@@ -1031,13 +1031,56 @@ fn has_table_like_child(item: Option<&toml_edit::Item>, key: &str) -> bool {
     }
 }
 
+/// Replace a key's inline-table value with a standard table, carrying the line's
+/// comments onto the table header.
+///
+/// The key was parsed from `merge = { … }`, so its leaf decor holds whatever
+/// preceded the line — comments, blank lines — plus the space before `=`. A
+/// standard table renders that decor *inside* its brackets, so leaving it in
+/// place writes `[# comment\nmerge ]`: a config file wt can no longer parse,
+/// and the user's own comment is what breaks it. Move the prefix to the header
+/// and drop the rest.
+///
+/// A trailing comment after the closing brace sits in the inline value's own
+/// decor, which `InlineTable::into_table` discards, so it is read from
+/// `existing` before the replacement and lands after the header's `]`. It is
+/// carried only when it holds a comment; bare whitespace there would just trail
+/// the header.
+fn replace_inline_with_table(
+    existing: &mut toml_edit::Table,
+    key: &str,
+    mut table: toml_edit::Table,
+) {
+    let prefix = existing
+        .key(key)
+        .and_then(|k| k.leaf_decor().prefix())
+        .filter(|prefix| prefix.as_str() != Some(""))
+        .cloned();
+    let suffix = existing
+        .get(key)
+        .and_then(|item| item.as_inline_table())
+        .and_then(|inline| inline.decor().suffix())
+        .filter(|suffix| suffix.as_str().is_some_and(|s| s.contains('#')))
+        .cloned();
+    if let Some(prefix) = prefix {
+        table.decor_mut().set_prefix(prefix);
+    }
+    if let Some(suffix) = suffix {
+        table.decor_mut().set_suffix(suffix);
+    }
+    if let Some(mut key_mut) = existing.key_mut(key) {
+        key_mut.leaf_decor_mut().clear();
+    }
+    existing[key] = toml_edit::Item::Table(table);
+}
+
 /// Ensure a table-like parent is writable as a standard table.
 ///
 /// Inline tables can deserialize like tables, but TOML forbids extending them
 /// with later subtables. Convert before inserting migrated nested sections so
 /// existing inline parent fields survive alongside the new child table.
 ///
-/// The conversion goes through [`super::replace_inline_with_table`] so the
+/// The conversion goes through [`replace_inline_with_table`] so the
 /// key's leading comments and blank lines land above the header rather than
 /// inside its brackets. These rules run on the load path, so a header the key's
 /// decor broke is a config file that stops parsing on every command, not just
@@ -1057,7 +1100,7 @@ fn ensure_standard_table_parent<'a>(
         .and_then(|item| item.as_inline_table())
         .cloned()
     {
-        super::replace_inline_with_table(table, key, inline.into_table());
+        replace_inline_with_table(table, key, inline.into_table());
     }
     table.get_mut(key)?.as_table_mut()
 }
@@ -1425,18 +1468,13 @@ fn migrate_negated_bool_doc(
 /// [`DeprecationRule::UpdateOnly`] rules are excluded — template variable
 /// renaming is cosmetic (would break `--var` overrides), and approved-commands
 /// is still a valid serde field. They apply in [`compute_migrated_content`].
-fn migrate_content_doc(doc: &mut toml_edit::DocumentMut) -> bool {
+pub(crate) fn migrate_content_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     apply_rules(doc, RulePass::Load, &mut Vec::new())
 }
 
 /// Rename the `pre-create`/`post-create` hook aliases to `pre-start`/`post-start`,
 /// in every config scope (see [`for_each_config_table_mut`]).
-///
-/// Config saves run this on the file they merge into too
-/// (`UserConfig::save_to`): the config being saved serializes only the
-/// canonical names, so a hook left under its alias would be written a second
-/// time beside it, and serde rejects the duplicate on the next load.
-pub(crate) fn canonicalize_hook_keys(doc: &mut toml_edit::DocumentMut) -> bool {
+fn canonicalize_hook_keys(doc: &mut toml_edit::DocumentMut) -> bool {
     for_each_config_table_mut(doc, |_, table| {
         let pre = rename_hook_key(table, "pre-create", "pre-start");
         let post = rename_hook_key(table, "post-create", "post-start");

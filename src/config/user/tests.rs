@@ -1671,197 +1671,6 @@ worktree-path = "/worktrees/{{ branch | sanitize }}"
 }
 
 // =========================================================================
-// save_to() tests
-// =========================================================================
-
-#[test]
-fn test_save_to_new_file_with_commit_generation() {
-    // Test that save_to() creates a new file with commit.generation section
-    // This exercises the "create from scratch" branch when no existing file exists
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-
-    let config = UserConfig {
-        commit: CommitConfig {
-            stage: None,
-            generation: Some(CommitGenerationConfig {
-                command: Some("llm -m haiku".to_string()),
-                ..Default::default()
-            }),
-        },
-        ..Default::default()
-    };
-
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    assert!(
-        saved.contains("[commit.generation]"),
-        "Should use new format: {saved}"
-    );
-    assert!(
-        saved.contains("command = \"llm -m haiku\""),
-        "Should contain command: {saved}"
-    );
-    // When only generation is set (no stage), [commit] header should be implicit
-    assert!(
-        !saved.contains("[commit]\n"),
-        "Should not have standalone [commit] header when only generation is set: {saved}"
-    );
-}
-
-#[test]
-fn test_save_to_new_file_commit_with_stage_and_generation() {
-    // Test that when both stage and generation are set, [commit] header is explicit
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-
-    let config = UserConfig {
-        commit: CommitConfig {
-            stage: Some(StageMode::Tracked),
-            generation: Some(CommitGenerationConfig {
-                command: Some("llm -m haiku".to_string()),
-                ..Default::default()
-            }),
-        },
-        ..Default::default()
-    };
-
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    assert!(
-        saved.contains("[commit]\n"),
-        "Should have [commit] header when stage is set: {saved}"
-    );
-    assert!(
-        saved.contains("stage = \"tracked\""),
-        "Should contain stage: {saved}"
-    );
-    assert!(
-        saved.contains("[commit.generation]"),
-        "Should have generation section: {saved}"
-    );
-}
-
-#[test]
-fn test_save_to_new_file_with_skip_shell_integration() {
-    // Test skip-shell-integration-prompt is only written when true
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-
-    let config = UserConfig {
-        skip_shell_integration_prompt: true,
-        ..Default::default()
-    };
-
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    assert!(
-        saved.contains("skip-shell-integration-prompt = true"),
-        "Should contain flag: {saved}"
-    );
-}
-
-#[test]
-fn test_save_to_new_file_with_worktree_path() {
-    // Test worktree-path is written when set
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-
-    let config = UserConfig {
-        worktree_path: Some("../{{ repo }}.{{ branch }}".to_string()),
-        ..Default::default()
-    };
-
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    assert!(
-        saved.contains("worktree-path = \"../{{ repo }}.{{ branch }}\""),
-        "Should contain worktree-path: {saved}"
-    );
-}
-
-#[test]
-fn test_save_to_preserves_project_section_configs() {
-    // Exercises sync_serialized_section through the surgical-update save path
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-
-    // Create initial file with a project
-    let initial = r#"
-[projects."github.com/user/repo"]
-worktree-path = ".wt/{{ branch | sanitize }}"
-"#;
-    std::fs::write(&config_path, initial).unwrap();
-
-    // Build config with project section overrides
-    let mut config = UserConfig::default();
-    config.projects.insert(
-        "github.com/user/repo".to_string(),
-        UserProjectOverrides {
-            worktree_path: Some(".wt/{{ branch | sanitize }}".to_string()),
-            merge: MergeConfig {
-                squash: Some(false),
-                ..Default::default()
-            },
-            list: ListConfig {
-                full: Some(true),
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-    );
-
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    assert!(
-        saved.contains("squash = false"),
-        "Should serialize merge config: {saved}"
-    );
-    assert!(
-        saved.contains("full = true"),
-        "Should serialize list config: {saved}"
-    );
-
-    // Default sections should not appear
-    assert!(
-        !saved.contains("[projects.\"github.com/user/repo\".commit]"),
-        "Default commit section should not appear: {saved}"
-    );
-    assert!(
-        !saved.contains("[projects.\"github.com/user/repo\".switch]"),
-        "Default switch section should not appear: {saved}"
-    );
-}
-
-#[test]
-fn test_save_to_removes_default_project_section() {
-    // Exercises the is_default → remove branch in sync_serialized_section
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-    std::fs::write(
-        &config_path,
-        "[projects.\"github.com/u/r\".list]\nfull = true\n",
-    )
-    .unwrap();
-
-    let mut config =
-        UserConfig::load_from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
-    config.projects.get_mut("github.com/u/r").unwrap().list = ListConfig::default();
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    assert!(
-        !saved.contains("[projects.\"github.com/u/r\".list]"),
-        "Default section should be removed: {saved}"
-    );
-}
-
-// =========================================================================
 // Per-project hooks tests (append semantics)
 // =========================================================================
 
@@ -2885,889 +2694,126 @@ fn test_finalize_with_undeserializable_table() {
 }
 
 // =========================================================================
-// save_to() tests — existing-file branch
+// ConfigEdit — writing one value into the file
 // =========================================================================
 
 #[test]
-fn test_save_to_existing_file_writes_project_sections() {
-    // An existing file is updated with a project that has list, commit,
-    // merge, and switch sections populated via diff-based merge.
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
+fn test_config_edit_changes_only_its_value() {
+    // Each case writes one value and leaves the rest of the file as the user
+    // wrote it: comments, values at their defaults, and tables written inline
+    // or as dotted keys. An existing value keeps its trailing comment. A table
+    // the edit creates is implicit, or inline inside an inline table.
+    let cases: &[(&str, &[&str], &str)] = &[
+        (
+            r#"skip-shell-integration-prompt = false  # keep asking
 
-    // Start with a minimal file so save_to takes the "existing file" path
-    std::fs::write(&config_path, "# user config\n").unwrap();
+[list]
+columns = []  # pick later
 
-    let mut config = UserConfig::default();
-    config.projects.insert(
-        "github.com/user/repo".to_string(),
-        UserProjectOverrides {
-            worktree_path: Some("../{{ branch | sanitize }}".to_string()),
-            list: ListConfig {
-                full: Some(true),
-                ..Default::default()
-            },
-            commit: CommitConfig {
-                stage: Some(StageMode::Tracked),
-                generation: None,
-            },
-            merge: MergeConfig {
-                squash: Some(false),
-                ..Default::default()
-            },
-            switch: SwitchConfig {
-                cd: Some(false),
-                picker: None,
-            },
-            ..Default::default()
-        },
-    );
+# fill in later
+[commit]
 
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    // Comment should be preserved
-    assert!(saved.contains("# user config"), "comment lost: {saved}");
-    // All four per-project sections should be present
-    assert!(
-        saved.contains("[projects.\"github.com/user/repo\".list]"),
-        "missing list section: {saved}"
-    );
-    assert!(saved.contains("full = true"), "missing list.full: {saved}");
-    assert!(
-        saved.contains("[projects.\"github.com/user/repo\".commit]"),
-        "missing commit section: {saved}"
-    );
-    assert!(
-        saved.contains("stage = \"tracked\""),
-        "missing commit.stage: {saved}"
-    );
-    assert!(
-        saved.contains("[projects.\"github.com/user/repo\".merge]"),
-        "missing merge section: {saved}"
-    );
-    assert!(
-        saved.contains("squash = false"),
-        "missing merge.squash: {saved}"
-    );
-    assert!(
-        saved.contains("[projects.\"github.com/user/repo\".switch]"),
-        "missing switch section: {saved}"
-    );
-    assert!(saved.contains("cd = false"), "missing switch.cd: {saved}");
-
-    // Round-trip: file parses back into an equivalent config
-    let reparsed = UserConfig::load_from_str(&saved).unwrap();
-    let reloaded = reparsed.projects.get("github.com/user/repo").unwrap();
-    assert_eq!(
-        reloaded.worktree_path.as_deref(),
-        Some("../{{ branch | sanitize }}")
-    );
-    assert_eq!(reloaded.list.full, Some(true));
-    assert_eq!(reloaded.commit.stage, Some(StageMode::Tracked));
-    assert_eq!(reloaded.merge.squash, Some(false));
-    assert_eq!(reloaded.switch.cd, Some(false));
-}
-
-#[test]
-fn test_save_to_existing_file_removes_stale_projects_and_sections() {
-    // The diff-based merge removes projects not in the in-memory config
-    // and removes sections whose in-memory value is now None.
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-
-    // Existing file has two projects and a list section on the one we keep.
-    std::fs::write(
-        &config_path,
-        r#"# keep me
-[projects."keep"]
-worktree-path = "keep-path"
-
-[projects."keep".list]
-full = true
-
-[projects."drop"]
-worktree-path = "drop-path"
-"#,
-    )
-    .unwrap();
-
-    let mut config = UserConfig::default();
-    config.projects.insert(
-        "keep".to_string(),
-        UserProjectOverrides {
-            worktree_path: Some("keep-path".to_string()),
-            list: ListConfig::default(), // was non-default on disk, now default — should be removed
-            ..Default::default()
-        },
-    );
-
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    assert!(saved.contains("# keep me"), "comment lost: {saved}");
-    assert!(
-        saved.contains("[projects.\"keep\"]") || saved.contains("\"keep\""),
-        "keep project lost: {saved}"
-    );
-    assert!(
-        !saved.contains("\"drop\""),
-        "stale project not removed: {saved}"
-    );
-    assert!(
-        !saved.contains("[projects.\"keep\".list]"),
-        "stale list section not removed: {saved}"
-    );
-}
-
-#[test]
-fn test_save_to_existing_file_updates_commit_generation_command() {
-    // The file already has a [commit.generation] table — the diff-based merge
-    // updates the changed command in place while preserving unchanged keys.
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-    std::fs::write(
-        &config_path,
-        r#"# keep this comment
 [commit.generation]
-command = "old-llm"
-template = "stays: {{ diff }}"
+command = "old"  # fast model
 "#,
-    )
-    .unwrap();
+            &["commit", "generation"],
+            "command",
+        ),
+        ("", &["commit", "generation"], "command"),
+        (
+            "# why we generate\ncommit = { generation = { command = \"old\" } } # trailing\n",
+            &["commit", "generation"],
+            "command",
+        ),
+        (
+            "projects = { \"a\" = { worktree-path = \"x\" } }\n",
+            &["projects", "github.com/u/r"],
+            "worktree-path",
+        ),
+        (
+            "commit.generation.command = \"old\"\n",
+            &["commit", "generation"],
+            "command",
+        ),
+        (
+            "commit.stage = \"all\"\n",
+            &["commit", "generation"],
+            "command",
+        ),
+    ];
 
-    let config = UserConfig {
-        commit: CommitConfig {
-            stage: None,
-            generation: Some(CommitGenerationConfig {
-                command: Some("new-llm".to_string()),
-                template: Some("stays: {{ diff }}".to_string()),
-                ..Default::default()
-            }),
-        },
-        ..Default::default()
-    };
+    let mut rendered = String::new();
+    for (input, tables, key) in cases {
+        let mut doc: toml_edit::DocumentMut = input.parse().unwrap();
+        super::persistence::ConfigEdit {
+            tables: tables.to_vec(),
+            key,
+            value: "new".into(),
+        }
+        .apply(&mut doc)
+        .unwrap();
+        rendered.push_str(&format!("----- {}.{key}\n{doc}", tables.join(".")));
+    }
+    insta::assert_snapshot!(rendered, @r#"
+    ----- commit.generation.command
+    skip-shell-integration-prompt = false  # keep asking
 
-    config.save_to(&config_path).unwrap();
+    [list]
+    columns = []  # pick later
 
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    assert!(
-        saved.contains("# keep this comment"),
-        "comment lost: {saved}"
-    );
-    assert!(
-        saved.contains("command = \"new-llm\""),
-        "command not updated: {saved}"
-    );
-    assert!(
-        !saved.contains("old-llm"),
-        "old command not removed: {saved}"
-    );
-    assert!(
-        saved.contains("template = \"stays: {{ diff }}\""),
-        "template not preserved: {saved}"
-    );
+    # fill in later
+    [commit]
+
+    [commit.generation]
+    command = "new"  # fast model
+    ----- commit.generation.command
+    [commit.generation]
+    command = "new"
+    ----- commit.generation.command
+    # why we generate
+    commit = { generation = { command = "new" } } # trailing
+    ----- projects.github.com/u/r.worktree-path
+    projects = { "a" = { worktree-path = "x" } , "github.com/u/r" = { worktree-path = "new" } }
+    ----- commit.generation.command
+    commit.generation.command = "new"
+    ----- commit.generation.command
+    commit.stage = "all"
+
+    [commit.generation]
+    command = "new"
+    "#);
 }
 
 #[test]
-fn test_save_to_existing_file_adds_commit_generation_to_plain_commit_table() {
-    // Existing file has a [commit] table (e.g., with `stage`) but no
-    // [commit.generation] subtable yet. The diff-based merge inserts the
-    // new subtable while preserving existing keys.
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-    std::fs::write(
-        &config_path,
-        r#"[commit]
-stage = "all"
-"#,
-    )
-    .unwrap();
-
-    let config = UserConfig {
-        commit: CommitConfig {
-            stage: Some(StageMode::All),
-            generation: Some(CommitGenerationConfig {
-                command: Some("llm".to_string()),
-                ..Default::default()
-            }),
-        },
-        ..Default::default()
-    };
-
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    assert!(
-        saved.contains("[commit.generation]"),
-        "generation subtable missing: {saved}"
-    );
-    assert!(
-        saved.contains("command = \"llm\""),
-        "command missing: {saved}"
-    );
-    assert!(saved.contains("stage = \"all\""), "stage lost: {saved}");
+fn test_config_edit_fails_when_a_parent_is_not_a_table() {
+    let mut doc: toml_edit::DocumentMut = "commit = \"oops\"\n".parse().unwrap();
+    let err = super::persistence::ConfigEdit {
+        tables: vec!["commit", "generation"],
+        key: "command",
+        value: "llm".into(),
+    }
+    .apply(&mut doc)
+    .unwrap_err();
+    insta::assert_snapshot!(err.to_string(), @"Failed to write config file: `commit` is not a table");
 }
 
 #[test]
-fn test_save_to_existing_file_with_type_mismatch_fails_and_leaves_it() {
-    // A file that parses as TOML but not as a config (a hand edit like
-    // `commit = "oops"`, landing after the mutation reloaded it) gives the
-    // merge no config to tell a reset key from an untouched one, so the save
-    // fails rather than rewrite the file.
+fn test_mutation_fails_on_a_file_that_is_not_a_valid_config_and_leaves_it() {
+    // Valid TOML that doesn't deserialize as a config (a hand edit like
+    // `commit = "oops"`) fails the reload, before anything is written.
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
     let content = "commit = \"oops\"\n";
     std::fs::write(&config_path, content).unwrap();
 
-    let err = UserConfig::default().save_to(&config_path).unwrap_err();
+    let err = UserConfig::default()
+        .set_commit_generation_command("llm".to_string(), &config_path)
+        .unwrap_err();
     assert!(
         err.to_string().contains("Failed to parse config file"),
         "expected parse error, got: {err}"
     );
     assert_eq!(std::fs::read_to_string(&config_path).unwrap(), content);
-}
-
-#[test]
-fn test_save_to_existing_file_with_invalid_toml_returns_parse_error() {
-    // Covers the `parse().map_err(...)` closure in save_to's existing-file
-    // branch: the file exists (so we take the "surgical update" path) but
-    // its contents don't parse as TOML.
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-    std::fs::write(&config_path, "this is not [[[ valid toml").unwrap();
-
-    let config = UserConfig::default();
-    let err = config.save_to(&config_path).unwrap_err();
-    let msg = err.to_string();
-    assert!(
-        msg.contains("Failed to parse config file"),
-        "expected parse error, got: {msg}"
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn test_save_to_existing_file_with_unreadable_file_returns_read_error() {
-    // Covers the `read_to_string.map_err(...)` closure in save_to: the file
-    // exists but we can't read it. Matches the pattern of the mutation-side
-    // test_reload_from_permission_error.
-    use std::os::unix::fs::PermissionsExt;
-
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-    std::fs::write(&config_path, "# valid\n").unwrap();
-
-    let mut perms = std::fs::metadata(&config_path).unwrap().permissions();
-    perms.set_mode(0o000);
-    std::fs::set_permissions(&config_path, perms).unwrap();
-
-    struct RestorePerms<'a>(&'a std::path::Path);
-    impl Drop for RestorePerms<'_> {
-        fn drop(&mut self) {
-            let mut perms = std::fs::metadata(self.0).unwrap().permissions();
-            perms.set_mode(0o644);
-            let _ = std::fs::set_permissions(self.0, perms);
-        }
-    }
-    let _guard = RestorePerms(&config_path);
-
-    if !permissions_restrict_reads(dir.path()) {
-        return;
-    }
-
-    let config = UserConfig::default();
-    let err = config.save_to(&config_path).unwrap_err();
-    let msg = err.to_string();
-    assert!(
-        msg.contains("Failed to read config file"),
-        "expected read error, got: {msg}"
-    );
-}
-
-#[test]
-fn test_save_to_root_path_skips_parent_creation() {
-    // Covers the else branch of `if let Some(parent) = config_path.parent()`
-    // in save_to: when the config path is the filesystem root (`/`), parent()
-    // returns None and we skip create_dir_all. The downstream write will
-    // fail because `/` is a directory, but we should reach that point
-    // without panicking — proving the None branch executes cleanly.
-    let config = UserConfig::default();
-    let err = config.save_to(std::path::Path::new("/")).unwrap_err();
-    let msg = err.to_string();
-    // We expect to fail at the read/write step, not at create_dir_all.
-    // The specific error depends on the platform (read error since "/"
-    // exists, or write error). We just verify it wasn't the create_dir
-    // path (which would mean line 216's else branch wasn't taken).
-    assert!(
-        !msg.contains("Failed to create config directory"),
-        "should skip create_dir when parent is None, got: {msg}"
-    );
-}
-
-#[test]
-fn test_save_to_fails_when_parent_is_a_file() {
-    // Covers the create_dir_all error branch: if config_path's parent
-    // already exists as a regular file, create_dir_all fails and save_to
-    // returns a "Failed to create config directory" error.
-    let dir = tempfile::tempdir().unwrap();
-    let blocker = dir.path().join("blocker");
-    std::fs::write(&blocker, "i am a file").unwrap();
-
-    // config_path's parent is "blocker", which is a file
-    let config_path = blocker.join("config.toml");
-
-    let config = UserConfig::default();
-    let err = config.save_to(&config_path).unwrap_err();
-    let msg = err.to_string();
-    assert!(
-        msg.contains("Failed to create config directory"),
-        "expected create_dir error, got: {msg}"
-    );
-}
-
-#[test]
-fn test_save_to_new_file_expands_nested_project_inline_tables() {
-    // Covers expand_inline_tables recursion: a per-project config with nested
-    // sections forces to_document to emit inline tables that must be expanded
-    // into standard [projects."id".list] etc. subtables for readability.
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-
-    let mut config = UserConfig::default();
-    config.projects.insert(
-        "repo".to_string(),
-        UserProjectOverrides {
-            list: ListConfig {
-                full: Some(true),
-                branches: Some(true),
-                ..Default::default()
-            },
-            switch: SwitchConfig {
-                cd: Some(false),
-                picker: None,
-            },
-            ..Default::default()
-        },
-    );
-
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    // Should be expanded into standard subtables, not inline tables
-    assert!(
-        saved.contains("[projects.repo.list]"),
-        "list should be expanded to standard subtable: {saved}"
-    );
-    assert!(
-        saved.contains("[projects.repo.switch]"),
-        "switch should be expanded to standard subtable: {saved}"
-    );
-    // Inline syntax should not appear for these sections
-    assert!(
-        !saved.contains("list = {"),
-        "list should not be inline: {saved}"
-    );
-    assert!(
-        !saved.contains("switch = {"),
-        "switch should not be inline: {saved}"
-    );
-    // And it should round-trip cleanly
-    let reparsed = UserConfig::load_from_str(&saved).unwrap();
-    assert_eq!(
-        reparsed.projects.get("repo").unwrap().list.branches,
-        Some(true)
-    );
-}
-
-#[test]
-fn test_save_to_existing_file_preserves_integer_and_array_values() {
-    // Exercises values_equal for Integer (timeout-ms) and Array
-    // (approved-commands) — types beyond String and Boolean.
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-    std::fs::write(
-        &config_path,
-        r#"# keep comment
-[list]
-timeout-ms = 5000
-full = true
-
-[projects."repo"]
-approved-commands = ["cargo test", "cargo build"]
-"#,
-    )
-    .unwrap();
-
-    let config =
-        UserConfig::load_from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    assert!(saved.contains("# keep comment"), "comment lost: {saved}");
-    assert!(
-        saved.contains("timeout-ms = 5000"),
-        "integer value should be preserved: {saved}"
-    );
-    assert!(
-        saved.contains("full = true"),
-        "boolean value should be preserved: {saved}"
-    );
-    assert!(
-        saved.contains("cargo test") && saved.contains("cargo build"),
-        "array values should be preserved: {saved}"
-    );
-}
-
-#[test]
-fn test_save_to_existing_file_replaces_changed_inline_table() {
-    // When an inline table's contents actually changed, the diff-based merge
-    // replaces it (even though this changes formatting from inline to standard).
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-    std::fs::write(&config_path, "post-start = { build = \"cargo build\" }\n").unwrap();
-
-    // Load, modify the hook, then save
-    let mut config =
-        UserConfig::load_from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
-    config.hooks = toml::from_str("post-start = { build = \"cargo test\" }").unwrap();
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    assert!(
-        saved.contains("cargo test"),
-        "changed value should be written: {saved}"
-    );
-    assert!(
-        !saved.contains("cargo build"),
-        "old value should be gone: {saved}"
-    );
-}
-
-#[test]
-fn test_save_to_existing_file_preserves_unknown_keys() {
-    // Unknown top-level keys (typos, future fields) must survive a save.
-    // The diff-based merge skips unknown keys in its stale-key sweep.
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-    std::fs::write(
-        &config_path,
-        r#"# A user comment
-unknown-key = "keep me"
-skip-shell-integration-prompt = true
-"#,
-    )
-    .unwrap();
-
-    let config = UserConfig {
-        skip_shell_integration_prompt: true,
-        ..Default::default()
-    };
-
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    assert!(
-        saved.contains("unknown-key = \"keep me\""),
-        "unknown key should be preserved: {saved}"
-    );
-    assert!(
-        saved.contains("# A user comment"),
-        "comment should be preserved: {saved}"
-    );
-    assert!(
-        saved.contains("skip-shell-integration-prompt = true"),
-        "known key should be preserved: {saved}"
-    );
-}
-
-#[test]
-fn test_save_to_existing_file_preserves_nested_unknown_keys() {
-    // Unknown keys inside a known table (e.g., a newer-version field under
-    // `[merge]`) must survive a save that touches unrelated settings. Older
-    // wt versions should leave config data they don't recognize alone.
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-    std::fs::write(
-        &config_path,
-        r#"[merge]
-squash = false
-future-option = true
-"#,
-    )
-    .unwrap();
-
-    // Mutate an unrelated setting so save_to() writes the file.
-    let config = UserConfig {
-        skip_shell_integration_prompt: true,
-        merge: MergeConfig {
-            squash: Some(false),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    assert!(
-        saved.contains("future-option = true"),
-        "nested unknown key should be preserved: {saved}"
-    );
-    assert!(
-        saved.contains("squash = false"),
-        "known sibling should be preserved: {saved}"
-    );
-    assert!(
-        saved.contains("skip-shell-integration-prompt = true"),
-        "new top-level key should be written: {saved}"
-    );
-}
-
-#[test]
-fn test_save_to_existing_file_preserves_section_with_only_unknown_fields() {
-    // A section whose known fields are all absent/default (so reserialization
-    // skips the whole section) but that still contains unknown keys must
-    // survive the save — including when a mutation later introduces a known
-    // field to the same section.
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-    std::fs::write(
-        &config_path,
-        r#"[merge]
-future-option = true
-"#,
-    )
-    .unwrap();
-
-    // Mutation introduces a known field to `[merge]` that wasn't on disk.
-    let config = UserConfig {
-        merge: MergeConfig {
-            squash: Some(false),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    assert!(
-        saved.contains("future-option = true"),
-        "unknown key in otherwise-empty section should be preserved: {saved}"
-    );
-    assert!(
-        saved.contains("squash = false"),
-        "new known field should be written: {saved}"
-    );
-}
-
-#[test]
-fn test_save_to_existing_file_preserves_deeply_nested_unknown_keys() {
-    // Unknown keys inside a doubly-nested table (e.g., `[commit.generation]`)
-    // must also survive — the merge has to keep them at the right level.
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-    std::fs::write(
-        &config_path,
-        r#"[commit.generation]
-command = "old-llm"
-future-knob = "from-newer-wt"
-"#,
-    )
-    .unwrap();
-
-    let config = UserConfig {
-        commit: CommitConfig {
-            stage: None,
-            generation: Some(CommitGenerationConfig {
-                command: Some("new-llm".to_string()),
-                ..Default::default()
-            }),
-        },
-        ..Default::default()
-    };
-
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    assert!(
-        saved.contains(r#"future-knob = "from-newer-wt""#),
-        "nested unknown key should be preserved: {saved}"
-    );
-    assert!(
-        saved.contains(r#"command = "new-llm""#),
-        "known field should be updated: {saved}"
-    );
-    assert!(!saved.contains("old-llm"), "old value not removed: {saved}");
-}
-
-#[test]
-fn test_save_to_existing_file_preserves_unknown_keys_in_project_section() {
-    // Unknown keys inside a project entry (e.g., `[projects."name"]`) are also
-    // at a nested level — the fix must cover entries inside the projects map too.
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-    std::fs::write(
-        &config_path,
-        r#"[projects."repo"]
-worktree-path = "../custom"
-future-per-project = "value"
-"#,
-    )
-    .unwrap();
-
-    let mut config = UserConfig::default();
-    config.projects.insert(
-        "repo".to_string(),
-        UserProjectOverrides {
-            worktree_path: Some("../custom".to_string()),
-            ..Default::default()
-        },
-    );
-    // Flip an unrelated flag so save_to() has a reason to write.
-    config.skip_shell_integration_prompt = true;
-
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    assert!(
-        saved.contains(r#"future-per-project = "value""#),
-        "unknown key inside a project entry should be preserved: {saved}"
-    );
-    assert!(
-        saved.contains(r#"worktree-path = "../custom""#),
-        "known field should be preserved: {saved}"
-    );
-}
-
-#[test]
-fn test_save_to_existing_file_preserves_unknown_keys_in_inline_table() {
-    // An unknown key inside an *inline* section must survive a save just as it
-    // does inside a standard `[merge]` table. The inline branch of the merge
-    // used to replace the whole item, so the unknown key went with it.
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-    std::fs::write(
-        &config_path,
-        "merge = { squash = false, future-option = true }\n",
-    )
-    .unwrap();
-
-    let mut config =
-        UserConfig::load_from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
-    config.skip_shell_integration_prompt = true;
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    assert!(
-        saved.contains("future-option = true"),
-        "unknown key inside an inline table should be preserved: {saved}"
-    );
-    assert!(
-        saved.contains("skip-shell-integration-prompt = true"),
-        "the unrelated change should still be written: {saved}"
-    );
-    // Nothing in the inline table changed, so its formatting survives too.
-    assert!(
-        saved.contains("merge = { squash = false, future-option = true }"),
-        "unchanged inline table should keep its formatting: {saved}"
-    );
-}
-
-#[test]
-fn test_save_to_existing_file_preserves_unknown_keys_when_inline_table_changes() {
-    // Same preservation when a known value inside the inline table does change:
-    // `squash` is rewritten, `future-option` stays.
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-    std::fs::write(
-        &config_path,
-        "merge = { squash = false, future-option = true }\n",
-    )
-    .unwrap();
-
-    let mut config =
-        UserConfig::load_from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
-    config.merge.squash = Some(true);
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    assert!(
-        saved.contains("future-option = true"),
-        "unknown key should survive a changed inline table: {saved}"
-    );
-    assert!(
-        saved.contains("squash = true"),
-        "changed value should be written: {saved}"
-    );
-}
-
-#[test]
-fn test_save_to_existing_file_preserves_nested_inline_table_formatting() {
-    // An inline section whose child is itself an inline table must keep its
-    // formatting when nothing inside it changed. `values_equal` had no
-    // `InlineTable` arm, so two identical inline tables never compared equal
-    // and the whole section was rewritten as a standard table.
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-    let original = "commit = { generation = { command = \"summarize\" } }\n";
-    std::fs::write(&config_path, original).unwrap();
-
-    let mut config = UserConfig::load_from_str(original).unwrap();
-    config.skip_shell_integration_prompt = true;
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    assert!(
-        saved.contains("commit = { generation = { command = \"summarize\" } }"),
-        "unchanged nested inline table should keep its formatting: {saved}"
-    );
-    assert!(
-        !saved.contains("[commit"),
-        "should not be expanded to a standard table: {saved}"
-    );
-    assert!(
-        saved.contains("skip-shell-integration-prompt = true"),
-        "the unrelated change should still be written: {saved}"
-    );
-}
-
-#[test]
-fn test_save_to_rewrites_commented_inline_section_as_parseable_toml() {
-    // Changing a value inside an inline section rewrites it as a standard
-    // table. The key's decor — the comment above it and the space before `=` —
-    // renders inside the table header, so the comment used to land between the
-    // brackets and the file wt wrote back no longer parsed.
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-    let original = "# why squash is off\nmerge = { squash = false, future-option = true }\n";
-    std::fs::write(&config_path, original).unwrap();
-
-    let mut config = UserConfig::load_from_str(original).unwrap();
-    config.merge.squash = Some(true);
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    UserConfig::load_from_str(&saved)
-        .unwrap_or_else(|e| panic!("saved config must still parse: {e}\n{saved}"));
-    assert!(
-        saved.contains("# why squash is off\n[merge]"),
-        "the comment belongs above the header, not inside it: {saved}"
-    );
-    assert!(
-        saved.contains("future-option = true"),
-        "unknown key should survive: {saved}"
-    );
-}
-
-#[test]
-fn test_save_to_rewrites_inline_commit_and_projects_without_bare_headers() {
-    // `commit` and `projects` holding only subtables, written inline, become
-    // standard tables when a value inside changes. Like the tables a save
-    // inserts, they write only their subtables' headers, not an empty
-    // `[commit]` or `[projects]` — and the comments on each line move onto the
-    // first header that is written.
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-    let original = r#"# why we generate
-commit = { generation = { command = "old" } } # trailing
-
-# per repo
-projects = { "example.com/org/repo" = { worktree-path = "old" } }
-"#;
-    std::fs::write(&config_path, original).unwrap();
-
-    let mut config = UserConfig::load_from_str(original).unwrap();
-    config.commit.generation.as_mut().unwrap().command = Some("new".to_string());
-    config
-        .projects
-        .get_mut("example.com/org/repo")
-        .unwrap()
-        .worktree_path = Some("new".to_string());
-    config.save_to(&config_path).unwrap();
-
-    insta::assert_snapshot!(std::fs::read_to_string(&config_path).unwrap(), @r#"
-    # why we generate
-    [commit.generation] # trailing
-    command = "new"
-
-    # per repo
-    [projects."example.com/org/repo"]
-    worktree-path = "new"
-    "#);
-}
-
-#[test]
-fn test_save_to_rewrites_blank_line_separated_inline_section_as_parseable_toml() {
-    // Same decor path with no comment: a blank line before the inline section
-    // is prefix decor too, and rendered inside the brackets it broke the file.
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-    let original = "skip-shell-integration-prompt = true\n\nmerge = { squash = false }\n";
-    std::fs::write(&config_path, original).unwrap();
-
-    let mut config = UserConfig::load_from_str(original).unwrap();
-    config.merge.squash = Some(true);
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    let reloaded = UserConfig::load_from_str(&saved)
-        .unwrap_or_else(|e| panic!("saved config must still parse: {e}\n{saved}"));
-    assert_eq!(reloaded.merge.squash, Some(true));
-}
-
-#[test]
-fn test_save_to_existing_file_preserves_inline_table_with_float_and_datetime() {
-    // Every `Value` variant needs an arm in `values_equal`: a pair it doesn't
-    // match falls through to "not equal", which reports an untouched inline
-    // section as changed and expands it to a standard table. Floats and
-    // datetimes only reach a user config as unknown keys — a typo, or a field
-    // from a newer wt — which is exactly what the inline branch preserves.
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-    let original = "merge = { squash = false, future-timeout = 1.5, future-since = 1979-05-27 }\n";
-    std::fs::write(&config_path, original).unwrap();
-
-    let mut config = UserConfig::load_from_str(original).unwrap();
-    config.skip_shell_integration_prompt = true;
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    assert!(
-        saved.contains(original.trim_end()),
-        "unchanged inline table should keep its formatting: {saved}"
-    );
-    assert!(
-        saved.contains("skip-shell-integration-prompt = true"),
-        "the unrelated change should still be written: {saved}"
-    );
-}
-
-#[test]
-fn test_save_to_existing_file_preserves_inline_table_formatting() {
-    // When a user writes a hook as an inline table (e.g., `post-start = { ... }`),
-    // the diff-based merge must not rewrite it to a standard table if the value
-    // is semantically unchanged.
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-    let original = "post-start = { build = \"cargo build\" }\n";
-    std::fs::write(&config_path, original).unwrap();
-
-    // Load the config (which parses hooks via flatten), then save it back
-    let config = UserConfig::load_from_str(original).unwrap();
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    // The inline table syntax should be preserved (not expanded to [post-start])
-    assert!(
-        saved.contains("post-start = { build = \"cargo build\" }"),
-        "inline table should be preserved: {saved}"
-    );
-    assert!(
-        !saved.contains("[post-start]"),
-        "should not be expanded to standard table: {saved}"
-    );
 }
 
 // =========================================================================
@@ -3776,8 +2822,8 @@ fn test_save_to_existing_file_preserves_inline_table_formatting() {
 
 #[test]
 fn test_set_project_worktree_path_noop_when_unchanged() {
-    // Covers the `return false` early-exit in set_project_worktree_path's
-    // mutator: when the path already matches, no save happens. We verify
+    // Covers the `None` early exit in set_project_worktree_path's
+    // mutator: when the path already matches, nothing is written. We verify
     // this by checking that the file content is byte-identical across a
     // redundant call.
     let dir = tempfile::tempdir().unwrap();
@@ -3793,9 +2839,9 @@ fn test_set_project_worktree_path_noop_when_unchanged() {
     // Sanity: first call actually wrote the value
     assert!(after_first.contains("../custom"), "{after_first}");
 
-    // Second call with identical value should be a no-op — reload_from
-    // refreshes self from disk, the mutator compares equal and returns
-    // false, so save is skipped.
+    // Second call with identical value should be a no-op — the mutator runs
+    // on the file's config, compares equal and returns `None`, so nothing is
+    // written.
     let mut config2 = UserConfig::default();
     config2
         .set_project_worktree_path("user/repo", "../custom".to_string(), &config_path)
@@ -3810,8 +2856,8 @@ fn test_set_project_worktree_path_noop_when_unchanged() {
 
 #[test]
 fn test_set_commit_generation_command_noop_when_unchanged() {
-    // Covers the `return false` early-exit in set_commit_generation_command's
-    // mutator: when the command already matches, no save happens. We verify
+    // Covers the `None` early exit in set_commit_generation_command's
+    // mutator: when the command already matches, nothing is written. We verify
     // this by checking that the file content is byte-identical across a
     // redundant call.
     let dir = tempfile::tempdir().unwrap();
@@ -3827,9 +2873,9 @@ fn test_set_commit_generation_command_noop_when_unchanged() {
     // Sanity: first call actually wrote the value
     assert!(after_first.contains("llm -m haiku"), "{after_first}");
 
-    // Second call with identical value should be a no-op — reload_from
-    // refreshes self from disk, the mutator compares equal and returns
-    // false, so save is skipped.
+    // Second call with identical value should be a no-op — the mutator runs
+    // on the file's config, compares equal and returns `None`, so nothing is
+    // written.
     let mut config2 = UserConfig::default();
     config2
         .set_commit_generation_command("llm -m haiku".to_string(), &config_path)
@@ -3844,10 +2890,10 @@ fn test_set_commit_generation_command_noop_when_unchanged() {
 
 #[test]
 fn test_set_skip_shell_integration_prompt_noop_on_second_call() {
-    // Covers the `return false` early-exit in set_skip_shell_integration_prompt's
-    // mutator. reload_from refreshes all fields from disk — after the first
-    // save, the flag is true on disk, so a second call sees it already true
-    // and skips the save.
+    // Covers the `None` early exit in set_skip_shell_integration_prompt's
+    // mutator. The mutator runs on the file's config — after the first
+    // write, the flag is true on disk, so a second call sees it already true
+    // and writes nothing.
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
     std::fs::write(&config_path, "# empty\n").unwrap();
@@ -3860,12 +2906,41 @@ fn test_set_skip_shell_integration_prompt_noop_on_second_call() {
     assert!(after_first.contains("skip-shell-integration-prompt = true"));
 
     // Second call with the flag already true in-memory — mutator returns
-    // false, save is skipped, file is byte-identical.
+    // `None`, nothing is written, file is byte-identical.
     config
         .set_skip_shell_integration_prompt(&config_path)
         .unwrap();
     let after_second = std::fs::read_to_string(&config_path).unwrap();
     assert_eq!(after_first, after_second);
+}
+
+#[test]
+fn test_mutation_keeps_in_memory_config_the_file_lacks() {
+    // The in-memory config also carries system config, environment variables,
+    // and `--config-set`. A mutation applies its change to it without
+    // replacing it with the file's config, so the rest of the command still
+    // reads those values.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(&config_path, "[list]\nfull = true\n").unwrap();
+
+    let mut config = UserConfig {
+        commit: CommitConfig {
+            stage: Some(StageMode::None),
+            generation: None,
+        },
+        ..Default::default()
+    };
+    config
+        .set_skip_commit_generation_prompt(&config_path)
+        .unwrap();
+
+    assert_eq!(config.commit.stage, Some(StageMode::None));
+    assert!(config.skip_commit_generation_prompt);
+    assert_eq!(
+        std::fs::read_to_string(&config_path).unwrap(),
+        "skip-commit-generation-prompt = true\n[list]\nfull = true\n"
+    );
 }
 
 #[test]
@@ -3915,53 +2990,49 @@ fn test_acquire_config_lock_fails_when_parent_is_file() {
 
 #[cfg(unix)]
 #[test]
-fn test_with_locked_mutation_propagates_save_error() {
-    // Covers the `save_to(&path)?` error branch in with_locked_mutation:
-    // after a successful lock + reload, the mutator closure chmods the
-    // config file to 000. The subsequent save_to tries to read the
-    // existing file and fails with a permission
-    // error, which with_locked_mutation propagates back to the caller.
+fn test_with_locked_mutation_propagates_write_error() {
+    // After lock and reload, the mutator makes the config directory read-only,
+    // so writing the edited file — a temp file beside it, renamed over it —
+    // fails, and with_locked_mutation returns that error to the caller.
     use std::os::unix::fs::PermissionsExt;
 
     let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
+    let config_dir = dir.path().join("config");
+    std::fs::create_dir(&config_dir).unwrap();
+    let config_path = config_dir.join("config.toml");
     std::fs::write(&config_path, "# valid\n").unwrap();
 
     struct RestorePerms<'a>(&'a std::path::Path);
     impl Drop for RestorePerms<'_> {
         fn drop(&mut self) {
-            if let Ok(meta) = std::fs::metadata(self.0) {
-                let mut perms = meta.permissions();
-                perms.set_mode(0o644);
-                let _ = std::fs::set_permissions(self.0, perms);
-            }
+            let _ = std::fs::set_permissions(self.0, std::fs::Permissions::from_mode(0o755));
         }
     }
-    let _guard = RestorePerms(&config_path);
+    let _guard = RestorePerms(&config_dir);
 
     if !permissions_restrict_reads(dir.path()) {
         return;
     }
 
-    let cfg_path_for_closure = config_path.clone();
+    let dir_for_closure = config_dir.clone();
     let mut config = UserConfig::default();
     let err = config
         .with_locked_mutation(&config_path, move |_config| {
-            // Mid-mutation: strip read permissions from the config file.
-            // reload_from already ran; save_to will try to read again and fail.
-            let mut perms = std::fs::metadata(&cfg_path_for_closure)
-                .unwrap()
-                .permissions();
-            perms.set_mode(0o000);
-            std::fs::set_permissions(&cfg_path_for_closure, perms).unwrap();
-            true
+            std::fs::set_permissions(&dir_for_closure, std::fs::Permissions::from_mode(0o555))
+                .unwrap();
+            Some(super::persistence::ConfigEdit {
+                tables: vec![],
+                key: "skip-shell-integration-prompt",
+                value: true.into(),
+            })
         })
         .unwrap_err();
     let msg = err.to_string();
     assert!(
-        msg.contains("Failed to read config file"),
-        "expected save-side read error, got: {msg}"
+        msg.contains("Failed to write config file"),
+        "expected write error, got: {msg}"
     );
+    assert_eq!(std::fs::read_to_string(&config_path).unwrap(), "# valid\n");
 }
 
 #[test]

@@ -10,7 +10,6 @@
 use crate::common::{TestRepo, repo};
 use rstest::rstest;
 use std::fs;
-use worktrunk::config::UserConfig;
 
 ///
 /// When WORKTRUNK_DIRECTIVE_CD_FILE is set (shell integration active), we should:
@@ -63,12 +62,11 @@ fn test_switch_with_active_shell_integration_no_prompt(repo: TestRepo) {
 #[rstest]
 fn test_switch_with_skip_prompt_flag(repo: TestRepo) {
     // Set the skip flag in config
-    let config_path = repo.test_config_path();
-    let config = UserConfig {
-        skip_shell_integration_prompt: true,
-        ..Default::default()
-    };
-    config.save_to(config_path).unwrap();
+    std::fs::write(
+        repo.test_config_path(),
+        "skip-shell-integration-prompt = true\n",
+    )
+    .unwrap();
 
     let output = repo
         .wt_command()

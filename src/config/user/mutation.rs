@@ -1,6 +1,6 @@
 //! Config mutation methods with file locking.
 //!
-//! These methods modify the UserConfig and persist changes to disk,
+//! These methods modify the UserConfig and write the changed value to disk,
 //! using file locking to prevent race conditions between concurrent processes.
 
 use fs2::FileExt;
@@ -10,6 +10,7 @@ use crate::config::ConfigError;
 use crate::path::format_path_for_display;
 
 use super::UserConfig;
+use super::persistence::{ConfigEdit, ConfigFile};
 use super::sections::CommitGenerationConfig;
 
 /// Acquire an exclusive lock on the config file for read-modify-write operations.
@@ -44,56 +45,39 @@ pub(crate) fn acquire_config_lock(
 impl UserConfig {
     /// Execute a mutation under an exclusive file lock.
     ///
-    /// Acquires lock, reloads from disk, calls the mutator, and saves if mutator returns true.
-    pub(super) fn with_locked_mutation<F>(
+    /// Acquires the lock and reads the config file. The mutator runs on the
+    /// file's config, returning the value it changed or `None` when the file
+    /// already has it, and that value alone is written into the file (see
+    /// [`ConfigFile::edited`]). The mutator also runs on `self`, which is not
+    /// replaced by the file's config: it carries system config, environment
+    /// variables, and `--config-set` too, which the rest of the command still
+    /// reads.
+    pub(super) fn with_locked_mutation<'a, F>(
         &mut self,
         config_path: &std::path::Path,
         mutate: F,
     ) -> Result<(), ConfigError>
     where
-        F: FnOnce(&mut Self) -> bool,
+        F: Fn(&mut Self) -> Option<ConfigEdit<'a>>,
     {
         let _lock = acquire_config_lock(config_path)?;
-        self.reload_from(config_path)?;
+        let file = ConfigFile::read(config_path)?;
+        let mut changed = file.config.clone();
+        let edit = mutate(&mut changed);
+        mutate(self);
 
-        if mutate(self) {
-            self.save_to(config_path)?;
-        }
-        Ok(())
-    }
-
-    /// Reload all fields from disk so the in-memory config matches the current
-    /// file state before applying mutations.
-    ///
-    /// The diff-based `save_to` writes ALL serializable fields, so the reload
-    /// must refresh everything to avoid overwriting concurrent manual edits
-    /// with stale in-memory data. After reload, the mutator applies its
-    /// specific change, and `save_to` persists the full state.
-    fn reload_from(&mut self, path: &std::path::Path) -> Result<(), ConfigError> {
-        if !path.exists() {
+        let Some(edit) = edit else {
             return Ok(());
-        }
-
-        let content = std::fs::read_to_string(path).map_err(|e| {
+        };
+        let content = file.edited(&edit, &changed)?;
+        crate::config::ensure_config_parses(&content)?;
+        crate::utils::write_atomically(config_path, &content).map_err(|e| {
             ConfigError(format!(
-                "Failed to read config file {}: {}",
-                format_path_for_display(path),
+                "Failed to write config file {}: {}",
+                format_path_for_display(config_path),
                 e
             ))
-        })?;
-
-        let migrated = crate::config::deprecation::migrate_content(&content);
-        let disk_config: UserConfig = toml::from_str(&migrated).map_err(|e| {
-            ConfigError(format!(
-                "Failed to parse config file {}: {}",
-                format_path_for_display(path),
-                e
-            ))
-        })?;
-
-        *self = disk_config;
-
-        Ok(())
+        })
     }
 
     /// Set `skip-shell-integration-prompt = true` and save.
@@ -105,10 +89,14 @@ impl UserConfig {
     ) -> Result<(), ConfigError> {
         self.with_locked_mutation(config_path, |config| {
             if config.skip_shell_integration_prompt {
-                return false;
+                return None;
             }
             config.skip_shell_integration_prompt = true;
-            true
+            Some(ConfigEdit {
+                tables: vec![],
+                key: "skip-shell-integration-prompt",
+                value: true.into(),
+            })
         })
     }
 
@@ -121,10 +109,14 @@ impl UserConfig {
     ) -> Result<(), ConfigError> {
         self.with_locked_mutation(config_path, |config| {
             if config.skip_commit_generation_prompt {
-                return false;
+                return None;
             }
             config.skip_commit_generation_prompt = true;
-            true
+            Some(ConfigEdit {
+                tables: vec![],
+                key: "skip-commit-generation-prompt",
+                value: true.into(),
+            })
         })
     }
 
@@ -140,10 +132,14 @@ impl UserConfig {
         self.with_locked_mutation(config_path, |config| {
             let entry = config.projects.entry(project.to_string()).or_default();
             if entry.worktree_path.as_ref() == Some(&worktree_path) {
-                return false;
+                return None;
             }
-            entry.worktree_path = Some(worktree_path);
-            true
+            entry.worktree_path = Some(worktree_path.clone());
+            Some(ConfigEdit {
+                tables: vec!["projects", project],
+                key: "worktree-path",
+                value: worktree_path.as_str().into(),
+            })
         })
     }
 
@@ -163,10 +159,14 @@ impl UserConfig {
                 .get_or_insert_with(CommitGenerationConfig::default);
 
             if gen_config.command.as_ref() == Some(&command) {
-                return false;
+                return None;
             }
-            gen_config.command = Some(command);
-            true
+            gen_config.command = Some(command.clone());
+            Some(ConfigEdit {
+                tables: vec!["commit", "generation"],
+                key: "command",
+                value: command.as_str().into(),
+            })
         })
     }
 }
