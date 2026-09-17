@@ -122,7 +122,7 @@ The filter matches each row's branch, path, and — when it has a PR/MR — the 
 7. **pr** — The selected row's PR/MR, for any row whose branch has one
 8. **comments** — The PR/MR's comment thread, fetched from the forge for any row whose branch has one
 
-The comparison base is the merge-base with the default branch, or with its upstream when the local default branch lags. The picker opens on **diff** for local rows and **pr** for a PR/MR listed by `--prs` but not available locally. `Tab` and `Shift-Tab` skip tabs without content; `Alt-1` through `Alt-8` open any tab directly. After you choose a tab, that choice stays active while you navigate.
+The comparison base is the merge-base with the default branch, or with its upstream when the local default branch lags. The picker opens on **diff** for local rows and **pr** for a PR/MR listed by `--prs` but not available locally. A tab with no content for the selected row has a dimmed label, and the active tab's label is underlined. `Tab` and `Shift-Tab` skip the dimmed tabs; `Alt-1` through `Alt-8` open any tab directly. After you choose a tab, that choice stays active while you navigate.
 
 **Pager configuration:** The preview panel pipes diff output through git's pager. Override in user config:
 
