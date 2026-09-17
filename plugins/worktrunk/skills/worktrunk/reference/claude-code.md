@@ -90,7 +90,7 @@ Claude Code is designed to load the skill automatically when it detects worktrun
 
 ## Activity tracking
 
-The plugins above track agent sessions with status markers in `wt list`:
+Every plugin tracks agent sessions with status markers in `wt list`:
 
 ```console
 $ wt list
