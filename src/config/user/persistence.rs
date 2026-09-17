@@ -16,7 +16,8 @@
 use toml_edit::{DocumentMut, Item, Table, TableLike, Value};
 
 use crate::config::ConfigError;
-use crate::config::deprecation::{DeprecationKind, migrate_doc};
+use crate::config::Deprecations;
+use crate::config::deprecation::migrate_doc;
 use crate::path::format_path_for_display;
 
 use super::UserConfig;
@@ -137,19 +138,11 @@ impl ConfigFile {
         }
 
         let mut doc = self.doc.clone();
-        let dropped = migrate_doc(&mut doc)
-            .into_iter()
-            .filter_map(|kind| match kind {
-                DeprecationKind::UnsupportedKey { section, key } => {
-                    Some(format!("{section} {key}"))
-                }
-                _ => None,
-            })
-            .collect();
+        let changes = migrate_doc(&mut doc);
         edit.apply(&mut doc)?;
         Ok(Edited::Migrated {
             content: doc.to_string(),
-            dropped,
+            changes,
         })
     }
 }
@@ -158,11 +151,11 @@ impl ConfigFile {
 /// migrations with it.
 pub(super) enum Edited {
     AsWritten(String),
-    /// The migrations came too, `dropped` naming each key they removed for want
-    /// of a field in its destination (`[select] height`).
+    /// The migrations came too, `changes` reporting each one — the sections
+    /// they moved and the keys they removed.
     Migrated {
         content: String,
-        dropped: Vec<String>,
+        changes: Deprecations,
     },
 }
 

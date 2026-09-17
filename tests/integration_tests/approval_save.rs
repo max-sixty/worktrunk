@@ -216,14 +216,16 @@ fn test_approval_saves_to_new_approvals_file() {
 /// A deprecated `[commit-generation]` section loads as `[commit.generation]`,
 /// but its migration declines once the canonical table exists. Writing the
 /// command there directly would leave the section's template unread, so the
-/// edit goes into the migrated file and the saved config keeps both.
+/// edit goes into the migrated file and the saved config keeps both — taking
+/// the rest of the load-path migrations with it, including a `[select]` key
+/// `[switch.picker]` has no field for.
 #[test]
 fn test_saving_command_beside_deprecated_commit_generation_keeps_its_template() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join("config.toml");
     fs::write(
         &config_path,
-        "[commit-generation]\ntemplate = \"MY TEMPLATE {{ git_diff }}\"\n",
+        "[commit-generation]\ntemplate = \"MY TEMPLATE {{ git_diff }}\"\n\n[select]\npager = \"delta\"\nheight = 5\n",
     )
     .unwrap();
 
@@ -243,6 +245,9 @@ fn test_saving_command_beside_deprecated_commit_generation_keeps_its_template() 
     [commit.generation]
     template = "MY TEMPLATE {{ git_diff }}"
     command = "llm"
+
+    [switch.picker]
+    pager = "delta"
     "#);
 }
 

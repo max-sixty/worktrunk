@@ -1964,7 +1964,11 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
 /// Render one `warning_message` line per kind (the commit-generation kind can
 /// emit several). The kinds arrive in emission order, so a single pass
 /// reproduces the original output verbatim.
-fn format_warning_lines<'a>(
+///
+/// A config mutation that writes into a migrated file reports what the
+/// migrations did through here too, so every kind is named the same way
+/// wherever it surfaces — including the removals.
+pub(crate) fn format_warning_lines<'a>(
     kinds: impl IntoIterator<Item = &'a DeprecationKind>,
     label: &str,
 ) -> String {
@@ -5031,6 +5035,25 @@ pager = "delta --paging=never"
     /// (string, `[table]`, `[[array-of-tables]]`) and the comment above the key,
     /// at the top level and inside `[projects."..."]` entries written either as
     /// tables or inline.
+    /// `[commit-generation]` migrates into `commit`, which TOML forbids
+    /// extending when the file wrote it inline — so it becomes a standard
+    /// table, and the line's trailing comment lands after the new header's `]`.
+    #[test]
+    fn test_migrate_carries_an_inline_parent_comment_onto_its_header() {
+        let content = r#"commit = { stage = "all" }  # how to stage
+
+[commit-generation]
+template = "MINE"
+"#;
+        insta::assert_snapshot!(migrate_content(content), @r#"
+        [commit]  # how to stage
+        stage = "all"
+
+        [commit.generation]
+        template = "MINE"
+        "#);
+    }
+
     #[test]
     fn test_migrate_create_hooks_renames_every_shape() {
         let content = r#"# install first

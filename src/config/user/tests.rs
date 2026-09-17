@@ -2823,14 +2823,26 @@ fn test_edit_takes_the_migrations_when_one_lands_on_its_path() {
         value: "llm".into(),
     };
 
-    let super::persistence::Edited::Migrated { content, dropped } =
+    let super::persistence::Edited::Migrated { content, changes } =
         file.edited(&edit, &changed).unwrap()
     else {
         panic!("the edit should have taken the migrations with it");
     };
-    // `[switch.picker]` has no `height`, so the migration drops it — the keys
-    // the caller's warning names.
-    assert_eq!(dropped, ["[select] height"]);
+    // `[switch.picker]` has no `height`, so the migration drops it. Every
+    // change is reported, which is what the caller's warning prints.
+    insta::assert_snapshot!(
+        ansi_str::AnsiStr::ansi_strip(
+            &crate::config::deprecation::format_warning_lines(
+                &changes,
+                crate::config::ConfigFileKind::User.label()
+            )
+        ),
+        @r"
+    ▲ User config: [commit-generation] is deprecated in favor of [commit.generation]
+    ▲ User config: [select] is deprecated in favor of [switch.picker]
+    ▲ User config: [select] height is no longer supported and will be removed
+    "
+    );
     // The migrated file carries every load-path migration, so the unrelated
     // `[select]` moves too — what the caller's warning tells the user about.
     insta::assert_snapshot!(content, @r#"
