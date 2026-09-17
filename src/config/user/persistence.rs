@@ -16,7 +16,7 @@
 use toml_edit::{DocumentMut, Item, Table, TableLike, Value};
 
 use crate::config::ConfigError;
-use crate::config::deprecation::migrate_content_doc;
+use crate::config::deprecation::{DeprecationKind, migrate_doc};
 use crate::path::format_path_for_display;
 
 use super::UserConfig;
@@ -137,23 +137,47 @@ impl ConfigFile {
         }
 
         let mut doc = self.doc.clone();
-        migrate_content_doc(&mut doc);
+        let dropped = migrate_doc(&mut doc)
+            .into_iter()
+            .filter_map(|kind| match kind {
+                DeprecationKind::UnsupportedKey { section, key } => {
+                    Some(format!("{section} {key}"))
+                }
+                _ => None,
+            })
+            .collect();
         edit.apply(&mut doc)?;
-        Ok(Edited::Migrated(doc.to_string()))
+        Ok(Edited::Migrated {
+            content: doc.to_string(),
+            dropped,
+        })
     }
 }
 
-/// A config file with an edit applied, and whether writing it took the load-time
+/// A config file with an edit applied, and whether writing it took the load-path
 /// migrations with it.
 pub(super) enum Edited {
     AsWritten(String),
-    Migrated(String),
+    /// The migrations came too, `dropped` naming each key they removed for want
+    /// of a field in its destination (`[select] height`).
+    Migrated {
+        content: String,
+        dropped: Vec<String>,
+    },
+}
+
+impl Edited {
+    pub(super) fn content(&self) -> &str {
+        match self {
+            Self::AsWritten(content) | Self::Migrated { content, .. } => content,
+        }
+    }
 }
 
 /// The config a document loads as, after the load-time migrations.
 fn load(doc: &DocumentMut) -> Result<UserConfig, toml::de::Error> {
     let mut migrated = doc.clone();
-    migrate_content_doc(&mut migrated);
+    migrate_doc(&mut migrated);
     toml::from_str(&migrated.to_string())
 }
 

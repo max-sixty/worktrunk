@@ -8,7 +8,7 @@ use fs2::FileExt;
 use crate::config::ConfigError;
 
 use crate::path::format_path_for_display;
-use crate::styling::{eprintln, hint_message, warning_message};
+use crate::styling::{eprintln, format_with_gutter, warning_message};
 use color_print::cformat;
 
 use super::UserConfig;
@@ -71,31 +71,35 @@ impl UserConfig {
         let Some(edit) = edit else {
             return Ok(());
         };
-        let content = match file.edited(&edit, &changed)? {
-            Edited::AsWritten(content) => content,
-            Edited::Migrated(content) => {
-                eprintln!(
-                    "{}",
-                    warning_message(cformat!(
-                        "Migrated deprecated settings @ <bold>{}</> — the setting being written can't be read beside them",
-                        format_path_for_display(config_path)
-                    ))
-                );
-                eprintln!(
-                    "{}",
-                    hint_message(cformat!("To review, run <underline>wt config show</>"))
-                );
-                content
-            }
-        };
-        crate::config::ensure_config_parses(&content)?;
-        crate::utils::write_atomically(config_path, &content).map_err(|e| {
+        let edited = file.edited(&edit, &changed)?;
+        crate::config::ensure_config_parses(edited.content())?;
+        crate::utils::write_atomically(config_path, edited.content()).map_err(|e| {
             ConfigError(format!(
                 "Failed to write config file {}: {}",
                 format_path_for_display(config_path),
                 e
             ))
-        })
+        })?;
+
+        // Reported only once the file is written, and only for the fallback:
+        // `wt config update` is otherwise what materializes migrations.
+        if let Edited::Migrated { dropped, .. } = &edited {
+            eprintln!(
+                "{}",
+                warning_message(cformat!(
+                    "Migrated deprecated settings @ <bold>{}</> — the setting being written can't be read beside them",
+                    format_path_for_display(config_path)
+                ))
+            );
+            if !dropped.is_empty() {
+                eprintln!(
+                    "{}",
+                    warning_message("Removed settings with no current equivalent:")
+                );
+                eprintln!("{}", format_with_gutter(&dropped.join("\n"), None));
+            }
+        }
+        Ok(())
     }
 
     /// Set `skip-shell-integration-prompt = true` in the config file.

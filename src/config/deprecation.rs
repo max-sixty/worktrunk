@@ -1468,8 +1468,19 @@ fn migrate_negated_bool_doc(
 /// [`DeprecationRule::UpdateOnly`] rules are excluded — template variable
 /// renaming is cosmetic (would break `--var` overrides), and approved-commands
 /// is still a valid serde field. They apply in [`compute_migrated_content`].
-pub(crate) fn migrate_content_doc(doc: &mut toml_edit::DocumentMut) -> bool {
+fn migrate_content_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     apply_rules(doc, RulePass::Load, &mut Vec::new())
+}
+
+/// Apply the load-path migrations to `doc`, reporting what they changed.
+///
+/// The config mutations use this where [`migrate_content_doc`]'s bool isn't
+/// enough: writing an edit into a migrated file removes the keys the
+/// destinations have no field for, which the mutation names to the user.
+pub(crate) fn migrate_doc(doc: &mut toml_edit::DocumentMut) -> Deprecations {
+    let mut deprecations = Vec::new();
+    apply_rules(doc, RulePass::Load, &mut deprecations);
+    deprecations
 }
 
 /// Rename the `pre-create`/`post-create` hook aliases to `pre-start`/`post-start`,

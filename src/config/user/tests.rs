@@ -1939,7 +1939,7 @@ test = "npm test"
 }
 
 // =========================================================================
-// reload_from error path tests
+// Mutation error path tests
 // =========================================================================
 
 /// A mutation returns a parse error with the formatted path when the config
@@ -2806,7 +2806,7 @@ fn test_edit_takes_the_migrations_when_one_lands_on_its_path() {
     let config_path = dir.path().join("config.toml");
     std::fs::write(
         &config_path,
-        "[commit-generation]\ntemplate = \"MINE\"\n\n[select]\npager = \"delta\"\n",
+        "[commit-generation]\ntemplate = \"MINE\"\n\n[select]\npager = \"delta\"\nheight = 5\n",
     )
     .unwrap();
 
@@ -2823,10 +2823,14 @@ fn test_edit_takes_the_migrations_when_one_lands_on_its_path() {
         value: "llm".into(),
     };
 
-    let super::persistence::Edited::Migrated(content) = file.edited(&edit, &changed).unwrap()
+    let super::persistence::Edited::Migrated { content, dropped } =
+        file.edited(&edit, &changed).unwrap()
     else {
         panic!("the edit should have taken the migrations with it");
     };
+    // `[switch.picker]` has no `height`, so the migration drops it — the keys
+    // the caller's warning names.
+    assert_eq!(dropped, ["[select] height"]);
     // The migrated file carries every load-path migration, so the unrelated
     // `[select]` moves too — what the caller's warning tells the user about.
     insta::assert_snapshot!(content, @r#"
