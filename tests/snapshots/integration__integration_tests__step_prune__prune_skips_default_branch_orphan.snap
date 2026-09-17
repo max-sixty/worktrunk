@@ -52,6 +52,6 @@ exit_code: 0
 
 ----- stderr -----
 ◎ Removing feature worktree & branch in background (same commit as main, _)
-▲ Cannot change directory — shell integration not installed
+▲ Worktree for main @ [TEMP]/repo, but cannot change directory — shell integration not installed
 ↳ To enable automatic cd, run wt config shell install
 ✓ Pruned 1 worktree & branch

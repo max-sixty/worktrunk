@@ -5,6 +5,7 @@ use crate::common::{
     repo_with_remote, setup_snapshot_settings, wait_for_file, wait_for_file_content,
     wait_for_worktree_removed,
 };
+use ansi_str::AnsiStr;
 use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
 use path_slash::PathExt as _;
@@ -924,6 +925,50 @@ fn test_merge_cwd_removed_hint_no_recovery(mut repo: TestRepo) {
     let mut cmd = make_snapshot_cmd(&repo, "merge", &["main", "--yes"], Some(&feature_wt));
     cmd.env("PWD", &feature_wt);
     assert_cmd_snapshot!(cmd);
+}
+
+/// A merge that removes the worktree the caller is standing in must name the
+/// destination it could not cd to.
+///
+/// Without shell integration the caller is left in a deleted directory, and no
+/// other line of the merge output prints a path to move to — `wt switch ^`
+/// does not recover from wt's own clean removal, because the removal prunes
+/// the admin entry that deleted-CWD recovery matches on. The warning is what
+/// un-strands the caller.
+#[rstest]
+fn test_merge_cwd_removed_warning_names_destination(mut repo: TestRepo) {
+    let feature_wt = repo.add_feature();
+
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--yes", "--no-hooks"])
+        .current_dir(&feature_wt)
+        .env("PWD", &feature_wt)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "merge should succeed; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let plain = stderr.ansi_strip();
+    let warning = plain
+        .lines()
+        .find(|line| line.contains("hange directory"))
+        .unwrap_or_else(|| panic!("merge should warn that it cannot cd; stderr:\n{stderr}"));
+    // `format_path_for_display` renders the destination home-relative, so match
+    // on the primary worktree's directory name rather than the tempdir prefix.
+    let named = warning
+        .split_once(" @ ")
+        .and_then(|(_, rest)| rest.split_once(", but "))
+        .map(|(path, _)| path);
+    let root_name = repo.root_path().file_name().unwrap().to_string_lossy();
+    assert!(
+        named.is_some_and(|path| path.ends_with(&*root_name)),
+        "the warning must name the destination worktree, since the removal deleted the caller's cwd; stderr:\n{stderr}"
+    );
 }
 
 #[rstest]
