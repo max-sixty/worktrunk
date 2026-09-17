@@ -10,19 +10,21 @@ Arguments: `$ARGUMENTS`. Grammar: `[<branch>] [<repo>] [-- <task>]`.
 
 - **branch** — optional; the branch name for the new worktree. When omitted,
   pick one (step 1 below).
-- **repo** — optional path; create the worktree in this repo instead of the
-  session's current one.
+- **repo** — optional path or name; create the worktree in this repo instead
+  of the session's current one.
 - **task** — optional; what to do inside the new worktree. No task means enter
   the worktree and wait.
 
-Tokens before the `--` are the branch and/or repo: a path-shaped token
-(starting with `/`, `~`, `./`, or `../`) is the repo; any other token is the
-branch (`docs` is a branch name, never the `docs/` directory). More than one
-branch-shaped token before a `--` doesn't fit the grammar — ask. Without a
-`--`, judge where the task starts: leading tokens that read as a branch name
-(`fix-auth`) or a repo path are consumed as such, and the rest is the task;
-otherwise the whole input is the task (`fix the parser bug` has no
-branch-shaped lead — all task).
+Tokens before the `--` are the branch and/or repo. A path-shaped token
+(starting with `/`, `~`, `./`, or `../`) is the repo. A bare name can be
+either, so make an informed guess: it is the repo when a git repository by that
+name exists where the user keeps repos (beside the current repo, or in a
+workspace directory like `~/workspace`), and otherwise the branch (`docs` is a
+branch, not the current repo's `docs/` directory). Two tokens that both read as branches don't fit the
+grammar — ask. Without a `--`, judge where the task starts: leading tokens that
+read as a branch name (`fix-auth`) or a repo are consumed as such, and the
+rest is the task; otherwise the whole input is the task (`fix the parser bug`
+has no branch-shaped lead — all task).
 
 ```
 /wt-switch-create my-feature -- fix the parser bug
