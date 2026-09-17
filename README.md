@@ -97,10 +97,6 @@ git branch -d feat</code></pre></td>
 - **[Aliases](https://worktrunk.dev/extending/#aliases) & [per-branch variables](https://worktrunk.dev/config/#wt-config-state-vars)** — custom `wt <name>` commands and branch-scoped state for hook templates
 - ...and **[lots more](#next-steps)**
 
-The picker, with each row's CI status and branch summary streaming in behind the list:
-
-![wt switch interactive picker demo: streaming CI status and branch summaries, a paged diff, and a PR comment thread](https://raw.githubusercontent.com/max-sixty/worktrunk-assets/main/assets/docs/light/wt-switch-picker.gif)
-
 Multiple parallel agents, same simple commands:
 
 ![Worktrunk omnibus demo: multiple Claude agents in Zellij tabs with hooks, LLM commits, and merge workflow](https://raw.githubusercontent.com/max-sixty/worktrunk-assets/main/assets/docs/light/wt-zellij-omnibus.gif)

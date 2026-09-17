@@ -235,12 +235,14 @@ def _ensure_zellij_plugin() -> Path:
 # `ensure_vhs_binary` reuses an existing clone and an existing binary without
 # pulling, so a clone made before that commit keeps building a VHS the tapes
 # have outgrown — one that drops the Alt modifier, turning a tape's `Alt+p`
-# into a literal "p" typed at whatever has focus, or one that times the
-# keystroke overlay from the first keypress rather than from the video, which
-# slides every key a fixed distance away from what it did. Both record a wrong
-# GIF with no error from VHS, the build, or the recording, which is why this
-# checks rather than trusting the clone.
-_VHS_FORK_MARKER = ("keystroke.go", "videoMS")
+# into a literal "p" typed at whatever has focus; one that times the keystroke
+# overlay from the first keypress rather than from the video, which slides
+# every key a fixed distance away from what it did; or one that records a
+# modifier as a keystroke of its own, so `Alt+"8"` reads as a spent ⌥ followed
+# by an unrelated 8. Each records a wrong GIF with no error from VHS, the
+# build, or the recording, which is why this checks rather than trusting the
+# clone.
+_VHS_FORK_MARKER = ("keystroke.go", "heldModifiers")
 
 
 def _require_current_vhs_fork(vhs_dir: Path) -> None:
@@ -251,7 +253,7 @@ def _require_current_vhs_fork(vhs_dir: Path) -> None:
         return
     raise RuntimeError(
         f"The VHS fork clone at {vhs_dir} predates the {marker} fix, so a tape's "
-        f"keystroke overlay would be recorded out of step with the screen.\n"
+        f"keystroke overlay would not match what the screen does.\n"
         f"Update and rebuild it:\n"
         f"  git -C {vhs_dir} pull && rm -f {vhs_dir / 'vhs'}"
     )
