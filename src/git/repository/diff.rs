@@ -6,50 +6,51 @@ use std::path::PathBuf;
 use anyhow::{Context, bail};
 use dashmap::mapref::entry::Entry;
 
-use crate::git::CommandError;
+use crate::git::{CommandError, PlumbingDiff};
 use crate::shell_exec::Cmd;
 
 use super::working_tree::{TempIndex, WorkingTree, path_to_logging_context};
 use super::{DiffStats, LineDiff, Repository};
 
-enum DiffSource<'repo> {
-    Repository {
-        repo: &'repo Repository,
-        path: PathBuf,
-    },
-    TempIndex(TempIndex),
+enum DiffSource<'a> {
+    Repository { repo: &'a Repository, path: PathBuf },
+    TempIndex(&'a TempIndex),
 }
 
-/// A fully specified `git diff` whose execution can be captured or streamed.
+enum DiffSides {
+    /// A tree-ish against the worktree's files, seen through the source's index.
+    WorkingTree(String),
+    /// A tree-ish against the source's index.
+    Staged(String),
+    /// One tree-ish against another.
+    Commits(String, String),
+}
+
+/// A fully specified diff that `wt` captures to parse, render, cache, or send
+/// to an LLM.
 ///
-/// The source owns a temporary index when untracked files must participate in
-/// the diff. Keeping that index alive in this value makes multi-command reads
-/// such as a stat followed by a patch observe the same prepared worktree state.
+/// Captures run git's plumbing (`diff-index`, `diff-tree`), which ignores
+/// `diff.external`, `diff.relative`, `color.ui=always`, and the prefix
+/// settings. Captures restore the `git diff` defaults plumbing lacks: rename
+/// detection, textconv filters, and hiding intent-to-add entries from a staged
+/// diff. They also override `submodule.<name>.ignore`, which plumbing still
+/// honors and which would hide a submodule bump. Plumbing's default output is
+/// the raw format, so every capture names the format it wants (`--patch`,
+/// `--stat`).
+///
+/// A diff prepared from a [`TempIndex`] borrows it, so every read — a stat,
+/// then a patch — observes the same index state.
 #[must_use]
-pub struct PreparedDiff<'repo> {
-    source: DiffSource<'repo>,
-    revisions: Vec<String>,
+pub struct PreparedDiff<'a> {
+    source: DiffSource<'a>,
+    sides: DiffSides,
 }
 
-impl<'repo> PreparedDiff<'repo> {
-    fn new(
-        repo: &'repo Repository,
-        path: PathBuf,
-        revisions: impl IntoIterator<Item = impl Into<String>>,
-    ) -> Self {
+impl<'a> PreparedDiff<'a> {
+    fn new(repo: &'a Repository, path: PathBuf, sides: DiffSides) -> Self {
         Self {
             source: DiffSource::Repository { repo, path },
-            revisions: revisions.into_iter().map(Into::into).collect(),
-        }
-    }
-
-    fn with_temp_index(
-        index: TempIndex,
-        revisions: impl IntoIterator<Item = impl Into<String>>,
-    ) -> Self {
-        Self {
-            source: DiffSource::TempIndex(index),
-            revisions: revisions.into_iter().map(Into::into).collect(),
+            sides,
         }
     }
 
@@ -76,31 +77,47 @@ impl<'repo> PreparedDiff<'repo> {
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
-    /// Capture one diff invocation with `options` placed before the revisions.
+    fn revisions(&self) -> Vec<String> {
+        match &self.sides {
+            DiffSides::WorkingTree(base) | DiffSides::Staged(base) => vec![base.clone()],
+            DiffSides::Commits(from, to) => vec![from.clone(), to.clone()],
+        }
+    }
+
+    /// Capture one plumbing diff invocation with `options` placed before the
+    /// revisions.
     ///
-    /// Revisions are fenced with `--end-of-options`, so even a ref beginning
-    /// with `-` is treated as a positional argument.
+    /// Revisions sit between `--end-of-options`, so a ref beginning with `-`
+    /// stays a revision, and `--`, so a path sharing a ref's name can't make
+    /// the argument ambiguous.
     pub fn capture(
         &self,
         options: impl IntoIterator<Item = impl Into<String>>,
     ) -> anyhow::Result<String> {
-        self.capture_with_git_options(std::iter::empty::<String>(), options)
+        let command = match &self.sides {
+            DiffSides::WorkingTree(_) => PlumbingDiff::Index.args(&[]),
+            DiffSides::Staged(_) => {
+                PlumbingDiff::Index.args(&["--cached", "--ita-invisible-in-index"])
+            }
+            DiffSides::Commits(..) => PlumbingDiff::Tree.args(&["-r"]),
+        };
+        let mut args = vec!["--no-optional-locks".to_string()];
+        args.extend(command.into_iter().map(String::from));
+        args.extend(["--find-renames".into(), "--textconv".into()]);
+        args.extend(options.into_iter().map(Into::into));
+        args.push("--end-of-options".into());
+        args.extend(self.revisions());
+        args.push("--".into());
+        self.run(&args)
     }
 
-    /// Capture one diff invocation with git-wide options placed before the
-    /// `diff` subcommand and diff options placed after it.
-    pub fn capture_with_git_options(
-        &self,
-        git_options: impl IntoIterator<Item = impl Into<String>>,
-        diff_options: impl IntoIterator<Item = impl Into<String>>,
-    ) -> anyhow::Result<String> {
-        let mut args = vec!["--no-optional-locks".to_string()];
-        args.extend(git_options.into_iter().map(Into::into));
-        args.push("diff".to_string());
-        args.extend(diff_options.into_iter().map(Into::into));
-        args.push("--end-of-options".to_string());
-        args.extend(self.revisions.iter().cloned());
-        self.run(&args)
+    /// Summarize the diff for display, like `["3 files", "+45", "-12"]`.
+    ///
+    /// Empty when the diff fails or has no changes.
+    pub fn stats_summary(&self) -> Vec<String> {
+        self.capture(["--shortstat"])
+            .map(|output| DiffStats::from_shortstat(&output).format_summary())
+            .unwrap_or_default()
     }
 
     /// Capture a stat header followed by the colored patch.
@@ -116,50 +133,99 @@ impl<'repo> PreparedDiff<'repo> {
             return Ok(None);
         }
 
-        let patch = self.capture(["--color=always"])?;
+        let patch = self.capture(["--patch", "--color=always"])?;
         Ok(Some(format!("{stat}{patch}")))
-    }
-
-    /// Stream the diff, preserving `wt step diff`'s argument order so git owns
-    /// paging, coloring, and interpretation of caller-supplied arguments.
-    pub fn stream(&self, extra_args: &[String]) -> anyhow::Result<()> {
-        let mut args = vec!["diff".to_string()];
-        args.extend(self.revisions.iter().cloned());
-        args.extend_from_slice(extra_args);
-        self.command(&args).stream()
     }
 }
 
 impl Repository {
-    /// Prepare an immutable revision diff in this repository's context.
-    pub fn prepare_diff(
-        &self,
-        revisions: impl IntoIterator<Item = impl Into<String>>,
-    ) -> PreparedDiff<'_> {
-        PreparedDiff::new(self, self.discovery_path().to_path_buf(), revisions)
+    /// Prepare an immutable diff from one tree-ish to another in this
+    /// repository's context.
+    ///
+    /// For `git diff A...B`, pass the merge base as `from`: `diff-tree` reads
+    /// a literal `A...B` as no revisions, and its `--merge-base` fails when
+    /// there are several merge bases.
+    pub fn prepare_diff(&self, from: impl Into<String>, to: impl Into<String>) -> PreparedDiff<'_> {
+        PreparedDiff::new(
+            self,
+            self.discovery_path().to_path_buf(),
+            DiffSides::Commits(from.into(), to.into()),
+        )
     }
 }
 
 impl<'repo> WorkingTree<'repo> {
-    /// Prepare a diff against this worktree's tracked index and files.
-    pub fn prepare_diff(
-        &self,
-        revisions: impl IntoIterator<Item = impl Into<String>>,
-    ) -> PreparedDiff<'repo> {
-        PreparedDiff::new(self.repo, self.path.clone(), revisions)
+    /// Prepare a diff from `base` to this worktree's tracked index and files.
+    pub fn prepare_diff(&self, base: impl Into<String>) -> PreparedDiff<'repo> {
+        PreparedDiff::new(
+            self.repo,
+            self.path.clone(),
+            DiffSides::WorkingTree(base.into()),
+        )
     }
 
-    /// Prepare a diff that also includes untracked files without changing the
-    /// real index.
-    pub fn prepare_diff_with_untracked(
-        &self,
-        revisions: impl IntoIterator<Item = impl Into<String>>,
-    ) -> anyhow::Result<PreparedDiff<'repo>> {
+    /// A temporary copy of this worktree's index with untracked files
+    /// registered, so a diff prepared from it includes them without changing
+    /// the real index.
+    pub fn temp_index_with_untracked(&self) -> anyhow::Result<TempIndex> {
         let index = self.temp_index()?;
         index.register_untracked()?;
-        Ok(PreparedDiff::with_temp_index(index, revisions))
+        Ok(index)
     }
 
+    /// Prepare a diff from one tree-ish to another, resolved in this worktree
+    /// so that `HEAD` names this worktree's HEAD.
+    pub fn prepare_commit_diff(
+        &self,
+        from: impl Into<String>,
+        to: impl Into<String>,
+    ) -> PreparedDiff<'repo> {
+        PreparedDiff::new(
+            self.repo,
+            self.path.clone(),
+            DiffSides::Commits(from.into(), to.into()),
+        )
+    }
+
+    /// Prepare a diff from `base` to this worktree's staged changes.
+    ///
+    /// For the changes a commit would record, `base` is [`Self::index_base`].
+    pub fn prepare_staged_diff(&self, base: impl Into<String>) -> PreparedDiff<'repo> {
+        PreparedDiff::new(self.repo, self.path.clone(), DiffSides::Staged(base.into()))
+    }
+}
+
+impl TempIndex {
+    /// Prepare a diff from `base` to the worktree's files, seen through this
+    /// index.
+    pub fn prepare_diff(&self, base: impl Into<String>) -> PreparedDiff<'_> {
+        PreparedDiff {
+            source: DiffSource::TempIndex(self),
+            sides: DiffSides::WorkingTree(base.into()),
+        }
+    }
+
+    /// Prepare a diff from `base` to what this index has staged.
+    pub fn prepare_staged_diff(&self, base: impl Into<String>) -> PreparedDiff<'_> {
+        PreparedDiff {
+            source: DiffSource::TempIndex(self),
+            sides: DiffSides::Staged(base.into()),
+        }
+    }
+
+    /// Stream porcelain `git diff <base> <extra_args>` from the worktree's
+    /// files, seen through this index.
+    ///
+    /// Porcelain, unlike [`PreparedDiff`]: `wt step diff` hands the user git's
+    /// own view, so git owns paging, coloring, and the caller's arguments.
+    pub fn stream_diff(&self, base: &str, extra_args: &[String]) -> anyhow::Result<()> {
+        let mut args = vec!["diff".to_string(), base.to_string()];
+        args.extend_from_slice(extra_args);
+        self.command(args).stream()
+    }
+}
+
+impl<'repo> WorkingTree<'repo> {
     /// Get recent commit subjects for style reference.
     ///
     /// Returns up to `count` commit subjects (first line of message), excluding merges.
@@ -196,22 +262,6 @@ impl<'repo> WorkingTree<'repo> {
                 Some(output.lines().map(String::from).collect())
             }
         })
-    }
-
-    /// Get formatted diff stats summary for display.
-    ///
-    /// Returns a vector of formatted strings like ["3 files", "+45", "-12"].
-    /// Returns empty vector if diff command fails or produces no output.
-    ///
-    /// Callers pass args including `--shortstat` which produces a single summary line.
-    ///
-    /// Worktree-scoped for the same reason as [`Self::recent_commit_subjects`]:
-    /// every caller diffs the index or HEAD, both of which are per-worktree.
-    pub fn diff_stats_summary(&self, args: &[&str]) -> Vec<String> {
-        self.run_command(args)
-            .ok()
-            .map(|output| DiffStats::from_shortstat(&output).format_summary())
-            .unwrap_or_default()
     }
 }
 
@@ -263,36 +313,28 @@ impl Repository {
             .context("Failed to parse commit count")
     }
 
-    /// Get files changed between base and head.
+    /// Get files changed between base and head, as repository-root-relative
+    /// paths.
     ///
-    /// For renames and copies, both old and new paths are included to ensure
-    /// overlap detection works correctly (e.g., detecting conflicts when a file
-    /// is renamed in one branch but has uncommitted changes under the old name).
+    /// `diff-tree` detects no renames, so a moved file lists both its old and
+    /// new path — what overlap detection needs (e.g., detecting conflicts when
+    /// a file is renamed in one branch but has uncommitted changes under the
+    /// old name).
     pub fn changed_files(&self, base: &str, head: &str) -> anyhow::Result<Vec<String>> {
-        let range = format!("{}..{}", base, head);
-        let stdout =
-            self.run_command(&["diff", "--name-status", "-z", "--end-of-options", &range])?;
-
-        // Format: STATUS\0PATH\0 or STATUS\0NEW_PATH\0OLD_PATH\0 for renames/copies
-        let mut files = Vec::new();
-        let mut parts = stdout.split('\0').filter(|s| !s.is_empty());
-
-        while let Some(status) = parts.next() {
-            let path = parts
-                .next()
-                .ok_or_else(|| anyhow::anyhow!("Malformed git diff output: status without path"))?;
-            files.push(path.to_string());
-
-            // For renames (R) and copies (C), the old path follows
-            if status.starts_with('R') || status.starts_with('C') {
-                let old_path = parts.next().ok_or_else(|| {
-                    anyhow::anyhow!("Malformed git diff output: rename/copy without old path")
-                })?;
-                files.push(old_path.to_string());
-            }
-        }
-
-        Ok(files)
+        let stdout = self.run_command(&PlumbingDiff::Tree.args(&[
+            "-r",
+            "--name-only",
+            "-z",
+            "--end-of-options",
+            base,
+            head,
+            "--",
+        ]))?;
+        Ok(stdout
+            .split('\0')
+            .filter(|path| !path.is_empty())
+            .map(str::to_string)
+            .collect())
     }
 
     /// Get short SHA, commit timestamp and subject for multiple commits in a
@@ -603,13 +645,21 @@ impl Repository {
             return Ok(LineDiff::default());
         };
 
-        let range = format!("{}..{}", merge_base, head_sha);
-        let mut args = vec!["diff", "--shortstat", &range];
-
-        if !sparse_paths.is_empty() {
-            args.push("--");
-            args.extend(sparse_paths.iter().map(|s| s.as_str()));
-        }
+        // Sparse paths are root-relative, but git resolves pathspecs against
+        // the cwd, which is the user's subdirectory when run from one.
+        let sparse_pathspecs: Vec<String> = sparse_paths
+            .iter()
+            .map(|path| format!(":(top){path}"))
+            .collect();
+        let mut args = PlumbingDiff::Tree.args(&[
+            "-r",
+            "--shortstat",
+            "--find-renames",
+            &merge_base,
+            head_sha,
+            "--",
+        ]);
+        args.extend(sparse_pathspecs.iter().map(String::as_str));
 
         let stdout = self.run_command(&args)?;
         let result = LineDiff::from_shortstat(&stdout);

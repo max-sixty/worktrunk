@@ -1416,6 +1416,41 @@ fn test_remove_branch_only_unmerged(repo: TestRepo) {
     ));
 }
 
+/// `diff.relative` limits porcelain `git diff` to the cwd. With it set, running
+/// `wt remove` from a subdirectory made a branch whose changes sat outside that
+/// subdirectory look integrated, and the branch was deleted.
+#[rstest]
+fn test_remove_branch_only_unmerged_from_subdirectory_with_diff_relative(repo: TestRepo) {
+    repo.run_git(&["switch", "--create", "feature-unmerged"]);
+    fs::write(repo.root_path().join("feature.txt"), "new feature").unwrap();
+    repo.run_git(&["add", "feature.txt"]);
+    repo.run_git(&["commit", "--message", "Add feature"]);
+    repo.run_git(&["checkout", "main"]);
+    repo.run_git(&["config", "diff.relative", "true"]);
+    let subdir = repo.root_path().join("subdir");
+    fs::create_dir(&subdir).unwrap();
+
+    let output = make_snapshot_cmd(&repo, "remove", &["feature-unmerged"], Some(&subdir))
+        .output()
+        .unwrap();
+
+    let branch = repo
+        .git_command()
+        .args([
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "refs/heads/feature-unmerged",
+        ])
+        .run()
+        .unwrap();
+    assert!(
+        branch.status.success(),
+        "unmerged branch must survive; wt remove said: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[rstest]
 fn test_remove_branch_only_force_delete(repo: TestRepo) {
     // Create a branch with a unique commit (not in main)

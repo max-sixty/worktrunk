@@ -80,10 +80,8 @@ fn assert_hidden_untracked_auto_staging_warning(output: &std::process::Output, c
         "{command} should succeed; stderr:\n{stderr}"
     );
     assert!(
-        stderr.contains("Auto-staging 2 untracked paths:")
-            && stderr.contains("nested/first.txt")
-            && stderr.contains("nested/second.txt"),
-        "the warning must enumerate every hidden file that git add -A will stage; stderr:\n{stderr}"
+        stderr.contains("Auto-staging 1 untracked path:") && stderr.contains("nested/\n"),
+        "the warning must name the hidden directory git add -A will stage; stderr:\n{stderr}"
     );
 }
 
@@ -98,6 +96,21 @@ fn test_merge_fast_forward(merge_scenario: (TestRepo, PathBuf)) {
         &["main"],
         Some(&feature_wt)
     ));
+}
+
+/// A diff between two revisions passes them as two arguments, and git checks
+/// each against the filesystem, so a directory named like the target branch
+/// must not make the merge's diffs ambiguous.
+#[rstest]
+fn test_merge_with_directory_named_like_target(merge_scenario: (TestRepo, PathBuf)) {
+    let (repo, feature_wt) = merge_scenario;
+    fs::create_dir(feature_wt.join("main")).unwrap();
+
+    let output = make_snapshot_cmd(&repo, "merge", &["main"], Some(&feature_wt))
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "{output:?}");
 }
 
 ///
@@ -1811,6 +1824,33 @@ fn test_merge_rebase_true_rebase(mut repo: TestRepo) {
     ));
 }
 
+/// `rebase.updateRefs` would also move a branch stacked inside the rebased
+/// range; `wt step rebase` rewrites only the worktree's own branch.
+#[rstest]
+fn test_step_rebase_leaves_stacked_branches(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    repo.commit_in_worktree(&feature_wt, "base.txt", "base\n", "Stack base");
+    repo.run_git_in(&feature_wt, &["branch", "stacked"]);
+    repo.commit_in_worktree(&feature_wt, "top.txt", "top\n", "Stack top");
+    fs::write(repo.root_path().join("main-update.txt"), "main\n").unwrap();
+    repo.run_git(&["add", "main-update.txt"]);
+    repo.run_git(&["commit", "--message", "Update main"]);
+    repo.run_git(&["config", "rebase.updateRefs", "true"]);
+    let stacked_before = repo.git_output(&["rev-parse", "stacked"]);
+
+    let output = make_snapshot_cmd(&repo, "step", &["rebase", "main"], Some(&feature_wt))
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(repo.git_output(&["rev-parse", "stacked"]), stacked_before);
+    assert_eq!(
+        repo.git_output(&["merge-base", "main", "feature"]),
+        repo.git_output(&["rev-parse", "main"]),
+        "feature should be rebased onto main"
+    );
+}
+
 // =============================================================================
 // --no-rebase tests
 // =============================================================================
@@ -1926,6 +1966,44 @@ fn test_merge_no_commit_no_rebase_removes_merge_shaped_worktree(mut repo: TestRe
     assert!(
         !feature_ref.status.success(),
         "removed source branch should no longer exist"
+    );
+}
+
+/// `wt merge --no-ff` builds its merge commit with `commit-tree`, which ignores
+/// `commit.gpgSign`, so it asks for the signature `git merge --no-ff` would add.
+#[cfg(unix)]
+#[rstest]
+fn test_merge_no_ff_signs_merge_commit(merge_scenario: (TestRepo, PathBuf)) {
+    let (repo, feature_wt) = merge_scenario;
+    let key = repo.root_path().parent().unwrap().join("signing-key");
+    let keygen = std::process::Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+        .arg(&key)
+        .output()
+        .unwrap();
+    assert!(keygen.status.success(), "{keygen:?}");
+    repo.run_git(&["config", "gpg.format", "ssh"]);
+    repo.run_git(&["config", "user.signingKey", key.to_str().unwrap()]);
+    repo.run_git(&["config", "commit.gpgSign", "true"]);
+
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--no-ff", "--no-remove", "--no-hooks"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        repo.git_output(&["show", "--no-patch", "--format=%P", "main"])
+            .split(' ')
+            .count(),
+        2
+    );
+    assert!(
+        repo.git_output(&["cat-file", "commit", "main"])
+            .contains("\ngpgsig "),
+        "the merge commit must carry a signature"
     );
 }
 
@@ -2689,6 +2767,36 @@ fn test_step_commit_auto_staging_warns_about_untracked_files_hidden_by_user_conf
     assert_hidden_untracked_auto_staging_warning(&output, "step commit");
 }
 
+/// Ten paths fill the listing's ten rows. One more lists nine and counts the
+/// other two, so the hint never takes the row a single remaining path would
+/// have used. `0-generated/` sorts first and holds 300 files, but as a wholly
+/// untracked directory it takes one row and leaves the rest of the listing to
+/// the paths beside it.
+#[rstest]
+fn test_step_commit_auto_staging_caps_untracked_listing(
+    repo: TestRepo,
+    #[values(10, 11)] count: usize,
+) {
+    let generated = repo.root_path().join("0-generated");
+    fs::create_dir(&generated).unwrap();
+    for i in 1..=300 {
+        fs::write(generated.join(format!("{i:03}.txt")), "").unwrap();
+    }
+    for i in 1..count {
+        fs::write(repo.root_path().join(format!("{i:02}.txt")), "").unwrap();
+    }
+
+    let mut cmd = make_snapshot_cmd(&repo, "step", &["commit"], None);
+    cmd.env(
+        "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+        "cat >/dev/null && echo 'feat: add generated files'",
+    );
+    assert_cmd_snapshot!(
+        format!("step_commit_auto_staging_caps_untracked_listing_{count}"),
+        cmd
+    );
+}
+
 #[rstest]
 fn test_step_commit_with_stage_tracked_flag(repo: TestRepo) {
     fs::write(repo.root_path().join("tracked.txt"), "initial").expect("Failed to write file");
@@ -2914,6 +3022,93 @@ fn test_step_commit_show_prompt(repo: TestRepo) {
     ));
 }
 
+/// The staged diff hides intent-to-add entries and pairs renames, as
+/// `git diff --cached` does, so the fallback message names only what the
+/// commit records.
+#[rstest]
+fn test_step_commit_fallback_message_names_recorded_changes(repo: TestRepo) {
+    fs::write(repo.root_path().join("old.txt"), "content\n").unwrap();
+    repo.run_git(&["add", "old.txt"]);
+    repo.run_git(&["commit", "--message", "Add old.txt"]);
+    repo.run_git(&["mv", "old.txt", "new.txt"]);
+    fs::write(repo.root_path().join("notes.txt"), "").unwrap();
+    repo.run_git(&["add", "--intent-to-add", "notes.txt"]);
+
+    let output = make_snapshot_cmd(
+        &repo,
+        "step",
+        &["commit", "--stage=none", "--no-hooks"],
+        None,
+    )
+    .output()
+    .unwrap();
+
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        repo.git_output(&["log", "--max-count=1", "--format=%s"]),
+        "Changes to new.txt"
+    );
+}
+
+/// A staged diff on an unborn branch compares against the empty tree, whose
+/// id depends on the repository's object format.
+#[test]
+fn test_step_commit_first_commit_in_sha256_repo() {
+    let repo = TestRepo::init_repo(&[
+        "init",
+        "--quiet",
+        "--initial-branch=main",
+        "--object-format=sha256",
+    ]);
+    fs::write(repo.root_path().join("first.txt"), "first\n").unwrap();
+    repo.run_git(&["add", "first.txt"]);
+
+    let output = make_snapshot_cmd(&repo, "step", &["commit", "--no-hooks"], None)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        repo.git_output(&["log", "--max-count=1", "--format=%s"]),
+        "Changes to first.txt"
+    );
+}
+
+/// The commit and squash prompts split git's diff into per-file sections, so
+/// the user's diff display settings must not change what the LLM receives.
+#[rstest]
+fn test_show_prompt_ignores_diff_display_config(repo_with_multi_commit_feature: TestRepo) {
+    let repo = repo_with_multi_commit_feature;
+    let feature_wt = repo.worktree_path("feature");
+    fs::write(feature_wt.join("staged.txt"), "staged content\n").unwrap();
+    repo.git_command()
+        .args(["add", "staged.txt"])
+        .current_dir(feature_wt)
+        .run()
+        .unwrap();
+    let prompts = || {
+        ["commit", "squash"].map(|step| {
+            let output =
+                make_snapshot_cmd(&repo, "step", &[step, "--show-prompt"], Some(feature_wt))
+                    .output()
+                    .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            String::from_utf8(output.stdout).unwrap()
+        })
+    };
+
+    let default_prompts = prompts();
+    for (key, value) in [
+        ("color.ui", "always"),
+        ("diff.external", "echo"),
+        ("diff.noprefix", "true"),
+    ] {
+        repo.run_git(&["config", key, value]);
+    }
+
+    assert_eq!(prompts(), default_prompts);
+}
+
 #[rstest]
 fn test_step_commit_show_prompt_no_staged_changes(repo: TestRepo) {
     // No staged changes - should still output the prompt (with empty diff)
@@ -3035,11 +3230,14 @@ squash-template = """
     ));
 }
 
-/// A custom squash template that references the deprecated `commits` variable
-/// still renders, and the standard config-deprecation framework warns that it
-/// is replaced by `commit_details` and points at `wt config update` to apply
-/// the rewrite (see #2984). The rename is mechanical because each
-/// `commit_details` element renders as its subject when printed bare.
+/// A custom squash template that references the retired `commits` variable
+/// still renders, even though the prompt renderer no longer supplies that name:
+/// the config-deprecation layer rewrites it to `commit_details` on load, warns
+/// that it is replaced, and points at `wt config update` to write the rename
+/// into the file (see #2984 and `RETIRED_VARS`). The rename is mechanical
+/// because each `commit_details` element renders as its subject when printed
+/// bare — which is why the rendered count below is the real commit count and
+/// not the zero an undefined variable would produce.
 #[rstest]
 fn test_step_squash_show_prompt_deprecated_commits_warns(mut repo: TestRepo) {
     let feature_wt = repo.add_worktree("feature");

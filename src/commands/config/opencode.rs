@@ -10,6 +10,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use etcetera::base_strategy::{BaseStrategy, Xdg};
 
 /// The plugin source, embedded at compile time.
 const PLUGIN_SOURCE: &str = include_str!("../../../dev/opencode-plugin.ts");
@@ -22,25 +23,25 @@ const PLUGIN_SOURCE: &str = include_str!("../../../dev/opencode-plugin.ts");
 /// not where OpenCode looks for user plugins, so we deliberately avoid `dirs::config_dir()`
 /// here — it would put the plugin in the wrong place on macOS.
 ///
-/// Both overrides read an exported-but-empty value as unset, matching
-/// `CLAUDE_CONFIG_DIR` in `config::show` and `PI_CONFIG_DIR` in `config::pi`.
+/// `OPENCODE_CONFIG_DIR` reads an exported-but-empty value as unset, matching
+/// `CLAUDE_CONFIG_DIR` in `config::show` and `PI_CONFIG_DIR` in `config::omp`.
 /// An empty value taken at face value yields the relative path `plugins/`, so
 /// the install writes the plugin into whatever directory `wt` was run from.
+///
+/// The two lower rungs are etcetera's XDG strategy — `$XDG_CONFIG_HOME` when
+/// absolute, `~/.config` otherwise — which rules out the same mistake for that
+/// variable. `Xdg` rather than `choose_base_strategy` keeps `~/.config` on
+/// Windows too, for the same reason the macOS path is avoided above.
 fn opencode_plugins_dir() -> Result<PathBuf> {
     let config_dir = if let Some(dir) = std::env::var("OPENCODE_CONFIG_DIR")
         .ok()
         .filter(|s| !s.is_empty())
     {
         PathBuf::from(dir)
-    } else if let Some(xdg) = std::env::var("XDG_CONFIG_HOME")
-        .ok()
-        .filter(|s| !s.is_empty())
-    {
-        PathBuf::from(xdg).join("opencode")
     } else {
-        worktrunk::path::home_dir()
+        Xdg::new()
             .context("Could not determine home directory")?
-            .join(".config")
+            .config_dir()
             .join("opencode")
     };
     Ok(config_dir.join("plugins"))

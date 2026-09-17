@@ -107,7 +107,7 @@ git operations complete.
 
 [2m--full[0m adds the two columns that reach off-machine: CI status (GitHub/GitLab 
 pipeline pass/fail, over the network) and LLM-generated summaries of each 
-branch's changes. The [2mmain…±[0m line diffs are local git, so they show by default.
+branch's changes.
 
 [1m[32mExamples[0m
 
@@ -154,9 +154,8 @@ Output as JSON for scripting:
 
   Column                                  Shows                                 
  ──────── ───────────────────────────────────────────────────────────────────── 
- Branch   Branch name, elided with … past 32 characters so one long name can't  
-          size the column for every row ([2m--format=json[0m keeps it whole); a       
-          detached worktree has none, so it shows its short hash in dim yellow  
+ Branch   Branch name, elided with … past 32 characters; a detached worktree    
+          shows its short hash                                                  
  Status   Compact symbols (see below)                                           
  HEAD±    Uncommitted changes, including untracked files: +added -deleted lines 
  main↕    Commits ahead/behind default branch                                   
@@ -178,16 +177,9 @@ The [2mmain↕[0m and [2mmain…±[0m headers keep the familiar [2mmain[0m
 The table sizes itself to the terminal. When the columns don't all fit, the 
 least important go first — roughly right to left, since the order above runs 
 from identity to nice-to-have — and the summary footer names them ([2mhidden: 
-[2mCommit, Age, Message[0m). A column with nothing to show on any row — [2mRemote⇅[0m in a 
-repo with no remote — ranks below every populated column, so it goes first. A 
-wider terminal brings them back. To pin a set rather than leave it to the width,
- name the columns in [2m[list] columns[0m; [2m--format=json[0m carries every field at any 
-width.
-
-[2mmain↕[0m and [2mmain…±[0m measure against the default branch's upstream tip when the 
-local copy lags it — so in a fork whose local [2mmain[0m trails [2morigin/main[0m, a branch 
-reads as ahead of the real mainline, not of a stale local checkout. The [2m↑[0m/[2m↓[0m/[2m↕[0m 
-Status symbols derive from these counts, so they track the upstream tip too.
+[2mCommit, Age, Message[0m). A wider terminal brings them back. To pin a set rather 
+than leave it to the width, name the columns in [2m[list] columns[0m; [2m--format=json[0m 
+carries every field at any width.
 
 [32mGutter[0m
 
@@ -206,11 +198,9 @@ least:
 
 The CI column shows the branch's open PR/MR — [2m#3035[0m on GitHub, Gitea, and Azure 
 DevOps, [2m!3035[0m on GitLab — colored by pipeline status, or a bare [2m#[0m when no number
- is available (e.g. branch workflows without a PR/MR). One color folds two JSON 
-fields: green/blue/red/yellow/gray are the pipeline state, magenta/cyan the 
-review state. The [2mValue[0m column names each state; checks object and review states
- give the JSON spelling — schema 2 reports three of the pipeline values by the 
-shape of [2mpr[0m and [2mchecks[0m rather than as a [2mchecks.status[0m string:
+ is available (e.g. branch workflows without a PR/MR). Green, blue, red, yellow,
+ and gray show the pipeline state; magenta and cyan show the review state. 
+checks object and review states give the JSON form of each value:
 
  Indicator        Value                             Meaning                     
  ───────── ──────────────────── ─────────────────────────────────────────────── 
@@ -229,20 +219,14 @@ shape of [2mpr[0m and [2mchecks[0m rather than as a [2mchecks.status[0m st
 The two remaining review states have no indicator of their own: [2m"draft"[0m only 
 dims the cell and [2m"approved"[0m leaves the color unchanged.
 
-Color precedence resolves the fold: changes-requested (magenta) outranks running
- checks — waiting can't clear it — while an outstanding required review (cyan) 
-only recolors an otherwise green or quiet branch. Cool colors mean waiting, warm
- colors mean act. An approved PR, or one with no review signal at all (no 
-required reviewers and no reviews), keeps its plain pipeline color — [2mpr.review[0m 
-is then [2m"approved"[0m or absent, respectively. GitLab MR data carries only 
-[2m"pending"[0m and [2m"draft"[0m — no approved or changes-requested signal.
+Changes requested (magenta) outranks running checks, while a required review 
+(cyan) only recolors an otherwise green or gray branch. GitLab reports only the 
+[2m"pending"[0m and [2m"draft"[0m review states.
 
 CI cells are clickable links to the PR or pipeline page, and appear dimmed for a
  draft PR/MR ([2m"draft"[0m) or when unpushed local changes make the status stale 
-([2mchecks.stale[0m). PRs/MRs are checked first, then branch workflows/pipelines for 
-branches with an upstream. Local-only branches show blank; remote-only branches 
-— visible with [2m--remotes[0m — get CI status detection. Results are cached for 30-60
- seconds; use [2mwt config state cache[0m to view or clear.
+([2mchecks.stale[0m). Results are cached for 30-60 seconds; use [2mwt config state cache[0m 
+to view or clear.
 
 [32mLLM summaries[0m
 
@@ -262,9 +246,7 @@ you set yourself, or the git-native [2mdescription[0m) — useful for tracking
 [107m [0m [2m[36m[list.custom-columns.Ticket][0m
 [107m [0m [2mtemplate = [0m[2m[32m"{{ vars.ticket }}"[0m
 
-A custom column that renders empty for every row is dropped from the table 
-outright, rather than merely ranked last as an empty built-in is. Templates, 
-widths, and drop priority: custom columns config.
+The custom columns config covers templates, widths, and drop priority.
 
 [1m[32mStatus symbols[0m
 
@@ -294,27 +276,20 @@ symbol in the column.
 An in-progress git operation, a worktree-location attribute, or a branch with no
  worktree. One symbol shows, highest priority first ([2m✘ > ↻ > ⊟ > ⊞ > ⊘ > ⚑ > /[0m):
 
- Symb           JSON                                Meaning                     
-  ol                                                                            
- ──── ───────────────────────── ─────────────────────────────────────────────── 
- [31m✘[0m    [2mworktree.changes.conflict[0m Merge conflicts                                 
-      [2med[0m                                                                        
- [33m↻[0m    [2mworktree.operation[0m        A git operation is in progress; [2mgit status[0m      
-      [2m"rebase"[0m, [2m"merge"[0m,        names it                                        
-      [2m"cherry_pick"[0m, [2m"revert"[0m,                                                  
-      [2m"bisect"[0m                                                                  
- [33m⊟[0m    [2mworktree.prunable[0m         Prunable (worktree directory missing); nothing  
-                                can be read from a directory that isn't there,  
-                                so the row's data cells stay blank              
- [33m⊞[0m    [2mworktree.locked[0m           Locked worktree                                 
- [2m⊘[0m    [2mworktree.detached[0m         Detached HEAD — the worktree is on a commit,    
-                                not a branch, which is why its Branch cell      
-                                holds a short hash                              
- [2m[33m⚑[0m    [2mworktree.duplicate_branch[0m Branch checked out in more than one worktree,   
-                                so [2mwt[0m resolves it to whichever git lists first; 
-                                every worktree on the branch is flagged         
- [2m[33m⚑[0m    [2mworktree.branch_mismatch[0m  Worktree isn't at the path its branch implies   
- [2m/[0m    no [2mworktree[0m object        Branch without a worktree                       
+ Symbol           JSON                               Meaning                    
+ ────── ───────────────────────── ───────────────────────────────────────────── 
+ [31m✘[0m      [2mworktree.changes.conflict[0m Merge conflicts                               
+        [2med[0m                                                                      
+ [33m↻[0m      [2mworktree.operation[0m        A git operation is in progress; [2mgit status[0m    
+        [2m"rebase"[0m, [2m"merge"[0m,        names it                                      
+        [2m"cherry_pick"[0m, [2m"revert"[0m,                                                
+        [2m"bisect"[0m                                                                
+ [33m⊟[0m      [2mworktree.prunable[0m         Prunable (worktree directory missing)         
+ [33m⊞[0m      [2mworktree.locked[0m           Locked worktree                               
+ [2m⊘[0m      [2mworktree.detached[0m         Detached HEAD                                 
+ [2m[33m⚑[0m      [2mworktree.duplicate_branch[0m Branch checked out in more than one worktree  
+ [2m[33m⚑[0m      [2mworktree.branch_mismatch[0m  Worktree isn't at the path its branch implies 
+ [2m/[0m      no [2mworktree[0m object        Branch without a worktree                     
 
 [32mDefault branch[0m
 
@@ -357,13 +332,10 @@ Relation to the tracking branch, derived from the [2mupstream.ahead[0m /
 
 [32mMarker[0m
 
-The last subcolumn carries the branch's own marker — whatever
-[2mwt config state marker set[0m stored, usually
-an emoji, which is why the subcolumn is two cells wide. Nothing in [2mwt[0m writes
-it; it is there for agents and scripts to say what a branch is for, and it
-reads back as the item's [2mmarker[0m field. [2mwt config state marker set 🤖[0m on a
-branch whose default-branch state is [2m_[0m renders [2m_ 🤖[0m in the column and
-[2m"_🤖"[0m in [2mdisplay.symbols[0m.
+The last subcolumn shows the branch's marker, set with
+[2mwt config state marker set[0m — usually an
+emoji saying what the branch is for. It reads back as the item's [2mmarker[0m
+field.
 
 [32mPlaceholder symbols[0m
 
@@ -547,19 +519,16 @@ Independent facts; the table's priority-collapsed symbol is [2mdisplay.state[0
 
 [32mpr object[0m
 
-  Field    Type                            Description                          
- ─────── ───────── ──────────────────────────────────────────────────────────── 
- [2mnumber[0m  integer/n PR/MR number                                                 
-         ull                                                                    
- [2murl[0m     string/nu URL to the PR/MR page                                        
-         ll                                                                     
- [2mreview[0m  string    Review state (see review states); absent when the forge      
-                   reports no review signal                                     
- [2mmergeab[0m boolean/n False when the forge reports conflicts, null otherwise — the 
- [2mle[0m      ull       fetch records only the conflicted case                       
- [2mrepo[0m    object    Structured metadata for the repository the PR/MR targets,    
-                   the upstream for fork PRs (see repo object); absent when the 
-                   URL doesn't parse                                            
+   Field       Type                           Description                       
+ ───────── ──────────── ─────────────────────────────────────────────────────── 
+ [2mnumber[0m    integer/null PR/MR number                                            
+ [2murl[0m       string/null  URL to the PR/MR page                                   
+ [2mreview[0m    string       Review state (see review states); absent when the forge 
+                        reports no review signal                                
+ [2mmergeable[0m boolean/null False when the forge reports conflicts, null otherwise  
+ [2mrepo[0m      object       Structured metadata for the repository the PR/MR        
+                        targets, the upstream for fork PRs (see repo object);   
+                        absent when the URL doesn't parse                       
 
 [32mchecks object[0m
 
@@ -644,10 +613,8 @@ cheapest-first and the first match wins. JSON-only — every reason renders as t
 [32mreview states[0m
 
 [2mpr.review[0m is one of [2m"changes_requested"[0m, [2m"pending"[0m, [2m"draft"[0m, [2m"approved"[0m, absent 
-when the forge reports no review signal. The CI status section is the single 
-source: its table maps the colored values, and the notes below it cover [2m"draft"[0m 
-and [2m"approved"[0m. The vocabulary matches Claude Code's statusline [2mpr.review_state[0m 
-field.
+when the forge reports no review signal. CI status shows how each renders. The 
+vocabulary matches Claude Code's statusline [2mpr.review_state[0m field.
 
 [107m [0m [2m# Current worktree path (for scripts)[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[36m-r[0m[2m [0m[2m[32m'.items[] | select(.worktree.current) | [0m
@@ -680,8 +647,6 @@ field.
 
 A JSON Schema for the envelope is published at
 worktrunk.dev/schema/list-v2.json.
-It describes what [2mwt[0m writes, so a field the absence rule can omit is
-optional there rather than required-and-null.
 
 [32mSchema 1[0m
 

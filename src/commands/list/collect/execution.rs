@@ -32,7 +32,7 @@ use super::types::{TaskError, TaskKind, TaskResult};
 /// Tasks that require a valid commit SHA. Skipped for unborn branches (no commits yet).
 /// Without this, these tasks would fail on the null OID and show as errors in the table.
 ///
-/// `WorkingTreeDiff` runs `git diff HEAD` and `WorkingTreeConflicts` runs
+/// `WorkingTreeDiff` runs `git diff-index HEAD` and `WorkingTreeConflicts` runs
 /// `git merge-tree` against the worktree's HEAD SHA — both fail on a null OID
 /// with `fatal: ambiguous argument 'HEAD'` / `fatal: 0000… is not a valid
 /// object`. Their seed defaults (`None` for the diff, `Some(None)` for the

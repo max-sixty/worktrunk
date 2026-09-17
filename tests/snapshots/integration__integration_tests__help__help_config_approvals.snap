@@ -118,6 +118,6 @@ Approved commands are saved to [2m~/.config/worktrunk/approvals.toml[0m. Re-ap
 
 [2mstate[0m is [2mno_commands[0m (the project declares none), [2mapproval_required[0m (at least one is unapproved), or [2mapproved[0m. [2mname[0m is absent for an unnamed command and for the commit-template fragment.
 
-[2mstale[0m is separate rather than a fourth [2mstate[0m, because it co-occurs with all three: these are approvals recorded earlier whose command has since been edited or removed from the project config. They are what [2m--yes[0m would silently re-approve, so an orchestrator preserving the approval model reads them before choosing that flag.
+[2mstale[0m, which can accompany any [2mstate[0m, lists approvals whose command has since been edited or removed from the project config.
 
 ----- stderr -----

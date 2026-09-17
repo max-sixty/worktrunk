@@ -5,7 +5,9 @@ use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
 use worktrunk::config::CommitGenerationConfig;
-use worktrunk::git::{CommandError, CommitMessageDetail, ErrorExt, Repository, WorkingTree};
+use worktrunk::git::{
+    CommandError, CommitMessageDetail, ErrorExt, Repository, TempIndex, WorkingTree,
+};
 use worktrunk::shell_exec::{Cmd, ShellConfig};
 
 use minijinja::Environment;
@@ -16,10 +18,12 @@ use minijinja::value::{Enumerator, Object, Value};
 ///
 /// It renders as its bare subject (`{{ detail }}` yields the subject line) so a
 /// template that iterates the list and prints the loop variable directly
-/// behaves exactly like the deprecated `commits` list of subject strings. That
-/// equivalence is what lets `wt config update` migrate a `commits` template to
-/// `commit_details` as a plain identifier rename — no shape-changing hand edits
-/// (see #2984). The `.subject` and `.body` properties remain available for
+/// behaves exactly like the retired `commits` list of subject strings. That
+/// equivalence is what lets the deprecation layer rewrite a `commits` template
+/// to `commit_details` as a plain identifier rename — on every load, and in the
+/// file itself via `wt config update` — with no shape-changing hand edits (see
+/// #2984 and `RETIRED_VARS`). The `.subject` and `.body` properties remain
+/// available for
 /// templates that want the structured form, and because minijinja coerces an
 /// object to a string via its `render`, string filters (`{{ c | upper }}`)
 /// operate on the subject too.
@@ -153,23 +157,6 @@ const MAX_SQUASH_COMMITS: usize = 200;
 /// Lock file patterns that are filtered out when diff is too large
 const LOCK_FILE_PATTERNS: &[&str] = &[".lock", "-lock.json", "-lock.yaml", ".lock.hcl"];
 
-/// Git `-c` overrides forcing the `a/`/`b/` diff prefix format regardless of
-/// user config: `diff.noprefix`, `diff.mnemonicPrefix`, and (git >= 2.45)
-/// `diff.srcPrefix`/`diff.dstPrefix` can all change the header format that
-/// [`parse_diff_sections`] splits file sections on, so every full diff
-/// destined for [`prepare_diff`] must carry these flags. Unknown config keys
-/// are ignored by older git.
-pub(crate) const DIFF_PREFIX_OVERRIDES: [&str; 8] = [
-    "-c",
-    "diff.noprefix=false",
-    "-c",
-    "diff.mnemonicPrefix=false",
-    "-c",
-    "diff.srcPrefix=a/",
-    "-c",
-    "diff.dstPrefix=b/",
-];
-
 /// Prepared diff output with optional filtering applied
 pub(crate) struct PreparedDiff {
     /// The diff content (possibly filtered/truncated)
@@ -187,8 +174,9 @@ fn is_lock_file(filename: &str) -> bool {
 
 /// Extract the destination path from a `diff --git` header line.
 ///
-/// [`DIFF_PREFIX_OVERRIDES`] pins the prefixes to `a/` and `b/`, so the
-/// destination begins at the last ` b/` — or, when git quotes the pair,
+/// Every diff fed to [`prepare_diff`] comes from plumbing (`diff-index`,
+/// `diff-tree`), which ignores the prefix settings and always writes `a/` and
+/// `b/`, so the destination begins at the last ` b/` — or, when git quotes the pair,
 /// at the last ` "b/`. Quoting is not optional: `core.quotePath` escapes a
 /// non-ASCII name, and a name holding `"` or `\` is quoted whatever that
 /// setting says, so a parser that only knows the bare form fails on both.
@@ -410,7 +398,7 @@ pub(crate) fn prepare_diff(diff: String, stat: String) -> PreparedDiff {
 struct PromptContext<'a> {
     /// The diff to describe (staged changes for commit, combined diff for squash)
     git_diff: &'a str,
-    /// Diff statistics summary (output of git diff --stat)
+    /// Diff statistics summary (`--stat` output)
     git_diff_stat: &'a str,
     /// Current branch name
     branch: &'a str,
@@ -522,7 +510,7 @@ const DEFAULT_SQUASH_TEMPLATE: &str = r#"<task>Write a commit message for the co
 /// All LLM execution should go through this function to maintain consistency.
 pub(crate) fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result<String> {
     // TODO(diff-pipe): Consider splitting the prompt template around
-    // `{{ git_diff }}` and piping `git diff` directly into the LLM via
+    // `{{ git_diff }}` and piping the diff directly into the LLM via
     // `Cmd::pipe_into` (preamble + epilogue through env vars). Avoids buffering
     // MB-scale diffs in our process memory and removes them from our logs
     // entirely. See conversation around PR #2136 for sketch.
@@ -584,9 +572,11 @@ enum TemplateType {
 ///   subject when printed bare and exposes `.subject` / `.body` properties.
 ///   Capped at [`MAX_SQUASH_COMMITS`]; the older tail is represented by one
 ///   synthetic "(N earlier commits omitted)" entry.
-/// - `commits`: Commit subjects being squashed (deprecated — see #2984;
-///   `wt config update` rewrites it to `commit_details`)
 /// - `target_branch`: Target branch for merge
+///
+/// The retired `commits` variable is not supplied: the deprecation layer
+/// rewrites it to `commit_details` before serde parses the config, so an
+/// unmigrated template still renders its commit list (see `RETIRED_VARS`).
 fn build_prompt(
     config: &CommitGenerationConfig,
     template_type: TemplateType,
@@ -621,15 +611,14 @@ fn build_prompt(
 
     // Reverse commits so they're in chronological order (oldest first).
     //
-    // `commits` (a list of bare subject strings) is deprecated in favor of
-    // `commit_details` (see #2984). The deprecation warning and the
-    // `wt config update` rewrite both go through the standard config
-    // deprecation framework (`DEPRECATED_VARS`), so nothing is detected or
-    // warned here — `commits` is simply still rendered for templates that
-    // haven't migrated yet. The rename is safe because each `commit_details`
-    // element renders as its subject (see `CommitDetailValue`), so a migrated
-    // `{% for c in commit_details %}{{ c }}` reads identically to the old
-    // `{% for c in commits %}{{ c }}`.
+    // `commit_details` is the only commit list supplied. The retired `commits`
+    // variable (a list of bare subject strings) is handled entirely by the
+    // config deprecation layer (`RETIRED_VARS`), which rewrites it to
+    // `commit_details` on every load and warns, so an unmigrated template
+    // arrives here already renamed — nothing is detected or warned here. The
+    // rename is safe because each `commit_details` element renders as its
+    // subject (see `CommitDetailValue`), so `{% for c in commit_details %}{{ c
+    // }}` reads identically to the old `{% for c in commits %}{{ c }}`.
     //
     // The list is capped at `MAX_SQUASH_COMMITS` — the one prompt input the
     // diff budget doesn't bound. Details arrive newest-first, so the newest
@@ -647,10 +636,6 @@ fn build_prompt(
     let details_chronological: Vec<&CommitMessageDetail> = synthetic_tail
         .iter()
         .chain(kept_details.iter().rev())
-        .collect();
-    let commits_chronological: Vec<&String> = details_chronological
-        .iter()
-        .map(|detail| &detail.subject)
         .collect();
     let commit_details_chronological: Vec<Value> = details_chronological
         .iter()
@@ -680,7 +665,6 @@ fn build_prompt(
             branch => context.branch,
             recent_commits => context.recent_commits.unwrap_or(&empty_commits),
             repo => context.repo_name,
-            commits => &commits_chronological,
             commit_details => &commit_details_chronological,
             target_branch => context.target_branch.unwrap_or(""),
         })?)
@@ -705,7 +689,6 @@ fn build_prompt(
         branch => context.branch,
         recent_commits => context.recent_commits.unwrap_or(&empty_commits),
         repo => context.repo_name,
-        commits => commits_chronological,
         commit_details => commit_details_chronological,
         target_branch => context.target_branch.unwrap_or(""),
         user_guidance => user_guidance,
@@ -720,8 +703,8 @@ fn build_prompt(
 /// --branch <b>` and `wt step relocate --commit` commit somewhere else, and
 /// reading the diff from the cwd instead handed the LLM an empty diff.
 ///
-/// `index_override` is forwarded to git operations that read the staging area, so
-/// `--dry-run` can preview against a temp index without touching the user's real one.
+/// `staging_index` is the temporary index `--dry-run` staged into, read in
+/// place of the real one so the preview doesn't touch it.
 ///
 /// `project_append` is the approved project-level append fragment (or
 /// `None` to skip). It is rendered with the main template's context and
@@ -731,7 +714,7 @@ fn build_prompt(
 pub(crate) fn generate_commit_message(
     commit_generation_config: &CommitGenerationConfig,
     wt: &WorkingTree<'_>,
-    index_override: Option<&Path>,
+    staging_index: Option<&TempIndex>,
     project_append: Option<&str>,
 ) -> anyhow::Result<String> {
     // Check if commit generation is configured (non-empty command)
@@ -741,7 +724,7 @@ pub(crate) fn generate_commit_message(
         // failure of the LLM command itself gets the `LlmCommandFailed`
         // wrapper — mirroring `generate_squash_message`.
         let prompt =
-            build_commit_prompt(commit_generation_config, wt, index_override, project_append)?;
+            build_commit_prompt(commit_generation_config, wt, staging_index, project_append)?;
         // A slow or hung command is otherwise silent (stdout is captured); the
         // watchdog surfaces a "still waiting" status. Held until this function
         // returns, clearing the block before the caller prints the message.
@@ -761,11 +744,7 @@ pub(crate) fn generate_commit_message(
     }
 
     // Fallback: generate a descriptive commit message based on changed files
-    let file_list = run_git_capture(
-        &["diff", "--staged", "--name-only", "-z"],
-        wt.path(),
-        index_override,
-    )?;
+    let file_list = staged_diff(wt, staging_index)?.capture(["--name-only", "-z"])?;
     let staged_files = file_list
         .split('\0')
         .map(|s| s.trim())
@@ -792,28 +771,17 @@ pub(crate) fn generate_commit_message(
     Ok(message)
 }
 
-/// Run a git command and capture stdout, mirroring [`Repository::run_command`]
-/// (including its [`CommandError`] on non-zero exit).
-///
-/// Used by call sites that need to set `GIT_INDEX_FILE` (`--dry-run`) and so can't go
-/// through `Repository::run_command`. Without this check, a failing `git diff` would
-/// silently feed an empty diff to the LLM.
-fn run_git_capture(
-    args: &[&str],
-    cwd: &Path,
-    index_override: Option<&Path>,
-) -> anyhow::Result<String> {
-    let mut cmd = Cmd::new("git").args(args.iter().copied()).current_dir(cwd);
-    if let Some(index) = index_override {
-        cmd = cmd.env("GIT_INDEX_FILE", index);
-    }
-    let output = cmd
-        .run()
-        .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
-    if !output.status.success() {
-        return Err(CommandError::from_failed_output("git", args, &output).into());
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+/// The changes a commit from `wt` would record, read from `staging_index`
+/// when given and from the real index otherwise.
+fn staged_diff<'a>(
+    wt: &WorkingTree<'a>,
+    staging_index: Option<&'a TempIndex>,
+) -> anyhow::Result<worktrunk::git::PreparedDiff<'a>> {
+    let base = wt.index_base()?;
+    Ok(match staging_index {
+        Some(index) => index.prepare_staged_diff(base),
+        None => wt.prepare_staged_diff(base),
+    })
 }
 
 /// Build the commit prompt from staged changes.
@@ -825,25 +793,17 @@ fn run_git_capture(
 /// Every input is read from `wt`, the worktree being committed — which is not
 /// always the invoking one (see [`generate_commit_message`]).
 ///
-/// `index_override` points git at an alternate index via `GIT_INDEX_FILE` — used by
-/// `--dry-run` to preview what `git add` per the user's `--stage` flag would produce
-/// without modifying the real index.
+/// `staging_index` is the temporary index `--dry-run` staged per the user's
+/// `--stage` flag, read in place of the real index.
 pub(crate) fn build_commit_prompt(
     config: &CommitGenerationConfig,
     wt: &WorkingTree<'_>,
-    index_override: Option<&Path>,
+    staging_index: Option<&TempIndex>,
     project_append: Option<&str>,
 ) -> anyhow::Result<String> {
-    let cwd = wt.path();
-
-    let mut diff_args: Vec<&str> = DIFF_PREFIX_OVERRIDES.to_vec();
-    diff_args.extend(["--no-pager", "diff", "--staged"]);
-    let diff_output = run_git_capture(&diff_args, cwd, index_override)?;
-    let diff_stat = run_git_capture(
-        &["--no-pager", "diff", "--staged", "--stat"],
-        cwd,
-        index_override,
-    )?;
+    let staged = staged_diff(wt, staging_index)?;
+    let diff_output = staged.capture(["--patch"])?;
+    let diff_stat = staged.capture(["--stat"])?;
 
     // Prepare diff (may filter if too large)
     let prepared = prepare_diff(diff_output, diff_stat);
@@ -936,10 +896,9 @@ pub(crate) fn build_squash_prompt(
     let repo = Repository::current()?;
 
     // Get the combined diff and diffstat for all commits being squashed
-    let mut diff_args: Vec<&str> = DIFF_PREFIX_OVERRIDES.to_vec();
-    diff_args.extend(["--no-pager", "diff", merge_base, "HEAD"]);
-    let diff_output = repo.run_command(&diff_args)?;
-    let diff_stat = repo.run_command(&["--no-pager", "diff", merge_base, "HEAD", "--stat"])?;
+    let squashed = repo.prepare_diff(merge_base, "HEAD");
+    let diff_output = squashed.capture(["--patch"])?;
+    let diff_stat = squashed.capture(["--stat"])?;
 
     // Prepare diff (may filter if too large)
     let prepared = prepare_diff(diff_output, diff_stat);
@@ -1050,21 +1009,6 @@ mod tests {
         );
     }
 
-    /// `run_git_capture` must surface a non-zero exit as a typed [`CommandError`]
-    /// carrying the command and its captured stderr — without that, the dry-run
-    /// path would feed an empty diff to the LLM on a `git` failure.
-    #[test]
-    fn test_run_git_capture_bails_on_nonzero_exit() {
-        let err = run_git_capture(&["frobnicate-nonexistent"], Path::new("."), None).unwrap_err();
-        let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
-        assert_eq!(cmd_err.command_string(), "git frobnicate-nonexistent");
-        assert!(
-            cmd_err.stderr.contains("frobnicate-nonexistent"),
-            "stderr should name the failing command; got: {}",
-            cmd_err.stderr
-        );
-    }
-
     /// Git failures while constructing a configured prompt surface directly;
     /// they must not be mislabeled as a failure of the configured LLM command.
     #[test]
@@ -1131,8 +1075,9 @@ mod tests {
 
     /// A `commit_details` element renders as its bare subject and exposes
     /// `.subject` / `.body`. This is the equivalence that lets the
-    /// `commits` → `commit_details` rename be a mechanical identifier rewrite
-    /// (see #2984 and `CommitDetailValue`).
+    /// `commits` → `commit_details` rename be a mechanical identifier rewrite,
+    /// which is what the config deprecation layer applies on every load now
+    /// that nothing supplies `commits` (see #2984 and `CommitDetailValue`).
     #[test]
     fn test_commit_detail_value_render_and_properties() {
         assert_eq!(render_with_detail("{{ c }}", "Add a", "body a"), "Add a");
@@ -1630,7 +1575,7 @@ mod tests {
             command: None,
             template: None,
             squash_template: Some(
-                "Target: {{ target_branch }}\n{% for c in commits %}{{ c }}\n{% endfor %}"
+                "Target: {{ target_branch }}\n{% for c in commit_details %}{{ c }}\n{% endfor %}"
                     .to_string(),
             ),
             template_append: None,
@@ -1699,7 +1644,7 @@ mod tests {
         let config = CommitGenerationConfig {
             command: None,
             template: None,
-            squash_template: Some("{% for x in commits %}{{ x }".to_string()),
+            squash_template: Some("{% for x in commit_details %}{{ x }".to_string()),
             template_append: None,
         };
         let commit_details = vec![];
@@ -1729,7 +1674,7 @@ mod tests {
             command: None,
             template: None,
             squash_template: Some(
-                "Repo: {{ repo }}\nBranch: {{ branch }}\nTarget: {{ target_branch }}\nDiff: {{ git_diff }}\n{% for c in commits %}{{ c }}\n{% endfor %}{% for r in recent_commits %}style: {{ r }}\n{% endfor %}"
+                "Repo: {{ repo }}\nBranch: {{ branch }}\nTarget: {{ target_branch }}\nDiff: {{ git_diff }}\n{% for c in commit_details %}{{ c }}\n{% endfor %}{% for r in recent_commits %}style: {{ r }}\n{% endfor %}"
                     .to_string(),
             ),
             template_append: None,
@@ -1827,14 +1772,14 @@ Diff follows:
             command: None,
             template: None,
             squash_template: Some(
-                r#"Squashing {{ commits | length }} commit(s) from {{ branch }} to {{ target_branch }}
-{% if commits | length > 1 -%}
+                r#"Squashing {{ commit_details | length }} commit(s) from {{ branch }} to {{ target_branch }}
+{% if commit_details | length > 1 -%}
 Multiple commits detected:
-{%- for c in commits %}
+{%- for c in commit_details %}
   {{ loop.index }}/{{ loop.length }}: {{ c }}
 {%- endfor %}
 {%- else -%}
-Single commit: {{ commits[0] }}
+Single commit: {{ commit_details[0] }}
 {%- endif %}"#
                     .to_string(),
             ),
@@ -1886,7 +1831,7 @@ Single commit: {{ commits[0] }}
         let config = CommitGenerationConfig {
             command: None,
             template: Some(
-                "Branch: {{ branch }}\nTarget: {{ target_branch }}\nCommit subjects: {{ commits | length }}\nCommit details: {{ commit_details | length }}"
+                "Branch: {{ branch }}\nTarget: {{ target_branch }}\nCommit details: {{ commit_details | length }}"
                     .to_string(),
             ),
             squash_template: None,
@@ -1897,10 +1842,7 @@ Single commit: {{ commits[0] }}
         assert!(result.is_ok());
         let prompt = result.unwrap();
         // Squash-specific variables are empty for regular commits
-        assert_eq!(
-            prompt,
-            "Branch: feature\nTarget: \nCommit subjects: 0\nCommit details: 0"
-        );
+        assert_eq!(prompt, "Branch: feature\nTarget: \nCommit details: 0");
     }
 
     // Tests for diff filtering

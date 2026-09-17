@@ -39,7 +39,7 @@
 # - Reference the relevant issue ID in the body
 # """
 #
-# The first time the fragment is used (and whenever it changes), `wt` prompts the user to approve it — the same one-shot gate as project-defined hooks. Only `template-append` is honored from the project file; the LLM command and the main prompt template stay in user config (https://worktrunk.dev/config/), since they describe per-developer environment (which CLI is installed, which agent the developer prefers). How the fragment renders: the LLM commits guide (https://worktrunk.dev/llm-commits/#appending-to-the-prompt).
+# The first time the fragment is used (and whenever it changes), `wt` prompts the user to approve it — the same one-shot gate as project-defined hooks. Only `template-append` is honored from the project file; the LLM command and the main prompt template stay in user config (https://worktrunk.dev/config/). See the LLM commits guide (https://worktrunk.dev/llm-commits/#appending-to-the-prompt) for how the fragment renders.
 #
 # ## Copy-ignored excludes
 #

@@ -186,8 +186,10 @@ $ wt config plugins opencode install --yes
 ## Plugin location
 
 The plugin is written to `~/.config/opencode/plugins/worktrunk.ts`,
-mirroring OpenCode's own global-config precedence:
-`$OPENCODE_CONFIG_DIR` > `$XDG_CONFIG_HOME/opencode` > `~/.config/opencode`."#
+following OpenCode's global-config precedence:
+`$OPENCODE_CONFIG_DIR` > `$XDG_CONFIG_HOME/opencode` > `~/.config/opencode`.
+An empty `$OPENCODE_CONFIG_DIR` and an empty or relative `$XDG_CONFIG_HOME`
+are ignored."#
     )]
     Install,
 
@@ -207,9 +209,13 @@ $ wt config plugins opencode uninstall
 // Ordering: action + inverse adjacent (install, uninstall).
 #[derive(Subcommand)]
 pub enum ConfigPluginsPiCommand {
-    /// Install the activity tracking hook
+    /// Install the activity tracking extension
     #[command(
-        after_long_help = r#"Writes the Worktrunk hook to Pi's profile-aware user hook directory.
+        after_long_help = r#"Writes the Worktrunk extension to Pi's user extension directory.
+
+Where oh-my-pi is on `PATH` and Pi is not — the state a user of the pre-split
+`pi install` is in — the output names `wt config plugins omp install` before
+writing anything.
 
 ## Examples
 
@@ -218,23 +224,65 @@ $ wt config plugins pi install
 $ wt config plugins pi install --yes
 ```
 
-## Plugin location
+## Extension location
 
-The default location is `~/.omp/agent/hooks/pre/worktrunk.ts`. The installer
-honors `$PI_CONFIG_DIR` and active `$OMP_PROFILE` / `$PI_PROFILE` profiles.
-`$PI_CODING_AGENT_DIR` overrides the agent directory for the default profile
-only — named profiles ignore it, matching Pi's own resolution."#
+The default location is `~/.pi/agent/extensions/worktrunk.ts`.
+`$PI_CODING_AGENT_DIR` replaces the agent directory (`~/.pi/agent`).
+
+This targets Pi (<https://github.com/earendil-works/pi>), which loads
+extensions from `extensions/`. oh-my-pi (`omp`) is a separate agent with a
+different hook API — use `wt config plugins omp install` for that."#
     )]
     Install,
 
-    /// Remove the activity tracking hook
+    /// Remove the activity tracking extension
     #[command(
-        after_long_help = r#"Removes the Worktrunk hook from Pi's active user hook directory.
+        after_long_help = r#"Removes the Worktrunk extension from Pi's user extension directory.
+
+Where nothing is installed there while an oh-my-pi hook remains — the state an
+install from before `pi` and `omp` became separate commands leaves behind — the
+output names `wt config plugins omp uninstall` rather than reporting a removal.
 
 ## Examples
 
 ```console
 $ wt config plugins pi uninstall
+```"#
+    )]
+    Uninstall,
+}
+
+// Ordering: action + inverse adjacent (install, uninstall).
+#[derive(Subcommand)]
+pub enum ConfigPluginsOmpCommand {
+    /// Install the activity tracking hook
+    #[command(
+        after_long_help = r#"Writes the Worktrunk hook to oh-my-pi's profile-aware user hook directory.
+
+## Examples
+
+```console
+$ wt config plugins omp install
+$ wt config plugins omp install --yes
+```
+
+## Hook location
+
+The default location is `~/.omp/agent/hooks/pre/worktrunk.ts`. The installer
+honors `$PI_CONFIG_DIR` and active `$OMP_PROFILE` / `$PI_PROFILE` profiles.
+`$PI_CODING_AGENT_DIR` overrides the agent directory for the default profile
+only — named profiles ignore it, matching oh-my-pi's own resolution."#
+    )]
+    Install,
+
+    /// Remove the activity tracking hook
+    #[command(
+        after_long_help = r#"Removes the Worktrunk hook from oh-my-pi's active user hook directory.
+
+## Examples
+
+```console
+$ wt config plugins omp uninstall
 ```"#
     )]
     Uninstall,
@@ -378,6 +426,32 @@ $ wt config plugins codex uninstall
         action: ConfigPluginsCodexCommand,
     },
 
+    /// oh-my-pi activity hook
+    #[command(
+        after_long_help = r#"Activity tracking hook — shows status markers in `wt list`:
+- 🤖 — agent is working
+- 💬 — agent is waiting for input
+
+oh-my-pi's `session_shutdown` event clears the marker when the session exits.
+
+## Examples
+
+```console
+$ wt config plugins omp install
+$ wt config plugins omp uninstall
+```
+
+## Hook location
+
+Written to `~/.omp/agent/hooks/pre/worktrunk.ts`. Honors `$PI_CONFIG_DIR`,
+the active `$OMP_PROFILE` / `$PI_PROFILE` profile, and `$PI_CODING_AGENT_DIR`
+for the default profile."#
+    )]
+    Omp {
+        #[command(subcommand)]
+        action: ConfigPluginsOmpCommand,
+    },
+
     /// OpenCode plugin
     #[command(
         after_long_help = r#"Activity tracking plugin — shows status markers in `wt list`:
@@ -393,18 +467,19 @@ $ wt config plugins opencode uninstall
 
 ## Plugin location
 
-Written to `~/.config/opencode/plugins/worktrunk.ts`. Honors OpenCode's
+Written to `~/.config/opencode/plugins/worktrunk.ts`. Follows OpenCode's
 config precedence: `$OPENCODE_CONFIG_DIR` > `$XDG_CONFIG_HOME/opencode` >
-`~/.config/opencode`."#
+`~/.config/opencode`. An empty `$OPENCODE_CONFIG_DIR` and an empty or relative
+`$XDG_CONFIG_HOME` are ignored."#
     )]
     Opencode {
         #[command(subcommand)]
         action: ConfigPluginsOpencodeCommand,
     },
 
-    /// Pi / oh-my-pi activity hook
+    /// Pi activity extension
     #[command(
-        after_long_help = r#"Activity tracking hook — shows status markers in `wt list`:
+        after_long_help = r#"Activity tracking extension — shows status markers in `wt list`:
 - 🤖 — agent is working
 - 💬 — agent is waiting for input
 
@@ -415,7 +490,12 @@ Pi's `session_shutdown` event clears the marker when the session exits.
 ```console
 $ wt config plugins pi install
 $ wt config plugins pi uninstall
-```"#
+```
+
+## Extension location
+
+Written to `~/.pi/agent/extensions/worktrunk.ts`. `$PI_CODING_AGENT_DIR`
+replaces the agent directory."#
     )]
     Pi {
         #[command(subcommand)]
@@ -467,6 +547,10 @@ Preserves existing settings. Creates the config directory and `settings.json` if
 Skips gracefully if the statusline is already configured."#
     )]
     InstallStatusline,
+
+    /// Internal: the plugin's PermissionRequest hook, reading its payload from stdin
+    #[command(hide = true, name = "approve-enter-worktree")]
+    ApproveEnterWorktree,
 }
 
 // Ordering: introspection adjacent to invocation — show prints the template,
@@ -597,15 +681,6 @@ This tests:
 to their current equivalents, removes deprecated keys that have no equivalent,
 and reports each one. Shows a diff and asks for confirmation.
 
-Migrations are computed in memory on demand; nothing is written outside this
-command. Set `--output <path>` to write a migrated config to that destination
-instead of applying it in place. Use `-` for stdout. When both user and project
-config need migration, stdout emits a labeled inspection artifact and file
-output fails rather than combining the configs.
-
-`--output` omits deprecated `approved-commands` with a stderr warning; only an
-in-place update migrates them to `approvals.toml`.
-
 ## Examples
 
 Preview and apply updates:
@@ -618,12 +693,12 @@ Apply without confirmation:
 $ wt config update --yes
 ```
 
-Write the migration artifact to a file:
+Write the migrated config to a file instead of updating in place:
 ```console
 $ wt config update --output migrated.toml
 ```
 
-Write the migration artifact to stdout:
+Print the migrated config:
 ```console
 $ wt config update --output=-
 ```"#
@@ -698,7 +773,7 @@ Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval
 
 `state` is `no_commands` (the project declares none), `approval_required` (at least one is unapproved), or `approved`. `name` is absent for an unnamed command and for the commit-template fragment.
 
-`stale` is separate rather than a fourth `state`, because it co-occurs with all three: these are approvals recorded earlier whose command has since been edited or removed from the project config. They are what `--yes` would silently re-approve, so an orchestrator preserving the approval model reads them before choosing that flag."#
+`stale`, which can accompany any `state`, lists approvals whose command has since been edited or removed from the project config."#
     )]
     Approvals {
         #[command(subcommand)]
@@ -740,14 +815,16 @@ $ wt config alias dry-run deploy -- --env=staging
 
 - **claude** — Claude Code plugin (activity tracking + statusline)
 - **codex** — Codex plugin (Worktrunk configuration skill)
+- **omp** — oh-my-pi hook (activity tracking)
 - **opencode** — OpenCode plugin (activity tracking)
-- **pi** — Pi / oh-my-pi plugin (activity tracking)
+- **pi** — Pi extension (activity tracking)
 
 ## Examples
 
 ```console
 $ wt config plugins claude install
 $ wt config plugins codex install
+$ wt config plugins omp install
 $ wt config plugins opencode install
 $ wt config plugins pi install
 ```"#
@@ -808,7 +885,6 @@ $ wt config state clear
 <!-- subdoc: cache -->
 <!-- subdoc: default-branch -->
 <!-- subdoc: logs -->
-<!-- subdoc: ci-status -->
 <!-- subdoc: marker -->
 <!-- subdoc: vars -->"#
     )]
@@ -836,7 +912,7 @@ pub enum StateCommand {
 - **Previous branch**: Previous branch for `wt switch -`
 - **Branch markers**: User-defined branch notes
 - **Vars**: Custom variables per branch
-- **CI status**: Cached GitHub/GitLab CI status per branch (30-60s TTL), plus the largest PR/MR number seen (sizes the `wt list` CI column)
+- **CI status**: Cached GitHub/GitLab CI status per branch (30-60s TTL)
 - **Summaries**: Cached LLM-generated branch summaries (shown in `wt list --full` and `wt switch` preview)
 - **Git commands cache**: Cached merge-tree, ancestry, diff-stat, and `wt switch` preview results
 - **Hints**: One-time hints that have been shown
@@ -879,7 +955,7 @@ untouched."#)]
 
 ## What's cached
 
-- **CI status** — GitHub/GitLab CI per branch (30–60s TTL), shown in [`wt list`](/list/#ci-status), plus the largest PR/MR number seen (sizes the CI column)
+- **CI status** — GitHub/GitLab CI per branch (30–60s TTL), shown in [`wt list`](/list/#ci-status)
 - **Summaries** — LLM-generated branch summaries (`wt list --full`, `wt switch` preview)
 - **Git commands** — cached merge-tree, ancestry, diff-stat, and `wt switch` preview results
 - **Hints** — one-time hints already shown in this repo
@@ -922,20 +998,16 @@ In a hook or alias template, prefer the `{{ default_branch }}` [template variabl
 
 Without a subcommand, runs `get`. `set` stores the override in the repository's local git config. The override adds no project file and applies to every linked worktree in the clone. `clear` then `get` re-detects. The branch must exist locally for `wt list` comparisons.
 
-`default-branch get` resolves the value and caches it on a miss; the aggregate `wt config state get` only reports the cache (read-only), so it can show `(none)` until something populates it.
-
 ## Detection
 
 Worktrunk detects the default branch automatically:
 
 1. **Worktrunk cache** — Checks `git config worktrunk.default-branch`
 2. **Git cache** — Detects primary remote and checks its HEAD (e.g., `origin/HEAD`)
-3. **Remote query** — If not cached, queries `git ls-remote` — typically 100ms–2s, abandoned after 10s
+3. **Remote query** — If not cached, queries `git ls-remote`, giving up after 10s
 4. **Local inference** — If no remote, or the query was abandoned, infers from local branches
 
-Once detected, the result is cached in `worktrunk.default-branch` for fast access. The cache isn't re-validated on every command, so a later change to `origin/HEAD` — a renamed default branch followed by `git remote set-head origin -a` — isn't picked up automatically. `wt config state` flags the drift when the cached value differs from the remote's local HEAD — expected for a deliberate override; `set` adopts the new branch and `clear` re-detects.
-
-An abandoned remote query is the one case that isn't cached: the branch it inferred locally answers that command, but a value guessed while the remote was unreachable would otherwise become permanent, so the next command queries again.
+Once detected, the result is cached in `worktrunk.default-branch` — except a value inferred after the remote query was abandoned, so an outage can't make a guess permanent. A later change to `origin/HEAD` isn't picked up automatically: `wt config state` flags the mismatch, `set` adopts the new branch, and `clear` re-detects.
 
 The local inference fallback uses these heuristics in order:
 - If only one local branch exists, uses it
@@ -1001,7 +1073,7 @@ Hook output lives in per-branch subtrees under `.git/wt/logs/{branch}/`:
 | Background hooks | `{branch}/{source}/{hook-type}/{name}.log` |
 | Background removal | `{branch}/internal/remove.log` |
 
-All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the background and produce log files. Source is `user` or `project`. Branch and hook names are sanitized for filesystem safety (invalid characters → `-`; short collision-avoidance hash appended). Same operation on same branch overwrites the previous log. Removing a branch clears its subtree; orphans from deleted branches can be swept with `wt config state logs clear`.
+All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the background and produce log files. Source is `user` or `project`. Branch and hook names are sanitized for filesystem safety. Same operation on same branch overwrites the previous log. Removing a branch clears its subtree; orphans from deleted branches can be swept with `wt config state logs clear`.
 
 ### Diagnostic files
 
@@ -1012,11 +1084,11 @@ All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the
 | `subprocess.log` | Running with `-vv` |
 | `diagnostic.md` | Running with `-vv` |
 
-`trace.log` is the human-readable trace at `-vv` — each command's start (`$ …`) and completion (`✓`/`✗ … 12.3ms`), in-process spans, milestones, and bounded subprocess previews. `trace.jsonl` is the same event stream as one JSON object per line, for machines (`jq`, chrome://tracing); `wt config state logs profile` reads it to summarize a performance report (where time went, parallelism, redundant commands). `subprocess.log` holds the raw uncapped subprocess stdout/stderr bodies. `diagnostic.md` is a markdown bug-report bundle that leads with that same performance profile and inlines `trace.log`; `wt` prints a `gh gist create` command pointing at it. All four are overwritten on each `-vv` run.
+`trace.log` is the human-readable trace of commands and their timings. `trace.jsonl` holds the same events as JSON lines, which `wt config state logs profile` summarizes into a performance report. `subprocess.log` holds full subprocess output. `diagnostic.md` is a bug-report bundle; `wt` prints a `gh gist create` command for it. All four are overwritten on each `-vv` run.
 
 ## Location
 
-All logs are stored in `.git/wt/logs/` (in the main worktree's git directory). All worktrees write to the same directory. Top-level files are shared logs (command audit + diagnostics); top-level directories are per-branch log trees.
+All logs are stored in `.git/wt/logs/` (in the main worktree's git directory). All worktrees write to the same directory.
 
 ## Structured output
 
@@ -1192,7 +1264,7 @@ dev = "npm start -- --port {{ vars.config.port }}"
 
 ## Storage format
 
-Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys must contain only letters, digits and hyphens — dots conflict with git config's section separator, underscores with its variable name format."#
+Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys may contain only letters, digits, and hyphens."#
     )]
     Vars {
         #[command(subcommand)]

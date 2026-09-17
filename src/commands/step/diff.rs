@@ -7,7 +7,7 @@ use worktrunk::git::Repository;
 ///
 /// Shows all changes since branching from the target: committed, staged, unstaged,
 /// and untracked files in a single diff. Stages untracked files into a temp index
-/// (`WorkingTree::prepare_diff_with_untracked`) so they appear in the diff
+/// (`WorkingTree::temp_index_with_untracked`) so they appear in the diff
 /// without mutating the real index — git's stat cache stays warm and tracked
 /// files aren't re-hashed.
 ///
@@ -32,8 +32,8 @@ pub fn step_diff(
         .context("No common ancestor with target branch")?;
 
     // Stream diff to stdout — git handles pager and coloring.
-    wt.prepare_diff_with_untracked([merge_base])?
-        .stream(extra_args)?;
+    wt.temp_index_with_untracked()?
+        .stream_diff(&merge_base, extra_args)?;
 
     Ok(())
 }

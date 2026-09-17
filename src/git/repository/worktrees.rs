@@ -350,7 +350,7 @@ impl Repository {
                 self.switch_previous().ok_or_else(|| {
                     GitError::Other {
                         message: cformat!(
-                            "No previous branch found in history. Run <underline>wt list</> to see available worktrees."
+                            "No previous branch found in history; to see available worktrees, run <bold>wt list</>"
                         ),
                     }
                     .into()
@@ -359,7 +359,7 @@ impl Repository {
             "^" => self.default_branch().ok_or_else(|| {
                 GitError::Other {
                     message: cformat!(
-                        "Cannot determine default branch. Specify target explicitly or run <underline>wt config state default-branch set <bold>BRANCH</></>"
+                        "Cannot determine default branch; specify the target explicitly, or to configure one, run <bold>wt config state default-branch set BRANCH</>"
                     ),
                 }
                 .into()

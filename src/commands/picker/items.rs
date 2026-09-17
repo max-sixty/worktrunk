@@ -374,7 +374,7 @@ impl SkimItem for HeaderSkimItem {
 
 /// What the shared porcelain snapshot says about the worktree diff path.
 /// Only an untracked file requires the temporary-index path; tracked-only
-/// changes can use ordinary `git diff` without copying or updating an index.
+/// changes can diff against the real index without copying or updating one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WorktreeDiffState {
     Clean,
@@ -727,11 +727,11 @@ pub(super) fn pr_status_pane_eq(
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) struct LocalContent {
     /// `working_tree`: staged, unstaged, or untracked changes exist. Matches the
-    /// pane's temporary-index `git diff HEAD`. `Some(false)` for a branch-only
-    /// row (no working tree to diff).
+    /// pane's temporary-index `git diff-index HEAD`. `Some(false)` for a
+    /// branch-only row (no working tree to diff).
     working_tree: Option<bool>,
     /// Tracked working-tree changes exist. The Summary pane's existing
-    /// combined-diff source uses ordinary `git diff HEAD`, which intentionally
+    /// combined-diff source uses `git diff-index HEAD` on the real index, which intentionally
     /// excludes untracked files, so its availability must not reuse the
     /// untracked-inclusive `working_tree` signal above.
     summary_working_tree: Option<bool>,
@@ -914,7 +914,7 @@ struct Tab {
 /// a `u16` (`render_text` in skim 5.7.0's `src/tui/preview.rs` clamps with
 /// `u16::try_from(self.scroll_y).unwrap_or(u16::MAX)`), so a body over 65,535
 /// lines renders a tail the user can never scroll to and is given no sign of.
-/// A `git diff <default>...<branch>` on a long-lived branch clears that on its
+/// A branch diff against the default branch on a long-lived branch clears that on its
 /// own. The cap sits under the ceiling rather than at it because the body isn't
 /// the whole pane: the tab bar and this notice ride above it and count toward
 /// the same total.
@@ -1388,8 +1388,8 @@ impl PickerRow {
     }
 
     /// Compute a live worktree diff. Porcelain selects the cheapest path, but
-    /// never supplies the diff itself: tracked-only changes use ordinary
-    /// `git diff`, while untracked or unknown state uses a temporary index so
+    /// never supplies the diff itself: tracked-only changes diff against the
+    /// real index, while untracked or unknown state uses a temporary index so
     /// untracked files are included without touching the real index.
     fn compute_live_worktree_diff(
         repo: &Repository,
@@ -1399,14 +1399,16 @@ impl PickerRow {
         state: WorktreeDiffState,
     ) -> anyhow::Result<Option<String>> {
         let worktree = repo.worktree_at(path);
-        let diff = match state {
-            WorktreeDiffState::Clean => return Ok(None),
-            WorktreeDiffState::TrackedOnly => worktree.prepare_diff([base]),
-            WorktreeDiffState::HasUntracked | WorktreeDiffState::Unknown => {
-                worktree.prepare_diff_with_untracked([base])?
+        match state {
+            WorktreeDiffState::Clean => Ok(None),
+            WorktreeDiffState::TrackedOnly => {
+                worktree.prepare_diff(base).capture_stat_and_patch(width)
             }
-        };
-        diff.capture_stat_and_patch(width)
+            WorktreeDiffState::HasUntracked | WorktreeDiffState::Unknown => worktree
+                .temp_index_with_untracked()?
+                .prepare_diff(base)
+                .capture_stat_and_patch(width),
+        }
     }
 
     fn unavailable_diff(branch: &str, label: &str) -> String {
@@ -1439,7 +1441,7 @@ impl PickerRow {
                 "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no comparison base for a complete diff\n"
             );
         };
-        let Some(base) = spec.working_base.as_deref() else {
+        let Some(base) = spec.diff_base.as_deref() else {
             return Self::unavailable_diff(branch, "complete diff");
         };
 
@@ -1528,8 +1530,11 @@ impl PickerRow {
             return render(&cached);
         }
 
+        let Some(base) = spec.diff_base.as_deref() else {
+            return Self::unavailable_diff(branch, "committed diff");
+        };
         let body = match repo
-            .prepare_diff(spec.revs.iter().cloned())
+            .prepare_diff(base, item.head())
             .capture_stat_and_patch(width)
         {
             Ok(body) => body,
@@ -1631,12 +1636,19 @@ impl PickerRow {
             // Ahead or diverged shows this branch's unique changes
             // (upstream…head); behind-only shows what upstream has
             // (head…upstream).
-            let range = if ahead > 0 {
-                format!("{upstream_sha}...{}", item.head())
+            let (base, head) = if ahead > 0 {
+                (upstream_sha, item.head())
             } else {
-                format!("{}...{upstream_sha}", item.head())
+                (item.head(), upstream_sha)
             };
-            match repo.prepare_diff([range]).capture_stat_and_patch(width) {
+            let body = repo.merge_base(base, head).and_then(|merge_base| {
+                let Some(merge_base) = merge_base else {
+                    anyhow::bail!("{base} and {head} have no merge base");
+                };
+                repo.prepare_diff(merge_base, head)
+                    .capture_stat_and_patch(width)
+            });
+            match body {
                 Ok(body) => body,
                 Err(error) => {
                     log::debug!("Could not compute upstream diff for {branch}: {error:#}");
@@ -3066,6 +3078,44 @@ mod tests {
     }
 
     #[test]
+    fn branch_diff_with_several_merge_bases() {
+        // Criss-cross merges give `main` and `feature` two merge bases.
+        // `git diff-tree --merge-base` refuses that; the preview diffs from
+        // one resolved merge base, as `git diff main...feature` does.
+        let (t, repo) = repo_with_main();
+        let commit = |file: &str| {
+            std::fs::write(t.path().join(file), file).unwrap();
+            repo.run_command(&["add", file]).unwrap();
+            repo.run_command(&["commit", "--message", file]).unwrap();
+            repo.run_command(&["rev-parse", "HEAD"])
+                .unwrap()
+                .trim()
+                .to_string()
+        };
+        repo.run_command(&["branch", "feature"]).unwrap();
+        let main_side = commit("main-side.txt");
+        repo.run_command(&["checkout", "feature"]).unwrap();
+        let feature_side = commit("feature-side.txt");
+        repo.run_command(&["merge", "--no-edit", &main_side])
+            .unwrap();
+        commit("feature-only.txt");
+        repo.run_command(&["checkout", "main"]).unwrap();
+        repo.run_command(&["merge", "--no-edit", &feature_side])
+            .unwrap();
+        let bases = repo
+            .run_command(&["merge-base", "--all", "main", "feature"])
+            .unwrap();
+        assert_eq!(bases.lines().count(), 2, "fixture needs two merge bases");
+
+        let item = item_at(&repo, "feature");
+        let output = PickerRow::compute_branch_diff_preview(&repo, &item, 80);
+        assert!(
+            output.contains("feature-only.txt"),
+            "expected the branch diff, got: {output:?}"
+        );
+    }
+
+    #[test]
     fn unified_diff_is_net_change_and_subsidiary_diffs_include_untracked() {
         use crate::commands::list::model::WorktreeData;
 
@@ -3246,7 +3296,7 @@ mod tests {
     #[test]
     fn diff_preview_fences_flag_like_refs() {
         // A ref whose name starts with `-` must reach git as a positional, not
-        // an option. Without the `--end-of-options` fence, `git diff <sha>
+        // an option. Without the `--end-of-options` fence, `git diff-tree <sha>
         // -weird` misparses `-weird` as a flag and errors out; the fence lets
         // it resolve as a ref. `git branch` rejects leading-dash names, so the
         // ref is created via `update-ref`.
@@ -3261,7 +3311,7 @@ mod tests {
             .unwrap();
 
         let out = repo
-            .prepare_diff([root.trim(), "-weird"])
+            .prepare_diff(root.trim(), "-weird")
             .capture_stat_and_patch(80)
             .expect("diff commands succeed")
             .expect("non-empty diff between the two refs");

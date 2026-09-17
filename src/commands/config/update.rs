@@ -2,17 +2,19 @@
 //!
 //! Computes user- and project-config migrations in memory. The default mode
 //! previews and applies them atomically; output mode writes one migration
-//! artifact to the named destination instead. The previous `.new` file flow
-//! was removed — nothing writes to disk outside this command.
+//! artifact to the named destination instead. No other command writes a
+//! migration to disk.
 
 use std::fmt::Write as _;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::{
     ConfigFileKind, DeprecationInfo, DeprecationKind, compute_migrated_content, config_path,
-    copy_approved_commands_to_approvals_file, format_deprecation_warnings, format_migration_diff,
+    copy_approved_commands_to_approvals_file, ensure_config_parses, format_deprecation_warnings,
+    format_migration_diff_block,
 };
 use worktrunk::git::{Repository, resolve_input_path};
 use worktrunk::path::{format_path_for_display, paths_match};
@@ -20,6 +22,7 @@ use worktrunk::styling::{
     eprint, eprintln, format_bash_with_gutter, hint_message, info_message, print, success_message,
     suggest_command_in_dir, warning_message,
 };
+use worktrunk::utils::{write_atomically, write_new_atomically};
 
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 
@@ -35,6 +38,25 @@ struct UpdateCandidate {
     info: DeprecationInfo,
 }
 
+impl UpdateCandidate {
+    /// Compute the migration, refusing one whose content wt could not load.
+    ///
+    /// Checking here rather than at the write covers both destinations — the
+    /// in-place update and `--output` — and fails before the preview asks for
+    /// confirmation.
+    fn new(config_path: PathBuf, original: String, info: DeprecationInfo) -> anyhow::Result<Self> {
+        let migrated = compute_migrated_content(&original);
+        ensure_config_parses(&migrated)
+            .with_context(|| format!("Failed to migrate {}", info.label().to_lowercase()))?;
+        Ok(Self {
+            config_path,
+            original,
+            migrated,
+            info,
+        })
+    }
+}
+
 /// Handle the `wt config update` command.
 pub fn handle_config_update(yes: bool, output: Option<PathBuf>) -> anyhow::Result<()> {
     let mut candidates = Vec::new();
@@ -48,7 +70,7 @@ pub fn handle_config_update(yes: bool, output: Option<PathBuf>) -> anyhow::Resul
     }
 
     if let Some(output) = output {
-        write_migrated_output(&output, &candidates)?;
+        write_migrated_output(&output, &candidates, yes)?;
         return Ok(());
     }
 
@@ -90,7 +112,7 @@ pub fn handle_config_update(yes: bool, output: Option<PathBuf>) -> anyhow::Resul
         })?;
         if current != candidate.original {
             bail!(cformat!(
-                "{} changed @ <bold>{}</> since the preview; re-run <bold>wt config update</> to migrate the current contents",
+                "{} changed @ <bold>{}</> since the preview; to migrate the current contents, re-run <bold>wt config update</>",
                 candidate.info.label(),
                 format_path_for_display(&candidate.config_path)
             ));
@@ -120,7 +142,7 @@ pub fn handle_config_update(yes: bool, output: Option<PathBuf>) -> anyhow::Resul
             );
         }
 
-        worktrunk::utils::write_atomically(&candidate.config_path, &candidate.migrated)
+        write_atomically(&candidate.config_path, &candidate.migrated)
             .with_context(|| format!("Failed to update {}", candidate.info.label()))?;
         eprintln!(
             "{}",
@@ -137,8 +159,21 @@ pub fn handle_config_update(yes: bool, output: Option<PathBuf>) -> anyhow::Resul
 /// paths rather than one path testing `-` at each step. Stdout labels and
 /// concatenates every candidate and needs no confirmation — the artifact is
 /// right there. A file takes exactly one migration, so the checks below and
-/// the confirmation can name the config it came from.
-fn write_migrated_output(output: &Path, candidates: &[UpdateCandidate]) -> anyhow::Result<()> {
+/// the success line can name the config it came from.
+///
+/// A file destination replaces nothing without consent. The config being
+/// migrated is refused outright: rewriting it is the in-place update's job,
+/// which previews the diff, re-reads the file after the prompt, and moves
+/// `approved-commands` to approvals.toml. Any other existing file is replaced
+/// only after a prompt, which `--yes` answers in advance; with no terminal to
+/// prompt on, the command fails instead. A destination that was absent is
+/// created without clobbering, so a file that appears before the write lands
+/// survives it.
+fn write_migrated_output(
+    output: &Path,
+    candidates: &[UpdateCandidate],
+    yes: bool,
+) -> anyhow::Result<()> {
     if output == Path::new("-") {
         for candidate in candidates {
             eprint!("{}", format_dropped_approvals_warning(candidate));
@@ -154,34 +189,52 @@ fn write_migrated_output(output: &Path, candidates: &[UpdateCandidate]) -> anyho
 
     let [candidate] = candidates else {
         bail!(cformat!(
-            "Cannot write <bold>user config</> and <bold>project config</> migrations to one file; use <bold>--output=-</> to inspect both or run <bold>wt config update</> to apply them in place"
+            "Cannot write <bold>user config</> and <bold>project config</> migrations to one file; to inspect both, use <bold>--output=-</>; to apply them in place, run <bold>wt config update</>"
         ));
     };
 
     let output = resolve_input_path(output);
-    if drops_approved_commands(candidate) && paths_match(&output, &candidate.config_path) {
+    let label = candidate.info.label().to_lowercase();
+    if paths_match(&output, &candidate.config_path) {
         bail!(cformat!(
-            "Cannot overwrite <bold>{}</> with <bold>--output</>; run <bold>wt config update</> to apply the migration in place",
-            candidate.info.label().to_lowercase()
+            "Cannot overwrite <bold>{label}</> with <bold>--output</>; to apply the migration in place, run <bold>wt config update</>"
         ));
     }
+    let display_path = format_path_for_display(&output);
 
-    eprint!("{}", format_dropped_approvals_warning(candidate));
+    let approvals_warning = format_dropped_approvals_warning(candidate);
+    eprint!("{approvals_warning}");
+
+    let replace = output.exists();
+    if replace && !yes {
+        if !std::io::stdin().is_terminal() {
+            bail!(cformat!(
+                "{display_path} already exists; to overwrite it with the {label} migration, add <bold>--yes</>"
+            ));
+        }
+        if !approvals_warning.is_empty() {
+            eprintln!();
+        }
+        let prompt = format!("Overwrite {display_path} with the {label} migration?");
+        match prompt_yes_no_preview(&prompt, || {})? {
+            PromptResponse::Accepted => {}
+            PromptResponse::Declined => {
+                eprintln!("{}", info_message("Update cancelled"));
+                return Ok(());
+            }
+        }
+    }
 
     let artifact = format_migrated_output(candidates);
-    worktrunk::utils::write_atomically(&output, &artifact).with_context(|| {
-        format!(
-            "Failed to write output @ {}",
-            format_path_for_display(&output)
-        )
-    })?;
+    let written = if replace {
+        write_atomically(&output, &artifact)
+    } else {
+        write_new_atomically(&output, &artifact)
+    };
+    written.with_context(|| format!("Failed to write output @ {display_path}"))?;
     eprintln!(
         "{}",
-        success_message(format!(
-            "Wrote {} migration @ {}",
-            candidate.info.label().to_lowercase(),
-            format_path_for_display(&output)
-        ))
+        success_message(format!("Wrote {label} migration @ {display_path}"))
     );
     Ok(())
 }
@@ -216,7 +269,7 @@ fn format_dropped_approvals_warning(candidate: &UpdateCandidate) -> String {
     format!(
         "{}\n",
         warning_message(cformat!(
-            "Output omits deprecated <bold>approved-commands</>; run <underline>wt config update</> to migrate them to approvals.toml"
+            "Output omits deprecated <bold>approved-commands</>; to migrate them to approvals.toml, run <bold>wt config update</>"
         ))
     )
 }
@@ -244,10 +297,11 @@ fn format_update_preview(candidate: &UpdateCandidate) -> String {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "config".to_string());
-    if let Some(diff) = format_migration_diff(&candidate.original, &candidate.migrated, &label) {
-        let _ = writeln!(out, "{}", info_message("Proposed diff:"));
-        let _ = writeln!(out, "{diff}");
-    }
+    out.push_str(&format_migration_diff_block(
+        &candidate.original,
+        &candidate.migrated,
+        &label,
+    ));
     out
 }
 
@@ -275,13 +329,7 @@ fn check_user_config() -> anyhow::Result<Option<UpdateCandidate>> {
         return Ok(None);
     };
 
-    let migrated = compute_migrated_content(&original);
-    Ok(Some(UpdateCandidate {
-        config_path,
-        original,
-        migrated,
-        info,
-    }))
+    UpdateCandidate::new(config_path, original, info).map(Some)
 }
 
 fn check_project_config(read_only: bool) -> anyhow::Result<Option<UpdateCandidate>> {
@@ -324,11 +372,5 @@ fn check_project_config(read_only: bool) -> anyhow::Result<Option<UpdateCandidat
         return Ok(None);
     }
 
-    let migrated = compute_migrated_content(&original);
-    Ok(Some(UpdateCandidate {
-        config_path,
-        original,
-        migrated,
-        info,
-    }))
+    UpdateCandidate::new(config_path, original, info).map(Some)
 }

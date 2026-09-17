@@ -44,26 +44,27 @@ use commands::worktree::{PushKind, PushOutcome, PushResult, handle_no_ff_merge, 
 use commands::{
     HookCliArgs, MergeFlagOverrides, MergeOptions, RebaseResult, SquashResult, add_approvals,
     clear_approvals, flag_pair, handle_alias_dry_run, handle_alias_show, handle_cache_clear,
-    handle_cache_get, handle_claude_install, handle_claude_install_statusline,
-    handle_claude_uninstall, handle_codex_install, handle_codex_uninstall, handle_completions,
-    handle_config_create, handle_config_show, handle_config_update, handle_configure_shell,
-    handle_custom_command, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
-    handle_list, handle_logs_list, handle_logs_profile, handle_merge, handle_opencode_install,
-    handle_opencode_uninstall, handle_pi_install, handle_pi_uninstall, handle_promote,
-    handle_rebase, handle_remove_command, handle_show_theme, handle_squash, handle_state_clear,
-    handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show,
-    handle_switch_command, handle_unconfigure_shell, handle_vars_clear, handle_vars_get,
-    handle_vars_list, handle_vars_set, list_approvals, run_hook, step_commit, step_copy_ignored,
-    step_diff, step_eval, step_for_each, step_prune, step_relocate, step_tether,
+    handle_cache_get, handle_claude_approve_enter_worktree, handle_claude_install,
+    handle_claude_install_statusline, handle_claude_uninstall, handle_codex_install,
+    handle_codex_uninstall, handle_completions, handle_config_create, handle_config_show,
+    handle_config_update, handle_configure_shell, handle_custom_command, handle_hints_clear,
+    handle_hints_get, handle_hook_show, handle_init, handle_list, handle_logs_list,
+    handle_logs_profile, handle_merge, handle_omp_install, handle_omp_uninstall,
+    handle_opencode_install, handle_opencode_uninstall, handle_pi_install, handle_pi_uninstall,
+    handle_promote, handle_rebase, handle_remove_command, handle_show_theme, handle_squash,
+    handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
+    handle_state_show, handle_switch_command, handle_unconfigure_shell, handle_vars_clear,
+    handle_vars_get, handle_vars_list, handle_vars_set, list_approvals, run_hook, step_commit,
+    step_copy_ignored, step_diff, step_eval, step_for_each, step_prune, step_relocate, step_tether,
 };
 
 use cli::{
     ApprovalsCommand, CacheAction, CiStatusAction, Cli, Commands, ConfigAliasCommand,
     ConfigCommand, ConfigPluginsClaudeCommand, ConfigPluginsCodexCommand, ConfigPluginsCommand,
-    ConfigPluginsOpencodeCommand, ConfigPluginsPiCommand, ConfigShellCommand, DefaultBranchAction,
-    GlobalFormatFlag, HintsAction, HookCommand, HookOptions, ListArgs, ListSubcommand, LogsAction,
-    MarkerAction, MergeArgs, PreviousBranchAction, StateCommand, StateWrite, StepCommand,
-    SwitchFormat, VarsAction,
+    ConfigPluginsOmpCommand, ConfigPluginsOpencodeCommand, ConfigPluginsPiCommand,
+    ConfigShellCommand, DefaultBranchAction, GlobalFormatFlag, HintsAction, HookCommand,
+    HookOptions, ListArgs, ListSubcommand, LogsAction, MarkerAction, MergeArgs,
+    PreviousBranchAction, StateCommand, StateWrite, StepCommand, SwitchFormat, VarsAction,
 };
 
 /// Render a clap error to stderr, appending a wt-specific nested-subcommand
@@ -660,10 +661,17 @@ fn handle_plugins_command(action: ConfigPluginsCommand, yes: bool) -> anyhow::Re
             ConfigPluginsClaudeCommand::Install => handle_claude_install(yes),
             ConfigPluginsClaudeCommand::Uninstall => handle_claude_uninstall(yes),
             ConfigPluginsClaudeCommand::InstallStatusline => handle_claude_install_statusline(yes),
+            ConfigPluginsClaudeCommand::ApproveEnterWorktree => {
+                handle_claude_approve_enter_worktree()
+            }
         },
         ConfigPluginsCommand::Codex { action } => match action {
             ConfigPluginsCodexCommand::Install => handle_codex_install(yes),
             ConfigPluginsCodexCommand::Uninstall => handle_codex_uninstall(yes),
+        },
+        ConfigPluginsCommand::Omp { action } => match action {
+            ConfigPluginsOmpCommand::Install => handle_omp_install(yes),
+            ConfigPluginsOmpCommand::Uninstall => handle_omp_uninstall(yes),
         },
         ConfigPluginsCommand::Opencode { action } => match action {
             ConfigPluginsOpencodeCommand::Install => handle_opencode_install(yes),

@@ -1731,6 +1731,14 @@ impl Repository {
         self.config_bool("core.bare")
     }
 
+    /// Whether `commit.gpgSign` asks for signed commits.
+    ///
+    /// `git commit` and `git merge` honor it; `git commit-tree` ignores it, so
+    /// a commit meant to match what porcelain would record passes `-S` itself.
+    pub fn signs_commits(&self) -> anyhow::Result<bool> {
+        self.config_bool("commit.gpgSign")
+    }
+
     /// Get the sparse checkout paths for this repository.
     ///
     /// Returns the list of paths from `git sparse-checkout list`. For non-sparse
@@ -1931,14 +1939,14 @@ impl Repository {
     /// Run a git command and return whether it succeeded (exit code 0).
     ///
     /// This is useful for commands that use exit codes for boolean results,
-    /// like `git merge-base --is-ancestor` or `git diff --quiet`.
+    /// like `git merge-base --is-ancestor`.
     ///
     /// # Examples
     /// ```no_run
     /// use worktrunk::git::Repository;
     ///
     /// let repo = Repository::current()?;
-    /// let is_clean = repo.run_command_check(&["diff", "--quiet", "--exit-code"])?;
+    /// let merged = repo.run_command_check(&["merge-base", "--is-ancestor", "feature", "main"])?;
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn run_command_check(&self, args: &[&str]) -> anyhow::Result<bool> {

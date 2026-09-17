@@ -1324,6 +1324,43 @@ fn test_unknown_project_key_warning_during_load(repo: TestRepo, temp_home: TempD
     );
 }
 
+/// The load-time unknown-field warning fires from a linked worktree too.
+///
+/// `[merge]` in project config is ignored at runtime, and the warning is the
+/// only thing that says so. Suppressing it outside the primary worktree hid it
+/// from exactly the commands the keys govern — `wt merge` runs from the
+/// feature worktree — so a repo's merge policy diverged silently between a
+/// machine carrying the `[projects."<id>"]` entry and a fresh checkout (#4144).
+#[rstest]
+fn test_misplaced_project_key_warns_from_linked_worktree(mut repo: TestRepo, temp_home: TempDir) {
+    let feature_wt = repo.add_worktree("feature");
+
+    // `[merge]` is user-config-only, so project config ignores it entirely.
+    let config_dir = feature_wt.join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        "[merge]\nsquash = false\nff = false\n",
+    )
+    .unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.arg("list").current_dir(&feature_wt);
+    set_temp_home_env(&mut cmd, temp_home.path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "Command should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("belongs in user config"),
+        "Expected misplaced-key warning from a linked worktree, got: {stderr}"
+    );
+}
+
 /// Tests that when a user-config-only key (commit-generation) appears in project config,
 /// the warning suggests moving it to user config.
 #[rstest]
@@ -2072,9 +2109,12 @@ fn test_deprecated_project_config_silent_in_linked_worktree(
         .iter()
         .find(|hook| hook["source"] == "project" && hook["type"] == "pre-start")
         .expect("linked-worktree project hook should be listed");
+    // The linked-worktree gate silences the warning, not the migration: the
+    // retired name is rewritten before serde parses, here as everywhere, since
+    // nothing would resolve it at render time.
     assert_eq!(
         project_hook["template"],
-        "echo linked-project-hook {{ main_worktree }}"
+        "echo linked-project-hook {{ repo }}"
     );
     assert!(
         !(stderr.contains("Project config")
@@ -2409,9 +2449,9 @@ fn test_config_show_opencode_plugin_outdated(mut repo: TestRepo, temp_home: Temp
 
 #[rstest]
 #[case(None, "Plugin not installed")]
-#[case(Some("// outdated plugin content\n"), "Plugin outdated")]
-#[case(Some(include_str!("../../dev/pi-plugin.ts")), "Plugin installed")]
-fn test_config_show_pi_plugin_status(
+#[case(Some("// outdated hook content\n"), "Plugin outdated")]
+#[case(Some(include_str!("../../dev/omp-hook.ts")), "Plugin installed")]
+fn test_config_show_omp_hook_status(
     mut repo: TestRepo,
     temp_home: TempDir,
     #[case] plugin_content: Option<&str>,
@@ -2432,16 +2472,78 @@ fn test_config_show_pi_plugin_status(
     cmd.args(["config", "show"]).current_dir(repo.root_path());
     set_temp_home_env(&mut cmd, temp_home.path());
     set_xdg_config_path(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_TEST_OMP_INSTALLED", "1");
+    cmd.env("WORKTRUNK_TEST_PI_INSTALLED", "0");
+
+    let output = cmd.output().expect("config show should run");
+    assert!(output.status.success(), "config show failed: {output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("OH-MY-PI"),
+        "missing oh-my-pi section: {stdout}"
+    );
+    assert!(
+        stdout.contains(expected_status),
+        "missing oh-my-pi status: {stdout}"
+    );
+    // Installed is the one state with nothing to do, so it carries no hint.
+    if expected_status != "Plugin installed" {
+        assert!(
+            stdout.contains("wt config plugins omp install"),
+            "missing oh-my-pi install hint: {stdout}"
+        );
+    }
+}
+
+#[rstest]
+#[case(None, "Plugin not installed")]
+#[case(Some("// outdated extension content\n"), "Plugin outdated")]
+#[case(Some(include_str!("../../dev/pi-extension.ts")), "Plugin installed")]
+fn test_config_show_pi_extension_status(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+    #[case] plugin_content: Option<&str>,
+    #[case] expected_status: &str,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    let plugin_path = temp_home.path().join(".pi/agent/extensions/worktrunk.ts");
+    if let Some(content) = plugin_content {
+        fs::create_dir_all(plugin_path.parent().unwrap()).unwrap();
+        fs::write(&plugin_path, content).unwrap();
+    }
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(global_config_dir.join("config.toml"), "").unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["config", "show"]).current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    set_xdg_config_path(&mut cmd, temp_home.path());
     cmd.env("WORKTRUNK_TEST_PI_INSTALLED", "1");
+    // Each Pi-family section renders from its own agent, so pin the other
+    // off rather than leaving it to the developer's PATH.
+    cmd.env("WORKTRUNK_TEST_OMP_INSTALLED", "0");
 
     let output = cmd.output().expect("config show should run");
     assert!(output.status.success(), "config show failed: {output:?}");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("PI"), "missing Pi section: {stdout}");
     assert!(
+        !stdout.contains("OH-MY-PI"),
+        "oh-my-pi section should not render: {stdout}"
+    );
+    assert!(
         stdout.contains(expected_status),
         "missing Pi status: {stdout}"
     );
+    // Installed is the one state with nothing to do, so it carries no hint.
+    if expected_status != "Plugin installed" {
+        assert!(
+            stdout.contains("wt config plugins pi install"),
+            "missing Pi install hint: {stdout}"
+        );
+    }
 }
 
 #[rstest]
@@ -2754,6 +2856,55 @@ fn test_opencode_install_treats_empty_config_dir_as_unset(temp_home: TempDir) {
     );
 }
 
+/// A relative `$XDG_CONFIG_HOME` is ignored, as the XDG base directory spec
+/// requires, rather than resolved against the invocation directory.
+///
+/// Regression guard for the same shape as the empty `OPENCODE_CONFIG_DIR`
+/// above, one rung down the precedence: `$XDG_CONFIG_HOME` filtered only the
+/// empty string, so `XDG_CONFIG_HOME=relative-config` made the install target
+/// `relative-config/opencode/plugins/worktrunk.ts` — written under whatever
+/// directory `wt` was run from, and read back from there by
+/// `is_plugin_installed()`, so the install reported success while OpenCode
+/// never saw the plugin.
+///
+/// Out-of-process, so `.env()` sets the child's environment and this races
+/// nothing else in the binary.
+#[rstest]
+fn test_opencode_install_ignores_relative_xdg_config_home(temp_home: TempDir) {
+    let run_dir = temp_home.path().join("run-from-here");
+    fs::create_dir_all(&run_dir).unwrap();
+
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env_remove("OPENCODE_CONFIG_DIR");
+    cmd.env("XDG_CONFIG_HOME", "relative-config");
+    cmd.current_dir(&run_dir);
+    cmd.args(["config", "plugins", "opencode", "install", "--yes"]);
+
+    let output = cmd.output().expect("install command should run");
+    assert!(
+        output.status.success(),
+        "install failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let canonical_home =
+        crate::common::canonicalize(temp_home.path()).unwrap_or_else(|_| temp_home.path().into());
+    // The relative value is discarded, so the `$HOME/.config/opencode` default
+    // applies — the same target the unset case reaches.
+    let plugin_path = canonical_home.join(".config/opencode/plugins/worktrunk.ts");
+    assert!(
+        plugin_path.exists(),
+        "Plugin should fall through to $HOME/.config, but not found at: {}",
+        plugin_path.display(),
+    );
+    assert!(
+        !run_dir.join("relative-config").exists(),
+        "Plugin must not be written relative to the invocation directory"
+    );
+}
+
 /// Install prompt declined (no `--yes`, piped stdin → empty → declined).
 /// Exercises the `return Ok(())` branch at lines 83-84 of opencode.rs.
 #[rstest]
@@ -2805,17 +2956,17 @@ fn test_opencode_uninstall_prompt_declined(temp_home: TempDir) {
 }
 
 // =============================================================================
-// Pi plugin install/uninstall
+// oh-my-pi hook install/uninstall
 // =============================================================================
 
 #[rstest]
-fn test_pi_install_creates_profile_aware_hook(temp_home: TempDir) {
+fn test_omp_install_creates_profile_aware_hook(temp_home: TempDir) {
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("OMP_PROFILE", "research");
-        cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+        cmd.args(["config", "plugins", "omp", "install", "--yes"]);
 
         assert_cmd_snapshot!(cmd);
     });
@@ -2823,19 +2974,19 @@ fn test_pi_install_creates_profile_aware_hook(temp_home: TempDir) {
     let canonical_home =
         crate::common::canonicalize(temp_home.path()).unwrap_or_else(|_| temp_home.path().into());
     let plugin_path = canonical_home.join(".omp/profiles/research/agent/hooks/pre/worktrunk.ts");
-    let content = fs::read_to_string(&plugin_path).expect("Pi hook should be installed");
+    let content = fs::read_to_string(&plugin_path).expect("oh-my-pi hook should be installed");
     assert!(content.contains("agent_start"));
     assert!(content.contains("agent_end"));
     assert!(content.contains("session_shutdown"));
 }
 
 #[rstest]
-fn test_pi_install_honors_agent_dir_override(temp_home: TempDir) {
-    let agent_dir = temp_home.path().join("custom-pi-agent");
+fn test_omp_install_honors_agent_dir_override(temp_home: TempDir) {
+    let agent_dir = temp_home.path().join("custom-omp-agent");
     let mut cmd = wt_command();
     set_temp_home_env(&mut cmd, temp_home.path());
     cmd.env("PI_CODING_AGENT_DIR", &agent_dir);
-    cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+    cmd.args(["config", "plugins", "omp", "install", "--yes"]);
 
     let output = cmd.output().expect("install command should run");
     assert!(
@@ -2848,13 +2999,13 @@ fn test_pi_install_honors_agent_dir_override(temp_home: TempDir) {
 }
 
 #[rstest]
-fn test_pi_named_profile_ignores_agent_dir_override(temp_home: TempDir) {
-    let agent_dir = temp_home.path().join("custom-pi-agent");
+fn test_omp_named_profile_ignores_agent_dir_override(temp_home: TempDir) {
+    let agent_dir = temp_home.path().join("custom-omp-agent");
     let mut cmd = wt_command();
     set_temp_home_env(&mut cmd, temp_home.path());
     cmd.env("OMP_PROFILE", "research");
     cmd.env("PI_CODING_AGENT_DIR", &agent_dir);
-    cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+    cmd.args(["config", "plugins", "omp", "install", "--yes"]);
 
     let output = cmd.output().expect("install command should run");
     assert!(output.status.success(), "install failed: {output:?}");
@@ -2868,13 +3019,13 @@ fn test_pi_named_profile_ignores_agent_dir_override(temp_home: TempDir) {
 }
 
 #[rstest]
-fn test_pi_install_honors_pi_profile_and_config_dir(temp_home: TempDir) {
+fn test_omp_install_honors_profile_and_config_dir(temp_home: TempDir) {
     let mut cmd = wt_command();
     set_temp_home_env(&mut cmd, temp_home.path());
     cmd.env_remove("OMP_PROFILE");
     cmd.env("PI_PROFILE", "research");
     cmd.env("PI_CONFIG_DIR", ".pi-config");
-    cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+    cmd.args(["config", "plugins", "omp", "install", "--yes"]);
 
     let output = cmd.output().expect("install command should run");
     assert!(output.status.success(), "install failed: {output:?}");
@@ -2887,6 +3038,168 @@ fn test_pi_install_honors_pi_profile_and_config_dir(temp_home: TempDir) {
 }
 
 #[rstest]
+fn test_omp_install_is_idempotent(temp_home: TempDir) {
+    for _ in 0..2 {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.args(["config", "plugins", "omp", "install", "--yes"]);
+        let output = cmd.output().expect("install command should run");
+        assert!(output.status.success(), "install failed: {output:?}");
+    }
+
+    let plugin_path = temp_home.path().join(".omp/agent/hooks/pre/worktrunk.ts");
+    assert_eq!(
+        fs::read_to_string(plugin_path).unwrap(),
+        include_str!("../../dev/omp-hook.ts")
+    );
+}
+
+#[rstest]
+fn test_omp_install_prompt_declined(temp_home: TempDir) {
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.args(["config", "plugins", "omp", "install"]);
+
+    let output = cmd.output().expect("install command should run");
+    assert!(output.status.success(), "install failed: {output:?}");
+    assert!(
+        !temp_home
+            .path()
+            .join(".omp/agent/hooks/pre/worktrunk.ts")
+            .exists()
+    );
+}
+
+#[rstest]
+fn test_omp_uninstall_removes_hook(temp_home: TempDir) {
+    let agent_dir = temp_home.path().join(".omp/agent");
+    let plugin_path = agent_dir.join("hooks/pre/worktrunk.ts");
+    fs::create_dir_all(plugin_path.parent().unwrap()).unwrap();
+    fs::write(&plugin_path, include_str!("../../dev/omp-hook.ts")).unwrap();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.args(["config", "plugins", "omp", "uninstall", "--yes"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    assert!(!plugin_path.exists());
+}
+
+#[rstest]
+fn test_omp_uninstall_missing_is_a_no_op(temp_home: TempDir) {
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.args(["config", "plugins", "omp", "uninstall", "--yes"]);
+
+    let output = cmd.output().expect("uninstall command should run");
+    assert!(output.status.success(), "uninstall failed: {output:?}");
+}
+
+#[rstest]
+fn test_omp_uninstall_prompt_declined(temp_home: TempDir) {
+    let plugin_path = temp_home.path().join(".omp/agent/hooks/pre/worktrunk.ts");
+    fs::create_dir_all(plugin_path.parent().unwrap()).unwrap();
+    fs::write(&plugin_path, include_str!("../../dev/omp-hook.ts")).unwrap();
+
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.args(["config", "plugins", "omp", "uninstall"]);
+
+    let output = cmd.output().expect("uninstall command should run");
+    assert!(output.status.success(), "uninstall failed: {output:?}");
+    assert!(plugin_path.exists());
+}
+
+// =============================================================================
+// Pi extension install/uninstall
+// =============================================================================
+
+#[rstest]
+fn test_pi_install_writes_extension(temp_home: TempDir) {
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        // `pi install` redirects when only oh-my-pi resolves, so pin both
+        // rather than letting the developer's PATH decide this snapshot.
+        cmd.env("WORKTRUNK_TEST_PI_INSTALLED", "1");
+        cmd.env("WORKTRUNK_TEST_OMP_INSTALLED", "0");
+        cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    let canonical_home =
+        crate::common::canonicalize(temp_home.path()).unwrap_or_else(|_| temp_home.path().into());
+    let extension_path = canonical_home.join(".pi/agent/extensions/worktrunk.ts");
+    let content = fs::read_to_string(&extension_path).expect("Pi extension should be installed");
+    assert!(content.contains("@earendil-works/pi-coding-agent"));
+    assert!(content.contains("agent_start"));
+    // `agent_settled`, not `agent_end`: Pi documents the former as the event a
+    // status integration waits for, because it may still auto-retry after the
+    // latter. oh-my-pi's hook API has no equivalent and keeps `agent_end`.
+    assert!(content.contains(r#"pi.on("agent_settled""#));
+    assert!(content.contains("session_shutdown"));
+}
+
+#[rstest]
+fn test_pi_install_honors_agent_dir_override(temp_home: TempDir) {
+    let agent_dir = temp_home.path().join("custom-pi-agent");
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("PI_CODING_AGENT_DIR", &agent_dir);
+    cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+
+    let output = cmd.output().expect("install command should run");
+    assert!(output.status.success(), "install failed: {output:?}");
+    assert!(agent_dir.join("extensions/worktrunk.ts").exists());
+
+    // Pi expands a leading `~` in the override, so a quoted `~/…` lands under
+    // home rather than in a literal `~` directory beneath the cwd.
+    let cwd = tempfile::tempdir().unwrap();
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.current_dir(cwd.path());
+    cmd.env("PI_CODING_AGENT_DIR", "~/tilde-pi-agent");
+    cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+
+    let output = cmd.output().expect("install command should run");
+    assert!(output.status.success(), "install failed: {output:?}");
+    assert!(
+        temp_home
+            .path()
+            .join("tilde-pi-agent/extensions/worktrunk.ts")
+            .exists()
+    );
+    assert!(!cwd.path().join("~").exists());
+}
+
+/// Pi has no profile concept: the oh-my-pi profile variables must not move the
+/// extension into a `profiles/` subtree.
+#[rstest]
+fn test_pi_install_ignores_omp_profile_variables(temp_home: TempDir) {
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("OMP_PROFILE", "research");
+    cmd.env("PI_PROFILE", "research");
+    cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+
+    let output = cmd.output().expect("install command should run");
+    assert!(output.status.success(), "install failed: {output:?}");
+    assert!(
+        temp_home
+            .path()
+            .join(".pi/agent/extensions/worktrunk.ts")
+            .exists()
+    );
+    assert!(!temp_home.path().join(".pi/agent/profiles").exists());
+}
+
+#[rstest]
 fn test_pi_install_is_idempotent(temp_home: TempDir) {
     for _ in 0..2 {
         let mut cmd = wt_command();
@@ -2896,10 +3209,70 @@ fn test_pi_install_is_idempotent(temp_home: TempDir) {
         assert!(output.status.success(), "install failed: {output:?}");
     }
 
-    let plugin_path = temp_home.path().join(".omp/agent/hooks/pre/worktrunk.ts");
+    let extension_path = temp_home.path().join(".pi/agent/extensions/worktrunk.ts");
     assert_eq!(
-        fs::read_to_string(plugin_path).unwrap(),
-        include_str!("../../dev/pi-plugin.ts")
+        fs::read_to_string(extension_path).unwrap(),
+        include_str!("../../dev/pi-extension.ts")
+    );
+}
+
+/// `pi install` meant oh-my-pi until the split, and a stray Pi extension has
+/// no surface in `wt config show` — so the command says so itself when only
+/// oh-my-pi is on PATH.
+#[rstest]
+fn test_pi_install_points_at_omp_when_only_omp_is_on_path(temp_home: TempDir) {
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("WORKTRUNK_TEST_OMP_INSTALLED", "1");
+        cmd.env("WORKTRUNK_TEST_PI_INSTALLED", "0");
+        cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// With Pi itself on PATH the command has nothing to redirect, whatever else
+/// is installed alongside it.
+#[rstest]
+fn test_pi_install_stays_quiet_when_pi_is_on_path(temp_home: TempDir) {
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_TEST_OMP_INSTALLED", "1");
+    cmd.env("WORKTRUNK_TEST_PI_INSTALLED", "1");
+    cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+
+    let output = cmd.output().expect("install command should run");
+    assert!(output.status.success(), "install failed: {output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("wt config plugins omp install"),
+        "unexpected oh-my-pi redirect: {stderr}"
+    );
+}
+
+/// The redirect prints before the install prompt, so the blank line between
+/// them belongs to the prompt. Declined here (no `--yes`, piped stdin → empty),
+/// which is the only path that renders both.
+#[rstest]
+fn test_pi_install_redirect_precedes_the_prompt(temp_home: TempDir) {
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("WORKTRUNK_TEST_OMP_INSTALLED", "1");
+        cmd.env("WORKTRUNK_TEST_PI_INSTALLED", "0");
+        cmd.args(["config", "plugins", "pi", "install"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    assert!(
+        !temp_home
+            .path()
+            .join(".pi/agent/extensions/worktrunk.ts")
+            .exists()
     );
 }
 
@@ -2914,17 +3287,16 @@ fn test_pi_install_prompt_declined(temp_home: TempDir) {
     assert!(
         !temp_home
             .path()
-            .join(".omp/agent/hooks/pre/worktrunk.ts")
+            .join(".pi/agent/extensions/worktrunk.ts")
             .exists()
     );
 }
 
 #[rstest]
-fn test_pi_uninstall_removes_hook(temp_home: TempDir) {
-    let agent_dir = temp_home.path().join(".omp/agent");
-    let plugin_path = agent_dir.join("hooks/pre/worktrunk.ts");
-    fs::create_dir_all(plugin_path.parent().unwrap()).unwrap();
-    fs::write(&plugin_path, include_str!("../../dev/pi-plugin.ts")).unwrap();
+fn test_pi_uninstall_removes_extension(temp_home: TempDir) {
+    let extension_path = temp_home.path().join(".pi/agent/extensions/worktrunk.ts");
+    fs::create_dir_all(extension_path.parent().unwrap()).unwrap();
+    fs::write(&extension_path, include_str!("../../dev/pi-extension.ts")).unwrap();
 
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
@@ -2935,7 +3307,7 @@ fn test_pi_uninstall_removes_hook(temp_home: TempDir) {
         assert_cmd_snapshot!(cmd);
     });
 
-    assert!(!plugin_path.exists());
+    assert!(!extension_path.exists());
 }
 
 #[rstest]
@@ -2948,11 +3320,35 @@ fn test_pi_uninstall_missing_is_a_no_op(temp_home: TempDir) {
     assert!(output.status.success(), "uninstall failed: {output:?}");
 }
 
+/// `pi uninstall` used to remove the oh-my-pi hook, so anyone repeating that
+/// command after the split gets "Plugin not installed" for a hook that is
+/// still there. The hint names the command that removes it.
+#[rstest]
+fn test_pi_uninstall_points_at_omp_when_its_hook_remains(temp_home: TempDir) {
+    let hook_path = temp_home.path().join(".omp/agent/hooks/pre/worktrunk.ts");
+    fs::create_dir_all(hook_path.parent().unwrap()).unwrap();
+    fs::write(&hook_path, include_str!("../../dev/omp-hook.ts")).unwrap();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.args(["config", "plugins", "pi", "uninstall", "--yes"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    assert!(
+        hook_path.exists(),
+        "pi uninstall must not touch the oh-my-pi hook"
+    );
+}
+
 #[rstest]
 fn test_pi_uninstall_prompt_declined(temp_home: TempDir) {
-    let plugin_path = temp_home.path().join(".omp/agent/hooks/pre/worktrunk.ts");
-    fs::create_dir_all(plugin_path.parent().unwrap()).unwrap();
-    fs::write(&plugin_path, include_str!("../../dev/pi-plugin.ts")).unwrap();
+    let extension_path = temp_home.path().join(".pi/agent/extensions/worktrunk.ts");
+    fs::create_dir_all(extension_path.parent().unwrap()).unwrap();
+    fs::write(&extension_path, include_str!("../../dev/pi-extension.ts")).unwrap();
 
     let mut cmd = wt_command();
     set_temp_home_env(&mut cmd, temp_home.path());
@@ -2960,7 +3356,7 @@ fn test_pi_uninstall_prompt_declined(temp_home: TempDir) {
 
     let output = cmd.output().expect("uninstall command should run");
     assert!(output.status.success(), "uninstall failed: {output:?}");
-    assert!(plugin_path.exists());
+    assert!(extension_path.exists());
 }
 
 /// When $SHELL is not set but PSModulePath is, config show should display
@@ -3566,7 +3962,6 @@ fn test_config_update_output_destinations_emit_same_config(repo: TestRepo) {
     assert!(stdout_output.stderr.is_empty());
 
     let destination = repo.root_path().join("migrated.toml");
-    fs::write(&destination, "stale\n").unwrap();
     let file_output = repo
         .wt_command()
         .args(["config", "update", "--output=migrated.toml"])
@@ -3814,19 +4209,17 @@ approved-commands = ["cargo test"]
     );
 }
 
+/// `--output` never rewrites the config it migrates, even with `--yes`: that is
+/// the in-place update's job, which previews the diff and migrates
+/// `approved-commands`.
 #[rstest]
 fn test_config_update_output_rejects_source_path(repo: TestRepo) {
-    let original = r#"[list]
-json-schema = 1
-
-[projects."github.com/user/repo"]
-approved-commands = ["npm test"]
-"#;
+    let original = "worktree-path = \"../{{ main_worktree }}.{{ branch }}\"\n";
     fs::write(repo.test_config_path(), original).unwrap();
 
     let output = repo
         .wt_command()
-        .args(["config", "update", "--output"])
+        .args(["config", "update", "--yes", "--output"])
         .arg(repo.test_config_path())
         .output()
         .unwrap();
@@ -3836,7 +4229,6 @@ approved-commands = ["npm test"]
         fs::read_to_string(repo.test_config_path()).unwrap(),
         original
     );
-    assert!(!repo.test_approvals_path().exists());
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stderr = stderr.ansi_strip();
     assert!(
@@ -3845,24 +4237,59 @@ approved-commands = ["npm test"]
     );
 }
 
+/// An existing destination is overwritten only with `--yes`. Without it, and with
+/// no terminal to prompt on, the command fails and leaves the file as it was —
+/// here the user config, which has nothing to migrate but sits at the path a
+/// project-config migration was sent to.
 #[rstest]
-fn test_config_update_output_can_replace_source_without_approvals(repo: TestRepo) {
-    fs::write(
-        repo.test_config_path(),
-        "worktree-path = \"../{{ main_worktree }}.{{ branch }}\"\n",
-    )
-    .unwrap();
+fn test_config_update_output_overwrites_existing_file_only_with_yes(repo: TestRepo) {
+    let user_config = r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
-    let output = repo
+[aliases]
+hi = "echo hi"
+"#;
+    fs::write(repo.test_config_path(), user_config).unwrap();
+    repo.write_project_config(
+        r#"pre-start = "ln -sf {{ main_worktree }}/node_modules"
+"#,
+    );
+    repo.commit("Add deprecated project config");
+
+    let refused = repo
         .wt_command()
         .args(["config", "update", "--output"])
         .arg(repo.test_config_path())
         .output()
         .unwrap();
+    assert_eq!(refused.status.code(), Some(1));
+    assert_eq!(
+        fs::read_to_string(repo.test_config_path()).unwrap(),
+        user_config
+    );
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    let stderr = stderr.ansi_strip();
+    assert!(
+        stderr.contains(
+            "already exists; to overwrite it with the project config migration, add --yes"
+        ),
+        "stderr:\n{stderr}"
+    );
 
-    assert!(output.status.success());
-    let updated = fs::read_to_string(repo.test_config_path()).unwrap();
-    assert!(updated.contains("{{ repo }}"), "config:\n{updated}");
+    let overwritten = repo
+        .wt_command()
+        .args(["config", "update", "--yes", "--output"])
+        .arg(repo.test_config_path())
+        .output()
+        .unwrap();
+    assert!(
+        overwritten.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&overwritten.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(repo.test_config_path()).unwrap(),
+        "pre-start = \"ln -sf {{ repo }}/node_modules\"\n"
+    );
 }
 
 /// `wt config update` with no deprecated settings reports nothing to do
@@ -5865,6 +6292,146 @@ fn test_worktree_remove_hook_skips_path_holding_no_worktree(mut repo: TestRepo) 
     assert!(!live.exists(), "the hook must remove a real worktree");
 }
 
+/// The plugin's `PermissionRequest` command answers Claude Code's
+/// `EnterWorktree` confirmation for a worktree at worktrunk's managed location
+/// in the repository the payload's `cwd` is in, so a background session doesn't
+/// wait at it (#4149), and otherwise sets the 💬 marker as before (design:
+/// skills/wt-switch-create/rationale.md, "The confirmation hook").
+///
+/// An approval prints the allow decision and leaves the marker unset, since no
+/// dialog waits. Each case that declines differs from an approved one in a
+/// single input — the tool, a worktree off the `worktree-path` template, the
+/// repository of the `cwd` — and must print nothing, so the dialog stays, and
+/// set 💬. The `cwd` pair shares its worktree, which pins that the session's
+/// directory decides. It runs the real command out of `hooks.json`.
+#[cfg(all(unix, feature = "shell-integration-tests"))]
+#[rstest]
+fn test_permission_request_hook_approves_entering_managed_worktrees(mut repo: TestRepo) {
+    use std::io::Write;
+    use std::path::Path;
+    use std::process::Stdio;
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let hooks_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("plugins/worktrunk/hooks/hooks.json")).unwrap(),
+    )
+    .unwrap();
+    let command = hooks_json["hooks"]["PermissionRequest"][0]["hooks"][0]["command"]
+        .as_str()
+        .expect("PermissionRequest hook must define a command")
+        .to_owned();
+
+    let feature = repo.add_worktree("feature");
+    // A symlinked spelling of the same worktree, as macOS `/tmp` is of
+    // `/private/tmp`.
+    let feature_link = repo.home_path().join("feature-link");
+    std::os::unix::fs::symlink(&feature, &feature_link).unwrap();
+    // Registered like any worktree, but not where the template puts its branch.
+    let stray = repo.add_worktree_at_path("stray", &repo.home_path().join("stray"));
+    let mut other = TestRepo::standard();
+    let other_feature = other.add_worktree("other-feature");
+
+    let marker_key = format!("worktrunk.state.{}.marker", repo.current_branch());
+    let marker = || -> String {
+        repo.git_command()
+            .args(["config", "--get", &marker_key])
+            .run()
+            .map_or_else(
+                |_| String::new(),
+                |output| String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+            )
+    };
+
+    // Fire the hook as Claude Code does: the payload on stdin, the plugin root
+    // and the launch project dir in the environment. Returns stdout and the
+    // marker the call left, starting from none.
+    let run_hook = |tool: &str, cwd: &Path, path: &Path| -> (String, String) {
+        let _ = repo
+            .git_command()
+            .args(["config", "--unset", &marker_key])
+            .run();
+        let mut cmd = std::process::Command::new("bash");
+        repo.configure_wt_cmd(&mut cmd);
+        let mut child = cmd
+            .args(["-c", &command])
+            .env("WORKTRUNK_BIN", crate::common::wt_bin())
+            .env("CLAUDE_PLUGIN_ROOT", root.join("plugins/worktrunk"))
+            .env("CLAUDE_PROJECT_DIR", repo.root_path())
+            .current_dir(repo.root_path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn bash");
+        let payload = serde_json::json!({
+            "hook_event_name": "PermissionRequest",
+            "tool_name": tool,
+            "cwd": cwd,
+            "tool_input": { "path": path },
+        });
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(payload.to_string().as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "the hook command must exit 0 for {tool} {}; got {}\nstderr:\n{}",
+            path.display(),
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        (
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            marker(),
+        )
+    };
+
+    for (cwd, path) in [
+        (repo.root_path(), feature.as_path()),
+        (repo.root_path(), feature_link.as_path()),
+        (other.root_path(), other_feature.as_path()),
+    ] {
+        let (stdout, marker) = run_hook("EnterWorktree", cwd, path);
+        let decision: serde_json::Value = serde_json::from_str(&stdout)
+            .unwrap_or_else(|e| panic!("expected an allow decision, got {stdout:?}: {e}"));
+        assert_eq!(
+            decision["hookSpecificOutput"],
+            serde_json::json!({
+                "hookEventName": "PermissionRequest",
+                "decision": { "behavior": "allow" },
+            }),
+            "entering {} from {} must be approved",
+            path.display(),
+            cwd.display()
+        );
+        assert!(
+            marker.is_empty(),
+            "an approved entry shows no dialog, so it must not set the marker; got {marker:?}"
+        );
+    }
+
+    for (tool, cwd, path) in [
+        ("Bash", repo.root_path(), feature.as_path()),
+        ("EnterWorktree", repo.root_path(), stray.as_path()),
+        ("EnterWorktree", repo.root_path(), other_feature.as_path()),
+    ] {
+        let (stdout, marker) = run_hook(tool, cwd, path);
+        assert!(
+            stdout.is_empty(),
+            "{tool} {} must get no decision, leaving the dialog; got {stdout:?}",
+            path.display()
+        );
+        assert!(
+            marker.contains('💬'),
+            "{tool} {} leaves a dialog waiting, so it must set 💬; got {marker:?}",
+            path.display()
+        );
+    }
+}
+
 // ==================== Plugin Install-Statusline Tests ====================
 
 #[rstest]
@@ -7124,4 +7691,58 @@ fn test_project_config_path_env_var_half_anchored_errors(repo: TestRepo) {
             "error should explain the rejected form for {value}; stderr:\n{stderr}"
         );
     }
+}
+
+/// A deprecated config whose migration diff `wt config show` renders.
+const DEPRECATED_CONFIG_FOR_DIFF: &str = r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#;
+
+/// Worktrunk renders its own migration patch, so a user's `diff.external`
+/// program must not be consulted — a broken or interactive one would otherwise
+/// replace or suppress the proposed diff.
+#[rstest]
+fn test_config_show_migration_diff_ignores_external_diff(repo: TestRepo) {
+    fs::write(repo.test_config_path(), DEPRECATED_CONFIG_FOR_DIFF).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "show"])
+        // Appended to the hermetic test git config (keys 0 and 1).
+        .env("GIT_CONFIG_COUNT", "3")
+        .env("GIT_CONFIG_KEY_2", "diff.external")
+        .env("GIT_CONFIG_VALUE_2", "wt-nonexistent-external-diff")
+        .output()
+        .unwrap();
+
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let stdout = raw.ansi_strip();
+    assert!(
+        stdout.contains("Proposed diff:") && stdout.contains("{{ repo }}"),
+        "expected the migration patch, got:\n{stdout}"
+    );
+}
+
+/// A `git diff --no-index` that fails outright must not read as "no changes":
+/// the preview says so instead of silently dropping the patch.
+#[rstest]
+fn test_config_show_reports_failed_migration_diff(repo: TestRepo) {
+    fs::write(repo.test_config_path(), DEPRECATED_CONFIG_FOR_DIFF).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "show"])
+        // An unparsable `diff.*` value fails git after option parsing, which
+        // `--no-ext-diff` cannot prevent.
+        .env("GIT_CONFIG_COUNT", "3")
+        .env("GIT_CONFIG_KEY_2", "diff.algorithm")
+        .env("GIT_CONFIG_VALUE_2", "wt-nonexistent-diff-algorithm")
+        .output()
+        .unwrap();
+
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let stdout = raw.ansi_strip();
+    assert!(
+        stdout.contains("Could not render the proposed diff"),
+        "expected the failure to be reported, got:\n{stdout}"
+    );
 }

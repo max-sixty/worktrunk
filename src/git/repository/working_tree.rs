@@ -13,7 +13,7 @@ use crate::shell_exec::Cmd;
 use dunce::canonicalize;
 
 use super::{GitError, LineDiff, Repository};
-use crate::git::CommandError;
+use crate::git::{CommandError, PlumbingDiff};
 
 const TEMP_INDEX_PREFIX: &str = "worktrunk-temp-index-";
 
@@ -483,6 +483,18 @@ impl<'a> WorkingTree<'a> {
             .filter(|s| !s.is_empty()))
     }
 
+    /// The tree-ish the index is compared against for staged changes: HEAD,
+    /// or the empty tree on an unborn branch.
+    ///
+    /// Porcelain `git diff --cached` picks this itself; plumbing
+    /// (`diff-index --cached`) needs it spelled out.
+    pub fn index_base(&self) -> anyhow::Result<String> {
+        match self.head_sha()? {
+            Some(head) => Ok(head),
+            None => Ok(self.repo.empty_tree_sha()?.to_string()),
+        }
+    }
+
     /// Return cached `git status --porcelain` output for this worktree.
     ///
     /// Keyed by worktree path in the shared `RepoCache`, so parallel tasks that
@@ -678,7 +690,7 @@ impl<'a> WorkingTree<'a> {
     /// all.
     pub fn unmerged_paths(&self) -> anyhow::Result<Vec<String>> {
         let output = self
-            .run_command(&["diff", "--name-only", "--diff-filter=U", "-z"])
+            .run_command(&PlumbingDiff::Files.args(&["--name-only", "--diff-filter=U", "-z"]))
             .context("Failed to list unmerged paths")?;
         Ok(output
             .split('\0')
@@ -873,13 +885,18 @@ impl<'a> WorkingTree<'a> {
 
     /// Get line diff statistics for working tree changes (unstaged + staged).
     pub fn working_tree_diff_stats(&self) -> anyhow::Result<LineDiff> {
-        let stdout = self.run_command(&["diff", "--shortstat", "--find-renames", "HEAD"])?;
+        let stdout = self.run_command(&PlumbingDiff::Index.args(&[
+            "--shortstat",
+            "--find-renames",
+            "HEAD",
+            "--",
+        ]))?;
         Ok(LineDiff::from_shortstat(&stdout))
     }
 
     /// Working-tree diff stats vs HEAD that also count untracked files.
-    /// The scope matches `wt step diff`; explicit rename detection keeps
-    /// `HEAD±` stable across user Git configuration.
+    /// The scope matches `wt step diff`. Plumbing ignores the user's diff
+    /// configuration, and explicit rename detection pairs moves.
     ///
     /// Untracked paths enter a temporary index as intent-to-add entries, which
     /// lets one diff pair them with tracked deletions as renames without writing
@@ -897,14 +914,14 @@ impl<'a> WorkingTree<'a> {
             return self.working_tree_diff_stats();
         }
 
-        let numstat_args = [
-            "diff",
+        let numstat_args = PlumbingDiff::Index.args(&[
             "--numstat",
             "-z",
             "--find-renames",
             "--end-of-options",
             "HEAD",
-        ];
+            "--",
+        ]);
         let tracked_output = self.run_command_output(&numstat_args)?;
         if !tracked_output.status.success() {
             return Err(
@@ -1772,7 +1789,7 @@ mod tests {
         assert!(
             cmd_err
                 .command_string()
-                .starts_with("git diff --numstat -z --find-renames --end-of-options HEAD")
+                .starts_with("git diff-index --ignore-submodules=none --numstat -z --find-renames --end-of-options HEAD")
         );
     }
 

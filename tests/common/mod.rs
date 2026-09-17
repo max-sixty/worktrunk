@@ -1325,6 +1325,31 @@ pub fn add_pty_filters(settings: &mut insta::Settings) {
     // macOS PTYs emit ^D (literal caret-D) followed by backspaces (0x08)
     // when EOF is signaled. Linux PTYs don't. Strip these for consistency.
     settings.add_filter(r"\^D\x08+", "");
+
+    // An interactive shell puts each child it forks into its own process
+    // group, and reports a failed `setpgid` on its own stderr:
+    //
+    //     bash: child setpgid (42242 to 42242): Operation not permitted
+    //
+    // Whether that call loses its race with the child's own `setpgid`/exec is
+    // up to host scheduling, so the line appears in a handful of runs and in
+    // none of the others (observed once on macOS CI, actions/runs/35065804093).
+    // It is the shell describing its own job-control bookkeeping, not anything
+    // `wt` wrote, and the bash arm of the wrapper harness folds stderr into
+    // stdout (`exec 2>&1`) so that leaked job-control *notifications* are
+    // visible to tests — those stay visible, since `assert_no_job_control_messages`
+    // matches the `[1] 12345` / `[1]+ Done` shape this filter does not touch.
+    //
+    // The shell writes the line whenever the race resolves, so it need not
+    // start a line: it has also landed straight after the capture's trailing
+    // `\x1b[0m`, with no newline between (macOS CI, actions/runs/35132033122).
+    // The pattern therefore starts at a line start or right after an SGR
+    // escape, and keeps the escape. A bare unanchored `\w+` would instead eat
+    // the tail of whatever word preceded the shell's name.
+    settings.add_filter(
+        r"(?m)(^|\x1b\[[0-9;]*m)\w+: child setpgid \(\d+ to \d+\): [^\n]*\n?",
+        "$1",
+    );
 }
 
 /// Add filters for binary paths (target/debug/wt) in PTY output.
@@ -1352,11 +1377,41 @@ pub fn add_pty_binary_path_filters(settings: &mut insta::Settings) {
 // Tests
 // =============================================================================
 
+/// PTY capture carrying a shell's failed-`setpgid` diagnostic alongside the
+/// job-control notifications the wrapper tests assert on — once at a line
+/// start, and once appended to the capture's trailing SGR reset.
+#[cfg(test)]
+const SETPGID_NOISE_SAMPLE: &str = "bash: child setpgid (42242 to 42242): Operation not permitted
+[1] 42243
+Switched to worktree for feature-api
+[1]+ Done                    wt hook post-start
+\x1b[0mbash: child setpgid (64019 to 64019): Operation not permitted
+";
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use insta::assert_snapshot;
     use rstest::rstest;
+
+    /// A shell's own failed-`setpgid` diagnostic is host scheduling noise that
+    /// lands in the middle of a PTY snapshot, while the job-control
+    /// *notifications* the wrapper tests watch for must survive the filters.
+    #[test]
+    fn pty_filters_drop_the_setpgid_diagnostic_but_keep_job_control_notices() {
+        let mut settings = insta::Settings::clone_current();
+        add_pty_filters(&mut settings);
+        // Runs after the PTY filters, so it shows the reset they must keep.
+        settings.add_filter(r"\x1b\[0m", "[RESET]");
+        settings.bind(|| {
+            assert_snapshot!(SETPGID_NOISE_SAMPLE, @r"
+            [1] 42243
+            Switched to worktree for feature-api
+            [1]+ Done                    wt hook post-start
+            [RESET]
+            ");
+        });
+    }
 
     /// The uplifted `target/debug/wt` is removed and recreated by any
     /// concurrent `cargo build`, so the suite spawns a pinned hardlink

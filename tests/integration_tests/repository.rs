@@ -3,8 +3,10 @@
 use std::fs;
 use std::path::Path;
 
-use worktrunk::git::{InProgressOperation, RefType, Repository};
+use path_slash::PathExt as _;
+use worktrunk::git::{InProgressOperation, PlumbingDiff, RefType, Repository};
 
+use crate::common::source_scan::visit_files;
 use crate::common::{BareRepoTest, TestRepo};
 
 // =============================================================================
@@ -1206,6 +1208,88 @@ fn test_sparse_checkout_paths_cached() {
     assert_eq!(first, &["dir1".to_string()]);
 }
 
+/// `submodule.<name>.ignore = all` hides gitlink changes even from plumbing,
+/// so the diffs `wt` reads override it: a branch that only moves a submodule
+/// still has changes.
+#[test]
+fn test_submodule_bump_survives_submodule_ignore() {
+    let repo = TestRepo::new();
+    fs::write(
+        repo.root_path().join(".gitmodules"),
+        "[submodule \"sub\"]\n\tpath = sub\n\turl = ./sub\n",
+    )
+    .unwrap();
+    repo.run_git(&["add", ".gitmodules"]);
+    repo.run_git(&["commit", "--message", "add .gitmodules"]);
+    let first = repo.git_output(&["rev-parse", "HEAD"]);
+    let gitlink = |sha: &str| format!("160000,{sha},sub");
+    repo.run_git(&["update-index", "--add", "--cacheinfo", &gitlink(&first)]);
+    repo.run_git(&["commit", "--message", "add submodule"]);
+    repo.run_git(&["switch", "--create", "feature"]);
+    let second = repo.git_output(&["rev-parse", "HEAD"]);
+    repo.run_git(&["update-index", "--cacheinfo", &gitlink(&second)]);
+    repo.run_git(&["commit", "--message", "bump submodule"]);
+    repo.run_git(&["switch", "main"]);
+    repo.run_git(&["config", "submodule.sub.ignore", "all"]);
+    let main_sha = repo.git_output(&["rev-parse", "main"]);
+    let feature_sha = repo.git_output(&["rev-parse", "feature"]);
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+
+    assert!(
+        repository
+            .has_added_changes_by_sha(&feature_sha, &main_sha)
+            .unwrap()
+    );
+    assert_eq!(
+        repository.changed_files(&main_sha, &feature_sha).unwrap(),
+        ["sub"]
+    );
+    let stats = repository.branch_diff_stats("main", "feature").unwrap();
+    assert_eq!((stats.added, stats.deleted), (1, 1));
+    assert!(
+        repository
+            .prepare_diff(&main_sha, &feature_sha)
+            .capture(["--name-only"])
+            .unwrap()
+            .contains("sub")
+    );
+}
+
+/// `PlumbingDiff::args` is the one place that spells a plumbing diff command,
+/// so no diff under `src/` or `tests/` can skip its submodule override. The
+/// needles come from `PlumbingDiff` too, so this guard spells none of them.
+#[test]
+fn test_plumbing_diffs_are_built_by_plumbing_diff() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let builder = root.join("src").join("git").join("diff.rs");
+    let needles = [PlumbingDiff::Tree, PlumbingDiff::Index, PlumbingDiff::Files]
+        .map(|diff| format!("\"{}\"", diff.args(&[])[0]));
+    let mut offenders = Vec::new();
+    for dir in ["src", "tests"] {
+        let scanned = visit_files(
+            &root.join(dir),
+            "rs",
+            "plumbing-diff scan",
+            &mut |path, contents| {
+                for needle in &needles {
+                    if path != builder && contents.contains(needle.as_str()) {
+                        let relative = path.strip_prefix(root).unwrap().to_slash_lossy();
+                        offenders.push(format!("{relative} spells {needle}"));
+                    }
+                }
+            },
+        );
+        assert!(
+            scanned > 0,
+            "the plumbing-diff scan read no files under {dir}"
+        );
+    }
+    assert!(
+        offenders.is_empty(),
+        "build these with PlumbingDiff::args: {offenders:#?}"
+    );
+}
+
 #[test]
 fn test_branch_diff_stats_scoped_to_sparse_checkout() {
     let repo = TestRepo::new();
@@ -1239,6 +1323,18 @@ fn test_branch_diff_stats_scoped_to_sparse_checkout() {
     // inside/file.txt: "base content\n" → "modified inside\nadded line\n" = 2 added, 1 deleted
     assert_eq!(stats.added, 2, "sparse: only inside/ additions");
     assert_eq!(stats.deleted, 1, "sparse: only inside/ deletions");
+
+    // The sparse paths are root-relative, so discovery from a subdirectory
+    // counts the same changes.
+    let nested_stats = Repository::at(inside.clone())
+        .unwrap()
+        .branch_diff_stats("main", "feature")
+        .unwrap();
+    assert_eq!(
+        (nested_stats.added, nested_stats.deleted),
+        (2, 1),
+        "sparse: discovered from inside/"
+    );
 
     // Disable sparse checkout — full stats include both inside/ and outside/
     repo.run_git(&["sparse-checkout", "disable"]);

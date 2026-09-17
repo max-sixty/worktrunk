@@ -276,7 +276,7 @@ MY_PACKAGES_PATH = "{{ config_root }}/.packages"
 
 `{{ config_root }}` is the project root mise resolves relative paths against ([env directives](https://mise.jdx.dev/environments/)) — the worktree root, not the primary worktree. mise also covers Windows / PowerShell, which direnv doesn't natively.
 
-Both set real environment variables in the shell session, so every child process inherits them — hooks, build tools, subshells — without the `--execute` workaround. Each new worktree is a new path, so it needs its own one-time trust step (`direnv allow` / `mise trust`); worktrunk deliberately doesn't bypass that prompt, the same safety reasoning behind [disabling `--execute` in project alias and hook bodies](https://github.com/max-sixty/worktrunk/issues/2101).
+Both set real environment variables in the shell session, so every child process inherits them — hooks, build tools, subshells. Each new worktree is a new path, so it needs its own one-time trust step (`direnv allow` / `mise trust`).
 
 ### Eliminate cold starts
 

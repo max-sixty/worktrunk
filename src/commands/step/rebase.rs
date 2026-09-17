@@ -54,7 +54,15 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
         );
     }
 
-    let rebase_result = repo.run_command(&["rebase", "--end-of-options", &integration_target]);
+    // `--no-update-refs` overrides `rebase.updateRefs`, which would also move
+    // other local branches stacked in the rebased range; a worktree's rebase
+    // rewrites only its own branch.
+    let rebase_result = repo.run_command(&[
+        "rebase",
+        "--no-update-refs",
+        "--end-of-options",
+        &integration_target,
+    ]);
 
     // If rebase failed, classify the failure (interrupt vs conflict vs other).
     if let Err(e) = rebase_result {

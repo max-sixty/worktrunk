@@ -86,13 +86,34 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
     // Render OpenCode status (only when opencode CLI is available)
     if is_opencode_available() {
         show_output.push('\n');
-        render_opencode_status(&mut show_output)?;
+        show_output.push_str(&file_plugin_status(
+            "OPENCODE",
+            "wt config plugins opencode install",
+            super::opencode::is_plugin_installed(),
+            super::opencode::plugin_file_exists(),
+        ));
+    }
+
+    // Render oh-my-pi status (only when the oh-my-pi CLI is available)
+    if is_omp_available() {
+        show_output.push('\n');
+        show_output.push_str(&file_plugin_status(
+            "OH-MY-PI",
+            "wt config plugins omp install",
+            super::omp::is_plugin_installed(),
+            super::omp::plugin_file_exists(),
+        ));
     }
 
     // Render Pi status (only when the Pi CLI is available)
     if is_pi_available() {
         show_output.push('\n');
-        render_pi_status(&mut show_output)?;
+        show_output.push_str(&file_plugin_status(
+            "PI",
+            "wt config plugins pi install",
+            super::pi::is_plugin_installed(),
+            super::pi::plugin_file_exists(),
+        ));
     }
 
     // Render Gemini status (only when gemini CLI is available)
@@ -409,70 +430,47 @@ fn is_opencode_available() -> bool {
 }
 
 /// Check if the Pi coding agent CLI is available.
-fn is_pi_available() -> bool {
+pub(super) fn is_pi_available() -> bool {
     if let Ok(val) = std::env::var("WORKTRUNK_TEST_PI_INSTALLED") {
+        return val == "1";
+    }
+    which::which("pi").is_ok()
+}
+
+/// Check if the oh-my-pi coding agent CLI is available.
+pub(super) fn is_omp_available() -> bool {
+    if let Ok(val) = std::env::var("WORKTRUNK_TEST_OMP_INSTALLED") {
         return val == "1";
     }
     which::which("omp").is_ok()
 }
 
-/// Render OPENCODE section (plugin status).
-/// Caller must check `is_opencode_available()` first.
-fn render_opencode_status(out: &mut String) -> anyhow::Result<()> {
-    writeln!(out, "{}", format_heading("OPENCODE", None))?;
-
-    // Plugin status
-    let plugin_installed = super::opencode::is_plugin_installed();
-    let plugin_exists = super::opencode::plugin_file_exists();
-    if plugin_installed {
-        writeln!(out, "{}", success_message("Plugin installed"))?;
-    } else if plugin_exists {
-        writeln!(
-            out,
-            "{}",
-            hint_message(cformat!(
-                "Plugin outdated. To update, run <underline>wt config plugins opencode install</>"
-            ))
-        )?;
+/// The section for a plugin the installer writes as a plain file: a heading,
+/// then one line of status, with the trailing newline the caller would add.
+///
+/// OpenCode, Pi, and oh-my-pi each install one file and each report the same
+/// three states, differing only in the heading and the command that writes the
+/// file — so they share this rather than keeping a copy apiece. Callers check
+/// their own `is_*_available()` first, and answer `installed` / `file_exists`
+/// from their own module.
+fn file_plugin_status(
+    heading: &str,
+    install_command: &str,
+    installed: bool,
+    file_exists: bool,
+) -> String {
+    let status = if installed {
+        success_message("Plugin installed")
+    } else if file_exists {
+        hint_message(cformat!(
+            "Plugin outdated. To update, run <underline>{install_command}</>"
+        ))
     } else {
-        writeln!(
-            out,
-            "{}",
-            hint_message(cformat!(
-                "Plugin not installed. To install, run <underline>wt config plugins opencode install</>"
-            ))
-        )?;
-    }
-
-    Ok(())
-}
-
-/// Render PI section (plugin status).
-/// Caller must check `is_pi_available()` first.
-fn render_pi_status(out: &mut String) -> anyhow::Result<()> {
-    writeln!(out, "{}", format_heading("PI", None))?;
-
-    if super::pi::is_plugin_installed() {
-        writeln!(out, "{}", success_message("Plugin installed"))?;
-    } else if super::pi::plugin_file_exists() {
-        writeln!(
-            out,
-            "{}",
-            hint_message(cformat!(
-                "Plugin outdated. To update, run <underline>wt config plugins pi install</>"
-            ))
-        )?;
-    } else {
-        writeln!(
-            out,
-            "{}",
-            hint_message(cformat!(
-                "Plugin not installed. To install, run <underline>wt config plugins pi install</>"
-            ))
-        )?;
-    }
-
-    Ok(())
+        hint_message(cformat!(
+            "Plugin not installed. To install, run <underline>{install_command}</>"
+        ))
+    };
+    format!("{}\n{status}\n", format_heading(heading, None))
 }
 
 /// Check if Gemini CLI is available
@@ -970,8 +968,9 @@ fn render_project_config(out: &mut String, repo: Option<&Repository>) -> anyhow:
         return Ok(false);
     }
 
-    // Check for deprecations with emit_inline_warnings=false (silent mode)
-    // Only write migration file in main worktree, not linked worktrees.
+    // Check for deprecations with emit_inline_warnings=false (silent mode).
+    // They are actionable only from the main worktree, where `wt config update`
+    // rewrites the file.
     // Deprecated patterns supersede the TOML dump below because their diff
     // covers the file.
     let is_main_worktree = !repo.current_worktree().is_linked().unwrap_or(true);

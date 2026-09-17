@@ -8,7 +8,7 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 
 ## Full mode
 
-`--full` adds the two columns that reach off-machine: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail, over the network) and [LLM-generated summaries](#llm-summaries) of each branch's changes. The `main…±` line diffs are local git, so they show by default.
+`--full` adds the two columns that reach off-machine: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail, over the network) and [LLM-generated summaries](#llm-summaries) of each branch's changes.
 
 ## Examples
 
@@ -63,7 +63,7 @@ $ wt list --format=json
 
 | Column | Shows |
 |--------|-------|
-| Branch | Branch name, elided with `…` past 32 characters so one long name can't size the column for every row (`--format=json` keeps it whole); a detached worktree has none, so it shows its short hash in dim yellow |
+| Branch | Branch name, elided with `…` past 32 characters; a detached worktree shows its short hash |
 | Status | Compact symbols (see below) |
 | HEAD± | Uncommitted changes, including untracked files: +added -deleted lines |
 | main↕ | Commits ahead/behind default branch |
@@ -80,9 +80,7 @@ $ wt list --format=json
 
 The `main↕` and `main…±` headers keep the familiar `main` label in every repository.
 
-The table sizes itself to the terminal. When the columns don't all fit, the least important go first — roughly right to left, since the order above runs from identity to nice-to-have — and the summary footer names them (`hidden: Commit, Age, Message`). A column with nothing to show on any row — `Remote⇅` in a repo with no remote — ranks below every populated column, so it goes first. A wider terminal brings them back. To pin a set rather than leave it to the width, name the columns in [`[list] columns`](https://worktrunk.dev/config/#list); `--format=json` carries every field at any width.
-
-`main↕` and `main…±` measure against the default branch's upstream tip when the local copy lags it — so in a fork whose local `main` trails `origin/main`, a branch reads as ahead of the real mainline, not of a stale local checkout. The `↑`/`↓`/`↕` Status symbols derive from these counts, so they track the upstream tip too.
+The table sizes itself to the terminal. When the columns don't all fit, the least important go first — roughly right to left, since the order above runs from identity to nice-to-have — and the summary footer names them (`hidden: Commit, Age, Message`). A wider terminal brings them back. To pin a set rather than leave it to the width, name the columns in [`[list] columns`](https://worktrunk.dev/config/#list); `--format=json` carries every field at any width.
 
 ### Gutter
 
@@ -98,7 +96,7 @@ The leftmost column marks each row by physical presence, from most present to le
 
 ### CI status
 
-The CI column shows the branch's open PR/MR — `#3035` on GitHub, Gitea, and Azure DevOps, `!3035` on GitLab — colored by pipeline status, or a bare `#` when no number is available (e.g. branch workflows without a PR/MR). One color folds two JSON fields: green/blue/red/yellow/gray are the pipeline state, magenta/cyan the review state. The `Value` column names each state; [checks object](#checks-object) and [review states](#review-states) give the JSON spelling — schema 2 reports three of the pipeline values by the shape of `pr` and `checks` rather than as a `checks.status` string:
+The CI column shows the branch's open PR/MR — `#3035` on GitHub, Gitea, and Azure DevOps, `!3035` on GitLab — colored by pipeline status, or a bare `#` when no number is available (e.g. branch workflows without a PR/MR). Green, blue, red, yellow, and gray show the pipeline state; magenta and cyan show the review state. [checks object](#checks-object) and [review states](#review-states) give the JSON form of each value:
 
 | Indicator | Value | Meaning |
 |-----------|-------|---------|
@@ -114,9 +112,9 @@ The CI column shows the branch's open PR/MR — `#3035` on GitHub, Gitea, and Az
 
 The two remaining review states have no indicator of their own: `"draft"` only dims the cell and `"approved"` leaves the color unchanged.
 
-Color precedence resolves the fold: changes-requested (magenta) outranks running checks — waiting can't clear it — while an outstanding required review (cyan) only recolors an otherwise green or quiet branch. Cool colors mean waiting, warm colors mean act. An approved PR, or one with no review signal at all (no required reviewers and no reviews), keeps its plain pipeline color — `pr.review` is then `"approved"` or absent, respectively. GitLab MR data carries only `"pending"` and `"draft"` — no approved or changes-requested signal.
+Changes requested (magenta) outranks running checks, while a required review (cyan) only recolors an otherwise green or gray branch. GitLab reports only the `"pending"` and `"draft"` review states.
 
-CI cells are clickable links to the PR or pipeline page, and appear dimmed for a draft PR/MR (`"draft"`) or when unpushed local changes make the status stale (`checks.stale`). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with `--remotes` — get CI status detection. Results are cached for 30-60 seconds; use `wt config state cache` to view or clear.
+CI cells are clickable links to the PR or pipeline page, and appear dimmed for a draft PR/MR (`"draft"`) or when unpushed local changes make the status stale (`checks.stale`). Results are cached for 30-60 seconds; use `wt config state cache` to view or clear.
 
 ### LLM summaries
 
@@ -131,7 +129,7 @@ Each `[list.custom-columns]` entry in user config adds a column: the key is the 
 template = "{{ vars.ticket }}"
 ```
 
-A custom column that renders empty for every row is dropped from the table outright, rather than merely ranked last as an empty built-in is. Templates, widths, and drop priority: [custom columns config](https://worktrunk.dev/config/#custom-columns).
+The [custom columns config](https://worktrunk.dev/config/#custom-columns) covers templates, widths, and drop priority.
 
 ## Status symbols
 
@@ -157,10 +155,10 @@ An in-progress git operation, a worktree-location attribute, or a branch with no
 |--------|------|---------|
 | `✘` | `worktree.changes.conflicted` | Merge conflicts |
 | `↻` | `worktree.operation` `"rebase"`, `"merge"`, `"cherry_pick"`, `"revert"`, `"bisect"` | A git operation is in progress; `git status` names it |
-| `⊟` | `worktree.prunable` | Prunable (worktree directory missing); nothing can be read from a directory that isn't there, so the row's data cells stay blank |
+| `⊟` | `worktree.prunable` | Prunable (worktree directory missing) |
 | `⊞` | `worktree.locked` | Locked worktree |
-| `⊘` | `worktree.detached` | Detached HEAD — the worktree is on a commit, not a branch, which is why its Branch cell holds a short hash |
-| `⚑` | `worktree.duplicate_branch` | Branch checked out in more than one worktree, so `wt` resolves it to whichever git lists first; every worktree on the branch is flagged |
+| `⊘` | `worktree.detached` | Detached HEAD |
+| `⚑` | `worktree.duplicate_branch` | Branch checked out in more than one worktree |
 | `⚑` | `worktree.branch_mismatch` | Worktree isn't at the path its branch implies |
 | `/` | no `worktree` object | Branch without a worktree |
 
@@ -195,13 +193,10 @@ Relation to the tracking branch, derived from the `upstream.ahead` / `upstream.b
 
 ### Marker
 
-The last subcolumn carries the branch's own marker — whatever
-[`wt config state marker set`](https://worktrunk.dev/config/#wt-config-state-marker) stored, usually
-an emoji, which is why the subcolumn is two cells wide. Nothing in `wt` writes
-it; it is there for agents and scripts to say what a branch is for, and it
-reads back as the item's `marker` field. `wt config state marker set 🤖` on a
-branch whose default-branch state is `_` renders `_ 🤖` in the column and
-`"_🤖"` in `display.symbols`.
+The last subcolumn shows the branch's marker, set with
+[`wt config state marker set`](https://worktrunk.dev/config/#wt-config-state-marker) — usually an
+emoji saying what the branch is for. It reads back as the item's `marker`
+field.
 
 ### Placeholder symbols
 
@@ -363,7 +358,7 @@ Independent facts; the table's priority-collapsed symbol is `display.state`.
 | `number` | integer/null | PR/MR number |
 | `url` | string/null | URL to the PR/MR page |
 | `review` | string | Review state (see [review states](#review-states)); absent when the forge reports no review signal |
-| `mergeable` | boolean/null | False when the forge reports conflicts, null otherwise — the fetch records only the conflicted case |
+| `mergeable` | boolean/null | False when the forge reports conflicts, null otherwise |
 | `repo` | object | Structured metadata for the repository the PR/MR targets, the upstream for fork PRs (see [repo object](#repo-object)); absent when the URL doesn't parse |
 
 ### checks object
@@ -427,7 +422,7 @@ The single highest-priority state describing the branch's relation to the defaul
 
 ### review states
 
-`pr.review` is one of `"changes_requested"`, `"pending"`, `"draft"`, `"approved"`, absent when the forge reports no review signal. The [CI status](#ci-status) section is the single source: its table maps the colored values, and the notes below it cover `"draft"` and `"approved"`. The vocabulary matches Claude Code's statusline `pr.review_state` field.
+`pr.review` is one of `"changes_requested"`, `"pending"`, `"draft"`, `"approved"`, absent when the forge reports no review signal. [CI status](#ci-status) shows how each renders. The vocabulary matches Claude Code's statusline `pr.review_state` field.
 
 ```console
 # Current worktree path (for scripts)
@@ -457,8 +452,6 @@ $ wt list --format=json --full | jq '.items[] | select(.checks.stale) | .branch'
 
 A JSON Schema for the envelope is published at
 [worktrunk.dev/schema/list-v2.json](https://worktrunk.dev/schema/list-v2.json).
-It describes what `wt` writes, so a field the absence rule can omit is
-optional there rather than required-and-null.
 
 ### Schema 1
 
@@ -566,9 +559,9 @@ The line carries the same cells as the worktree's row in `wt list`. A stale CI s
 - `json`: the current [`wt list --format=json`](https://worktrunk.dev/list/#json-output) schema — a one-item envelope by default, or a one-item array with `[list] json-schema = 1`
 - `claude-code`: the `table` cells, preceded by `dir` and followed by `model  context  pace`
 
-A cell with nothing to show is left out rather than blanked, so most lines are shorter than that; `claude-code` also drops `branch` where `dir` already ends in `.<branch>`. A line that still overruns the terminal drops whole cells, least important first, starting with the dev server URL.
+A cell with nothing to show is left out, so most lines are shorter than that. A line that overruns the terminal drops whole cells, least important first.
 
-The CI reference links to its PR/MR, and a dev server URL carrying a port shows as `:3000` linking to the URL in full, dim until something answers on that port. Both are underlined, which is what marks them as clickable. They are OSC 8 links, and a terminal that doesn't support those discards the escape, leaving the underlined text unclickable.
+The CI reference links to its PR/MR, and a dev server URL carrying a port shows as `:3000` linking to the URL in full, dim until something answers on that port. Both are underlined terminal links.
 
 ### Claude Code mode
 
@@ -580,7 +573,7 @@ The CI reference links to its PR/MR, and a dev server URL carrying a port shows 
 - `.rate_limits.{five_hour,seven_day}.used_percentage` — rate-limit window usage (0–100)
 - `.rate_limits.{five_hour,seven_day}.resets_at` — window reset time (Unix epoch seconds)
 
-The pace segment appears only when usage is likely to hit a rate limit before its window resets, and shows the higher-risk window: `2.9×(Tue–Tue 5pm)` reads as 2.9× the pace that would exactly fill that window. Above 90% used it shows usage instead of pace — `93%(Tue–Tue 5pm)` — near the cap, how much is left matters more than how fast it's going. "Likely" is a Bayesian forecast; early-window bursts don't trigger it. Its colour deepens with severity — dim, then dim-yellow, then yellow — as the forecast lockout (how much of the window would be spent capped) grows, so a fast pace that would only tip over near the reset stays dim rather than alarming. With `-vv`, each window's inputs and projection are logged to `.git/wt/logs/trace.log`.
+The pace segment appears only when usage is likely to hit a rate limit before its window resets, and shows the higher-risk window: `2.9×(Tue–Tue 5pm)` reads as 2.9× the pace that would exactly fill that window. Above 90% used it shows usage instead of pace — `93%(Tue–Tue 5pm)`. Its color deepens from dim to yellow as more of the window would be spent capped.
 
 [Claude Code statusline setup](https://worktrunk.dev/claude-code/#statusline-claude-code-only) has the `~/.claude/settings.json` entry that feeds this mode.
 

@@ -148,7 +148,7 @@ impl<'a> CommitGenerator<'a> {
         }
 
         if show_progress {
-            let stats_parts = wt.diff_stats_summary(&["diff", "--staged", "--shortstat"]);
+            let stats_parts = wt.prepare_staged_diff(wt.index_base()?).stats_summary();
 
             let changes_type = match stage_mode {
                 StageMode::Tracked => "tracked changes",
@@ -258,10 +258,7 @@ impl CommitOptions<'_> {
         }
 
         if self.stage_mode == StageMode::All {
-            let status = wt
-                .run_command(&["status", "--porcelain", "-z", "-uall"])
-                .context("Failed to get status")?;
-            warn_about_untracked_files(&status)?;
+            warn_about_untracked_files(&wt)?;
         }
 
         // Stage changes based on mode. Re-gated inside `stage`: the refusal

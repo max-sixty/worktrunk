@@ -17,7 +17,7 @@ use super::super::command_executor::FailureStrategy;
 use super::super::commit::{CommitGenerator, CommitOutcome, HookGate, StageMode};
 use super::super::context::CommandEnv;
 use super::super::hooks::{HookAnnouncer, execute_hook};
-use super::super::repository_ext::RepositoryCliExt;
+use super::super::repository_ext::warn_about_untracked_files;
 use super::super::template_vars::TemplateVars;
 use super::shared::print_dry_run;
 
@@ -160,7 +160,7 @@ pub fn handle_squash(
 
     // Auto-stage changes before running pre-commit hooks so both beta and merge paths behave identically
     if stage_mode == StageMode::All {
-        repo.warn_if_auto_staging_untracked()?;
+        warn_about_untracked_files(&wt)?;
     }
     wt.stage(stage_mode)?;
 
@@ -226,9 +226,9 @@ pub fn handle_squash(
 
     // Get total stats (commits + any working tree changes)
     let total_stats = if has_staged {
-        wt.diff_stats_summary(&["diff", "--shortstat", &merge_base, "--cached"])
+        wt.prepare_staged_diff(&merge_base).stats_summary()
     } else {
-        wt.diff_stats_summary(&["diff", "--shortstat", &range])
+        wt.prepare_commit_diff(&merge_base, "HEAD").stats_summary()
     };
 
     let with_changes = if has_staged {

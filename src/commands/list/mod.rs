@@ -58,15 +58,16 @@
 //! - `git status --porcelain` - Working tree state (uses index cache)
 //! - `git rev-list --count <base>..<head>` - Ahead/behind counts (uses commit graph)
 //! - Working tree line diffs:
-//!   - Without untracked files: `git diff --shortstat --find-renames HEAD`
+//!   - Without untracked files: `git diff-index --shortstat --find-renames HEAD`
 //!   - With untracked files: `git ls-files --others`, a temporary index copy plus
-//!     `git add --intent-to-add`, and two `git diff --numstat -z --find-renames HEAD` calls
-//! - `git diff --shortstat <base>...<head>` - Branch line diffs (uses tree objects)
+//!     `git add --intent-to-add`, and two `git diff-index --numstat -z --find-renames HEAD` calls
+//! - `git diff-tree -r --shortstat --find-renames <merge-base> <head>` - Branch line diffs
+//!   (uses tree objects)
 //! - `git rev-parse <ref>` - Ref resolution (uses ref cache)
 //!
-//! `HEAD±` always enables rename detection because pairing a tracked deletion with an
-//! untracked destination makes a move line-neutral. `main…±` compares committed trees
-//! and continues to use the user's configured rename policy.
+//! Both line-diff columns use plumbing with rename detection on, so the user's diff
+//! configuration can't change them. For `HEAD±`, renames also pair a tracked deletion
+//! with an untracked destination, making a move line-neutral.
 //!
 //! Plus one global command:
 //! - `git worktree list --porcelain` - List all worktrees (uses ref cache)

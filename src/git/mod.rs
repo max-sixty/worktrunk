@@ -31,7 +31,7 @@ mod test;
 //
 // Heavy operations protected:
 // - git rev-list --count (accesses commit-graph via mmap)
-// - git diff --shortstat (accesses pack files and indexes via mmap)
+// - git diff-tree --shortstat (accesses pack files and indexes via mmap)
 use crate::path::canonicalize_with_parents;
 use crate::sync::Semaphore;
 use std::sync::LazyLock;
@@ -61,7 +61,7 @@ pub(crate) fn is_bare_repo_dir(dir: &Path) -> bool {
 // Re-exports from submodules
 pub use ci_platform::ForgeKind;
 pub(crate) use diff::DiffStats;
-pub use diff::{LineDiff, parse_numstat_line};
+pub use diff::{LineDiff, PlumbingDiff, parse_numstat_line};
 pub use error::{
     // Typed leaf error for buffered command-runner failures (downcast target)
     CommandError,

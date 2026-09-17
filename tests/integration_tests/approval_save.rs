@@ -243,7 +243,10 @@ fn test_saving_config_mutation_preserves_toml_comments() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join("config.toml");
 
-    // Create a config file with comments
+    // `main_worktree` is retired, so loading migrates this line to `{{ repo }}`
+    // and the save below rewrites it — the case where decor is easiest to drop.
+    // The `command` line carries one too, since that is the line the mutation
+    // itself changes.
     let initial_content = r#"# User preferences for worktrunk
 # These comments should be preserved after saving
 
@@ -251,7 +254,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"  # inline comment should a
 
 # LLM commit generation settings
 [commit.generation]
-command = "llm -m claude-haiku-4.5"
+command = "llm -m claude-haiku-4.5"  # comment on the mutated line
 
 # Per-project settings below
 "#;
@@ -282,11 +285,21 @@ command = "llm -m claude-haiku-4.5"
         saved_content.contains("# inline comment should also be preserved"),
         "Inline comment was lost. Saved content:\n{saved_content}"
     );
+    assert!(
+        saved_content.contains("# comment on the mutated line"),
+        "Inline comment on the mutated line was lost. Saved content:\n{saved_content}"
+    );
 
     // Verify the command was updated
     assert!(
         saved_content.contains("llm -m claude-sonnet-4"),
         "Command was not updated. Saved content:\n{saved_content}"
+    );
+
+    // The retired name still migrates — keeping the comment must not cost the rewrite
+    assert!(
+        saved_content.contains(r#"worktree-path = "../{{ repo }}.{{ branch }}""#),
+        "Retired variable was not migrated. Saved content:\n{saved_content}"
     );
 }
 
@@ -861,4 +874,192 @@ approved-commands = [
         !saved.contains("[commit]\n"),
         "Should not have standalone [commit] header when only generation is set:\n{saved}"
     );
+}
+
+/// A value written out at its default serializes to nothing, the same as a
+/// value that was never written, so a save can't tell the two apart from the
+/// config alone. A save that doesn't change them must leave them — and their
+/// comments — where the user put them.
+#[test]
+fn test_saving_config_mutation_keeps_explicit_defaults() {
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join("config.toml");
+
+    let initial_content = r#"skip-shell-integration-prompt = false  # keep asking
+
+[list]
+columns = []  # pick later
+
+[merge]
+
+# fill in later
+[commit]
+
+[commit.generation]
+command = "llm -m claude-haiku-4.5"
+"#;
+    fs::write(&config_path, initial_content).unwrap();
+
+    let toml_str = fs::read_to_string(&config_path).unwrap();
+    let mut config: UserConfig = toml::from_str(&toml_str).unwrap();
+    config
+        .set_commit_generation_command("llm -m claude-sonnet-4".to_string(), &config_path)
+        .unwrap();
+
+    assert_snapshot!(fs::read_to_string(&config_path).unwrap(), @r#"
+    skip-shell-integration-prompt = false  # keep asking
+
+    [list]
+    columns = []  # pick later
+
+    [merge]
+
+    # fill in later
+    [commit]
+
+    [commit.generation]
+    command = "llm -m claude-sonnet-4"
+    "#);
+}
+
+/// A hook under its `pre-create`/`post-create` alias loads as
+/// `pre-start`/`post-start`, which is the only name the saved config has. The
+/// save writes it under that name once, with its comment, at the top level and
+/// per project however the entry is written, rather than adding the canonical
+/// key beside the alias — a duplicate that fails the next load.
+#[test]
+fn test_saving_config_mutation_renames_hook_aliases() {
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join("config.toml");
+
+    let initial_content = r#"# greet
+pre-create = "echo top"
+
+[projects]
+"example.com/org/inline" = { pre-create = "make" }
+
+[projects."example.com/org/repo"]
+post-create = "npm install"
+"#;
+    fs::write(&config_path, initial_content).unwrap();
+
+    let toml_str = fs::read_to_string(&config_path).unwrap();
+    let mut config: UserConfig = toml::from_str(&toml_str).unwrap();
+    config
+        .set_commit_generation_command("llm -m claude-sonnet-4".to_string(), &config_path)
+        .unwrap();
+
+    let saved_content = fs::read_to_string(&config_path).unwrap();
+    toml::from_str::<UserConfig>(&saved_content).unwrap();
+    assert_snapshot!(saved_content, @r#"
+    # greet
+    pre-start = "echo top"
+
+    [projects]
+    "example.com/org/inline" = { pre-start = "make" }
+
+    [projects."example.com/org/repo"]
+    post-start = "npm install"
+
+    [commit.generation]
+    command = "llm -m claude-sonnet-4"
+    "#);
+}
+
+/// The same line-decor guarantee for a `[projects]` entry written inline.
+///
+/// This entry is an inline table, which `toml_edit` holds as a value, and the
+/// save replaces it with a standard table — a different shape from the scalar
+/// case above, and the one where the comment is easiest to drop. The retired
+/// `main_worktree` inside it is what makes the entry differ from the file at
+/// all, since template migration runs on every load.
+#[test]
+fn test_saving_config_mutation_preserves_an_inline_entry_comment() {
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join("config.toml");
+
+    let initial_content = r#"[projects]
+"example.com/org/repo" = { worktree-path = "../{{ main_worktree }}.{{ branch }}" }  # entry note
+
+[commit.generation]
+command = "llm -m claude-haiku-4.5"
+"#;
+    fs::write(&config_path, initial_content).unwrap();
+
+    let toml_str = fs::read_to_string(&config_path).unwrap();
+    let mut config: UserConfig = toml::from_str(&toml_str).unwrap();
+    config
+        .set_commit_generation_command("llm -m claude-sonnet-4".to_string(), &config_path)
+        .unwrap();
+
+    // The comment lands after the header's `]`, and the rewrite still parses.
+    let saved_content = fs::read_to_string(&config_path).unwrap();
+    toml::from_str::<toml::Table>(&saved_content).unwrap();
+    assert_snapshot!(saved_content, @r#"
+    [projects]
+
+    [projects."example.com/org/repo"]  # entry note
+    worktree-path = "../{{ repo }}.{{ branch }}"
+
+    [commit.generation]
+    command = "llm -m claude-sonnet-4"
+    "#);
+}
+
+/// A hook pipeline serializes in one spelling — one step as its lone table, more
+/// as an inline array — while the file may write `[[post-start]]` blocks (the
+/// documented form) or an inline array. An unrelated save must keep each
+/// pipeline in the file's spelling with its comments, changing only the steps
+/// the load rewrote (template migration renaming `repo_root`).
+#[test]
+fn test_saving_config_mutation_keeps_each_pipeline_spelling_and_its_comments() {
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join("config.toml");
+
+    let initial_content = r#"worktree-path = "../x"
+
+# start the dev server
+post-start = [{ server = "cd {{ repo_root }} && npm run dev" }]  # port 3000
+
+# announce the switch
+[[post-switch]]
+notify = "echo switched"
+
+# share the build cache, then install
+[[pre-start]]
+copy = "wt step copy-ignored"
+
+[[pre-start]]
+install = "cd {{ repo_root }} && pnpm install"  # after the copy
+"#;
+    fs::write(&config_path, initial_content).unwrap();
+
+    let toml_str = fs::read_to_string(&config_path).unwrap();
+    let mut config: UserConfig = toml::from_str(&toml_str).unwrap();
+    config
+        .set_commit_generation_command("llm -m claude-sonnet-4".to_string(), &config_path)
+        .unwrap();
+
+    let saved_content = fs::read_to_string(&config_path).unwrap();
+    toml::from_str::<toml::Table>(&saved_content).unwrap();
+    assert_snapshot!(saved_content, @r#"
+    worktree-path = "../x"
+
+    # start the dev server
+    post-start = [{ server = "cd {{ repo_path }} && npm run dev" }]  # port 3000
+
+    # announce the switch
+    [[post-switch]]
+    notify = "echo switched"
+
+    # share the build cache, then install
+    [[pre-start]]
+    copy = "wt step copy-ignored"
+
+    [[pre-start]]
+    install = "cd {{ repo_path }} && pnpm install"  # after the copy
+
+    [commit.generation]
+    command = "llm -m claude-sonnet-4"
+    "#);
 }

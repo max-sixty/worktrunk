@@ -52,6 +52,8 @@ Behavior changes require doc updates. `src/cli/mod.rs` (`after_long_help` plus c
 
 Per-tool layout and path resolution (Claude/Codex/Gemini), the convention-only Claude manifest, the Codex inline-hooks rationale, the generated plugin-skills mirror, the accepted `wt-switch-create` tradeoff, and `test_plugin_layout_is_consolidated`: `plugins/worktrunk/CLAUDE.md`.
 
+The Pi-family integrations are two commands because they are two agents. `wt config plugins pi` targets Pi (earendil-works/pi), which loads `ExtensionAPI` extensions from `~/.pi/agent/extensions/`; `wt config plugins omp` targets oh-my-pi, which loads `HookAPI` hooks from `~/.omp/agent/hooks/pre/`. Path rules live in `src/commands/config/pi.rs` and `src/commands/config/omp.rs`; the embedded sources are `dev/pi-extension.ts` and `dev/omp-hook.ts`. Neither file is interchangeable — the loaders differ, and so do the config roots (`$PI_CODING_AGENT_DIR` for Pi; `$PI_CONFIG_DIR`, `$OMP_PROFILE`/`$PI_PROFILE`, and `$PI_CODING_AGENT_DIR` for oh-my-pi).
+
 ## Data Safety
 
 Never risk data loss without explicit user consent. A failed command that preserves data beats a "successful" one that silently destroys work.
@@ -98,12 +100,16 @@ Prefer exit codes / `--porcelain` / `--json` over parsing human-readable message
 
 | Tool | Fragile | Structured |
 |------|---------|------------|
-| `git diff` | `--stat` (localized) | `--numstat`, `--shortstat` (`(+)`/`(-)` hardcoded) |
-| `git status` | default | `--porcelain=v2` |
+| `git diff-tree` / `diff-index` | `--stat` (localized) | `--numstat`, `--shortstat` (`(+)`/`(-)` hardcoded) |
+| `git status` | default | `--porcelain=v2 -z` |
 | `git merge-base` | error messages | exit codes |
 | `gh` / `glab` | default | `--json` |
 
 When no structured alternative exists, document the fragility inline.
+
+### Plumbing for Output `wt` Consumes
+
+Porcelain commands read display configuration that changes what they report: `diff.relative` once made `wt remove` delete an unmerged branch, and `color.ui=always` and `diff.external` leaked into LLM prompts. When `wt` parses, caches, renders, or prompts with git's output, it runs plumbing (`diff-tree`, `diff-index`, `diff-files`, `for-each-ref`), which ignores that configuration apart from `submodule.<name>.ignore`. `PlumbingDiff::args` builds every plumbing diff with `--ignore-submodules=none` to override that setting, and a test rejects one spelled by hand. Rendered and prompted diffs go through `PreparedDiff::capture`, which also restores the `git diff` defaults plumbing lacks. `git status` has no plumbing equivalent, so it pins its behavior with explicit flags. Output shown as git's own view, like `wt step diff`, stays porcelain.
 
 ### Immutable Ids Over List Positions
 
@@ -180,6 +186,23 @@ Check `Cargo.toml` before hand-rolling a utility:
 | Shell escaping | `shell_escape::unix::escape()` | manual quoting |
 | ANSI colors | `color_print::cformat!()` | raw escape codes |
 | Template var detection | `minijinja::undeclared_variables(false)` | regex/substring on `{{ var }}` |
+
+Delegation extends past utilities to **another tool's own rules** — where zsh
+reads its config, which TOML keys a schema accepts, how MiniJinja scopes a
+template binding. Ask the library; don't re-derive its rule inside `wt`. A
+re-derived rule is correct on the cases that motivated it and drifts silently
+afterwards. Where the library exposes no API that answers the question, keep
+the substitute no larger than the question and say in the code why it exists.
+
+### Don't Defend Improbable Environments
+
+No resolvable home directory, a config directory the user moved out from under
+the tool that owns it — `wt`'s behavior there is the least of that user's
+problems. Take the working environment as a precondition and drop the fallback
+chain rather than carrying code that is maintained forever and exercised by
+nobody. Dropping a fallback still means failing with an error, never
+`.expect()` — see **Error Handling**. Data safety is the exception, and it has
+its own section.
 
 ### Other
 

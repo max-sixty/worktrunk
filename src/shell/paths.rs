@@ -94,16 +94,22 @@ fn nu_dirs() -> NuDirs {
 
 /// Fallback for Nushell's `$nu.data-dir` when `nu` can't be queried.
 ///
-/// Mirrors `nu_path::data_dir`: `XDG_DATA_HOME` (when absolute) wins on every
-/// platform, otherwise `dirs::data_dir()` (`~/Library/Application Support` on
-/// macOS, `%APPDATA%` on Windows, `~/.local/share` on Linux). Nushell appends
-/// `nushell`.
+/// Mirrors Nushell's own `resolve_xdg_base` (`crates/nu-config/src/resolve.rs`):
+/// `XDG_DATA_HOME` wins on every platform when it is absolute, otherwise
+/// `dirs::data_dir()` (`~/Library/Application Support` on macOS, `%APPDATA%` on
+/// Windows, `~/.local/share` on Linux). Nushell appends `nushell`.
+///
+/// The one XDG read worktrunk still spells out, because it is Nushell's rule
+/// rather than the spec's: etcetera's `Xdg::data_dir()` applies the same
+/// absolute-only filter but falls back to `~/.local/share` everywhere, which is
+/// the wrong directory on macOS and Windows, and the native strategies that get
+/// those right ignore `XDG_DATA_HOME`.
 fn nushell_data_dir_fallback(home: &std::path::Path) -> PathBuf {
-    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
-        let path = PathBuf::from(xdg);
-        if path.is_absolute() {
-            return path.join("nushell");
-        }
+    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+    {
+        return xdg.join("nushell");
     }
     dirs::data_dir()
         .unwrap_or_else(|| home.join(".local").join("share"))
@@ -141,8 +147,11 @@ fn legacy_nushell_autoload_dirs(
     if let Some(dir) = default_config {
         dirs.push(dir.to_path_buf());
     }
-    if let Ok(xdg_config) = std::env::var("XDG_CONFIG_HOME") {
-        dirs.push(PathBuf::from(xdg_config).join("nushell"));
+    // etcetera's XDG strategy: `$XDG_CONFIG_HOME` when absolute, `~/.config`
+    // otherwise. `~/.config` stays listed on its own because an absolute
+    // `$XDG_CONFIG_HOME` displaces it, and older worktrunk wrote there too.
+    if let Ok(xdg) = Xdg::new() {
+        dirs.push(xdg.config_dir().join("nushell"));
     }
     dirs.push(home.join(".config").join("nushell"));
     if let Ok(strategy) = choose_base_strategy() {
@@ -237,6 +246,28 @@ pub fn fish_config_dir(home: &std::path::Path) -> PathBuf {
         .join("fish")
 }
 
+/// The directory worktrunk reads and writes zsh's rc file in: `$ZDOTDIR` when
+/// it holds an absolute path, otherwise `$HOME`.
+///
+/// zsh's rule is `$ZDOTDIR`, or `$HOME` when it is unset. The absolute-only
+/// guard on top is the same one this module already applies to
+/// `$XDG_DATA_HOME` ([`nushell_data_dir_fallback`]) and, through etcetera's
+/// [`Xdg`], to `$XDG_CONFIG_HOME` ([`fish_config_dir`]).
+///
+/// A non-absolute value resolves against the current directory, and that
+/// directory is `wt`'s: zsh resolves one against *zsh's* own startup
+/// directory, which `wt` has no way to know at install time. Honouring it
+/// would send install, and the whole-file rewrite `wt config shell uninstall`
+/// performs, to a file neither side meant — a `.zshrc` in a dotfiles checkout
+/// that happened to be the invocation directory. `$HOME` is also where
+/// `wt config show` reads back from, so install and detection agree.
+pub(super) fn zsh_config_dir(home: &std::path::Path) -> PathBuf {
+    std::env::var_os("ZDOTDIR")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .unwrap_or_else(|| home.to_path_buf())
+}
+
 /// Rc/profile files scanned line-by-line for integration lines.
 ///
 /// Bash/Zsh/PowerShell integration is one line in an rc file, so these paths
@@ -249,12 +280,7 @@ pub fn line_based_config_paths(shell: super::Shell, home: &std::path::Path) -> V
             // Use .bashrc - sourced by interactive shells (login shells should source .bashrc)
             vec![home.join(".bashrc")]
         }
-        super::Shell::Zsh => {
-            let zdotdir = std::env::var("ZDOTDIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| home.to_path_buf());
-            vec![zdotdir.join(".zshrc")]
-        }
+        super::Shell::Zsh => vec![zsh_config_dir(home).join(".zshrc")],
         super::Shell::PowerShell => powershell_profile_paths(home),
         super::Shell::Fish | super::Shell::Nushell => Vec::new(),
     }

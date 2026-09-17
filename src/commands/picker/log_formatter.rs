@@ -7,7 +7,7 @@ use std::fmt::Write;
 
 use ansi_str::AnsiStr;
 use unicode_width::UnicodeWidthStr;
-use worktrunk::git::{Repository, parse_numstat_line};
+use worktrunk::git::{PlumbingDiff, Repository, parse_numstat_line};
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{ADDITION, DELETION};
 
@@ -46,7 +46,7 @@ pub(super) fn batch_fetch_stats(
         return HashMap::new();
     };
     let Ok(output) = Cmd::new("git")
-        .args(["diff-tree", "--numstat", "-r", "--root", "--stdin"])
+        .args(PlumbingDiff::Tree.args(&["--numstat", "-r", "--root", "--stdin"]))
         .current_dir(repo_path)
         .stdin_bytes(stdin_data)
         .run()

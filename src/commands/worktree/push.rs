@@ -197,12 +197,9 @@ impl MergeContext {
         let commit_count = repo.count_commits(&target_branch, "HEAD")?;
 
         let stats_summary = if commit_count > 0 {
-            repo.current_worktree().diff_stats_summary(&[
-                "diff",
-                "--shortstat",
-                "--end-of-options",
-                &format!("{}..HEAD", target_branch),
-            ])
+            repo.current_worktree()
+                .prepare_commit_diff(&target_branch, "HEAD")
+                .stats_summary()
         } else {
             Vec::new()
         };
@@ -263,7 +260,7 @@ impl MergeContext {
         eprintln!("{}", format_with_gutter(&log_output, None));
 
         // Diff statistics
-        crate::commands::show_diffstat(&self.repo, &format!("{}..HEAD", self.target_branch))?;
+        crate::commands::show_diffstat(&self.repo, &self.target_branch, "HEAD")?;
 
         Ok(())
     }
@@ -568,18 +565,23 @@ pub fn handle_no_ff_merge(
         feature_branch, ctx.target_branch
     );
 
+    let mut commit_tree_args = vec![
+        "commit-tree",
+        &tree,
+        "-p",
+        &ctx.target_tip,
+        "-p",
+        &ctx.head_sha,
+        "-m",
+        &merge_message,
+    ];
+    // Sign as `git merge --no-ff` would; `commit-tree` ignores `commit.gpgSign`.
+    if ctx.repo.signs_commits()? {
+        commit_tree_args.push("--gpg-sign");
+    }
     let merge_sha = ctx
         .repo
-        .run_command(&[
-            "commit-tree",
-            &tree,
-            "-p",
-            &ctx.target_tip,
-            "-p",
-            &ctx.head_sha,
-            "-m",
-            &merge_message,
-        ])
+        .run_command(&commit_tree_args)
         .context("Failed to create merge commit")?
         .trim()
         .to_string();

@@ -38,7 +38,7 @@ $ wt remove -D experimental
 
 By default, branches are deleted when they would add no changes to the default branch if merged. This works with both unchanged git histories, and squash-merge or rebase workflows where commit history differs but file changes match.
 
-Worktrunk checks six conditions (in order of cost):
+Worktrunk checks six conditions:
 
 1. **Same commit** — Branch HEAD equals the default branch. Shows `_` in `wt list`.
 2. **Ancestor** — Branch is in target's history (fast-forward or rebase case). Shows `⊂`.
@@ -52,8 +52,6 @@ The default-branch walk is capped so a single check stays fast; a squash merge w
 The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., `origin/main`) when strictly ahead.
 
 Branches matching these conditions and with empty working trees are dimmed in `wt list` as safe to delete.
-
-Those six ask whether deleting loses work. A branch checked out in a second worktree (only reachable via `git worktree add --force`) fails a different test: deleting the ref would leave that worktree unable to resolve `HEAD`, which is why `git branch -d` refuses the same delete. Such a branch is retained whatever `-D` asks, and the surviving checkout is named.
 
 ## Force flags
 
@@ -74,9 +72,7 @@ Use `--no-delete-branch` to keep the branch regardless of merge status.
 
 ## Background removal
 
-Removal runs in the background by default — the command returns immediately. The worktree is renamed into `.git/wt/trash/` (instant same-filesystem rename), git metadata is pruned, the branch is deleted, and a detached `rm -rf` finishes cleanup. Cross-filesystem worktrees fall back to `git worktree remove`. Logs: `.git/wt/logs/{branch}/internal/remove.log`. Use `--foreground` to run in the foreground.
-
-After each `wt remove`, entries in `.git/wt/trash/` older than 24 hours are swept by a detached `rm -rf` — eventual cleanup for directories orphaned when a previous background removal was interrupted (SIGKILL, reboot, disk full).
+Removal runs in the background by default — the command returns immediately, and output goes to `.git/wt/logs/{branch}/internal/remove.log`. Use `--foreground` to wait for it.
 
 ## Reaping processes [experimental]
 
@@ -96,7 +92,7 @@ To avoid killing work the user did not mean to kill, two guards keep `--reap` co
 - **Interactive processes are spared.** A process holding a controlling terminal — an interactive shell, or a terminal editor such as `vim` with unsaved buffers — is never reaped. Only detached processes remain candidates.
 - **Discovery is by working directory only.** A process that started in the worktree and later changed directory, or a daemon that reparented to `init`, no longer reports a directory under the worktree and is not found. To reliably reap those, launch them with [`wt step tether`](https://worktrunk.dev/step/#wt-step-tether), which kills the whole process group when the worktree is removed.
 
-Reaping runs before the worktree directory is touched, so it is independent of foreground/background removal and the `--force` flag. Unix only; on Windows `--reap` is rejected.
+Unix only; on Windows `--reap` is rejected.
 
 ## JSON output
 
@@ -107,11 +103,11 @@ Reaping runs before the worktree directory is touched, so it is independent of f
 | Value | Meaning |
 |-------|---------|
 | `deleted` | The branch is gone |
-| `deferred` | Handed to the detached background process, whose result this run never sees. `--foreground` never reports it |
+| `deferred` | Left to the background removal, whose result this run doesn't see. `--foreground` never reports it |
 | `not_attempted` | No deletion was tried: a detached worktree, a sibling checkout, or `--no-delete-branch` |
 | `retained_unmerged` | Declined: the branch was not integrated into the target |
-| `retained_checked_out` | Declined: the final topology read found a live worktree with it checked out |
-| `retained_raced` | Refused by the compare-and-swap — the branch moved between the integration check and the delete. Re-read the ref and retry |
+| `retained_checked_out` | Declined: another worktree has the branch checked out |
+| `retained_raced` | Declined: the branch moved during the removal. Retry |
 | `retained_failed` | The delete command itself failed |
 
 ## Hooks

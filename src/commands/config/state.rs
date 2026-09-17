@@ -713,7 +713,7 @@ pub fn handle_state_get(
         "default-branch" => {
             let branch_name = repo.default_branch().ok_or_else(|| {
                 anyhow::anyhow!(cformat!(
-                    "Cannot determine default branch. To configure, run <bold>wt config state default-branch set BRANCH</>"
+                    "Cannot determine default branch; to configure one, run <bold>wt config state default-branch set BRANCH</>"
                 ))
             })?;
             println!("{branch_name}");
