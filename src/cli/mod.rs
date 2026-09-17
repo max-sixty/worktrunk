@@ -691,7 +691,7 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 
 The CI column shows each row's PR/MR CI and review status, the same as [`wt list --full`](/list/).
 
-<!-- demo: wt-switch-picker.gif 1600x900 | Alt-p to reveal the CI column as it fills in, then paging a diff, a PR's comment thread, and the PR itself -->
+<!-- demo: wt-switch-picker.gif 1600x900 | Alt-p to reveal the CI and summary columns as they fill in, then paging a diff, a PR's comment thread, and the PR itself -->
 **Keybindings:**
 
 | Key | Action |

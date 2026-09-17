@@ -7,7 +7,8 @@ docs/demos/
   build            # Unified build script
   tapes/           # All VHS tape files (templated)
   shared/          # Python library, themes, fixtures
-  vhs-keystrokes/  # Custom VHS binary (gitignored, built on demand)
+  tests/           # Tests for the build script and tape conventions
+  .deps/vhs/       # VHS fork clone and binary (gitignored, built on demand)
 
 docs/public/assets/  # Output GIFs (gitignored, shared with fetch-assets)
   docs/            # Doc site demos (1600x900; wt-core-mobile is 576x432)
@@ -80,7 +81,7 @@ Checkpoints are defined in `docs/demos/shared/validation.py`. To add validation 
 1. Identify key frame numbers by examining the GIF (25fps, so frame 75 = 3 seconds; a negative frame counts back from the last, for the state a recording ends in)
 2. Define checkpoint patterns in `validation.py` with frame numbers, expected patterns, and forbidden patterns
 
-`wt-switch`, `wt-statusline`, and `wt-zellij-omnibus` have checkpoints. Other TUI demos are skipped until checkpoints are added.
+`wt-switch`, `wt-switch-picker`, `wt-statusline`, and `wt-zellij-omnibus` have checkpoints. Other TUI demos are skipped until checkpoints are added.
 
 **Measure the window; don't derive it.** A tape's Sleep directives don't fix where its content lands: command execution varies run to run, so the same tape gives GIFs whose frame counts differ by tens of frames. Anchor to the end (a negative `start`) where the content is near it, and prefer a window that stays generous under that drift. OCR each candidate range before committing to it — `extract_frames` plus `ocr_image` over `range(n-500, n, 20)` prints where a pattern actually lives.
 
@@ -97,11 +98,10 @@ Checkpoints are defined in `docs/demos/shared/validation.py`. To add validation 
 
 **Requires Go** — The VHS fork is built from source ([install Go](https://go.dev/dl/)).
 
-**Requires ffmpeg with libass** — The keystroke overlay uses ASS subtitles. The build script checks for this and exits with install instructions if missing. Homebrew's regular `ffmpeg` formula omits `libass`; use the keg-only full build instead:
+**Requires ffmpeg with libass** — The keystroke overlay uses ASS subtitles, and Homebrew's regular `ffmpeg` formula is built without libass while holding the linked name, so installing or upgrading `ffmpeg` at any point takes the overlay away. `check_ffmpeg_libass` puts the full build in front of it on PATH for the run when it finds the linked one can't draw subtitles, and otherwise exits with:
 
 ```bash
 brew install ffmpeg-full
-export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"
 ```
 
 External dependencies are downloaded/built automatically on first run:
@@ -160,27 +160,28 @@ git push origin keypress-overlay
 
 **CRITICAL**: Push changes to `origin keypress-overlay`. The directory is gitignored—changes only persist in the fork repo.
 
-### Keystroke timing calibration
+### Keystroke overlay timing
 
-The keystroke overlay timing is controlled by `keystrokeDelayMS` in `ffmpeg.go`:
+Each keystroke event is timed by the video's own clock: `Record` writes one
+frame per tick and only while recording, so `recordedMS` in `vhs.go` turns that
+frame count into the timeline the finished GIF plays on, and an event's time is
+where it lands in the output. A `Hide` stretch records no frames and so
+contributes nothing. Measured, a keypress and the frame that answers it are
+within one frame of each other (25fps = 40ms), so nothing is added on top.
 
-```go
-keystrokeDelayMS  = 500.0   // Delay to sync with terminal rendering
-```
+**Keys pressed while the recording is hidden all land on the first visible
+frame**, since a hidden stretch records no frames to separate them. Every docs
+demo types its opening command before `Show` on purpose — the first frame
+carries the whole command, which
+`test_docs_demos_open_on_a_complete_command_before_execution` pins — so that
+command arrives in the overlay in one go, matching the prompt already on
+screen. Anything the overlay should track key by key happens after `Show`.
 
-**How this was calibrated:**
-1. The overlay must appear synchronized with when the terminal responds to the keystroke
-2. Initial value (600ms) showed keystrokes appearing ~240ms LATE (after terminal changed)
-3. Frame-by-frame GIF analysis (25fps = 40ms/frame) revealed the exact offset
-4. Reduced to 500ms achieves perfect sync—keystroke and terminal change on same frame
+To check the alignment of a recorded GIF, extract its frames and compare the
+frame where the overlay changes against the frame where the screen answers:
 
-**To recalibrate if needed:**
 ```bash
-# Extract frames from GIF
-ffmpeg -i demo.gif -vsync 0 /tmp/gif-frames/frame_%04d.png
-
-# Compare frames to find when terminal changes vs when keystroke appears
-# Adjust keystrokeDelayMS: increase if keystroke appears too early, decrease if too late
+ffmpeg -i demo.gif -fps_mode passthrough /tmp/gif-frames/frame_%04d.png
 ```
 
 ## The mocked forge
@@ -217,9 +218,18 @@ primes the picker's on-disk comments cache from the `gh pr list` payload, so the
 ## wt-switch-picker demo goals (interactive picker)
 
 The wt-switch-picker demo showcases the interactive picker (`wt switch` without
-args). The list itself is the subject here, so `prepare_picker` gives it eleven
+args). The list itself is the subject here, so `prepare_picker` gives it sixteen
 worktrees — the shared set plus `PICKER_EXTRA_BRANCHES`, where every other demo
 keeps the shared four — and its table reads like a repo someone works in.
+
+It is also the one demo that records at its own size, `SIZE_DOCS_PICKER`: the
+same 1600x900 canvas as the rest in smaller text, which buys 139x34 instead of
+102x25. At the usual size the columns worth watching — CI status and the branch
+summary — fall off the right edge, and the preview pane is too short to page a
+diff through. `prepare_picker` is also the reason the Summary column renders at
+all: it writes the user config, and the column is gated on an LLM command being
+configured. `fixtures/llm-mock.sh` answers those calls, picking a summary from
+the paths in the diff, so each branch's row is its own sentence.
 
 Variety to preserve across all columns:
 
@@ -233,7 +243,7 @@ Variety to preserve across all columns:
 
 Branch setup:
 - **alpha** — Large working tree changes, unpushed commits (so its PR head reads
-  as stale), and the seven-comment thread the `comments` tab pages through
+  as stale), and the ten-comment thread the `comments` tab pages through
 - **beta** — Staged changes, behind main, PR with CI running
 - **hooks** — Staged+unstaged changes, no remote, so no CI at all
 - **`PICKER_EXTRA_BRANCHES`** — each carries one commit of its own; a branch left

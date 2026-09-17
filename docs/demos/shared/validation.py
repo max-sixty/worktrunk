@@ -77,6 +77,39 @@ TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
             ],
         ),
     ],
+    "wt-switch-picker": [
+        # The alt-p beat. Both halves of it matter: the columns the preview was
+        # covering appear, and the preview's own tab bar goes with it — and that
+        # second half is the only evidence the Alt binding reached the picker at
+        # all. Where an Alt key degrades to a plain keypress (a recorder that
+        # doesn't send Option as Meta), the tape types a "p" into the query
+        # instead: the list filters, the preview stays open, and the recording
+        # is wrong without anything failing. Scoped to docs because the social
+        # terminal is too narrow for these columns.
+        Checkpoint(
+            start=45,
+            end=95,
+            expected=["Commit", "Summary", "Reissue tokens"],
+            forbidden=["ctrl-u/d"],
+            targets=("docs",),
+        ),
+        # The comment thread behind alt-8, every line of it from the mocked
+        # forge. `reopen the picker` is how a failed fetch reads, and a forge
+        # mock that isn't reachable fails exactly that way.
+        Checkpoint(
+            start=345,
+            end=470,
+            expected=["normalize_path", "rmurthy"],
+            forbidden=["reopen the picker"],
+        ),
+        # The PR itself behind alt-7.
+        Checkpoint(
+            start=495,
+            end=550,
+            expected=["utility functions", "BRANCH", "alpha"],
+            forbidden=["reopen the picker"],
+        ),
+    ],
     "wt-statusline": [
         Checkpoint(
             start=-130,

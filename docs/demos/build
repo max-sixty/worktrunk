@@ -49,6 +49,7 @@ from shared import (  # noqa: E402
     recorder_env,
     SIZE_DOCS,
     SIZE_DOCS_MOBILE,
+    SIZE_DOCS_PICKER,
     SIZE_SOCIAL,
     record_text,
     record_snapshot,
@@ -147,7 +148,8 @@ def prepare_basic(env: DemoEnv):
 
 
 # Worktrees the picker demo adds on top of the shared set, so its list reads
-# like a repo someone actually works in rather than a fixture.
+# like a repo someone actually works in rather than a fixture — sixteen rows,
+# which is also what fills the taller terminal `SIZE_DOCS_PICKER` records in.
 #
 # Each carries a commit of its own: a branch sitting on main's tip renders as an
 # empty row and, because branch CI is keyed by commit, borrows main's checks —
@@ -159,9 +161,14 @@ PICKER_EXTRA_BRANCHES = [
     ("auth", "src/auth.rs", "feat: rotate tokens on role change", False),
     ("billing", "src/billing.rs", "refactor: format currency by locale", False),
     ("cache", "src/cache.rs", "perf: memoize the config parse", True),
+    ("deps", "Cargo.toml", "chore: bump tokio to 1.41", False),
     ("docs/site", "docs/config.md", "docs: document every config key", False),
+    ("metrics", "src/metrics.rs", "feat: emit per-request timings", False),
     ("perf/collect", "src/collect.rs", "perf: batch the rev-parse calls", True),
     ("release", "CHANGELOG.md", "chore: start the 0.2.0 notes", False),
+    ("retry", "tests/retry.rs", "test: retry the network test", False),
+    ("search", "src/search.rs", "feat: rank results by recency", True),
+    ("ui/theme", "src/theme.rs", "style: soften the dark palette", False),
 ]
 
 
@@ -173,6 +180,11 @@ def prepare_picker(env: DemoEnv):
     than in `prepare_demo_repo` leaves every other demo's table unchanged.
     """
     prepare_demo_repo(env, REPO_ROOT)
+
+    # The Summary column renders only where an LLM command is configured, and
+    # `fixtures/llm-mock.sh` is what answers it. No project commands to approve:
+    # nothing in this tape runs a hook.
+    _write_user_config(env, [])
 
     for branch, rel_path, message, dirty in PICKER_EXTRA_BRANCHES:
         path = env.work_base / f"acme.{branch.replace('/', '-')}"
@@ -454,7 +466,10 @@ TARGETS = {
     "docs": {
         "demos": DOCS_DEMOS,
         "size": SIZE_DOCS,
-        "sizes": {"wt-core-mobile": SIZE_DOCS_MOBILE},
+        "sizes": {
+            "wt-core-mobile": SIZE_DOCS_MOBILE,
+            "wt-switch-picker": SIZE_DOCS_PICKER,
+        },
         "themes": ["light", "dark"],
     },
     "social": {

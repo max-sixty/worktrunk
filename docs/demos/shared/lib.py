@@ -228,14 +228,19 @@ def _ensure_zellij_plugin() -> Path:
     return plugin_path
 
 
-# A source marker for the fork commit the tapes depend on, as (file, substring).
+# A source marker for the newest fork commit the tapes depend on, as
+# (file, substring). Name the latest one: the branch is linear, so a clone that
+# has it has the ones before it too.
 #
 # `ensure_vhs_binary` reuses an existing clone and an existing binary without
-# pulling, so a clone made before this commit keeps building a VHS that drops the
-# Alt modifier — and `Alt+p` in a tape then types a literal "p" into whatever has
-# focus. That records a wrong GIF with no error from VHS, the build, or the
-# recording, which is why it's worth checking rather than trusting the clone.
-_VHS_FORK_MARKER = ("tty.go", "macOptionIsMeta")
+# pulling, so a clone made before that commit keeps building a VHS the tapes
+# have outgrown — one that drops the Alt modifier, turning a tape's `Alt+p`
+# into a literal "p" typed at whatever has focus, or one that times the
+# keystroke overlay from the first keypress rather than from the video, which
+# slides every key a fixed distance away from what it did. Both record a wrong
+# GIF with no error from VHS, the build, or the recording, which is why this
+# checks rather than trusting the clone.
+_VHS_FORK_MARKER = ("keystroke.go", "videoMS")
 
 
 def _require_current_vhs_fork(vhs_dir: Path) -> None:
@@ -246,7 +251,7 @@ def _require_current_vhs_fork(vhs_dir: Path) -> None:
         return
     raise RuntimeError(
         f"The VHS fork clone at {vhs_dir} predates the {marker} fix, so a tape's "
-        f"Alt keybinding would be recorded as a plain keypress.\n"
+        f"keystroke overlay would be recorded out of step with the screen.\n"
         f"Update and rebuild it:\n"
         f"  git -C {vhs_dir} pull && rm -f {vhs_dir / 'vhs'}"
     )
@@ -461,10 +466,16 @@ DEMO_PRS = [
         "review": "APPROVED",
         "delay": 0.3,
         # Bodies are written for the picker's preview pane, which is about half
-        # the terminal — roughly 48 columns at the recording size. Short
+        # the terminal — roughly 65 columns at `SIZE_DOCS_PICKER`. Short
         # sentences and short code lines keep the wrap from shredding them, and
         # the thread runs a little past one screen so ctrl-d has somewhere to go.
         "comments": [
+            (
+                "dbenson",
+                28,
+                "Opening this for review. The path helpers are lifted out "
+                "of the config loader as-is — no behaviour change intended.",
+            ),
             (
                 "rmurthy",
                 26,
@@ -490,6 +501,20 @@ DEMO_PRS = [
                 "Reads well. One more: `find_project_root` walks "
                 "all the way to `/` when the path is outside any "
                 "project. That's a lot of `stat` for a miss.",
+            ),
+            (
+                "dbenson",
+                18,
+                "Measured it: a miss from a nested path is about forty "
+                "`stat` calls here. Fine on a warm cache, less so on a "
+                "network mount.",
+            ),
+            (
+                "rmurthy",
+                14,
+                "A network mount is exactly where I'd expect it to bite. "
+                "Worth a ceiling — the first directory we can't read is "
+                "as good a one as any.",
             ),
             (
                 "dbenson",
@@ -598,6 +623,8 @@ DEMO_BRANCH_CI = {
     "main": [("completed", "success")],
     "cache": [("completed", "success")],
     "release": [("completed", "failure")],
+    "search": [("completed", "success")],
+    "retry": [("completed", "failure")],
 }
 
 
@@ -1190,41 +1217,9 @@ fi
 """)
     flyctl_mock.chmod(0o755)
 
-    # llm mock - simulates both commit message and summary generation.
-    # Reads stdin to detect prompt type: summary prompts contain "summary",
-    # commit prompts don't. For summaries, returns branch-appropriate one-liners
-    # based on filenames in the diff.
+    # llm mock — the command every demo's `[commit.generation]` points at.
     llm_mock = bin_dir / "llm"
-    llm_mock.write_text(r"""#!/bin/bash
-input=$(cat)
-
-if echo "$input" | grep -qi "summary"; then
-    # Summary generation — return branch-appropriate one-liner
-    if echo "$input" | grep -q "utils\.rs"; then
-        echo "Add utility functions module with string and math helpers"
-    elif echo "$input" | grep -q "notes\.txt"; then
-        echo "Add TODO notes for caching improvements"
-    elif echo "$input" | grep -q "multiply\|subtract\|math"; then
-        echo "Add math operations and consolidate tests"
-    elif echo "$input" | grep -q "User settings"; then
-        echo "Add user settings module placeholder"
-    else
-        echo "Expand README with contributing and license sections"
-    fi
-else
-    # Commit message generation
-    sleep 0.5
-    if echo "$input" | grep -q "test_add"; then
-        echo "test: expand add coverage"
-        echo ""
-        echo "Add another test case for the add function."
-    else
-        echo "feat: add user settings module"
-        echo ""
-        echo "Add placeholder module for user profile settings."
-    fi
-fi
-""")
+    shutil.copy(FIXTURES_DIR / "llm-mock.sh", llm_mock)
     llm_mock.chmod(0o755)
 
     # cargo mock - handles nextest run
@@ -1420,25 +1415,41 @@ def check_dependencies(commands: list[str]):
             raise SystemExit(f"Missing dependency: {cmd}")
 
 
+def _ffmpeg_draws_subtitles(ffmpeg: str) -> bool:
+    """Whether this ffmpeg was built with libass, i.e. has the `ass` filter."""
+    result = subprocess.run([ffmpeg, "-filters"], capture_output=True, text=True)
+    return " ass " in result.stdout
+
+
 def check_ffmpeg_libass():
-    """Check that ffmpeg has libass support (required for keystroke overlay)."""
-    if not shutil.which("ffmpeg"):
-        raise SystemExit(
-            "Missing dependency: ffmpeg\n"
-            "Install with: brew install ffmpeg-full\n"
-            'Then add it to PATH: export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"'
-        )
-    result = subprocess.run(
-        ["ffmpeg", "-filters"],
-        capture_output=True,
-        text=True,
+    """Put an ffmpeg that can draw subtitles on PATH, for the keystroke overlay.
+
+    Homebrew ships two builds: `ffmpeg` is the one linked onto PATH and is
+    built without libass, while `ffmpeg-full` carries it and stays unlinked —
+    so installing ffmpeg at any point silently takes the overlay away again.
+    VHS shells out to plain `ffmpeg`, so when the linked build can't draw
+    subtitles this puts the full one in front of it for the rest of the build.
+
+    Worth doing rather than telling the user to fix their PATH: the failure
+    lands at the very end of a recording, as an ffmpeg filter-graph parse
+    error naming the subtitle file, minutes after the work that produced it.
+    """
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg and _ffmpeg_draws_subtitles(ffmpeg):
+        return
+
+    full = subprocess.run(
+        ["brew", "--prefix", "ffmpeg-full"], capture_output=True, text=True
     )
-    if " ass " not in result.stdout:
-        raise SystemExit(
-            "ffmpeg missing libass support (required for keystroke overlay).\n"
-            "Install with: brew install ffmpeg-full\n"
-            'Then add it to PATH: export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"'
-        )
+    candidate = Path(full.stdout.strip()) / "bin" / "ffmpeg" if full.returncode == 0 else None
+    if candidate and candidate.exists() and _ffmpeg_draws_subtitles(str(candidate)):
+        os.environ["PATH"] = f"{candidate.parent}{os.pathsep}{os.environ['PATH']}"
+        return
+
+    raise SystemExit(
+        "No ffmpeg with libass support (required for the keystroke overlay).\n"
+        "Install with: brew install ffmpeg-full"
+    )
 
 
 def write_starship_config(path: Path, theme: str) -> None:
@@ -1700,6 +1711,13 @@ class DemoSize:
 SIZE_SOCIAL = DemoSize(width=1200, height=700, fontsize=26)  # Big text for mobile
 SIZE_DOCS = DemoSize(width=1600, height=900, fontsize=24)  # More content for docs
 SIZE_DOCS_MOBILE = DemoSize(width=576, height=432, fontsize=20)
+
+# The picker demo trades text size for terminal size, on the same canvas as the
+# rest: 139x34 rather than 102x25. It is the one demo whose subject is a table
+# and a preview pane side by side, and the columns it loses first are the ones
+# worth watching — at 102 columns the CI status and the branch summary fall off
+# the right edge, and the preview pane is too short to page a diff through.
+SIZE_DOCS_PICKER = DemoSize(width=1600, height=900, fontsize=18)
 
 
 def build_tape_replacements(demo_env: DemoEnv, repo_root: Path) -> dict:

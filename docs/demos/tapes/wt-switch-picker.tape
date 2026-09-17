@@ -9,9 +9,9 @@ Output "{{OUTPUT_GIF}}"
 # and a preview pane that pages through a diff or a PR thread without leaving
 # the list. The order below takes them in turn.
 #
-# 1. wt switch          — rows land immediately, CI still in flight
+# 1. wt switch          — rows land immediately, CI and summaries still in flight
 # 2. alt-p              — preview off: the same rows reveal their right-hand
-#                         columns (CI, commit, age) while CI is still arriving
+#                         columns (summary, CI, commit) while both are arriving
 # 3. alt-p, ↓↓          — preview back on, following the cursor
 # 4. "alpha"            — filter to the branch with the large diff
 # 5. ctrl-d ×3          — page through a 397-line diff
@@ -19,9 +19,12 @@ Output "{{OUTPUT_GIF}}"
 # 7. alt-7              — the PR itself: title, author, URL, description
 # 8. Enter              — switch to it
 #
-# The environment is `prepare_picker` in docs/demos/build: eleven worktrees,
-# varied CI (PR numbers, bare branch CI, none), and a mocked forge whose
-# per-branch response delays are what make the CI column stream.
+# The environment is `prepare_picker` in docs/demos/build: sixteen worktrees,
+# varied CI (PR numbers, bare branch CI, none), a mocked LLM behind the Summary
+# column, and a mocked forge whose per-branch response delays are what make the
+# CI column stream. It records at `SIZE_DOCS_PICKER` — the same canvas as every
+# other demo, in smaller text, because at the usual size the CI status and the
+# summary fall off the right edge.
 
 Source docs/demos/tapes/shared-commands.tape
 
@@ -30,7 +33,11 @@ Enter
 Sleep 1s
 Set KeyStrokes Show
 
-# Open the picker. Rows paint from local git right away.
+# Open the picker. Rows paint from local git right away. `Show` comes after the
+# command is typed, as in every docs demo — the first frame carries the whole
+# command rather than a character of it. Keystroke times are positions in the
+# recorded video and a hidden stretch records no frames, so those characters
+# all land on that first frame together, which is what it already shows.
 Type "wt switch"
 Show
 Sleep 300ms

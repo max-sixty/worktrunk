@@ -107,14 +107,14 @@ git branch -d feat</code></pre></td>
 - **[Aliases](/extending/#aliases) & [per-branch variables](/config/#wt-config-state-vars)** — custom `wt <name>` commands and branch-scoped state for hook templates
 - ...and **[lots more](#next-steps)**
 
-The picker, with each row's CI status streaming in behind the list:
+The picker, with each row's CI status and branch summary streaming in behind the list:
 
 <figure class="demo">
 <picture>
   <source srcset="/assets/docs/dark/wt-switch-picker.gif" media="(prefers-color-scheme: dark)">
-  <img src="/assets/docs/light/wt-switch-picker.gif" alt="wt switch interactive picker demo: streaming CI status, a paged diff, and a PR comment thread" width="1600" height="900" loading="lazy">
+  <img src="/assets/docs/light/wt-switch-picker.gif" alt="wt switch interactive picker demo: streaming CI status and branch summaries, a paged diff, and a PR comment thread" width="1600" height="900" loading="lazy">
 </picture>
-<figcaption>Revealing the CI column, paging a diff, then the PR's comment thread</figcaption>
+<figcaption>Revealing the CI and summary columns, paging a diff, then the PR's comment thread</figcaption>
 </figure>
 
 Multiple parallel agents, same simple commands:

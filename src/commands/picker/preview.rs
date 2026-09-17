@@ -109,6 +109,16 @@ pub(super) const MIN_VISIBLE_ITEMS: usize = 3;
 /// Preview width as percentage of terminal width (for Right layout).
 const PREVIEW_WIDTH_PERCENT: usize = 50;
 
+/// The column skim leaves unpainted at the right edge of a preview pane.
+///
+/// Measured in both layouts: a `right:N` window paints N-1 columns, and a
+/// `down:` pane paints one fewer than the terminal is wide. Render to the full
+/// width and the last column is dropped — silently, and only on the lines long
+/// enough to reach it, which for wrapped prose is whichever line happens to
+/// break flush against the edge, so the loss is a missing letter mid-sentence
+/// rather than anything that looks like clipping.
+const PREVIEW_RESERVED_COLS: usize = 1;
+
 /// Minimum terminal columns for side-by-side (Right) layout.
 ///
 /// Below this width, the list panel in Right layout is too narrow
@@ -201,7 +211,7 @@ impl PreviewLayout {
     /// Right positions the preview by width, Down by height.
     pub(super) fn spec_for(self, (width, height): (usize, usize)) -> String {
         match self {
-            Self::Right => format!("right:{width}"),
+            Self::Right => format!("right:{}", width + PREVIEW_RESERVED_COLS),
             Self::Down => format!("down:{height}"),
         }
     }
@@ -211,6 +221,10 @@ impl PreviewLayout {
     /// terminal once and calls this for both the skim preview-window spec (via
     /// `spec_for`) and background pre-computation. Pure, so it's testable
     /// without a live TTY.
+    ///
+    /// The width is the pane's *text* width, which is what every renderer
+    /// wants; `spec_for` adds [`PREVIEW_RESERVED_COLS`] back when it asks skim
+    /// for the Right window, and Down's spec carries only a height.
     ///
     /// Right keeps a fixed 50%/90% split independent of `num_items`. Down lets
     /// the list grow to `max_visible_items(available)` rows (half of skim's
@@ -224,12 +238,13 @@ impl PreviewLayout {
     ) -> (usize, usize) {
         match self {
             Self::Right => {
-                let width = term_width * PREVIEW_WIDTH_PERCENT / 100;
+                let width = (term_width * PREVIEW_WIDTH_PERCENT / 100)
+                    .saturating_sub(PREVIEW_RESERVED_COLS);
                 let height = available_height(term_height);
                 (width, height)
             }
             Self::Down => {
-                let width = term_width;
+                let width = term_width.saturating_sub(PREVIEW_RESERVED_COLS);
                 let available = available_height(term_height);
                 let list_lines = LIST_CHROME_LINES + num_items.min(max_visible_items(available));
                 let remaining = available.saturating_sub(list_lines);
@@ -352,9 +367,36 @@ mod tests {
 
     #[test]
     fn test_preview_layout_spec_for() {
-        // Right positions by width, Down by height.
-        assert_eq!(PreviewLayout::Right.spec_for((40, 21)), "right:40");
+        // Right positions by width, Down by height. The Right window is one
+        // column wider than the text it holds — see PREVIEW_RESERVED_COLS.
+        assert_eq!(PreviewLayout::Right.spec_for((40, 21)), "right:41");
         assert_eq!(PreviewLayout::Down.spec_for((80, 15)), "down:15");
+    }
+
+    #[test]
+    fn test_preview_width_stops_short_of_the_column_skim_leaves_unpainted() {
+        // Both layouts hand renderers a text width one short of the pane, so a
+        // line that fills it survives; rendering to the full pane instead drops
+        // the last column, which reads as a wrapped sentence missing a letter.
+        // Right's window spec still names the whole pane — that is skim's, not
+        // the renderer's.
+        for term_width in [80usize, 120, 139, 200] {
+            let pane = term_width * PREVIEW_WIDTH_PERCENT / 100;
+            let (text_width, _) = PreviewLayout::Right.dimensions_for(term_width, 40, 10);
+            assert_eq!(text_width, pane - 1, "Right text width at {term_width}");
+            assert_eq!(
+                PreviewLayout::Right.spec_for((text_width, 0)),
+                format!("right:{pane}"),
+                "Right window spec at {term_width}"
+            );
+
+            let (down_width, _) = PreviewLayout::Down.dimensions_for(term_width, 40, 10);
+            assert_eq!(
+                down_width,
+                term_width - 1,
+                "Down text width at {term_width}"
+            );
+        }
     }
 
     #[test]
@@ -429,7 +471,10 @@ mod tests {
         ];
         for (term_height, num_items, expected_preview) in cases {
             let (width, preview) = PreviewLayout::Down.dimensions_for(80, term_height, num_items);
-            assert_eq!(width, 80, "Down width is the full terminal width");
+            assert_eq!(
+                width, 79,
+                "Down width is the terminal less the column skim leaves unpainted"
+            );
             assert_eq!(
                 preview, expected_preview,
                 "Down preview height for {term_height}h x {num_items} items"
