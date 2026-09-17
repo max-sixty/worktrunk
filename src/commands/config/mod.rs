@@ -25,7 +25,8 @@ pub use omp::{handle_omp_install, handle_omp_uninstall};
 pub use opencode::{handle_opencode_install, handle_opencode_uninstall};
 pub use pi::{handle_pi_install, handle_pi_uninstall};
 pub use plugins::{
-    handle_claude_install, handle_claude_install_statusline, handle_claude_uninstall,
+    handle_claude_approve_enter_worktree, handle_claude_install, handle_claude_install_statusline,
+    handle_claude_uninstall,
 };
 pub use show::handle_config_show;
 pub use state::{

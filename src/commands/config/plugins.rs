@@ -4,9 +4,13 @@ use std::path::PathBuf;
 
 use anyhow::{Context, bail};
 use color_print::cformat;
+use worktrunk::git::{Repository, WorktrunkError};
+use worktrunk::path::paths_match;
 use worktrunk::styling::{eprintln, info_message, progress_message, success_message};
 
 use super::show::{claude_config_dir, is_claude_available, is_statusline_configured};
+use crate::commands::is_worktree_at_expected_path;
+use crate::output::print_json;
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 
 const MARKETPLACE_SOURCE: &str = "max-sixty/worktrunk";
@@ -101,6 +105,53 @@ pub fn handle_claude_uninstall(yes: bool) -> anyhow::Result<()> {
     eprintln!("{}", success_message("Plugin & marketplace removed"));
 
     Ok(())
+}
+
+/// The fields of a Claude Code `PermissionRequest` hook payload this handler
+/// reads.
+#[derive(serde::Deserialize)]
+struct PermissionRequest {
+    tool_name: String,
+    cwd: PathBuf,
+    tool_input: serde_json::Value,
+}
+
+/// Handle `wt config plugins claude approve-enter-worktree`, the plugin's
+/// `PermissionRequest` hook.
+///
+/// Claude Code confirms an `EnterWorktree` into any worktree outside its own
+/// `.claude/worktrees/`, which in worktrunk's layout is every worktree, and a
+/// background session waits at that dialog until someone attaches. This
+/// extends Claude Code's exemption to worktrunk's managed location: it prints
+/// the `allow` decision when the call's `path` names a worktree of the
+/// repository the payload's `cwd` is in, sitting at the path the
+/// `worktree-path` template gives its branch. Every other payload exits 1 with
+/// nothing on stdout, so the dialog appears and the hook command's `||` sets
+/// the 💬 marker.
+pub fn handle_claude_approve_enter_worktree() -> anyhow::Result<()> {
+    let request: PermissionRequest = serde_json::from_reader(std::io::stdin().lock())
+        .context("Failed to parse PermissionRequest payload")?;
+
+    if request.tool_name == "EnterWorktree"
+        && let Some(path) = request.tool_input.get("path").and_then(|p| p.as_str())
+    {
+        let path = request.cwd.join(path);
+        let repo = Repository::at(&request.cwd)?;
+        let config = repo.user_config();
+        let managed = repo.list_worktrees()?.iter().any(|wt| {
+            paths_match(&wt.path, &path) && is_worktree_at_expected_path(wt, &repo, config)
+        });
+        if managed {
+            return print_json(&serde_json::json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PermissionRequest",
+                    "decision": { "behavior": "allow" },
+                }
+            }));
+        }
+    }
+
+    Err(WorktrunkError::AlreadyDisplayed { exit_code: 1 }.into())
 }
 
 /// Whether Claude Code lists the worktrunk plugin, or `None` where its answer
