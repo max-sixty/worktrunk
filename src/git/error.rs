@@ -31,7 +31,7 @@ use super::HookType;
 use crate::path::format_path_for_display;
 use crate::styling::{
     error_message, format_bash_with_gutter, format_with_gutter, hint_message, info_message,
-    suggest_command,
+    suggest_command, suggest_command_in_dir,
 };
 
 /// Platform-specific reference type (PR vs MR).
@@ -375,7 +375,7 @@ impl SwitchSuggestionCtx {
 ///     GitError::DetachedHead { action: Some("merge".into()), worktree: None }.into();
 ///
 /// // Recover the typed error to branch on the variant.
-/// if let Some(GitError::BranchAlreadyExists { branch }) = err.downcast_ref::<GitError>() {
+/// if let Some(GitError::BranchAlreadyExists { branch, .. }) = err.downcast_ref::<GitError>() {
 ///     println!("branch {branch} already exists");
 /// }
 /// ```
@@ -441,6 +441,19 @@ pub enum GitError {
     },
     BranchAlreadyExists {
         branch: String,
+        /// Worktree path already registered for `branch`, if any.
+        ///
+        /// `wt switch <branch>` (without `--create`) only runs
+        /// pre-start/post-start hooks when it has to register a new
+        /// worktree (`SwitchPlan::Create`); a branch whose worktree is
+        /// already registered takes the existing-worktree path and only
+        /// runs post-switch. So if an earlier `--create` failed partway
+        /// through `pre-start`, the branch and a partial worktree
+        /// registration are both left behind, and the switch this hint
+        /// suggests reports success without finishing that setup. When
+        /// `Some(path)`, the hint also points at the idempotent command
+        /// that does finish it.
+        existing_worktree: Option<PathBuf>,
     },
     BranchNotFound {
         branch: String,
@@ -763,7 +776,7 @@ impl GitError {
                 (None, None) => "Working tree has uncommitted changes".to_string(),
             },
 
-            GitError::BranchAlreadyExists { branch } => {
+            GitError::BranchAlreadyExists { branch, .. } => {
                 cformat!("Branch <bold>{branch}</> already exists")
             }
 
@@ -1045,20 +1058,32 @@ impl GitError {
                 write!(f, "\n{}", hint_message(hint))
             }
 
-            GitError::BranchAlreadyExists { branch } => {
+            GitError::BranchAlreadyExists {
+                branch,
+                existing_worktree,
+            } => {
                 let title = self.title();
                 let mut switch_cmd = suggest_command("switch", &[branch], &[]);
                 if let Some(ctx) = ctx {
                     switch_cmd = ctx.apply(switch_cmd);
                 }
-                write!(
-                    f,
-                    "{}\n{}",
-                    error_message(&title),
-                    hint_message(cformat!(
+                let hint = match existing_worktree {
+                    // A worktree is already registered for `branch`, so the
+                    // switch above only runs post-switch (see the field
+                    // doc). If an earlier --create failed partway through
+                    // pre-start, that switch reports success without
+                    // finishing setup — name the command that does.
+                    Some(path) => {
+                        let hook_cmd = suggest_command_in_dir(path, "hook", &["pre-start"], &[]);
+                        cformat!(
+                            "To switch to the existing branch, run without <underline>--create</>: <underline>{switch_cmd}</> (if its setup didn't finish, run <underline>{hook_cmd}</> first — safe to re-run)"
+                        )
+                    }
+                    None => cformat!(
                         "To switch to the existing branch, run without <underline>--create</>: <underline>{switch_cmd}</>"
-                    ))
-                )
+                    ),
+                };
+                write!(f, "{}\n{}", error_message(&title), hint_message(hint))
             }
 
             GitError::BranchNotFound {
@@ -2020,6 +2045,7 @@ mod tests {
         // .into() preserves type so we can downcast and use Display
         let err: anyhow::Error = GitError::BranchAlreadyExists {
             branch: "main".into(),
+            existing_worktree: None,
         }
         .into();
 
@@ -2034,13 +2060,31 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_branch_already_exists_with_existing_worktree() {
+        // A worktree already registered for the branch means `wt switch`
+        // (no --create) only runs post-switch, not pre-start -- so if the
+        // branch and worktree are what's left of a --create that failed
+        // mid pre-start, the hint must not imply the plain switch finishes
+        // setup. It should name the idempotent recovery command instead.
+        let err = GitError::BranchAlreadyExists {
+            branch: "feat".into(),
+            existing_worktree: Some(PathBuf::from("/tmp/repo.feat")),
+        };
+        assert_snapshot!(err.render(), @"
+        [31m✗[39m [31mBranch [1mfeat[22m already exists[39m
+        [2m↳[22m [2mTo switch to the existing branch, run without [4m--create[24m: [4mwt switch feat[24m (if its setup didn't finish, run [4mwt -C /tmp/repo.feat hook pre-start[24m first — safe to re-run)[22m
+        ");
+    }
+
+    #[test]
     fn test_pattern_matching_with_into() {
         let err: anyhow::Error = GitError::BranchAlreadyExists {
             branch: "main".into(),
+            existing_worktree: None,
         }
         .into();
 
-        if let Some(GitError::BranchAlreadyExists { branch }) = err.downcast_ref::<GitError>() {
+        if let Some(GitError::BranchAlreadyExists { branch, .. }) = err.downcast_ref::<GitError>() {
             assert_eq!(branch, "main");
         } else {
             panic!("Failed to downcast and pattern match");
@@ -2254,7 +2298,8 @@ mod tests {
     fn snapshot_short_display_per_variant() {
         // GitError variants
         assert_snapshot!(
-            GitError::BranchAlreadyExists { branch: "feature".into() }.to_string(),
+            GitError::BranchAlreadyExists { branch: "feature".into(), existing_worktree: None }
+                .to_string(),
             @"Branch feature already exists"
         );
         assert_snapshot!(
@@ -2285,6 +2330,7 @@ mod tests {
         // WithSwitchSuggestion delegates to inner — ctx only affects render
         let inner = GitError::BranchAlreadyExists {
             branch: "feature".into(),
+            existing_worktree: None,
         };
         let wrapped = GitError::WithSwitchSuggestion {
             source: Box::new(inner.clone()),
@@ -2732,6 +2778,7 @@ mod tests {
         let err = GitError::WithSwitchSuggestion {
             source: Box::new(GitError::BranchAlreadyExists {
                 branch: "emails".into(),
+                existing_worktree: None,
             }),
             ctx: SwitchSuggestionCtx {
                 extra_flags: vec!["--execute=claude".into()],
@@ -2768,6 +2815,7 @@ mod tests {
         let err = GitError::WithSwitchSuggestion {
             source: Box::new(GitError::BranchAlreadyExists {
                 branch: "emails".into(),
+                existing_worktree: None,
             }),
             ctx: SwitchSuggestionCtx {
                 extra_flags: vec!["--execute=claude".into()],

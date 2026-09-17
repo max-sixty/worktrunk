@@ -307,6 +307,7 @@ fn git_state_errors_render() {
             "branch already exists",
             GitError::BranchAlreadyExists {
                 branch: "feature".into(),
+                existing_worktree: None,
             }
             .render(),
         ),

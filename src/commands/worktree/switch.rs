@@ -665,8 +665,10 @@ fn resolve_switch_target(
     if create {
         let branch_handle = repo.branch(&resolved_branch);
         if branch_handle.exists_locally()? {
+            let existing_worktree = repo.worktree_for_branch(&resolved_branch)?;
             return Err(GitError::BranchAlreadyExists {
                 branch: resolved_branch,
+                existing_worktree,
             }
             .into());
         }
