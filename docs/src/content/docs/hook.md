@@ -75,12 +75,14 @@ Hooks take one of three forms, determined by their TOML shape.
 A string is a single command:
 
 ```toml
+# .config/wt.toml
 pre-start = "npm install"
 ```
 
 A table is multiple commands that run concurrently:
 
 ```toml
+# .config/wt.toml
 [post-start]
 server = "npm run dev"
 watch = "npm run watch"
@@ -89,6 +91,7 @@ watch = "npm run watch"
 A pipeline is a sequence of `[[hook]]` blocks run in order. Each block is one step; multiple keys within a block run concurrently. A failing step aborts the rest of the pipeline:
 
 ```toml
+# .config/wt.toml
 [[post-start]]
 install = "npm ci"
 
@@ -170,6 +173,7 @@ All hooks share the same perspective — `{{ branch | hash_port }}` produces the
 Undefined variables error — use conditionals or defaults for optional behavior:
 
 ```toml
+# .config/wt.toml
 [pre-start]
 # Rebase onto upstream if tracking a remote branch (e.g., wt switch --create feature --base origin/feature)
 sync = "{% if upstream %}git fetch && git rebase {{ upstream }}{% endif %}"
@@ -182,6 +186,7 @@ Run any hook-firing command with `-v` to see the resolved variables for the actu
 Variables use dot access and the `default` filter for missing keys. JSON object/array values are parsed automatically, so `{{ vars.config.port }}` works when the value is `{"port": 3000}`:
 
 ```toml
+# .config/wt.toml
 [post-start]
 dev = "ENV={{ vars.env | default('development') }} npm start -- --port {{ vars.config.port | default('3000') }}"
 ```
@@ -206,6 +211,7 @@ The `sanitize_db` filter produces database-safe identifiers — lowercase alphan
 The `hash` filter is the bare 3-character base36 digest, useful for composing your own truncate-with-collision-avoidance recipes when an output budget is tight (e.g., Unix socket paths capped at 107 bytes):
 
 ```toml
+# ~/.config/worktrunk/config.toml
 # Truncated branch slug + hash: collisions remain disambiguated even when prefixes match
 worktree-path = "/tmp/{{ (branch | sanitize)[:20] }}_{{ branch | sanitize | hash }}"
 ```
@@ -213,6 +219,7 @@ worktree-path = "/tmp/{{ (branch | sanitize)[:20] }}_{{ branch | sanitize | hash
 The `dirname` and `basename` filters traverse paths. They're useful for bare repos in a hidden directory like `myproject/.git`, where `{{ repo }}` resolves to `.git`:
 
 ```toml
+# ~/.config/worktrunk/config.toml
 # Place worktrees as siblings of the bare repo, named `<wrapper>.<branch>`
 worktree-path = "{{ repo_path }}/../{{ repo_path | dirname | basename }}.{{ branch | sanitize }}"
 ```
@@ -220,6 +227,7 @@ worktree-path = "{{ repo_path }}/../{{ repo_path | dirname | basename }}.{{ bran
 The `hash_port` filter is useful for running dev servers on unique ports per worktree:
 
 ```toml
+# .config/wt.toml
 [post-start]
 dev = "npm run dev -- --host {{ branch }}.localhost --port {{ branch | hash_port }}"
 ```
@@ -227,7 +235,9 @@ dev = "npm run dev -- --host {{ branch }}.localhost --port {{ branch | hash_port
 Hash any string, including concatenations:
 
 ```toml
+# .config/wt.toml
 # Unique port per repo+branch combination
+[post-start]
 dev = "npm run dev --port {{ (repo ~ '-' ~ branch) | hash_port }}"
 ```
 
@@ -244,6 +254,7 @@ Templates also support functions for dynamic lookups:
 The `worktree_path_of_branch` function returns the filesystem path of a worktree given a branch name, or an empty string if no worktree exists for that branch. This is useful for referencing files in other worktrees:
 
 ```toml
+# .config/wt.toml
 [pre-start]
 # Copy config from main worktree
 setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path }}"
@@ -254,11 +265,13 @@ setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path 
 Hooks receive all template variables as JSON on stdin, enabling complex logic that templates can't express. Variables that are unset in a template are absent from the JSON too, so read the optional ones with a default — `branch` has none in a detached worktree:
 
 ```toml
+# .config/wt.toml
 [pre-start]
 setup = "python3 scripts/pre-start-setup.py"
 ```
 
 ```python
+# scripts/pre-start-setup.py
 import json, sys, subprocess
 ctx = json.load(sys.stdin)
 if ctx.get('branch', '').startswith('feature/') and 'backend' in ctx['repo']:
@@ -270,6 +283,7 @@ if ctx.get('branch', '').startswith('feature/') and 'backend' in ctx['repo']:
 Git worktrees share the repository but not untracked files. [`wt step copy-ignored`](/step/#wt-step-copy-ignored) copies gitignored files between worktrees:
 
 ```toml
+# .config/wt.toml
 [post-start]
 copy = "wt step copy-ignored"
 ```

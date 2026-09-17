@@ -9,6 +9,7 @@ Any command that reads a prompt from stdin and outputs a commit message works. A
 ### Claude Code
 
 ```toml
+# ~/.config/worktrunk/config.toml
 [commit.generation]
 command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''"
 ```
@@ -18,6 +19,7 @@ command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haik
 ### Codex
 
 ```toml
+# ~/.config/worktrunk/config.toml
 [commit.generation]
 command = "codex exec -m gpt-5.6-luna -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 ```
@@ -107,6 +109,7 @@ Summaries appear in:
 Enable in user config:
 
 ```toml
+# ~/.config/worktrunk/config.toml
 [list]
 summary = true
 ```
@@ -122,6 +125,7 @@ Worktrunk uses [minijinja](https://docs.rs/minijinja/) templates (Jinja2-like sy
 Override the defaults with inline templates:
 
 ```toml
+# ~/.config/worktrunk/config.toml
 [commit.generation]
 command = "llm -m claude-haiku-4.5"
 

@@ -164,7 +164,7 @@ Worktree state comes from the same cells [`wt list`](/list/) renders; Claude Cod
 
 Add to `~/.claude/settings.json`:
 
-```json
+```json title="~/.claude/settings.json"
 {
   "statusLine": {
     "type": "command",

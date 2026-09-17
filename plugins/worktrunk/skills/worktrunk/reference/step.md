@@ -126,6 +126,7 @@ $ wt step commit --stage=tracked
 Configure the default in user config:
 
 ```toml
+# ~/.config/worktrunk/config.toml
 [commit]
 stage = "tracked"
 ```
@@ -207,6 +208,7 @@ $ wt step squash --stage=none
 Configure the default in user config:
 
 ```toml
+# ~/.config/worktrunk/config.toml
 [commit]
 stage = "tracked"
 ```
@@ -470,6 +472,7 @@ target/
 After `.worktreeinclude` selects entries, you can add more gitignore-style excludes in user config, per-project user overrides, or project config:
 
 ```toml
+# ~/.config/worktrunk/config.toml
 [step.copy-ignored]
 exclude = [".cache/", ".turbo/"]
 ```
@@ -517,6 +520,7 @@ The `target/` directory is huge (often 1-10GB). Copying with reflink cuts first 
 `node_modules/` is large but mostly static. If the project has no native dependencies, symlinks are even faster:
 
 ```toml
+# .config/wt.toml
 [pre-start]
 deps = "ln -sf {{ primary_worktree_path }}/node_modules ."
 ```

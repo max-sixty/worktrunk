@@ -23,6 +23,7 @@ Hooks and aliases live in the same TOML config and share the [template engine](h
 Ten hooks cover five lifecycle events — switch, start, commit, merge, remove — each with a blocking `pre-` variant (failure aborts the operation) and a background `post-` variant. [`wt hook`](https://worktrunk.dev/hook/#hook-types) maps each hook to its timing and typical uses.
 
 ```toml
+# .config/wt.toml
 [pre-start]
 deps = "npm ci"
 
@@ -40,6 +41,7 @@ See [`wt hook`](https://worktrunk.dev/hook/) for the full reference and built-in
 Aliases are configured under `[aliases]`:
 
 ```toml
+# .config/wt.toml
 [aliases]
 deploy = "fly deploy --config=fly.{{ env }}.toml --app=myproject-{{ branch }}"
 open = "open http://localhost:{{ branch | hash_port }}"
@@ -64,6 +66,7 @@ Alias templates add `{{ args }}` for positional CLI arguments. Operation-context
 `{{ args }}` renders as a space-joined, shell-escaped string, ready to splice into a command:
 
 ```toml
+# ~/.config/worktrunk/config.toml
 [aliases]
 s = "wt switch {{ args }}"
 ```
@@ -96,6 +99,7 @@ wt config alias dry-run deploy -- --env=staging
 `[[aliases.NAME]]` defines a pipeline using the [same `[[block]]` semantics as hooks](https://worktrunk.dev/hook/#hook-forms): blocks run in order, keys within a block run concurrently, and a step failure aborts the remainder.
 
 ```toml
+# .config/wt.toml
 [[aliases.release]]
 test = "cargo test"
 
@@ -115,20 +119,27 @@ Every step sees the same `{{ args }}` and bound variables. `wt release -- --dry-
 
 ### Deferring expansion to a nested `wt` command
 
-A `wt step for-each` alias that prints the same branch in every worktree is rendering `{{ branch }}` too early. An alias body renders once at dispatch, in the invoking worktree, so a bare `{{ branch }}` is baked to that worktree's branch before for-each iterates. (`wt config alias dry-run <name>` shows the rendered body, with the value already baked in.)
-
-`{% raw %}…{% endraw %}` defers the variable: it survives the dispatch render as a literal `{{ branch }}`, and for-each expands it per worktree. One catch for `for-each`: the deferred `{{ branch }}` has spaces, so the alias body's `sh -c` splits it into `{{`, `branch`, `}}` before for-each sees it (`Failed to expand for-each argument: syntax error`). Give for-each its own `sh -c '…'` to keep the value one token:
+This alias prints the invoking worktree's branch once per worktree, rather than each worktree's own:
 
 ```toml
 [aliases]
-show-branches = "wt step for-each -- sh -c 'echo {% raw %}{{ branch }}{% endraw %}'"
+show-branches = "wt step for-each -- echo {{ branch }}"
 ```
 
-`wt show-branches` prints each worktree's own branch.
+An alias body renders once, at dispatch, in the worktree the alias ran from, so `{{ branch }}` is already that worktree's branch before `for-each` iterates. `wt config alias dry-run show-branches` prints the rendered body with the value baked in.
 
-`wt switch --execute` defers the same way. `-x` names the program and arguments after `--` stay separate, so quote the deferred template as one alias-body token. Here `{{ worktree_path }}` expands against the worktree being created, not the one the alias ran from:
+`{% raw %}…{% endraw %}` defers the variable: it survives the dispatch render as a literal `{{ branch }}`, and the nested command expands it in its own context. The deferred text contains spaces and the alias body is a shell command line, so quote it:
 
 ```toml
+# ~/.config/worktrunk/config.toml
+[aliases]
+show-branches = "wt step for-each -- echo '{% raw %}{{ branch }}{% endraw %}'"
+```
+
+`wt switch --execute` defers the same way, and `{{ worktree_path }}` then expands against the worktree being created:
+
+```toml
+# ~/.config/worktrunk/config.toml
 [aliases]
 echo-target = "wt switch {{ args }} --no-cd --execute echo -- '{% raw %}{{ worktree_path }}{% endraw %}'"
 ```
@@ -138,6 +149,7 @@ A repo-level variable like `{{ default_branch }}` needs no deferral: it is ident
 ### Recipe: rebase every worktree onto its upstream
 
 ```toml
+# ~/.config/worktrunk/config.toml
 [aliases]
 up = '''
 git fetch --all --prune; wt step for-each -- sh -c '
@@ -152,12 +164,7 @@ git fetch --all --prune; wt step for-each -- sh -c '
 
 `wt up` fetches every remote, then brings each worktree up to date with its upstream: skip if there is no upstream or a rebase is already in progress, fast-forward if a tracked file is modified or staged, otherwise rebase, aborting on conflict. It rebases onto git-native `@{u}` rather than a `{{ … }}` template, so git resolves each worktree's own upstream and there is nothing to defer.
 
-Two details matter when adapting it:
-
-- `;` after the fetch lets the sweep run even when one remote fails to fetch.
-- `--no-autostash` overrides a global `rebase.autostash` or `merge.autostash`, whose conflicting pop would leave markers behind and still exit 0.
-
-The sweep exits non-zero only when it leaves a worktree needing attention, which matters when the alias runs as a hook step: a failing step stops the rest of the pipeline.
+`--no-autostash` overrides a global `rebase.autostash` or `merge.autostash`, whose conflicting pop would leave conflict markers behind and still exit 0.
 
 ### Recipe: move or copy in-progress changes to a new worktree
 
@@ -187,6 +194,7 @@ To copy instead of move, add `git stash apply --index --quiet` right after the p
 `wt config state logs --format=json` emits structured entries (`branch`, `source`, `hook_type`, `name`, `path`). Pipe through `jq` to resolve one entry, then wrap in an alias for quick access:
 
 ```toml
+# ~/.config/worktrunk/config.toml
 [aliases]
 hook-log = '''
 tail -f "$(wt config state logs --format=json | jq -r --arg name "{{ name | sanitize_hash }}" --arg kind "{{ kind }}" '

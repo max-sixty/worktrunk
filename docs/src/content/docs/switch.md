@@ -127,6 +127,7 @@ The comparison base is the merge-base with the default branch, or with its upstr
 **Pager configuration:** The preview panel pipes diff output through git's pager. Override in user config:
 
 ```toml
+# ~/.config/worktrunk/config.toml
 [switch.picker]
 pager = "delta --paging=never --width=$COLUMNS"
 ```
