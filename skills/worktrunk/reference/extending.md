@@ -152,14 +152,12 @@ git fetch --all --prune; wt step for-each -- sh -c '
 
 `wt up` fetches every remote, then brings each worktree up to date with its upstream: skip if there is no upstream or a rebase is already in progress, fast-forward if a tracked file is modified or staged, otherwise rebase, aborting on conflict. It rebases onto git-native `@{u}` rather than a `{{ … }}` template, so git resolves each worktree's own upstream and there is nothing to defer.
 
-A sweep finds each worktree in whatever state you left it, so most of the script is guards:
+Two details matter when adapting it:
 
-- `git fetch --all` exits non-zero when any single remote fails. With `&&`, one remote with lapsed credentials is enough to skip the whole sweep, so even worktrees whose refs fetched fine go unrebased. With `;` the sweep runs on what did fetch, and the fetch error still prints.
-- `git rebase` refuses to run in a worktree with a modified or staged tracked file, whether or not there is anything to rebase — so a worktree you are editing would fail the sweep. `git merge --ff-only` is the piece of the rebase git will still do there: it advances a branch that is simply behind, and otherwise changes nothing — a diverged branch, or an incoming file that collides with your edits, leaves the worktree exactly as it was, with the reason printed. Untracked files trigger neither the refusal nor the `git diff` guard, so a worktree carrying only new files still rebases — unless one of them has the same name as a file the incoming commits add, which git declines to overwrite.
-- `rebasing` tells the two ways `git rebase` fails apart. Conflicting partway leaves a rebase in progress, which the abort winds back. Refusing to start — a tracked file modified under you, an untracked file in the way of an incoming one, a `pre-rebase` hook saying no — leaves nothing to abort and nothing to clean up, so the sweep moves on; an unconditional `git rebase --abort` there would answer `fatal: no rebase in progress` and exit 128 in place of git's own message.
-- Both arms pass `--no-autostash`, because a global `rebase.autostash` or `merge.autostash` breaks what each arm relies on. An autostash that pops with conflicts leaves the markers in the worktree and still exits 0, so the sweep would report success on a worktree it had just left in conflict — and an autostashed tree is momentarily clean, so a fast-forward that should have refused goes through and the collision lands on the pop instead.
+- `;` after the fetch lets the sweep run even when one remote fails to fetch.
+- `--no-autostash` overrides a global `rebase.autostash` or `merge.autostash`, whose conflicting pop would leave markers behind and still exit 0.
 
-So the sweep exits non-zero only when it leaves a worktree needing attention — an abort that itself failed. Everything git declines to do, it declines atomically, and the sweep carries on to the next worktree with git's reason in the output. That matters where the alias is a hook step, since a failing step stops the rest of the pipeline.
+The sweep exits non-zero only when it leaves a worktree needing attention, which matters when the alias runs as a hook step: a failing step stops the rest of the pipeline.
 
 ### Recipe: move or copy in-progress changes to a new worktree
 
@@ -233,7 +231,6 @@ Aside from the differences below, hooks and aliases behave the same.
 | Reach `{{ args }}` from positionals | Must use `--` (`wt hook pre-merge -- extra`) | Any bare positional lands there |
 | Approval skip flag | Post-subcommand `--yes` / `-y` supported (`wt hook pre-merge --yes`) | Only the global form (`wt -y <alias>`); post-alias `--yes` falls through to `{{ args }}` |
 | Source discrimination | `user:` / `project:` / `user:name` / `project:name` filter syntax | Run user first, then project; no filter syntax |
-| Force-bind escape | `--var KEY=VALUE` (deprecated in favor of `--KEY=VALUE`, but still force-binds) | None; smart routing is the only path |
 | `--help` | `wt hook --help` lists hook types; `wt hook <type> --help` shows flags and arguments for that type | The template body is the documentation: `wt <alias> --help` redirects to `wt config alias show` / `dry-run`. `wt --help` and `wt step --help` list configured aliases alongside built-in commands |
 | Inspection | `wt hook show [type] [--expanded]` | `wt config alias show <name>` / `wt config alias dry-run <name>` |
 | Stdin | All template variables as JSON (parse with `json.load(sys.stdin)`) | Inherits parent stdin (pipes pass through; interactive TUIs like `wt switch` keep the tty) |

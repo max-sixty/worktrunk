@@ -101,7 +101,7 @@ See [LLM-generated commit messages](https://worktrunk.dev/llm-commits/) for conf
 $ wt step commit --branch feature
 ```
 
-The branch must have a checked-out worktree. `--branch` re-roots the whole command: staging, hooks, and the commit all happen there. It selects the previewed worktree the same way, so `--dry-run` describes the commit the same flags would make.
+The branch must have a checked-out worktree; staging, hooks, and the commit all happen there.
 
 ### Hooks
 
@@ -290,13 +290,9 @@ The first matching row wins:
 | The branch is an ancestor of the target, so it has no commits of its own | `Fast-forwarded to <target>` |
 | Otherwise | The branch's commits replay onto the target's tip — refused outright if the two share no history |
 
-A branch that merged the target into itself still rebases: the target is its ancestor, but the merge commit in between keeps the first row from applying.
-
-When the target's local ref lags its upstream, the rows are measured against that upstream, which the result then names in place of the argument. [`wt merge`](https://worktrunk.dev/merge/) covers why.
-
 ### Conflicts
 
-A conflicting commit leaves the rebase open rather than undoing it. The worktree keeps git's conflict markers, and the ways out are `git rebase --continue` once the conflict is resolved, `git rebase --skip`, or `git rebase --abort`. Until the rebase is settled, `wt step rebase`, `wt step squash`, `wt step push`, and `wt merge` refuse to run — as they do while any other git operation is open, a conflicted `git merge` included.
+A conflicting commit leaves the rebase open rather than undoing it. The worktree keeps git's conflict markers, and the ways out are `git rebase --continue` once the conflict is resolved, `git rebase --skip`, or `git rebase --abort`. Until the rebase is settled, `wt step rebase`, `wt step squash`, `wt step push`, and `wt merge` refuse to run.
 
 ### Command reference
 
@@ -343,9 +339,7 @@ $ wt step push --no-ff     # Merge commit instead of a fast-forward
 
 ### Target worktree
 
-When the target branch has a worktree of its own, that worktree's files move to the new commits too. Uncommitted changes there never move: the update carries any file the push doesn't touch — staged or not — exactly where it is, and a change touching a file the push does change is refused upfront, naming the file. If the sync can't be applied for any reason — a conflicting file appearing in the race window after the check, or a busy index — the update is rolled back whole, leaving branch and worktree as they were.
-
-A worktree that is still registered but whose directory is gone is refused as well, since nothing can be synced into it — `git worktree prune` clears the registration.
+When the target branch has a worktree of its own, that worktree's files move to the new commits too. Uncommitted changes there never move: the update carries any file the push doesn't touch — staged or not — exactly where it is, and a change touching a file the push does change is refused upfront, naming the file. If the update can't be applied, it is rolled back, leaving branch and worktree as they were.
 
 ### Command reference
 
@@ -408,18 +402,6 @@ The diff is pipeable to tools like `delta`:
 ```console
 $ wt step diff | delta
 ```
-
-### How it works
-
-Equivalent to:
-
-```bash
-cp "$(git rev-parse --git-dir)/index" /tmp/idx
-GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .
-GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))
-```
-
-`git diff` ignores untracked files. `git add --intent-to-add .` registers them in the index without staging their content, making them visible to `git diff`. This runs against a copy of the real index so the original is never modified.
 
 ### Command reference
 
@@ -518,17 +500,11 @@ Files are reflinked where the filesystem supports it: APFS (macOS), btrfs and XF
 | `cp -R` (full copy) | 2m | 14GB |
 | `cp -Rc` / `wt step copy-ignored` | 20s | ~0 |
 
-On ext4 and NTFS, which have no reflink, every file is copied in full. The same byte count therefore costs nothing on one filesystem and 14GB on the other, so the summary says which happened: `Copied 4,812 files · 14.0 GB (reflinked, no extra disk)`, against `(full copy)` where those bytes were written out.
+On ext4 and NTFS, which have no reflink, every file is copied in full; the summary says `(reflinked, no extra disk)` or `(full copy)`.
 
 Reflinks are per file (like `cp -Rc`), so copy time scales with file count.
 
 Use the `post-start` hook so the copy runs in the background. Use `pre-start` instead if subsequent hooks or `--execute` command need the copied files immediately.
-
-### Background-hook priority (experimental)
-
-When invoked from a background hook pipeline (`post-*` hooks), `wt step copy-ignored` self-lowers its CPU and I/O priority — `taskpolicy -b` on macOS, `nice -n 19` plus `ionice -c 3` on Linux — so it yields to interactive work. Foreground callers (`pre-*` hooks, direct interactive use) run at normal priority so the user isn't waiting on a throttled copy.
-
-wt signals background-hook context by exporting `WORKTRUNK_FOREGROUND=-1` into every detached hook pipeline; `copy-ignored` inspects that variable on entry. The variable name is experimental and may change.
 
 ### Language-specific notes
 
@@ -681,7 +657,7 @@ Automation:
 
 Run command in each worktree. Executes sequentially with real-time output; continues past command failures.
 
-A summary of successes and failures is shown at the end. A template-expansion error (a malformed `{{ … }}` argument) aborts the whole run; only command failures are tolerated and reported. Context JSON — a flat object of every template variable — is piped to stdin for scripts that need structured data.
+A summary of successes and failures is shown at the end. Context JSON — a flat object of every template variable — is piped to stdin for scripts that need structured data.
 
 ### Arguments
 
@@ -785,8 +761,6 @@ Without an argument, promotes the current branch — or restores the default bra
 
 Gitignored files (build artifacts, `node_modules/`, `.env`) are swapped along with the branches so each worktree keeps the artifacts that belong to its branch. Files are discovered using the same mechanism as [`copy-ignored`](#wt-step-copy-ignored) and can be filtered with `.worktreeinclude`.
 
-The swap uses `rename()` for each entry — fast regardless of entry size, since only filesystem metadata changes. If the worktree is on a different filesystem from `.git/`, it falls back to reflink copy.
-
 ### Command reference
 
 ```
@@ -838,7 +812,7 @@ $ wt step prune --min-age=2d     # skip candidates younger than 2 days
 
 ### JSON output
 
-`--format=json` prints one object per candidate to stdout. The two modes report different things, and name their fields accordingly: a live run reports `branch_outcome`, the executed outcome, using the vocabulary [`wt remove`](https://worktrunk.dev/remove/#json-output) documents; `--dry-run` reports `branch_deleted`, its prediction of whether the removal would take the branch, since it runs nothing to have an outcome. A dry run also carries `reason` and `target` (why the candidate qualifies, and what it was measured against).
+`--format=json` prints one object per candidate to stdout. A live run reports `branch_outcome`, as [`wt remove`](https://worktrunk.dev/remove/#json-output) does. `--dry-run` reports `branch_deleted` (whether the removal would delete the branch), `reason` (why the candidate qualifies), and `target` (what it was measured against).
 
 ### Examples
 
@@ -924,9 +898,8 @@ this by using a temporary location.
 ### Clobbering
 
 With `--clobber`, non-worktree paths at target locations are moved to
-`<path>.bak.<timestamp>` before relocating. If that name is already taken,
-the move counts up (`…-2`, `…-3`, …) until it finds a free name, so an
-existing backup is never overwritten.
+`<path>.bak.<timestamp>` before relocating, never overwriting an existing
+backup.
 
 ### Main worktree behavior
 
@@ -970,8 +943,7 @@ Options:
       --clobber
           Backup non-worktree paths at target locations
 
-          Moves blocking paths to <path>.bak.<timestamp>. If that name is taken, counts up (…-2, …-3
-          , …) to a free name.
+          Moves blocking paths to <path>.bak.<timestamp>.
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1017,9 +989,7 @@ For pipes, redirects, variables, or globs, wrap in `sh -c`:
 $ wt step tether -- sh -c 'PORT=$P npm run dev | tee dev.log'
 ```
 
-To run the command from a subdirectory, pass the global `-C` flag (teardown
-still watches the worktree root, so a server launched with a relative `-C` is
-torn down with the worktree):
+To run the command from a subdirectory, pass the global `-C` flag:
 
 ```console
 $ wt step tether -C frontend -- npm run dev

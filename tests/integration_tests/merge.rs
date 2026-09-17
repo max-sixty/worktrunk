@@ -80,10 +80,8 @@ fn assert_hidden_untracked_auto_staging_warning(output: &std::process::Output, c
         "{command} should succeed; stderr:\n{stderr}"
     );
     assert!(
-        stderr.contains("Auto-staging 2 untracked paths:")
-            && stderr.contains("nested/first.txt")
-            && stderr.contains("nested/second.txt"),
-        "the warning must enumerate every hidden file that git add -A will stage; stderr:\n{stderr}"
+        stderr.contains("Auto-staging 1 untracked path:") && stderr.contains("nested/\n"),
+        "the warning must name the hidden directory git add -A will stage; stderr:\n{stderr}"
     );
 }
 
@@ -2767,6 +2765,36 @@ fn test_step_commit_auto_staging_warns_about_untracked_files_hidden_by_user_conf
         .output()
         .unwrap();
     assert_hidden_untracked_auto_staging_warning(&output, "step commit");
+}
+
+/// Ten paths fill the listing's ten rows. One more lists nine and counts the
+/// other two, so the hint never takes the row a single remaining path would
+/// have used. `0-generated/` sorts first and holds 300 files, but as a wholly
+/// untracked directory it takes one row and leaves the rest of the listing to
+/// the paths beside it.
+#[rstest]
+fn test_step_commit_auto_staging_caps_untracked_listing(
+    repo: TestRepo,
+    #[values(10, 11)] count: usize,
+) {
+    let generated = repo.root_path().join("0-generated");
+    fs::create_dir(&generated).unwrap();
+    for i in 1..=300 {
+        fs::write(generated.join(format!("{i:03}.txt")), "").unwrap();
+    }
+    for i in 1..count {
+        fs::write(repo.root_path().join(format!("{i:02}.txt")), "").unwrap();
+    }
+
+    let mut cmd = make_snapshot_cmd(&repo, "step", &["commit"], None);
+    cmd.env(
+        "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+        "cat >/dev/null && echo 'feat: add generated files'",
+    );
+    assert_cmd_snapshot!(
+        format!("step_commit_auto_staging_caps_untracked_listing_{count}"),
+        cmd
+    );
 }
 
 #[rstest]

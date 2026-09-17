@@ -258,10 +258,7 @@ impl CommitOptions<'_> {
         }
 
         if self.stage_mode == StageMode::All {
-            let status = wt
-                .run_command(&["status", "--porcelain", "-z", "-uall"])
-                .context("Failed to get status")?;
-            warn_about_untracked_files(&status)?;
+            warn_about_untracked_files(&wt)?;
         }
 
         // Stage changes based on mode. Re-gated inside `stage`: the refusal

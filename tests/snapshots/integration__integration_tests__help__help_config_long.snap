@@ -257,14 +257,11 @@ Valid built-in names:
 A selection mixes built-ins with custom columns, each named
 by its [2m[list.custom-columns][0m header ([2mcolumns = ["branch", "Ticket", "ci"][0m),
 and is exhaustive: only the listed columns render. Omit [2mcolumns[0m to keep the
-default set, where custom columns append automatically. A built-in name wins a
-header collision; the gutter type indicator always shows.
+default set, where custom columns append automatically.
 
-Listing a column forces it on, space permitting: [2mci[0m shows without [2m--full[0m,
-since [2m--full[0m only bundles columns into the default table rather than gating a
-named one. A column whose data source is missing still stays hidden — [2msummary[0m
-needs an LLM command ([2m[commit.generation][0m), [2murl[0m needs a [2m[list] url[0m
-template — since listing can't supply the data.
+Listing a column forces it on, space permitting: [2mci[0m shows without [2m--full[0m. A
+column whose data source is missing still stays hidden — [2msummary[0m needs an LLM
+command ([2m[commit.generation][0m), [2murl[0m needs a [2m[list] url[0m template.
 
 [1mCustom columns [experimental][0m
 
@@ -387,7 +384,7 @@ A key containing [2m*[0m matches any run of characters, [2m/[0m included, so
 Every matching entry applies, least- to most-specific, following the rule above: a more specific entry — [2mgit.company.example/platform/*[0m over [2mgit.company.example/*[0m — wins where both set the same setting, while hooks and aliases from every matching entry all run, least-specific first. A literal key is the most specific of all; specificity is the count of non-[2m*[0m characters in the key. End a host-wide key with [2m/*[0m — a bare [2mgit.company.example*[0m also covers hosts whose names merely start with that 
 string.
 
-[2mapproved-commands[0m matches the same way, so a pattern entry approves its commands for every repository it covers. Only a key written by hand is ever a pattern: [2mwt config approvals add[0m and the interactive prompt record under the exact identifier, and [2mwt config approvals clear[0m removes only that exact entry, leaving a pattern other repositories share intact.
+Entries in [2mapprovals.toml[0m match the same way, so a hand-written pattern entry approves its commands for every repository it covers.
 
 [1mForge platform and hostname[0m
 
@@ -397,9 +394,9 @@ string.
 [107m [0m [2mforge.platform = [0m[2m[32m"gitlab"[0m[2m                    [0m[2m# or "github", "gitea" (experimental), "azure-devops" (experimental)[0m
 [107m [0m [2mforge.hostname = [0m[2m[32m"api.git.company.example"[0m[2m   [0m[2m# API host, when the remote's own host isn't it[0m
 
-Both fields describe the host rather than the repository, which is why a pattern keyed to a hostname suits them, and why an SSH alias resolved through [2m~/.ssh/config[0m — where the name in the remote URL is local to one machine — belongs here rather than in a repository's committed config. A repository's own [2m[forge][0m block still wins over any entry here, field by field: a repository that sets only [2mplatform[0m still takes a matching entry's [2mhostname[0m.
+A repository's own [2m[forge][0m block still wins over any entry here, field by field.
 
-Hooks support all three hook forms. A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence. The dotted-key examples below are equivalent to the table forms — TOML treats [2mprojects."github.com/user/repo".post-start.server = "..."[0m and a [2m[projects."github.com/user/repo".post-start][0m table the same way:
+Hooks support all three hook forms. A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence:
 
 [107m [0m [2m# Single command[0m
 [107m [0m [2m[36m[projects."github.com/user/repo"][0m
@@ -530,7 +527,7 @@ Default template:
 [107m [0m [2m[32m- Explain the rationale in the body, not just the change[0m
 [107m [0m [2m[32m"[0m[2m[32m""[0m
 
-How the fragment renders, and the project-config counterpart: the LLM commits guide.
+See the LLM commits guide for how the fragment renders and its project-config counterpart.
 
 [1m[32mUser hooks[0m
 
@@ -576,7 +573,7 @@ When many repositories share one self-hosted host, name it once in user config w
 [107m [0m [2m[32m- Reference the relevant issue ID in the body[0m
 [107m [0m [2m[32m"[0m[2m[32m""[0m
 
-The first time the fragment is used (and whenever it changes), [2mwt[0m prompts the user to approve it — the same one-shot gate as project-defined hooks. Only [2mtemplate-append[0m is honored from the project file; the LLM command and the main prompt template stay in user config, since they describe per-developer environment (which CLI is installed, which agent the developer prefers). How the fragment renders: the LLM commits guide.
+The first time the fragment is used (and whenever it changes), [2mwt[0m prompts the user to approve it — the same one-shot gate as project-defined hooks. Only [2mtemplate-append[0m is honored from the project file; the LLM command and the main prompt template stay in user config. See the LLM commits guide for how the fragment renders.
 
 [1m[32mCopy-ignored excludes[0m
 
@@ -644,9 +641,6 @@ Override the LLM command in CI to use a mock:
  [2mWORKTRUNK_SYSTEM_CONFIG_PATH[0m      Override system config file location                                                                               
  [2mWORKTRUNK_PROJECT_CONFIG_PATH[0m     Override project config file location (defaults to [2m.config/wt.toml[0m); relative paths resolve from the worktree root 
  [2mXDG_CONFIG_DIRS[0m                   Colon-separated system config directories (default: [2m/etc/xdg[0m)                                                      
- [2mWORKTRUNK_DIRECTIVE_CD_FILE[0m       Internal: set by shell wrappers. wt writes a raw path; the wrapper [2mcd[0ms to it                                       
- [2mWORKTRUNK_SHELL_CWD[0m               Internal: set by wt on alias and hook bodies, so a nested [2mwt[0m preserves the user's subdirectory                     
- [2mWORKTRUNK_COMPLETE_NAME[0m           Internal: set by shell wrappers to the command name completions register under (defaults to the binary name)       
  [2mWORKTRUNK_MAX_CONCURRENT_COMMANDS[0m Max parallel git commands (default: 32). Lower if hitting file descriptor limits.                                  
  [2mWORKTRUNK_VERBOSE[0m                 Verbosity level ([2m0[0m/[2m1[0m/[2m2[0m), like [2m-v[0m/[2m-vv[0m but applied everywhere — including shell completion, which no flag can reach  
  [2mRUST_LOG[0m                          Logging directive (e.g. [2mworktrunk=debug[0m); overrides the verbosity baseline for what reaches stderr                 

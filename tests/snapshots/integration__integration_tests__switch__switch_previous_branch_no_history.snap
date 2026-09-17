@@ -59,4 +59,4 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mNo previous branch found in history. Run [4mwt list[24m to see available worktrees.[39m
+[31m✗[39m [31mNo previous branch found in history; to see available worktrees, run [1mwt list[22m[39m

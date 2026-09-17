@@ -133,14 +133,11 @@
 # A selection mixes built-ins with custom columns (#custom-columns), each named
 # by its `[list.custom-columns]` header (`columns = ["branch", "Ticket", "ci"]`),
 # and is exhaustive: only the listed columns render. Omit `columns` to keep the
-# default set, where custom columns append automatically. A built-in name wins a
-# header collision; the gutter type indicator always shows.
+# default set, where custom columns append automatically.
 #
-# Listing a column forces it on, space permitting: `ci` shows without `--full`,
-# since `--full` only bundles columns into the default table rather than gating a
-# named one. A column whose data source is missing still stays hidden — `summary`
-# needs an LLM command (`[commit.generation]`), `url` needs a `[list] url`
-# template — since listing can't supply the data.
+# Listing a column forces it on, space permitting: `ci` shows without `--full`. A
+# column whose data source is missing still stays hidden — `summary` needs an LLM
+# command (`[commit.generation]`), `url` needs a `[list] url` template.
 #
 # #### Custom columns [experimental]
 #
@@ -262,7 +259,7 @@
 #
 # Every matching entry applies, least- to most-specific, following the rule above: a more specific entry — `git.company.example/platform/*` over `git.company.example/*` — wins where both set the same setting, while hooks and aliases from every matching entry all run, least-specific first. A literal key is the most specific of all; specificity is the count of non-`*` characters in the key. End a host-wide key with `/*` — a bare `git.company.example*` also covers hosts whose names merely start with that string.
 #
-# `approved-commands` matches the same way, so a pattern entry approves its commands for every repository it covers. Only a key written by hand is ever a pattern: `wt config approvals add` and the interactive prompt record under the exact identifier, and `wt config approvals clear` removes only that exact entry, leaving a pattern other repositories share intact.
+# Entries in `approvals.toml` match the same way, so a hand-written pattern entry approves its commands for every repository it covers.
 #
 # #### Forge platform and hostname
 #
@@ -272,9 +269,9 @@
 # forge.platform = "gitlab"                    # or "github", "gitea" (experimental), "azure-devops" (experimental)
 # forge.hostname = "api.git.company.example"   # API host, when the remote's own host isn't it
 #
-# Both fields describe the host rather than the repository, which is why a pattern keyed to a hostname suits them, and why an SSH alias resolved through `~/.ssh/config` — where the name in the remote URL is local to one machine — belongs here rather than in a repository's committed config. A repository's own `[forge]` block still wins over any entry here, field by field: a repository that sets only `platform` still takes a matching entry's `hostname`.
+# A repository's own `[forge]` block still wins over any entry here, field by field.
 #
-# Hooks support all three hook forms (https://worktrunk.dev/hook/#hook-forms). A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence. The dotted-key examples below are equivalent to the table forms — TOML treats `projects."github.com/user/repo".post-start.server = "..."` and a `[projects."github.com/user/repo".post-start]` table the same way:
+# Hooks support all three hook forms (https://worktrunk.dev/hook/#hook-forms). A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence:
 #
 # # Single command
 # [projects."github.com/user/repo"]
@@ -409,7 +406,7 @@
 # - Explain the rationale in the body, not just the change
 # """
 #
-# How the fragment renders, and the project-config counterpart: the LLM commits guide (https://worktrunk.dev/llm-commits/#appending-to-the-prompt).
+# See the LLM commits guide (https://worktrunk.dev/llm-commits/#appending-to-the-prompt) for how the fragment renders and its project-config counterpart.
 #
 # ## User hooks
 #

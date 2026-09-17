@@ -4,11 +4,13 @@ use super::worktree::{RemovalPlan, SharedBranchCheckout};
 use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::git::{
-    BranchDeletionMode, GitError, IntegrationReason, RefSnapshot, Repository, WorktreeInfo,
-    parse_porcelain_z, parse_untracked_files,
+    BranchDeletionMode, GitError, IntegrationReason, RefSnapshot, Repository, WorkingTree,
+    WorktreeInfo, parse_porcelain_z, parse_untracked_files,
 };
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{eprintln, format_with_gutter, suggest_command, warning_message};
+use worktrunk::styling::{
+    eprintln, format_with_gutter, hint_message, suggest_command, warning_message,
+};
 
 /// Target for worktree removal.
 #[derive(Debug)]
@@ -31,9 +33,6 @@ pub enum RemoveTarget {
 /// CLI-only helpers implemented on [`Repository`] via an extension trait so we can keep orphan
 /// implementations inside the binary crate.
 pub trait RepositoryCliExt {
-    /// Warn about untracked files being auto-staged.
-    fn warn_if_auto_staging_untracked(&self) -> anyhow::Result<()>;
-
     /// Prepare the removal of whichever worktree or branch [`RemoveTarget`]
     /// names.
     ///
@@ -99,15 +98,6 @@ pub trait RepositoryCliExt {
 }
 
 impl RepositoryCliExt for Repository {
-    fn warn_if_auto_staging_untracked(&self) -> anyhow::Result<()> {
-        // `-uall` overrides the user's display preference and expands untracked
-        // directories so the warning names every path `git add -A` will stage.
-        let status = self
-            .run_command(&["status", "--porcelain", "-z", "-uall"])
-            .context("Failed to get status")?;
-        warn_about_untracked_files(&status)
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn prepare_worktree_removal(
         &self,
@@ -620,8 +610,21 @@ pub(crate) fn check_not_default_branch(
 }
 
 /// Warn about untracked files that will be auto-staged.
-pub(crate) fn warn_about_untracked_files(status_output: &str) -> anyhow::Result<()> {
-    let files = parse_untracked_files(status_output);
+///
+/// Paths come from git's `normal` untracked mode, which overrides a
+/// `status.showUntrackedFiles=no` that would hide them and names a wholly
+/// untracked directory once as `dir/`. A directory of generated files then
+/// takes one row instead of pushing the paths beside it past the cap.
+///
+/// The listing has at most `MAX_ROWS` rows. Past that many paths, the last row
+/// is a hint counting the rest, which is always at least two paths.
+pub(crate) fn warn_about_untracked_files(wt: &WorkingTree) -> anyhow::Result<()> {
+    const MAX_ROWS: usize = 10;
+
+    let status = wt
+        .run_command(&["status", "--porcelain", "-z", "-unormal"])
+        .context("Failed to get status")?;
+    let files = parse_untracked_files(&status);
     if files.is_empty() {
         return Ok(());
     }
@@ -633,8 +636,16 @@ pub(crate) fn warn_about_untracked_files(status_output: &str) -> anyhow::Result<
         warning_message(format!("Auto-staging {count} untracked {path_word}:"))
     );
 
-    let joined_files = files.join("\n");
-    eprintln!("{}", format_with_gutter(&joined_files, None));
+    let listed = if count > MAX_ROWS {
+        MAX_ROWS - 1
+    } else {
+        count
+    };
+    eprintln!("{}", format_with_gutter(&files[..listed].join("\n"), None));
+    if listed < count {
+        let omitted = count - listed;
+        eprintln!("{}", hint_message(format!("… and {omitted} other paths")));
+    }
 
     Ok(())
 }

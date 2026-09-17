@@ -209,14 +209,11 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# A selection mixes built-ins with custom columns (#custom-columns), each named[0m
 [107m [0m [2m# by its `[list.custom-columns]` header (`columns = ["branch", "Ticket", "ci"]`),[0m
 [107m [0m [2m# and is exhaustive: only the listed columns render. Omit `columns` to keep the[0m
-[107m [0m [2m# default set, where custom columns append automatically. A built-in name wins a[0m
-[107m [0m [2m# header collision; the gutter type indicator always shows.[0m
+[107m [0m [2m# default set, where custom columns append automatically.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Listing a column forces it on, space permitting: `ci` shows without `--full`,[0m
-[107m [0m [2m# since `--full` only bundles columns into the default table rather than gating a[0m
-[107m [0m [2m# named one. A column whose data source is missing still stays hidden — `summary`[0m
-[107m [0m [2m# needs an LLM command (`[commit.generation]`), `url` needs a `[list] url`[0m
-[107m [0m [2m# template — since listing can't supply the data.[0m
+[107m [0m [2m# Listing a column forces it on, space permitting: `ci` shows without `--full`. A[0m
+[107m [0m [2m# column whose data source is missing still stays hidden — `summary` needs an LLM[0m
+[107m [0m [2m# command (`[commit.generation]`), `url` needs a `[list] url` template.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# #### Custom columns [experimental][0m
 [107m [0m [2m#[0m
@@ -339,7 +336,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# Every matching entry applies, least- to most-specific, following the rule above: a more specific entry — `git.company.example/platform/*` over `git.company.example/*` — wins where both set the same setting, while hooks and aliases from every matching entry all run, least-specific first. A literal key is the most specific of all; specificity is the count of non-`*` characters in the key. End a host-wide key with `/*` — a bare `git.company.example*` also covers hosts whose names merely start
 [107m [0m with that string.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# `approved-commands` matches the same way, so a pattern entry approves its commands for every repository it covers. Only a key written by hand is ever a pattern: `wt config approvals add` and the interactive prompt record under the exact identifier, and `wt config approvals clear` removes only that exact entry, leaving a pattern other repositories share intact.[0m
+[107m [0m [2m# Entries in `approvals.toml` match the same way, so a hand-written pattern entry approves its commands for every repository it covers.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# #### Forge platform and hostname[0m
 [107m [0m [2m#[0m
@@ -349,9 +346,9 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# forge.platform = "gitlab"                    # or "github", "gitea" (experimental), "azure-devops" (experimental)[0m
 [107m [0m [2m# forge.hostname = "api.git.company.example"   # API host, when the remote's own host isn't it[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Both fields describe the host rather than the repository, which is why a pattern keyed to a hostname suits them, and why an SSH alias resolved through `~/.ssh/config` — where the name in the remote URL is local to one machine — belongs here rather than in a repository's committed config. A repository's own `[forge]` block still wins over any entry here, field by field: a repository that sets only `platform` still takes a matching entry's `hostname`.[0m
+[107m [0m [2m# A repository's own `[forge]` block still wins over any entry here, field by field.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Hooks support all three hook forms (https://worktrunk.dev/hook/#hook-forms). A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence. The dotted-key examples below are equivalent to the table forms — TOML treats `projects."github.com/user/repo".post-start.server = "..."` and a `[projects."github.com/user/repo".post-start]` table the same way:[0m
+[107m [0m [2m# Hooks support all three hook forms (https://worktrunk.dev/hook/#hook-forms). A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence:[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# # Single command[0m
 [107m [0m [2m# [projects."github.com/user/repo"][0m
@@ -486,7 +483,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# - Explain the rationale in the body, not just the change[0m
 [107m [0m [2m# """[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# How the fragment renders, and the project-config counterpart: the LLM commits guide (https://worktrunk.dev/llm-commits/#appending-to-the-prompt).[0m
+[107m [0m [2m# See the LLM commits guide (https://worktrunk.dev/llm-commits/#appending-to-the-prompt) for how the fragment renders and its project-config counterpart.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## User hooks[0m
 [107m [0m [2m#[0m
@@ -537,8 +534,7 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m# - Reference the relevant issue ID in the body[0m
 [107m [0m [2m# """[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# The first time the fragment is used (and whenever it changes), `wt` prompts the user to approve it — the same one-shot gate as project-defined hooks. Only `template-append` is honored from the project file; the LLM command and the main prompt template stay in user config (https://worktrunk.dev/config/), since they describe per-developer environment (which CLI is installed, which agent the developer prefers). How the fragment renders: the LLM commits guide
-[107m [0m (https://worktrunk.dev/llm-commits/#appending-to-the-prompt).[0m
+[107m [0m [2m# The first time the fragment is used (and whenever it changes), `wt` prompts the user to approve it — the same one-shot gate as project-defined hooks. Only `template-append` is honored from the project file; the LLM command and the main prompt template stay in user config (https://worktrunk.dev/config/). See the LLM commits guide (https://worktrunk.dev/llm-commits/#appending-to-the-prompt) for how the fragment renders.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Copy-ignored excludes[0m
 [107m [0m [2m#[0m
