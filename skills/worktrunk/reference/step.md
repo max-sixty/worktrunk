@@ -687,7 +687,7 @@ Variables substitute into each argv element before exec. See [`wt hook` template
 $ wt step for-each -- echo 'Branch: {{ branch }}'
 ```
 
-Each element is expanded fresh in every worktree, so `{{ branch }}` is that worktree's branch. An alias wrapping for-each renders templates earlier, in the invoking worktree; [deferring expansion in an alias](https://worktrunk.dev/extending/#deferring-expansion-to-a-nested-wt-command) shows how to keep a variable per-worktree.
+Each element is expanded fresh in every worktree, so `{{ branch }}` is that worktree's branch. An alias wrapping for-each renders templates earlier, in the invoking worktree; [nesting templates](https://worktrunk.dev/extending/#nesting-templates) shows how to keep a variable per-worktree.
 
 ### Examples
 

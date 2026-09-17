@@ -117,34 +117,20 @@ Every step sees the same `{{ args }}` and bound variables. `wt release -- --dry-
 
 `wt switch`, `wt merge` (when it leaves the removed source), and `wt remove` of the current worktree change the parent shell's directory even when invoked from an alias; the Worktrunk shell integration propagates the change through. Other shell state doesn't persist: the alias runs in a subshell, so `cd`, `export`, and similar commands only affect that subshell.
 
-### Deferring expansion to a nested `wt` command
+### Nesting templates
 
-This alias prints the invoking worktree's branch once per worktree, rather than each worktree's own:
-
-```toml
-[aliases]
-show-branches = "wt step for-each -- echo {{ branch }}"
-```
-
-An alias body renders once, at dispatch, in the worktree the alias ran from, so `{{ branch }}` is already that worktree's branch before `for-each` iterates. `wt config alias dry-run show-branches` prints the rendered body with the value baked in.
-
-`{% raw %}…{% endraw %}` defers the variable: it survives the dispatch render as a literal `{{ branch }}`, and the nested command expands it in its own context. The deferred text contains spaces and the alias body is a shell command line, so quote it:
+An alias that calls a `wt` command may want to pass it a template for that command to expand — each worktree's own branch, or the worktree `wt switch` is about to create:
 
 ```toml
 # ~/.config/worktrunk/config.toml
 [aliases]
 show-branches = "wt step for-each -- echo '{% raw %}{{ branch }}{% endraw %}'"
-```
-
-`wt switch --execute` defers the same way, and `{{ worktree_path }}` then expands against the worktree being created:
-
-```toml
-# ~/.config/worktrunk/config.toml
-[aliases]
 echo-target = "wt switch {{ args }} --no-cd --execute echo -- '{% raw %}{{ worktree_path }}{% endraw %}'"
 ```
 
-A repo-level variable like `{{ default_branch }}` needs no deferral: it is identical in every worktree, so a bare `{{ default_branch }}` is already correct everywhere.
+An alias body renders once, at dispatch, so a bare `{{ branch }}` would reach the nested command already resolved to the invoking worktree's branch. `{% raw %}…{% endraw %}` passes it through unrendered instead. Quote it — the deferred text contains spaces, and the alias body is a shell command line.
+
+Repo-level variables like `{{ default_branch }}` are identical in every worktree, so they need no deferral.
 
 ### Recipe: rebase every worktree onto its upstream
 
