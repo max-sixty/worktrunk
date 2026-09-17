@@ -69,18 +69,23 @@ design choices behind this — read it before re-adding guards or routes. -->
    worktree if missing); if step 1 picked the name, pick another and rerun. Any
    other failure (not a git repo, invalid name): report it and stop.
 
+   With a repo argument, `cd <repo>` next, in its own `Bash` call.
+   `EnterWorktree` re-roots only within the repository the cwd is in, and
+   worktrunk's `PermissionRequest` hook answers the confirmation that call
+   asks for only for a `wt` worktree of that same repository. If the `cd`
+   reports `Shell cwd was reset`, the repo is unreachable: skip the entry and
+   hand back as in **Unreachable** below.
+
    Then call `EnterWorktree({path: "<path from the JSON>"})`.
 
    - **Accepted** → the session is re-rooted in the worktree. Do the task (or,
      with no task text, confirm it's ready and wait).
    - **Tool error** — the tool ran and returned an error (`Cannot enter
      worktree: …`) → graceful; nothing moved, and one recovery covers them
-     all. Common causes: the cwd resolves to no git repo (e.g. a non-git
-     parent like `~/workspace` that only holds repos, as in a background job)
-     or to a different repo than the target; or the session is already rooted
-     in a worktree (or is a pinned agent), which limits entry to the current
-     repo's `.claude/worktrees/` and excludes even a same-repo `wt` sibling.
-     The recovery test is whether you can `cd` into the worktree, which works
+     all. The common cause is a session already rooted in a worktree (or a
+     pinned agent), which limits entry to the current repo's
+     `.claude/worktrees/` and excludes even a same-repo `wt` sibling. The
+     recovery test is whether you can `cd` into the worktree, which works
      when it's inside an allowed directory. So `cd <path>` and read the
      result:
      - no `Shell cwd was reset` notice → it stuck; the worktree is reachable.
@@ -88,19 +93,21 @@ design choices behind this — read it before re-adding guards or routes. -->
        revert to the session's launch worktree across turns (and in spawned
        subagents); pin commands with `git -C <path>` / `wt -C <path>` rather
        than trusting the `cd` to persist.
-     - `Shell cwd was reset` → not reachable. Stop and ask the user to make it
-       reachable: add the repo, or a parent like `~/workspace`, to
+     - `Shell cwd was reset` → **Unreachable.** Stop and ask the user to make
+       the directory whose `cd` reset reachable: add a parent that holds both
+       the repo and its worktrees, like `~/workspace`, to
        `permissions.additionalDirectories` (durable, every session), or run
-       `/add-dir <path>` (this session). Then continue. Don't grind through
-       absolute paths with `cd` resetting on every command.
+       `/add-dir` on it (this session). Then continue from that `cd`. Don't
+       grind through absolute paths with `cd` resetting on every command.
    - **Denied** — the call itself was refused, with no tool error → however
      the denial is worded, it is the user's answer to the confirmation Claude
      Code shows for entering a worktree outside `.claude/worktrees/`, unless
      there was no user to ask (the denial says the session couldn't prompt),
      which decides nothing — take the recovery above. On the user's answer:
      the worktree `wt` just created still exists; only the entry didn't
-     happen. Report its path and ask how to proceed, since reaching it
-     through `cd` would override that answer.
+     happen. `cd` back out of the repo you moved into, if any, then report
+     the worktree's path and ask how to proceed, since reaching it through
+     `cd` would override that answer.
 
 ## Cleanup
 

@@ -6292,6 +6292,146 @@ fn test_worktree_remove_hook_skips_path_holding_no_worktree(mut repo: TestRepo) 
     assert!(!live.exists(), "the hook must remove a real worktree");
 }
 
+/// The plugin's `PermissionRequest` command answers Claude Code's
+/// `EnterWorktree` confirmation for a worktree at worktrunk's managed location
+/// in the repository the payload's `cwd` is in, so a background session doesn't
+/// wait at it (#4149), and otherwise sets the 💬 marker as before (design:
+/// skills/wt-switch-create/rationale.md, "The confirmation hook").
+///
+/// An approval prints the allow decision and leaves the marker unset, since no
+/// dialog waits. Each case that declines differs from an approved one in a
+/// single input — the tool, a worktree off the `worktree-path` template, the
+/// repository of the `cwd` — and must print nothing, so the dialog stays, and
+/// set 💬. The `cwd` pair shares its target, which pins that the session's
+/// directory decides. It runs the real command out of `hooks.json`.
+#[cfg(all(unix, feature = "shell-integration-tests"))]
+#[rstest]
+fn test_permission_request_hook_approves_entering_managed_worktrees(mut repo: TestRepo) {
+    use std::io::Write;
+    use std::path::Path;
+    use std::process::Stdio;
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let hooks_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("plugins/worktrunk/hooks/hooks.json")).unwrap(),
+    )
+    .unwrap();
+    let command = hooks_json["hooks"]["PermissionRequest"][0]["hooks"][0]["command"]
+        .as_str()
+        .expect("PermissionRequest hook must define a command")
+        .to_owned();
+
+    let feature = repo.add_worktree("feature");
+    // A symlinked spelling of the same worktree, as macOS `/tmp` is of
+    // `/private/tmp`.
+    let feature_link = repo.home_path().join("feature-link");
+    std::os::unix::fs::symlink(&feature, &feature_link).unwrap();
+    // Registered like any worktree, but not where the template puts its branch.
+    let stray = repo.add_worktree_at_path("stray", &repo.home_path().join("stray"));
+    let mut other = TestRepo::standard();
+    let other_feature = other.add_worktree("other-feature");
+
+    let marker_key = format!("worktrunk.state.{}.marker", repo.current_branch());
+    let marker = || -> String {
+        repo.git_command()
+            .args(["config", "--get", &marker_key])
+            .run()
+            .map_or_else(
+                |_| String::new(),
+                |output| String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+            )
+    };
+
+    // Fire the hook as Claude Code does: the payload on stdin, the plugin root
+    // and the launch project dir in the environment. Returns stdout and the
+    // marker the call left, starting from none.
+    let run_hook = |tool: &str, cwd: &Path, target: &Path| -> (String, String) {
+        let _ = repo
+            .git_command()
+            .args(["config", "--unset", &marker_key])
+            .run();
+        let mut cmd = std::process::Command::new("bash");
+        repo.configure_wt_cmd(&mut cmd);
+        let mut child = cmd
+            .args(["-c", &command])
+            .env("WORKTRUNK_BIN", crate::common::wt_bin())
+            .env("CLAUDE_PLUGIN_ROOT", root.join("plugins/worktrunk"))
+            .env("CLAUDE_PROJECT_DIR", repo.root_path())
+            .current_dir(repo.root_path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn bash");
+        let payload = serde_json::json!({
+            "hook_event_name": "PermissionRequest",
+            "tool_name": tool,
+            "cwd": cwd,
+            "tool_input": { "path": target },
+        });
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(payload.to_string().as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "the hook command must exit 0 for {tool} {}; got {}\nstderr:\n{}",
+            target.display(),
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        (
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            marker(),
+        )
+    };
+
+    for (cwd, target) in [
+        (repo.root_path(), feature.as_path()),
+        (repo.root_path(), feature_link.as_path()),
+        (other.root_path(), other_feature.as_path()),
+    ] {
+        let (stdout, marker) = run_hook("EnterWorktree", cwd, target);
+        let decision: serde_json::Value = serde_json::from_str(&stdout)
+            .unwrap_or_else(|e| panic!("expected an allow decision, got {stdout:?}: {e}"));
+        assert_eq!(
+            decision["hookSpecificOutput"],
+            serde_json::json!({
+                "hookEventName": "PermissionRequest",
+                "decision": { "behavior": "allow" },
+            }),
+            "entering {} from {} must be approved",
+            target.display(),
+            cwd.display()
+        );
+        assert!(
+            marker.is_empty(),
+            "an approved entry shows no dialog, so it must not set the marker; got {marker:?}"
+        );
+    }
+
+    for (tool, cwd, target) in [
+        ("Bash", repo.root_path(), feature.as_path()),
+        ("EnterWorktree", repo.root_path(), stray.as_path()),
+        ("EnterWorktree", repo.root_path(), other_feature.as_path()),
+    ] {
+        let (stdout, marker) = run_hook(tool, cwd, target);
+        assert!(
+            stdout.is_empty(),
+            "{tool} {} must get no decision, leaving the dialog; got {stdout:?}",
+            target.display()
+        );
+        assert!(
+            marker.contains('💬'),
+            "{tool} {} leaves a dialog waiting, so it must set 💬; got {marker:?}",
+            target.display()
+        );
+    }
+}
+
 // ==================== Plugin Install-Statusline Tests ====================
 
 #[rstest]

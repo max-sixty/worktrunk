@@ -547,6 +547,10 @@ Preserves existing settings. Creates the config directory and `settings.json` if
 Skips gracefully if the statusline is already configured."#
     )]
     InstallStatusline,
+
+    /// Internal: the plugin's PermissionRequest hook, reading its payload from stdin
+    #[command(hide = true, name = "approve-enter-worktree")]
+    ApproveEnterWorktree,
 }
 
 // Ordering: introspection adjacent to invocation — show prints the template,
