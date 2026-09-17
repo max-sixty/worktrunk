@@ -80,12 +80,13 @@ fn run_post_hook(
 /// When hooks run during real operations (switch, merge, remove), each call site
 /// builds precise vars from the actual source/destination context. When invoked
 /// manually via `wt hook <type>`, we only have the current worktree — so each
-/// hook type gets the vars its real call site sets, filled in from that
-/// worktree. The merge and remove hooks bind `target` and
-/// `target_worktree_path` to it; the switch hooks add `base` for the worktree
-/// being switched away from, which manually is that same worktree; the commit
-/// hooks bind `target` to the default branch and nothing else, as `wt commit`
-/// does. No arm binds every directional var.
+/// hook type gets the directional vars its real call site sets, filled in from
+/// that worktree. The merge and remove hooks bind `target` and
+/// `target_worktree_path` to it; the switch and start hooks also bind the
+/// `base` pair, which names the source a real switch starts from and manually
+/// is that same worktree; the commit hooks bind `target` to the default branch
+/// and nothing else, as `wt commit` does. Only the switch/start arm binds all
+/// four directional vars.
 ///
 /// The directional *path* vars apply either way, since the worktree exists
 /// whether or not it is on a branch. The directional *branch* vars follow
