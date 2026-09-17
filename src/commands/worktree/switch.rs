@@ -1978,9 +1978,13 @@ impl SwitchPipeline<'_> {
                 .collect();
             let argv: Vec<String> = std::iter::once(program).chain(args?).collect();
             // The header names where the program starts, which is the
-            // directory the switch cd'd to and not the worktree the hooks
+            // directory the switch selected and not the worktree the hooks
             // announce (#4042).
-            execute_user_command(&argv, display_paths.execute.as_deref())?;
+            execute_user_command(
+                &argv,
+                display_paths.execute.as_deref(),
+                &display_paths.execute_dir,
+            )?;
         }
 
         Ok(())

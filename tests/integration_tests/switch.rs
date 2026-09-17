@@ -939,14 +939,14 @@ fn test_switch_execute_does_not_inherit_git_discovery_vars(mut repo: TestRepo) {
     );
 }
 
-/// `--no-cd` starts the `--execute` program in the invoking directory, so the
-/// "Executing (--execute) @ …" header must not name the new worktree. The path
-/// it renders is the one the background hooks run in; the program never enters
-/// it, and naming it there sent a reporter looking for a broken template
-/// variable instead of the directory the flag moved (issue #4042).
+/// `--no-cd` governs where the user's shell lands, not where the `--execute`
+/// program runs: the program starts in the worktree the switch selected either
+/// way, so `wt switch feature --no-cd -x code -- .` opens the worktree while
+/// the terminal stays put (issue #4042). The header names that worktree,
+/// because the shell won't be there.
 #[rstest]
-fn test_switch_no_cd_execute_header_omits_worktree_path(mut repo: TestRepo) {
-    repo.add_worktree("feature");
+fn test_switch_no_cd_execute_runs_in_worktree(mut repo: TestRepo) {
+    let worktree = repo.add_worktree("feature");
 
     let output = repo
         .wt_command()
@@ -961,14 +961,21 @@ fn test_switch_no_cd_execute_header_omits_worktree_path(mut repo: TestRepo) {
         String::from_utf8_lossy(&output.stderr)
     );
 
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        dunce::canonicalize(stdout.trim()).unwrap(),
+        dunce::canonicalize(&worktree).unwrap(),
+        "--no-cd ran the program outside the worktree: {stdout}"
+    );
+
     let stderr = String::from_utf8_lossy(&output.stderr);
     let header = stderr
         .lines()
         .find(|line| line.contains("Executing (--execute)"))
         .unwrap_or_else(|| panic!("no --execute header in stderr:\n{stderr}"));
     assert!(
-        !header.contains('@'),
-        "--no-cd runs the program in the invoking directory, but the header named a path: {header}"
+        header.contains('@'),
+        "--no-cd leaves the shell behind, so the header must name the program's directory: {header}"
     );
 }
 

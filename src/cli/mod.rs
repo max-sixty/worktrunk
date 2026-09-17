@@ -384,8 +384,10 @@ pub(crate) struct SwitchArgs {
     ///
     /// Without a branch argument, the interactive picker opens and the
     /// command runs against the selected worktree — so `wt switch -x claude`
-    /// picks a worktree, then launches Claude Code there. With `--no-cd`, the
-    /// program starts in the invoking directory instead.
+    /// picks a worktree, then launches Claude Code there.
+    ///
+    /// The program starts in the worktree the switch selected, whether or not
+    /// your shell follows it there: `--no-cd` governs only the shell.
     ///
     /// Supports [hook template variables](https://worktrunk.dev/hook/#template-variables)
     /// (`{{ branch }}`, `{{ worktree_path }}`, etc.) and filters.
@@ -432,9 +434,12 @@ pub(crate) struct SwitchArgs {
 
     /// Skip directory change after switching
     ///
-    /// Hooks still run normally. Useful when hooks handle navigation
-    /// (e.g., tmux workflows) or for CI/automation. `--execute` also starts in
-    /// the invoking directory. Use --cd to override.
+    /// Hooks still run normally, and an `--execute` program still starts in
+    /// the worktree — only your shell stays put, so
+    /// `wt switch feature --no-cd -x code -- .` opens the worktree in an
+    /// editor and leaves your terminal where it was. Useful when hooks handle
+    /// navigation (e.g., tmux workflows) or for CI/automation. Use --cd to
+    /// override.
     #[arg(long, overrides_with = "cd")]
     pub(crate) no_cd: bool,
 
