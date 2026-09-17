@@ -115,25 +115,39 @@ impl ConfigFile {
     /// The file's content with `edit` applied, such that it loads as `expected`.
     ///
     /// The edit goes into the file as written when that loads as `expected`.
-    /// Otherwise a load-time migration touches the edit's path, and the edit
-    /// goes into the migrated file, which loads as `expected` by construction:
-    /// the migrations are idempotent and the edit lands after them.
+    /// Otherwise a load-time migration touches the edit's path — a deprecated
+    /// `[commit-generation]` migrates to `[commit.generation]` only while that
+    /// table is absent — and the edit goes into the migrated file, which loads
+    /// as `expected` by construction: the migrations are idempotent and the
+    /// edit lands after them. That file carries *every* load-path migration,
+    /// not just the one on the edit's path, so it can also move an unrelated
+    /// deprecated section and drop the keys its destination has no field for.
+    /// A mutation is otherwise not what materializes migrations —
+    /// `wt config update` is — so [`Edited::Migrated`] says so, and its caller
+    /// tells the user.
     pub(super) fn edited(
         &self,
         edit: &ConfigEdit,
         expected: &UserConfig,
-    ) -> Result<String, ConfigError> {
+    ) -> Result<Edited, ConfigError> {
         let mut doc = self.doc.clone();
         edit.apply(&mut doc)?;
         if load(&doc).is_ok_and(|config| &config == expected) {
-            return Ok(doc.to_string());
+            return Ok(Edited::AsWritten(doc.to_string()));
         }
 
         let mut doc = self.doc.clone();
         migrate_content_doc(&mut doc);
         edit.apply(&mut doc)?;
-        Ok(doc.to_string())
+        Ok(Edited::Migrated(doc.to_string()))
     }
+}
+
+/// A config file with an edit applied, and whether writing it took the load-time
+/// migrations with it.
+pub(super) enum Edited {
+    AsWritten(String),
+    Migrated(String),
 }
 
 /// The config a document loads as, after the load-time migrations.

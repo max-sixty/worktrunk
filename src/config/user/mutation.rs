@@ -8,9 +8,11 @@ use fs2::FileExt;
 use crate::config::ConfigError;
 
 use crate::path::format_path_for_display;
+use crate::styling::{eprintln, hint_message, warning_message};
+use color_print::cformat;
 
 use super::UserConfig;
-use super::persistence::{ConfigEdit, ConfigFile};
+use super::persistence::{ConfigEdit, ConfigFile, Edited};
 use super::sections::CommitGenerationConfig;
 
 /// Acquire an exclusive lock on the config file for read-modify-write operations.
@@ -69,7 +71,23 @@ impl UserConfig {
         let Some(edit) = edit else {
             return Ok(());
         };
-        let content = file.edited(&edit, &changed)?;
+        let content = match file.edited(&edit, &changed)? {
+            Edited::AsWritten(content) => content,
+            Edited::Migrated(content) => {
+                eprintln!(
+                    "{}",
+                    warning_message(cformat!(
+                        "Migrated deprecated settings @ <bold>{}</> — the setting being written can't be read beside them",
+                        format_path_for_display(config_path)
+                    ))
+                );
+                eprintln!(
+                    "{}",
+                    hint_message(cformat!("To review, run <underline>wt config show</>"))
+                );
+                content
+            }
+        };
         crate::config::ensure_config_parses(&content)?;
         crate::utils::write_atomically(config_path, &content).map_err(|e| {
             ConfigError(format!(
@@ -80,9 +98,9 @@ impl UserConfig {
         })
     }
 
-    /// Set `skip-shell-integration-prompt = true` and save.
+    /// Set `skip-shell-integration-prompt = true` in the config file.
     ///
-    /// Acquires lock, reloads from disk, sets flag if not already set, and saves.
+    /// Under the lock, writes the flag unless the file already has it.
     pub fn set_skip_shell_integration_prompt(
         &mut self,
         config_path: &std::path::Path,
@@ -100,9 +118,9 @@ impl UserConfig {
         })
     }
 
-    /// Set `skip-commit-generation-prompt = true` and save.
+    /// Set `skip-commit-generation-prompt = true` in the config file.
     ///
-    /// Acquires lock, reloads from disk, sets flag if not already set, and saves.
+    /// Under the lock, writes the flag unless the file already has it.
     pub fn set_skip_commit_generation_prompt(
         &mut self,
         config_path: &std::path::Path,
@@ -120,9 +138,10 @@ impl UserConfig {
         })
     }
 
-    /// Set worktree-path for a specific project and save.
+    /// Set `worktree-path` for a specific project in the config file.
     ///
-    /// Creates the project entry if it doesn't exist.
+    /// Under the lock, writes the path unless the file already has it, creating
+    /// the project entry if it doesn't exist.
     pub fn set_project_worktree_path(
         &mut self,
         project: &str,
@@ -143,10 +162,9 @@ impl UserConfig {
         })
     }
 
-    /// Set commit generation command and save.
+    /// Set `[commit.generation] command` in the config file.
     ///
-    /// Sets `[commit.generation] command = ...` in the user config.
-    /// Acquires lock, reloads from disk, sets the command, and saves.
+    /// Under the lock, writes the command unless the file already has it.
     pub fn set_commit_generation_command(
         &mut self,
         command: String,

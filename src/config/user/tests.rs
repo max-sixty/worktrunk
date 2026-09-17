@@ -1942,10 +1942,10 @@ test = "npm test"
 // reload_from error path tests
 // =========================================================================
 
-/// Test that reload_from returns a parse error with formatted path
-/// when the config file contains invalid TOML.
+/// A mutation returns a parse error with the formatted path when the config
+/// file contains invalid TOML.
 #[test]
-fn test_reload_from_invalid_toml() {
+fn test_mutation_invalid_toml() {
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
 
@@ -1955,7 +1955,7 @@ fn test_reload_from_invalid_toml() {
     // Now corrupt it with invalid TOML
     std::fs::write(&config_path, "this is not valid toml [[[").unwrap();
 
-    // Try to reload via a mutation — should fail with parse error
+    // A mutation reads the file first — it should fail with a parse error
     let mut config = UserConfig::default();
     let result = config.set_skip_shell_integration_prompt(&config_path);
 
@@ -2137,11 +2137,11 @@ project-only = "only-project"
     );
 }
 
-/// Test that reload_from handles permission errors
-/// when the config file exists but cannot be read.
+/// A mutation surfaces a permission error when the config file exists but
+/// cannot be read.
 #[cfg(unix)]
 #[test]
-fn test_reload_from_permission_error() {
+fn test_mutation_permission_error() {
     use std::os::unix::fs::PermissionsExt;
 
     let dir = tempfile::tempdir().unwrap();
@@ -2170,7 +2170,7 @@ fn test_reload_from_permission_error() {
         return;
     }
 
-    // Try to reload via a mutation — should fail with read error
+    // A mutation reads the file first — it should fail with a read error
     let mut config = UserConfig::default();
     let result = config.set_skip_shell_integration_prompt(&config_path);
 
@@ -2795,6 +2795,61 @@ fn test_config_edit_fails_when_a_parent_is_not_a_table() {
     .apply(&mut doc)
     .unwrap_err();
     insta::assert_snapshot!(err.to_string(), @"Failed to write config file: `commit` is not a table");
+}
+
+#[test]
+fn test_edit_takes_the_migrations_when_one_lands_on_its_path() {
+    // A deprecated `[commit-generation]` migrates to `[commit.generation]` only
+    // while that table is absent, so the command can't be written there as the
+    // file stands: the edit takes the load-time migrations with it, and says so.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        "[commit-generation]\ntemplate = \"MINE\"\n\n[select]\npager = \"delta\"\n",
+    )
+    .unwrap();
+
+    let file = super::persistence::ConfigFile::read(&config_path).unwrap();
+    let mut changed = file.config.clone();
+    changed
+        .commit
+        .generation
+        .get_or_insert_with(Default::default)
+        .command = Some("llm".to_string());
+    let edit = super::persistence::ConfigEdit {
+        tables: vec!["commit", "generation"],
+        key: "command",
+        value: "llm".into(),
+    };
+
+    let super::persistence::Edited::Migrated(content) = file.edited(&edit, &changed).unwrap()
+    else {
+        panic!("the edit should have taken the migrations with it");
+    };
+    // The migrated file carries every load-path migration, so the unrelated
+    // `[select]` moves too — what the caller's warning tells the user about.
+    insta::assert_snapshot!(content, @r#"
+    [commit.generation]
+    template = "MINE"
+    command = "llm"
+
+    [switch.picker]
+    pager = "delta"
+    "#);
+
+    // An edit no migration lands on leaves the file's own spelling alone.
+    let mut only_flag = file.config.clone();
+    only_flag.skip_shell_integration_prompt = true;
+    let flag_edit = super::persistence::ConfigEdit {
+        tables: vec![],
+        key: "skip-shell-integration-prompt",
+        value: true.into(),
+    };
+    assert!(matches!(
+        file.edited(&flag_edit, &only_flag).unwrap(),
+        super::persistence::Edited::AsWritten(_)
+    ));
 }
 
 #[test]
