@@ -41,9 +41,9 @@ pub(super) fn header(pr_ref: PrRef, title: Option<&str>) -> String {
 /// A field label (`BRANCH`, `URL`, `DESCRIPTION`, …) in the app's cyan all-caps
 /// title style, rendered through [`format_heading`] so it matches the section
 /// headings across the CLI (`wt config show`, `wt step`, …). A trailing full
-/// `{reset}` closes the span, the same rule every styled run in a pane follows
-/// (see [`branch_line`]) — the cyan ends at the label whatever the value that
-/// follows it carries. Every label in the pane goes through this one helper, so
+/// `{reset}` closes the span, under the same rule as [`branch_line`]: what
+/// follows a label is a caller's value, so the cyan ends at the label whatever
+/// that value carries. Every label in the pane goes through this one helper, so
 /// they all render identically.
 fn field_label(text: &str) -> String {
     let reset = Reset;

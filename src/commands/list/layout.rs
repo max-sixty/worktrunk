@@ -678,9 +678,11 @@ pub enum LinkStyle {
     /// An underlined OSC 8 link. A dev-server URL shows as `:3000` with the URL
     /// itself inside the escape.
     Linked,
-    /// The same short text, with neither escape nor underline: the picker feeds
-    /// its rows through skim, whose pipeline mangles OSC 8 into garbage like
-    /// `^[8;;…`. Nothing on those rows is clickable, so nothing is underlined.
+    /// The same short text, with neither escape nor underline: a picker row is
+    /// parsed by `ansi_to_tui` (`items::parse_ansi_line`), whose OSC arm reads
+    /// to a BEL, while `osc8` terminates a link with ST — so the parser runs
+    /// off the end of the line and takes the link's own text with it. Nothing
+    /// on those rows is clickable, so nothing is underlined.
     /// The column is sized for the short form either way, so a dev-server URL
     /// still collapses to `:3000`.
     Unlinked,

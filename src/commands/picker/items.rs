@@ -3729,8 +3729,9 @@ mod tests {
         // Count resets - should have one after each of the 8 tabs
         assert_eq!(first_line.matches(full_reset).count(), 8);
 
-        // The sequence should be: number + style + label + [22m + [0m + divider
-        // Check that dividers come after full resets
+        // Each segment is the number, then the label with whatever style it
+        // carries, then a full reset — so a divider always follows one, whether
+        // or not the label opened a style of its own.
         let parts: Vec<&str> = first_line.split(TAB_DIVIDER).collect();
         assert_eq!(parts.len(), 8);
         assert!(parts.iter().all(|part| part.ends_with(full_reset)));

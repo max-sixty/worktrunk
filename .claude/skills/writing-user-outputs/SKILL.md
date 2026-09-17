@@ -823,10 +823,10 @@ answers it once for a whole row, so a CI reference and a dev-server port can't
 disagree. Two destinations carry no links, and so no underline: a terminal
 without OSC 8 support, where `wt list` prints the dev-server URL in full, and
 the picker's rows, which `Destination::picker` renders as
-`LinkStyle::Unlinked` because skim's pipeline would mangle the escape. Nothing
-in the picker is clickable, by two routes: a row's link style is decided at
-render time, so it carries no OSC 8 to begin with, and the preview pane is
-parsed by skim through `ansi_to_tui`, which keeps none. Underline there is
+`LinkStyle::Unlinked` (that variant's docstring has the reason). Nothing in the
+picker is clickable, by two routes: a row's link style is decided at render
+time, so it carries no OSC 8 to begin with, and the preview pane is parsed by
+skim through `ansi_to_tui`, which keeps none. Underline there is
 free to mean something else, and the preview pane spends it twice: on a URL,
 marking a reference rather than a link (`pr_pane::url_line`), and on the active
 tab in the tab bar (`items::render_preview_tabs`).
