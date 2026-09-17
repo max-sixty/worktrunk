@@ -38,7 +38,7 @@ See [`wt hook`](https://worktrunk.dev/hook/) for the full reference and built-in
 
 ## Aliases
 
-Aliases are configured under `[aliases]`:
+Aliases are configured under `[aliases]`, in project config for a repo's own commands or user config for shortcuts that follow you across repositories:
 
 ```toml
 # .config/wt.toml
