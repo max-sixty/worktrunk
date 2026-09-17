@@ -5336,6 +5336,48 @@ timeout-ms = 500
         "#);
     }
 
+    /// The same kinds as above, in the tense a config mutation reports its
+    /// write in — the second half of what "Adding a deprecation" words.
+    #[test]
+    fn test_format_applied_lines_all_kinds() {
+        let kinds = vec![
+            DeprecationKind::TemplateVar {
+                old: "repo_root",
+                new: "repo_path",
+            },
+            DeprecationKind::CommitGeneration(ScopedSections {
+                has_top_level: true,
+                project_keys: vec!["github.com/user/repo".to_string()],
+            }),
+            DeprecationKind::ApprovedCommands,
+            DeprecationKind::Select(ScopedSections {
+                has_top_level: true,
+                project_keys: vec!["github.com/user/repo".to_string()],
+            }),
+            DeprecationKind::UnsupportedKey {
+                section: "[select]".to_string(),
+                key: "height".to_string(),
+            },
+            DeprecationKind::CiSection,
+            DeprecationKind::NoFf,
+            DeprecationKind::NoCd,
+            DeprecationKind::ListTaskTimeout,
+        ];
+        assert_snapshot!(format_applied_lines(&kinds).ansi_strip(), @r#"
+        ▲ Renamed template variable repo_root to repo_path
+        ▲ Moved [commit-generation] to [commit.generation]
+        ▲ Moved [projects."github.com/user/repo".commit-generation] to [projects."github.com/user/repo".commit.generation]
+        ▲ Moved approved-commands under [projects] to approvals.toml
+        ▲ Moved [select] to [switch.picker]
+        ▲ Moved [projects."github.com/user/repo".select] to [projects."github.com/user/repo".switch.picker]
+        ▲ Removed [select] height, which its replacement has no field for
+        ▲ Moved [ci] to [forge]
+        ▲ Replaced merge.no-ff with merge.ff (inverted)
+        ▲ Replaced switch.no-cd with switch.cd (inverted)
+        ▲ Removed list.task-timeout-ms, which nothing reads
+        "#);
+    }
+
     #[test]
     fn test_detect_no_ff_deprecation() {
         let deprecations = detect_deprecations("[merge]\nno-ff = true\n");
