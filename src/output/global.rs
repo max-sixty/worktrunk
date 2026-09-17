@@ -347,16 +347,14 @@ pub fn execute(argv: Vec<String>, dir: &Path) -> anyhow::Result<()> {
     // wt relocated the payload into a worktree it selected; its `git` calls
     // must discover that worktree from the cwd, not an inherited `GIT_DIR`
     // (issue #3373; see `scrub_git_discovery_env_vars`).
-    let mut cmd = Cmd::new(program)
+    let cmd = Cmd::new(program)
         .args(argv)
         .inherit_stdin()
         .forward_signals()
         .current_dir(dir)
         .scrub_git_discovery_env();
     #[cfg(unix)]
-    {
-        cmd = cmd.propagate_sigpipe();
-    }
+    let cmd = cmd.propagate_sigpipe();
 
     suppress_child_exit_message(cmd.stream())
 }
