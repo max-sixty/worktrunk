@@ -221,8 +221,10 @@ command parameters.
 - Name the file a sample belongs in, as a first-line comment holding its path
   (`# .config/wt.toml`, `# ~/.config/worktrunk/config.toml`, `# mise.toml`).
   Expressive Code lifts it into the block's file-name tab and drops it from the
-  rendered code, while the committed Markdown keeps it as a readable comment. A
-  language with no comment syntax takes `title="<path>"` on the fence instead.
+  rendered code, while the committed Markdown keeps it as a readable comment.
+  Where a path comment would be invalid or noisy in the committed sample — a
+  `json` file, or a fenced `markdown` fragment — put `title="<path>"` on the
+  fence instead.
   Blocks that show values for one key rather than a whole file, and
   counter-examples, stay untitled; the prose says what they are.
 
@@ -249,10 +251,9 @@ option, value, and metadata roles. Committed Markdown must remain useful
 without the plugin.
 
 Config samples inside the `USER_CONFIG_START` / `PROJECT_CONFIG_START` regions
-of `src/cli/mod.rs` are the exception to the file-name comment: those sections
-name their file once at the top, and every line in them is `# `-prefixed into
-`dev/config.example.toml`, where a path comment would double-comment and name
-the file it already is.
+of `src/cli/mod.rs` carry no file-name comment: the double-comment rule under
+"Command-page generation" above already rules out the standalone comment line
+the path would need, and those sections name their file once at the top.
 
 ### Web-only post-processing
 
