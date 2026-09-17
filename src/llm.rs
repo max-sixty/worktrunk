@@ -745,7 +745,7 @@ pub(crate) fn generate_commit_message(
 
     // Fallback: generate a descriptive commit message based on changed files
     let file_list =
-        staged_diff(wt, staging_index, wt.index_base()?)?.capture(["--name-only", "-z"])?;
+        staged_diff(wt, staging_index, wt.index_base()?).capture(["--name-only", "-z"])?;
     let staged_files = file_list
         .split('\0')
         .map(|s| s.trim())
@@ -776,16 +776,18 @@ pub(crate) fn generate_commit_message(
 /// `staging_index` when given and from the real index otherwise.
 ///
 /// `base` is the commit the resulting one sits on: `HEAD` for a plain commit,
-/// the merge base for a squash that rewrites everything since it.
+/// the merge base for a squash that rewrites everything since it. The caller
+/// supplies it because only the caller knows which, and reading `HEAD` is the
+/// only fallible part of naming either.
 fn staged_diff<'a>(
     wt: &WorkingTree<'a>,
     staging_index: Option<&'a TempIndex>,
-    base: String,
-) -> anyhow::Result<worktrunk::git::PreparedDiff<'a>> {
-    Ok(match staging_index {
+    base: impl Into<String>,
+) -> worktrunk::git::PreparedDiff<'a> {
+    match staging_index {
         Some(index) => index.prepare_staged_diff(base),
         None => wt.prepare_staged_diff(base),
-    })
+    }
 }
 
 /// Build the commit prompt from staged changes.
@@ -805,7 +807,7 @@ pub(crate) fn build_commit_prompt(
     staging_index: Option<&TempIndex>,
     project_append: Option<&str>,
 ) -> anyhow::Result<String> {
-    let staged = staged_diff(wt, staging_index, wt.index_base()?)?;
+    let staged = staged_diff(wt, staging_index, wt.index_base()?);
     let diff_output = staged.capture(["--patch"])?;
     let diff_stat = staged.capture(["--stat"])?;
 
@@ -912,7 +914,7 @@ impl SquashInputs<'_> {
         // matches `HEAD` and the two spans are the same diff, so this needs no
         // second path. It also matches the stats `handle_squash` prints for the
         // same commit.
-        let squashed = staged_diff(&wt, self.staging_index, self.merge_base.to_string())?;
+        let squashed = staged_diff(&wt, self.staging_index, self.merge_base);
         let diff_output = squashed.capture(["--patch"])?;
         let diff_stat = squashed.capture(["--stat"])?;
 
