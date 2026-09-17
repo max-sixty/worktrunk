@@ -1440,13 +1440,19 @@ def check_ffmpeg_libass():
     if ffmpeg and _ffmpeg_draws_subtitles(ffmpeg):
         return
 
-    full = subprocess.run(
-        ["brew", "--prefix", "ffmpeg-full"], capture_output=True, text=True
-    )
-    candidate = Path(full.stdout.strip()) / "bin" / "ffmpeg" if full.returncode == 0 else None
-    if candidate and candidate.exists() and _ffmpeg_draws_subtitles(str(candidate)):
-        os.environ["PATH"] = f"{candidate.parent}{os.pathsep}{os.environ['PATH']}"
-        return
+    # Ask brew only where there is one: `subprocess.run` on a missing program
+    # raises rather than returning non-zero, which would replace the message
+    # below with a traceback on any box without Homebrew.
+    if shutil.which("brew"):
+        full = subprocess.run(
+            ["brew", "--prefix", "ffmpeg-full"], capture_output=True, text=True
+        )
+        candidate = (
+            Path(full.stdout.strip()) / "bin" / "ffmpeg" if full.returncode == 0 else None
+        )
+        if candidate and candidate.exists() and _ffmpeg_draws_subtitles(str(candidate)):
+            os.environ["PATH"] = f"{candidate.parent}{os.pathsep}{os.environ['PATH']}"
+            return
 
     raise SystemExit(
         "No ffmpeg with libass support (required for the keystroke overlay).\n"

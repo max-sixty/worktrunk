@@ -15,9 +15,12 @@
 set -u
 input=$(cat)
 
-# Matches a path in the diff. The paths are the branch fixtures in
-# shared/lib.py and `PICKER_EXTRA_BRANCHES` in docs/demos/build; a branch
-# added there wants a line here or its row falls through to the default.
+# Matches a path in the diff. The paths come from three places, all of which a
+# branch can be defined in: the shared fixtures in shared/lib.py,
+# `PICKER_EXTRA_BRANCHES`, and `prepare_zellij_omnibus` — which builds its own
+# `api` out of `src/health.rs` where the picker's writes `src/api.rs`. A branch
+# added to any of them wants a line here, or its row falls through to the
+# default and claims to be a README change.
 mentions() { echo "$input" | grep -q "$1"; }
 
 if echo "$input" | grep -qi "summary"; then
@@ -25,7 +28,7 @@ if echo "$input" | grep -qi "summary"; then
         echo "Add utility functions module with string and math helpers"
     elif mentions "notes\.txt"; then
         echo "Add TODO notes for caching improvements"
-    elif mentions "api\.rs"; then
+    elif mentions "api\.rs\|health\.rs"; then
         echo "Add /health for load-balancer polling"
     elif mentions "auth\.rs"; then
         echo "Reissue tokens when a role changes"

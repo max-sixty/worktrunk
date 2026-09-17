@@ -465,7 +465,7 @@ Branch: {{ branch }}
 /// Default template for squash commit message prompts
 ///
 /// Synced to dev/config.example.toml by `cargo test readme_sync`
-const DEFAULT_SQUASH_TEMPLATE: &str = r#"<task>Write a commit message for the combined effect of these commits.</task>
+const DEFAULT_SQUASH_TEMPLATE: &str = r#"<task>Write a commit message for the change in <diff>, which is everything the squash will record. <commits> lists what it folds in.</task>
 
 <format>
 - Subject line under 50 chars
@@ -722,7 +722,7 @@ pub(crate) fn generate_commit_message(
         let command = commit_generation_config.command.as_ref().unwrap();
         // Prompt-build failures (git plumbing) propagate as-is; only a
         // failure of the LLM command itself gets the `LlmCommandFailed`
-        // wrapper — mirroring `generate_squash_message`.
+        // wrapper — mirroring `SquashInputs::generate_message`.
         let prompt =
             build_commit_prompt(commit_generation_config, wt, staging_index, project_append)?;
         // A slow or hung command is otherwise silent (stdout is captured); the
@@ -744,7 +744,8 @@ pub(crate) fn generate_commit_message(
     }
 
     // Fallback: generate a descriptive commit message based on changed files
-    let file_list = staged_diff(wt, staging_index)?.capture(["--name-only", "-z"])?;
+    let file_list =
+        staged_diff(wt, staging_index, wt.index_base()?)?.capture(["--name-only", "-z"])?;
     let staged_files = file_list
         .split('\0')
         .map(|s| s.trim())
@@ -771,13 +772,16 @@ pub(crate) fn generate_commit_message(
     Ok(message)
 }
 
-/// The changes a commit from `wt` would record, read from `staging_index`
-/// when given and from the real index otherwise.
+/// The changes a commit from `wt` would record against `base`, read from
+/// `staging_index` when given and from the real index otherwise.
+///
+/// `base` is the commit the resulting one sits on: `HEAD` for a plain commit,
+/// the merge base for a squash that rewrites everything since it.
 fn staged_diff<'a>(
     wt: &WorkingTree<'a>,
     staging_index: Option<&'a TempIndex>,
+    base: String,
 ) -> anyhow::Result<worktrunk::git::PreparedDiff<'a>> {
-    let base = wt.index_base()?;
     Ok(match staging_index {
         Some(index) => index.prepare_staged_diff(base),
         None => wt.prepare_staged_diff(base),
@@ -801,7 +805,7 @@ pub(crate) fn build_commit_prompt(
     staging_index: Option<&TempIndex>,
     project_append: Option<&str>,
 ) -> anyhow::Result<String> {
-    let staged = staged_diff(wt, staging_index)?;
+    let staged = staged_diff(wt, staging_index, wt.index_base()?)?;
     let diff_output = staged.capture(["--patch"])?;
     let diff_stat = staged.capture(["--stat"])?;
 
@@ -831,105 +835,103 @@ pub(crate) fn build_commit_prompt(
     build_prompt(config, TemplateType::Commit, &context)
 }
 
-pub(crate) fn generate_squash_message(
-    target_branch: &str,
-    merge_base: &str,
-    commit_details: &[CommitMessageDetail],
-    current_branch: &str,
-    repo_name: &str,
-    commit_generation_config: &CommitGenerationConfig,
-    project_append: Option<&str>,
-) -> anyhow::Result<String> {
-    // Check if commit generation is configured (non-empty command)
-    if commit_generation_config.is_configured() {
-        let command = commit_generation_config.command.as_ref().unwrap();
-
-        let prompt = build_squash_prompt(
-            target_branch,
-            merge_base,
-            commit_details,
-            current_branch,
-            repo_name,
-            commit_generation_config,
-            project_append,
-        )?;
-
-        // See `generate_commit_message` — keep a slow squash-message generation
-        // from being silent.
-        let _watchdog = watch_llm_command(command);
-        return execute_llm_command(command, &prompt).map_err(|e| {
-            worktrunk::git::GitError::LlmCommandFailed {
-                command: command.clone(),
-                error: e.display_message(),
-                reproduction_command: Some(format_reproduction_command(
-                    "wt step squash --show-prompt",
-                    command,
-                )),
-            }
-            .into()
-        });
-    }
-
-    // Fallback: deterministic commit message (only when not configured)
-    let mut commit_message = format!("Squash commits from {}\n\n", current_branch);
-    commit_message.push_str("Combined commits:\n");
-    for detail in commit_details.iter().rev() {
-        // Reverse so they're in chronological order
-        commit_message.push_str(&format!("- {}\n", detail.subject));
-    }
-    Ok(commit_message)
+/// Everything the squash's message is derived from.
+///
+/// One struct rather than eight positional arguments: `generate` forwards the
+/// whole set to `build`, and the three call sites pass the same values in the
+/// same order, which is exactly where a transposed pair goes unnoticed.
+pub(crate) struct SquashInputs<'a> {
+    pub target_branch: &'a str,
+    pub merge_base: &'a str,
+    pub commit_details: &'a [CommitMessageDetail],
+    pub current_branch: &'a str,
+    pub repo_name: &'a str,
+    pub config: &'a CommitGenerationConfig,
+    pub project_append: Option<&'a str>,
+    /// The temporary index `--dry-run` staged per the user's `--stage` mode,
+    /// read in place of the real one so the preview spans what a real run would
+    /// commit. A real run passes `None` — it has already staged the real index
+    /// — and so does `--show-prompt`, the cheap "what's already staged" path.
+    pub staging_index: Option<&'a TempIndex>,
 }
 
-/// Build the squash prompt from what the squash commit will record.
-///
-/// Gathers the combined diff, commit message details, branch names, and recent commits, then
-/// renders the prompt template. Used by both normal squash generation and `--show-prompt`.
-///
-/// The diff spans everything the one resulting commit records — the commits
-/// since `merge_base` plus any staged working-tree changes folded in with them.
-pub(crate) fn build_squash_prompt(
-    target_branch: &str,
-    merge_base: &str,
-    commit_details: &[CommitMessageDetail],
-    current_branch: &str,
-    repo_name: &str,
-    config: &CommitGenerationConfig,
-    project_append: Option<&str>,
-) -> anyhow::Result<String> {
-    let repo = Repository::current()?;
+impl SquashInputs<'_> {
+    /// The squash commit's message: generated by the configured LLM command, or
+    /// a deterministic list of the folded-in subjects when none is configured.
+    pub(crate) fn generate_message(&self) -> anyhow::Result<String> {
+        if self.config.is_configured() {
+            let command = self.config.command.as_ref().unwrap();
+            let prompt = self.prompt()?;
 
-    // Diff `merge_base` against the index, because the index is what the squash
-    // commits: `handle_squash` stages the working tree before generating this
-    // message and soft-resets to `merge_base` afterwards, so the index already
-    // holds everything the one resulting commit will record. `merge_base..HEAD`
-    // would name only the pre-existing commits and omit the working-tree
-    // changes folded into the same commit — and for `wt merge` on a dirty
-    // worktree those changes are the whole reason it ran, so the message came
-    // out describing the branch's older commits instead of the work just
-    // finished. With nothing staged the index matches `HEAD` and the two spans
-    // are the same diff, so this needs no second path. It also matches the
-    // stats `handle_squash` prints for the same commit.
-    let squashed = repo.current_worktree().prepare_staged_diff(merge_base);
-    let diff_output = squashed.capture(["--patch"])?;
-    let diff_stat = squashed.capture(["--stat"])?;
+            // See `generate_commit_message` — keep a slow squash-message
+            // generation from being silent.
+            let _watchdog = watch_llm_command(command);
+            return execute_llm_command(command, &prompt).map_err(|e| {
+                worktrunk::git::GitError::LlmCommandFailed {
+                    command: command.clone(),
+                    error: e.display_message(),
+                    reproduction_command: Some(format_reproduction_command(
+                        "wt step squash --show-prompt",
+                        command,
+                    )),
+                }
+                .into()
+            });
+        }
 
-    // Prepare diff (may filter if too large)
-    let prepared = prepare_diff(diff_output, diff_stat);
+        let mut commit_message = format!("Squash commits from {}\n\n", self.current_branch);
+        commit_message.push_str("Combined commits:\n");
+        for detail in self.commit_details.iter().rev() {
+            // Reverse so they're in chronological order
+            commit_message.push_str(&format!("- {}\n", detail.subject));
+        }
+        Ok(commit_message)
+    }
 
-    let recent_commits = repo
-        .current_worktree()
-        .recent_commit_subjects(Some(merge_base), 5);
-    let context = PromptContext {
-        git_diff: &prepared.diff,
-        git_diff_stat: &prepared.stat,
-        branch: current_branch,
-        recent_commits: recent_commits.as_ref(),
-        repo_name,
-        commit_details,
-        target_branch: Some(target_branch),
-        project_append,
-    };
-    build_prompt(config, TemplateType::Squash, &context)
+    /// Render the squash prompt from what the squash commit will record.
+    ///
+    /// Gathers the combined diff, commit message details, branch names, and
+    /// recent commits, then renders the prompt template. Used by normal squash
+    /// generation, `--show-prompt`, and `--dry-run`.
+    ///
+    /// The diff spans everything the one resulting commit records — the commits
+    /// since `merge_base` plus any working-tree changes folded in with them.
+    pub(crate) fn prompt(&self) -> anyhow::Result<String> {
+        let repo = Repository::current()?;
+        let wt = repo.current_worktree();
+
+        // Diff `merge_base` against the index, because the index is what the
+        // squash commits: `handle_squash` stages the working tree before
+        // generating this message and soft-resets to `merge_base` afterwards, so
+        // the index already holds everything the one resulting commit will
+        // record. `merge_base..HEAD` would name only the pre-existing commits
+        // and omit the working-tree changes folded into the same commit — and
+        // for `wt merge` on a dirty worktree those changes are the whole reason
+        // it ran, so the message came out describing the branch's older commits
+        // instead of the work just finished. With nothing staged the index
+        // matches `HEAD` and the two spans are the same diff, so this needs no
+        // second path. It also matches the stats `handle_squash` prints for the
+        // same commit.
+        let squashed = staged_diff(&wt, self.staging_index, self.merge_base.to_string())?;
+        let diff_output = squashed.capture(["--patch"])?;
+        let diff_stat = squashed.capture(["--stat"])?;
+
+        // Prepare diff (may filter if too large)
+        let prepared = prepare_diff(diff_output, diff_stat);
+
+        let recent_commits = wt.recent_commit_subjects(Some(self.merge_base), 5);
+        let context = PromptContext {
+            git_diff: &prepared.diff,
+            git_diff_stat: &prepared.stat,
+            branch: self.current_branch,
+            recent_commits: recent_commits.as_ref(),
+            repo_name: self.repo_name,
+            commit_details: self.commit_details,
+            target_branch: Some(self.target_branch),
+            project_append: self.project_append,
+        };
+        build_prompt(self.config, TemplateType::Squash, &context)
+    }
 }
 
 /// Synthetic diff for testing commit generation
@@ -1497,7 +1499,7 @@ mod tests {
         context.project_append = Some("- Reference the related issue");
         let prompt = build_prompt(&config, TemplateType::Squash, &context).unwrap();
         assert_snapshot!(prompt, @r#"
-        <task>Write a commit message for the combined effect of these commits.</task>
+        <task>Write a commit message for the change in <diff>, which is everything the squash will record. <commits> lists what it folds in.</task>
 
         <format>
         - Subject line under 50 chars
@@ -1553,7 +1555,7 @@ mod tests {
         );
         let prompt = build_prompt(&config, TemplateType::Squash, &context).unwrap();
         assert_snapshot!(prompt, @r#"
-        <task>Write a commit message for the combined effect of these commits.</task>
+        <task>Write a commit message for the change in <diff>, which is everything the squash will record. <commits> lists what it folds in.</task>
 
         <format>
         - Subject line under 50 chars

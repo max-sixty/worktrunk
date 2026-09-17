@@ -237,9 +237,9 @@ fn handle_step_command(
             }
             // --show-prompt and --dry-run skip the squash and exit after preview output.
             if args.show_prompt {
-                commands::step_show_squash_prompt(args.target.as_deref())
+                commands::step_show_squash_prompt(args.target.as_deref(), args.stage)
             } else if args.dry_run {
-                commands::step_dry_run_squash(args.target.as_deref(), yes)
+                commands::step_dry_run_squash(args.target.as_deref(), args.stage, yes)
             } else {
                 // Approval is handled inside handle_squash (like step_commit).
                 let repo = Repository::current()?;
