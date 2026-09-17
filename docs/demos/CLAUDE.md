@@ -82,6 +82,10 @@ Checkpoints are defined in `docs/demos/shared/validation.py`. To add validation 
 
 `wt-switch`, `wt-statusline`, and `wt-zellij-omnibus` have checkpoints. Other TUI demos are skipped until checkpoints are added.
 
+**Measure the window; don't derive it.** A tape's Sleep directives don't fix where its content lands: command execution varies run to run, so the same tape gives GIFs whose frame counts differ by tens of frames. Anchor to the end (a negative `start`) where the content is near it, and prefer a window that stays generous under that drift. OCR each candidate range before committing to it — `extract_frames` plus `ocr_image` over `range(n-500, n, 20)` prints where a pattern actually lives.
+
+**A window is calibrated for one target's terminal size.** One tape records at each target's own size, so a line's on-screen lifetime differs between them: the docs terminal is ~33 rows and the social one ~24. `wt merge`'s generated commit message survives to the end of the docs recording and scrolls off the social one within a second. Set `targets=("docs",)` on a checkpoint that depends on that, rather than widening the window until it catches an 18-frame band in both.
+
 **Prerequisites for TUI validation:** `ffmpeg` and `tesseract` must be installed.
 
 **Limitations:**
@@ -179,22 +183,86 @@ ffmpeg -i demo.gif -vsync 0 /tmp/gif-frames/frame_%04d.png
 # Adjust keystrokeDelayMS: increase if keystroke appears too early, decrease if too late
 ```
 
+## The mocked forge
+
+`fixtures/gh-mock.sh` answers every `gh` call from a file under
+`$HOME/.local/share/gh-mock` that `write_gh_mock_data` (in `shared/lib.py`)
+writes after the branches exist. Each file's first line is how long the mock
+waits before answering; the rest is the JSON body.
+
+Three things have to hold or the mock is never reached, and each one silently
+empties the CI column rather than failing:
+
+- **A parseable origin.** wt's CI detection parses the remote URL for an
+  owner/repo before it will call `gh` at all, and a bare filesystem path doesn't
+  parse. `prepare_base_repo` sets origin to `DEMO_ORIGIN_URL` and rewrites only
+  *push* to the local bare repo via `url.<bare>.pushInsteadOf` — plain
+  `git remote get-url` applies `insteadOf` but not `pushInsteadOf`, so rewriting
+  fetch too would hand wt the local path back.
+- **`gh --version` and `gh auth status` both exiting 0.** `CiToolsStatus::detect`
+  gates every forge call on them.
+- **`DEMO_PROJECT_ID` matching the URL.** It keys the approvals file, so a URL
+  change without it leaves every project command unapproved.
+
+The per-branch delays in `DEMO_PRS` are what make the CI column *stream*: wt
+runs one `gh pr list` per branch concurrently, so staggered delays land the cells
+one at a time behind a frame that already painted from local git. Keep the
+largest under the tape's post-command sleep — `wt list` renders progressively but
+still can't finish until every call returns.
+
+The PR bodies and comment threads also ride these responses. `detect_github`
+primes the picker's on-disk comments cache from the `gh pr list` payload, so the
+`comments` tab renders with no second call.
+
 ## wt-switch-picker demo goals (interactive picker)
 
-The wt-switch-picker demo showcases the interactive picker (`wt switch` without args) with **realistic variety in all columns**:
+The wt-switch-picker demo showcases the interactive picker (`wt switch` without
+args). The list itself is the subject here, so `prepare_picker` gives it eleven
+worktrees — the shared set plus `PICKER_EXTRA_BRANCHES`, where every other demo
+keeps the shared four — and its table reads like a repo someone works in.
+
+Variety to preserve across all columns:
 
 | Column | Demonstration |
 |--------|---------------|
-| CI | PR/MR number (`#412`) vs bare `#` (branch CI) vs none |
-| HEAD± | Large staged diff (+54), small unstaged (+8), none |
-| Status | Staged changes (+), unstaged (!), ahead/behind (↕) |
+| CI | PR number colored by state (`#4` failing, `#5` changes-requested, `#2` running, `#1` stale head) vs bare `#` (branch CI, passing and failing) vs none |
+| HEAD± | Large unstaged diff (+106 -14), small (+1), none |
+| Status | Staged changes (+), unstaged (!), untracked (?), ahead/behind (↕) |
 | main↕ | Some branches ahead-only, some ahead-and-behind |
 | main…± | Meaningful merge-base diffstats (small to 300+ lines) |
 
-Branch setup (from shared infrastructure):
-- **alpha** — Large working tree changes, unpushed commits, PR CI
-- **beta** — Staged changes, behind main, branch CI
-- **hooks** — Staged+unstaged changes, no remote
+Branch setup:
+- **alpha** — Large working tree changes, unpushed commits (so its PR head reads
+  as stale), and the seven-comment thread the `comments` tab pages through
+- **beta** — Staged changes, behind main, PR with CI running
+- **hooks** — Staged+unstaged changes, no remote, so no CI at all
+- **`PICKER_EXTRA_BRANCHES`** — each carries one commit of its own; a branch left
+  on main's tip renders as an empty row *and* borrows main's branch CI, since
+  branch CI is keyed by commit
+
+Two keystroke hazards the tape works around, both of which pick the wrong
+worktree rather than failing:
+
+- **Narrowing the list keeps the cursor's row index**, not the row. A query
+  matching several rows leaves the cursor on whichever row now sits at that
+  index, and clearing the query restores the old index. Either type a query that
+  matches exactly one row, or type it before moving the cursor at all.
+- **The filter matches PR number, title and author too**, not just the branch
+  name and path. Adding a PR to a branch can make a previously unambiguous query
+  match several rows.
+
+## Alt keybindings in tapes
+
+`Alt+p`, `Alt+"8"` and the rest reach the program only because `buildTtyCmd` in
+the VHS fork passes `-t macOptionIsMeta=true` to ttyd. Without it xterm.js hands
+macOS Option to the browser's own composition and the program receives the
+unmodified character — so an `Alt+p` in a tape types a literal `p` into the
+picker's query, with no error anywhere. Verify a modifier reaches the program by
+recording a tape that runs `cat > file`, sending the key, and reading the bytes:
+alt-p is `1b70`, a bare `p` is `70`.
+
+VHS's parser takes a string, `Enter` or `Tab` after `Alt+`, so a digit needs
+quoting: `Alt+"8"`, not `Alt+8` (which fails to parse).
 
 ## Light/dark theme variants
 

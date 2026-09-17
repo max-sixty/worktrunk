@@ -22,6 +22,8 @@ from .lib import (
     setup_fish_config,
     setup_mock_clis,
     prepare_demo_repo,
+    write_gh_mock_data,
+    DEMO_PROJECT_ID,
     # Demo recording infrastructure
     check_dependencies,
     check_ffmpeg_libass,
@@ -62,6 +64,8 @@ __all__ = [
     "setup_fish_config",
     "setup_mock_clis",
     "prepare_demo_repo",
+    "write_gh_mock_data",
+    "DEMO_PROJECT_ID",
     "THEMES",
     "format_theme_for_vhs",
     # Demo recording infrastructure

@@ -12,12 +12,12 @@ every sampled frame. This makes validation resilient to timing shifts from UI
 changes without allowing transient errors.
 
 Usage:
-    from shared.validation import validate_tui_demo, TUI_CHECKPOINTS
+    from shared.validation import validate_tui_demo_verbose
 
-    # Validate after building
-    errors = validate_tui_demo("wt-zellij-omnibus", gif_path)
-    if errors:
-        print("Validation failed:", errors)
+    # Validate after building, for the target the GIF was recorded at
+    passed, report = validate_tui_demo_verbose("wt-zellij-omnibus", gif_path, "docs")
+    if not passed:
+        print(report)
 """
 
 from __future__ import annotations
@@ -36,6 +36,14 @@ class Checkpoint:
     for checkpoints on the state a recording ends in. How many frames a tape
     produces varies between runs with the recording machine's speed, so a
     fixed frame number near the end can fall past a faster recording's end.
+
+    ``targets`` restricts a checkpoint to the build targets whose geometry it
+    was calibrated against. One tape records at each target's own size, so how
+    long a given line stays on screen differs between them: the docs terminal
+    is ~33 rows and the social one ~24, and output that persists to the end of
+    the docs recording can scroll away within a second in social. A checkpoint
+    on such a line holds only where it was measured. Leave it unset for a
+    checkpoint whose window is generous in every target.
     """
 
     start: int
@@ -43,6 +51,7 @@ class Checkpoint:
     expected: list[str] = field(default_factory=list)
     forbidden: list[str] = field(default_factory=list)
     step: int = 10
+    targets: tuple[str, ...] | None = None
 
 
 # Checkpoint definitions per TUI demo.
@@ -119,13 +128,24 @@ TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
                 "Transcript saving",
             ],
         ),
-        # The API agent adds a test. Commit generation should describe that
-        # diff rather than replaying the feature-tab fixture's message.
+        # The API agent adds a test, and `wt merge` squashes it together with
+        # api's own commit. The generated message must describe that combined
+        # diff rather than replaying the feature-tab fixture's message — the
+        # squash prompt once diffed only the commits and missed the staged work.
+        #
+        # docs only. The message is printed mid-way through `wt merge`'s output
+        # and then pushed up by the rest of it, so it survives to the end of the
+        # ~33-row docs recording but scrolls off the ~24-row social one inside a
+        # second — an 18-frame window there, too narrow to sample reliably.
         Checkpoint(
-            start=1400,
-            end=1750,
+            start=-430,
+            end=-1,
             expected=["expand", "coverage"],
+            # The fixture message belongs to TAB 3's own commit, which has
+            # scrolled away by here; the squash-prompt bug put it on the merge's
+            # commit instead, inside this window.
             forbidden=["user settings module", "script -q"],
+            targets=("docs",),
         ),
         # The feature push uses a local demo remote internally, but its
         # disposable filesystem path must never appear in the recording.
@@ -386,36 +406,18 @@ def validate_checkpoint(
     return False, f"no match in {label} ({frames_checked} checked): {'; '.join(best_errors)}"
 
 
-def validate_tui_demo(demo_name: str, gif_path: Path) -> list[str]:
-    """Validate a TUI demo GIF against its checkpoints.
-
-    Returns list of error messages. Empty list means validation passed.
-    """
-    if demo_name not in TUI_CHECKPOINTS:
-        return [f"No checkpoints defined for demo: {demo_name}"]
-
-    if not gif_path.exists():
-        return [f"GIF not found: {gif_path}"]
-
-    missing = check_dependencies()
-    if missing:
-        return [f"Missing required tools: {', '.join(missing)}"]
-
-    checkpoints = TUI_CHECKPOINTS[demo_name]
-    all_errors = []
-
-    with tempfile.TemporaryDirectory(prefix="wt-validate-") as work_dir:
-        work_path = Path(work_dir)
-
-        for checkpoint in checkpoints:
-            passed, detail = validate_checkpoint(gif_path, checkpoint, work_path)
-            if not passed:
-                all_errors.append(detail)
-
-    return all_errors
+def checkpoints_for(demo_name: str, target: str) -> list[Checkpoint]:
+    """The checkpoints that apply to this demo in this build target."""
+    return [
+        c
+        for c in TUI_CHECKPOINTS[demo_name]
+        if c.targets is None or target in c.targets
+    ]
 
 
-def validate_tui_demo_verbose(demo_name: str, gif_path: Path) -> tuple[bool, str]:
+def validate_tui_demo_verbose(
+    demo_name: str, gif_path: Path, target: str
+) -> tuple[bool, str]:
     """Validate a TUI demo with verbose output.
 
     Returns (success, output_message).
@@ -432,7 +434,7 @@ def validate_tui_demo_verbose(demo_name: str, gif_path: Path) -> tuple[bool, str
     if missing:
         return False, f"Missing required tools: {', '.join(missing)}"
 
-    checkpoints = TUI_CHECKPOINTS[demo_name]
+    checkpoints = checkpoints_for(demo_name, target)
     all_passed = True
 
     with tempfile.TemporaryDirectory(prefix="wt-validate-") as work_dir:

@@ -3120,6 +3120,47 @@ fn test_step_commit_first_commit_in_sha256_repo() {
     );
 }
 
+/// The squash commits the index, so its prompt must describe the staged
+/// working-tree changes alongside the commits being folded in.
+///
+/// The prompt used to diff `merge_base..HEAD`, which named only the commits —
+/// so `wt merge` on a dirty worktree generated a message about the branch's
+/// older commits and said nothing about the work it had just staged into the
+/// same commit.
+#[rstest]
+fn test_squash_prompt_covers_staged_changes(repo_with_multi_commit_feature: TestRepo) {
+    let repo = repo_with_multi_commit_feature;
+    let feature_wt = repo.worktree_path("feature");
+    fs::write(feature_wt.join("staged.txt"), "staged content\n").unwrap();
+    repo.git_command()
+        .args(["add", "staged.txt"])
+        .current_dir(feature_wt)
+        .run()
+        .unwrap();
+
+    let output = make_snapshot_cmd(
+        &repo,
+        "step",
+        &["squash", "--show-prompt"],
+        Some(feature_wt),
+    )
+    .output()
+    .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let prompt = String::from_utf8(output.stdout).unwrap();
+
+    assert!(
+        prompt.contains("staged.txt"),
+        "squash prompt covers the staged change: {prompt}"
+    );
+    for committed in ["file1.txt", "file2.txt"] {
+        assert!(
+            prompt.contains(committed),
+            "squash prompt still covers {committed}: {prompt}"
+        );
+    }
+}
+
 /// The commit and squash prompts split git's diff into per-file sections, so
 /// the user's diff display settings must not change what the LLM receives.
 #[rstest]

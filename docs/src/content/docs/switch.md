@@ -86,9 +86,9 @@ The CI column shows each row's PR/MR CI and review status, the same as [`wt list
 <figure class="demo">
 <picture>
   <source srcset="/assets/docs/dark/wt-switch-picker.gif" media="(prefers-color-scheme: dark)">
-  <img src="/assets/docs/light/wt-switch-picker.gif" alt="wt switch picker demo" width="1600" height="800">
+  <img src="/assets/docs/light/wt-switch-picker.gif" alt="wt switch picker demo" width="1600" height="900">
 </picture>
-<figcaption>Browsing the picker, scrolling a preview, filtering, and selecting</figcaption>
+<figcaption>Alt-p to reveal the CI column as it fills in, then paging a diff, a PR's comment thread, and the PR itself</figcaption>
 </figure>
 
 **Keybindings:**

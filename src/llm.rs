@@ -880,10 +880,13 @@ pub(crate) fn generate_squash_message(
     Ok(commit_message)
 }
 
-/// Build the squash prompt from commits being squashed.
+/// Build the squash prompt from what the squash commit will record.
 ///
 /// Gathers the combined diff, commit message details, branch names, and recent commits, then
 /// renders the prompt template. Used by both normal squash generation and `--show-prompt`.
+///
+/// The diff spans everything the one resulting commit records — the commits
+/// since `merge_base` plus any staged working-tree changes folded in with them.
 pub(crate) fn build_squash_prompt(
     target_branch: &str,
     merge_base: &str,
@@ -895,8 +898,18 @@ pub(crate) fn build_squash_prompt(
 ) -> anyhow::Result<String> {
     let repo = Repository::current()?;
 
-    // Get the combined diff and diffstat for all commits being squashed
-    let squashed = repo.prepare_diff(merge_base, "HEAD");
+    // Diff `merge_base` against the index, because the index is what the squash
+    // commits: `handle_squash` stages the working tree before generating this
+    // message and soft-resets to `merge_base` afterwards, so the index already
+    // holds everything the one resulting commit will record. `merge_base..HEAD`
+    // would name only the pre-existing commits and omit the working-tree
+    // changes folded into the same commit — and for `wt merge` on a dirty
+    // worktree those changes are the whole reason it ran, so the message came
+    // out describing the branch's older commits instead of the work just
+    // finished. With nothing staged the index matches `HEAD` and the two spans
+    // are the same diff, so this needs no second path. It also matches the
+    // stats `handle_squash` prints for the same commit.
+    let squashed = repo.current_worktree().prepare_staged_diff(merge_base);
     let diff_output = squashed.capture(["--patch"])?;
     let diff_stat = squashed.capture(["--stat"])?;
 
