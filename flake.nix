@@ -165,13 +165,15 @@
               # Tests shell out to a few host tools — `git` for the harness,
               # `python3` for argv-quoting and post-start fixtures, `ps`
               # (procps) for the pgid invariant test, `lsof` for the
-              # `--reap` process-discovery test. Without these on PATH
+              # `--reap` process-discovery test, `ssh-keygen` (openssh) for
+              # the `--no-ff` commit-signing test. Without these on PATH
               # the sandbox surfaces them as `No such file or directory`.
               nativeBuildInputs = commonArgs.nativeBuildInputs ++ [
                 pkgs.git
                 pkgs.python3
                 pkgs.procps
                 pkgs.lsof
+                pkgs.openssh
               ];
             }
           );
