@@ -30,9 +30,10 @@
 //!
 //! The warning names the destination, as the switch-to-existing case does.
 //! Both the `--create` success line and the switch-to-existing warning already
-//! print a path; a removal prints none anywhere else, and it has just deleted
-//! the directory the caller is standing in — so without the path a caller
-//! without shell integration has nowhere to `cd`.
+//! print a path; a removal prints one only where a post-merge / post-remove
+//! hook announcement names its working directory, and it has just deleted the
+//! directory the caller is standing in — so without the path a caller without
+//! shell integration has nowhere to `cd`.
 //!
 //! | Condition | Warning | Hint |
 //! |-----------|---------|------|

@@ -930,11 +930,12 @@ fn test_merge_cwd_removed_hint_no_recovery(mut repo: TestRepo) {
 /// A merge that removes the worktree the caller is standing in must name the
 /// destination it could not cd to.
 ///
-/// Without shell integration the caller is left in a deleted directory, and no
-/// other line of the merge output prints a path to move to — `wt switch ^`
-/// does not recover from wt's own clean removal, because the removal prunes
-/// the admin entry that deleted-CWD recovery matches on. The warning is what
-/// un-strands the caller.
+/// Without shell integration the caller is left in a deleted directory, and
+/// unless a post-merge hook announcement names the destination, no other line
+/// of the merge output prints a path to move to — `wt switch ^` does not
+/// recover from wt's own clean removal, because the removal prunes the admin
+/// entry that deleted-CWD recovery matches on. The warning is what un-strands
+/// the caller.
 #[rstest]
 fn test_merge_cwd_removed_warning_names_destination(mut repo: TestRepo) {
     let feature_wt = repo.add_feature();

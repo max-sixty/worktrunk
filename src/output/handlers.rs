@@ -929,8 +929,9 @@ fn flag_note(
 /// Uses the standard "Worktree for X @ path, but cannot change directory —
 /// {reason}" pattern, the same shape `wt switch` uses for an existing worktree.
 /// Naming the destination matters more here than anywhere else: the removal
-/// deleted the directory the caller is standing in, and no other line of a
-/// `wt merge` / `wt remove` run prints a path to move to.
+/// deleted the directory the caller is standing in, and unless a post-merge or
+/// post-remove hook announcement happens to name its working directory, no
+/// other line of the run prints a path to move to.
 /// See [`compute_shell_warning_reason`] for the full list of reasons.
 fn print_switch_message_if_changed(
     changed_directory: bool,
@@ -1055,7 +1056,10 @@ pub struct SwitchDisplayPaths {
 /// - `AlreadyAt` — user is already in the target directory
 /// - Shell integration IS active — cd will happen automatically
 ///
-/// **Warning format:** `Cannot change directory — {reason}`
+/// **Warning format:** `Existing` shares the switch-to-existing shape,
+/// `Worktree for X @ path, but cannot change directory — {reason}`; `Created`
+/// warns with the bare `Cannot change directory — {reason}`, because the
+/// success line printed above it already names the path.
 ///
 /// See [`compute_shell_warning_reason`] for the full list of reasons.
 ///
