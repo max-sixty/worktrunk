@@ -243,6 +243,8 @@ No `get_*` — bare nouns follow Rust stdlib convention.
 
 `Repository` caches read-only values via `Arc<RepoCache>` (cloning shares it). What is and isn't cached, the `list_worktrees()` post-mutation invariant, the two storage patterns, and the in-memory-`RepoCache`-vs-persistent-`sha_cache` decision (cheap-and-hot → in-memory get-or-create; expensive → disk; both → in-memory front over disk back): the `# Caching` section in `src/git/repository/mod.rs`.
 
+**A change to what a cached value means bumps `CACHE_EPOCH`** (`src/cache.rs`). The persistent entries are keyed on SHA pairs with no TTL, so the key cannot see the generator's output: an entry written by an older `wt` keeps answering until its key recurs, and on a finished branch that is never. Moving the diffs onto plumbing is the worked example — it left `has-added-changes` entries saying an unmerged branch had no added changes, which is `wt remove` deleting it. So the question belongs to any change that alters what a cached read reports, not just to code inside `cache.rs`; ask it whenever a generator behind one of `sha_cache`'s kinds changes.
+
 ## Releases
 
 Use the `release` skill (version bump, changelog, crates.io publish, GitHub release). It writes every changelog entry from the commits since the last tag, so other PRs leave `CHANGELOG.md` untouched; a PR that already carries an entry drops it rather than resolving a conflict on it.

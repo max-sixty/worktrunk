@@ -58,6 +58,14 @@
 //! it is a plain read. So a `clear` followed by the aggregate `get` shows the
 //! value gone, while the per-key `get` would re-resolve it.
 //!
+//! One exception, and it is the cache's rather than this command's: every
+//! cache read goes through `cache::cache_dir`, which discards entries an
+//! older worktrunk wrote (`CACHE_EPOCH`). The first `get` after such an
+//! upgrade therefore reports the git-command counts it left behind rather
+//! than the ones it found. Nothing here can read past that without reporting
+//! numbers the next command would invalidate anyway; the kinds that cost
+//! something to rebuild are exempt from the discard.
+//!
 //! # Log layout invariant
 //!
 //! Inside `wt_logs_dir()`, top-level *files* are shared logs (`commands.jsonl*`,
@@ -1063,6 +1071,10 @@ pub fn handle_state_clear_all(yes: bool) -> anyhow::Result<()> {
     cleared_any |= clear_logs_reported(&repo)?;
     cleared_any |= clear_hints_reported(&repo)?;
     cleared_any |= clear_trash_reported(&repo)?;
+    // Last, as in `handle_cache_clear`: the category clears above go through
+    // `cache_dir`, which stamps. An emptied tree left stamped would vouch for
+    // whatever lands in it next.
+    worktrunk::cache::clear_epoch(&repo)?;
 
     if !cleared_any {
         eprintln!("{}", info_message("No stored state to clear"));
@@ -1086,6 +1098,8 @@ pub fn handle_cache_clear() -> anyhow::Result<()> {
     cleared_any |= clear_summary_reported(&repo)?;
     cleared_any |= clear_git_commands_reported(&repo)?;
     cleared_any |= clear_hints_reported(&repo)?;
+    // Last: the category clears above go through `cache_dir`, which stamps.
+    worktrunk::cache::clear_epoch(&repo)?;
 
     if !cleared_any {
         eprintln!("{}", info_message("No cache to clear"));

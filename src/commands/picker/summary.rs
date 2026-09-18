@@ -175,10 +175,13 @@ mod tests {
     fn test_write_handles_unwritable_path() {
         use crate::summary::CachedSummary;
         let (_t, repo) = temp_repo();
-        // Block cache directory creation by placing a file where the directory should be
+        // Block cache directory creation by placing a file where the directory
+        // should be. `TestRepo` stamps the cache epoch, so the directory is
+        // already there and has to go first.
         let wt_dir = repo.wt_dir();
         fs::create_dir_all(&wt_dir).unwrap();
         let cache_parent = wt_dir.join("cache");
+        fs::remove_dir_all(&cache_parent).unwrap();
         fs::write(&cache_parent, "blocker").unwrap();
 
         let cached = CachedSummary {

@@ -1451,6 +1451,67 @@ fn test_remove_branch_only_unmerged_from_subdirectory_with_diff_relative(repo: T
     );
 }
 
+/// The `has-added-changes` answer is keyed on the branch and target tips and
+/// never expires, so on a finished branch it outlives the release that wrote
+/// it. Releases through 0.78.0 wrote it from porcelain `git diff`, which under
+/// `diff.relative` recorded a branch with changes outside the cwd as having
+/// none — so moving the read to plumbing fixes nothing until that entry is
+/// gone. The epoch stamp is what discards it.
+#[rstest]
+fn test_remove_branch_only_unmerged_ignores_cache_from_an_older_epoch(repo: TestRepo) {
+    repo.run_git(&["switch", "--create", "feature-unmerged"]);
+    fs::write(repo.root_path().join("feature.txt"), "new feature").unwrap();
+    repo.run_git(&["add", "feature.txt"]);
+    repo.run_git(&["commit", "--message", "Add feature"]);
+    repo.run_git(&["checkout", "main"]);
+
+    let sha = |rev: &str| {
+        String::from_utf8(
+            repo.git_command()
+                .args(["rev-parse", rev])
+                .run()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_string()
+    };
+    // What 0.78.0 left behind: the poisoned answer, and no epoch stamp.
+    let cache = repo.root_path().join(".git/wt/cache");
+    fs::create_dir_all(cache.join("has-added-changes")).unwrap();
+    fs::write(
+        cache.join("has-added-changes").join(format!(
+            "{}-{}.json",
+            sha("feature-unmerged"),
+            sha("main")
+        )),
+        "false",
+    )
+    .unwrap();
+    fs::remove_file(cache.join(".epoch")).unwrap();
+
+    let output = make_snapshot_cmd(&repo, "remove", &["feature-unmerged"], None)
+        .output()
+        .unwrap();
+
+    let branch = repo
+        .git_command()
+        .args([
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "refs/heads/feature-unmerged",
+        ])
+        .run()
+        .unwrap();
+    assert!(
+        branch.status.success(),
+        "unmerged branch must survive a pre-epoch cache; wt remove said: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[rstest]
 fn test_remove_branch_only_force_delete(repo: TestRepo) {
     // Create a branch with a unique commit (not in main)

@@ -29,22 +29,198 @@
 //!   errors so `wt config state clear` can report truthfully when it can't
 //!   delete a file (e.g. permission denied). `NotFound` is counted as "already
 //!   gone" so concurrent clearers don't fight each other.
+//!
+//! # Epoch
+//!
+//! A SHA-keyed entry has no TTL and no invalidation rule, so it answers for
+//! whatever code wrote it until its key recurs — which for a finished branch
+//! is never. That is correct while a given key means one thing, and wrong the
+//! moment a release changes how the value is computed: the stale entry then
+//! outranks the new code at the one call that would have corrected it.
+//! `CACHE_EPOCH` is the version of that meaning. `ensure_epoch` discards the
+//! kinds it governs when the stamp on disk disagrees, so a generator change is
+//! one constant bump rather than a rename per affected kind.
+//! `UNVERSIONED_KINDS` names the kinds it leaves alone and why each one holds.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
 
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::git::Repository;
 
+/// The meaning of the cached values, bumped whenever a change alters what any
+/// of them says.
+///
+/// 1 — v0.79.0 moved every diff `wt` parses onto plumbing, so display config
+/// can no longer change what it reads. The porcelain reads that preceded it
+/// wrote `has-added-changes` and `merge-add-probe` entries that, under
+/// `diff.relative` or `submodule.<name>.ignore`, recorded a branch as having
+/// no added changes when it had some. Those entries are keyed on the branch
+/// and target tips, both of which sit still on a finished branch, so without
+/// this stamp the first `wt remove` after the upgrade still reads the old
+/// answer and deletes an unmerged branch. `diff-stats` and the diffs behind
+/// the LLM prompts moved in the same change.
+///
+/// The stamp records the last worktrunk to *check* a tree, not the version
+/// that wrote each entry, so a v0.78.0 binary run against an already-stamped
+/// tree writes porcelain answers this one will trust. Two binaries against one
+/// repository is the case that costs; putting the epoch in each entry's path
+/// is what would close it.
+const CACHE_EPOCH: u32 = 1;
+
+/// Kinds the epoch leaves alone. `ci-status` and `pr-number` store the forge's
+/// own answer rather than anything `wt` derives — the first under a TTL, the
+/// second a ratchet under a constant key — so no change to how `wt` computes
+/// things can make them wrong.
+///
+/// `summary` is exempt on weaker grounds: its key is a hash of the diff, but
+/// `SUMMARY_TEMPLATE` and `llm::prepare_diff`'s filtering sit downstream of
+/// that hash, so rewording the prompt leaves every finished branch holding a
+/// summary the old one wrote. It stays exempt because the value is
+/// display-only and reaches no destructive decision, while rebuilding it is a
+/// model call per branch. Closing that gap means hashing the rendered prompt,
+/// not bumping this constant.
+///
+/// A new kind left off this list is discarded on a bump, which is the safe
+/// direction: that costs a recomputation, while wrongly exempting one costs
+/// the branch the stale answer is consulted about.
+const UNVERSIONED_KINDS: &[&str] = &["summary", "ci-status", "pr-number"];
+
+/// Cache roots whose epoch this process has already checked.
+///
+/// Keyed by path rather than held on the `Repository`, so the check covers a
+/// second repository in the same process and stays inside this module.
+static EPOCH_CHECKED: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+
+/// The root holding every cache kind for a repository.
+fn cache_root(repo: &Repository) -> PathBuf {
+    repo.wt_dir().join("cache")
+}
+
+/// Discard a repository's cache tree when it was written under a different
+/// [`CACHE_EPOCH`], then stamp it with the current one.
+///
+/// Runs at most once per cache root per process, from [`cache_dir`] — the one
+/// funnel every read and write passes through. `EPOCH_CHECKED`'s lock is held
+/// across the removal, not just the bookkeeping, because `wt list` fans the
+/// SHA-keyed reads over a thread pool and a worker that saw the root marked
+/// mid-wipe would read the entries the wipe is there to discard. The stamp
+/// goes when the cache does ([`clear_epoch`]): a cleared tree then re-stamps
+/// on the next command at the cost of wiping nothing, and entries an older
+/// worktrunk wrote into it meanwhile are discarded rather than trusted.
+///
+/// Best-effort, like the rest of this module, and asymmetric in its failures:
+/// everything under the root is regenerable, so a failed removal leaves the
+/// tree unstamped for the next process to retry, while a removal that succeeds
+/// and then fails to stamp costs one more wipe per process until it lands.
+fn ensure_epoch(repo: &Repository) {
+    let root = cache_root(repo);
+    // Held across the removal, not just the set insert: `wt list` fans
+    // `has_added_changes_by_sha` out over a Rayon pool, and a worker that found
+    // the root already marked while the wipe was still running would read the
+    // entries it is there to discard.
+    let mut checked = EPOCH_CHECKED
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if checked.contains(&root) {
+        return;
+    }
+
+    if read_json::<u32>(&epoch_stamp(&root)) != Some(CACHE_EPOCH) {
+        match discard_governed_kinds(&root) {
+            Ok(()) => stamp_epoch(repo),
+            // Nothing better is available: the entries are undeletable, so
+            // every read for the rest of this process gets the stale tree —
+            // including the `has-added-changes` probe the epoch exists to
+            // protect. Retrying per call would repeat the failure without
+            // changing that. Left unstamped, so the next process tries again.
+            Err(e) => {
+                tracing::debug!(path = %root.display(), error = %e, "cache: failed to clear {} for epoch {}: {}", root.display(), CACHE_EPOCH, e);
+            }
+        }
+    }
+    checked.insert(root);
+}
+
+/// Remove every kind directory under `root` that [`CACHE_EPOCH`] governs.
+///
+/// Walks what is on disk rather than a list of known kinds, so a kind this
+/// version no longer writes still goes; [`UNVERSIONED_KINDS`] is the exemption,
+/// and anything else found is discarded. A missing root is nothing to do.
+fn discard_governed_kinds(root: &Path) -> std::io::Result<()> {
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    // Accumulated with `and` rather than `?` or `try_fold`, both of which
+    // stop at the first error: one undeletable directory would strand the
+    // others, and which ones would follow `read_dir` order rather than
+    // anything meaningful. Every kind is attempted, the first error returned.
+    let mut outcome = Ok(());
+    for entry in entries {
+        let result = entry.and_then(|entry| {
+            let name = entry.file_name();
+            let exempt = name
+                .to_str()
+                .is_some_and(|name| UNVERSIONED_KINDS.contains(&name));
+            if exempt || !entry.file_type()?.is_dir() {
+                return Ok(());
+            }
+            fs::remove_dir_all(entry.path())
+        });
+        outcome = outcome.and(result);
+    }
+    outcome
+}
+
+/// The stamp naming the [`CACHE_EPOCH`] a cache tree was written under.
+fn epoch_stamp(root: &Path) -> PathBuf {
+    root.join(".epoch")
+}
+
+/// Record a repository's cache tree as written under the current
+/// [`CACHE_EPOCH`], leaving its entries alone.
+///
+/// `ensure_epoch` calls this after discarding a tree from an older epoch.
+/// A caller that puts entries in the tree itself — a test seeding what this
+/// version would have produced — calls it beforehand, so the first read
+/// doesn't sweep them as an older version's.
+pub(crate) fn stamp_epoch(repo: &Repository) {
+    write_json(&epoch_stamp(&cache_root(repo)), &CACHE_EPOCH);
+}
+
+/// Drop a repository's epoch stamp, as part of clearing its cache.
+///
+/// The stamp describes the tree's contents, so it belongs to them: left behind
+/// over an emptied tree it would vouch for whatever lands there next,
+/// including entries an older worktrunk writes before this one runs again.
+///
+/// Propagates like the other clear functions, so a stamp that can't be removed
+/// fails the clear rather than leaving `wt config state cache clear` reporting
+/// a tree it didn't finish clearing. The removal isn't counted as a cleared
+/// entry — it is metadata, and its absence costs one wipe of an empty
+/// directory.
+pub fn clear_epoch(repo: &Repository) -> anyhow::Result<()> {
+    clear_one(&epoch_stamp(&cache_root(repo))).map(|_| ())
+}
+
 /// The root directory for a named cache kind.
 ///
 /// Returns `<git-common-dir>/wt/cache/<kind>/`. All worktrunk caches live
 /// here; the `kind` is the subdirectory name (e.g. `"ci-status"`,
 /// `"summary"`, `"is-ancestor"`).
+///
+/// The first call per cache root in a process settles the tree's
+/// `CACHE_EPOCH` (see `ensure_epoch`).
 pub fn cache_dir(repo: &Repository, kind: &str) -> PathBuf {
-    repo.wt_dir().join("cache").join(kind)
+    ensure_epoch(repo);
+    cache_root(repo).join(kind)
 }
 
 /// Read and deserialize a JSON cache entry.
@@ -218,7 +394,60 @@ pub fn count_json_files(dir: &Path) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::TestRepo;
     use tempfile::TempDir;
+
+    /// The epoch's whole job is to answer "was this written by code that meant
+    /// something else". A missing stamp is only the v0.78.0 case; every bump
+    /// after this one turns on a stamp that disagrees, and on a matching stamp
+    /// leaving entries where they are.
+    #[test]
+    fn test_epoch_discards_a_tree_stamped_by_another_version() {
+        for (stamped, survives) in [
+            (None, false),
+            (Some(CACHE_EPOCH + 1), false),
+            (Some(CACHE_EPOCH), true),
+        ] {
+            let test = TestRepo::new();
+            let root = cache_root(&test.repo);
+            // Seeded off `cache_root`, not `cache_dir`: that call is itself the
+            // funnel, so seeding through it would sweep the tree first and
+            // land both entries in one already discarded.
+            let entry = root.join("has-added-changes").join("a-b.json");
+            let exempt = root.join(UNVERSIONED_KINDS[0]).join("x.json");
+            write_json(&entry, &true);
+            write_json(&exempt, &true);
+
+            let stamp = epoch_stamp(&root);
+            match stamped {
+                Some(epoch) => write_json(&stamp, &epoch),
+                None => fs::remove_file(&stamp).unwrap(),
+            }
+            // `cache_dir` checks once per root per process, and `TestRepo`
+            // stamped this root as it built it.
+            EPOCH_CHECKED
+                .get_or_init(|| Mutex::new(HashSet::new()))
+                .lock()
+                .unwrap()
+                .remove(&root);
+
+            let _ = cache_dir(&test.repo, "has-added-changes");
+            assert_eq!(
+                read_json::<bool>(&entry).is_some(),
+                survives,
+                "stamp {stamped:?} against epoch {CACHE_EPOCH}"
+            );
+            assert!(
+                read_json::<bool>(&exempt).is_some(),
+                "an unversioned kind survives any stamp, here {stamped:?}"
+            );
+            assert_eq!(
+                read_json::<u32>(&epoch_stamp(&root)),
+                Some(CACHE_EPOCH),
+                "the tree is stamped current either way"
+            );
+        }
+    }
 
     #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
     struct V {
