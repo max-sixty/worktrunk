@@ -103,7 +103,7 @@ Multiple parallel agents, same simple commands:
 
 <!-- END AUTO-GENERATED -->
 
-<!-- ⚠️ AUTO-GENERATED from docs/src/content/docs/worktrunk.md#install..further-reading — edit source to update -->
+<!-- ⚠️ AUTO-GENERATED from docs/src/content/docs/worktrunk.md#install..next-steps — edit source to update -->
 
 ## Install
 
@@ -219,15 +219,8 @@ The `-x` flag runs a command after switching; arguments after `--` are passed to
   status & PR links](https://worktrunk.dev/list/#ci-status)
 - Browse [tips & patterns](https://worktrunk.dev/tips-patterns/) for recipes: aliases, dev servers, databases, agent handoffs, and more
 - [Extending Worktrunk](https://worktrunk.dev/extending/) — customize workflows with hooks & aliases
+- Watch [@DevOpsToolbox's video on Worktrunk](https://youtu.be/WBQiqr6LevQ?t=345)
 - Run `wt --help` or `wt <command> --help` for quick CLI reference
-
-## Further reading
-
-- [Claude Code: Best practices for agentic coding](https://www.anthropic.com/engineering/claude-code-best-practices) — Anthropic's official guide, including the worktree pattern
-- [Shipping faster with Claude Code and Git Worktrees](https://incident.io/blog/shipping-faster-with-claude-code-and-git-worktrees) — incident.io's workflow for parallel agents
-- [Git worktree pattern discussion](https://github.com/anthropics/claude-code/issues/1052) — Community discussion in the Claude Code repo
-- [@DevOpsToolbox's video on Worktrunk](https://youtu.be/WBQiqr6LevQ?t=345)
-- [git-worktree documentation](https://git-scm.com/docs/git-worktree) — Official git reference
 
 <!-- END AUTO-GENERATED -->
 
