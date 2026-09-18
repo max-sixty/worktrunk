@@ -8,15 +8,16 @@ metadata:
 # Worktrunk Tend CI
 
 Project-specific guidance for tend workflows running on worktrunk (a Rust
-CLI for managing git worktrees). The generic skills (`tend-running-in-ci`,
-`tend-review`, `tend-triage`, etc.) provide the workflow framework;
-this skill adds worktrunk conventions.
+CLI for managing git worktrees). The generic skills
+(`/tend-ci-runner:run-tend`, `/tend-ci-runner:review`,
+`/tend-ci-runner:triage`, etc.) provide the workflow framework; this skill
+adds worktrunk conventions.
 
 ## Filing issues in other repos
 
 Standing exception granted: file directly in agent-equipped targets (per
-**Filing Issues in Other Repos** in the bundled `running-in-ci` skill) without
-asking permission here first. The default rule (open an issue here asking
+**Filing issues** in the bundled `/tend-ci-runner:act-in-other-repos` skill)
+without asking permission here first. The default rule (open an issue here asking
 permission first) still applies when the target shows no agent signals.
 
 ## Codecov Monitoring
