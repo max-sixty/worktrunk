@@ -56,33 +56,24 @@ use crate::output;
 
 /// Single-character thread label (e.g. `a`, `b`, …, `A`, …) used to group
 /// concurrent records by thread in stderr / trace.log output.
+///
+/// Shares [`thread_id`]'s parse rather than repeating it, so the test that
+/// pins that parse covers this label too.
 fn thread_label() -> char {
-    let thread_id = format!("{:?}", std::thread::current().id());
-    let parsed = thread_id
-        .strip_prefix("ThreadId(")
-        .and_then(|s| s.strip_suffix(")"))
-        .and_then(|s| s.parse::<usize>().ok());
-    label_for_thread_index(parsed)
+    label_for_thread_index(thread_id())
 }
 
-/// Pure helper: map a parsed `ThreadId` number to a single-char label.
+/// Pure helper: map a thread id to a single-char label.
 ///
-/// `n == 0` → `'0'`; `1..=26` → `'a'..='z'`; `27..=52` → `'A'..='Z'`;
-/// everything else (including a `None` from a `ThreadId` whose `Debug`
-/// shape we don't recognize) → `'?'`. Tested via the branch coverage
-/// below — `thread_label` itself never sees `n == 0` or `n > 52` in
-/// practice, so its `unwrap_or` chain stays exercised only through
-/// `label_for_thread_index`.
-fn label_for_thread_index(n: Option<usize>) -> char {
-    let Some(n) = n else { return '?' };
-    if n == 0 {
-        '0'
-    } else if n <= 26 {
-        char::from(b'a' + (n - 1) as u8)
-    } else if n <= 52 {
-        char::from(b'A' + (n - 27) as u8)
-    } else {
-        '?'
+/// `1..=26` → `'a'..='z'`; `27..=52` → `'A'..='Z'`; everything else → `'?'`,
+/// including the `0` [`thread_id`] falls back to when `ThreadId`'s `Debug`
+/// shape stops matching. Tested via the branch coverage below —
+/// `thread_label` itself never sees `n == 0` or `n > 52` in practice.
+fn label_for_thread_index(n: u64) -> char {
+    match n {
+        1..=26 => char::from(b'a' + (n - 1) as u8),
+        27..=52 => char::from(b'A' + (n - 27) as u8),
+        _ => '?',
     }
 }
 
@@ -780,17 +771,17 @@ mod tests {
     /// hands it `n == 0` or `n > 52` in practice (Rust's `ThreadId`
     /// numbering starts at 1 and the main process won't spawn 53+ threads
     /// during the lifetime of the logger), but the branches are there for
-    /// the day either invariant changes.
+    /// the day either invariant changes. `0` is `thread_id`'s parse
+    /// fallback, so it labels like any other unrecognized id.
     #[test]
     fn label_covers_each_branch() {
-        assert_eq!(label_for_thread_index(None), '?');
-        assert_eq!(label_for_thread_index(Some(0)), '0');
-        assert_eq!(label_for_thread_index(Some(1)), 'a');
-        assert_eq!(label_for_thread_index(Some(26)), 'z');
-        assert_eq!(label_for_thread_index(Some(27)), 'A');
-        assert_eq!(label_for_thread_index(Some(52)), 'Z');
-        assert_eq!(label_for_thread_index(Some(53)), '?');
-        assert_eq!(label_for_thread_index(Some(9999)), '?');
+        assert_eq!(label_for_thread_index(0), '?');
+        assert_eq!(label_for_thread_index(1), 'a');
+        assert_eq!(label_for_thread_index(26), 'z');
+        assert_eq!(label_for_thread_index(27), 'A');
+        assert_eq!(label_for_thread_index(52), 'Z');
+        assert_eq!(label_for_thread_index(53), '?');
+        assert_eq!(label_for_thread_index(9999), '?');
     }
 
     /// Each shape `StderrFormat` recognises — verified ANSI-stripped so
