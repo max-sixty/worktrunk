@@ -1,6 +1,6 @@
 ---
 name: running-tend
-description: Worktrunk-specific guidance for tend CI workflows. Adds codecov polling, Rust test commands, labels, and review criteria on top of the generic tend-* skills. Use when operating in CI.
+description: Worktrunk-specific guidance for tend CI workflows. Adds codecov polling, Rust test commands, labels, and review criteria on top of the bundled tend-ci-runner skills. Use when operating in CI.
 metadata:
   internal: true
 ---
