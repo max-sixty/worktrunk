@@ -106,6 +106,13 @@ pub fn now_us() -> u64 {
 
 /// Numeric thread id, extracted from `ThreadId`'s `Debug` representation.
 /// `ThreadId` debug format is `ThreadId(N)`.
+///
+/// Parsing `Debug` because `std` exposes no stable accessor for the number
+/// (`ThreadId::as_u64` is unstable). The substitute is kept to exactly that
+/// question, and `thread_ids_are_distinct_and_nonzero` pins it: a `Debug`
+/// format that stopped matching would fall through to the `0` below on every
+/// thread, and `Profile`'s thread count — the `-vv` diagnostic report's answer
+/// to "did this run in parallel?" — would silently read 1 for every run.
 pub fn thread_id() -> u64 {
     let thread_id = std::thread::current().id();
     let debug_str = format!("{:?}", thread_id);
@@ -439,6 +446,19 @@ impl Drop for Span {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `thread_id` reads a number out of `ThreadId`'s `Debug` string, so a
+    /// change to that format degrades silently to `0` everywhere rather than
+    /// failing. Two threads reporting distinct non-zero ids is what proves the
+    /// parse still lands.
+    #[test]
+    fn thread_ids_are_distinct_and_nonzero() {
+        let main = thread_id();
+        let spawned = std::thread::spawn(thread_id).join().unwrap();
+        assert_ne!(main, 0, "main thread id parsed as the 0 fallback");
+        assert_ne!(spawned, 0, "spawned thread id parsed as the 0 fallback");
+        assert_ne!(main, spawned, "two threads reported the same id");
+    }
 
     // Resolution (complete/fail) marks the guard so its drop is a no-op. No
     // tracing subscriber is installed, so the records themselves are dropped —
