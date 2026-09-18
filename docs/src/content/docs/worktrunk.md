@@ -99,7 +99,7 @@ git branch -d feat</code></pre></td>
 - **[Hooks](/hook/)** — run commands on create, pre-merge, post-merge, etc
 - **[LLM commit messages](/llm-commits/)** — generate commit messages from diffs
 - **[Merge workflow](/merge/)** — squash, rebase, merge, clean up in one command
-- **[Interactive picker](/switch/#interactive-picker)** — browse worktrees with live diff and log previews
+- **[Interactive picker](/switch/#interactive-picker)** — browse worktrees with streaming CI status and diff, log, PR and comment previews
 - **[Share build caches](/step/#wt-step-copy-ignored)** — ten worktrees get `target/`, `node_modules/`, etc without building or copying them (on APFS, btrfs, and XFS)
 - **[`wt list --full`](/list/#full-mode)** — [CI status](/list/#ci-status) and [AI-generated summaries](/list/#llm-summaries) per branch
 - **[PR checkout](/switch/#pull-requests-and-merge-requests)** — `wt switch pr:123` to jump straight to a PR's branch

@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .themes import PALETTES, THEMES, format_theme_for_vhs
@@ -24,6 +24,23 @@ _GCS_BUCKET = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42a
 _ZELLIJ_PLUGIN_URL = "https://github.com/Cynary/zellij-tab-name/releases/download/v0.4.1/zellij-tab-name.wasm"
 _VHS_FORK_REPO = "https://github.com/max-sixty/vhs.git"
 _VHS_FORK_BRANCH = "keypress-overlay"
+
+# The demo repo's origin claims a GitHub URL, and `url.<bare>.pushInsteadOf`
+# sends every push to the local bare repo beside it. `git remote get-url origin`
+# reports the URL below, which is what wt's CI detection parses for an
+# owner/repo before it will call `gh` at all — a bare filesystem path doesn't
+# parse, so a path remote leaves the CI column empty and the picker's `pr` and
+# `comments` tabs permanently unavailable. Only push is rewritten: plain
+# `get-url` applies `insteadOf` but not `pushInsteadOf`, so rewriting fetch too
+# would hand wt the local path again. Nothing in the demos fetches from origin
+# (only `wt switch pr:`/`mr:` do, and no tape uses them), and
+# `worktrunk.default-branch` is seeded so default-branch detection never falls
+# through to `git ls-remote` — so no demo command reaches the network.
+DEMO_ORIGIN_URL = "https://github.com/acme/demo.git"
+
+# What `Repository::project_identifier` derives from the URL above. Keys the
+# approvals file, so it must track `DEMO_ORIGIN_URL`.
+DEMO_PROJECT_ID = "github.com/acme/demo"
 
 
 def _detect_platform() -> str:
@@ -211,6 +228,37 @@ def _ensure_zellij_plugin() -> Path:
     return plugin_path
 
 
+# A source marker for the newest fork commit the tapes depend on, as
+# (file, substring). Name the latest one: the branch is linear, so a clone that
+# has it has the ones before it too.
+#
+# `ensure_vhs_binary` reuses an existing clone and an existing binary without
+# pulling, so a clone made before that commit keeps building a VHS the tapes
+# have outgrown — one that drops the Alt modifier, turning a tape's `Alt+p`
+# into a literal "p" typed at whatever has focus; one that times the keystroke
+# overlay from the first keypress rather than from the video, which slides
+# every key a fixed distance away from what it did; or one that records a
+# modifier as a keystroke of its own, so `Alt+"8"` reads as a spent ⌥ followed
+# by an unrelated 8. Each records a wrong GIF with no error from VHS, the
+# build, or the recording, which is why this checks rather than trusting the
+# clone.
+_VHS_FORK_MARKER = ("keystroke.go", "heldModifiers")
+
+
+def _require_current_vhs_fork(vhs_dir: Path) -> None:
+    """Fail when the VHS clone predates the fork commit the tapes need."""
+    source_name, marker = _VHS_FORK_MARKER
+    source = vhs_dir / source_name
+    if source.exists() and marker in source.read_text():
+        return
+    raise RuntimeError(
+        f"The VHS fork clone at {vhs_dir} predates the {marker} fix, so a tape's "
+        f"keystroke overlay would not match what the screen does.\n"
+        f"Update and rebuild it:\n"
+        f"  git -C {vhs_dir} pull && rm -f {vhs_dir / 'vhs'}"
+    )
+
+
 def ensure_vhs_binary() -> Path:
     """Ensure VHS binary is cloned and built, return path.
 
@@ -221,6 +269,7 @@ def ensure_vhs_binary() -> Path:
     vhs_binary = vhs_dir / "vhs"
 
     if vhs_binary.exists():
+        _require_current_vhs_fork(vhs_dir)
         return vhs_binary
 
     # Check Go is available
@@ -262,6 +311,7 @@ def ensure_vhs_binary() -> Path:
     if result.returncode != 0:
         raise RuntimeError(f"VHS built but --version failed: {result.stderr}")
 
+    _require_current_vhs_fork(vhs_dir)
     print("✓ VHS ready")
     return vhs_binary
 
@@ -393,6 +443,285 @@ def build_wt(repo_root: Path):
     run(["cargo", "build", "--quiet"], cwd=repo_root)
 
 
+# The demo's open PRs on the mocked forge, one row per branch.
+#
+# `delay` is how long that branch's `gh pr list` waits before answering. wt runs
+# one call per branch concurrently, so staggering the delays is what the picker
+# and `wt list --full` show as CI status streaming in: cells land one at a time
+# behind the frame that already painted from local git. Keep the largest under
+# the tape's post-command sleep — `wt list` can't finish until every call
+# returns, even though it renders progressively.
+#
+# `checks` is `statusCheckRollup`; `review` is `reviewDecision` (None for a PR
+# with no reviews). Comment ages are hours before the recording, so the pane's
+# relative times read naturally. A branch absent here has no PR; DEMO_BRANCH_CI
+# below covers branch CI without one.
+DEMO_PRS = [
+    {
+        "number": 1,
+        "branch": "alpha",
+        "title": "Add utility functions module",
+        "body": "Adds `src/utils.rs` with path normalization and project-root "
+        "discovery, plus the string helpers the config loader needs.",
+        "author": "dbenson",
+        "checks": [("COMPLETED", "SUCCESS")],
+        "review": "APPROVED",
+        "delay": 0.3,
+        # Bodies are written for the picker's preview pane, which is about half
+        # the terminal — roughly 65 columns at `SIZE_DOCS_PICKER`. Short
+        # sentences and short code lines keep the wrap from shredding them, and
+        # the thread runs a little past one screen so ctrl-d has somewhere to go.
+        "comments": [
+            (
+                "dbenson",
+                28,
+                "Opening this for review. The path helpers are lifted out "
+                "of the config loader as-is — no behaviour change intended.",
+            ),
+            (
+                "rmurthy",
+                26,
+                "`normalize_path` pops `..` without resolving "
+                "symlinks, so it can land somewhere the kernel "
+                "wouldn't. Worth saying so in the doc comment.",
+            ),
+            (
+                "dbenson",
+                22,
+                "That's the documented difference from "
+                "`fs::canonicalize` — we never touch the "
+                "filesystem, so we can't know. Spelled it out:\n\n"
+                "```rust\n"
+                "/// Purely lexical: `..` pops the\n"
+                "/// previous component without\n"
+                "/// resolving symlinks.\n"
+                "```",
+            ),
+            (
+                "rmurthy",
+                20,
+                "Reads well. One more: `find_project_root` walks "
+                "all the way to `/` when the path is outside any "
+                "project. That's a lot of `stat` for a miss.",
+            ),
+            (
+                "dbenson",
+                18,
+                "Measured it: a miss from a nested path is about forty "
+                "`stat` calls here. Fine on a warm cache, less so on a "
+                "network mount.",
+            ),
+            (
+                "rmurthy",
+                14,
+                "A network mount is exactly where I'd expect it to bite. "
+                "Worth a ceiling — the first directory we can't read is "
+                "as good a one as any.",
+            ),
+            (
+                "dbenson",
+                6,
+                "Bounded it at the filesystem root, or the first "
+                "directory we can't read. There's a test that "
+                "runs it from `/tmp` now.",
+            ),
+            (
+                "rmurthy",
+                4,
+                "Last thing and then I'm happy: `join_relative` "
+                "takes `&str` while everything around it takes "
+                "`impl AsRef<Path>`.",
+            ),
+            (
+                "dbenson",
+                2,
+                "Fixed. Every helper in the module takes "
+                "`impl AsRef<Path>` now.",
+            ),
+            (
+                "rmurthy",
+                1,
+                "Approving. Let's land this before the config "
+                "loader change, so that one can drop its own copy "
+                "of the helpers.",
+            ),
+        ],
+    },
+    {
+        "number": 2,
+        "branch": "beta",
+        "title": "Cache resolved config per project",
+        "body": "Keeps the parsed config behind a `OnceCell` so a command "
+        "that reads it twice doesn't parse twice.",
+        "author": "dbenson",
+        "checks": [("IN_PROGRESS", None)],
+        "review": "REVIEW_REQUIRED",
+        "delay": 0.8,
+        "comments": [
+            (
+                "rmurthy",
+                3,
+                "Does this need invalidation? A long-lived process would "
+                "hold a stale config across an edit.",
+            ),
+        ],
+    },
+    {
+        "number": 4,
+        "branch": "api",
+        "title": "Add the /health endpoint",
+        "body": "Returns build metadata and the database's round-trip time.",
+        "author": "dbenson",
+        "checks": [("COMPLETED", "FAILURE")],
+        "review": None,
+        "delay": 1.2,
+        "comments": [
+            (
+                "ci-bot",
+                1,
+                "`test (linux)` failed: `acme::tests::test_add_zeros` "
+                "panicked at `assert_eq!(add(0, 0), 0)`.",
+            ),
+        ],
+    },
+    {
+        "number": 5,
+        "branch": "auth",
+        "title": "Rotate session tokens on privilege change",
+        "body": "Issues a fresh token whenever a session's role changes, so a "
+        "downgraded session can't keep its old claims.",
+        "author": "rmurthy",
+        "checks": [("COMPLETED", "SUCCESS")],
+        "review": "CHANGES_REQUESTED",
+        "delay": 1.6,
+        "comments": [
+            (
+                "dbenson",
+                5,
+                "The rotation drops the old token immediately, which logs "
+                "out every other tab. Can we keep it valid for a grace "
+                "period?",
+            ),
+        ],
+    },
+    {
+        "number": 6,
+        "branch": "billing",
+        "title": "Format currency by locale",
+        "body": "Replaces the hand-rolled formatter with the locale-aware one.",
+        "author": "dbenson",
+        "checks": [("COMPLETED", "SUCCESS")],
+        "review": None,
+        "delay": 1.0,
+        "comments": [],
+    },
+]
+
+# Branches whose CI comes from the check-runs API rather than a PR — the bare
+# `#` in the CI column. `main` has pushed commits and passing checks but no open
+# PR. Branches listed in neither this nor DEMO_PRS show no CI at all, which is
+# what `hooks` (no remote) demonstrates.
+DEMO_BRANCH_CI = {
+    "main": [("completed", "success")],
+    "cache": [("completed", "success")],
+    "release": [("completed", "failure")],
+    "search": [("completed", "success")],
+    "retry": [("completed", "failure")],
+}
+
+
+def _iso_hours_ago(now: datetime, hours: int) -> str:
+    """RFC 3339 timestamp `hours` before `now`, as the forge reports one.
+
+    `now` must be UTC-aware: the forge stamps comments in UTC, and the picker
+    renders them as an age against the clock. A naive local time with a `Z`
+    suffix would shift every age by the recorder's UTC offset.
+    """
+    return (now - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _rev_parse(repo: Path, rev: str) -> str | None:
+    """Resolve `rev` in `repo`, or None when it doesn't exist."""
+    result = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--verify", "--quiet", rev],
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() or None
+
+
+def write_gh_mock_data(env: DemoEnv) -> None:
+    """Write the mocked forge's responses for this demo environment.
+
+    Runs after the branches exist: the check-runs responses are keyed by commit
+    SHA, and a PR's `headRefOid` is its pushed tip, so a branch with unpushed
+    commits reports the stale-head marker a real PR would. `prepare_demo_repo`
+    calls it once the shared branches are in place; a setup that adds more
+    branches calls it again, which rewrites every file from the current state.
+
+    Each file's first line is the delay the mock waits before answering; see
+    DEMO_PRS and `fixtures/gh-mock.sh`.
+    """
+    mock_dir = env.home / ".local" / "share" / "gh-mock"
+    for sub in ("head", "view", "sha"):
+        (mock_dir / sub).mkdir(parents=True, exist_ok=True)
+
+    def write(rel: str, delay: float, payload) -> None:
+        (mock_dir / rel).write_text(f"{delay}\n{json.dumps(payload)}\n")
+
+    now = datetime.now(timezone.utc)
+
+    for pr in DEMO_PRS:
+        branch = pr["branch"]
+        # The pushed tip when there is one, so unpushed local commits read as a
+        # stale PR head; a branch created during the recording has neither yet.
+        head = _rev_parse(env.repo, f"origin/{branch}") or _rev_parse(
+            env.repo, branch
+        )
+        comments = [
+            {
+                "author": {"login": author},
+                "body": body,
+                "createdAt": _iso_hours_ago(now, hours),
+            }
+            for author, hours, body in pr["comments"]
+        ]
+        newest = min((hours for _, hours, _ in pr["comments"]), default=1)
+        entry = {
+            "number": pr["number"],
+            "title": pr["title"],
+            "body": pr["body"],
+            "author": {"login": pr["author"]},
+            "comments": comments,
+            "headRefOid": head,
+            "mergeStateStatus": "CLEAN",
+            "statusCheckRollup": [
+                {"status": status, "conclusion": conclusion}
+                for status, conclusion in pr["checks"]
+            ],
+            "url": f"https://github.com/acme/demo/pull/{pr['number']}",
+            "headRepositoryOwner": {"login": "acme"},
+            "reviewDecision": pr["review"],
+            "isDraft": False,
+            "updatedAt": _iso_hours_ago(now, newest),
+        }
+        # `/` -> `_` matches `sanitize` in fixtures/gh-mock.sh.
+        write(f"head/{branch.replace('/', '_')}", pr["delay"], [entry])
+        # The comments tab's own fetch, for a row whose CI call hasn't primed
+        # the cache yet — which the delays above make the common case.
+        write(f"view/{pr['number']}", pr["delay"], {"comments": comments})
+
+    for branch, checks in DEMO_BRANCH_CI.items():
+        sha = _rev_parse(env.repo, branch)
+        if sha is None:
+            continue
+        write(
+            f"sha/{sha}",
+            0.5,
+            [{"status": status, "conclusion": conclusion} for status, conclusion in checks],
+        )
+
+
 def commit_dated(repo: Path, message: str, offset: str, env_extra: dict = None):
     """Commit with a date offset like '7d' or '2H'."""
     now = datetime.now()
@@ -453,8 +782,18 @@ def prepare_base_repo(env: DemoEnv, repo_root: Path):
     git(["-C", str(env.repo), "add", "README.md"])
     commit_dated(env.repo, "Initial commit", "7d")
     git(["-C", str(env.repo), "branch", "-m", "main"])
-    # Use local bare repo as remote (GitHub URLs cause VHS to hang waiting for SSH)
-    git(["-C", str(env.repo), "remote", "add", "origin", str(env.bare_remote)])
+    # Claim a GitHub origin, push to the local bare repo (see DEMO_ORIGIN_URL).
+    git(["-C", str(env.repo), "remote", "add", "origin", DEMO_ORIGIN_URL])
+    git([
+        "-C",
+        str(env.repo),
+        "config",
+        f"url.{env.bare_remote}.pushInsteadOf",
+        DEMO_ORIGIN_URL,
+    ])
+    # Seed the default branch so detection never reaches `git ls-remote`, whose
+    # fetch URL is the unreachable github.com one.
+    git(["-C", str(env.repo), "config", "worktrunk.default-branch", "main"])
     git(["-C", str(env.repo), "push", "-u", "origin", "main", "-q"])
 
     # Rust project
@@ -880,41 +1219,9 @@ fi
 """)
     flyctl_mock.chmod(0o755)
 
-    # llm mock - simulates both commit message and summary generation.
-    # Reads stdin to detect prompt type: summary prompts contain "summary",
-    # commit prompts don't. For summaries, returns branch-appropriate one-liners
-    # based on filenames in the diff.
+    # llm mock — the command every demo's `[commit.generation]` points at.
     llm_mock = bin_dir / "llm"
-    llm_mock.write_text(r"""#!/bin/bash
-input=$(cat)
-
-if echo "$input" | grep -qi "summary"; then
-    # Summary generation — return branch-appropriate one-liner
-    if echo "$input" | grep -q "utils\.rs"; then
-        echo "Add utility functions module with string and math helpers"
-    elif echo "$input" | grep -q "notes\.txt"; then
-        echo "Add TODO notes for caching improvements"
-    elif echo "$input" | grep -q "multiply\|subtract\|math"; then
-        echo "Add math operations and consolidate tests"
-    elif echo "$input" | grep -q "User settings"; then
-        echo "Add user settings module placeholder"
-    else
-        echo "Expand README with contributing and license sections"
-    fi
-else
-    # Commit message generation
-    sleep 0.5
-    if echo "$input" | grep -q "test_add"; then
-        echo "test: expand add coverage"
-        echo ""
-        echo "Add another test case for the add function."
-    else
-        echo "feat: add user settings module"
-        echo ""
-        echo "Add placeholder module for user profile settings."
-    fi
-fi
-""")
+    shutil.copy(FIXTURES_DIR / "llm-mock.sh", llm_mock)
     llm_mock.chmod(0o755)
 
     # cargo mock - handles nextest run
@@ -971,7 +1278,8 @@ def prepare_demo_repo(env: DemoEnv, repo_root: Path, hooks_config: str = None):
     commit_dated(env.repo, "Add project hooks", "5d")
     git(["-C", str(env.repo), "push", "-q"])
 
-    # Mock gh CLI with varied CI status per branch
+    # Mock gh CLI. Its responses are written by `write_gh_mock_data` at the end
+    # of this function, once the branches it keys off exist.
     bin_dir = env.home / ".local" / "bin"
     gh_mock = bin_dir / "gh"
     shutil.copy(FIXTURES_DIR / "gh-mock.sh", gh_mock)
@@ -997,6 +1305,8 @@ def prepare_demo_repo(env: DemoEnv, repo_root: Path, hooks_config: str = None):
     # Create alpha and hooks after the main commit (so they're only ahead, not diverged)
     _create_branch_alpha(env)
     _create_branch_hooks(env)
+
+    write_gh_mock_data(env)
 
 
 def _create_branch_alpha(env: DemoEnv):
@@ -1107,25 +1417,47 @@ def check_dependencies(commands: list[str]):
             raise SystemExit(f"Missing dependency: {cmd}")
 
 
+def _ffmpeg_draws_subtitles(ffmpeg: str) -> bool:
+    """Whether this ffmpeg was built with libass, i.e. has the `ass` filter."""
+    result = subprocess.run([ffmpeg, "-filters"], capture_output=True, text=True)
+    return " ass " in result.stdout
+
+
 def check_ffmpeg_libass():
-    """Check that ffmpeg has libass support (required for keystroke overlay)."""
-    if not shutil.which("ffmpeg"):
-        raise SystemExit(
-            "Missing dependency: ffmpeg\n"
-            "Install with: brew install ffmpeg-full\n"
-            'Then add it to PATH: export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"'
+    """Put an ffmpeg that can draw subtitles on PATH, for the keystroke overlay.
+
+    Homebrew ships two builds: `ffmpeg` is the one linked onto PATH and is
+    built without libass, while `ffmpeg-full` carries it and stays unlinked —
+    so installing ffmpeg at any point silently takes the overlay away again.
+    VHS shells out to plain `ffmpeg`, so when the linked build can't draw
+    subtitles this puts the full one in front of it for the rest of the build.
+
+    Worth doing rather than telling the user to fix their PATH: the failure
+    lands at the very end of a recording, as an ffmpeg filter-graph parse
+    error naming the subtitle file, minutes after the work that produced it.
+    """
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg and _ffmpeg_draws_subtitles(ffmpeg):
+        return
+
+    # Ask brew only where there is one: `subprocess.run` on a missing program
+    # raises rather than returning non-zero, which would replace the message
+    # below with a traceback on any box without Homebrew.
+    if shutil.which("brew"):
+        full = subprocess.run(
+            ["brew", "--prefix", "ffmpeg-full"], capture_output=True, text=True
         )
-    result = subprocess.run(
-        ["ffmpeg", "-filters"],
-        capture_output=True,
-        text=True,
+        candidate = (
+            Path(full.stdout.strip()) / "bin" / "ffmpeg" if full.returncode == 0 else None
+        )
+        if candidate and candidate.exists() and _ffmpeg_draws_subtitles(str(candidate)):
+            os.environ["PATH"] = f"{candidate.parent}{os.pathsep}{os.environ['PATH']}"
+            return
+
+    raise SystemExit(
+        "No ffmpeg with libass support (required for the keystroke overlay).\n"
+        "Install with: brew install ffmpeg-full"
     )
-    if " ass " not in result.stdout:
-        raise SystemExit(
-            "ffmpeg missing libass support (required for keystroke overlay).\n"
-            "Install with: brew install ffmpeg-full\n"
-            'Then add it to PATH: export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"'
-        )
 
 
 def write_starship_config(path: Path, theme: str) -> None:
@@ -1318,8 +1650,16 @@ def record_snapshot(
             "LANG": "en_US.UTF-8",
             "LC_ALL": "en_US.UTF-8",
             "GIT_PAGER": "",  # Plain text output, no delta formatting
+            # Pin what the snapshot's shape depends on. The commands run without
+            # a terminal, so `wt` falls back to `COLUMNS` for width and drops
+            # color; both would otherwise come from whatever shell invoked the
+            # build, and a snapshot that reflows with the recorder's window
+            # can't show that a hint crept in.
+            "COLUMNS": "80",
+            "CLICOLOR_FORCE": "1",
         }
     )
+    env.pop("NO_COLOR", None)
 
     # Generate a fish script that:
     # 1. Initializes shell integration (like shared-commands.tape)
@@ -1379,6 +1719,13 @@ class DemoSize:
 SIZE_SOCIAL = DemoSize(width=1200, height=700, fontsize=26)  # Big text for mobile
 SIZE_DOCS = DemoSize(width=1600, height=900, fontsize=24)  # More content for docs
 SIZE_DOCS_MOBILE = DemoSize(width=576, height=432, fontsize=20)
+
+# The picker demo trades text size for terminal size, on the same canvas as the
+# rest: 139x34 rather than 102x25. It is the one demo whose subject is a table
+# and a preview pane side by side, and the columns it loses first are the ones
+# worth watching — at 102 columns the CI status and the branch summary fall off
+# the right edge, and the preview pane is too short to page a diff through.
+SIZE_DOCS_PICKER = DemoSize(width=1600, height=900, fontsize=18)
 
 
 def build_tape_replacements(demo_env: DemoEnv, repo_root: Path) -> dict:

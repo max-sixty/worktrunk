@@ -3120,6 +3120,59 @@ fn test_step_commit_first_commit_in_sha256_repo() {
     );
 }
 
+/// The squash commits the index, so its prompt must describe the working-tree
+/// changes folded in alongside the commits, and each preview must span what its
+/// own run would commit.
+///
+/// The prompt used to diff `merge_base..HEAD`, which named only the commits —
+/// so `wt merge` on a dirty worktree generated a message about the branch's
+/// older commits and said nothing about the work it had just staged into the
+/// same commit. `--dry-run` inherits that duty: it stages into a temp index the
+/// way a real run stages the real one, where `--show-prompt` deliberately shows
+/// only what is already staged.
+#[rstest]
+fn test_squash_prompt_covers_what_its_run_would_commit(repo_with_multi_commit_feature: TestRepo) {
+    let repo = repo_with_multi_commit_feature;
+    let feature_wt = repo.worktree_path("feature");
+    fs::write(feature_wt.join("staged.txt"), "staged content\n").unwrap();
+    repo.git_command()
+        .args(["add", "staged.txt"])
+        .current_dir(feature_wt)
+        .run()
+        .unwrap();
+    fs::write(feature_wt.join("unstaged.txt"), "unstaged content\n").unwrap();
+
+    let prompt_of = |args: &[&str]| {
+        let output = make_snapshot_cmd(&repo, "step", args, Some(feature_wt))
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stdout).unwrap()
+    };
+
+    let shown = prompt_of(&["squash", "--show-prompt"]);
+    assert!(
+        shown.contains("staged.txt"),
+        "--show-prompt covers the staged change: {shown}"
+    );
+    for committed in ["file1.txt", "file2.txt"] {
+        assert!(
+            shown.contains(committed),
+            "--show-prompt still covers {committed}: {shown}"
+        );
+    }
+    assert!(
+        !shown.contains("unstaged.txt"),
+        "--show-prompt shows what is already staged, and nothing else: {shown}"
+    );
+
+    let dry = prompt_of(&["squash", "--dry-run"]);
+    assert!(
+        dry.contains("unstaged.txt") && dry.contains("staged.txt"),
+        "--dry-run covers everything a real squash would stage: {dry}"
+    );
+}
+
 /// The commit and squash prompts split git's diff into per-file sections, so
 /// the user's diff display settings must not change what the LLM receives.
 #[rstest]
@@ -3595,7 +3648,7 @@ command = "cat >/dev/null && echo 'feat: missing-index'"
 }
 
 /// `wt step squash --show-prompt` propagates template errors from
-/// `build_squash_prompt`. A malformed jinja template must surface the failure
+/// `SquashInputs::prompt`. A malformed jinja template must surface the failure
 /// rather than producing an empty prompt.
 #[rstest]
 fn test_step_squash_show_prompt_malformed_template(repo_with_multi_commit_feature: TestRepo) {
@@ -3625,7 +3678,7 @@ squash-template = "{% if commits"
 }
 
 /// `wt step squash --dry-run` propagates LLM-command failures from
-/// `generate_squash_message`. The prompt renders fine, but a non-zero exit
+/// `SquashInputs::generate_message`. The prompt renders fine, but a non-zero exit
 /// from the configured command must be surfaced rather than swallowed.
 #[rstest]
 fn test_step_squash_dry_run_llm_failure(repo_with_multi_commit_feature: TestRepo) {
@@ -3633,7 +3686,7 @@ fn test_step_squash_dry_run_llm_failure(repo_with_multi_commit_feature: TestRepo
     let feature_wt = repo.worktree_path("feature");
 
     // `cat >/dev/null` consumes stdin first to avoid a broken-pipe race; the
-    // command then exits non-zero so generate_squash_message bubbles the failure up.
+    // command then exits non-zero so `generate_message` bubbles the failure up.
     let worktrunk_config = r#"
 [commit.generation]
 command = "cat >/dev/null; echo 'simulated LLM failure' >&2 && exit 1"

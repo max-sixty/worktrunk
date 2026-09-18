@@ -482,7 +482,7 @@ Default template:
 
 [107m [0m [2m[36m[commit.generation][0m
 [107m [0m [2msquash-template = [0m[2m[32m""[0m[2m[32m"[0m
-[107m [0m [2m[32m<task>Write a commit message for the combined effect of these commits.</task>[0m
+[107m [0m [2m[32m<task>Write a commit message for the change in <diff>, which is everything the squash will record. <commits> lists what it folds in.</task>[0m
 [107m [0m 
 [107m [0m [2m[32m<format>[0m
 [107m [0m [2m[32m- Subject line under 50 chars[0m
