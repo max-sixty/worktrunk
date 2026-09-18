@@ -682,13 +682,13 @@ build = "cargo build"
 broken = 42
 "#,
             ),
-            @r#"
+            @"
         TOML parse error at line 3, column 10
           |
         3 | broken = 42
           |          ^^
         invalid type: integer `42`, expected a string
-        "#
+        "
         );
     }
 

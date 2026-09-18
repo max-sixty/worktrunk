@@ -981,7 +981,7 @@ mod tests {
             vec!["日本語".into(), "3".into()],
             vec!["main".into(), "12".into()],
         ];
-        insta::assert_snapshot!(render_table(&rows, &[Align::Left, Align::Right]), @r"
+        insta::assert_snapshot!(render_table(&rows, &[Align::Left, Align::Right]), @"
         context  count
         日本語       3
         main        12

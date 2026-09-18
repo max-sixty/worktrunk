@@ -1619,7 +1619,7 @@ mod tests {
             .iter()
             .map(|b| format!("[{}]\n{}", b.headline.ansi_strip(), b.body))
             .collect();
-        insta::assert_snapshot!(rendered.join("\n---\n"), @r"
+        insta::assert_snapshot!(rendered.join("\n---\n"), @"
         [Pre-approve hooks for the current worktree with wt config approvals add:]
         pre-remove: echo pre
         post-switch: echo switch

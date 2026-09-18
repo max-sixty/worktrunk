@@ -1404,7 +1404,7 @@ mod tests {
         // Runs after the PTY filters, so it shows the reset they must keep.
         settings.add_filter(r"\x1b\[0m", "[RESET]");
         settings.bind(|| {
-            assert_snapshot!(SETPGID_NOISE_SAMPLE, @r"
+            assert_snapshot!(SETPGID_NOISE_SAMPLE, @"
             [1] 42243
             Switched to worktree for feature-api
             [1]+ Done                    wt hook post-start

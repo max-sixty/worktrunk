@@ -143,7 +143,7 @@ Controls where new worktrees are created.
 - [2m{{ remote_repo }}[0m — repository name in the primary remote URL, without [2m.git[0m (e.g., [2mmyproject[0m); differs from [2m{{ repo }}[0m, the directory on disk, when a clone was renamed
 - [2m{{ branch }}[0m — raw branch name (e.g., [2mfeature/auth[0m)
 - [2m{{ branch | sanitize }}[0m — filesystem-safe: [2m/[0m and [2m\[0m become [2m-[0m (e.g., [2mfeature-auth[0m)
-- [2m{{ branch | sanitize_db }}[0m — database-safe: lowercase, underscores, hash suffix (e.g., [2mfeature_auth_x7k[0m)
+- [2m{{ branch | sanitize_db }}[0m — database-safe: lowercase, underscores, hash suffix (e.g., [2mfeature_auth_cgzmt[0m)
 - [2m{{ branch | codename(2) }}[0m — deterministic friendly name from a ~1.26M-combo pool (e.g., [2mmalleable-opah[0m)
 
 This is a smaller set than the variables hooks and aliases get.

@@ -2832,7 +2832,7 @@ fn test_edit_takes_the_migrations_when_one_lands_on_its_path() {
     // change is reported, which is what the caller's warning prints.
     insta::assert_snapshot!(
         ansi_str::AnsiStr::ansi_strip(&crate::config::deprecation::format_applied_lines(&changes)),
-        @r"
+        @"
     ▲ Moved [commit-generation] to [commit.generation]
     ▲ Moved [select] to [switch.picker]
     ▲ Removed [select] height, which its replacement has no field for

@@ -600,15 +600,15 @@ pub fn sanitize_db(s: &str) -> String {
         result.insert(0, '_');
     }
 
-    // Truncate base to leave room for hash suffix (4 chars: _ + 3 hash chars).
+    // Truncate base to leave room for hash suffix (6 chars: _ + 5 hash chars).
     // Total cap is 48 chars (well within PostgreSQL's 63-char identifier limit),
-    // so max base is 44.
-    if result.len() > 44 {
-        result.truncate(44);
+    // so max base is 42.
+    if result.len() > 42 {
+        result.truncate(42);
     }
 
-    // Append 3-character hash suffix for collision avoidance and reserved word safety
-    // Hash is computed from original input, ensuring unique suffixes for colliding transforms
+    // Append 5-character hash suffix for collision avoidance and reserved word safety.
+    // Hash is computed from original input, ensuring unique suffixes for colliding transforms.
     if !result.ends_with('_') {
         result.push('_');
     }
@@ -617,21 +617,25 @@ pub fn sanitize_db(s: &str) -> String {
     result
 }
 
-/// Generate a 3-character hash suffix from a string.
+/// Generate a 5-character hash suffix from a string.
 ///
-/// Uses base36 (0-9, a-z) for a compact representation with 46,656 unique values.
-/// Used by `sanitize_db` and `sanitize_for_filename` to avoid collisions.
+/// Uses SHA-256 for a stable, cross-platform digest truncated to 30 bits
+/// (five base-36 chars = ~60 million unique values). The entropy was raised
+/// from 3 chars (~46k) after finding that deeply nested alternating branch
+/// paths (e.g. `a/b/c-d/e/f/g-h/…`) collided under the old width.
 pub fn short_hash(s: &str) -> String {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    s.hash(&mut h);
-    let hash = h.finish();
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(s.as_bytes());
+    let hash = u32::from_le_bytes([digest[0], digest[1], digest[2], digest[3]]) as u64;
 
-    // Convert to base36 and take 3 characters
     const CHARS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
-    let c0 = CHARS[(hash % 36) as usize];
-    let c1 = CHARS[((hash / 36) % 36) as usize];
-    let c2 = CHARS[((hash / 1296) % 36) as usize];
-    String::from_utf8(vec![c0, c1, c2]).unwrap()
+    let mut out = [0u8; 5];
+    let mut h = hash;
+    for byte in out.iter_mut() {
+        *byte = CHARS[(h % 36) as usize];
+        h /= 36;
+    }
+    String::from_utf8(out.to_vec()).unwrap()
 }
 
 fn codename_index(input: &str, position: usize, salt: usize, pool: &str, len: usize) -> usize {
@@ -1440,10 +1444,10 @@ mod tests {
                 result.starts_with(expected_prefix),
                 "input: {input}, expected prefix: {expected_prefix}, got: {result}"
             );
-            // Result should be prefix + 3-char hash
+            // Result should be prefix + 5-char hash
             assert_eq!(
                 result.len(),
-                expected_prefix.len() + 3,
+                expected_prefix.len() + 5,
                 "input: {input}, result: {result}"
             );
         }
@@ -1455,7 +1459,7 @@ mod tests {
         for input in ["_", "-", "---", "日本語"] {
             let result = sanitize_db(input);
             assert!(result.starts_with('_'), "input: {input}, got: {result}");
-            assert_eq!(result.len(), 4, "input: {input}, got: {result}"); // _xxx
+            assert_eq!(result.len(), 6, "input: {input}, got: {result}"); // _xxxxx
         }
     }
 
@@ -1469,6 +1473,31 @@ mod tests {
         // Same input always produces same output (deterministic)
         assert_eq!(sanitize_db("test"), sanitize_db("test"));
         assert_eq!(sanitize_db("feature/foo"), sanitize_db("feature/foo"));
+    }
+
+    #[test]
+    fn test_sanitize_db_does_not_collide_on_deeply_nested_alternating_paths() {
+        // Two distinct branch paths whose sanitized forms would share a
+        // 3-character base36 hash suffix (~46k unique values). The
+        // birthday paradox puts a collision within reach at around 1200
+        // such paths, so we pin these two to catch any future regression.
+        let a = sanitize_db("a/b/c-d/e/f/g-h/i/j/k/l/m/n/o/p/q");
+        let b = sanitize_db("a-b-c/d-e-f/g/h-i/j/k/l/m/n/o/p/q");
+        assert_ne!(a, b, "two distinct branches must not sanitize to the same db name: got '{a}'");
+
+        // Both are deterministic.
+        assert_eq!(sanitize_db("a/b/c-d/e/f/g-h/i/j/k/l/m/n/o/p/q"), a);
+        assert_eq!(sanitize_db("a-b-c/d-e-f/g/h-i/j/k/l/m/n/o/p/q"), b);
+    }
+
+    #[test]
+    fn test_short_hash_deterministic_and_has_entropy() {
+        let a = short_hash("a/b/c-d/e/f/g-h/i/j/k/l/m/n/o/p/q");
+        let b = short_hash("a-b-c/d-e-f/g/h-i/j/k/l/m/n/o/p/q");
+        assert_ne!(a, b, "short_hash must distinguish these two inputs (found collision: both produced '{a}')");
+
+        assert_eq!(short_hash("same"), short_hash("same"));
+        assert_eq!(short_hash("feature/auth"), short_hash("feature/auth"));
     }
 
     #[test]
@@ -1486,20 +1515,20 @@ mod tests {
     #[test]
     fn test_sanitize_db_truncation() {
         // Total output is always max 48 characters
-        // Base is truncated to 44 chars, then _xxx suffix (4 chars) is added
+        // Base is truncated to 42 chars, then _xxxxx suffix (6 chars) is added
 
-        // Very long input: base truncated to 44, + 4 = 48
+        // Very long input: base truncated to 42, + 6 = 48
         let long_input = "a".repeat(100);
         let result = sanitize_db(&long_input);
         assert_eq!(result.len(), 48, "result: {result}");
-        assert!(result.starts_with(&"a".repeat(43)), "result: {result}");
+        assert!(result.starts_with(&"a".repeat(41)), "result: {result}");
         assert!(!result.ends_with('_'), "should end with hash chars");
 
         // Short input: base + _ + hash
         let short = "test";
         let result = sanitize_db(short);
         assert!(result.starts_with("test_"), "result: {result}");
-        assert_eq!(result.len(), 8, "result: {result}"); // test_ + 3 hash chars
+        assert_eq!(result.len(), 10, "result: {result}"); // test_ + 5 hash chars
 
         // Truncation happens after prefix is added for digit-starting inputs
         let digit_start = format!("1{}", "x".repeat(100));
@@ -3175,7 +3204,7 @@ mod tests {
         ctx.insert("hook_type", "pre-switch");
         ctx.insert("hook_name", "show-variables");
 
-        assert_snapshot!(format_hook_variables(HookType::PreSwitch, &ctx), @r"
+        assert_snapshot!(format_hook_variables(HookType::PreSwitch, &ctx), @"
         branch                = feature
         worktree_path         = /tmp/feature
         worktree_name         = feature

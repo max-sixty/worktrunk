@@ -3971,7 +3971,7 @@ mod tests {
             .lines()
             .filter_map(|line| line.strip_prefix("command\t"))
             .collect();
-        insta::assert_snapshot!(from_env.join("\n"), @r"
+        insta::assert_snapshot!(from_env.join("\n"), @"
         user.useconfigonly=true
         rerere.enabled=false
         ");

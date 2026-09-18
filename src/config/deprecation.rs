@@ -3681,11 +3681,11 @@ command = 123
 args = ["-m", "haiku"]
 "#;
         let result = migrate_content(content);
-        insta::assert_snapshot!(result, @r#"
+        insta::assert_snapshot!(result, @"
 
         [commit.generation]
         command = 123
-        "#);
+        ");
     }
 
     #[test]
@@ -4032,6 +4032,7 @@ hostname = "gitlab.example.com"
             [DeprecationKind::CiSection]
         ));
         insta::assert_snapshot!(migrate_content(content), @r#"
+
         [forge]
         hostname = "gitlab.example.com"
         platform = "gitlab"
@@ -5399,10 +5400,10 @@ timeout-ms = 500
             k,
             DeprecationKind::NoFf
         )));
-        insta::assert_snapshot!(migrate_content(content), @r#"
+        insta::assert_snapshot!(migrate_content(content), @"
         [merge]
         ff = true
-        "#);
+        ");
     }
 
     #[test]

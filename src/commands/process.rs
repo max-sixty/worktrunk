@@ -818,15 +818,15 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n"),
             @r"
-        path separator /: feature-branch-30k
-        path separator \: feature-branch-k37
-        colon: bug-123-4xh
-        angle brackets: fix-angle-q9m
-        pipe: fix-pipe-68k
-        question mark: fix-question-ab6
-        wildcard: fix-wildcard-38y
-        quotes: fix-quotes-2xu
-        multiple special: a-b-c-d-e-f-g-h-i-j-obi
+        path separator /: feature-branch-sdoqz
+        path separator \: feature-branch-t395i
+        colon: bug-123-oztiz
+        angle brackets: fix-angle-x4wok
+        pipe: fix-pipe-axk24
+        question mark: fix-question-syyef
+        wildcard: fix-wildcard-2tgsu
+        quotes: fix-quotes-lupev
+        multiple special: a-b-c-d-e-f-g-h-i-j-nyj2x
         already safe: normal-branch
         underscore: branch_with_underscore
         reserved prefix CONSOLE: CONSOLE
@@ -948,7 +948,7 @@ mod tests {
         // Empty list still produces a well-formed command — the caller
         // (`sweep_stale_trash`) bails before we get here, but the helper itself
         // must not panic on an empty slice.
-        assert_snapshot!(build_trash_sweep_command(&[]), @"rm -rf -- ");
+        assert_snapshot!(build_trash_sweep_command(&[]), @"rm -rf --");
 
         // Plain paths — joined with spaces, no quoting.
         let paths = [
@@ -973,7 +973,7 @@ mod tests {
         ];
         assert_snapshot!(
             build_trash_sweep_command(&nasty),
-            @"rm -rf -- '/tmp/trash/with space-1' '/tmp/trash/$(echo pwned)-2' '/tmp/trash/a'\\''b-3'"
+            @r"rm -rf -- '/tmp/trash/with space-1' '/tmp/trash/$(echo pwned)-2' '/tmp/trash/a'\''b-3'"
         );
     }
 
@@ -993,7 +993,7 @@ mod tests {
         // Slash in branch name gets sanitized (feature/auth → feature-auth-{hash})
         assert_snapshot!(
             log.path(log_dir, "feature/auth").to_slash_lossy(),
-            @"/repo/.git/wt/logs/feature-auth-j34/user/post-start/server.log"
+            @"/repo/.git/wt/logs/feature-auth-cgzmt/user/post-start/server.log"
         );
 
         // Project source

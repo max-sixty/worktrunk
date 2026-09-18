@@ -2405,7 +2405,7 @@ remove the file manually to continue.";
         assert_snapshot!(
             format_task_failure("plugins", TaskKind::WorkingTreeConflicts, INDEX_LOCK_MESSAGE)
                 .ansi_strip(),
-            @r"
+            @"
         plugins: working-tree conflict check
           fatal: Unable to create '/repo/.git/index.lock': File exists.
 
@@ -2428,7 +2428,7 @@ remove the file manually to continue.";
             .join("\n");
         assert_snapshot!(
             format_task_failure("plugins", TaskKind::SummaryGenerate, &trace).ansi_strip(),
-            @r"
+            @"
         plugins: summary generation
           at frame 0
           at frame 1
