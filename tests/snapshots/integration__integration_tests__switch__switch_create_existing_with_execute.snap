@@ -64,4 +64,4 @@ exit_code: 1
 
 ----- stderr -----
 [31m✗[39m [31mBranch [1memails[22m already exists[39m
-[2m↳[22m [2mTo switch to the existing branch, run without [4m--create[24m: [4mwt switch emails --execute=claude -- 'Check my emails'[24m (if its setup didn't finish, run [4mwt -C _REPO_.emails hook pre-start[24m first — safe to re-run)[22m
+[2m↳[22m [2mIf its setup didn't finish, run [4mwt -C _REPO_.emails hook pre-start[24m first; to switch to the existing branch, run without [4m--create[24m: [4mwt switch emails --execute=claude -- 'Check my emails'[24m[22m

@@ -1076,7 +1076,7 @@ impl GitError {
                     Some(path) => {
                         let hook_cmd = suggest_command_in_dir(path, "hook", &["pre-start"], &[]);
                         cformat!(
-                            "To switch to the existing branch, run without <underline>--create</>: <underline>{switch_cmd}</> (if its setup didn't finish, run <underline>{hook_cmd}</> first — safe to re-run)"
+                            "If its setup didn't finish, run <underline>{hook_cmd}</> first; to switch to the existing branch, run without <underline>--create</>: <underline>{switch_cmd}</>"
                         )
                     }
                     None => cformat!(
@@ -2072,7 +2072,7 @@ mod tests {
         };
         assert_snapshot!(err.render(), @"
         [31m✗[39m [31mBranch [1mfeat[22m already exists[39m
-        [2m↳[22m [2mTo switch to the existing branch, run without [4m--create[24m: [4mwt switch feat[24m (if its setup didn't finish, run [4mwt -C /tmp/repo.feat hook pre-start[24m first — safe to re-run)[22m
+        [2m↳[22m [2mIf its setup didn't finish, run [4mwt -C /tmp/repo.feat hook pre-start[24m first; to switch to the existing branch, run without [4m--create[24m: [4mwt switch feat[24m[22m
         ");
     }
 
