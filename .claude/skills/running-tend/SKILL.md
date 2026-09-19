@@ -75,6 +75,15 @@ cargo test --test integration       # integration tests only
 
 CI runs on Linux, Windows, and macOS.
 
+## Rework a test that reaches for its environment
+
+A test that leans on inherited state — the process CWD, an ambient env var —
+sets up its own instead, via `TestRepo::with_initial_commit()` plus a tempdir,
+the way most worktrunk tests already do. Guarding it with an early return
+(**Don't "fix" tests by adding skip guards** in `/tend-ci-runner:fix-a-bug`)
+drops the coverage rather than restoring it. This governs every workflow that
+fixes a test here, not just issue triage.
+
 ## Session Log Paths
 
 The artifact directory is named after the agent's working directory, and from
@@ -242,14 +251,6 @@ across every repo. It's the project's preferred extension point.
 4. Post the tested alias with usage examples.
 5. Link to the [aliases docs](https://worktrunk.dev/extending/#aliases) and
    [tips & patterns](https://worktrunk.dev/tips-patterns/).
-
-### Rework a test that reaches for its environment
-
-A test that leans on inherited state — the process CWD, an ambient env var —
-sets up its own instead, via `TestRepo::with_initial_commit()` plus a tempdir,
-the way most worktrunk tests already do. Guarding it with an early return
-(**Don't "fix" tests by adding skip guards** in `/tend-ci-runner:fix-a-bug`)
-drops the coverage rather than restoring it.
 
 ## Weekly Maintenance: MSRV & Toolchain
 
