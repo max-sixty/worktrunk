@@ -243,27 +243,13 @@ across every repo. It's the project's preferred extension point.
 5. Link to the [aliases docs](https://worktrunk.dev/extending/#aliases) and
    [tips & patterns](https://worktrunk.dev/tips-patterns/).
 
-### Don't fix tests by adding skip guards
+### Rework a test that reaches for its environment
 
-When a test fails because production code or test setup can't handle some
-scenario, fix the production code or rework the test setup. Don't add an
-early-return skip — that removes the safety net while looking like a fix.
-If a triage fix reaches for `let Ok(_) = ... else { return };`, a newly-added
-`if !path.exists() { return; }`, or a fresh `#[ignore]`, stop and ask what
-production behavior is actually broken.
-
-If the test relies on inherited environment (process CWD, ambient env
-vars), rework it to set up its own — most worktrunk tests already do this
-via `TestRepo::with_initial_commit()` plus a tempdir.
-
-### Same-root-cause-class triage
-
-The "work on the existing PR if it addresses the same problem" rule keys
-on the same test. It doesn't catch a different test failing for the same
-underlying reason. Group failing tests by root-cause class before writing
-a fix; if an outstanding PR addresses any test in the class, wait for it
-to merge and re-run, then mirror its approach for any sites still failing
-rather than opening a parallel PR with a weaker fix.
+A test that leans on inherited state — the process CWD, an ambient env var —
+sets up its own instead, via `TestRepo::with_initial_commit()` plus a tempdir,
+the way most worktrunk tests already do. Guarding it with an early return
+(**Don't "fix" tests by adding skip guards** in `/tend-ci-runner:fix-a-bug`)
+drops the coverage rather than restoring it.
 
 ## Weekly Maintenance: MSRV & Toolchain
 
