@@ -162,12 +162,35 @@ fn test_branch_name_is_directive_not_executed(repo: TestRepo) {
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd);
+
+        assert_cd_file_holds_one_path(&cd_path);
     });
 
     // Verify the malicious file was NOT created
     assert!(
         !std::path::Path::new("/tmp/hacked2").exists(),
         "Malicious code was executed! File /tmp/hacked2 should not exist"
+    );
+}
+
+/// Assert the CD directive file holds what `wt` promises a wrapper it holds:
+/// one line, an absolute path that exists.
+///
+/// This is the assertion that carries the directive tests. `wt` writes the CD
+/// file itself (`src/output/global.rs`), so a branch name that smuggled a
+/// second line or a directive token past the display layer would show up here
+/// — whereas the `/tmp/hackedN` canaries below can only ever pass: these tests
+/// run the binary directly, and no shell evaluates the file's contents.
+fn assert_cd_file_holds_one_path(cd_path: &std::path::Path) {
+    let cd_content = std::fs::read_to_string(cd_path).unwrap_or_default();
+    assert_eq!(
+        cd_content.lines().count(),
+        1,
+        "the CD file must hold a single line, got {cd_content:?}"
+    );
+    assert!(
+        std::path::Path::new(cd_content.trim()).is_dir(),
+        "the CD file must hold the new worktree's path, got {cd_content:?}"
     );
 }
 
@@ -192,11 +215,6 @@ fn test_git_rejects_newline_directive_in_branch_name(repo: TestRepo) {
     assert!(
         !result.status.success(),
         "git should reject a branch name containing a newline"
-    );
-
-    assert!(
-        !std::path::Path::new("/tmp/hacked3").exists(),
-        "Malicious code was executed!"
     );
 }
 
@@ -323,6 +341,8 @@ fn test_execute_flag_with_directive_like_branch_name(repo: TestRepo) {
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd);
+
+        assert_cd_file_holds_one_path(&cd_path);
     });
 
     assert!(
