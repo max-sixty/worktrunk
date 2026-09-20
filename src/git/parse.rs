@@ -160,7 +160,7 @@ pub fn parse_porcelain_z(output: &str) -> Vec<String> {
         files.push(path.to_string());
 
         // For renames (R) and copies (C), the next NUL-separated field is the old path
-        if (status.starts_with('R') || status.starts_with('C'))
+        if status.contains(['R', 'C'])
             && let Some(old_path) = entries.next()
         {
             files.push(old_path.to_string());
@@ -193,7 +193,7 @@ pub fn parse_untracked_files(status_output: &str) -> Vec<String> {
         }
 
         // Skip old path for renames/copies (we don't care about them here)
-        if status.starts_with('R') || status.starts_with('C') {
+        if status.contains(['R', 'C']) {
             entries.next();
         }
     }
@@ -435,6 +435,13 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_porcelain_z_worktree_rename() {
+        let output = " R new.rs\0old.rs\0?? untracked.txt\0";
+        let files = parse_porcelain_z(output);
+        assert_eq!(files, vec!["new.rs", "old.rs", "untracked.txt"]);
+    }
+
+    #[test]
     fn test_parse_porcelain_z_spaces_in_path() {
         let output = " M path with spaces/file name.rs\0";
         let files = parse_porcelain_z(output);
@@ -476,6 +483,16 @@ mod tests {
     fn test_parse_untracked_files_skips_rename_old_path() {
         // Rename entry has an extra NUL-separated old path that must be skipped
         let output = "R  new.rs\0old.rs\0?? untracked.txt\0";
+        let files = parse_untracked_files(output);
+        assert_eq!(files, vec!["untracked.txt"]);
+    }
+
+    #[test]
+    fn test_parse_untracked_files_skips_worktree_rename_old_path() {
+        // A rename/copy in either status column has an extra old-path field.
+        // Make that old path look like another rename so a parser that treats
+        // it as a status entry will consume the real untracked record.
+        let output = " R new.rs\0R  old.rs\0?? untracked.txt\0";
         let files = parse_untracked_files(output);
         assert_eq!(files, vec!["untracked.txt"]);
     }
