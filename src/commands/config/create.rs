@@ -124,9 +124,11 @@ fn create_config_file(
         std::fs::create_dir_all(parent).context("Failed to create config directory")?;
     }
 
-    // Write the example config with all values commented out
+    // Write the example config with all values commented out. The path was
+    // observed absent above, so a file that appears in the window is one wt
+    // never read — including a dangling symlink a dotfile manager owns.
     let commented_config = comment_out_config(content);
-    worktrunk::utils::write_atomically(&path, &commented_config)
+    worktrunk::utils::write_new_atomically(&path, &commented_config)
         .context("Failed to write config file")?;
 
     // Success message

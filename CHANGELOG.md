@@ -10,13 +10,13 @@
 
 - **Messages name the destination, and end with the command to run**: without shell integration, `wt merge` and `wt remove` printed `Cannot change directory — shell integration not installed` and no path; the warning now names the worktree, as `wt switch` already did. "Cannot determine default branch" had three wordings, and three recovery hints put their command first rather than last. ([#4163](https://github.com/max-sixty/worktrunk/pull/4163), [#4155](https://github.com/max-sixty/worktrunk/pull/4155), thanks @blrain3 for reporting)
 
+- **`wt config update --output <path>` writes the path it names**: a destination already holding a file is replaced, as `cp` and a shell redirect do, and so is the config being migrated, which used to be refused when the migration dropped `approved-commands`. The warning above the write still says those approvals reach approvals.toml only via `wt config update`. ([#4153](https://github.com/max-sixty/worktrunk/pull/4153))
+
 - **`/wt-switch-create` no longer stalls at Claude Code's path-entry dialog**: Claude Code confirms every entry outside `.claude/worktrees/`, which is every Worktrunk worktree, so a background session waited for someone to attach. The plugin now approves entry into a worktree at its `worktree-path` location, and reads a bare name as the repo or the branch. ([#4158](https://github.com/max-sixty/worktrunk/pull/4158), [#4159](https://github.com/max-sixty/worktrunk/pull/4159))
 
 ### Fixed
 
 - **Diff display config no longer changes what Worktrunk reads**: `color.ui = always` and `diff.external` reached the commit, squash, and summary prompts. Two settings could also hide a branch's changes from the integration check, so `wt remove` deleted the branch without `-D`: `diff.relative` when run from a subdirectory the changes sat outside, and `submodule.<name>.ignore` on a submodule bump. Every diff Worktrunk parses now runs plumbing, which ignores that configuration, and upgrading discards the cached answers. ([#4146](https://github.com/max-sixty/worktrunk/pull/4146), [#4147](https://github.com/max-sixty/worktrunk/pull/4147), [#4181](https://github.com/max-sixty/worktrunk/pull/4181))
-
-- **`wt config update --output <path>` asks before overwriting**: it replaced whatever was there, so `--output ~/.config/worktrunk/config.toml` from a repo with a deprecated project config wiped the user config and reported success. It now prompts, takes `--yes`, and refuses the config being migrated. (Breaking: `--output` naming the config being migrated used to succeed unless the migration dropped `approved-commands`.) ([#4153](https://github.com/max-sixty/worktrunk/pull/4153))
 
 - **`wt merge` on a dirty worktree describes what it commits**: the generated message covered the branch's earlier commits and said nothing about the work the merge had just staged into the same commit. `wt step squash --dry-run` now previews what the run would commit, as `wt step commit --dry-run` does. ([#4178](https://github.com/max-sixty/worktrunk/pull/4178))
 

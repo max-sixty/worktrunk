@@ -6,7 +6,6 @@
 //! migration to disk.
 
 use std::fmt::Write as _;
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
@@ -17,12 +16,12 @@ use worktrunk::config::{
     format_migration_diff_block,
 };
 use worktrunk::git::{Repository, resolve_input_path};
-use worktrunk::path::{format_path_for_display, paths_match};
+use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     eprint, eprintln, format_bash_with_gutter, hint_message, info_message, print, success_message,
     suggest_command_in_dir, warning_message,
 };
-use worktrunk::utils::{write_atomically, write_new_atomically};
+use worktrunk::utils::write_atomically;
 
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 
@@ -70,7 +69,7 @@ pub fn handle_config_update(yes: bool, output: Option<PathBuf>) -> anyhow::Resul
     }
 
     if let Some(output) = output {
-        write_migrated_output(&output, &candidates, yes)?;
+        write_migrated_output(&output, &candidates)?;
         return Ok(());
     }
 
@@ -157,23 +156,14 @@ pub fn handle_config_update(yes: bool, output: Option<PathBuf>) -> anyhow::Resul
 ///
 /// The two destinations differ in what they can carry, so they run as separate
 /// paths rather than one path testing `-` at each step. Stdout labels and
-/// concatenates every candidate and needs no confirmation — the artifact is
-/// right there. A file takes exactly one migration, so the checks below and
-/// the success line can name the config it came from.
+/// concatenates every candidate. A file takes exactly one migration, so the
+/// check below and the success line can name the config it came from.
 ///
-/// A file destination replaces nothing without consent. The config being
-/// migrated is refused outright: rewriting it is the in-place update's job,
-/// which previews the diff, re-reads the file after the prompt, and moves
-/// `approved-commands` to approvals.toml. Any other existing file is replaced
-/// only after a prompt, which `--yes` answers in advance; with no terminal to
-/// prompt on, the command fails instead. A destination that was absent is
-/// created without clobbering, so a file that appears before the write lands
-/// survives it.
-fn write_migrated_output(
-    output: &Path,
-    candidates: &[UpdateCandidate],
-    yes: bool,
-) -> anyhow::Result<()> {
+/// The named path is written, replacing whatever is there, the way `cp` and a
+/// shell redirect do. Pointed at the config being migrated it still writes only
+/// the migration: moving `approved-commands` to approvals.toml belongs to the
+/// in-place update, which is what the warning above the write says.
+fn write_migrated_output(output: &Path, candidates: &[UpdateCandidate]) -> anyhow::Result<()> {
     if output == Path::new("-") {
         for candidate in candidates {
             eprint!("{}", format_dropped_approvals_warning(candidate));
@@ -195,43 +185,12 @@ fn write_migrated_output(
 
     let output = resolve_input_path(output);
     let label = candidate.info.label().to_lowercase();
-    if paths_match(&output, &candidate.config_path) {
-        bail!(cformat!(
-            "Cannot overwrite <bold>{label}</> with <bold>--output</>; to apply the migration in place, run <bold>wt config update</>"
-        ));
-    }
     let display_path = format_path_for_display(&output);
 
-    let approvals_warning = format_dropped_approvals_warning(candidate);
-    eprint!("{approvals_warning}");
+    eprint!("{}", format_dropped_approvals_warning(candidate));
 
-    let replace = output.exists();
-    if replace && !yes {
-        if !std::io::stdin().is_terminal() {
-            bail!(cformat!(
-                "{display_path} already exists; to overwrite it with the {label} migration, add <bold>--yes</>"
-            ));
-        }
-        if !approvals_warning.is_empty() {
-            eprintln!();
-        }
-        let prompt = format!("Overwrite {display_path} with the {label} migration?");
-        match prompt_yes_no_preview(&prompt, || {})? {
-            PromptResponse::Accepted => {}
-            PromptResponse::Declined => {
-                eprintln!("{}", info_message("Update cancelled"));
-                return Ok(());
-            }
-        }
-    }
-
-    let artifact = format_migrated_output(candidates);
-    let written = if replace {
-        write_atomically(&output, &artifact)
-    } else {
-        write_new_atomically(&output, &artifact)
-    };
-    written.with_context(|| format!("Failed to write output @ {display_path}"))?;
+    write_atomically(&output, &format_migrated_output(candidates))
+        .with_context(|| format!("Failed to write output @ {display_path}"))?;
     eprintln!(
         "{}",
         success_message(format!("Wrote {label} migration @ {display_path}"))

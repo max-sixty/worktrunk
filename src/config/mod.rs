@@ -185,10 +185,12 @@ pub fn is_user_project_override_key(key: &str) -> bool {
 ///
 /// wt can't load such a file: every later command skips user config with a
 /// warning, and the commands that need project config fail, until the user
-/// hand-edits it. Both writers of a config file the user owns check the
-/// content they are about to write: the `UserConfig` mutations and
-/// `wt config update`. Neither starts from invalid TOML, so this fires only when
-/// the edit itself broke the syntax, and the file on disk stays as it was.
+/// hand-edits it. `wt config update` runs this over the migration it computed,
+/// before either destination is written. A `UserConfig` mutation faces a
+/// stronger test of its own — that the file it is about to write loads back as
+/// the config the mutation asked for — so it needs no second, weaker one.
+/// Neither starts from invalid TOML, so this fires only when the migration
+/// itself broke the syntax, and the file on disk stays as it was.
 pub fn ensure_config_parses(content: &str) -> Result<(), ConfigError> {
     content.parse::<toml::Table>().map(|_| ()).map_err(|e| {
         ConfigError(format!(

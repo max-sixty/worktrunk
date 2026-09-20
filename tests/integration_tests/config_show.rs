@@ -4209,75 +4209,69 @@ approved-commands = ["cargo test"]
     );
 }
 
-/// `--output` never rewrites the config it migrates, even with `--yes`: that is
-/// the in-place update's job, which previews the diff and migrates
-/// `approved-commands`.
+/// `--output` writes the path it was given, including the config being migrated.
+/// That destination carries only the migration: moving `approved-commands` to
+/// approvals.toml stays the in-place update's job, and the warning says so.
 #[rstest]
-fn test_config_update_output_rejects_source_path(repo: TestRepo) {
-    let original = "worktree-path = \"../{{ main_worktree }}.{{ branch }}\"\n";
-    fs::write(repo.test_config_path(), original).unwrap();
+fn test_config_update_output_writes_the_config_it_migrates(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+
+[projects."github.com/user/repo"]
+approved-commands = ["npm test"]
+"#,
+    )
+    .unwrap();
 
     let output = repo
         .wt_command()
-        .args(["config", "update", "--yes", "--output"])
+        .args(["config", "update", "--output"])
         .arg(repo.test_config_path())
         .output()
         .unwrap();
 
-    assert_eq!(output.status.code(), Some(1));
-    assert_eq!(
-        fs::read_to_string(repo.test_config_path()).unwrap(),
-        original
+    assert!(
+        output.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let written = fs::read_to_string(repo.test_config_path()).unwrap();
+    assert!(
+        written.contains("{{ repo }}") && !written.contains("approved-commands"),
+        "the migration should land at the path it named:\n{written}"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stderr = stderr.ansi_strip();
     assert!(
-        stderr.contains("Cannot overwrite user config") && stderr.contains("wt config update"),
-        "stderr:\n{stderr}"
+        stderr.contains("approved-commands") && stderr.contains("wt config update"),
+        "stderr should explain how to preserve approvals:\n{stderr}"
     );
 }
 
-/// An existing destination is overwritten only with `--yes`. Without it, and with
-/// no terminal to prompt on, the command fails and leaves the file as it was —
+/// An existing destination is replaced, the way `cp` and a shell redirect do —
 /// here the user config, which has nothing to migrate but sits at the path a
 /// project-config migration was sent to.
 #[rstest]
-fn test_config_update_output_overwrites_existing_file_only_with_yes(repo: TestRepo) {
-    let user_config = r#"worktree-path = "../{{ repo }}.{{ branch }}"
+fn test_config_update_output_replaces_an_existing_file(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [aliases]
 hi = "echo hi"
-"#;
-    fs::write(repo.test_config_path(), user_config).unwrap();
+"#,
+    )
+    .unwrap();
     repo.write_project_config(
         r#"pre-start = "ln -sf {{ main_worktree }}/node_modules"
 "#,
     );
     repo.commit("Add deprecated project config");
 
-    let refused = repo
-        .wt_command()
-        .args(["config", "update", "--output"])
-        .arg(repo.test_config_path())
-        .output()
-        .unwrap();
-    assert_eq!(refused.status.code(), Some(1));
-    assert_eq!(
-        fs::read_to_string(repo.test_config_path()).unwrap(),
-        user_config
-    );
-    let stderr = String::from_utf8_lossy(&refused.stderr);
-    let stderr = stderr.ansi_strip();
-    assert!(
-        stderr.contains(
-            "already exists; to overwrite it with the project config migration, add --yes"
-        ),
-        "stderr:\n{stderr}"
-    );
-
     let overwritten = repo
         .wt_command()
-        .args(["config", "update", "--yes", "--output"])
+        .args(["config", "update", "--output"])
         .arg(repo.test_config_path())
         .output()
         .unwrap();
