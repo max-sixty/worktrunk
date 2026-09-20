@@ -150,6 +150,11 @@ awk '/^## /{if (f) exit; f=1} f' CHANGELOG.md \
 **Good:** "Removed `.pi/` from the default excludes list; users who need it can add it via `[step.copy-ignored]`."
 **Bad:** "Removed `.pi/` — a sledgehammer fix from an unrelated debugging session that has no place as a project-agnostic default."
 
+**Name the conditions a bug needed, so the entry carries its magnitude.** A correctness or data-loss entry reads as though it fired for everyone unless it says what it took. These are usually narrow — a non-default git config, a command run from a particular place, a change of a particular shape — and naming each condition lets a reader decide in one pass whether it reached them. Join the conditions with "and": "X set *and* run from Y" is a corner case, while "X or Y" reads as two common triggers. Establish each one by reproducing against the previous release's binary rather than reading it off the diff — a condition assumed is a condition the entry overstates, and overstating a data-loss bug is its own kind of inaccuracy.
+
+**Good:** "`diff.relative` set *and* the command run from a subdirectory the branch's changes sat entirely outside"
+**Bad:** "`diff.relative` could hide a branch's changes from the integration check"
+
 ### Credit External Contributors
 
 For any changelog entry where an external contributor (not the repo owner) authored the commit, add credit with their GitHub username:
