@@ -16,7 +16,7 @@ use worktrunk::config::{
     format_migration_diff_block,
 };
 use worktrunk::git::{Repository, resolve_input_path};
-use worktrunk::path::format_path_for_display;
+use worktrunk::path::{format_path_for_display, paths_match};
 use worktrunk::styling::{
     eprint, eprintln, format_bash_with_gutter, hint_message, info_message, print, success_message,
     suggest_command_in_dir, warning_message,
@@ -119,27 +119,7 @@ pub fn handle_config_update(yes: bool, output: Option<PathBuf>) -> anyhow::Resul
     }
 
     for candidate in &candidates {
-        // Preserve approved-commands before rewriting config (migrated content
-        // drops them; approvals.toml becomes the authoritative source). Abort
-        // the whole update if the copy fails — rewriting config.toml first
-        // would silently lose the legacy approvals.
-        if candidate
-            .info
-            .deprecations
-            .iter()
-            .any(|k| matches!(k, DeprecationKind::ApprovedCommands))
-            && let Some(approvals_path) =
-                copy_approved_commands_to_approvals_file(&candidate.config_path)?
-        {
-            let filename = approvals_path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            eprintln!(
-                "{}",
-                info_message(cformat!("Copied approved commands to <bold>{filename}</>"))
-            );
-        }
+        move_approvals_out_of(candidate)?;
 
         write_atomically(&candidate.config_path, &candidate.migrated)
             .with_context(|| format!("Failed to update {}", candidate.info.label()))?;
@@ -160,9 +140,11 @@ pub fn handle_config_update(yes: bool, output: Option<PathBuf>) -> anyhow::Resul
 /// check below and the success line can name the config it came from.
 ///
 /// The named path is written, replacing whatever is there, the way `cp` and a
-/// shell redirect do. Pointed at the config being migrated it still writes only
-/// the migration: moving `approved-commands` to approvals.toml belongs to the
-/// in-place update, which is what the warning above the write says.
+/// shell redirect do. Pointed at the config being migrated, that write drops
+/// the config's `approved-commands`, so they move to approvals.toml first,
+/// exactly as the in-place update moves them — otherwise the warning's
+/// "run `wt config update`" would name a command with nothing left to migrate.
+/// Any other destination leaves the config alone, so the warning stands.
 fn write_migrated_output(output: &Path, candidates: &[UpdateCandidate]) -> anyhow::Result<()> {
     if output == Path::new("-") {
         for candidate in candidates {
@@ -187,13 +169,44 @@ fn write_migrated_output(output: &Path, candidates: &[UpdateCandidate]) -> anyho
     let label = candidate.info.label().to_lowercase();
     let display_path = format_path_for_display(&output);
 
-    eprint!("{}", format_dropped_approvals_warning(candidate));
+    if paths_match(&output, &candidate.config_path) {
+        move_approvals_out_of(candidate)?;
+    } else {
+        eprint!("{}", format_dropped_approvals_warning(candidate));
+    }
 
     write_atomically(&output, &format_migrated_output(candidates))
         .with_context(|| format!("Failed to write output @ {display_path}"))?;
     eprintln!(
         "{}",
         success_message(format!("Wrote {label} migration @ {display_path}"))
+    );
+    Ok(())
+}
+
+/// Move a config's deprecated `approved-commands` into approvals.toml, before a
+/// migration that drops them is written over that config.
+///
+/// approvals.toml becomes the authoritative source, so this runs first and a
+/// failure aborts the write: rewriting the config first would lose them with
+/// nothing left to read them from. Both writes that land a migration on top of
+/// the config it came from reach this — the in-place update, and `--output`
+/// naming that same path.
+fn move_approvals_out_of(candidate: &UpdateCandidate) -> anyhow::Result<()> {
+    if !drops_approved_commands(candidate) {
+        return Ok(());
+    }
+    let Some(approvals_path) = copy_approved_commands_to_approvals_file(&candidate.config_path)?
+    else {
+        return Ok(());
+    };
+    let filename = approvals_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    eprintln!(
+        "{}",
+        info_message(cformat!("Copied approved commands to <bold>{filename}</>"))
     );
     Ok(())
 }

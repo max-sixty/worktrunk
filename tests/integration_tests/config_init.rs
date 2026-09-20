@@ -120,6 +120,37 @@ run = "echo hello"
     });
 }
 
+/// A dangling symlink occupies the path while `path.exists()` reads false, so
+/// the create reaches its write with the path looking absent. It must refuse
+/// rather than replace a dotfile manager's link with a regular file, and the
+/// error has to name what it found — "File exists" right after the existence
+/// check said otherwise explains nothing.
+#[cfg(unix)]
+#[rstest]
+fn test_config_create_project_refuses_a_dangling_symlink(repo: TestRepo) {
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    let link = config_dir.join("wt.toml");
+    std::os::unix::fs::symlink(config_dir.join("synced/wt.toml"), &link).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "create", "--project"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("dangling symlink"),
+        "the error should name what occupies the path:\n{stderr}"
+    );
+    assert!(
+        link.is_symlink() && !link.exists(),
+        "the link should survive unreplaced"
+    );
+}
+
 /// Running `wt config create --project` from inside a repo's `.git` directory
 /// (not inside a worktree, not a bare repo) must fail with the generic
 /// "no worktree found" error rather than the bare-repo-specific message.

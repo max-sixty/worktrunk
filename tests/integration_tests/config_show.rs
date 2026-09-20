@@ -4209,9 +4209,10 @@ approved-commands = ["cargo test"]
     );
 }
 
-/// `--output` writes the path it was given, including the config being migrated.
-/// That destination carries only the migration: moving `approved-commands` to
-/// approvals.toml stays the in-place update's job, and the warning says so.
+/// `--output` writes the path it was given, including the config being
+/// migrated. That write drops the config's `approved-commands`, so they move to
+/// approvals.toml first, exactly as the in-place update moves them — warning
+/// instead would point at a `wt config update` with nothing left to migrate.
 #[rstest]
 fn test_config_update_output_writes_the_config_it_migrates(repo: TestRepo) {
     fs::write(
@@ -4241,11 +4242,11 @@ approved-commands = ["npm test"]
         written.contains("{{ repo }}") && !written.contains("approved-commands"),
         "the migration should land at the path it named:\n{written}"
     );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stderr = stderr.ansi_strip();
+    let approvals = fs::read_to_string(repo.test_config_path().with_file_name("approvals.toml"))
+        .expect("approvals.toml should carry the commands the write removed");
     assert!(
-        stderr.contains("approved-commands") && stderr.contains("wt config update"),
-        "stderr should explain how to preserve approvals:\n{stderr}"
+        approvals.contains("npm test"),
+        "the approvals should survive the overwrite:\n{approvals}"
     );
 }
 
