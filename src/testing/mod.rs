@@ -1445,10 +1445,6 @@ impl TestRepo {
         let root = canonicalize(root).unwrap();
         let repo = Repository::at(&root).unwrap();
         write_local_test_config(&repo);
-        // A test that seeds `.git/wt/cache/` by hand means entries this
-        // version produced. Unstamped, the first read would discard them as an
-        // older epoch's (`cache::ensure_epoch`).
-        crate::cache::stamp_epoch(&repo);
 
         Self {
             temp_dir,
