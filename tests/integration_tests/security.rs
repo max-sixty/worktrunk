@@ -43,7 +43,7 @@
 //! with `$IFS` instead: `touch$IFS/tmp/hacked2` is a legal ref name and still
 //! creates the canary if a shell ever evaluates it. A payload that reaches a
 //! worktree path must also be a legal filename on Windows, which rules out
-//! `< > : " | ? *` — `sanitize` only rewrites `/` and `\`.
+//! `< > : " | ? *` — `sanitize_branch_name` only rewrites `/` and `\`.
 //!
 //! Where git's own rules are the defense, assert the refusal rather than
 //! returning early from it: a skip reads as a pass on every platform.
@@ -54,6 +54,7 @@ use crate::common::{
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::process::Command;
+use worktrunk::config::sanitize_branch_name;
 
 ///
 /// Git provides the first line of defense by refusing to create commits
@@ -148,6 +149,7 @@ fn test_rust_prevents_nul_bytes_in_args(repo: TestRepo) {
 #[rstest]
 fn test_branch_name_is_directive_not_executed(repo: TestRepo) {
     let malicious_branch = "__WORKTRUNK_EXEC__touch$IFS/tmp/hacked2";
+    let expected_worktree = expected_worktree_path(&repo, malicious_branch);
 
     let settings = setup_snapshot_settings(&repo);
 
@@ -163,7 +165,7 @@ fn test_branch_name_is_directive_not_executed(repo: TestRepo) {
 
         assert_cmd_snapshot!(cmd);
 
-        assert_cd_file_holds_one_path(&cd_path);
+        assert_cd_file_holds_worktree_path(&cd_path, &expected_worktree);
     });
 
     // Verify the malicious file was NOT created
@@ -173,24 +175,65 @@ fn test_branch_name_is_directive_not_executed(repo: TestRepo) {
     );
 }
 
+/// The worktree path `wt switch --create <branch>` produces under the default
+/// layout: a sibling of the repo named `<repo>.<branch>`, with `/` and `\`
+/// dashed out by `sanitize_branch_name` and nothing else rewritten.
+fn expected_worktree_path(repo: &TestRepo, branch: &str) -> std::path::PathBuf {
+    let root = repo.root_path();
+    let repo_name = root.file_name().expect("repo root has a name");
+    root.parent().expect("repo root has a parent").join(format!(
+        "{}.{}",
+        repo_name.to_string_lossy(),
+        sanitize_branch_name(branch)
+    ))
+}
+
 /// Assert the CD directive file holds what `wt` promises a wrapper it holds:
-/// one line, an absolute path that exists.
+/// one line, and that line is the worktree `wt` just created.
 ///
 /// This is the assertion that carries the directive tests. `wt` writes the CD
 /// file itself (`src/output/global.rs`), so a branch name that smuggled a
-/// second line or a directive token past the display layer would show up here
-/// — whereas the `/tmp/hackedN` canaries below can only ever pass: these tests
-/// run the binary directly, and no shell evaluates the file's contents.
-fn assert_cd_file_holds_one_path(cd_path: &std::path::Path) {
+/// second line or a different destination past the display layer would show up
+/// here — whereas the `/tmp/hackedN` canaries in the callers can only ever
+/// pass: these tests run the binary directly, and no shell evaluates the
+/// file's contents.
+///
+/// It compares against `expected` rather than asking whether the line names
+/// *a* directory, because the directive these tests model
+/// (`__WORKTRUNK_CD__/tmp`) smuggles a path that exists — a verifier that only
+/// checked `is_dir()` would pass on the leak it is named for. Both sides are
+/// canonicalized: `wt` writes the logical, symlink-preserved path, which is
+/// not textually the tempdir path on macOS.
+fn assert_cd_file_holds_worktree_path(cd_path: &std::path::Path, expected: &std::path::Path) {
     let cd_content = std::fs::read_to_string(cd_path).unwrap_or_default();
     assert_eq!(
         cd_content.lines().count(),
         1,
         "the CD file must hold a single line, got {cd_content:?}"
     );
-    assert!(
-        std::path::Path::new(cd_content.trim()).is_dir(),
+    let written = std::fs::canonicalize(cd_content.trim()).unwrap_or_else(|e| {
+        panic!("the CD file must hold an existing path, got {cd_content:?}: {e}")
+    });
+    let expected = std::fs::canonicalize(expected)
+        .unwrap_or_else(|e| panic!("the new worktree {} should exist: {e}", expected.display()));
+    assert_eq!(
+        written, expected,
         "the CD file must hold the new worktree's path, got {cd_content:?}"
+    );
+}
+
+/// Assert `wt` left the CD directive file untouched.
+///
+/// The counterpart to [`assert_cd_file_holds_worktree_path`] for the tests
+/// whose `wt switch` fails: no switch happened, so nothing may move the user's
+/// shell. `directive_file()` hands over an empty file, and `wt` only writes one
+/// after a successful switch (`handle_switch_output`), so any content here is a
+/// destination that came from somewhere other than a completed switch.
+fn assert_cd_file_unwritten(cd_path: &std::path::Path) {
+    let cd_content = std::fs::read_to_string(cd_path).unwrap_or_default();
+    assert!(
+        cd_content.is_empty(),
+        "a failed switch must not write a cd directive, got {cd_content:?}"
     );
 }
 
@@ -283,6 +326,10 @@ fn test_branch_name_with_cd_directive_not_executed(repo: TestRepo) {
 
         // Branch name should appear in success message, but not as a separate directive
         assert_cmd_snapshot!(cmd);
+
+        // The payload names `/tmp`, which exists: the proof that nothing
+        // honored it is that the failed switch wrote no destination at all.
+        assert_cd_file_unwritten(&cd_path);
     });
 }
 
@@ -306,6 +353,8 @@ fn test_error_message_with_directive_not_executed(repo: TestRepo) {
 
         // Should fail with error, but not execute directive
         assert_cmd_snapshot!(cmd);
+
+        assert_cd_file_unwritten(&cd_path);
     });
 
     assert!(
@@ -324,6 +373,7 @@ fn test_execute_flag_with_directive_like_branch_name(repo: TestRepo) {
     // containing a space, so the old payload could never be created and the
     // branch it needs never existed.
     let malicious_branch = "__WORKTRUNK_EXEC__touch$IFS/tmp/hacked7";
+    let expected_worktree = expected_worktree_path(&repo, malicious_branch);
 
     let settings = setup_snapshot_settings(&repo);
 
@@ -342,7 +392,7 @@ fn test_execute_flag_with_directive_like_branch_name(repo: TestRepo) {
 
         assert_cmd_snapshot!(cmd);
 
-        assert_cd_file_holds_one_path(&cd_path);
+        assert_cd_file_holds_worktree_path(&cd_path, &expected_worktree);
     });
 
     assert!(
