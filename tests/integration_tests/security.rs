@@ -324,7 +324,8 @@ fn test_branch_name_with_cd_directive_not_executed(repo: TestRepo) {
             .arg(malicious_branch)
             .current_dir(repo.root_path());
 
-        // Branch name should appear in success message, but not as a separate directive
+        // The branch is pre-created above, so `--create` fails: this snapshots
+        // how a directive-shaped name renders in an error message.
         assert_cmd_snapshot!(cmd);
 
         // The payload names `/tmp`, which exists: the proof that nothing
