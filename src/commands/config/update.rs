@@ -193,21 +193,19 @@ fn write_migrated_output(output: &Path, candidates: &[UpdateCandidate]) -> anyho
 /// the config it came from reach this — the in-place update, and `--output`
 /// naming that same path.
 fn move_approvals_out_of(candidate: &UpdateCandidate) -> anyhow::Result<()> {
-    if !drops_approved_commands(candidate) {
-        return Ok(());
+    if drops_approved_commands(candidate)
+        && let Some(approvals_path) =
+            copy_approved_commands_to_approvals_file(&candidate.config_path)?
+    {
+        let filename = approvals_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        eprintln!(
+            "{}",
+            info_message(cformat!("Copied approved commands to <bold>{filename}</>"))
+        );
     }
-    let Some(approvals_path) = copy_approved_commands_to_approvals_file(&candidate.config_path)?
-    else {
-        return Ok(());
-    };
-    let filename = approvals_path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    eprintln!(
-        "{}",
-        info_message(cformat!("Copied approved commands to <bold>{filename}</>"))
-    );
     Ok(())
 }
 

@@ -126,22 +126,19 @@ fn create_config_file(
 
     // Write the example config with all values commented out. The path was
     // observed absent above, so a file that occupies it now is one wt never
-    // read — a dangling symlink a dotfile manager owns, or another process
-    // that got there first. Neither is replaced by an example file.
+    // read, and is not replaced by an example. A dangling symlink is the case
+    // worth naming — `exists()` reads false through it, so a dotfile manager's
+    // link reaches this write every time; a file another process created in
+    // the window is a plain write failure.
     let commented_config = comment_out_config(content);
     worktrunk::utils::write_new_atomically(&path, &commented_config).map_err(|e| {
         let display_path = format_path_for_display(&path);
-        if e.kind() != std::io::ErrorKind::AlreadyExists {
-            return anyhow::Error::new(e).context(format!("Failed to write {display_path}"));
-        }
-        if path.is_symlink() && !path.exists() {
+        if e.kind() == std::io::ErrorKind::AlreadyExists && path.is_symlink() && !path.exists() {
             anyhow::anyhow!(
                 "Failed to create {display_path}: path is a dangling symlink; restore its target or remove the link, then rerun"
             )
         } else {
-            anyhow::anyhow!(
-                "Failed to create {display_path}: another process created it first; rerun to see it"
-            )
+            anyhow::Error::new(e).context(format!("Failed to write {display_path}"))
         }
     })?;
 
