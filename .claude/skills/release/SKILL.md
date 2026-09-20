@@ -145,6 +145,8 @@ awk '/^## /{if (f) exit; f=1} f' CHANGELOG.md \
 
 **Calibrate against the ceiling, not against the last release.** Length ratchets: each release is drafted beside the previous section, and an abstract rule loses to a concrete neighbouring exemplar every time. Entries grew from 49 to 101 words on average across five releases while this skill said "be brief" throughout. Read the previous section for what it drifted to, then ignore it and write to the ceiling.
 
+**Entries describe; they don't instruct.** An entry records what the old behavior was and what it is now. Leave out remediation steps and "run X if Y" advice — that belongs in the PR description, alongside the reasoning.
+
 **No editorial framing.** Describe what changed, not what was wrong with the previous decision in subjective terms. Avoid words like "sledgehammer", "ugly", "noisy", "wrong" applied to past code. State the prior behavior neutrally and the new behavior plainly.
 
 **Good:** "Removed `.pi/` from the default excludes list; users who need it can add it via `[step.copy-ignored]`."
