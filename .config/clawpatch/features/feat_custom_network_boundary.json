@@ -34,6 +34,10 @@
       "reason": "picker forge fetches (`spawn_pr_previews`, `spawn_comments_fetch`): sanctioned because the picker paints before they start and its exit cancels whatever is unfinished"
     },
     {
+      "path": "src/commands/list/ci_status/mod.rs",
+      "reason": "CI-status egress: where `gh`/`glab` spawn for `wt list --full`, `wt list statusline`, a `ci` column, and the picker's per-row status — the sanctioned calls `statusline.rs` and the picker reach the wire through"
+    },
+    {
       "path": "src/shell_exec.rs",
       "reason": "Cmd: where external commands (git, gh, glab) spawn"
     },
