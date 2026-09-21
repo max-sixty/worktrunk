@@ -47,9 +47,8 @@ Don't try to `cargo install` them in the sandbox — past attempts at
 source-compiling installs cascaded into bash-tool interrupts that blocked
 even `pwd` and `echo`. Instead, query Codecov directly, following
 `tests/CLAUDE.md` → **Coverage Investigation** for the endpoints and their
-traps. The sandbox also mounts root `/tmp` read-only, which is why the
-scratch paths there and below go to `${TMPDIR:-/tmp}` — write new ones the
-same way.
+traps. The scratch paths there and below go to `${TMPDIR:-/tmp}` — write new
+ones the same way.
 
 If the Codecov API markers aren't enough, download the `code-coverage-report`
 artifact from the PR head's `coverage` workflow run — it contains a
@@ -87,11 +86,12 @@ fixes a test here, not just issue triage.
 ## Session Log Paths
 
 The artifact directory is named after the agent's working directory, and from
-tend 0.2.5 that is a per-run `/tmp/tend-agent-workspace-*/checkout` — so the
-old `-home-runner-work-worktrunk-worktrunk/` prefix appears only in runs
-predating the bump, and there is no literal to match on any more. Use the
-bundled `find "$DEST" -name '*.jsonl'` recipe; either shape is one
-`<session-id>.jsonl` under a single slugified directory.
+tend 0.2.5 that is a per-run `tend-agent-workspace-*/checkout` whose parent
+directory moves between tend releases — so the old
+`-home-runner-work-worktrunk-worktrunk/` prefix appears only in runs predating
+the bump, and there is no literal to match on any more. Use the bundled
+`find "$DEST" -name '*.jsonl'` recipe; either shape is one `<session-id>.jsonl`
+under a single slugified directory.
 
 ## Labels
 
