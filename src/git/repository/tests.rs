@@ -976,6 +976,46 @@ fn worktree_at_path_resolves_symlinked_path() {
     assert_eq!(branch.as_deref(), Some("feature"));
 }
 
+/// `signs_commits` answers as `git commit` would in the worktree it runs from:
+/// a valueless `gpgsign` is true to git, and a `--worktree` setting applies to
+/// its own worktree only.
+#[test]
+fn signs_commits_follows_gits_reading_per_worktree() {
+    use crate::git::Repository;
+    use crate::testing::TestRepo;
+
+    let mut test = TestRepo::with_initial_commit();
+    let feature_path = test.add_worktree("feature");
+    let signs = |path: &std::path::Path| Repository::at(path).unwrap().signs_commits().unwrap();
+
+    assert!(!signs(test.root_path()), "unset means unsigned");
+
+    let config_path = test.root_path().join(".git/config");
+    let mut config = std::fs::read_to_string(&config_path).unwrap();
+    config.push_str("[commit]\n\tgpgsign\n");
+    std::fs::write(&config_path, config).unwrap();
+    assert!(signs(test.root_path()), "a valueless key is true");
+
+    test.run_git(&["config", "extensions.worktreeConfig", "true"]);
+    test.run_git_in(
+        &feature_path,
+        &["config", "--worktree", "commit.gpgSign", "false"],
+    );
+    assert!(!signs(&feature_path), "the feature worktree opted out");
+    assert!(signs(test.root_path()), "the opt-out stays in its worktree");
+
+    // A value git can't read as a boolean is an error, not "unsigned" —
+    // `git commit` would refuse the same way.
+    test.run_git(&["config", "commit.gpgSign", "maybe"]);
+    assert!(
+        Repository::at(test.root_path())
+            .unwrap()
+            .signs_commits()
+            .is_err(),
+        "a value that isn't a boolean must surface as an error"
+    );
+}
+
 #[test]
 fn current_worktree_anchors_to_repository_discovery_path() {
     // `Repository::at(p).current_worktree()` must resolve relative to `p`,

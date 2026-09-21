@@ -1735,8 +1735,19 @@ impl Repository {
     ///
     /// `git commit` and `git merge` honor it; `git commit-tree` ignores it, so
     /// a commit meant to match what porcelain would record passes `-S` itself.
+    /// Asked of git from this worktree rather than read from the cached config
+    /// map, which is read from the common dir and so misses worktree-scoped
+    /// config, and whose boolean parsing is not git's (a valueless key is true
+    /// to git).
     pub fn signs_commits(&self) -> anyhow::Result<bool> {
-        self.config_bool("commit.gpgSign")
+        let args = ["config", "--type=bool", "--get", "commit.gpgSign"];
+        let output = self.run_command_output(&args)?;
+        match output.status.code() {
+            Some(0) => Ok(String::from_utf8_lossy(&output.stdout).trim() == "true"),
+            // Exit 1: the key is unset.
+            Some(1) => Ok(false),
+            _ => Err(super::error::CommandError::from_failed_output("git", &args, &output).into()),
+        }
     }
 
     /// Get the sparse checkout paths for this repository.
