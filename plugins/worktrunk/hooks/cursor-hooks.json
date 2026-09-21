@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeSubmitPrompt": [
+      {
+        "command": "bash \"${CURSOR_PLUGIN_ROOT}/hooks/wt.sh\" -C \"$CURSOR_PROJECT_DIR\" config state marker set 🤖 || true"
+      }
+    ],
+    "stop": [
+      {
+        "command": "bash \"${CURSOR_PLUGIN_ROOT}/hooks/wt.sh\" -C \"$CURSOR_PROJECT_DIR\" config state marker set 💬 || true"
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": "bash \"${CURSOR_PLUGIN_ROOT}/hooks/wt.sh\" -C \"$CURSOR_PROJECT_DIR\" config state marker clear || true"
+      }
+    ]
+  }
+}

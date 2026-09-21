@@ -1,23 +1,28 @@
-# Worktrunk Plugin for Claude Code
+# Worktrunk Agent Plugin
 
 Git worktree management CLI integration with activity tracking.
 
-Requires the `wt` CLI ([worktrunk.dev](https://worktrunk.dev)) and `jq` (used
-by the worktree-lifecycle hooks).
+Requires the `wt` CLI ([worktrunk.dev](https://worktrunk.dev)). Claude Code's
+worktree-lifecycle hooks also require `jq`.
 
 ## Features
 
 1. **Configuration skill** — Guides LLM-powered commit message setup, project hooks (pre-start, pre-merge), and worktree path customization
-2. **Activity tracking** — Shows which branches have active Claude sessions via indicators in `wt list`
-3. **`/wt-switch-create` command** — Creates a worktrunk worktree and moves the current Claude session into it
+2. **Activity tracking** — Shows which branches have active local agent sessions via indicators in `wt list`
+3. **Claude Code worktree integration** — Routes Claude's worktree lifecycle through Worktrunk and provides `/wt-switch-create`
 
 ## Examples
 
 **Activity tracking across worktrees**
 
-The plugin installs Claude Code hooks that track session activity per branch. When a prompt is submitted, the hook sets 🤖 on that branch. When Claude finishes and waits for input, it switches to 💬. When the session ends, the marker clears.
+The plugin installs native Claude Code, Cursor, and Codex hooks that track
+session activity per branch. When a prompt is submitted, the hook sets 🤖 on
+that branch. When the agent finishes and waits for input, it switches to 💬.
+When the local session ends, the marker clears.
 
-These markers appear in `wt list` output, making it easy to see which worktrees have active Claude sessions — useful when running multiple instances in parallel.
+These markers appear in `wt list` output, making it easy to see which
+worktrees have active agent sessions — useful when running multiple instances
+in parallel.
 
 **Set up LLM commit message generation**
 

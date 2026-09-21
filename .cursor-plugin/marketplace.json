@@ -1,0 +1,17 @@
+{
+  "name": "worktrunk",
+  "owner": {
+    "name": "Worktrunk",
+    "email": "m@maxroos.com"
+  },
+  "metadata": {
+    "description": "Cursor plugin for Worktrunk, a CLI for Git worktree management"
+  },
+  "plugins": [
+    {
+      "name": "worktrunk",
+      "description": "Worktrunk is a CLI for Git worktree management, designed for parallel AI agent workflows. This plugin provides configuration guidance (LLM commit messages, project hooks, worktree paths) and automatic activity tracking (🤖/💬 indicators in `wt list` showing active local Cursor sessions).",
+      "source": "./plugins/worktrunk"
+    }
+  ]
+}

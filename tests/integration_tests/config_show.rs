@@ -5247,8 +5247,8 @@ fn test_codex_plugin_metadata_is_valid_json() {
     assert_eq!(marketplace["interface"]["displayName"], "Worktrunk");
 }
 
-/// Claude Code + Codex share `plugins/worktrunk/`; Gemini's manifest is a
-/// third loader-mandated repo-root pointer (`gemini-extension.json` +
+/// Claude Code, Codex, and Cursor share `plugins/worktrunk/`; Gemini's
+/// manifest is another loader-mandated repo-root pointer (`gemini-extension.json` +
 /// `hooks/hooks.json` — Gemini hard-probes `${extensionPath}/{hooks,skills}/`
 /// at the extension root with no path indirection). Verified end-to-end
 /// against the real CLIs: Claude (claude-cli 2.1.207) reads the manifest at
@@ -5297,7 +5297,7 @@ fn test_plugin_layout_is_consolidated() {
         );
     }
 
-    // Repo root keeps ONLY the two loader-mandated marketplace pointers.
+    // Repo root keeps only the loader-mandated marketplace pointers.
     assert!(
         !root.join(".claude-plugin/plugin.json").exists()
             && !root.join(".claude-plugin/hooks").exists(),
@@ -5361,6 +5361,69 @@ fn test_plugin_layout_is_consolidated() {
         ".claude-plugin/marketplace.json and plugins/worktrunk/.claude-plugin/plugin.json \
          descriptions drifted"
     );
+
+    // Cursor also resolves the shared plugin root from its repo-root
+    // marketplace pointer. Unlike Claude, Cursor honors an explicit hooks
+    // path, which keeps its native event schema out of Claude's conventional
+    // hooks/hooks.json slot. Skills still load from skills/ by convention.
+    assert!(
+        !root.join(".cursor-plugin/plugin.json").exists()
+            && !root.join(".cursor-plugin/hooks").exists(),
+        ".cursor-plugin/ at the repo root must hold only marketplace.json"
+    );
+    let cursor_mkt = json(".cursor-plugin/marketplace.json");
+    assert_eq!(cursor_mkt["plugins"][0]["source"], "./plugins/worktrunk");
+    let cursor = json("plugins/worktrunk/.cursor-plugin/plugin.json");
+    assert_eq!(cursor["name"], "worktrunk");
+    assert_eq!(cursor["hooks"], "./hooks/cursor-hooks.json");
+    assert!(
+        cursor.get("skills").is_none(),
+        "the Cursor manifest must not carry a `skills` key — Cursor scans skills/ by convention"
+    );
+    assert_eq!(
+        cursor_mkt["plugins"][0]["description"], cursor["description"],
+        ".cursor-plugin/marketplace.json and plugins/worktrunk/.cursor-plugin/plugin.json \
+         descriptions drifted"
+    );
+
+    let cursor_hooks = json("plugins/worktrunk/hooks/cursor-hooks.json");
+    assert_eq!(cursor_hooks["version"], 1);
+    let cursor_events = cursor_hooks["hooks"]
+        .as_object()
+        .expect("Cursor hooks file must carry a `hooks` object");
+    let mut event_names = cursor_events.keys().map(String::as_str).collect::<Vec<_>>();
+    event_names.sort_unstable();
+    assert_eq!(
+        event_names,
+        ["beforeSubmitPrompt", "sessionEnd", "stop"],
+        "Cursor plugin must define only its native activity-marker lifecycle events"
+    );
+    let cursor_commands = cursor_events
+        .values()
+        .flat_map(|event| {
+            event
+                .as_array()
+                .expect("each Cursor hook event must be an array")
+        })
+        .map(|hook| {
+            hook["command"]
+                .as_str()
+                .expect("each Cursor hook must define a command")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(cursor_commands.len(), 3);
+    for command in cursor_commands {
+        assert!(
+            command.contains("${CURSOR_PLUGIN_ROOT}/hooks/wt.sh"),
+            "Cursor hooks must call the canonical shim through CURSOR_PLUGIN_ROOT. \
+             command:\n{command}"
+        );
+        assert!(
+            command.contains(r#"-C "$CURSOR_PROJECT_DIR""#),
+            "Cursor marker hooks must resolve against the session workspace. \
+             command:\n{command}"
+        );
+    }
 
     // Gemini extension: manifest + hooks are loader-mandated repo-root
     // pointers (Gemini hard-probes ${extensionPath}/{hooks,skills}/ at the
@@ -5581,6 +5644,14 @@ fn test_plugin_layout_is_consolidated() {
         (
             "plugins/worktrunk/.codex-plugin/plugin.json",
             &codex["description"],
+        ),
+        (
+            "plugins/worktrunk/.cursor-plugin/plugin.json",
+            &cursor["description"],
+        ),
+        (
+            ".cursor-plugin/marketplace.json",
+            &cursor_mkt["plugins"][0]["description"],
         ),
         ("gemini-extension.json", &gemini["description"]),
     ] {

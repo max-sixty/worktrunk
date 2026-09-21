@@ -1,28 +1,31 @@
-# Worktrunk Plugin Guidelines (Claude Code + Codex)
+# Worktrunk Plugin Guidelines (Claude Code + Codex + Cursor)
 
 ## Directory Layout
 
-This directory (`plugins/worktrunk/`) is the Claude Code + Codex payload. Each
-tool hardcodes its loader path with no fallback, so the repo root carries one
-pointer per tool: Claude's and Codex's both `source → ./plugins/worktrunk`,
-while Gemini resolves its extension at the repo root itself; Gemini's hooks
-call the canonical `hooks/wt.sh` below.
+This directory (`plugins/worktrunk/`) is the shared Claude Code, Codex, and
+Cursor payload. Each tool hardcodes its loader path with no fallback, so the
+repo root carries one pointer per tool: Claude, Codex, and Cursor all resolve
+`source → ./plugins/worktrunk`, while Gemini resolves its extension at the
+repo root itself; Gemini's hooks call the canonical `hooks/wt.sh` below.
 
 ```
 worktrunk/                          ← repo root = marketplace root
 ├── .claude-plugin/marketplace.json ← Claude pointer  (source → ./plugins/worktrunk)
 ├── .agents/plugins/marketplace.json← Codex pointer   (source → ./plugins/worktrunk)
+├── .cursor-plugin/marketplace.json ← Cursor pointer  (source → ./plugins/worktrunk)
 ├── .claude/skills/                 ← authored repo-local maintainer skills
 ├── .agents/skills → ../.claude/skills
 │                                     Codex repo-skill pointer
 ├── gemini-extension.json           ← Gemini manifest (extensionPath = repo root)
 ├── hooks/hooks.json                ← Gemini activity hooks (call the wt.sh below)
 ├── skills/                         ← real dir; Gemini reads ${extensionPath}/skills directly
-└── plugins/worktrunk/              ← plugin root (Claude + Codex resolve source here)
+└── plugins/worktrunk/              ← shared plugin root
     ├── .claude-plugin/plugin.json  ← Claude manifest (metadata only — NO `hooks`
     │                                  or `skills` keys; components load by
     │                                  convention, see below)
     ├── .codex-plugin/plugin.json   ← Codex manifest (Codex's required wrapper)
+    ├── .cursor-plugin/plugin.json  ← Cursor manifest; points hooks at the
+    │                                  Cursor-specific file below
     ├── hooks/hooks.json            ← Claude activity + WorktreeCreate/Remove hooks,
     │                                  discovered by convention at this exact path
     │                                  (#3417; Codex is kept off it by its inline
@@ -33,6 +36,8 @@ worktrunk/                          ← repo root = marketplace root
     │                                  ${extensionPath}/plugins/worktrunk/hooks/wt.sh
     ├── hooks/wt.cmd                ← finds Git Bash for cmd.exe, which is what runs
     │                                  a Codex `commandWindows`, then runs wt.sh (#4007)
+    ├── hooks/cursor-hooks.json     ← Cursor activity hooks; explicit manifest path
+    │                                  avoids loading Claude's conventional file
     ├── skills/                      ← generated real-file mirror of repo-root
     │                                  skills/ (test_docs_are_in_sync; never
     │                                  hand-edit) — real files because Codex's
@@ -77,18 +82,31 @@ Path resolution differs by tool, all verified end-to-end against the real CLIs:
   explicit `"skills": "./skills/"` names the same directory, so the manifest
   carries no `skills` key. The scanned tree is the real-file mirror ("Plugin
   skills are a generated mirror" below).
+- **Cursor** (Cursor CLI 2026.09.18-9a7762b):
+  `.cursor-plugin/marketplace.json` points at `./plugins/worktrunk`; Cursor
+  reads `plugins/worktrunk/.cursor-plugin/plugin.json`. Skills load by
+  convention from `skills/*/SKILL.md`. The explicit
+  `"hooks": "./hooks/cursor-hooks.json"` replaces Cursor's conventional
+  `hooks/hooks.json` discovery, so Cursor gets its native lower-camel-case
+  events instead of attempting to parse Claude's file. Hook commands resolve
+  the shared shim through `${CURSOR_PLUGIN_ROOT}` and anchor marker state with
+  `-C "$CURSOR_PROJECT_DIR"`. Verified against the real CLI with
+  `agent --plugin-dir`: the worktrunk skills load, the explicit hooks path is
+  honored, `${CURSOR_PLUGIN_ROOT}` resolves to the plugin directory, and
+  `sessionEnd` executes with `CURSOR_PROJECT_DIR` set to the workspace. The
+  other event names follow Cursor's documented hook vocabulary.
 - **Gemini**: `gemini-extension.json` at the repo root; `${extensionPath}` is
   the repo root, so `${extensionPath}/skills/` is the repo-root `skills/`
   directly and `hooks/hooks.json` (repo root) calls the canonical shim at
   `${extensionPath}/plugins/worktrunk/hooks/wt.sh`. No symlink or copy.
 
-All three tools pick up the whole `skills/` set — Gemini reads the repo-root
-directory, Claude and Codex ship the plugin mirror — so a new repo-root skill
-ships everywhere once `test_docs_are_in_sync` regenerates the mirror, provided
-its directory contains a `SKILL.md` (`test_plugin_layout_is_consolidated`
-enforces that; a directory without one is silently ignored). Claude-only
-skills reach the other tools too (accepted tradeoff — see Known Limitations
-below).
+All four tools pick up the whole `skills/` set — Gemini reads the repo-root
+directory, while Claude, Codex, and Cursor ship the plugin mirror — so a new
+repo-root skill ships everywhere once `test_docs_are_in_sync` regenerates the
+mirror, provided its directory contains a `SKILL.md`
+(`test_plugin_layout_is_consolidated` enforces that; a directory without one
+is silently ignored). Claude-only skills reach the other tools too (accepted
+tradeoff — see Known Limitations below).
 
 ### Plugin skills are a generated mirror
 
@@ -120,8 +138,9 @@ end-to-end against codex-cli 0.144.1 (scratch marketplaces through
   a plain text file on Windows checkouts, which shipped no skills from a
   Windows clone to Claude or Codex.
 
-`test_plugin_layout_is_consolidated` pins the no-symlinks invariant;
-`test_docs_are_in_sync` pins content equality with repo-root `skills/`.
+`test_plugin_layout_is_consolidated` pins the no-symlinks invariant and each
+loader's pointer; `test_docs_are_in_sync` pins content equality with repo-root
+`skills/`.
 
 ## Known Limitations
 
@@ -162,6 +181,35 @@ The events (Codex's `HookEventsToml` vocabulary, verified against `codex-rs/conf
 
 Codex and Gemini marker commands still resolve from the hook process's cwd. When either harness exposes a stable session project directory, pass that directory to Worktrunk with global `-C`, as Claude does with `$CLAUDE_PROJECT_DIR`.
 
+### Cursor activity hooks
+
+Cursor honors the manifest's explicit string-path `hooks` override, so its
+hooks live at `hooks/cursor-hooks.json` rather than competing with Claude for
+the conventional `hooks/hooks.json` path. The file uses Cursor's native schema
+(`version: 1`, direct command entries) and events:
+
+- `beforeSubmitPrompt` → 🤖 (working)
+- `stop` → 💬 (waiting for input)
+- `sessionEnd` → clears the marker
+
+Every command calls the canonical shim through `${CURSOR_PLUGIN_ROOT}` and
+passes `-C "$CURSOR_PROJECT_DIR"`. Cursor documents both variables as part of
+the plugin/hook environment. This pins a local session to its workspace after
+shell directory changes. Like Claude's launch-directory variable, it cannot
+follow a conversation that later relocates to another worktree; #3921 tracks
+that broader limitation.
+
+Cloud Agents run project command hooks but do not have an editor-lifetime
+`sessionEnd` boundary, and their Git configuration is remote. The plugin's
+activity-marker contract therefore describes local IDE and CLI sessions, not
+updates to a developer machine's `wt list` from a cloud VM.
+
 ### Accepted tradeoff: shared `skills/` exposes `wt-switch-create`
 
-Codex's mirrored `skills/` and Gemini's `${extensionPath}/skills/` both carry the entire skill set, including `wt-switch-create`, which depends on Claude session-cwd switching (`EnterWorktree`) that neither provides. Accepted: a tool loading a skill it can't act on is harmless, and a single authored `skills/` keeps the `worktrunk` skill single-source across all three tools and the docs sync. Don't add per-tool skills subtrees to exclude it.
+Codex and Cursor's mirrored `skills/` and Gemini's
+`${extensionPath}/skills/` all carry the entire skill set, including
+`wt-switch-create`, which depends on Claude session-cwd switching
+(`EnterWorktree`) that none provides. Accepted: a tool loading a skill it
+can't act on is harmless, and a single authored `skills/` keeps the
+`worktrunk` skill single-source across all four tools and the docs sync. Don't
+add per-tool skills subtrees to exclude it.

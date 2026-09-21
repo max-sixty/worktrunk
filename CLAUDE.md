@@ -50,7 +50,7 @@ Behavior changes require doc updates. `src/cli/mod.rs` (`after_long_help` plus c
 
 ## Plugin Layout
 
-Per-tool layout and path resolution (Claude/Codex/Gemini), the convention-only Claude manifest, the Codex inline-hooks rationale, the generated plugin-skills mirror, the accepted `wt-switch-create` tradeoff, and `test_plugin_layout_is_consolidated`: `plugins/worktrunk/CLAUDE.md`.
+Per-tool layout and path resolution (Claude/Codex/Cursor/Gemini), the convention-only Claude manifest, the Codex inline-hooks rationale, Cursor's explicit hooks path, the generated plugin-skills mirror, the accepted `wt-switch-create` tradeoff, and `test_plugin_layout_is_consolidated`: `plugins/worktrunk/CLAUDE.md`.
 
 The Pi-family integrations are two commands because they are two agents. `wt config plugins pi` targets Pi (earendil-works/pi), which loads `ExtensionAPI` extensions from `~/.pi/agent/extensions/`; `wt config plugins omp` targets oh-my-pi, which loads `HookAPI` hooks from `~/.omp/agent/hooks/pre/`. Path rules live in `src/commands/config/pi.rs` and `src/commands/config/omp.rs`; the embedded sources are `dev/pi-extension.ts` and `dev/omp-hook.ts`. Neither file is interchangeable — the loaders differ, and so do the config roots (`$PI_CODING_AGENT_DIR` for Pi; `$PI_CONFIG_DIR`, `$OMP_PROFILE`/`$PI_PROFILE`, and `$PI_CODING_AGENT_DIR` for oh-my-pi).
 
