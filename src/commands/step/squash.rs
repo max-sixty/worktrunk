@@ -4,7 +4,7 @@ use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::UserConfig;
-use worktrunk::git::Repository;
+use worktrunk::git::{Repository, WorkingTree};
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, println, progress_message,
     success_message,
@@ -174,13 +174,17 @@ pub fn handle_squash(
         )?;
     }
 
+    // Resolve HEAD once, so the span, the message's commit list, and the
+    // compare-and-swap that finally moves the branch all describe one tip.
+    let head_sha = wt.run_command(&["rev-parse", "HEAD"])?.trim().to_string();
+
     // Get merge base with target branch (required for squash)
     let merge_base = repo
-        .merge_base("HEAD", &span_target)?
+        .merge_base(&head_sha, &span_target)?
         .context("Cannot squash: no common ancestor with target branch")?;
 
     // Count commits since merge base
-    let commit_count = repo.count_commits(&merge_base, "HEAD")?;
+    let commit_count = repo.count_commits(&merge_base, &head_sha)?;
 
     // Check if there are staged changes in addition to commits
     let has_staged = wt.has_staged_changes()?;
@@ -216,7 +220,7 @@ pub fn handle_squash(
 
     // Either multiple commits OR single commit with staged changes - squash them
     // Get diff stats early for display in progress message
-    let range = format!("{}..HEAD", merge_base);
+    let range = format!("{merge_base}..{head_sha}");
 
     let commit_text = if commit_count == 1 {
         "commit"
@@ -228,7 +232,8 @@ pub fn handle_squash(
     let total_stats = if has_staged {
         wt.prepare_staged_diff(&merge_base).stats_summary()
     } else {
-        wt.prepare_commit_diff(&merge_base, "HEAD").stats_summary()
+        wt.prepare_commit_diff(&merge_base, &head_sha)
+            .stats_summary()
     };
 
     let with_changes = if has_staged {
@@ -255,7 +260,7 @@ pub fn handle_squash(
     };
     eprintln!("{}", progress_message(squash_progress));
 
-    // Create safety backup before potentially destructive reset if there are working tree changes
+    // Back up working-tree changes before the squash commit absorbs them
     if has_staged {
         let backup_message = format!("{} → {} (squash)", current_branch, span_target);
         let sha = wt.create_safety_backup(&backup_message)?;
@@ -297,18 +302,43 @@ pub fn handle_squash(
     let formatted_message = generator.format_message_for_display(&commit_message);
     eprintln!("{}", format_with_gutter(&formatted_message, None));
 
-    // Reset to merge base (soft reset stages all changes, including any already-staged uncommitted changes)
-    //
-    // TOCTOU note: Between this reset and the commit below, an external process could
-    // modify the staging area. This is extremely unlikely (requires precise timing) and
-    // the consequence is minor (unexpected content in squash commit). The commit message
-    // generated above accurately reflects the original commits being squashed, so any
-    // discrepancy would be visible in the diff. Considered acceptable risk.
-    repo.run_command(&["reset", "--soft", &merge_base])
-        .context("Failed to reset to merge base")?;
+    // Squash the way `git rebase` rewrites history: detach HEAD onto the merge
+    // base, commit there, and move the branch to the result. The branch keeps
+    // its commits until the commit exists, so a commit that fails — a
+    // `pre-commit` hook rejecting it, a broken signing setup — leaves the
+    // branch and its history where they were. Committing through `git commit`
+    // rather than plumbing is what keeps git's own hooks, `commit.cleanup`,
+    // signing, and identity resolution behaving as they do for any other
+    // commit; those hooks see a detached HEAD, as they do under `git rebase`.
+    let tree = wt.run_command(&["write-tree"])?.trim().to_string();
+    let base_tree = repo
+        .run_command(&["rev-parse", &format!("{merge_base}^{{tree}}")])?
+        .trim()
+        .to_string();
 
-    // Check if there are actually any changes to commit
-    if !wt.has_staged_changes()? {
+    // One compare-and-swap moves the branch, refusing if it moved since
+    // `head_sha` was read; ORIG_HEAD then keeps the pre-squash tip, as `git
+    // reset` and `git rebase` leave it.
+    let branch_ref = format!("refs/heads/{current_branch}");
+    let move_branch = |new_sha: &str, reflog_message: &str| -> anyhow::Result<()> {
+        wt.run_command(&[
+            "update-ref",
+            "-m",
+            reflog_message,
+            &branch_ref,
+            new_sha,
+            &head_sha,
+        ])
+        .with_context(|| cformat!("Failed to update <bold>{current_branch}</>"))?;
+        wt.run_command(&["update-ref", "ORIG_HEAD", &head_sha])?;
+        Ok(())
+    };
+
+    if tree == base_tree {
+        // The commits cancel out, so the squash produces no commit and the
+        // branch moves to the merge base, where `wt merge` finds nothing left
+        // to integrate.
+        move_branch(&merge_base, "wt squash: no net changes")?;
         eprintln!(
             "{}",
             info_message(format!(
@@ -318,12 +348,37 @@ pub fn handle_squash(
         return Ok(SquashResult::NoNetChanges);
     }
 
-    // Commit with the generated message
-    repo.run_command(&["commit", "-m", &commit_message])
-        .context("Failed to create squash commit")?;
+    // `--no-deref` moves HEAD itself, leaving the branch, the index and the
+    // working tree untouched; the compare-and-swap refuses if the branch moved
+    // while the message was being generated.
+    wt.run_command(&[
+        "update-ref",
+        "--no-deref",
+        "-m",
+        "wt squash: detach to build the squash commit",
+        "HEAD",
+        &merge_base,
+        &head_sha,
+    ])
+    .context("Failed to detach HEAD onto the merge base")?;
+
+    let commit_sha = match wt
+        .run_command(&["commit", "-m", &commit_message])
+        .context("Failed to create squash commit")
+        .and_then(|_| wt.run_command(&["rev-parse", "HEAD"]))
+    {
+        Ok(sha) => sha.trim().to_string(),
+        Err(err) => return Err(reattach_head(&wt, &branch_ref, err)),
+    };
+
+    let subject = commit_message.lines().next().unwrap_or_default();
+    if let Err(err) = move_branch(&commit_sha, &format!("wt squash: {subject}")) {
+        return Err(reattach_head(&wt, &branch_ref, err));
+    }
+    wt.run_command(&["symbolic-ref", "HEAD", &branch_ref])
+        .with_context(|| cformat!("Failed to put HEAD back on <bold>{current_branch}</>"))?;
 
     // Full SHA for the JSON payload, abbreviated form for the success line.
-    let commit_sha = repo.run_command(&["rev-parse", "HEAD"])?.trim().to_string();
     let commit_hash = repo.short_sha(&commit_sha)?;
 
     // Show success immediately after completing the squash
@@ -345,6 +400,20 @@ pub fn handle_squash(
     })
 }
 
+/// Put HEAD back on the branch after a failure that struck while it was
+/// detached for the squash commit, and return the failure that got us here.
+///
+/// The branch never moved, so a successful reattach restores the worktree
+/// exactly as it was and leaves nothing to report beyond `err`.
+fn reattach_head(wt: &WorkingTree<'_>, branch_ref: &str, err: anyhow::Error) -> anyhow::Error {
+    match wt.run_command(&["symbolic-ref", "HEAD", branch_ref]) {
+        Ok(_) => err,
+        Err(reattach_err) => err.context(cformat!(
+            "HEAD is left detached ({reattach_err:#}); to put it back, run <bold>git symbolic-ref HEAD {branch_ref}</>"
+        )),
+    }
+}
+
 /// Handle `wt step squash --show-prompt`
 ///
 /// Builds and outputs the squash prompt without running the LLM or squashing.
@@ -360,7 +429,7 @@ pub fn step_show_squash_prompt(
 /// Handle `wt step squash --dry-run`
 ///
 /// Renders the squash prompt, prints the LLM command, generates the message, and prints
-/// it without resetting, running hooks, or committing.
+/// it without staging, running hooks, or squashing.
 pub fn step_dry_run_squash(
     target: Option<&str>,
     stage: Option<StageMode>,

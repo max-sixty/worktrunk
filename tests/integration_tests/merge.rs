@@ -4433,6 +4433,86 @@ fn test_step_squash_no_net_changes_json(mut repo: TestRepo) {
     );
     let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_eq!(parsed["outcome"], "no_net_changes");
+    assert_eq!(
+        repo.git_output(&["rev-parse", "feature"]),
+        repo.git_output(&["rev-parse", "main"]),
+        "commits that cancel out squash to nothing, leaving the branch at the merge base"
+    );
+}
+
+/// The squash commit is made on a detached HEAD, so the branch keeps its
+/// commits until that commit exists: git's own `pre-commit` hook still gates
+/// the squash, and rejecting it leaves the branch, HEAD and the history
+/// exactly as they were. Without the hook the same squash lands on the branch.
+#[rstest]
+fn test_step_squash_failed_commit_leaves_branch_intact(repo_with_multi_commit_feature: TestRepo) {
+    let repo = &repo_with_multi_commit_feature;
+    let feature_wt = &repo.worktrees["feature"];
+    let feature_dir = feature_wt.to_str().unwrap();
+
+    let hook = repo.root_path().join(".git/hooks/pre-commit");
+    fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    fs::write(&hook, "#!/bin/sh\necho REJECTED-BY-GIT-HOOK >&2\nexit 1\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let squash = || {
+        repo.wt_command()
+            .args(["step", "squash", "--no-hooks"])
+            .current_dir(feature_wt)
+            .env(
+                "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+                "cat >/dev/null && echo 'squash: combined'",
+            )
+            .output()
+            .unwrap()
+    };
+    let original_tip = repo.git_output(&["rev-parse", "feature"]);
+
+    let output = squash();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success() && stderr.contains("REJECTED-BY-GIT-HOOK"),
+        "git's pre-commit hook must gate the squash commit: {stderr}"
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "feature"]),
+        original_tip,
+        "a rejected squash commit must leave the branch at its original tip"
+    );
+    assert_eq!(
+        repo.git_output(&["-C", feature_dir, "symbolic-ref", "HEAD"]),
+        "refs/heads/feature",
+        "HEAD must be back on the branch"
+    );
+
+    fs::remove_file(&hook).unwrap();
+    let output = squash();
+    assert!(
+        output.status.success(),
+        "squash failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "feature^"]),
+        repo.git_output(&["rev-parse", "main"]),
+        "the squash commit sits directly on the merge base"
+    );
+    assert_eq!(
+        repo.git_output(&["log", "-1", "--format=%s", "feature"]),
+        "squash: combined"
+    );
+    assert_eq!(
+        repo.git_output(&["-C", feature_dir, "symbolic-ref", "HEAD"]),
+        "refs/heads/feature"
+    );
+    assert_eq!(
+        repo.git_output(&["-C", feature_dir, "rev-parse", "ORIG_HEAD"]),
+        original_tip
+    );
 }
 
 /// `step rebase --format=json` reports `rebased` (not `fast_forwarded`) when

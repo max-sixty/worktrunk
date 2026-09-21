@@ -904,9 +904,9 @@ impl SquashInputs<'_> {
 
         // Diff `merge_base` against the index, because the index is what the
         // squash commits: `handle_squash` stages the working tree before
-        // generating this message and soft-resets to `merge_base` afterwards, so
-        // the index already holds everything the one resulting commit will
-        // record. `merge_base..HEAD` would name only the pre-existing commits
+        // generating this message and writes the squash commit's tree from the
+        // index afterwards, so the index already holds everything the one
+        // resulting commit will record. `merge_base..HEAD` would name only the pre-existing commits
         // and omit the working-tree changes folded into the same commit — and
         // for `wt merge` on a dirty worktree those changes are the whole reason
         // it ran, so the message came out describing the branch's older commits
