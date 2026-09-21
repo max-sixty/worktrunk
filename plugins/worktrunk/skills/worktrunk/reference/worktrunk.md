@@ -5,7 +5,8 @@ workflows**.
 
 Worktrunk's three core commands make worktrees as easy as branches.
 Plus, Worktrunk has a bunch of quality-of-life features to simplify working
-with many parallel changes, including hooks to automate local workflows.
+with many parallel changes, including hooks to automate local workflows, and
+copy-on-write build caches.
 
 A quick demo:
 
