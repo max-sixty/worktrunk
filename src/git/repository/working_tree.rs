@@ -1032,13 +1032,32 @@ impl<'a> WorkingTree<'a> {
     ///
     /// Note: The index is per-worktree in git, so this checks this specific
     /// worktree's staging area.
+    ///
+    /// Plumbing, because `wt` branches on the answer rather than showing it:
+    /// porcelain `git diff --cached` honors `submodule.<name>.ignore`, and
+    /// under `= all` it called a staged submodule pointer bump no change. So
+    /// `wt step commit` bailed "Nothing to commit" on a bump its own
+    /// `--dry-run` rendered, and `wt step squash` took the already-squashed
+    /// exit and left the bump uncommitted for `wt merge` to miss.
+    ///
+    /// `--ita-invisible-in-index` keeps an `add -N` path unstaged, which is
+    /// the answer porcelain gave and the one [`Self::prepare_staged_diff`]
+    /// renders.
     pub fn has_staged_changes(&self) -> anyhow::Result<bool> {
-        // Exit code 0 = no diff (no staged changes), exit code 1 = diff exists (has staged changes)
-        // run_command returns Ok on exit 0, Err on non-zero
-        // So: Err means has changes
-        Ok(self
-            .run_command(&["diff", "--cached", "--quiet", "--exit-code"])
-            .is_err())
+        let base = self.index_base()?;
+        let args = PlumbingDiff::Index.args(&[
+            "--quiet",
+            "--cached",
+            "--ita-invisible-in-index",
+            &base,
+            "--",
+        ]);
+        let output = self.run_command_output(&args)?;
+        match output.status.code() {
+            Some(0) => Ok(false),
+            Some(1) => Ok(true),
+            _ => Err(CommandError::from_failed_output("git", &args, &output).into()),
+        }
     }
 
     /// Check whether this worktree has initialized submodules.
