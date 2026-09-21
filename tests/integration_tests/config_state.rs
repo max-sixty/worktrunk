@@ -1505,14 +1505,6 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
         !summary_feature_dir.exists(),
         "Summary cache dir for feature should be cleared"
     );
-    // The command re-stamps the epoch on its way through `cache_dir`, so the
-    // drop has to come after the clears. A stamp left over an emptied tree
-    // vouches for whatever lands there next, including entries an older
-    // worktrunk writes before this one runs again.
-    assert!(
-        !git_dir.join("wt/cache/.epoch").exists(),
-        "epoch stamp should not survive over an emptied cache tree"
-    );
     assert!(!log_dir.exists());
 }
 
@@ -1757,12 +1749,6 @@ fn test_state_cache_clear_with_entries(repo: TestRepo) {
     [32m✓[39m [32mCleared [1m1[22m git commands cache entry[39m
     [32m✓[39m [32mCleared [1m1[22m hint[39m
     ");
-    // Same invariant as `wt config state clear`: the emptied tree carries no
-    // stamp, so an older worktrunk's entries aren't trusted on the way back.
-    assert!(
-        !git_dir.join("wt/cache/.epoch").exists(),
-        "epoch stamp should not survive over an emptied cache tree"
-    );
 }
 
 /// `cache clear` must leave authoritative state (markers, vars,

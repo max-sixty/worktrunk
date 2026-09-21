@@ -145,10 +145,17 @@ awk '/^## /{if (f) exit; f=1} f' CHANGELOG.md \
 
 **Calibrate against the ceiling, not against the last release.** Length ratchets: each release is drafted beside the previous section, and an abstract rule loses to a concrete neighbouring exemplar every time. Entries grew from 49 to 101 words on average across five releases while this skill said "be brief" throughout. Read the previous section for what it drifted to, then ignore it and write to the ceiling.
 
+**Entries describe.** An entry records what the old behavior was and what it is now. Give imperative guidance only for a material issue that affects a sizable share of users, which is rare; otherwise remediation belongs in the PR description.
+
 **No editorial framing.** Describe what changed, not what was wrong with the previous decision in subjective terms. Avoid words like "sledgehammer", "ugly", "noisy", "wrong" applied to past code. State the prior behavior neutrally and the new behavior plainly.
 
 **Good:** "Removed `.pi/` from the default excludes list; users who need it can add it via `[step.copy-ignored]`."
 **Bad:** "Removed `.pi/` — a sledgehammer fix from an unrelated debugging session that has no place as a project-agnostic default."
+
+**Name the conditions a bug needed, so the entry carries its magnitude.** A correctness or data-loss entry reads as though it fired for everyone unless it says what it took. These are usually narrow — a non-default git config, a command run from a particular place, a change of a particular shape — and naming each condition lets a reader decide in one pass whether it reached them. Join the conditions with "and": "X set *and* run from Y" is a corner case, while "X or Y" reads as two common triggers. Establish each one by reproducing against the previous release's binary rather than reading it off the diff — a condition assumed is a condition the entry overstates, and overstating a data-loss bug is its own kind of inaccuracy.
+
+**Good:** "`diff.relative` set *and* the command run from a subdirectory the branch's changes sat entirely outside"
+**Bad:** "`diff.relative` could hide a branch's changes from the integration check"
 
 ### Credit External Contributors
 

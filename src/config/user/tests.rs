@@ -3083,9 +3083,10 @@ fn test_with_locked_mutation_propagates_write_error() {
     let dir_for_closure = config_dir.clone();
     let mut config = UserConfig::default();
     let err = config
-        .with_locked_mutation(&config_path, move |_config| {
+        .with_locked_mutation(&config_path, move |config| {
             std::fs::set_permissions(&dir_for_closure, std::fs::Permissions::from_mode(0o555))
                 .unwrap();
+            config.skip_shell_integration_prompt = true;
             Some(super::persistence::ConfigEdit {
                 tables: vec![],
                 key: "skip-shell-integration-prompt",
@@ -3097,6 +3098,35 @@ fn test_with_locked_mutation_propagates_write_error() {
     assert!(
         msg.contains("Failed to write config file"),
         "expected write error, got: {msg}"
+    );
+    assert_eq!(std::fs::read_to_string(&config_path).unwrap(), "# valid\n");
+}
+
+/// A mutator sets a value and returns the edit that writes it, so the file
+/// loads back as the config the mutation asked for. One whose edit says
+/// something else is refused rather than written — the same test both candidate
+/// documents face, whether or not writing them takes the migrations along.
+#[test]
+fn test_with_locked_mutation_refuses_an_edit_that_does_not_load_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(&config_path, "# valid\n").unwrap();
+
+    let mut config = UserConfig::default();
+    let err = config
+        .with_locked_mutation(&config_path, |_config| {
+            // The edit, without the matching change to the config beside it.
+            Some(super::persistence::ConfigEdit {
+                tables: vec![],
+                key: "skip-shell-integration-prompt",
+                value: true.into(),
+            })
+        })
+        .unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("skip-shell-integration-prompt would not load as written"),
+        "the refusal should name the key, got: {msg}"
     );
     assert_eq!(std::fs::read_to_string(&config_path).unwrap(), "# valid\n");
 }
