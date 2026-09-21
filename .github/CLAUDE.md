@@ -102,8 +102,8 @@ rather than as the route:
   `tend-setup` installs too. 0.2.14 deprecated the key and runs its commands as
   an ordinary `runner` step after `setup:`; #4222 kept it so a release
   reverting 0.2.14 would still find it. Its closing probe still earns its place
-  — it asserts the five tools the pre-merge gate needs, whichever step
-  installed them.
+  — it asserts the four tools the pre-merge gate needs, whichever step
+  installed them, plus `nix` for the weekly toolchain bump.
 
 Being on PATH gets the *binary* across, not what it talks to. `nix` resolves
 for the agent but cannot reach the daemon: `socket(AF_UNIX, …)` is blocked, so

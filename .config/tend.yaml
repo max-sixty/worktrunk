@@ -16,8 +16,9 @@ setup:
 # the job with an `::error::` annotation naming it. No tend-outage issue is
 # filed any more — that is `report_failure.py`, a step inside the tend action
 # under `if: failure()`, and the generator now emits this block ahead of that
-# action, so a failure here skips it. The probe asserts all five because all
-# five are what the pre-merge gate needs, whichever step installed them.
+# action, so a failure here skips it. Of the five tools it asserts, four are
+# what the pre-merge gate needs, whichever step installed them; `nix` is for
+# the weekly toolchain bump's `flake.lock` refresh.
 sandbox_setup:
 - mkdir -p ~/.local/bin
 - uv tool install --quiet pre-commit
