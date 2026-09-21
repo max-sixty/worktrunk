@@ -10,21 +10,21 @@
 
 - **Messages name the destination, and end with the command to run**: without shell integration, `wt merge` and `wt remove` printed `Cannot change directory — shell integration not installed` and no path; the warning now names the worktree, as `wt switch` already did. "Cannot determine default branch" had three wordings, and three recovery hints put their command first rather than last. ([#4163](https://github.com/max-sixty/worktrunk/pull/4163), [#4155](https://github.com/max-sixty/worktrunk/pull/4155), thanks @blrain3 for reporting)
 
-- **`wt config update --output <path>` writes the path it names**: a destination already holding a file is replaced, as `cp` and a shell redirect do, and so is the config being migrated, which used to be refused when the migration dropped `approved-commands`. Those approvals move to approvals.toml first, exactly as the in-place update moves them. ([#4153](https://github.com/max-sixty/worktrunk/pull/4153), [#4204](https://github.com/max-sixty/worktrunk/pull/4204))
-
 - **`/wt-switch-create` no longer stalls at Claude Code's path-entry dialog**: Claude Code confirms every entry outside `.claude/worktrees/`, which is every Worktrunk worktree, so a background session waited for someone to attach. The plugin now approves entry into a worktree at its `worktree-path` location, and reads a bare name as the repo or the branch. ([#4158](https://github.com/max-sixty/worktrunk/pull/4158), [#4159](https://github.com/max-sixty/worktrunk/pull/4159))
 
-### Fixed
+- **`wt config update --output` accepts the config being migrated**: it refused that path when the migration dropped `approved-commands`. Those approvals now move to approvals.toml first, exactly as the in-place update moves them. ([#4204](https://github.com/max-sixty/worktrunk/pull/4204))
 
-- **Diff display config no longer changes what Worktrunk reads**: `color.ui = always` and `diff.external` reached the commit, squash, and summary prompts. Two corner cases could also hide a branch's changes from the integration check, so `wt remove` deleted the branch without `-D`: `diff.relative` set *and* the command run from a subdirectory the branch's changes sat entirely outside, or `submodule.<name>.ignore` set (git config or `.gitmodules`) *and* a submodule bump as the branch's only change. Every diff Worktrunk parses now runs plumbing, which ignores that configuration. ([#4146](https://github.com/max-sixty/worktrunk/pull/4146), [#4147](https://github.com/max-sixty/worktrunk/pull/4147))
+### Fixed
 
 - **`wt merge` on a dirty worktree describes what it commits**: the generated message covered the branch's earlier commits and said nothing about the work the merge had just staged into the same commit. `wt step squash --dry-run` now previews what the run would commit, as `wt step commit --dry-run` does. ([#4178](https://github.com/max-sixty/worktrunk/pull/4178))
 
 - **A config save no longer rewrites the rest of your config**: declining a prompt, or setting the commit-generation command, rewrote the whole file, dropping values written at their default and re-spelling hook pipelines and dropping their comments. It also reloaded that file over the in-memory config, so `wt step commit --config-set 'commit.stage="none"'` staged everything once it had asked about commit generation. ([#4160](https://github.com/max-sixty/worktrunk/pull/4160), [#4156](https://github.com/max-sixty/worktrunk/pull/4156), [#4151](https://github.com/max-sixty/worktrunk/pull/4151))
 
-- **Valid empty per-project sections stop warning**: `[projects."host/org/repo".list]` is accepted on load, yet every command reported `unknown field projects.host/org/repo.list` for it — as did the other six per-project sections. Fixes [#4115](https://github.com/max-sixty/worktrunk/issues/4115). ([#4123](https://github.com/max-sixty/worktrunk/pull/4123), thanks @zach-hammad-vs for reporting)
-
 - **Auto-staging names a wholly untracked directory once**: since 0.78.0 the warning expanded each one into its files, so `wt step commit`, `wt step squash`, and `wt merge` listed 300 paths for a directory of 300 new files. The listing also stops at ten rows, with a hint counting the rest. ([#4152](https://github.com/max-sixty/worktrunk/pull/4152), thanks @Duang777)
+
+- **Diff display config no longer changes what Worktrunk reads**: `color.ui = always` and `diff.external` reached the commit, squash, and summary prompts. Two corner cases also hid a branch's changes from the integration check, so `wt remove` and `wt step prune` deleted an unmerged branch: `diff.relative` set *and* a Worktrunk command run from a subdirectory the branch's changes sat outside, or `submodule.<name>.ignore` set (git config or `.gitmodules`) *and* a submodule bump as its only change. ([#4146](https://github.com/max-sixty/worktrunk/pull/4146), [#4147](https://github.com/max-sixty/worktrunk/pull/4147))
+
+- **Valid empty per-project sections stop warning**: `[projects."host/org/repo".list]` is accepted on load, yet every command reported `unknown field projects.host/org/repo.list` for it — as did the other six per-project sections. Fixes [#4115](https://github.com/max-sixty/worktrunk/issues/4115). ([#4123](https://github.com/max-sixty/worktrunk/pull/4123), thanks @zach-hammad-vs for reporting)
 
 - **An unstaged rename counts as a change**: after `git add -N`, git reports the rename in the worktree column (` R`), which Worktrunk read only in the index column. A worktree whose only change was such a rename showed clean in `wt list`, and `wt merge`'s overlap check on the destination misparsed the old path. ([#4190](https://github.com/max-sixty/worktrunk/pull/4190), [#4191](https://github.com/max-sixty/worktrunk/pull/4191), thanks @Duang777)
 
@@ -35,6 +35,8 @@
 - **The picker preview renders the whole pane**: a fenced code block with no closing fence dropped everything from the fence to the end of a PR description or comment, and the pane rendered one column wider than skim paints, so a wrapped line flush against the right edge lost its last character. ([#4178](https://github.com/max-sixty/worktrunk/pull/4178), [#4183](https://github.com/max-sixty/worktrunk/pull/4183))
 
 - **`wt config plugins pi install` expands `~` in `$PI_CODING_AGENT_DIR`**: Pi expands it, so `PI_CODING_AGENT_DIR="~/x"` means a directory under home, where Worktrunk created a literal `~` directory under the current directory. ([#4151](https://github.com/max-sixty/worktrunk/pull/4151))
+
+- **`wt config create` no longer replaces a dangling symlink at the config path**: it wrote a regular file over the link, detaching whatever owns it. It now fails and names the link. ([#4204](https://github.com/max-sixty/worktrunk/pull/4204))
 
 ### Documentation
 
