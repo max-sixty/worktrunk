@@ -18,9 +18,9 @@ List all worktrees:
 $ wt list
   Branch       Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message
 @ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      6814f02   30m  Add API tests
-^ main             ^⇅                                    ⇡1  ⇣1  41ee083    4d  Merge fix-auth: h…
-+ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68    5h  Add secure token…
-+ fix-typos        _|                                      |     41ee083    4d  Merge fix-auth: h…
+^ main             ^⇅                                    ⇡1  ⇣1  41ee083    4d  Merge fix-auth: ha…
++ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68    5h  Add secure token s…
++ fix-typos        _|                                      |     41ee083    4d  Merge fix-auth: ha…
 
 ○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path
 ```
@@ -29,11 +29,11 @@ Include CI status and LLM summaries:
 
 ```console
 $ wt list --full
-  Branch       Status      HEAD±     main↕    main…±    Summary                      Remote⇅  CI
-@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archi…   ⇡3      #412
-^ main             ^⇅                                                                 ⇡1  ⇣1  #
-+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-…     |     #408
-+ fix-typos        _|                                                                   |     #410
+  Branch       Status      HEAD±     main↕    main…±    Summary                       Remote⇅  CI
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archit…   ⇡3      #412
+^ main             ^⇅                                                                  ⇡1  ⇣1  #
++ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-t…     |     #408
++ fix-typos        _|                                                                    |     #410
 
 ○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path, Commit, Age, Message
 ```
@@ -42,11 +42,11 @@ Include branches that don't have worktrees:
 
 ```console
 $ wt list --branches --full
-  Branch       Status      HEAD±     main↕    main…±    Summary                      Remote⇅  CI
-@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archi…   ⇡3      #412
-^ main             ^⇅                                                                 ⇡1  ⇣1  #
-+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-…     |     #408
-+ fix-typos        _|                                                                   |     #410
+  Branch       Status      HEAD±     main↕    main…±    Summary                       Remote⇅  CI
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archit…   ⇡3      #412
+^ main             ^⇅                                                                  ⇡1  ⇣1  #
++ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-t…     |     #408
++ fix-typos        _|                                                                    |     #410
 / exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and…
 / wip             /↕                 ↑1  ↓1   +33       Start API documentation
 

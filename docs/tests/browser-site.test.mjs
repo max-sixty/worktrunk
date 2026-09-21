@@ -187,7 +187,7 @@ test('mobile pages stay viewport-bound while code remains readable', { timeout: 
 test('desktop code examples fit the content column', { timeout: 60_000 }, async () => {
   const browser = await webkit.launch();
   try {
-    for (const width of [1152, 1376, 1920]) {
+    for (const width of [1152, 1376, 1401, 1920]) {
       const page = await browser.newPage({ viewport: { width, height: 900 } });
       for (const route of await sitemapRoutes()) {
         await page.goto(`${baseUrl}${route}`, { waitUntil: 'domcontentloaded' });
@@ -226,6 +226,43 @@ test('desktop code examples fit the content column', { timeout: 60_000 }, async 
       }
       await page.close();
     }
+
+    const page = await browser.newPage({ viewport: { width: 1920, height: 900 } });
+    await page.goto(baseUrl + '/', { waitUntil: 'domcontentloaded' });
+    const gutters = await page.evaluate(() => {
+      const frame = [...document.querySelectorAll('.expressive-code .frame')]
+        .find((candidate) => candidate.querySelector('.wt-command')?.textContent.trim() === 'wt list');
+      const pre = frame.querySelector('pre').getBoundingClientRect();
+      const textBounds = [...frame.querySelectorAll('.ec-line')].map((line) => {
+        const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+        let node;
+        let first;
+        let last;
+        while ((node = walker.nextNode())) {
+          if (!node.textContent) continue;
+          first ??= node;
+          last = node;
+        }
+        if (!first) return null;
+        const firstRange = document.createRange();
+        const lastRange = document.createRange();
+        firstRange.selectNodeContents(first);
+        lastRange.selectNodeContents(last);
+        return {
+          left: firstRange.getBoundingClientRect().left,
+          right: lastRange.getBoundingClientRect().right,
+        };
+      }).filter(Boolean);
+      const widest = textBounds.reduce((current, candidate) => (
+        candidate.right - candidate.left > current.right - current.left ? candidate : current
+      ));
+      return { left: widest.left - pre.left, right: pre.right - widest.right };
+    });
+    assert.ok(
+      gutters.right > 0 && gutters.right < gutters.left,
+      `99-column terminal gutters are ${gutters.left}px left and ${gutters.right}px right`,
+    );
+    await page.close();
   } finally {
     await browser.close();
   }
