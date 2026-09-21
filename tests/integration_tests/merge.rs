@@ -3175,28 +3175,64 @@ fn test_squash_prompt_covers_what_its_run_would_commit(repo_with_multi_commit_fe
 
 /// The commit and squash prompts split git's diff into per-file sections, so
 /// the user's diff display settings must not change what the LLM receives.
+///
+/// The prompt is captured from the generation command's stdin rather than from
+/// `--show-prompt`'s stdout, which is where the `color.ui` case has to be read:
+/// `.output()` pipes stdout, anstream strips ANSI on a pipe, and the two runs
+/// then agree byte for byte whether or not the diff is colored. Reading the
+/// bytes `wt` actually hands the command is the only place the difference
+/// survives. `--dry-run` stages into a temp index, so neither run mutates the
+/// repository the other reads.
 #[rstest]
-fn test_show_prompt_ignores_diff_display_config(repo_with_multi_commit_feature: TestRepo) {
+fn test_generation_prompt_ignores_diff_display_config(repo_with_multi_commit_feature: TestRepo) {
     let repo = repo_with_multi_commit_feature;
-    let feature_wt = repo.worktree_path("feature");
+    let feature_wt = repo.worktree_path("feature").to_path_buf();
     fs::write(feature_wt.join("staged.txt"), "staged content\n").unwrap();
     repo.git_command()
         .args(["add", "staged.txt"])
-        .current_dir(feature_wt)
+        .current_dir(&feature_wt)
         .run()
         .unwrap();
-    let prompts = || {
-        ["commit", "squash"].map(|step| {
-            let output =
-                make_snapshot_cmd(&repo, "step", &[step, "--show-prompt"], Some(feature_wt))
-                    .output()
-                    .unwrap();
-            assert!(output.status.success(), "{output:?}");
-            String::from_utf8(output.stdout).unwrap()
-        })
+
+    // Captures live under `.git/`, which no diff `wt` builds ever reads.
+    let capture_dir = repo.root_path().join(".git");
+    let capture_for = |label: &str, step: &str| capture_dir.join(format!("prompt-{label}-{step}"));
+
+    // One command serves both steps; `{{ step }}` is not a template here, so
+    // the file name comes from the step's own argv via `$0`-free shell.
+    let prompts = |label: &str| {
+        for step in ["commit", "squash"] {
+            let target = capture_for(label, step);
+            let target = target.to_slash_lossy().replace('\\', r"\\");
+            assert!(
+                !target.contains('\''),
+                "capture path must not contain single quotes: {target}"
+            );
+            repo.write_test_config(&format!(
+                "\n[commit.generation]\ncommand = \"cat > '{target}'; echo summary\"\n"
+            ));
+            let output = make_snapshot_cmd(
+                &repo,
+                "step",
+                &[step, "--dry-run", "--yes"],
+                Some(&feature_wt),
+            )
+            .output()
+            .unwrap();
+            assert!(
+                output.status.success(),
+                "{step} --dry-run failed: {output:?}"
+            );
+        }
+        ["commit", "squash"].map(|step| fs::read(capture_for(label, step)).unwrap())
     };
 
-    let default_prompts = prompts();
+    let default_prompts = prompts("default");
+    assert!(
+        !default_prompts[0].is_empty() && !default_prompts[1].is_empty(),
+        "the generation command must have received a prompt to compare"
+    );
+
     for (key, value) in [
         ("color.ui", "always"),
         ("diff.external", "echo"),
@@ -3205,7 +3241,14 @@ fn test_show_prompt_ignores_diff_display_config(repo_with_multi_commit_feature: 
         repo.run_git(&["config", key, value]);
     }
 
-    assert_eq!(prompts(), default_prompts);
+    let configured_prompts = prompts("configured");
+    for (step, prompt) in ["commit", "squash"].iter().zip(&configured_prompts) {
+        assert!(
+            !prompt.contains(&0x1b),
+            "under `color.ui = always` the {step} prompt must carry no escape bytes"
+        );
+    }
+    assert_eq!(configured_prompts, default_prompts);
 }
 
 #[rstest]
