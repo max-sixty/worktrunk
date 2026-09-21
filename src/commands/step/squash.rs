@@ -368,15 +368,14 @@ pub fn handle_squash(
         .and_then(|_| wt.run_command(&["rev-parse", "HEAD"]))
     {
         Ok(sha) => sha.trim().to_string(),
-        Err(err) => return Err(reattach_head(&wt, &branch_ref, err)),
+        Err(err) => return Err(reattach_after_failure(&wt, &branch_ref, err)),
     };
 
     let subject = commit_message.lines().next().unwrap_or_default();
     if let Err(err) = move_branch(&commit_sha, &format!("wt squash: {subject}")) {
-        return Err(reattach_head(&wt, &branch_ref, err));
+        return Err(reattach_after_failure(&wt, &branch_ref, err));
     }
-    wt.run_command(&["symbolic-ref", "HEAD", &branch_ref])
-        .with_context(|| cformat!("Failed to put HEAD back on <bold>{current_branch}</>"))?;
+    reattach_head(&wt, &branch_ref)?;
 
     // Full SHA for the JSON payload, abbreviated form for the success line.
     let commit_hash = repo.short_sha(&commit_sha)?;
@@ -400,17 +399,30 @@ pub fn handle_squash(
     })
 }
 
-/// Put HEAD back on the branch after a failure that struck while it was
-/// detached for the squash commit, and return the failure that got us here.
+/// Put HEAD back on the branch it was detached from for the squash commit.
+fn reattach_head(wt: &WorkingTree<'_>, branch_ref: &str) -> anyhow::Result<()> {
+    wt.run_command(&["symbolic-ref", "HEAD", branch_ref])
+        .with_context(|| {
+            cformat!(
+                "HEAD is left detached; to put it back, run <bold>git symbolic-ref HEAD {branch_ref}</>"
+            )
+        })?;
+    Ok(())
+}
+
+/// Reattach HEAD after a failure that struck while it was detached, and return
+/// the failure that got us here.
 ///
 /// The branch never moved, so a successful reattach restores the worktree
 /// exactly as it was and leaves nothing to report beyond `err`.
-fn reattach_head(wt: &WorkingTree<'_>, branch_ref: &str, err: anyhow::Error) -> anyhow::Error {
-    match wt.run_command(&["symbolic-ref", "HEAD", branch_ref]) {
-        Ok(_) => err,
-        Err(reattach_err) => err.context(cformat!(
-            "HEAD is left detached ({reattach_err:#}); to put it back, run <bold>git symbolic-ref HEAD {branch_ref}</>"
-        )),
+fn reattach_after_failure(
+    wt: &WorkingTree<'_>,
+    branch_ref: &str,
+    err: anyhow::Error,
+) -> anyhow::Error {
+    match reattach_head(wt, branch_ref) {
+        Ok(()) => err,
+        Err(reattach_err) => err.context(format!("{reattach_err:#}")),
     }
 }
 
