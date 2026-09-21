@@ -28,10 +28,13 @@ use super::{
 /// Project IDs already resolved in this process, keyed by the worktree root
 /// `glab` was run from.
 ///
-/// Keyed by path rather than held in a bare static because tests run many
-/// commands in one process, matching the path-keyed process-wide caches in
-/// `git::repository`. A lookup that failed caches as `None`: retrying it once
-/// per row is the cost this exists to remove.
+/// Keyed by path rather than held in a bare static, matching the path-keyed
+/// process-wide caches in `git::repository`: two `Repository` instances
+/// pointed at the same path see the same answer, and a second repository
+/// resolved in the same process can't inherit the first's. A failed lookup
+/// caches as `None` too — retrying it per row is the cost this exists to
+/// remove — so a transient failure degrades MR detection for the rest of the
+/// process.
 static GITLAB_PROJECT_IDS: LazyLock<DashMap<PathBuf, Option<u64>>> = LazyLock::new(DashMap::new);
 
 /// Get the GitLab project ID for a repository.
