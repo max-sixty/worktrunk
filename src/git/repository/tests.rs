@@ -1003,6 +1003,17 @@ fn signs_commits_follows_gits_reading_per_worktree() {
     );
     assert!(!signs(&feature_path), "the feature worktree opted out");
     assert!(signs(test.root_path()), "the opt-out stays in its worktree");
+
+    // A value git can't read as a boolean is an error, not "unsigned" —
+    // `git commit` would refuse the same way.
+    test.run_git(&["config", "commit.gpgSign", "maybe"]);
+    assert!(
+        Repository::at(test.root_path())
+            .unwrap()
+            .signs_commits()
+            .is_err(),
+        "a value that isn't a boolean must surface as an error"
+    );
 }
 
 #[test]

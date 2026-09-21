@@ -318,7 +318,9 @@ pub fn handle_squash(
 
     // One compare-and-swap moves the branch, refusing if it moved since
     // `head_sha` was read; ORIG_HEAD then keeps the pre-squash tip, as `git
-    // reset` and `git rebase` leave it.
+    // reset` and `git rebase` leave it. That write is best-effort, exactly as
+    // `git reset` makes it: the branch has already moved by then, so failing
+    // over ORIG_HEAD would report a squash that landed as an error.
     let branch_ref = format!("refs/heads/{current_branch}");
     let move_branch = |new_sha: &str, reflog_message: &str| -> anyhow::Result<()> {
         wt.run_command(&[
@@ -330,7 +332,7 @@ pub fn handle_squash(
             &head_sha,
         ])
         .with_context(|| cformat!("Failed to update <bold>{current_branch}</>"))?;
-        wt.run_command(&["update-ref", "ORIG_HEAD", &head_sha])?;
+        let _ = wt.run_command(&["update-ref", "ORIG_HEAD", &head_sha]);
         Ok(())
     };
 
@@ -351,6 +353,12 @@ pub fn handle_squash(
     // `--no-deref` moves HEAD itself, leaving the branch, the index and the
     // working tree untouched; the compare-and-swap refuses if the branch moved
     // while the message was being generated.
+    //
+    // TOCTOU note: `write-tree` above snapshots the index, and the commit below
+    // re-reads it, so an external process staging into this worktree in between
+    // lands in the squash commit. Precise timing, and the consequence is minor
+    // — unexpected content in a commit whose diff the user is about to see, and
+    // whose message still describes the commits being folded in.
     wt.run_command(&[
         "update-ref",
         "--no-deref",
