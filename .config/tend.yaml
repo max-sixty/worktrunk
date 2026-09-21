@@ -13,8 +13,11 @@ setup:
 # into the sandbox's own home. It now duplicates `tend-setup`'s own pre-commit
 # step and goes when the key does. The probe is what still earns its place:
 # the block runs under `bash -eo pipefail`, so a tool that goes missing fails
-# the job and files a tend-outage issue naming it. It asserts all five because
-# all five are what the pre-merge gate needs, whichever step installed them.
+# the job with an `::error::` annotation naming it. No tend-outage issue is
+# filed any more — that is `report_failure.py`, a step inside the tend action
+# under `if: failure()`, and the generator now emits this block ahead of that
+# action, so a failure here skips it. The probe asserts all five because all
+# five are what the pre-merge gate needs, whichever step installed them.
 sandbox_setup:
 - mkdir -p ~/.local/bin
 - uv tool install --quiet pre-commit

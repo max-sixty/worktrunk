@@ -102,9 +102,9 @@ runs:
     # agent inherits `nix` on the same rule as `nu` above.
     #
     # Every tend workflow installs it, though only the weekly one runs `nix`.
-    # `.config/tend.yaml`'s probe asserts `nix` from inside the sandbox and
-    # runs everywhere, so gating this step to the weekly workflow would fail
-    # the rest. It costs 4 s of the action's ~50 s.
+    # `.config/tend.yaml`'s probe asserts `nix` and runs everywhere, so gating
+    # this step to the weekly workflow would fail the rest. It costs 4 s of the
+    # action's ~50 s.
     #
     # The multi-user daemon install is what this repo standardized on: root
     # owns /nix and the store is reached through the daemon. The ~1 s
