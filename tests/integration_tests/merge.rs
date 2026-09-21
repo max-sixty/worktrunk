@@ -3198,8 +3198,9 @@ fn test_generation_prompt_ignores_diff_display_config(repo_with_multi_commit_fea
     let capture_dir = repo.root_path().join(".git");
     let capture_for = |label: &str, step: &str| capture_dir.join(format!("prompt-{label}-{step}"));
 
-    // One command serves both steps; `{{ step }}` is not a template here, so
-    // the file name comes from the step's own argv via `$0`-free shell.
+    // One config write per step, each pointing `commit.generation.command` at
+    // that step's own capture path, so the two prompts can't overwrite each
+    // other.
     let prompts = |label: &str| {
         for step in ["commit", "squash"] {
             let target = capture_for(label, step);

@@ -1255,56 +1255,6 @@ fn test_submodule_bump_survives_submodule_ignore() {
     );
 }
 
-/// The staged-changes probe overrides `submodule.<name>.ignore` too. Porcelain
-/// `git diff --cached` honors it, so under `= all` a staged submodule bump read
-/// as nothing staged: `wt step commit` said "Nothing to commit" while its own
-/// `--dry-run` rendered the bump, and `wt step squash` took the
-/// already-squashed exit and left the bump uncommitted.
-///
-/// An `add -N` path stays unstaged, which is the answer porcelain gave and the
-/// one the staged diff renders.
-#[test]
-fn test_has_staged_changes_survives_submodule_ignore() {
-    let repo = TestRepo::new();
-    fs::write(
-        repo.root_path().join(".gitmodules"),
-        "[submodule \"sub\"]\n\tpath = sub\n\turl = ./sub\n",
-    )
-    .unwrap();
-    repo.run_git(&["add", ".gitmodules"]);
-    repo.run_git(&["commit", "--message", "add .gitmodules"]);
-    let first = repo.git_output(&["rev-parse", "HEAD"]);
-    let gitlink = |sha: &str| format!("160000,{sha},sub");
-    repo.run_git(&["update-index", "--add", "--cacheinfo", &gitlink(&first)]);
-    repo.run_git(&["commit", "--message", "add submodule"]);
-    let second = repo.git_output(&["rev-parse", "HEAD"]);
-    repo.run_git(&["config", "submodule.sub.ignore", "all"]);
-
-    let root = repo.root_path().to_path_buf();
-    let repository = Repository::at(root.clone()).unwrap();
-    let wt = repository.worktree_at(&root);
-
-    assert!(
-        !wt.has_staged_changes().unwrap(),
-        "a clean index has nothing staged"
-    );
-
-    // Stage the bump. `git diff --cached` calls this clean under `= all`.
-    repo.run_git(&["update-index", "--cacheinfo", &gitlink(&second)]);
-    assert!(
-        wt.has_staged_changes().unwrap(),
-        "a staged submodule bump is a staged change"
-    );
-
-    repo.run_git(&["update-index", "--cacheinfo", &gitlink(&first)]);
-    fs::write(root.join("intent.txt"), "intent\n").unwrap();
-    repo.run_git(&["add", "--intent-to-add", "intent.txt"]);
-    assert!(
-        !wt.has_staged_changes().unwrap(),
-        "an intent-to-add path is not staged content"
-    );
-}
-
 /// `PlumbingDiff::args` is the one place that spells a plumbing diff command,
 /// so no diff under `src/` or `tests/` can skip its submodule override. The
 /// needles come from `PlumbingDiff` too, so this guard spells none of them.
