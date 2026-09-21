@@ -14,8 +14,10 @@
 //!
 //! See: <https://github.com/max-sixty/worktrunk/issues/764>
 
+use dashmap::DashMap;
 use serde::Deserialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use worktrunk::git::Repository;
 
 use super::{
@@ -23,21 +25,44 @@ use super::{
     is_retriable_error, non_interactive_cmd, parse_json,
 };
 
+/// Project IDs already resolved in this process, keyed by the worktree root
+/// `glab` was run from.
+///
+/// Keyed by path rather than held in a bare static because tests run many
+/// commands in one process, matching the path-keyed process-wide caches in
+/// `git::repository`. A lookup that failed caches as `None`: retrying it once
+/// per row is the cost this exists to remove.
+static GITLAB_PROJECT_IDS: LazyLock<DashMap<PathBuf, Option<u64>>> = LazyLock::new(DashMap::new);
+
 /// Get the GitLab project ID for a repository.
 ///
-/// Used for client-side filtering of MRs by source project.
-/// This is the GitLab equivalent of `get_origin_owner` for GitHub.
+/// Used for client-side filtering of MRs by source project. The GitHub
+/// equivalent is [`branch_owner_repo`](super::branch_owner_repo), which reads
+/// local git config; this one has to ask the GitLab API, so it is memoized for
+/// the process. [`detect_gitlab`] runs once per branch and the project ID is a
+/// repo-level constant, so without that a `wt list --full` over N worktrees
+/// would spend N round trips resolving the same value — and `wt list` cannot
+/// finish until every row's task returns.
+///
+/// The `entry` API holds the shard lock across the fetch, so concurrent rows
+/// sharing the key wait on the first call rather than each spawning their own.
 ///
 /// Returns None if glab is not configured for this repo (e.g., non-GitLab
 /// remote, auth issues).
 fn gitlab_project_id(repo: &Repository) -> Option<u64> {
     let repo_root = repo.current_worktree().root().ok()?;
+    *GITLAB_PROJECT_IDS
+        .entry(repo_root.clone())
+        .or_insert_with(|| fetch_gitlab_project_id(&repo_root))
+}
 
+/// Ask `glab` for this repository's project ID.
+fn fetch_gitlab_project_id(repo_root: &Path) -> Option<u64> {
     // Use glab repo view to get the project info as JSON
     // Disable color/pager to avoid ANSI noise in JSON output
     let output = non_interactive_cmd("glab")
         .args(["repo", "view", "--output", "json"])
-        .current_dir(&repo_root)
+        .current_dir(repo_root)
         .env("PAGER", "cat")
         .run()
         .ok()?;
