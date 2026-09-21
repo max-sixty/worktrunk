@@ -229,7 +229,7 @@ test('desktop code examples fit the content column', { timeout: 60_000 }, async 
 
     const page = await browser.newPage({ viewport: { width: 1920, height: 900 } });
     await page.goto(baseUrl + '/', { waitUntil: 'domcontentloaded' });
-    const gutters = await page.evaluate(() => {
+    const rail = await page.evaluate(() => {
       const frame = [...document.querySelectorAll('.expressive-code .frame')]
         .find((candidate) => candidate.querySelector('.wt-command')?.textContent.trim() === 'wt list');
       const pre = frame.querySelector('pre').getBoundingClientRect();
@@ -251,16 +251,23 @@ test('desktop code examples fit the content column', { timeout: 60_000 }, async 
         return {
           left: firstRange.getBoundingClientRect().left,
           right: lastRange.getBoundingClientRect().right,
+          columns: line.textContent.length,
         };
       }).filter(Boolean);
       const widest = textBounds.reduce((current, candidate) => (
         candidate.right - candidate.left > current.right - current.left ? candidate : current
       ));
-      return { left: widest.left - pre.left, right: pre.right - widest.right };
+      const padEnd = parseFloat(
+        getComputedStyle(frame.querySelector('.ec-line.wt-output .code')).paddingInlineEnd,
+      );
+      return {
+        spare: pre.right - widest.right - padEnd,
+        column: (widest.right - widest.left) / widest.columns,
+      };
     });
     assert.ok(
-      gutters.right > 0 && gutters.right < gutters.left,
-      `99-column terminal gutters are ${gutters.left}px left and ${gutters.right}px right`,
+      rail.spare >= 0 && rail.spare < rail.column,
+      `99-column terminal leaves ${rail.spare.toFixed(1)}px spare beside ${rail.column.toFixed(1)}px columns`,
     );
     await page.close();
   } finally {

@@ -566,11 +566,6 @@ header.header {
   border-inline-start-color: var(--wt-craft);
 }
 
-/* Only command rows need the full inline clearance for their copy control. */
-.expressive-code .frame .ec-line.wt-output .code {
-  padding-inline-end: 0.5rem;
-}
-
 .sl-markdown-content table:not(.cmd-compare):not(:where(.not-content *)) {
   overscroll-behavior-inline: contain;
   -webkit-overflow-scrolling: touch;
