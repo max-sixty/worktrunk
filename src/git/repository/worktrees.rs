@@ -295,24 +295,39 @@ impl Repository {
         }
         // The registration is a git dir in its own right, so its index is read
         // against its `HEAD` without the working tree git can no longer find.
+        // Both commands answer with exit 0 or 1; anything else is a failure.
         let registration_arg = registration.to_string_lossy();
-        let mut args = vec!["--git-dir", registration_arg.as_ref()];
-        args.extend(PlumbingDiff::Index.args(&["--cached", "--quiet", "HEAD", "--"]));
-        let output = self
-            .with_object_store_env(
-                Cmd::new("git")
-                    .args(args.iter().copied())
-                    .context(path_to_logging_context(path))
-                    .scrub_git_discovery_env(),
-            )
-            .run()
-            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
-        // `--quiet` exits 1 when the index differs from `HEAD`.
-        match output.status.code() {
-            Some(0) => Ok(None),
-            Some(1) => Ok(Some(StaleWorktreeWork::StagedChanges)),
-            _ => Err(CommandError::from_failed_output("git", &args, &output).into()),
-        }
+        let git = |args: &[&str]| -> anyhow::Result<(bool, String)> {
+            let mut all = vec!["--git-dir", registration_arg.as_ref()];
+            all.extend_from_slice(args);
+            let output = self
+                .with_object_store_env(
+                    Cmd::new("git")
+                        .args(all.iter().copied())
+                        .context(path_to_logging_context(path))
+                        .scrub_git_discovery_env(),
+                )
+                .run()
+                .with_context(|| format!("Failed to execute: git {}", all.join(" ")))?;
+            match output.status.code() {
+                Some(0 | 1) => Ok((
+                    output.status.success(),
+                    String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+                )),
+                _ => Err(CommandError::from_failed_output("git", &all, &output).into()),
+            }
+        };
+        // An unborn `HEAD` compares against the empty tree, as `git diff
+        // --cached` does, so everything in its index counts as staged.
+        let (born, head) = git(&["rev-parse", "--verify", "--quiet", "HEAD"])?;
+        let base = if born {
+            head
+        } else {
+            self.empty_tree_sha()?.to_owned()
+        };
+        // `--quiet` exits 1 when the index differs from the base.
+        let (unchanged, _) = git(&PlumbingDiff::Index.args(&["--cached", "--quiet", &base, "--"]))?;
+        Ok((!unchanged).then_some(StaleWorktreeWork::StagedChanges))
     }
 
     /// The registration `<common>/worktrees/<id>` whose `gitdir` names the

@@ -46,20 +46,28 @@ expression: render_cases(cases)
 [31m✗[39m [31mWorktree for [1mstale-branch[22m is stale; its directory or .git is gone[39m
 [2m↳[22m [2mTo clean up, run [4mgit worktree prune[24m[22m
 
-## worktree missing its .git, directory remaining
+## worktree missing its .git, directory remaining at a path needing quotes
 
 [31m✗[39m [31mWorktree for [1mstale-branch[22m is stale; its directory or .git is gone[39m
-[2m↳[22m [2mTo restore the worktree, run [4mgit worktree repair /tmp/repo.stale-branch[24m[22m
+[2m↳[22m [2mTo restore the worktree, run [4mgit worktree repair '/tmp/my repo.stale-branch'[24m[22m
 
 ## stale worktree holding staged changes
 
 [31m✗[39m [31mWorktree for [1mstale-branch[22m is stale but holds staged changes[39m
 [2m↳[22m [2mTo discard the stale worktree, run [4mwt remove -f stale-branch[24m; to restore it, run [4mgit worktree repair /tmp/repo.stale-branch[24m[22m
 
-## stale worktree mid-rebase, directory gone
+## stale worktree mid-operation, directory gone, at a path needing quotes
 
+[31m✗[39m [31mWorktree for [1mstale-branch[22m is stale with a merge in progress[39m
+[2m↳[22m [2mTo discard the stale worktree, run [4mwt remove -f stale-branch[24m; to restore it, recreate its directory, then run [4mgit worktree repair '/tmp/my repo.stale-branch'[24m[22m
 [31m✗[39m [31mWorktree for [1mstale-branch[22m is stale with a rebase in progress[39m
-[2m↳[22m [2mTo discard the stale worktree, run [4mwt remove -f stale-branch[24m; to restore it, recreate its directory, then run [4mgit worktree repair /tmp/repo.stale-branch[24m[22m
+[2m↳[22m [2mTo discard the stale worktree, run [4mwt remove -f stale-branch[24m; to restore it, recreate its directory, then run [4mgit worktree repair '/tmp/my repo.stale-branch'[24m[22m
+[31m✗[39m [31mWorktree for [1mstale-branch[22m is stale with a cherry-pick in progress[39m
+[2m↳[22m [2mTo discard the stale worktree, run [4mwt remove -f stale-branch[24m; to restore it, recreate its directory, then run [4mgit worktree repair '/tmp/my repo.stale-branch'[24m[22m
+[31m✗[39m [31mWorktree for [1mstale-branch[22m is stale with a revert in progress[39m
+[2m↳[22m [2mTo discard the stale worktree, run [4mwt remove -f stale-branch[24m; to restore it, recreate its directory, then run [4mgit worktree repair '/tmp/my repo.stale-branch'[24m[22m
+[31m✗[39m [31mWorktree for [1mstale-branch[22m is stale with a bisect in progress[39m
+[2m↳[22m [2mTo discard the stale worktree, run [4mwt remove -f stale-branch[24m; to restore it, recreate its directory, then run [4mgit worktree repair '/tmp/my repo.stale-branch'[24m[22m
 
 ## no worktree at a leftover directory
 

@@ -1189,7 +1189,7 @@ impl GitError {
                 let hint = match repairable_at {
                     Some(path) => cformat!(
                         "To restore the worktree, run <underline>git worktree repair {}</>",
-                        escape(format_path_for_display(path).into())
+                        format_path_for_display(path)
                     ),
                     None => cformat!("To clean up, run <underline>git worktree prune</>"),
                 };
@@ -1204,7 +1204,7 @@ impl GitError {
             } => {
                 let title = self.title();
                 let discard = suggest_command("remove", &[branch], &["-f"]);
-                let path_display = escape(format_path_for_display(path).into());
+                let path_display = format_path_for_display(path);
                 let restore = if *directory_remains {
                     cformat!("run <underline>git worktree repair {path_display}</>")
                 } else {

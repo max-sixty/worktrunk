@@ -2315,7 +2315,27 @@ fn stale_worktree_work_reads_the_registration() {
     ]);
     std::fs::write(unborn.join("first.txt"), "work").unwrap();
     test.run_git_in(&unborn, &["add", "first.txt"]);
-    for path in [&clean, &staged, &bisecting, &no_checkout, &unborn] {
+    // An unborn branch whose index exists but holds nothing.
+    let unborn_empty = parent.join("repo.unborn-empty");
+    test.run_git(&[
+        "worktree",
+        "add",
+        "--orphan",
+        "-b",
+        "fresh-empty",
+        unborn_empty.to_str().unwrap(),
+    ]);
+    std::fs::write(unborn_empty.join("first.txt"), "work").unwrap();
+    test.run_git_in(&unborn_empty, &["add", "first.txt"]);
+    test.run_git_in(&unborn_empty, &["rm", "--cached", "-q", "first.txt"]);
+    for path in [
+        &clean,
+        &staged,
+        &bisecting,
+        &no_checkout,
+        &unborn,
+        &unborn_empty,
+    ] {
         std::fs::remove_dir_all(path).unwrap();
     }
 
@@ -2330,7 +2350,11 @@ fn stale_worktree_work_reads_the_registration() {
         Some(StaleWorktreeWork::Operation(InProgressOperation::Bisect))
     );
     assert_eq!(repo.stale_worktree_work(&no_checkout).unwrap(), None);
-    assert!(repo.stale_worktree_work(&unborn).is_err());
+    assert_eq!(
+        repo.stale_worktree_work(&unborn).unwrap(),
+        Some(StaleWorktreeWork::StagedChanges)
+    );
+    assert_eq!(repo.stale_worktree_work(&unborn_empty).unwrap(), None);
 }
 
 /// The deletion waits for in-process registry readers: `git worktree list`

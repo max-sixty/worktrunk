@@ -118,10 +118,10 @@ fn worktree_errors_render() {
             .render(),
         ),
         (
-            "worktree missing its .git, directory remaining",
+            "worktree missing its .git, directory remaining at a path needing quotes",
             GitError::WorktreeMissing {
                 branch: "stale-branch".into(),
-                repairable_at: Some(PathBuf::from("/tmp/repo.stale-branch")),
+                repairable_at: Some(PathBuf::from("/tmp/my repo.stale-branch")),
             }
             .render(),
         ),
@@ -136,14 +136,24 @@ fn worktree_errors_render() {
             .render(),
         ),
         (
-            "stale worktree mid-rebase, directory gone",
-            GitError::StaleWorktreeHoldsWork {
-                branch: "stale-branch".into(),
-                path: PathBuf::from("/tmp/repo.stale-branch"),
-                directory_remains: false,
-                work: StaleWorktreeWork::Operation(InProgressOperation::Rebase),
-            }
-            .render(),
+            "stale worktree mid-operation, directory gone, at a path needing quotes",
+            [
+                InProgressOperation::Merge,
+                InProgressOperation::Rebase,
+                InProgressOperation::CherryPick,
+                InProgressOperation::Revert,
+                InProgressOperation::Bisect,
+            ]
+            .map(|operation| {
+                GitError::StaleWorktreeHoldsWork {
+                    branch: "stale-branch".into(),
+                    path: PathBuf::from("/tmp/my repo.stale-branch"),
+                    directory_remains: false,
+                    work: StaleWorktreeWork::Operation(operation),
+                }
+                .render()
+            })
+            .join("\n"),
         ),
         (
             "no worktree at a leftover directory",
