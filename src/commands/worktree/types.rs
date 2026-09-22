@@ -196,8 +196,8 @@ impl SharedBranchCheckout {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BranchFate {
     /// No deletion was attempted: the plan had no branch (detached worktree)
-    /// or retained it (`deletion_mode` Keep — shared checkout, or
-    /// `--no-delete-branch`).
+    /// or retained it (`deletion_mode` Keep — a shared checkout, an unborn
+    /// branch with no ref to delete, or `--no-delete-branch`).
     NotAttempted,
     /// The deletion ran and the branch is gone.
     Deleted,

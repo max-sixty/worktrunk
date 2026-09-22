@@ -87,7 +87,7 @@ struct BackgroundRemoval<'a> {
     force_worktree: bool,
     changed_directory: bool,
     /// `true` when the planner already decided the branch would be retained
-    /// (unmerged, or `--no-delete-branch`) — `print_hints` has explained why,
+    /// (unmerged, or a `Keep` plan) — `print_hints` has explained why,
     /// so [`warn_if_branch_retained`] stays silent on the expected
     /// `NotDeleted` outcome and only fires when the deletion command errors.
     /// `false` means the planner predicted deletion; a `NotDeleted` here is a
