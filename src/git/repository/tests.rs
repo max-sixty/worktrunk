@@ -2281,8 +2281,9 @@ fn prune_worktree_entry_keeps_an_entry_it_cannot_check() {
 
 /// A stale registration is asked what unregistering it would destroy: its
 /// index against `HEAD`, and git's in-progress state files. A registration
-/// with no index has nothing staged, and a `HEAD` the index can't be read
-/// against is an error rather than a clean answer.
+/// with no index has nothing staged, and on an unborn branch the index is
+/// read against the empty tree, so a staged file counts and an emptied index
+/// doesn't.
 #[test]
 fn stale_worktree_work_reads_the_registration() {
     use crate::git::{InProgressOperation, Repository, StaleWorktreeWork};

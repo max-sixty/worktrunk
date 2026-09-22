@@ -527,15 +527,10 @@ impl<'a> WorkingTree<'a> {
     }
 
     /// The tree-ish the index is compared against for staged changes: HEAD,
-    /// or the empty tree on an unborn branch.
-    ///
-    /// Porcelain `git diff --cached` picks this itself; plumbing
-    /// (`diff-index --cached`) needs it spelled out.
+    /// or the empty tree on an unborn branch. Plumbing (`diff-index --cached`)
+    /// needs this spelled out; porcelain `git diff --cached` picks it itself.
     pub fn index_base(&self) -> anyhow::Result<String> {
-        match self.head_sha()? {
-            Some(head) => Ok(head),
-            None => Ok(self.repo.empty_tree_sha()?.to_string()),
-        }
+        self.repo.index_base_for(self.head_sha()?)
     }
 
     /// Return cached `git status --porcelain` output for this worktree.

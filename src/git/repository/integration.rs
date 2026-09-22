@@ -660,6 +660,18 @@ impl Repository {
         )
     }
 
+    /// The tree-ish an index is compared against for staged changes: `head`,
+    /// or the empty tree when `head` is `None` (an unborn branch).
+    ///
+    /// Porcelain `git diff --cached` picks this itself; plumbing
+    /// (`diff-index --cached`) needs it spelled out.
+    pub(super) fn index_base_for(&self, head: Option<String>) -> anyhow::Result<String> {
+        match head {
+            Some(head) => Ok(head),
+            None => Ok(self.empty_tree_sha()?.to_string()),
+        }
+    }
+
     /// Resolve how to diff a branch's content against the mainline for the
     /// diff/summary preview panes. `head` is a resolved commit SHA. See
     /// [`BranchDiffSpec`]. Returns `None` when there's no comparison base (no

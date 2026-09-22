@@ -317,14 +317,10 @@ impl Repository {
                 _ => Err(CommandError::from_failed_output("git", &all, &output).into()),
             }
         };
-        // An unborn `HEAD` compares against the empty tree, as `git diff
-        // --cached` does, so everything in its index counts as staged.
+        // An unborn `HEAD` compares against the empty tree, so everything in
+        // its index counts as staged.
         let (born, head) = git(&["rev-parse", "--verify", "--quiet", "HEAD"])?;
-        let base = if born {
-            head
-        } else {
-            self.empty_tree_sha()?.to_owned()
-        };
+        let base = self.index_base_for(born.then_some(head))?;
         // `--quiet` exits 1 when the index differs from the base.
         let (unchanged, _) = git(&PlumbingDiff::Index.args(&["--cached", "--quiet", &base, "--"]))?;
         Ok((!unchanged).then_some(StaleWorktreeWork::StagedChanges))
