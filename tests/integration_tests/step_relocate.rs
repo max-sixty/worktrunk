@@ -1556,7 +1556,7 @@ fn step_relocate_rejects_prunable_worktree(mut repo: TestRepo) {
     assert!(!output.status.success(), "a prunable worktree should fail");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("directory is gone"),
+        stderr.contains("it is stale"),
         "expected a prunable-worktree error, got: {stderr}"
     );
 }

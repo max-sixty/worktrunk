@@ -144,7 +144,7 @@ impl CandidateKind {
 
 /// Where a candidate originated, used to drive integration checks and dry-run labels.
 enum CheckSource {
-    /// Worktree with directory gone (prunable)
+    /// Stale worktree entry: git calls it prunable once its `.git` is gone
     Prunable { wt_idx: usize },
     /// Linked worktree
     Linked { wt_idx: usize },
@@ -322,8 +322,8 @@ fn try_remove(
         // Name the stale entry rather than sweeping the repository, so a
         // sibling whose directory is merely absent right now (unmounted
         // volume, half-finished `mv`) keeps its registration. `gather_check_items`
-        // never selects a locked worktree, so the scoped removal can't hit
-        // git's lock refusal.
+        // never selects a locked worktree, so the prune refuses one only when
+        // the lock was taken after the scan.
         let path = candidate
             .path
             .as_deref()
@@ -408,8 +408,8 @@ struct CheckOutcome {
     /// `prune_entry`; execution performs it), which is what lets this scan
     /// double as `--dry-run` and plan every source. `None` means not
     /// removable (dirty, locked, primary — filtered silently, never reported
-    /// as "younger than") — except detached stale entries whose directory is
-    /// gone, which need no plan: `try_remove` prunes them directly.
+    /// as "younger than") — except detached stale entries, which need no
+    /// plan: `try_remove` prunes them directly.
     plan: Option<RemovalPlan>,
     /// Whether the item passed the removability gate (see `plan`).
     removable: bool,
@@ -449,21 +449,13 @@ fn check_one(
         });
     }
     // A detached stale entry can't be planned — `prepare_worktree_removal`'s
-    // missing-directory fallback needs a branch to fall back to — and needs
-    // no plan: `try_remove` prunes the entry directly. It still needs that
-    // fallback's precondition, an absent directory. Git also calls an entry
-    // prunable when only the `.git` file inside the directory went (a temp-dir
-    // sweep that deletes idle files and keeps directories), and `git worktree
-    // remove` refuses an entry whose directory remains, failing the run. Such
-    // an entry stays registered, as its branch-bearing twin does when planning
-    // refuses it with `WorktreeMissing`.
-    let stale_detached = match &item.source {
-        CheckSource::Prunable { wt_idx } if worktrees[*wt_idx].branch.is_none() => {
-            Some(&worktrees[*wt_idx])
-        }
-        _ => None,
-    };
-    let plan = if stale_detached.is_some() {
+    // stale-entry fallback needs a branch to fall back to — and needs no plan:
+    // `try_remove` prunes the entry directly.
+    let stale_detached = matches!(
+        &item.source,
+        CheckSource::Prunable { wt_idx } if worktrees[*wt_idx].branch.is_none()
+    );
+    let plan = if stale_detached {
         None
     } else {
         match &item.source {
@@ -485,7 +477,7 @@ fn check_one(
                     // checkout, which for a duplicated branch is a different
                     // worktree — and for a stale entry is the live one. A
                     // `WorktreePath` target degrades to branch-only deletion
-                    // when the directory is gone, so a stale entry plans its
+                    // when the entry is prunable, so a stale entry plans its
                     // prune.
                     RemoveTarget::WorktreePath(wt.path.clone()),
                     BranchDeletionMode::SafeDelete,
@@ -498,10 +490,7 @@ fn check_one(
             }
         }
     };
-    let removable = match stale_detached {
-        Some(wt) => !wt.path.exists(),
-        None => plan.is_some(),
-    };
+    let removable = stale_detached || plan.is_some();
     let deletes_branch = plan.as_ref().is_some_and(RemovalPlan::deletes_branch);
     let age = if min_age_duration > Duration::ZERO {
         match &item.source {
@@ -927,10 +916,8 @@ fn render_dry_run(
 /// `.config/wt.toml`, whatever its anchor).
 ///
 /// Only `Linked` items can plan a worktree removal, the one plan that runs
-/// hooks. `Orphan` items name no worktree. A `Prunable` entry plans a pure
-/// branch deletion when its directory is gone and nothing when it remains
-/// (`prepare_worktree_removal` refuses it with `WorktreeMissing`, and a
-/// detached one is left out in [`check_one`]).
+/// hooks. `Orphan` items name no worktree, and a `Prunable` entry plans a pure
+/// branch deletion, or nothing at all when it is detached.
 fn build_pessimistic_plan(
     repo: &Repository,
     check_items: &[CheckItem],

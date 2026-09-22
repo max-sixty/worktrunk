@@ -165,12 +165,12 @@ pub fn gather_candidates(
         for arg in filter_branches {
             let path = repo.require_worktree(arg)?;
             let Some(wt) = worktrees.iter().find(|wt| paths_match(&path, &wt.path)) else {
-                // Resolved, but pruned out above: its directory is gone, so
-                // there is nothing to move.
+                // Resolved, but pruned out above: its directory or `.git` is
+                // gone, so there is nothing to move.
                 bail!(
                     "{}",
                     cformat!(
-                        "Cannot relocate worktree @ {} — its directory is gone; to clear the entry, run <bold>wt step prune</>",
+                        "Cannot relocate worktree @ {} — it is stale; to clear the entry, run <bold>wt step prune</>",
                         format_path_for_display(&path)
                     )
                 );

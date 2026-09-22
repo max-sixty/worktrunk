@@ -2059,7 +2059,7 @@ fn usable_worktree_for_branch_refuses_a_prunable_registration() {
 
     let err = repo.usable_worktree_for_branch("feature").unwrap_err();
     assert!(
-        err.to_string().contains("Worktree directory missing"),
+        err.to_string().contains("is stale"),
         "a prunable registration must be refused, got: {err}"
     );
     assert_eq!(
@@ -2162,6 +2162,114 @@ fn worktree_is_unusable_covers_locked_absent_and_recreated() {
         repo.worktree_is_unusable(&recreated).unwrap(),
         "a recreated directory exists, so only the `prunable` half catches it"
     );
+}
+
+/// Unregistering a stale worktree repeats git's own prune test at deletion
+/// time, since the caller's `prunable` came from an earlier listing: an entry
+/// locked or reconnected since is refused and keeps its registration. A stale
+/// entry goes whatever is left at its path — nothing, a directory, or a file —
+/// and a directory that remains keeps its files.
+#[test]
+fn prune_worktree_entry_repeats_git_prune_test() {
+    use crate::git::Repository;
+    use crate::testing::TestRepo;
+
+    let mut test = TestRepo::with_initial_commit();
+    let live = test.add_worktree("live");
+    let locked = test.add_worktree("locked-absent");
+    let absent = test.add_worktree("absent");
+    let dotgit_gone = test.add_worktree("dotgit-gone");
+    let now_a_file = test.add_worktree("now-a-file");
+
+    test.lock_worktree("locked-absent", Some("removable media"));
+    std::fs::remove_dir_all(&locked).unwrap();
+    std::fs::remove_dir_all(&absent).unwrap();
+    std::fs::remove_file(dotgit_gone.join(".git")).unwrap();
+    std::fs::write(dotgit_gone.join("leftover.txt"), "kept").unwrap();
+    // `now-a-file/.git` fails with `NotADirectory`, which git also counts as
+    // nothing there.
+    std::fs::remove_dir_all(&now_a_file).unwrap();
+    std::fs::write(&now_a_file, "not a directory").unwrap();
+
+    let repo = Repository::at(test.root_path()).unwrap();
+    let registered = || {
+        test.git_output(&["worktree", "list", "--porcelain"])
+            .lines()
+            .filter_map(|line| line.strip_prefix("worktree "))
+            .filter_map(|path| PathBuf::from(path).file_name().map(|n| n.to_owned()))
+            .collect::<Vec<_>>()
+    };
+
+    let err = repo.prune_worktree_entry(&live).unwrap_err();
+    assert!(err.to_string().contains("no longer stale"), "got: {err}");
+    let err = repo.prune_worktree_entry(&locked).unwrap_err();
+    assert!(err.to_string().contains("is locked"), "got: {err}");
+
+    repo.prune_worktree_entry(&absent).unwrap();
+    repo.prune_worktree_entry(&dotgit_gone).unwrap();
+    repo.prune_worktree_entry(&now_a_file).unwrap();
+    let names = registered();
+    for (path, kept) in [
+        (&live, true),
+        (&locked, true),
+        (&absent, false),
+        (&dotgit_gone, false),
+        (&now_a_file, false),
+    ] {
+        assert_eq!(
+            names.iter().any(|name| name == path.file_name().unwrap()),
+            kept,
+            "{} registration; worktrees: {names:?}",
+            path.display()
+        );
+    }
+    assert!(dotgit_gone.join("leftover.txt").is_file());
+
+    let err = repo.prune_worktree_entry(&absent).unwrap_err();
+    assert!(
+        err.to_string().contains("No worktree registered"),
+        "got: {err}"
+    );
+}
+
+/// The deletion waits for in-process registry readers: `git worktree list`
+/// reads every entry's files, so one overlapping the deletion could read the
+/// entry half-deleted and fail. A held read guard keeps the entry intact; its
+/// release lets the prune through.
+#[test]
+fn prune_worktree_entry_waits_for_registry_readers() {
+    use std::time::{Duration, Instant};
+
+    use crate::git::Repository;
+    use crate::testing::TestRepo;
+
+    let mut test = TestRepo::with_initial_commit();
+    let worktree_path = test.add_worktree("feature");
+    std::fs::remove_dir_all(&worktree_path).unwrap();
+    let registration = test
+        .root_path()
+        .join(".git/worktrees")
+        .join(worktree_path.file_name().unwrap());
+    assert!(registration.is_dir());
+    let repo = Repository::at(test.root_path()).unwrap();
+    let worker_repo = repo.clone();
+
+    let reader = repo.worktree_registry_read();
+    let worker = std::thread::spawn(move || worker_repo.prune_worktree_entry(&worktree_path));
+    let deadline = Instant::now() + Duration::from_millis(200);
+    while registration.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let survived_reader = registration.exists();
+    drop(reader);
+    let result = worker.join().expect("prune thread should not panic");
+
+    assert!(
+        survived_reader,
+        "the prune ran under a held registry read guard"
+    );
+    result.unwrap();
+    assert!(!registration.exists());
 }
 
 /// The ownership gate accepts a worktree that holds its own registration, in

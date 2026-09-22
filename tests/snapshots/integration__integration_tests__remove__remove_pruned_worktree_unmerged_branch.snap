@@ -59,6 +59,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m Worktree directory missing for [1mfeature-pruned-unmerged[22m; pruned
+[32m✓[39m [32mPruned stale worktree for [1mfeature-pruned-unmerged[22m[39m
 [2m○[22m Branch [1mfeature-pruned-unmerged[22m retained; has unmerged changes
 [2m↳[22m [2mTo delete the unmerged branch, run [4mwt remove -D feature-pruned-unmerged[24m[22m

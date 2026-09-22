@@ -507,9 +507,8 @@ fn rename_into_trash(repo: &Repository, worktree_path: &Path) -> Option<PathBuf>
     let staged_path = generate_removing_path(&trash_dir, worktree_path);
 
     if std::fs::rename(worktree_path, &staged_path).is_ok() {
-        // The rename moved the directory out from under `worktree_path`, so
-        // git resolves the entry by its recorded path and skips the clean
-        // check.
+        // The rename moved the directory out from under `worktree_path`,
+        // leaving its registration stale for the prune to delete.
         if let Err(e) = repo.prune_worktree_entry(worktree_path) {
             tracing::debug!(error = %e, "Failed to prune worktree entry after rename: {e}");
         }

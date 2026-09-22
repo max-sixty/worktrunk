@@ -61,5 +61,5 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mWorktree directory missing for [1mmain[22m[39m
+[31m✗[39m [31mWorktree for [1mmain[22m is stale; its directory or .git is gone[39m
 [2m↳[22m [2mTo clean up, run [4mgit worktree prune[24m[22m

@@ -176,7 +176,7 @@ fn sequencer_operation(git_dir: &Path) -> Option<InProgressOperation> {
 /// no longer exist — the case the caller is usually asking about, and the path it
 /// then shows the user. Normalizing rewrites spellings only, so it cannot make
 /// two directories compare equal.
-fn registration_worktree_path(registration: &Path) -> Option<PathBuf> {
+pub(super) fn registration_worktree_path(registration: &Path) -> Option<PathBuf> {
     let content = std::fs::read_to_string(registration.join("gitdir")).ok()?;
     let recorded = PathBuf::from(content.trim());
     let absolute = if recorded.is_relative() {

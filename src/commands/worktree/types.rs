@@ -325,19 +325,19 @@ pub enum RemovalPlan {
         /// [`SharedBranchCheckout`].
         branch_checked_out_at: Option<SharedBranchCheckout>,
     },
-    /// Branch exists but has no worktree directory - attempt branch deletion
+    /// Branch exists but has no usable worktree - attempt branch deletion
     /// only, unregistering the stale worktree entry first when one remains.
     BranchOnly {
         branch_name: String,
         deletion_mode: BranchDeletionMode,
         /// Stale worktree entry to unregister, recorded when the plan fell
-        /// back from a worktree whose directory was missing. Planning never
-        /// mutates — execution performs the prune (`git worktree remove`,
-        /// which validates before touching anything, so a directory that
-        /// reappears at this path between planning and execution is handled
-        /// by git: a clean reconnected worktree is removed, a dirty or
-        /// foreign one refuses loudly). `None` when the branch has no
-        /// worktree entry at all.
+        /// back from a prunable worktree. Planning never mutates — execution
+        /// performs the prune
+        /// ([`prune_worktree_entry`](worktrunk::git::Repository::prune_worktree_entry)),
+        /// which repeats git's prune test first, so a worktree reconnected at
+        /// this path between planning and execution refuses rather than
+        /// losing its registration. Whatever remains of the directory stays.
+        /// `None` when the branch has no worktree entry at all.
         prune_entry: Option<PathBuf>,
         /// Integration target for display. May be the effective target (e.g.,
         /// `origin/main` when upstream is ahead) or the local default branch.
@@ -347,9 +347,9 @@ pub enum RemovalPlan {
         /// executor still rechecks topology and ref state before safe deletion.
         integration_reason: Option<worktrunk::git::IntegrationReason>,
         /// A surviving checkout of `branch_name`, when one exists. Only reachable
-        /// on a pruned removal — the target's directory was gone, but a sibling
-        /// checkout of the same branch survives the fallback to branch-only
-        /// deletion. See [`SharedBranchCheckout`].
+        /// on a pruned removal — the target was stale, but a sibling checkout
+        /// of the same branch survives the fallback to branch-only deletion.
+        /// See [`SharedBranchCheckout`].
         branch_checked_out_at: Option<SharedBranchCheckout>,
     },
 }

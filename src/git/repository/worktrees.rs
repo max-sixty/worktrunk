@@ -8,6 +8,7 @@ use anyhow::Context as _;
 use color_print::cformat;
 use dunce::canonicalize;
 
+use super::working_tree::registration_worktree_path;
 use super::{
     GitError, Repository, ResolvedWorktree, Selector, WorktreeInfo, is_valid_branch_name,
     normalize_selector, resolve_input_path,
@@ -189,14 +190,35 @@ impl Repository {
             .map(|wt| (wt.path.clone(), wt.branch.clone())))
     }
 
-    /// Unregister the one worktree at `path`, whose directory is already gone.
+    /// Unregister the one stale worktree at `path`, as `git worktree prune`
+    /// would, leaving whatever remains of its directory in place.
     ///
-    /// Git tracks worktrees in `.git/worktrees/<id>/`. When a worktree's
-    /// directory disappears — deleted externally, or renamed into the trash by
+    /// Git tracks worktrees in `.git/worktrees/<id>/` and calls an entry
+    /// prunable once `<path>/.git` is gone. Usually the whole directory went —
+    /// deleted externally, or renamed into the trash by
     /// [`stage_worktree_removal`](crate::git::remove::stage_worktree_removal) —
-    /// that admin dir is stale and has to go. `git worktree remove` skips its
-    /// clean check when the directory is missing and deletes just that entry,
-    /// so it is the scoped spelling of the cleanup.
+    /// but a sweep that deletes idle files and keeps directories, like macOS's
+    /// `$TMPDIR` cleanup, takes only the `.git`. Either way the admin dir is
+    /// stale, and deleting it is all `git worktree prune` does to the entry.
+    ///
+    /// # Why not a git command
+    ///
+    /// No git command unregisters one prunable entry in both shapes.
+    /// `git worktree prune` takes no path (below), and `git worktree remove`
+    /// refuses an entry whose directory remains, `--force` included: its
+    /// validation wants `<path>/.git` unless the whole directory is gone. So
+    /// this reproduces git's prune for the one entry — its test, then its
+    /// deletion.
+    ///
+    /// The test is git's own (`should_prune_worktree`): the entry is not
+    /// locked, and nothing is at the `.git` its `gitdir` file names. It runs
+    /// under the registry lock just before the deletion, because the caller's
+    /// `prunable` came from an earlier listing, and it refuses rather than
+    /// deletes when either half has changed since — a lock taken, or a
+    /// remounted volume that reconnected the worktree. Deleting a live
+    /// worktree's admin dir would strand its checkout. Only a definite absence
+    /// counts as nothing being at `.git`; one that can't be statted for another
+    /// reason keeps the entry, where git's own test would prune it.
     ///
     /// # Why not `git worktree prune`
     ///
@@ -210,48 +232,66 @@ impl Repository {
     /// the per-worktree reflog, `refs/worktree/*` and `refs/bisect/*`, and any
     /// in-progress rebase or merge all go with it. `git worktree repair`
     /// cannot rebuild them — it relinks an admin dir, it does not recreate
-    /// one. Naming the target keeps a removal's blast radius equal to its
-    /// intent.
-    ///
-    /// # Locked worktrees
-    ///
-    /// A repo-wide prune silently skips a locked entry; `git worktree remove`
-    /// fails on one instead. Every call site has already established the target
-    /// is unlocked, by a different route each: `prepare_worktree_removal`
-    /// returns `WorktreeLocked` at the top of its path/current arm and rejects
-    /// a locked worktree before staging one for removal, and prune's
-    /// `gather_check_items` never selects one as a candidate.
+    /// one. A detached entry loses more: its `HEAD` was the only ref holding
+    /// commits made there, which the next `git gc` may then delete. Naming
+    /// the target keeps a removal's blast radius equal to its intent.
     ///
     /// # Concurrent calls
     ///
-    /// This method and [`Repository::remove_worktree`] serialize their `git
-    /// worktree remove` commands with each other for the same repository.
-    /// Naming one entry bounds what a call *deletes*, not what it *reads*.
-    /// `git worktree remove` enumerates *every* sibling under `.git/worktrees/`
-    /// and reads each one's `commondir` while resolving its target, so a
-    /// teardown overlapping another worker's teardown — or a branch delete's
-    /// `list_worktrees` probe — can read an entry mid-deletion and fail
-    /// (`failed to read …/commondir` / `Invalid path …/.git/worktrees/<id>`).
-    /// That is Git's own TOCTOU between the enumerator's `readdir` and its
-    /// `open`. The repository-scoped write lock closes the in-process window;
-    /// [`Repository::list_worktrees`] takes the matching read side.
+    /// This deletion and [`Repository::remove_worktree`]'s `git worktree
+    /// remove` serialize with each other for the same repository. Naming one
+    /// entry bounds what a call *deletes*, not what others *read*: `git
+    /// worktree remove` and `git worktree list` enumerate *every* entry under
+    /// `.git/worktrees/` and read each one's files, so one overlapping this
+    /// deletion can read the entry mid-deletion and fail (`failed to read
+    /// …/commondir` / `Invalid path …/.git/worktrees/<id>`). That is Git's own
+    /// TOCTOU between the enumerator's `readdir` and its `open`. The
+    /// repository-scoped write lock closes the in-process window;
+    /// [`Repository::list_worktrees`] takes the matching read side. A `git
+    /// worktree list` in an *unrelated* process — outside wt's lock — remains
+    /// exposed; wt's serialization only covers its own removals.
     ///
-    /// Git also `rmdir`s the containing `.git/worktrees` once the last entry
-    /// goes, but that only succeeds on an already-empty directory, and every
-    /// per-worktree command in the removal chain (`git status`, the fsmonitor
-    /// stop) runs while that worktree is still registered, so an emptied
-    /// directory has no in-flight reader left to strand. A `git worktree list`
-    /// in an *unrelated* process — outside wt's lock — remains exposed to the
-    /// same `Invalid path` race; wt's serialization only covers its own
-    /// removals.
+    /// Git also `rmdir`s `.git/worktrees` once its last entry goes. This
+    /// leaves the empty directory, which git reads as no linked worktrees.
     pub fn prune_worktree_entry(&self, path: &Path) -> anyhow::Result<()> {
-        // Every caller's path came from `list_worktrees`, which parses git's
-        // porcelain as UTF-8, so this only fires if that edge ever stops
-        // guaranteeing it — a bare `?` rather than a rendered path.
-        let path_str = path.to_str().context("worktree path is not valid UTF-8")?;
+        let display = format_path_for_display(path);
         let _registry = self.worktree_registry_write();
-        self.run_command(&["worktree", "remove", path_str])?;
-        Ok(())
+        let registrations = self.git_common_dir().join("worktrees");
+        // Unreadable siblings (an entry another process is deleting) are not
+        // this one, so they are passed over rather than failing the lookup.
+        let (registration, recorded) = std::fs::read_dir(&registrations)
+            .with_context(|| format!("Failed to read {}", format_path_for_display(&registrations)))?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find_map(|registration| {
+                let recorded = registration_worktree_path(&registration)?;
+                paths_match(&recorded, path).then_some((registration, recorded))
+            })
+            .with_context(|| format!("No worktree registered @ {display}"))?;
+        // Whether nothing is at `target`: `NotFound`, or `NotADirectory` where
+        // a parent became a file. Any other error keeps the entry.
+        let absent = |target: &Path| match std::fs::symlink_metadata(target) {
+            Ok(_) => Ok(false),
+            Err(e) => match e.kind() {
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory => Ok(true),
+                _ => Err(anyhow::Error::new(e).context(format!(
+                    "Failed to check {}",
+                    format_path_for_display(target)
+                ))),
+            },
+        };
+        if !absent(&registration.join("locked"))? {
+            anyhow::bail!("Worktree @ {display} is locked");
+        }
+        if !absent(&recorded.join(".git"))? {
+            anyhow::bail!("Worktree @ {display} is no longer stale; its .git exists");
+        }
+        std::fs::remove_dir_all(&registration).with_context(|| {
+            format!(
+                "Failed to delete {}",
+                format_path_for_display(&registration)
+            )
+        })
     }
 
     /// Remove a worktree at the specified path.

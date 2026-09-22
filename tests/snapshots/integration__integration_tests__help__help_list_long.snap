@@ -234,7 +234,7 @@ An in-progress git operation, a worktree-location attribute, or a branch with no
  ────── ─────────────────────────────────────────────────────────────────────── ─────────────────────────────────────────────────── 
  [31m✘[0m      [2mworktree.changes.conflicted[0m                                             Merge conflicts                                     
  [33m↻[0m      [2mworktree.operation[0m [2m"rebase"[0m, [2m"merge"[0m, [2m"cherry_pick"[0m, [2m"revert"[0m, [2m"bisect"[0m A git operation is in progress; [2mgit status[0m names it 
- [33m⊟[0m      [2mworktree.prunable[0m                                                       Prunable (worktree directory missing)               
+ [33m⊟[0m      [2mworktree.prunable[0m                                                       Prunable (worktree directory or its [2m.git[0m gone)      
  [33m⊞[0m      [2mworktree.locked[0m                                                         Locked worktree                                     
  [2m⊘[0m      [2mworktree.detached[0m                                                       Detached HEAD                                       
  [2m[33m⚑[0m      [2mworktree.duplicate_branch[0m                                               Branch checked out in more than one worktree        

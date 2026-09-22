@@ -789,7 +789,7 @@ impl GitError {
             },
 
             GitError::WorktreeMissing { branch } => {
-                cformat!("Worktree directory missing for <bold>{branch}</>")
+                cformat!("Worktree for <bold>{branch}</> is stale; its directory or .git is gone")
             }
 
             GitError::RemoteOnlyBranch { branch, remote } => {

@@ -396,8 +396,20 @@ impl AltXRemover {
             RemovalPlan::BranchOnly {
                 branch_name,
                 deletion_mode,
+                prune_entry,
                 ..
             } => {
+                // The stale entry goes first, as `wt remove` does it: deleting
+                // the branch under a registration that still names it would
+                // leave an entry with an unborn `HEAD`, which `wt step prune`
+                // never collects. A failed prune keeps the branch, so the row
+                // is restored.
+                if let Some(path) = prune_entry
+                    && let Err(e) = repo.prune_worktree_entry(path)
+                {
+                    tracing::warn!(branch = %branch_name, error = %e, "picker: failed to prune stale worktree for '{branch_name}': {e:#}");
+                    return Ok(());
+                }
                 if !deletion_mode.should_keep() {
                     let default_branch = repo.default_branch();
                     let target = default_branch.as_deref().unwrap_or("HEAD");
@@ -2898,6 +2910,38 @@ pub mod tests {
         assert!(output.is_empty(), "integrated branch should be deleted");
     }
 
+    /// A stale row's plan carries its registration, which goes along with the
+    /// branch; deleting the branch alone would leave an entry naming a branch
+    /// that no longer exists.
+    #[test]
+    fn test_do_removal_branch_only_prunes_stale_entry() {
+        let mut test = worktrunk::testing::TestRepo::with_initial_commit();
+        let wt_path = test.add_worktree("feature");
+        fs::remove_file(wt_path.join(".git")).unwrap();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+
+        let result = RemovalPlan::BranchOnly {
+            branch_name: "feature".to_string(),
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            prune_entry: Some(wt_path.clone()),
+            target_branch: None,
+            integration_reason: None,
+            branch_checked_out_at: None,
+        };
+        AltXRemover::do_removal(&repo, &result, &Approvals::default()).unwrap();
+
+        let list = repo
+            .run_command(&["worktree", "list", "--porcelain"])
+            .unwrap();
+        assert!(
+            !list.contains("prunable"),
+            "stale entry should be pruned:\n{list}"
+        );
+        let output = repo.run_command(&["branch", "--list", "feature"]).unwrap();
+        assert!(output.is_empty(), "integrated branch should be deleted");
+        assert!(wt_path.is_dir(), "the directory should stay");
+    }
+
     #[test]
     fn test_do_removal_branch_only_retains_unmerged_branch() {
         let test = worktrunk::testing::TestRepo::with_initial_commit();
@@ -3318,8 +3362,8 @@ pub mod tests {
     /// concurrent background removal can trigger.
     ///
     /// `apply` renames the worktree into the trash (so its path vanishes) and
-    /// then runs `git worktree remove` on it, which deletes that worktree's
-    /// `.git/worktrees/<id>` admin dir — all on a background thread.
+    /// then unregisters it, deleting that worktree's `.git/worktrees/<id>`
+    /// admin dir — all on a background thread.
     /// `git branch --list` enumerates
     /// worktrees to mark checked-out branches, so a query that races the
     /// in-flight prune can read a half-deleted admin dir and fail with

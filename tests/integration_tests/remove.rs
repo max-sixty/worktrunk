@@ -523,16 +523,12 @@ fn test_remove_path_holding_no_worktree(repo: TestRepo) {
     ));
 }
 
-/// A worktree directory deleted and *recreated* is reported, not carried into
-/// git's own validation failure.
-///
-/// It is a stale registration either way, but only the absent spelling can be
-/// cleaned up here: `prune_worktree_entry` unregisters with `git worktree
-/// remove`, which skips its validation only while the directory is gone. With
-/// a directory sitting there git refuses — `--force` included — so the answer
-/// is the message naming the repo-wide `git worktree prune` that does clear
-/// it. `test_remove_pruned_worktree_directory_missing` covers the absent half,
-/// which still removes without a prompt.
+/// A worktree directory deleted and *recreated* is a stale registration like
+/// one deleted outright, and is cleaned up the same way: the entry is
+/// unregistered and the branch removed, while the directory itself stays.
+/// `git worktree remove` refuses this entry, `--force` included, so handing
+/// it to git would surface as a raw `exit 128`.
+/// `test_remove_pruned_worktree_directory_missing` covers the absent half.
 #[rstest]
 fn test_remove_worktree_directory_recreated(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature");
@@ -540,6 +536,10 @@ fn test_remove_worktree_directory_recreated(mut repo: TestRepo) {
     std::fs::create_dir_all(&worktree_path).unwrap();
 
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["feature"], None));
+    assert!(
+        worktree_path.is_dir(),
+        "the recreated directory should stay"
+    );
 }
 
 /// A registration whose directory now holds a *different* repository is not
@@ -4799,7 +4799,7 @@ fn test_remove_pruned_dir_with_sibling_checkout_retains_branch(mut repo: TestRep
     assert_branch_exists(&repo, "feature", true, &stderr);
     assert_not_orphaned(&repo, &survivor, &stderr);
     assert!(
-        stderr.contains("pruned")
+        stderr.contains("Pruned stale worktree")
             && stderr.contains("retained")
             && stderr.contains("still checked out"),
         "output should report the prune and explain the branch was retained\nstderr:\n{stderr}",
