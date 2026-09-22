@@ -5,7 +5,7 @@
 
 use crate::common::{
     TestRepo, make_snapshot_cmd,
-    mock_commands::{MockConfig, MockResponse},
+    mock_commands::{MockConfig, MockResponse, mock_calls},
     repo, setup_snapshot_settings, wt_command,
 };
 use ansi_str::AnsiStr;
@@ -638,6 +638,65 @@ fn test_list_full_with_gitlab_filters_by_project_id(mut repo: TestRepo) {
         "gitlab_filters_by_project_id",
         &mr_json,
         Some(99999),
+    );
+}
+
+/// `glab repo view` answers a repo-level question over the GitLab API, but MR
+/// detection runs once per row — so a table of N worktrees used to spend N
+/// round trips resolving one constant, on a command that cannot finish until
+/// every row's task returns. Assert the spawn count, not the rendering: the
+/// table looks identical either way.
+#[rstest]
+fn test_gitlab_project_id_resolved_once_per_command(mut repo: TestRepo) {
+    let head_sha = setup_gitlab_repo_with_feature(&mut repo);
+
+    let mr_json = format!(
+        r#"[{{
+        "iid": 1,
+        "sha": "{}",
+        "has_conflicts": false,
+        "detailed_merge_status": null,
+        "head_pipeline": {{"status": "success"}},
+        "source_project_id": 12345,
+        "web_url": "https://gitlab.com/test-group/test-project/-/merge_requests/1"
+    }}]"#,
+        head_sha
+    );
+    repo.setup_mock_glab_with_ci_data(&mr_json, Some(12345));
+
+    // Outside the repo under test, so the log can't dirty the working tree the
+    // command is inspecting.
+    let call_log = tempfile::tempdir().unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.args(["list", "--full"]);
+    repo.configure_mock_commands(&mut cmd);
+    cmd.env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path());
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt list --full should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let calls = mock_calls(call_log.path(), "glab");
+    let repo_views: Vec<_> = calls
+        .iter()
+        .filter(|call| call.starts_with("repo view"))
+        .collect();
+    // More than one row reached MR detection, so a per-row lookup would show up
+    // as more than one `repo view`.
+    let mr_lists = calls
+        .iter()
+        .filter(|call| call.starts_with("mr list"))
+        .count();
+    assert!(
+        mr_lists > 1,
+        "the fixture must exercise several rows, else the count below proves nothing. calls: {calls:#?}"
+    );
+    assert_eq!(
+        repo_views.len(),
+        1,
+        "the project ID is repo-level, so it costs exactly one `glab repo view` however many rows ask for it. calls: {calls:#?}"
     );
 }
 

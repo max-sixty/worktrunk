@@ -13,23 +13,25 @@ runs:
   using: composite
   steps:
     # No rust-cache step here, and so no CARGO*/RUST* env block above one to
-    # match its key. From tend 0.2.5 the agent works in a disposable /tmp clone
-    # instead of the runner's checkout, and the sandbox denies reads under the
-    # runner's home, so a restored `~/.cargo` and `<runner checkout>/target`
-    # are both unreachable and at the wrong path — the restore warmed nothing
-    # and cost the download in all eight workflows. Tend sessions build cold
-    # until there is a supported way to warm the agent's own tree
-    # (max-sixty/tend#1198). Restoring here again needs that to land first.
+    # match its key. The reason was tend 0.2.5–0.2.13: the agent worked in a
+    # disposable /tmp clone and the sandbox denied reads under the runner's
+    # home, so a restored `~/.cargo` and `<runner checkout>/target` were both
+    # unreachable and at the wrong path — the restore warmed nothing and cost
+    # the download in all eight workflows. 0.2.14 put the agent on the job's
+    # own checkout and home, so both are now reachable at the path a restore
+    # writes them to, and tend sessions still build cold only because nothing
+    # restores them. Whether a cache pays for itself here is a measurement
+    # (max-sixty/tend#1198), no longer a blocked one.
 
-    # The cargo tools reach the agent through `/usr/local/bin`, not through the
-    # runner's home: these `cargo-install` steps write
-    # `$HOME/.cargo-install/<crate>/bin` — the root this action hardcodes — and
-    # the sandbox denies that whole subtree, so `.config/tend.yaml` can no
-    # longer copy them across from `sandbox_setup:`. A system location crosses
-    # verbatim instead, the route `nu` and `nix` already take (see "Sandbox
-    # toolchain" in .github/CLAUDE.md). Swapping these steps for an action with
-    # a different layout, or dropping the publish step below, breaks every tend
-    # workflow at `.config/tend.yaml`'s probe; update both sides.
+    # These `cargo-install` steps write `$HOME/.cargo-install/<crate>/bin` —
+    # the root the publish step below hardcodes — and from tend 0.2.14 the
+    # agent reads that directly, with the entry ahead of /usr/local/bin on its
+    # PATH. The publish was the only route while the sandbox denied reads under
+    # the runner's home (0.2.5–0.2.13) and is now a second copy of the same two
+    # binaries; it stays as what keeps `.config/tend.yaml`'s probe green if
+    # that isolation returns (see "Sandbox toolchain" in .github/CLAUDE.md).
+    # Swapping these steps for an action with a different layout breaks the
+    # publish step, which hardcodes this root; update both sides.
     - name: Install cargo-insta
       if: inputs.install-cargo-tools == 'true'
       uses: baptiste0928/cargo-install@v3
@@ -83,10 +85,10 @@ runs:
 
     # The gate's `insta` step runs `--all-features`, which turns on
     # `shell-integration-tests` — that needs `nu` as much as zsh and fish, and
-    # two tests `.expect()` it outright. `setup-nu` installs into a system
-    # location, so the agent inherits it (see "Sandbox toolchain" in
-    # .github/CLAUDE.md) with no `sandbox_setup:` line the way the runner-home
-    # installs above need. Level with `test-setup`'s pin.
+    # two tests `.expect()` it outright. `setup-nu` installs into
+    # /opt/hostedtoolcache, which the agent has reached under every sandbox
+    # arrangement so far (see "Sandbox toolchain" in .github/CLAUDE.md). Level
+    # with `test-setup`'s pin.
     - name: Install nushell
       if: inputs.install-shells == 'true'
       uses: hustcer/setup-nu@v3
@@ -100,19 +102,23 @@ runs:
     # agent inherits `nix` on the same rule as `nu` above.
     #
     # Every tend workflow installs it, though only the weekly one runs `nix`.
-    # `.config/tend.yaml`'s probe asserts `nix` from inside the sandbox and
-    # runs everywhere, so gating this step to the weekly workflow would fail
-    # the rest. It costs 4 s of the action's ~50 s.
+    # `.config/tend.yaml`'s probe asserts `nix` and runs everywhere, so gating
+    # this step to the weekly workflow would fail the rest. It costs 4 s of the
+    # action's ~50 s.
     #
-    # The multi-user daemon install is what carries it across, so the ~1 s
-    # `nixbuild/nix-quick-install-action` is no substitute: it hands /nix to
-    # the runner and puts only $HOME/.nix-profile/bin on $GITHUB_PATH, which
-    # the /home/runner rewrite drops. Here root owns /nix and the store is
-    # reached through the daemon.
+    # The multi-user daemon install is what this repo standardized on: root
+    # owns /nix and the store is reached through the daemon. The ~1 s
+    # `nixbuild/nix-quick-install-action` was ruled out because it hands /nix
+    # to the runner and puts only $HOME/.nix-profile/bin on $GITHUB_PATH, a
+    # path the pre-0.2.14 /home/runner PATH rewrite dropped. That rewrite is
+    # gone and so is the objection — but the daemon block below leaves the
+    # agent without a working `nix` either way, so there is nothing to gain by
+    # switching.
     #
     # Reaching the daemon is what the agent can no longer do. From tend 0.2.5
-    # the sandbox blocks `socket(AF_UNIX, …)` outright, so connecting to
-    # /nix/var/nix/daemon-socket/socket fails with EPERM and the weekly job's
+    # the sandbox blocks `socket(AF_UNIX, …)` outright — still true under
+    # 0.2.14's systemd unit — so connecting to
+    # /nix/var/nix/daemon-socket/socket fails and the weekly job's
     # `nix flake update` cannot run — it needs an upstream lever
     # (max-sixty/tend#1197). `command -v nix` still resolves, so the probe
     # below stays green and the gap surfaces only in that one job. The install

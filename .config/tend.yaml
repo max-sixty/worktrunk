@@ -1,16 +1,24 @@
 bot_name: worktrunk-bot
 setup:
 - uses: ./.github/actions/tend-setup
-# `setup:` runs as `runner`, so what it installs into the runner's home never
-# reaches the agent — and from tend 0.2.5 the sandbox denies reads there
-# outright, so a line copying a binary out of it fails the whole lifecycle
-# before the harness starts (see "Sandbox toolchain" in .github/CLAUDE.md).
-# Only pre-commit is left: it installs into the sandbox's own home, where uv's
-# shim shebang resolves, and needs no runner-owned file to do it. `cargo-insta`,
-# `cargo-nextest`, `nu` and `nix` all take the system-location route in
-# `tend-setup` instead and need no line here. The probe still asserts all five:
-# sandbox-setup runs the block under `bash -eo pipefail`, so a tool that goes
-# missing fails the job and files a tend-outage issue naming it.
+# tend 0.2.14 deprecated `sandbox_setup:` and runs its commands as an ordinary
+# `runner` step after `setup:`; the agent then sees what they install through a
+# copy-on-write view of the job's home (see "Sandbox toolchain" in
+# .github/CLAUDE.md). #4222 kept the key so a release reverting 0.2.14 would
+# still find it, so this block outliving its original rationale is deliberate,
+# not drift.
+#
+# What that rationale was: `setup:` ran as `runner` and the sandbox denied
+# reads under the runner's home, so pre-commit had to be installed from here,
+# into the sandbox's own home. It now duplicates `tend-setup`'s own pre-commit
+# step and goes when the key does. The probe is what still earns its place:
+# the block runs under `bash -eo pipefail`, so a tool that goes missing fails
+# the job with an `::error::` annotation naming it. No tend-outage issue is
+# filed any more — that is `report_failure.py`, a step inside the tend action
+# under `if: failure()`, and the generator now emits this block ahead of that
+# action, so a failure here skips it. Of the five tools it asserts, four are
+# what the pre-merge gate needs, whichever step installed them; `nix` is for
+# the weekly toolchain bump's `flake.lock` refresh.
 sandbox_setup:
 - mkdir -p ~/.local/bin
 - uv tool install --quiet pre-commit
