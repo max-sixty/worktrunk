@@ -80,11 +80,15 @@ const STABLE_DURATION: Duration = Duration::from_millis(500);
 /// Fast polling ensures tests complete quickly when ready.
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
-/// How often a cursor-arrow wait re-issues its (idempotent) arrow while the `>`
-/// pointer has not yet settled on the target row. Long enough not to thrash the
-/// picker; short enough to retry many times within [`STABILIZE_TIMEOUT`] after
-/// an async item-list refresh resets the cursor to the top.
+/// How often a cursor-arrow wait re-issues an arrow while the `>` pointer has
+/// not yet settled on the target row. Long enough not to thrash the picker;
+/// short enough to retry many times within [`STABILIZE_TIMEOUT`] after an async
+/// item-list refresh resets the cursor to the top.
 const CURSOR_REISSUE_INTERVAL: Duration = Duration::from_secs(1);
+
+/// The Up and Down cursor arrows, as the picker's PTY receives them.
+const ARROW_UP: &str = "\x1b[A";
+const ARROW_DOWN: &str = "\x1b[B";
 
 /// Picker tests shape their own linked-worktree topology. Starting from the
 /// cached main-only variant avoids constructing and immediately removing the
@@ -605,6 +609,73 @@ fn cursor_points_at(screen: &str, name: &str) -> bool {
     })
 }
 
+/// Column of the picker's gutter glyph, counted from the start of the line.
+///
+/// skim draws a two-column pointer field at the start of every item row (`> `
+/// on the selected row, two spaces on the rest) and the picker's gutter column
+/// is the first thing it renders after it.
+const GUTTER_OFFSET: usize = 2;
+
+/// The list-pane text of `line` when `line` is an item row, else `None`.
+///
+/// Every item row carries a gutter glyph — `@`, `^`, `+`, `/`, `|`, or `#` for
+/// a `--prs` row (`ItemKind::gutter_glyph`) — at [`GUTTER_OFFSET`], so a
+/// non-space there is what marks a line as a row. The column header pads that
+/// offset with a space, and an empty query line is a bare `>`; neither is a row.
+///
+/// Excluding the header is what makes a search *by name* safe: `main` is both a
+/// branch name and part of two column titles (`main↕`, `main…±`), so a search
+/// that matched the header would place the row above every item and steer the
+/// cursor away from it. Excluding the query line is why this can find the `>`
+/// pointer without the "never type" premise [`cursor_points_at`] leans on.
+///
+/// The text is scoped to the list pane (cols `0..LIST_WIDTH`) for the reason
+/// [`cursor_points_at`] gives — the preview pane shares the physical row.
+fn item_row_text(line: &str) -> Option<String> {
+    let list: String = line.chars().take(LIST_WIDTH as usize).collect();
+    let gutter = list.chars().nth(GUTTER_OFFSET)?;
+    (!gutter.is_whitespace()).then_some(list)
+}
+
+/// The arrow that moves the list `>` pointer one row toward the row carrying
+/// `name`, or `None` when the screen doesn't place both the pointer and the row.
+///
+/// A cursor-arrow wait steers by this rather than repeating the arrow it sent,
+/// because repeating only converges when the target is the last row. Arrow
+/// navigation clamps at the list ends, so a Down re-issued once too often past
+/// a target with rows below it — a streamed `--prs` row, the second worktree in
+/// [`test_switch_picker_alt_x_flashes_unremovable_reason`] — parks the pointer
+/// at the list end, where no further Down can recover it and the wait can only
+/// time out. Choosing the direction from where the pointer actually is converges
+/// from either side, so an overshoot costs one extra interval instead of the
+/// test.
+///
+/// A `name` on several rows aims at the topmost — which is the row a Down-arrow
+/// caller starting at the top reaches first, so it agrees with the row
+/// [`cursor_points_at`] would accept. Every caller today sends Down; an Up-arrow
+/// caller wanting a lower match would need a `name` that picks one row.
+fn arrow_toward_row(screen: &str, name: &str) -> Option<&'static str> {
+    let mut cursor = None;
+    let mut target = None;
+    for (index, line) in screen.lines().enumerate() {
+        let Some(row) = item_row_text(line) else {
+            continue;
+        };
+        if row.starts_with('>') {
+            cursor = Some(index);
+        }
+        if target.is_none() && row.contains(name) {
+            target = Some(index);
+        }
+    }
+    match target?.cmp(&cursor?) {
+        std::cmp::Ordering::Less => Some(ARROW_UP),
+        std::cmp::Ordering::Greater => Some(ARROW_DOWN),
+        // Already there: `cursor_points_at` holds, so the wait is over.
+        std::cmp::Ordering::Equal => None,
+    }
+}
+
 /// Drive the PTY reader until the screen satisfies `ready` and then settles, or
 /// the stabilization timeout elapses.
 ///
@@ -621,11 +692,13 @@ fn cursor_points_at(screen: &str, name: &str) -> bool {
 /// readiness condition there is nothing to find, so the screen must settle the
 /// hard way (the cosmetic-redraw fallback never engages).
 ///
-/// `nudge`, when `Some`, is invoked every [`CURSOR_REISSUE_INTERVAL`] while
-/// `ready` is still unmet. It exists for the cursor-arrow caller: an idempotent
-/// Up/Down arrow re-issued to drive the `>` pointer back onto its target row
-/// after an async item-list refresh (CI status / PR markers landing) reset the
-/// cursor to the top. Late *preview* content needs no nudge — the picker
+/// `nudge`, when `Some`, is invoked with the current screen every
+/// [`CURSOR_REISSUE_INTERVAL`] while `ready` is still unmet. It exists for the
+/// cursor-arrow caller: an Up/Down arrow re-issued to drive the `>` pointer back
+/// onto its target row after an async item-list refresh (CI status / PR markers
+/// landing) reset the cursor to the top. It receives the screen so it can pick
+/// the arrow that closes the gap rather than repeating one direction — see
+/// [`arrow_toward_row`]. Late *preview* content needs no nudge — the picker
 /// repaints a preview on its own once its background compute lands (see
 /// `PreviewNotifier`), so preview-content callers pass `None` and the poll just
 /// waits for `ready`.
@@ -634,7 +707,7 @@ fn wait_for_stable_until(
     parser: &mut vt100::Parser,
     ready: impl Fn(&str) -> bool,
     describe: Option<&str>,
-    nudge: Option<&dyn Fn()>,
+    nudge: Option<&dyn Fn(&str)>,
 ) {
     let start = Instant::now();
     let mut last_change = Instant::now();
@@ -693,7 +766,7 @@ fn wait_for_stable_until(
             && let Some(nudge) = nudge
             && last_nudge.elapsed() >= CURSOR_REISSUE_INTERVAL
         {
-            nudge();
+            nudge(&current_content);
             last_nudge = Instant::now();
         }
 
@@ -720,9 +793,9 @@ fn wait_for_stable_until(
     );
 }
 
-/// True for a Up/Down cursor arrow (`ESC [ A` / `ESC [ B`). Arrow navigation
-/// clamps at the list ends, so re-issuing one is idempotent there — safe to
-/// repeat while waiting for the cursor to reach a target row.
+/// True for a Up/Down cursor arrow (`ESC [ A` / `ESC [ B`) — the inputs whose
+/// expectation names a target row rather than screen content, so the wait can
+/// steer the `>` pointer onto it.
 fn is_cursor_arrow(input: &str) -> bool {
     matches!(input.as_bytes(), [0x1b, b'[', b'A' | b'B'])
 }
@@ -731,14 +804,17 @@ fn is_cursor_arrow(input: &str) -> bool {
 /// and settle.
 ///
 /// For a Up/Down cursor arrow carrying `expected_content`, the content names the
-/// target row and the wait re-issues the arrow every [`CURSOR_REISSUE_INTERVAL`]
+/// target row and the wait re-issues an arrow every [`CURSOR_REISSUE_INTERVAL`]
 /// until the list `>` pointer lands on it. A single arrow is unreliable on rows
 /// that decorate asynchronously (CI status / PR markers): when the background
 /// resolution lands it refreshes skim's item list, which resets the cursor to the
 /// top, stranding the pointer on the primary worktree. That is a Windows-CI flake
 /// observed with the cursor stuck on `main`, where the complete-diff tab showed the
-/// primary's empty diff and the awaited `diff --git` never appeared. Re-issuing
-/// the idempotent arrow drives the cursor back down after any reset; the wait
+/// primary's empty diff and the awaited `diff --git` never appeared.
+///
+/// Each re-issue is aimed by [`arrow_toward_row`] at where the pointer currently
+/// is, not fixed to `input`'s direction, so the wait converges whether a reset
+/// left the cursor short of the target or a re-issue carried it past. The wait
 /// returns only once the pointer holds on the target through [`STABLE_DURATION`],
 /// by which point the list has stopped refreshing.
 ///
@@ -755,22 +831,26 @@ fn send_input_awaiting_content(
     input: &str,
     expected_content: Option<&str>,
 ) {
-    let send = || {
+    let send = |bytes: &str| {
         let mut w = writer.lock().unwrap();
-        w.write_all(input.as_bytes()).unwrap();
+        w.write_all(bytes.as_bytes()).unwrap();
         w.flush().unwrap();
     };
-    send();
+    send(input);
 
     match expected_content {
         Some(name) if is_cursor_arrow(input) => {
             let describe = format!("the cursor (> pointer) on row {name:?}");
+            // A screen mid-redraw may show neither pointer nor row; falling back
+            // to `input` keeps the original direction until one of them lands,
+            // and the next re-issue corrects any overshoot it caused.
+            let nudge = |screen: &str| send(arrow_toward_row(screen, name).unwrap_or(input));
             wait_for_stable_until(
                 rx,
                 parser,
                 |screen| cursor_points_at(screen, name),
                 Some(&describe),
-                Some(&send),
+                Some(&nudge),
             );
         }
         _ => wait_for_stable_with_content(rx, parser, expected_content),
@@ -2247,4 +2327,70 @@ fn test_switch_picker_alt_x_lands_on_neighbor_under_filter(mut repo: TestRepo) {
     );
 
     let _ = abort_and_exit_code(child, writer, rx);
+}
+
+/// The frame a re-issued Down stranded the pointer on, from the Windows CI run
+/// that motivated [`arrow_toward_row`]: the wait wanted `wt-drop`, but the
+/// streamed `--prs` row sits below it, so the extra arrow clamped the pointer at
+/// the list end and 30s of further Downs could not bring it back.
+///
+/// Flush-left because the leading spaces before each gutter glyph are the frame.
+const OVERSHOT_SCREEN: &str = r">
+    Branch   Status      HEAD±     main↕    main…±    Remot
+  @ main       ? |     +16                              |
+  + wt-drop      _
+> # fix/fl…
+";
+
+/// The same list with the pointer still on the pinned current worktree — the
+/// state an item-list refresh resets to, which the re-issue exists to repair.
+const UNSTARTED_SCREEN: &str = r">
+    Branch   Status      HEAD±     main↕    main…±    Remot
+> @ main       ? |     +16                              |
+  + wt-drop      _
+  # fix/fl…
+";
+
+#[test]
+fn test_arrow_toward_row_recovers_from_an_overshoot() {
+    assert_eq!(
+        arrow_toward_row(OVERSHOT_SCREEN, "wt-drop"),
+        Some(ARROW_UP),
+        "a pointer parked below the target walks back up; repeating the caller's Down re-clamps it"
+    );
+    assert_eq!(
+        arrow_toward_row(UNSTARTED_SCREEN, "wt-drop"),
+        Some(ARROW_DOWN),
+        "a pointer above the target still moves down"
+    );
+}
+
+#[test]
+fn test_arrow_toward_row_ignores_the_column_header() {
+    // `main↕` and `main…±` put the target's name on the header line. Matching it
+    // would place the row above every item and send the pointer off `@ main`.
+    assert_eq!(
+        arrow_toward_row(UNSTARTED_SCREEN, "main"),
+        None,
+        "the pointer is already on the only `main` row"
+    );
+    assert_eq!(
+        arrow_toward_row(OVERSHOT_SCREEN, "main"),
+        Some(ARROW_UP),
+        "the `main` row, not the header, is what the pointer walks back to"
+    );
+}
+
+#[test]
+fn test_arrow_toward_row_without_a_bearing() {
+    assert_eq!(
+        arrow_toward_row(">\n    Branch   Status\n", "wt-drop"),
+        None,
+        "a frame with no item rows places neither pointer nor target"
+    );
+    assert_eq!(
+        arrow_toward_row(UNSTARTED_SCREEN, "absent-row"),
+        None,
+        "a target that has not rendered yet gives nothing to steer by"
+    );
 }
