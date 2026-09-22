@@ -1804,6 +1804,15 @@ fn test_prune_surfaces_failing_metadata_prune(mut repo: TestRepo) {
         std::fs::set_permissions(&registration, std::fs::Permissions::from_mode(mode)).unwrap()
     };
     set_mode(0o555);
+    // Skip if running as root: euid 0 ignores DAC mode bits, so the deletion
+    // would succeed. Probe with a write the mode should refuse.
+    let probe = registration.join("probe");
+    if std::fs::write(&probe, "").is_ok() {
+        let _ = std::fs::remove_file(&probe);
+        set_mode(0o755);
+        eprintln!("Skipping - running with elevated privileges");
+        return;
+    }
 
     let output = repo
         .wt_command()
@@ -1830,6 +1839,51 @@ fn test_prune_surfaces_failing_metadata_prune(mut repo: TestRepo) {
     assert!(
         branches.lines().any(|branch| branch == "stale-merged"),
         "the failed candidate's branch must survive; branches:\n{branches}"
+    );
+}
+
+/// A stale entry is unregistered before its branch is deleted, so it goes
+/// even when the branch deletion loses its compare-and-swap: prune reports the
+/// pruned entry, then the kept branch. The shim fails the CAS delete and leaves
+/// the ref, which is how a branch that moved during deletion reads.
+#[cfg(unix)]
+#[rstest]
+fn test_prune_unregisters_stale_entry_when_branch_delete_races(mut repo: TestRepo) {
+    repo.commit("initial");
+    let wt_path = repo.add_worktree("stale-raced");
+    std::fs::remove_dir_all(&wt_path).unwrap();
+
+    let mut cmd = repo.wt_command();
+    let git_wrapper_dir = repo.home_path().join("git-wrapper");
+    std::fs::create_dir_all(&git_wrapper_dir).unwrap();
+    write_failing_branch_delete_wrapper(&git_wrapper_dir, &which::which("git").unwrap());
+    prepend_path(&mut cmd, &git_wrapper_dir);
+    cmd.env("WT_TEST_FAIL_DELETE_BRANCH", "stale-raced");
+    cmd.env("WT_TEST_FAIL_DELETE_KEEPS_REF", "1");
+
+    let output = cmd
+        .args(["step", "prune", "--yes", "--min-age=0s"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+
+    assert!(output.status.success(), "prune failed\nstderr:\n{stderr}");
+    assert!(
+        stderr.contains("Pruned stale worktree for stale-raced")
+            && stderr.contains("moved during deletion"),
+        "prune should report the pruned entry and the kept branch\nstderr:\n{stderr}"
+    );
+    let list = repo.git_output(&["worktree", "list", "--porcelain"]);
+    assert!(
+        !list.contains("prunable"),
+        "the entry should be unregistered; worktrees:\n{list}"
+    );
+    let branches = repo.git_output(&["branch", "--format=%(refname:short)"]);
+    assert!(
+        branches.lines().any(|branch| branch == "stale-raced"),
+        "the raced branch should be kept; branches:\n{branches}"
     );
 }
 
@@ -2042,10 +2096,11 @@ fn test_prune_concurrent_removal_failures_report_first(repo: TestRepo) {
     );
 }
 
-/// A `git` shim that deletes `refs/heads/$WT_TEST_FAIL_DELETE_BRANCH` for
-/// real and then reports failure when prune's CAS delete targets it —
-/// making `cas_delete_branch_outcome` propagate an error (ref gone on
-/// re-check) instead of `RetainedRaced` (ref still present).
+/// A `git` shim that fails prune's CAS delete of
+/// `refs/heads/$WT_TEST_FAIL_DELETE_BRANCH`. By default it deletes the ref for
+/// real first, making `cas_delete_branch_outcome` propagate an error (ref gone
+/// on re-check); with `WT_TEST_FAIL_DELETE_KEEPS_REF` set it leaves the ref,
+/// which reads as `RetainedRaced` (a branch that moved during deletion).
 #[cfg(unix)]
 fn write_failing_branch_delete_wrapper(dir: &std::path::Path, real_git: &std::path::Path) {
     use std::os::unix::fs::PermissionsExt;
@@ -2054,7 +2109,7 @@ fn write_failing_branch_delete_wrapper(dir: &std::path::Path, real_git: &std::pa
     let script = format!(
         r#"#!/bin/sh
 if [ "$1" = "update-ref" ] && [ "$2" = "-d" ] && [ "$3" = "refs/heads/$WT_TEST_FAIL_DELETE_BRANCH" ]; then
-  {real_git} update-ref -d "$3" || true
+  [ -n "$WT_TEST_FAIL_DELETE_KEEPS_REF" ] || {real_git} update-ref -d "$3" || true
   exit 1
 fi
 exec {real_git} "$@"

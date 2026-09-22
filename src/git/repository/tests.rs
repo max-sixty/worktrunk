@@ -2257,6 +2257,13 @@ fn prune_worktree_entry_keeps_an_entry_it_cannot_check() {
     let set_mode =
         |mode| std::fs::set_permissions(&guarded, std::fs::Permissions::from_mode(mode)).unwrap();
     set_mode(0o000);
+    // Skip if running as root: euid 0 ignores DAC mode bits, so the stat
+    // would succeed. Probe with the stat the mode should refuse.
+    if std::fs::symlink_metadata(worktree_path.join(".git")).is_ok() {
+        set_mode(0o755);
+        eprintln!("Skipping - running with elevated privileges");
+        return;
+    }
     let result = repo.prune_worktree_entry(&worktree_path);
     set_mode(0o755);
 
