@@ -1890,11 +1890,10 @@ fn test_switch_picker_alt_x_lands_on_immediate_next_row(mut repo: TestRepo) {
     // Guard against the cursor having blown past to the next row: the pointer marks
     // exactly one row, so a landing on `expected_landing` already excludes
     // `overshoot_row`, but assert it explicitly for a clear failure message.
-    let pointer_line = list_pane_text(parser.screen())
-        .lines()
-        .find(|l| l.starts_with('>'))
-        .map(str::to_string)
-        .unwrap_or_default();
+    let screen = parser.screen().contents();
+    let pointer_line = picker_item_rows(&screen)
+        .find(|row| row.starts_with('>'))
+        .expect("the selected item has a pointer");
     assert!(
         !pointer_line.contains(&overshoot_row),
         "alt-x overshot to `{overshoot_row}` instead of the immediate next row \
@@ -2244,13 +2243,20 @@ fn test_switch_picker_alt_x_lands_on_neighbor_under_filter(mut repo: TestRepo) {
     // Type the query: only the four keepers survive (the current/main row and the
     // decoys filter out), so the cursor starts on the top keeper.
     send(b"keep");
-    wait_for_stable_with_content(&rx, &mut parser, Some("keep-1"));
+    let keepers = ["keep-1", "keep-2", "keep-3", "keep-4"];
+    wait_for_stable_until(
+        &rx,
+        &mut parser,
+        |screen| keepers.iter().any(|name| cursor_points_at(screen, name)),
+        Some("the filtered list to start on a keeper"),
+        None,
+    );
 
     // Learn the filtered display order — skim ranks the equal-scoring keepers, so
     // read the rows top-to-bottom rather than assume one.
     let order: Vec<String> = {
         let list = list_pane_text(parser.screen());
-        let mut rows: Vec<(usize, String)> = ["keep-1", "keep-2", "keep-3", "keep-4"]
+        let mut rows: Vec<(usize, String)> = keepers
             .iter()
             .filter_map(|name| {
                 list.lines()
@@ -2282,11 +2288,10 @@ fn test_switch_picker_alt_x_lands_on_neighbor_under_filter(mut repo: TestRepo) {
     send(b"\x1bx");
     wait_for_cursor_on_row(&rx, &mut parser, &expected_landing);
 
-    let pointer_line = list_pane_text(parser.screen())
-        .lines()
-        .find(|l| l.starts_with('>'))
-        .map(str::to_string)
-        .unwrap_or_default();
+    let screen = parser.screen().contents();
+    let pointer_line = picker_item_rows(&screen)
+        .find(|row| row.starts_with('>'))
+        .expect("the selected item has a pointer");
     assert!(
         !pointer_line.contains(&overshoot_row),
         "alt-x under a filter overshot to `{overshoot_row}` instead of the \
@@ -2403,15 +2408,32 @@ fn test_switch_picker_cursor_wait_recovers_under_filter(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
     );
-    send_input_awaiting_content(&writer, &rx, &mut parser, "keep", Some("keep-a"));
+    {
+        let mut w = writer.lock().unwrap();
+        w.write_all(b"keep").unwrap();
+        w.flush().unwrap();
+    }
+    // The keeper names are already visible before filtering. Wait for the
+    // pointer to leave the pinned main row, proving the query was applied.
+    let keepers = ["keep-a", "keep-b"];
+    wait_for_stable_until(
+        &rx,
+        &mut parser,
+        |screen| keepers.iter().any(|name| cursor_points_at(screen, name)),
+        Some("the filtered list to start on a keeper"),
+        None,
+    );
     let screen = parser.screen().contents();
-    let first = ["keep-a", "keep-b"]
+    let first = keepers
         .into_iter()
         .find(|name| cursor_points_at(&screen, name))
         .expect("the filtered list starts on a keeper");
 
-    // The first Down moves away from the target; a repeated Down would clamp
-    // on the other keeper forever. The wait must send Up to recover.
+    let other = keepers.into_iter().find(|name| *name != first).unwrap();
+    // Observe the overshoot before asking for recovery, so a delayed Down
+    // cannot leave the original target selected and falsely pass the test.
+    send_input_awaiting_content(&writer, &rx, &mut parser, ARROW_DOWN, Some(other));
+    // Down now clamps on the last row. The wait must send Up to recover.
     send_input_awaiting_content(&writer, &rx, &mut parser, ARROW_DOWN, Some(first));
     assert!(cursor_points_at(&parser.screen().contents(), first));
     assert_valid_abort_exit_code(abort_and_exit_code(child, writer, rx));
