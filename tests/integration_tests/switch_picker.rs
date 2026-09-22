@@ -618,16 +618,23 @@ const GUTTER_OFFSET: usize = 2;
 
 /// The list-pane text of `line` when `line` is an item row, else `None`.
 ///
-/// Every item row carries a gutter glyph — `@`, `^`, `+`, `/`, `|`, or `#` for
-/// a `--prs` row (`ItemKind::gutter_glyph`) — at [`GUTTER_OFFSET`], so a
-/// non-space there is what marks a line as a row. The column header pads that
-/// offset with a space, and an empty query line is a bare `>`; neither is a row.
+/// An item row carries a gutter glyph — `@`, `^`, `+`, `/`, `|`, or `#` for a
+/// `--prs` row (`ItemKind::gutter_glyph`), `·` while a worktree row is still a
+/// skeleton (`PLACEHOLDER`) — at [`GUTTER_OFFSET`], so a non-space there is what
+/// marks a line as a row. The column header pads that offset with a space, and
+/// an empty query line is a bare `>`; neither is a row. A prunable worktree
+/// row's skeleton gutter is blank (`ListItem::placeholder` → `PLACEHOLDER_BLANK`)
+/// and so reads as neither — [`arrow_toward_row`] falls back to the caller's own
+/// arrow there, which is what it does for any frame it can't take a bearing on.
 ///
 /// Excluding the header is what makes a search *by name* safe: `main` is both a
 /// branch name and part of two column titles (`main↕`, `main…±`), so a search
 /// that matched the header would place the row above every item and steer the
-/// cursor away from it. Excluding the query line is why this can find the `>`
-/// pointer without the "never type" premise [`cursor_points_at`] leans on.
+/// cursor away from it. The query line is excluded only while the query is
+/// empty — a bare `>` has no character at [`GUTTER_OFFSET`] — so this leans on
+/// the same "never type" premise [`cursor_points_at`] does. With a query typed,
+/// offset 2 carries query text and the line reads as a row, which would make
+/// the topmost-match `target` below resolve to it.
 ///
 /// The text is scoped to the list pane (cols `0..LIST_WIDTH`) for the reason
 /// [`cursor_points_at`] gives — the preview pane shares the physical row.
@@ -758,10 +765,11 @@ fn wait_for_stable_until(
         }
 
         // While the readiness condition is still unmet, periodically re-issue the
-        // nudge (the cursor-arrow caller's idempotent arrow). An async item-list
-        // refresh can reset skim's cursor to the top after the first arrow, so a
-        // single keystroke would strand the pointer; re-issuing drives it back
-        // onto the target row until the list stops refreshing.
+        // nudge (the cursor-arrow caller's arrow, aimed at the pointer's current
+        // position by `arrow_toward_row` rather than repeated). An async
+        // item-list refresh can reset skim's cursor to the top after the first
+        // arrow, so a single keystroke would strand the pointer; re-issuing
+        // drives it back onto the target row until the list stops refreshing.
         if !content_ready
             && let Some(nudge) = nudge
             && last_nudge.elapsed() >= CURSOR_REISSUE_INTERVAL
@@ -1440,11 +1448,10 @@ fn test_switch_picker_rapid_pr_navigation_cycles_from_pr(repo: TestRepo) {
 /// The PR row is selected by driving the cursor with a re-issued Down, not by an
 /// `!main` filter: a filter applied before the async `--prs` row streams in
 /// empties the result set, and skim doesn't reselect the lone row when it arrives
-/// — so the gate timed out under contention (#3269). Down is idempotent and
-/// clamps on the bottom row, where the streamed PR row sits (below the worktree
-/// row), so the cursor-arrow wait re-issues it until the `>` pointer holds on
-/// `flaky`, outlasting both the stream-in and the cursor reset that the
-/// item-list refresh triggers.
+/// — so the gate timed out under contention (#3269). The cursor-arrow wait
+/// re-issues an arrow aimed at the streamed PR row ([`arrow_toward_row`]) until
+/// the `>` pointer holds on `flaky`, outlasting both the stream-in and the
+/// cursor reset that the item-list refresh triggers.
 #[rstest]
 fn test_switch_picker_preview_auto_refreshes_when_compute_lands(repo: TestRepo) {
     repo.run_git(&[
