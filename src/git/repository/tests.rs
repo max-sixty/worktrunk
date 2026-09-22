@@ -2514,3 +2514,124 @@ fn worktree_path_not_ours_names_a_normalized_path() {
         "the refusal must name where the occupant belongs:\n{refusal}"
     );
 }
+
+/// Build a `git init --separate-git-dir` layout: the work tree's `.git` is a
+/// *file* pointing at a store directory outside it. Returns the tempdir, the
+/// store (which is the repository's git common dir) and the work tree.
+///
+/// `git worktree repair` runs last so the store carries git's `gitdir`
+/// backlink. Neither `git init --separate-git-dir` nor `git clone
+/// --separate-git-dir` writes one, so an unrepaired repository of this shape
+/// records its work tree nowhere.
+fn build_separate_git_dir_layout() -> (tempfile::TempDir, PathBuf, PathBuf) {
+    use super::canonicalize;
+    use crate::shell_exec::Cmd;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = canonicalize(tmp.path()).unwrap();
+    let store = root.join("store").join("repo.gitdir");
+    let work_tree = root.join("work");
+    std::fs::create_dir_all(root.join("store")).unwrap();
+
+    let git = || crate::testing::configure_git_env(Cmd::new("git"));
+    let path_str = |p: &std::path::Path| p.to_str().unwrap().to_owned();
+
+    let out = git()
+        .args([
+            "init",
+            "-b",
+            "main",
+            "--separate-git-dir",
+            &path_str(&store),
+            &path_str(&work_tree),
+        ])
+        .run()
+        .unwrap();
+    assert!(out.status.success(), "git init --separate-git-dir failed");
+
+    let out = git()
+        .current_dir(&work_tree)
+        .args(["commit", "--allow-empty", "-m", "init"])
+        .run()
+        .unwrap();
+    assert!(out.status.success(), "git commit failed");
+
+    let out = git()
+        .current_dir(&work_tree)
+        .args(["worktree", "repair"])
+        .run()
+        .unwrap();
+    assert!(out.status.success(), "git worktree repair failed");
+
+    (tmp, store, work_tree)
+}
+
+#[test]
+fn repo_path_follows_the_separate_git_dir_backlink() {
+    // Regression test for #4235. With the git dir outside the work tree, the
+    // `parent(git_common_dir)` fallback names the store's *parent* — so
+    // `{{ repo_path }}.{{ branch }}` placed new worktrees beside the store
+    // rather than beside the work tree.
+    use super::{Repository, canonicalize};
+
+    let (_tmp, store, work_tree) = build_separate_git_dir_layout();
+
+    let repo = Repository::at(&work_tree).unwrap();
+    assert_eq!(
+        canonicalize(repo.git_common_dir()).unwrap(),
+        canonicalize(&store).unwrap(),
+        "the store is the git common dir in this layout"
+    );
+    assert_eq!(
+        canonicalize(repo.repo_path().unwrap()).unwrap(),
+        work_tree,
+        "repo_path must name the work tree, not the store's parent"
+    );
+}
+
+#[test]
+fn list_worktrees_names_the_work_tree_of_a_separate_git_dir_repo() {
+    // Companion to the above: `git worktree list` reports the git common dir
+    // as the main worktree entry here, the same shape `list_worktrees`
+    // already corrects for submodules. Pin the corrected path, which is what
+    // `wt list` renders.
+    use super::{Repository, canonicalize};
+
+    let (_tmp, _store, work_tree) = build_separate_git_dir_layout();
+
+    let repo = Repository::at(&work_tree).unwrap();
+    let worktrees = repo.list_worktrees().unwrap();
+    assert_eq!(
+        canonicalize(&worktrees[0].path).unwrap(),
+        work_tree,
+        "the main worktree entry must be the work tree"
+    );
+}
+
+#[test]
+fn repo_path_declines_a_stale_separate_git_dir_backlink() {
+    // The backlink is one-way, so `repo_path` confirms it: a work tree that
+    // has moved away leaves a `gitdir` file naming a path that no longer
+    // points back. Falling through to `parent(git_common_dir)` returns the
+    // pre-#4235 answer rather than a path that doesn't hold this repository.
+    use super::{Repository, canonicalize};
+
+    let (_tmp, store, work_tree) = build_separate_git_dir_layout();
+    let moved = work_tree.with_file_name("moved");
+    std::fs::rename(&work_tree, &moved).unwrap();
+    // Plant an unrelated repository where the work tree used to be, so the
+    // backlink still resolves to a directory and the `.git` entry there is
+    // what rejects it — not the path simply being gone.
+    let out = crate::testing::configure_git_env(crate::shell_exec::Cmd::new("git"))
+        .args(["init", "-b", "main", work_tree.to_str().unwrap()])
+        .run()
+        .unwrap();
+    assert!(out.status.success(), "git init failed");
+
+    let repo = Repository::at(&store).unwrap();
+    assert_eq!(
+        canonicalize(repo.repo_path().unwrap()).unwrap(),
+        canonicalize(store.parent().unwrap()).unwrap(),
+        "a backlink whose work tree no longer points back must not be used"
+    );
+}

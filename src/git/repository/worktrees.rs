@@ -48,18 +48,21 @@ impl Repository {
                 let mut worktrees: Vec<_> =
                     raw_worktrees.into_iter().filter(|wt| !wt.bare).collect();
 
-                // Submodule path correction.
+                // Main-worktree path correction.
                 //
                 // Git's `get_main_worktree()` computes the main worktree path by stripping
-                // a trailing `/.git` from the common dir. For submodules, the common dir is
-                // `.git/modules/sub` (no trailing `/.git`), so git leaves it unchanged —
-                // reporting the git data directory as the "main worktree" path. Git does not
-                // consult `core.worktree` in this code path.
+                // a trailing `/.git` from the common dir. Two layouts have no such suffix,
+                // so git leaves the path unchanged and reports the git data directory as
+                // the "main worktree": submodules, whose common dir is `.git/modules/sub`,
+                // and `--separate-git-dir` repositories, whose common dir is wherever the
+                // user put the store. Git consults neither `core.worktree` nor its own
+                // `gitdir` backlink in this code path.
                 //
                 // We detect this by checking whether the first worktree's path equals
                 // git_common_dir (which never holds for normal repos, where git_common_dir
                 // is `.git` inside the worktree). When matched, we correct it using
-                // repo_path(), which reads `core.worktree` from the bulk config map.
+                // repo_path(), which resolves both layouts from the signals git does
+                // record.
                 //
                 // We fix this here rather than at each call site because list_worktrees()
                 // is the single point where worktree paths enter the system — all consumers
