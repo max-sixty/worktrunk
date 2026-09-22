@@ -65,16 +65,22 @@ use super::paths::{home_dir_required, powershell_profile_paths, zsh_config_dir};
 /// # Usage
 ///
 /// Used by:
-/// - `Shell::is_shell_configured()` - detect "configured but not restarted" state
-/// - `uninstall` - identify lines to remove from shell config
-/// - `wt config show` - display shell integration status
+/// - `Shell::is_shell_configured()` and `wt config show` - detect the
+///   "configured but not restarted" state
+/// - `wt config shell install` - the idempotency check
+///   (`contains_shell_integration`), which decides whether an rc file already
+///   carries this shell's line and skips the append when it does
+///
+/// Not by uninstall, which reads
+/// [`is_shell_integration_line_for_uninstall_any_cmd`] instead: it asks only
+/// whether a line is worktrunk's, whatever binary name it was installed under.
 ///
 /// # Impact of False Negatives
 ///
-/// Detection is ONLY used when shell integration is NOT active (i.e., user ran
-/// the binary directly without the shell wrapper). Once the shell wrapper is
-/// active (after shell restart), `WORKTRUNK_DIRECTIVE_CD_FILE` is set and no
-/// detection is needed.
+/// The messaging cases are benign. Detection is consulted for them only when
+/// shell integration is NOT active (i.e., user ran the binary directly without
+/// the shell wrapper); once the wrapper is active, `WORKTRUNK_DIRECTIVE_CD_FILE`
+/// is set and nothing asks.
 ///
 /// **When binary is run directly (wrapper not active):**
 /// - If detection finds integration → "installed but not active" (restart hint)
@@ -82,8 +88,12 @@ use super::paths::{home_dir_required, powershell_profile_paths, zsh_config_dir};
 ///
 /// **When wrapper is active:** No warnings shown regardless of detection.
 ///
-/// This means false negatives only cause incorrect messaging in `wt config show`
-/// and when users run the binary directly before restarting their shell.
+/// Install is the case that isn't benign: a miss there reads an
+/// already-configured rc file as unconfigured and appends a second copy of the
+/// line. Uninstall removes every line it matches, so the duplicate is not
+/// stranded — but this is a write to a user-owned file rather than a message,
+/// which is why the bar for a change here is higher than the messaging cases
+/// alone would set it.
 pub fn is_shell_integration_line(line: &str, cmd: &str) -> bool {
     has_init_invocation(line_code_portion(line), cmd)
 }
