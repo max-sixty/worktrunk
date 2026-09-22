@@ -2232,6 +2232,46 @@ fn prune_worktree_entry_repeats_git_prune_test() {
     );
 }
 
+/// A `.git` that can't be statted is not taken for an absent one: the entry
+/// keeps its registration, and the error names what couldn't be checked.
+#[cfg(unix)]
+#[test]
+fn prune_worktree_entry_keeps_an_entry_it_cannot_check() {
+    use std::os::unix::fs::PermissionsExt;
+
+    use crate::git::Repository;
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+    let guarded = test.root_path().parent().unwrap().join("guarded");
+    std::fs::create_dir(&guarded).unwrap();
+    let worktree_path = guarded.join("wt");
+    test.run_git(&[
+        "worktree",
+        "add",
+        "--detach",
+        worktree_path.to_str().unwrap(),
+    ]);
+    let repo = Repository::at(test.root_path()).unwrap();
+
+    let set_mode =
+        |mode| std::fs::set_permissions(&guarded, std::fs::Permissions::from_mode(mode)).unwrap();
+    set_mode(0o000);
+    let result = repo.prune_worktree_entry(&worktree_path);
+    set_mode(0o755);
+
+    let err = result.unwrap_err();
+    assert!(
+        format!("{err:#}").contains("Failed to check"),
+        "got: {err:#}"
+    );
+    assert!(
+        test.git_output(&["worktree", "list", "--porcelain"])
+            .contains("guarded/wt"),
+        "the entry should stay registered"
+    );
+}
+
 /// The deletion waits for in-process registry readers: `git worktree list`
 /// reads every entry's files, so one overlapping the deletion could read the
 /// entry half-deleted and fail. A held read guard keeps the entry intact; its

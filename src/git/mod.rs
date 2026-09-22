@@ -826,10 +826,12 @@ impl WorktreeInfo {
         WorktreeRef::new(self.path.clone(), self.branch.as_deref(), &self.head)
     }
 
-    /// Returns true if this worktree is prunable (directory deleted but git still tracks metadata).
+    /// Returns true if git reports this worktree prunable: the `.git` its
+    /// registration names is gone, with the directory or without it.
     ///
-    /// Prunable worktrees cannot be operated on - the directory doesn't exist.
-    /// Most iteration over worktrees should skip prunable ones.
+    /// Prunable worktrees cannot be operated on — git no longer resolves the
+    /// directory, if one remains, as this worktree. Most iteration over
+    /// worktrees should skip prunable ones.
     pub fn is_prunable(&self) -> bool {
         self.prunable.is_some()
     }

@@ -542,6 +542,33 @@ fn test_remove_worktree_directory_recreated(mut repo: TestRepo) {
     );
 }
 
+/// A detached stale entry has no branch for the removal to fall back to, so
+/// `wt remove` reports it rather than removing it; `wt step prune` is what
+/// unregisters one.
+#[rstest]
+fn test_remove_stale_detached_worktree_reports_it(repo: TestRepo) {
+    let wt_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("repo.detached-stale");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "--detach",
+        wt_path.to_str().unwrap(),
+        "HEAD",
+    ]);
+    std::fs::remove_dir_all(&wt_path).unwrap();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["../repo.detached-stale"],
+        None
+    ));
+}
+
 /// A registration whose directory now holds a *different* repository is not
 /// this repository's worktree, and removing it would destroy that one — its
 /// uncommitted work and, for a repo that was never pushed, the only copy of

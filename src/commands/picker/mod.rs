@@ -2942,6 +2942,31 @@ pub mod tests {
         assert!(wt_path.is_dir(), "the directory should stay");
     }
 
+    /// A prune that fails leaves the branch alone, so the row is restored
+    /// rather than showing a removal that only half happened.
+    #[test]
+    fn test_do_removal_branch_only_keeps_branch_when_prune_fails() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        repo.run_command(&["branch", "feature"]).unwrap();
+
+        let result = RemovalPlan::BranchOnly {
+            branch_name: "feature".to_string(),
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            prune_entry: Some(test.path().join("not-registered")),
+            target_branch: None,
+            integration_reason: None,
+            branch_checked_out_at: None,
+        };
+        AltXRemover::do_removal(&repo, &result, &Approvals::default()).unwrap();
+
+        let output = repo.run_command(&["branch", "--list", "feature"]).unwrap();
+        assert!(
+            !output.is_empty(),
+            "the branch should survive a failed prune"
+        );
+    }
+
     #[test]
     fn test_do_removal_branch_only_retains_unmerged_branch() {
         let test = worktrunk::testing::TestRepo::with_initial_commit();

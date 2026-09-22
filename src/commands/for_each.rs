@@ -51,7 +51,7 @@ use crate::output::print_json;
 pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> anyhow::Result<()> {
     let json_mode = format == crate::cli::SwitchFormat::Json;
     let repo = Repository::current()?;
-    // Filter out prunable worktrees (directory deleted) - can't run commands there
+    // Filter out prunable worktrees (directory or its `.git` gone) - can't run commands there
     let worktrees: Vec<&WorktreeInfo> = repo
         .list_worktrees()?
         .iter()

@@ -93,7 +93,8 @@ pub struct WorktreeData {
 }
 
 impl WorktreeData {
-    /// Returns true if this worktree is prunable (directory deleted but git still tracks metadata).
+    /// Returns true if git reports this worktree prunable: its directory or
+    /// that directory's `.git` is gone.
     pub fn is_prunable(&self) -> bool {
         self.prunable.is_some()
     }
@@ -497,8 +498,9 @@ impl ListItem {
     /// The glyph this row's unresolved cells render, given the render's
     /// current one.
     ///
-    /// A prunable worktree's directory is gone, so `work_items_for_worktree`
-    /// spawns nothing for it and no cell a task would fill will ever arrive.
+    /// A prunable worktree has lost its directory or its `.git`, so
+    /// `work_items_for_worktree` spawns nothing for it and no cell a task
+    /// would fill will ever arrive.
     /// The loading dot would promise data that isn't coming — for the life of
     /// the row, not for a tick — so those cells stay blank and the `⊟` in
     /// Status is the row's whole story.
