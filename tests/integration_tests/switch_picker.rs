@@ -2336,7 +2336,7 @@ fn test_switch_picker_alt_x_lands_on_neighbor_under_filter(mut repo: TestRepo) {
 ///
 /// Flush-left because the leading spaces before each gutter glyph are the frame.
 const OVERSHOT_SCREEN: &str = r">
-    Branch   Status      HEAD±     main↕    main…±    Remot
+    Branch   Status      HEAD±     main↕    main…±    Remote
   @ main       ? |     +16                              |
   + wt-drop      _
 > # fix/fl…
@@ -2345,7 +2345,7 @@ const OVERSHOT_SCREEN: &str = r">
 /// The same list with the pointer still on the pinned current worktree — the
 /// state an item-list refresh resets to, which the re-issue exists to repair.
 const UNSTARTED_SCREEN: &str = r">
-    Branch   Status      HEAD±     main↕    main…±    Remot
+    Branch   Status      HEAD±     main↕    main…±    Remote
 > @ main       ? |     +16                              |
   + wt-drop      _
   # fix/fl…
