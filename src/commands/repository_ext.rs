@@ -282,6 +282,10 @@ impl RepositoryCliExt for Repository {
         if let Some(branch) = branch_name {
             check_not_default_branch(self, branch, &deletion_mode)?;
         }
+        // An orphan worktree's branch is unborn until its first commit: it has
+        // no ref, so there is nothing for the removal to delete.
+        let branch_unborn =
+            branch_name.is_some_and(|branch| snapshot.local_branch(branch).is_none());
 
         // Phase 4: Return BranchOnly early (after validation), or continue to
         // worktree-level checks. Branch-only removals have no pre-remove hook,
@@ -298,14 +302,17 @@ impl RepositoryCliExt for Repository {
                     live_sibling_checkout(worktrees, &branch, target)
                         .map(|sibling| SharedBranchCheckout::new(&sibling.path, &deletion_mode))
                 });
-                if let Some(shared) = shared {
+                // A shared branch stays for its sibling, and an unborn one has
+                // no ref to delete, so either way pruning the entry is the whole
+                // removal.
+                if shared.is_some() || branch_unborn {
                     return Ok(RemovalPlan::BranchOnly {
                         branch_name: branch,
                         deletion_mode: BranchDeletionMode::Keep,
                         prune_entry: pruned_from,
                         target_branch: None,
                         integration_reason: None,
-                        branch_checked_out_at: Some(shared),
+                        branch_checked_out_at: shared,
                     });
                 }
                 let default_branch = self.default_branch();
@@ -376,32 +383,32 @@ impl RepositoryCliExt for Repository {
         // retention prediction. The actual branch deletion re-decides against
         // fresh refs (`delete_branch_if_safe`'s CAS), so this is display-only.
         //
-        // A retained shared branch skips all of it: forcing `Keep` — the single
-        // chokepoint every deletion path honors — settles the outcome, so an
-        // integration verdict would only be computed to be ignored, and
-        // reporting one alongside a branch that survives reads as a
-        // contradiction.
-        let (deletion_mode, target_branch, integration_reason) = if branch_checked_out_at.is_some()
-        {
-            (BranchDeletionMode::Keep, None, None)
-        } else {
-            let default_branch = self.default_branch();
-            let target_branch = match (&default_branch, &branch_name) {
-                (Some(db), Some(bn)) if db == bn => None,
-                _ => default_branch,
+        // A shared branch, retained for its sibling, skips all of it, as does
+        // an unborn one, which has nothing to delete. Forcing `Keep` — the
+        // single chokepoint every deletion path honors — settles the outcome,
+        // so an integration verdict would only be computed to be ignored, and
+        // beside a branch that survives it reads as a contradiction.
+        let (deletion_mode, target_branch, integration_reason) =
+            if branch_checked_out_at.is_some() || branch_unborn {
+                (BranchDeletionMode::Keep, None, None)
+            } else {
+                let default_branch = self.default_branch();
+                let target_branch = match (&default_branch, &branch_name) {
+                    (Some(db), Some(bn)) if db == bn => None,
+                    _ => default_branch,
+                };
+                let (integration_reason, target_branch) = match compute_integration_reason(
+                    self,
+                    snapshot,
+                    branch_name.as_deref(),
+                    target_branch.as_deref(),
+                    deletion_mode,
+                ) {
+                    (reason, Some(effective_target)) => (reason, Some(effective_target)),
+                    (reason, None) => (reason, target_branch),
+                };
+                (deletion_mode, target_branch, integration_reason)
             };
-            let (integration_reason, target_branch) = match compute_integration_reason(
-                self,
-                snapshot,
-                branch_name.as_deref(),
-                target_branch.as_deref(),
-                deletion_mode,
-            ) {
-                (reason, Some(effective_target)) => (reason, Some(effective_target)),
-                (reason, None) => (reason, target_branch),
-            };
-            (deletion_mode, target_branch, integration_reason)
-        };
 
         // Capture commit SHA before removal for post-remove hook template variables.
         // This ensures {{ commit }} references the removed worktree's state.

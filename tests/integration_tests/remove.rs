@@ -572,6 +572,60 @@ fn test_remove_stale_worktree_holding_staged_changes(mut repo: TestRepo) {
     );
 }
 
+/// An orphan worktree's branch is unborn, so there is no local branch to
+/// delete or retain, even with a remote branch of that name: removing the
+/// worktree, or pruning a stale one, is the whole removal.
+#[rstest]
+fn test_remove_orphan_worktree(#[from(repo_with_remote)] repo: TestRepo) {
+    let remove = |branch: &str| {
+        repo.run_git(&[
+            "update-ref",
+            &format!("refs/remotes/origin/{branch}"),
+            "HEAD",
+        ]);
+        let wt_path = repo
+            .root_path()
+            .parent()
+            .unwrap()
+            .join(format!("repo.{branch}"));
+        repo.run_git(&[
+            "worktree",
+            "add",
+            "--orphan",
+            "-b",
+            branch,
+            wt_path.to_str().unwrap(),
+        ]);
+        if branch == "stale" {
+            std::fs::remove_dir_all(&wt_path).unwrap();
+        }
+        let output = repo
+            .wt_command()
+            .args(["remove", branch, "--yes", "--foreground"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stderr)
+            .ansi_strip()
+            .to_string()
+    };
+
+    assert_snapshot!(remove("live"), @"
+    ◎ Removing live worktree...
+    ✓ Removed live worktree (1 file · [BYTES] B)
+    ");
+    assert_snapshot!(remove("stale"), @"✓ Pruned stale worktree for stale");
+    let list = repo.git_output(&["worktree", "list", "--porcelain"]);
+    assert!(
+        !list.contains("repo.live") && !list.contains("repo.stale"),
+        "worktrees:\n{list}"
+    );
+}
+
 /// A detached stale entry has no branch for the removal to fall back to, so
 /// `wt remove` reports it rather than removing it; `wt step prune` is what
 /// unregisters one.
