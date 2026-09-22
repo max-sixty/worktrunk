@@ -65,8 +65,10 @@ use super::paths::{home_dir_required, powershell_profile_paths, zsh_config_dir};
 /// # Usage
 ///
 /// Used by:
-/// - `Shell::is_shell_configured()` and `wt config show` - detect the
-///   "configured but not restarted" state
+/// - `Shell::is_shell_configured()` - detect the "configured but not restarted"
+///   state behind the shell-integration warnings
+/// - `wt config show` - render the matched integration line, and report a line
+///   that names the command but did not match as a possible false negative
 /// - `wt config shell install` - the idempotency check
 ///   (`contains_shell_integration`), which decides whether an rc file already
 ///   carries this shell's line and skips the append when it does
@@ -77,16 +79,23 @@ use super::paths::{home_dir_required, powershell_profile_paths, zsh_config_dir};
 ///
 /// # Impact of False Negatives
 ///
-/// The messaging cases are benign. Detection is consulted for them only when
-/// shell integration is NOT active (i.e., user ran the binary directly without
-/// the shell wrapper); once the wrapper is active, `WORKTRUNK_DIRECTIVE_CD_FILE`
-/// is set and nothing asks.
+/// The messaging cases are benign, but they are not all gated the same way.
+/// `Shell::is_shell_configured()`'s callers ask only when shell integration is
+/// NOT active (i.e., user ran the binary directly without the shell wrapper);
+/// once the wrapper is active, `WORKTRUNK_DIRECTIVE_CD_FILE` is set and they
+/// stop asking.
 ///
 /// **When binary is run directly (wrapper not active):**
 /// - If detection finds integration → "installed but not active" (restart hint)
 /// - If detection misses (false negative) → "shell integration not installed"
 ///
-/// **When wrapper is active:** No warnings shown regardless of detection.
+/// **When wrapper is active:** none of those warnings are shown, regardless of
+/// detection.
+///
+/// `wt config show` is not gated that way — it scans on every run, so a line
+/// that names the command but doesn't match is reported as a possible false
+/// negative whether or not the wrapper is active. That is still messaging, but
+/// it is a warning the user sees rather than silence.
 ///
 /// Install is the case that isn't benign: a miss there reads an
 /// already-configured rc file as unconfigured and appends a second copy of the
