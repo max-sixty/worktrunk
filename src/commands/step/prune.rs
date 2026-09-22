@@ -408,8 +408,8 @@ struct CheckOutcome {
     /// `prune_entry`; execution performs it), which is what lets this scan
     /// double as `--dry-run` and plan every source. `None` means not
     /// removable (dirty, locked, primary — filtered silently, never reported
-    /// as "younger than") — except detached stale entries, which need no
-    /// plan: `try_remove` prunes them directly.
+    /// as "younger than") — except detached stale entries whose directory is
+    /// gone, which need no plan: `try_remove` prunes them directly.
     plan: Option<RemovalPlan>,
     /// Whether the item passed the removability gate (see `plan`).
     removable: bool,
@@ -450,10 +450,20 @@ fn check_one(
     }
     // A detached stale entry can't be planned — `prepare_worktree_removal`'s
     // missing-directory fallback needs a branch to fall back to — and needs
-    // no plan: `try_remove` prunes the entry directly.
-    let detached_stale = matches!(&item.source,
-        CheckSource::Prunable { wt_idx } if worktrees[*wt_idx].branch.is_none());
-    let plan = if detached_stale {
+    // no plan: `try_remove` prunes the entry directly. It still needs that
+    // fallback's precondition, an absent directory. Git also calls an entry
+    // prunable when only the `.git` file inside the directory went (a temp-dir
+    // sweep that deletes idle files and keeps directories), and `git worktree
+    // remove` refuses an entry whose directory remains, failing the run. Such
+    // an entry stays registered, as its branch-bearing twin does when planning
+    // refuses it with `WorktreeMissing`.
+    let stale_detached = match &item.source {
+        CheckSource::Prunable { wt_idx } if worktrees[*wt_idx].branch.is_none() => {
+            Some(&worktrees[*wt_idx])
+        }
+        _ => None,
+    };
+    let plan = if stale_detached.is_some() {
         None
     } else {
         match &item.source {
@@ -488,7 +498,10 @@ fn check_one(
             }
         }
     };
-    let removable = detached_stale || plan.is_some();
+    let removable = match stale_detached {
+        Some(wt) => !wt.path.exists(),
+        None => plan.is_some(),
+    };
     let deletes_branch = plan.as_ref().is_some_and(RemovalPlan::deletes_branch);
     let age = if min_age_duration > Duration::ZERO {
         match &item.source {
@@ -905,7 +918,7 @@ fn render_dry_run(
     Ok(())
 }
 
-/// Build the pessimistic hook plan up front — every worktree entry in
+/// Build the pessimistic hook plan up front — every linked worktree in
 /// `check_items` × `pre-remove`/`post-remove`, plus the primary × `post-switch`
 /// when the current worktree appears in `check_items`. The actual scan may
 /// narrow this set; the pessimistic shape is what lets `try_remove` stream
@@ -913,15 +926,11 @@ fn render_dry_run(
 /// resolve against (every hook is selected from the invoking worktree's
 /// `.config/wt.toml`, whatever its anchor).
 ///
-/// `Orphan` items name no worktree, so they contribute nothing. `Prunable` ones
-/// do, even though the stale entry they usually describe plans a pure branch
-/// deletion that runs no hooks: git calls an entry prunable when the `.git` file
-/// its metadata points at is gone, which leaves the worktree *directory* still
-/// there whenever only that file went (an interrupted `rm -rf`, a copy that
-/// skipped dotfiles), and the scan then plans a full worktree removal whose
-/// hooks anchor at that path and must resolve (`ApprovedHookPlan::lookup`
-/// matches the anchor exactly, by design). For the ordinary stale entry the
-/// plan resolves to `BranchOnly` and the registration goes unused.
+/// Only `Linked` items can plan a worktree removal, the one plan that runs
+/// hooks. `Orphan` items name no worktree. A `Prunable` entry plans a pure
+/// branch deletion when its directory is gone and nothing when it remains
+/// (`prepare_worktree_removal` refuses it with `WorktreeMissing`, and a
+/// detached one is left out in [`check_one`]).
 fn build_pessimistic_plan(
     repo: &Repository,
     check_items: &[CheckItem],
@@ -934,8 +943,7 @@ fn build_pessimistic_plan(
     let mut builder = HookPlanBuilder::new(project_config, user_config, project_id);
     let mut has_current = false;
     for item in check_items {
-        let (CheckSource::Linked { wt_idx } | CheckSource::Prunable { wt_idx }) = &item.source
-        else {
+        let CheckSource::Linked { wt_idx } = &item.source else {
             continue;
         };
         let wt = &worktrees[*wt_idx];
@@ -1328,9 +1336,7 @@ pub fn step_prune(
                     continue;
                 }
                 // Keyed on the plan, not the candidate's shape: only a
-                // worktree removal runs `pre-remove`/`post-remove`, and a
-                // stale entry whose directory turned out to still exist plans
-                // one like any other (see `build_pessimistic_plan`). Branch-
+                // worktree removal runs `pre-remove`/`post-remove`. Branch-
                 // only plans and detached stale entries run no hooks.
                 let needs_approval = match &outcome.plan {
                     Some(RemovalPlan::Worktree { .. }) => {

@@ -690,6 +690,60 @@ fn test_prune_stale_detached_worktree(repo: TestRepo) {
     );
 }
 
+/// Prune leaves a detached entry registered when git calls it prunable only
+/// because the `.git` file inside its directory went, and removes the rest.
+/// `git worktree remove` refuses an entry whose directory remains, so selecting
+/// it would fail the whole prune with git's `validation failed` error.
+#[rstest]
+fn test_prune_keeps_stale_detached_entry_whose_directory_remains(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.add_worktree("merged");
+
+    let wt_path = repo.root_path().parent().unwrap().join("repo.dotgit-gone");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "--detach",
+        wt_path.to_str().unwrap(),
+        "HEAD",
+    ]);
+    std::fs::remove_file(wt_path.join(".git")).unwrap();
+    let list_before = repo.git_output(&["worktree", "list", "--porcelain"]);
+    let wt_path_str = porcelain_worktree_path(&list_before, "repo.dotgit-gone");
+    assert!(
+        list_before.contains("prunable") && wt_path.is_dir(),
+        "git should report the entry prunable with its directory intact; worktrees:\n{list_before}"
+    );
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "prune",
+            "--yes",
+            "--min-age=0s",
+            "--format=json",
+            "--foreground",
+        ])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(output.status.success(), "prune failed\nstderr:\n{stderr}");
+
+    let items: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let branches: Vec<_> = items.iter().map(|item| item["branch"].as_str()).collect();
+    assert_eq!(branches, [Some("merged")], "stderr:\n{stderr}");
+
+    let list_after = repo.git_output(&["worktree", "list", "--porcelain"]);
+    assert!(
+        list_after.contains(wt_path_str),
+        "the entry should stay registered; worktrees:\n{list_after}"
+    );
+    assert!(wt_path.is_dir(), "the directory should be left in place");
+}
+
 /// Min-age check passes when worktrees are old enough.
 ///
 /// Uses a far-future epoch (2030) so real worktrees (created Feb 2026) appear
