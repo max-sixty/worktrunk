@@ -2523,7 +2523,19 @@ fn worktree_path_not_ours_names_a_normalized_path() {
 /// backlink. Neither `git init --separate-git-dir` nor `git clone
 /// --separate-git-dir` writes one, so an unrepaired repository of this shape
 /// records its work tree nowhere.
+///
+/// `relative_backlink` sets `worktree.useRelativePaths` before the repair, so
+/// git writes the backlink as a path relative to the store rather than an
+/// absolute one. Git honors the setting from 2.48; below that it keeps writing
+/// the absolute form, which the tests accept the same way
+/// `test_switch_with_relative_worktree_paths` does.
 fn build_separate_git_dir_layout() -> (tempfile::TempDir, PathBuf, PathBuf) {
+    build_separate_git_dir_layout_with(false)
+}
+
+fn build_separate_git_dir_layout_with(
+    relative_backlink: bool,
+) -> (tempfile::TempDir, PathBuf, PathBuf) {
     use super::canonicalize;
     use crate::shell_exec::Cmd;
 
@@ -2555,6 +2567,15 @@ fn build_separate_git_dir_layout() -> (tempfile::TempDir, PathBuf, PathBuf) {
         .run()
         .unwrap();
     assert!(out.status.success(), "git commit failed");
+
+    if relative_backlink {
+        let out = git()
+            .current_dir(&work_tree)
+            .args(["config", "worktree.useRelativePaths", "true"])
+            .run()
+            .unwrap();
+        assert!(out.status.success(), "git config failed");
+    }
 
     let out = git()
         .current_dir(&work_tree)
@@ -2637,18 +2658,28 @@ fn repo_path_declines_a_stale_separate_git_dir_backlink() {
 }
 
 #[test]
-fn repo_path_declines_a_relative_separate_git_dir_backlink() {
-    // Git writes the backlink absolute. A relative one would resolve against
-    // the process cwd — whatever directory `wt` happened to be run from — so
-    // it is declined rather than followed.
+fn repo_path_follows_a_relative_separate_git_dir_backlink() {
+    // Under `worktree.useRelativePaths` git writes the backlink relative to
+    // the store — `../../work/.git` — the same form it uses for a linked
+    // worktree's registration, and it resolves it against the directory the
+    // file sits in. Declining that form, or resolving it against the process
+    // cwd, would leave #4235 unfixed for anyone with the setting on.
+    use std::path::Path;
+
     use super::{Repository, canonicalize};
 
-    let (_tmp, store, _work_tree) = build_separate_git_dir_layout();
-    std::fs::write(store.join("gitdir"), "../work/.git\n").unwrap();
+    let (_tmp, store, work_tree) = build_separate_git_dir_layout_with(true);
 
-    let repo = Repository::at(&store).unwrap();
+    let backlink = std::fs::read_to_string(store.join("gitdir")).unwrap();
+    assert!(
+        backlink.starts_with("../") || Path::new(backlink.trim()).is_absolute(),
+        "expected a relative or (pre-2.48) absolute backlink: {backlink}"
+    );
+
+    let repo = Repository::at(&work_tree).unwrap();
     assert_eq!(
         canonicalize(repo.repo_path().unwrap()).unwrap(),
-        canonicalize(store.parent().unwrap()).unwrap(),
+        work_tree,
+        "a relative backlink must resolve against the store, not the cwd"
     );
 }

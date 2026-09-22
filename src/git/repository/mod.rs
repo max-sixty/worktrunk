@@ -173,6 +173,7 @@ pub use diff::{CommitMessageDetail, PreparedDiff};
 pub use integration::{BranchDiffSpec, IntegrationTargets, select_comparison_base};
 pub use ref_snapshot::RefSnapshot;
 pub(super) use working_tree::path_to_logging_context;
+use working_tree::registration_worktree_path;
 pub use working_tree::{InProgressOperation, TempIndex, WorkingTree};
 pub use worktrees::{StaleWorktreeWork, duplicated_branches};
 
@@ -1470,9 +1471,11 @@ impl Repository {
     /// the reason that gate uses it rather than the `GIT_DIRS`-cached
     /// [`WorkingTree::git_dir`].
     ///
-    /// Two callers, with opposite readings of `None`:
+    /// Three callers, with different readings of `None`:
     /// [`Self::prime_worktree_path_caches`] declines to seed a cache entry and
-    /// leaves the answer to the subprocess, while the removal gate refuses.
+    /// leaves the answer to the subprocess, `separate_git_dir_work_tree`
+    /// declines the backlink it was confirming and falls back to
+    /// `parent(git_common_dir)`, and the removal gate refuses.
     fn git_dir_at(dir: &Path) -> Option<PathBuf> {
         let dot_git = dir.join(".git");
         // Follows a symlinked `.git`, as git and the subprocess fallback do.
@@ -1673,8 +1676,10 @@ impl Repository {
     /// trips the same way).
     ///
     /// Git's own record of the other direction is `<git-common-dir>/gitdir`,
-    /// holding the absolute path of the work tree's `.git` file — the same
-    /// format as a linked worktree's `.git/worktrees/<name>/gitdir`. Only
+    /// holding the path of the work tree's `.git` file — the same format as a
+    /// linked worktree's `.git/worktrees/<name>/gitdir`, down to the relative
+    /// form git writes under `worktree.useRelativePaths`, so
+    /// [`registration_worktree_path`] reads it. Only
     /// `git worktree repair` writes it; `git init --separate-git-dir` and
     /// `git clone --separate-git-dir` leave the store with no backlink, so a
     /// repository that has never been repaired records its work tree nowhere
@@ -1691,18 +1696,7 @@ impl Repository {
     /// repository. That round trip is also why a normal repository or a
     /// submodule can't misfire here on a stray `gitdir` file.
     fn separate_git_dir_work_tree(&self) -> Option<PathBuf> {
-        let backlink = std::fs::read_to_string(self.git_common_dir.join("gitdir")).ok()?;
-        // Git writes the work tree's `.git` file, absolute, as a linked
-        // worktree's `.git/worktrees/<name>/gitdir` holds one. A relative
-        // form would resolve against the process cwd, so decline it.
-        let dot_git = Path::new(backlink.trim_end_matches(['\n', '\r']));
-        if !dot_git.is_absolute() {
-            return None;
-        }
-        // Canonicalize to match `git_common_dir`, which `Repository::at`
-        // resolves through symlinks — worktree paths are compared by value
-        // across the codebase.
-        let work_tree = canonicalize(dot_git.parent()?).ok()?;
+        let work_tree = registration_worktree_path(&self.git_common_dir)?;
         (Self::git_dir_at(&work_tree)? == self.git_common_dir).then_some(work_tree)
     }
 

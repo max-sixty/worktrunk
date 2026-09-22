@@ -162,14 +162,18 @@ fn sequencer_operation(git_dir: &Path) -> Option<InProgressOperation> {
     }
 }
 
-/// The working tree a `<common>/worktrees/<id>` registration records, read from
-/// its `gitdir` file.
+/// The working tree a `gitdir` file records, read from the directory holding it.
 ///
 /// The file holds the path of that working tree's `.git`, absolute or relative to
-/// the registration directory — git writes the relative form under
+/// the directory it sits in — git writes the relative form under
 /// `worktree.useRelativePaths` and resolves either, so both are ordinary. Its
 /// parent is the working tree, which is the half of git's `validate_worktree`
 /// that reads from the registration side.
+///
+/// Two directories hold one: a `<common>/worktrees/<id>` registration, and the
+/// common dir itself when `git worktree repair` has written the main worktree's
+/// backlink there (`Repository::separate_git_dir_work_tree`). The format is the
+/// same, so one reader answers for both.
 ///
 /// Resolved through [`canonicalize_with_parents`], which normalizes the `..`
 /// chain a relative entry leaves behind even though the directory it names may
