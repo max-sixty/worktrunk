@@ -575,9 +575,8 @@ fn wait_for_stable_with_content(
 /// assertions on the preview text therefore races the picker's async render;
 /// gating on the pointer does not.
 ///
-/// The query line also starts with `> `, but these helpers navigate by cursor
-/// and never type, so the query stays empty — only the selected row both starts
-/// with `>` and carries a worktree `name`, which uniquely picks it out.
+/// [`cursor_points_at`] restricts the match to the item area, excluding the
+/// query line even when the filter contains `name`.
 fn wait_for_cursor_on_row(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser, name: &str) {
     let describe = format!("the cursor (> pointer) on row {name:?}");
     wait_for_stable_until(
@@ -589,59 +588,23 @@ fn wait_for_cursor_on_row(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Pars
     );
 }
 
-/// True when the list-pane `>` pointer is on the row for `name`.
-///
-/// skim draws its pointer at the start of the selected row's line on every
-/// item-list render. The query line also starts with `> `, but the helpers that
-/// rely on this navigate by cursor and never type, so the query stays empty —
-/// only the selected row both starts with `>` and carries a worktree `name`,
-/// which uniquely picks it out.
-///
-/// The match is scoped to the list pane (cols `0..LIST_WIDTH`). The preview pane
-/// shares each physical row to the right of the border, so `name` is sought only
-/// in the row's own list text — otherwise a token that also renders in the
-/// preview (e.g. a PR title carrying a branch word) could satisfy the check from
-/// the wrong row.
+/// True when the list-pane `>` pointer is on a row carrying `name`.
 fn cursor_points_at(screen: &str, name: &str) -> bool {
-    screen.lines().any(|line| {
-        let list: String = line.chars().take(LIST_WIDTH as usize).collect();
-        list.starts_with('>') && list.contains(name)
-    })
+    picker_item_rows(screen).any(|row| row.starts_with('>') && row.contains(name))
 }
 
-/// Column of the picker's gutter glyph, counted from the start of the line.
+/// Text in the item area of the fixed-size test terminal, scoped to the list pane.
 ///
-/// skim draws a two-column pointer field at the start of every item row (`> `
-/// on the selected row, two spaces on the rest) and the picker's gutter column
-/// is the first thing it renders after it.
-const GUTTER_OFFSET: usize = 2;
-
-/// The list-pane text of `line` when `line` is an item row, else `None`.
-///
-/// An item row carries a gutter glyph — `@`, `^`, `+`, `/`, `|`, or `#` for a
-/// `--prs` row (`ItemKind::gutter_glyph`), `·` while a worktree row is still a
-/// skeleton (`PLACEHOLDER`) — at [`GUTTER_OFFSET`], so a non-space there is what
-/// marks a line as a row. The column header pads that offset with a space, and
-/// an empty query line is a bare `>`; neither is a row. A prunable worktree
-/// row's skeleton gutter is blank (`ListItem::placeholder` → `PLACEHOLDER_BLANK`)
-/// and so reads as neither — [`arrow_toward_row`] falls back to the caller's own
-/// arrow there, which is what it does for any frame it can't take a bearing on.
-///
-/// Excluding the header is what makes a search *by name* safe: `main` is both a
-/// branch name and part of two column titles (`main↕`, `main…±`), so a search
-/// that matched the header would place the row above every item and steer the
-/// cursor away from it. The query line is excluded only while the query is
-/// empty — a bare `>` has no character at [`GUTTER_OFFSET`] — so this leans on
-/// the same "never type" premise [`cursor_points_at`] does. With a query typed,
-/// offset 2 carries query text and the line reads as a row, which would make
-/// the topmost-match `target` below resolve to it.
-///
-/// The text is scoped to the list pane (cols `0..LIST_WIDTH`) for the reason
-/// [`cursor_points_at`] gives — the preview pane shares the physical row.
-fn item_row_text(line: &str) -> Option<String> {
-    let list: String = line.chars().take(LIST_WIDTH as usize).collect();
-    let gutter = list.chars().nth(GUTTER_OFFSET)?;
-    (!gutter.is_whitespace()).then_some(list)
+/// `run_picker` uses skim's reverse layout, one header row, and no info line:
+/// row 0 is the query, row 1 the header, and items start at row 2. Read that area
+/// regardless of gutter contents, including blank skeletons before reveal.
+/// The query and header are excluded even when they contain the target name.
+/// Clipping at `LIST_WIDTH` excludes preview text on the same physical row.
+fn picker_item_rows(screen: &str) -> impl Iterator<Item = String> + '_ {
+    screen
+        .lines()
+        .skip(2)
+        .map(|line| line.chars().take(LIST_WIDTH as usize).collect())
 }
 
 /// The arrow that moves the list `>` pointer one row toward the row carrying
@@ -664,10 +627,7 @@ fn item_row_text(line: &str) -> Option<String> {
 fn arrow_toward_row(screen: &str, name: &str) -> Option<&'static str> {
     let mut cursor = None;
     let mut target = None;
-    for (index, line) in screen.lines().enumerate() {
-        let Some(row) = item_row_text(line) else {
-            continue;
-        };
+    for (index, row) in picker_item_rows(screen).enumerate() {
         if row.starts_with('>') {
             cursor = Some(index);
         }
@@ -2400,4 +2360,59 @@ fn test_arrow_toward_row_without_a_bearing() {
         None,
         "a target that has not rendered yet gives nothing to steer by"
     );
+}
+
+#[test]
+fn test_cursor_wait_uses_item_area_with_query_and_blank_gutters() {
+    // Query text can itself look like a selected item. Neither it nor the
+    // header is part of the item area, even before skeleton gutters appear.
+    let screen = "> + wt-drop
+    Branch  main↕
+>   main
+    wt-drop
+";
+    assert!(!cursor_points_at(screen, "wt-drop"));
+    assert!(cursor_points_at(screen, "main"));
+    assert_eq!(arrow_toward_row(screen, "wt-drop"), Some(ARROW_DOWN));
+    assert_eq!(arrow_toward_row(screen, "main"), None);
+
+    let overshot = "> + wt-drop
+    Branch  main↕
+    wt-drop
+>   main
+";
+    assert_eq!(arrow_toward_row(overshot, "wt-drop"), Some(ARROW_UP));
+}
+
+/// Deliberately overshoot a filtered row so the wait must steer back in a real PTY.
+#[rstest]
+fn test_switch_picker_cursor_wait_recovers_under_filter(mut repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.add_worktree("keep-a");
+    repo.add_worktree("keep-b");
+    let env_vars = repo.test_env_vars();
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+    );
+    send_input_awaiting_content(&writer, &rx, &mut parser, "keep", Some("keep-a"));
+    let screen = parser.screen().contents();
+    let first = ["keep-a", "keep-b"]
+        .into_iter()
+        .find(|name| cursor_points_at(&screen, name))
+        .expect("the filtered list starts on a keeper");
+
+    // The first Down moves away from the target; a repeated Down would clamp
+    // on the other keeper forever. The wait must send Up to recover.
+    send_input_awaiting_content(&writer, &rx, &mut parser, ARROW_DOWN, Some(first));
+    assert!(cursor_points_at(&parser.screen().contents(), first));
+    assert_valid_abort_exit_code(abort_and_exit_code(child, writer, rx));
 }
