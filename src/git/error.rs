@@ -22,12 +22,12 @@
 //!   emits its rendered output.
 
 use std::borrow::Cow;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use color_print::cformat;
 use shell_escape::unix::escape;
 
-use super::HookType;
+use super::{HookType, InProgressOperation, StaleWorktreeWork};
 use crate::path::format_path_for_display;
 use crate::styling::{
     error_message, format_bash_with_gutter, format_with_gutter, hint_message, info_message,
@@ -480,8 +480,22 @@ pub enum GitError {
         /// The action that requires being in a worktree
         action: Option<String>,
     },
+    /// A registered worktree git calls prunable, or whose directory is gone.
+    /// Built with [`GitError::worktree_missing`].
     WorktreeMissing {
         branch: String,
+        /// The worktree's path while its directory remains, where `git
+        /// worktree repair` can reconnect it; `None` once the directory is gone.
+        repairable_at: Option<PathBuf>,
+    },
+    /// A stale worktree whose registration holds what unregistering it would
+    /// destroy — see [`Repository::stale_worktree_work`](super::Repository::stale_worktree_work).
+    StaleWorktreeHoldsWork {
+        branch: String,
+        path: PathBuf,
+        /// Whether the directory remains, so repair needs no recreating first.
+        directory_remains: bool,
+        work: StaleWorktreeWork,
     },
     RemoteOnlyBranch {
         branch: String,
@@ -714,7 +728,27 @@ pub fn format_unresolved_conflicts(count: usize) -> String {
     format!("{count} {paths} with unresolved conflicts")
 }
 
+/// The operation's name as a message reads it ("a rebase in progress").
+fn operation_noun(operation: InProgressOperation) -> &'static str {
+    match operation {
+        InProgressOperation::Merge => "merge",
+        InProgressOperation::Rebase => "rebase",
+        InProgressOperation::CherryPick => "cherry-pick",
+        InProgressOperation::Revert => "revert",
+        InProgressOperation::Bisect => "bisect",
+    }
+}
+
 impl GitError {
+    /// [`GitError::WorktreeMissing`] for the worktree registered at `path`,
+    /// recording whether its directory remains for the hint to offer repair.
+    pub fn worktree_missing(branch: String, path: &Path) -> Self {
+        GitError::WorktreeMissing {
+            branch,
+            repairable_at: path.is_dir().then(|| path.to_path_buf()),
+        }
+    }
+
     /// Styled title for this variant (first line, with inline `<bold>`
     /// highlights on entity names like branch and path).
     ///
@@ -788,9 +822,19 @@ impl GitError {
                 None => "Not in a worktree".to_string(),
             },
 
-            GitError::WorktreeMissing { branch } => {
+            GitError::WorktreeMissing { branch, .. } => {
                 cformat!("Worktree for <bold>{branch}</> is stale; its directory or .git is gone")
             }
+
+            GitError::StaleWorktreeHoldsWork { branch, work, .. } => match work {
+                StaleWorktreeWork::StagedChanges => {
+                    cformat!("Worktree for <bold>{branch}</> is stale but holds staged changes")
+                }
+                StaleWorktreeWork::Operation(operation) => cformat!(
+                    "Worktree for <bold>{branch}</> is stale with a {} in progress",
+                    operation_noun(*operation)
+                ),
+            },
 
             GitError::RemoteOnlyBranch { branch, remote } => {
                 cformat!("Branch <bold>{branch}</> exists only on remote ({remote}/{branch})")
@@ -1138,14 +1182,42 @@ impl GitError {
                 )
             }
 
-            GitError::WorktreeMissing { .. } => {
+            GitError::WorktreeMissing { repairable_at, .. } => {
                 let title = self.title();
+                // Repair reconnects a directory that remains, whatever it holds;
+                // once the directory is gone there is nothing to reconnect.
+                let hint = match repairable_at {
+                    Some(path) => cformat!(
+                        "To restore the worktree, run <underline>git worktree repair {}</>",
+                        escape(format_path_for_display(path).into())
+                    ),
+                    None => cformat!("To clean up, run <underline>git worktree prune</>"),
+                };
+                write!(f, "{}\n{}", error_message(&title), hint_message(hint))
+            }
+
+            GitError::StaleWorktreeHoldsWork {
+                branch,
+                path,
+                directory_remains,
+                ..
+            } => {
+                let title = self.title();
+                let discard = suggest_command("remove", &[branch], &["-f"]);
+                let path_display = escape(format_path_for_display(path).into());
+                let restore = if *directory_remains {
+                    cformat!("run <underline>git worktree repair {path_display}</>")
+                } else {
+                    cformat!(
+                        "recreate its directory, then run <underline>git worktree repair {path_display}</>"
+                    )
+                };
                 write!(
                     f,
                     "{}\n{}",
                     error_message(&title),
                     hint_message(cformat!(
-                        "To clean up, run <underline>git worktree prune</>"
+                        "To discard the stale worktree, run <underline>{discard}</>; to restore it, {restore}"
                     ))
                 )
             }

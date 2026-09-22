@@ -8,13 +8,16 @@ use anyhow::Context as _;
 use color_print::cformat;
 use dunce::canonicalize;
 
-use super::working_tree::registration_worktree_path;
-use super::{
-    GitError, Repository, ResolvedWorktree, Selector, WorktreeInfo, is_valid_branch_name,
-    normalize_selector, resolve_input_path,
+use super::working_tree::{
+    operation_in_progress_at, path_to_logging_context, registration_worktree_path,
 };
-use crate::git::{WorktreeId, is_bare_repo_dir};
+use super::{
+    GitError, InProgressOperation, Repository, ResolvedWorktree, Selector, WorktreeInfo,
+    is_valid_branch_name, normalize_selector, resolve_input_path,
+};
+use crate::git::{CommandError, PlumbingDiff, WorktreeId, is_bare_repo_dir};
 use crate::path::{format_path_for_display, paths_match};
+use crate::shell_exec::Cmd;
 use crate::styling::{
     eprintln, format_with_gutter, hint_message, suggest_command, warning_message,
 };
@@ -112,10 +115,7 @@ impl Repository {
             return Ok(None);
         };
         if self.worktree_is_unusable(&path)? {
-            return Err(GitError::WorktreeMissing {
-                branch: branch.to_string(),
-            }
-            .into());
+            return Err(GitError::worktree_missing(branch.to_string(), &path).into());
         }
         Ok(Some(path))
     }
@@ -256,34 +256,11 @@ impl Repository {
     pub fn prune_worktree_entry(&self, path: &Path) -> anyhow::Result<()> {
         let display = format_path_for_display(path);
         let _registry = self.worktree_registry_write();
-        let registrations = self.git_common_dir().join("worktrees");
-        // Unreadable siblings (an entry another process is deleting) are not
-        // this one, so they are passed over rather than failing the lookup.
-        let (registration, recorded) = std::fs::read_dir(&registrations)
-            .with_context(|| format!("Failed to read {}", format_path_for_display(&registrations)))?
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .find_map(|registration| {
-                let recorded = registration_worktree_path(&registration)?;
-                paths_match(&recorded, path).then_some((registration, recorded))
-            })
-            .with_context(|| format!("No worktree registered @ {display}"))?;
-        // Whether nothing is at `target`: `NotFound`, or `NotADirectory` where
-        // a parent became a file. Any other error keeps the entry.
-        let absent = |target: &Path| match std::fs::symlink_metadata(target) {
-            Ok(_) => Ok(false),
-            Err(e) => match e.kind() {
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory => Ok(true),
-                _ => Err(anyhow::Error::new(e).context(format!(
-                    "Failed to check {}",
-                    format_path_for_display(target)
-                ))),
-            },
-        };
-        if !absent(&registration.join("locked"))? {
+        let (registration, recorded) = self.registration_at(path)?;
+        if !definitely_absent(&registration.join("locked"))? {
             anyhow::bail!("Worktree @ {display} is locked");
         }
-        if !absent(&recorded.join(".git"))? {
+        if !definitely_absent(&recorded.join(".git"))? {
             anyhow::bail!("Worktree @ {display} is no longer stale; its .git exists");
         }
         std::fs::remove_dir_all(&registration).with_context(|| {
@@ -292,6 +269,68 @@ impl Repository {
                 format_path_for_display(&registration)
             )
         })
+    }
+
+    /// What unregistering the stale worktree at `path` would destroy that
+    /// nothing else holds: staged changes in its index, or a git operation
+    /// partway through. `None` when its registration holds neither.
+    ///
+    /// [`prune_worktree_entry`](Self::prune_worktree_entry) deletes the
+    /// registration, and the index and any rebase, merge, cherry-pick, revert
+    /// or bisect state go with it. While the registration survives, `git
+    /// worktree repair <path>` reconnects the directory — recreated first, if
+    /// it went too — and all of that comes back; afterwards staged files
+    /// survive only as dangling blobs. So the stale-removal paths ask this
+    /// first and keep an entry that holds either, which is where they are
+    /// more careful than `git worktree prune`. Files in a directory that
+    /// remains stay on disk either way, and a registration with no index has
+    /// nothing staged.
+    pub fn stale_worktree_work(&self, path: &Path) -> anyhow::Result<Option<StaleWorktreeWork>> {
+        let (registration, _) = self.registration_at(path)?;
+        if let Some(operation) = operation_in_progress_at(&registration) {
+            return Ok(Some(StaleWorktreeWork::Operation(operation)));
+        }
+        if definitely_absent(&registration.join("index"))? {
+            return Ok(None);
+        }
+        // The registration is a git dir in its own right, so its index is read
+        // against its `HEAD` without the working tree git can no longer find.
+        let registration_arg = registration.to_string_lossy();
+        let mut args = vec!["--git-dir", registration_arg.as_ref()];
+        args.extend(PlumbingDiff::Index.args(&["--cached", "--quiet", "HEAD", "--"]));
+        let output = self
+            .with_object_store_env(
+                Cmd::new("git")
+                    .args(args.iter().copied())
+                    .context(path_to_logging_context(path))
+                    .scrub_git_discovery_env(),
+            )
+            .run()
+            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
+        // `--quiet` exits 1 when the index differs from `HEAD`.
+        match output.status.code() {
+            Some(0) => Ok(None),
+            Some(1) => Ok(Some(StaleWorktreeWork::StagedChanges)),
+            _ => Err(CommandError::from_failed_output("git", &args, &output).into()),
+        }
+    }
+
+    /// The registration `<common>/worktrees/<id>` whose `gitdir` names the
+    /// worktree at `path`, with the worktree path it records.
+    ///
+    /// Unreadable siblings (an entry another process is deleting) are not
+    /// this one, so they are passed over rather than failing the lookup.
+    fn registration_at(&self, path: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
+        let registrations = self.git_common_dir().join("worktrees");
+        std::fs::read_dir(&registrations)
+            .with_context(|| format!("Failed to read {}", format_path_for_display(&registrations)))?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find_map(|registration| {
+                let recorded = registration_worktree_path(&registration)?;
+                paths_match(&recorded, path).then_some((registration, recorded))
+            })
+            .with_context(|| format!("No worktree registered @ {}", format_path_for_display(path)))
     }
 
     /// Remove a worktree at the specified path.
@@ -685,6 +724,30 @@ impl Repository {
     pub fn home_path(&self) -> anyhow::Result<PathBuf> {
         self.primary_worktree()?
             .map_or_else(|| self.repo_path().map(|p| p.to_path_buf()), Ok)
+    }
+}
+
+/// What a stale worktree's registration holds that unregistering it would
+/// destroy — see [`Repository::stale_worktree_work`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StaleWorktreeWork {
+    /// The index differs from `HEAD`.
+    StagedChanges,
+    /// A git operation is partway through.
+    Operation(InProgressOperation),
+}
+
+/// Whether nothing is at `path`: `NotFound`, or `NotADirectory` where a parent
+/// became a file. Any other error is returned, so a caller deciding whether to
+/// delete keeps what it could not check.
+fn definitely_absent(path: &Path) -> anyhow::Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(false),
+        Err(e) => match e.kind() {
+            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory => Ok(true),
+            _ => Err(anyhow::Error::new(e)
+                .context(format!("Failed to check {}", format_path_for_display(path)))),
+        },
     }
 }
 

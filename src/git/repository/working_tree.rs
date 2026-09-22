@@ -187,6 +187,49 @@ pub(super) fn registration_worktree_path(registration: &Path) -> Option<PathBuf>
     absolute.parent().map(canonicalize_with_parents)
 }
 
+/// The git operation the worktree whose git dir is `git_dir` is partway
+/// through, if any.
+///
+/// Reads the state files git writes under that git dir, in the order
+/// [`git status`](https://git-scm.com/docs/git-status) consults them, so the
+/// answer tracks what git itself calls "in progress". Takes the git dir rather
+/// than a worktree because a stale worktree's registration is still asked,
+/// after its `.git` file — the usual route to that dir — has gone.
+pub(super) fn operation_in_progress_at(git_dir: &Path) -> Option<InProgressOperation> {
+    if git_dir.join("MERGE_HEAD").exists() {
+        return Some(InProgressOperation::Merge);
+    }
+
+    // `rebase-merge` (interactive/merge backend) and `rebase-apply` (am
+    // backend, also used by `git am`) are mutually exclusive; either one
+    // means commits are mid-replay.
+    if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
+        return Some(InProgressOperation::Rebase);
+    }
+
+    if git_dir.join("CHERRY_PICK_HEAD").exists() {
+        return Some(InProgressOperation::CherryPick);
+    }
+
+    if git_dir.join("REVERT_HEAD").exists() {
+        return Some(InProgressOperation::Revert);
+    }
+
+    // The two `_HEAD` files above exist only while a single pick is
+    // stopped: resolving one with `git commit` instead of `--continue`
+    // removes it and leaves the rest of the sequence queued, which git
+    // still reports as in progress.
+    if let Some(operation) = sequencer_operation(git_dir) {
+        return Some(operation);
+    }
+
+    if git_dir.join("BISECT_LOG").exists() {
+        return Some(InProgressOperation::Bisect);
+    }
+
+    None
+}
+
 /// Typed snapshot returned by [`WorkingTree::prewarm_info`].
 ///
 /// Mirrors what the batched `git rev-parse` actually resolved so callers can
@@ -638,46 +681,11 @@ impl<'a> WorkingTree<'a> {
         }
     }
 
-    /// The git operation this worktree is partway through, if any.
-    ///
-    /// Reads the state files git writes under the worktree's git dir, in the
-    /// order [`git status`](https://git-scm.com/docs/git-status) consults them,
-    /// so the answer tracks what git itself calls "in progress".
+    /// The git operation this worktree is partway through, if any, read from
+    /// the state files git writes under its git dir in the order
+    /// [`git status`](https://git-scm.com/docs/git-status) consults them.
     pub fn operation_in_progress(&self) -> anyhow::Result<Option<InProgressOperation>> {
-        let git_dir = self.git_dir()?;
-
-        if git_dir.join("MERGE_HEAD").exists() {
-            return Ok(Some(InProgressOperation::Merge));
-        }
-
-        // `rebase-merge` (interactive/merge backend) and `rebase-apply` (am
-        // backend, also used by `git am`) are mutually exclusive; either one
-        // means commits are mid-replay.
-        if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
-            return Ok(Some(InProgressOperation::Rebase));
-        }
-
-        if git_dir.join("CHERRY_PICK_HEAD").exists() {
-            return Ok(Some(InProgressOperation::CherryPick));
-        }
-
-        if git_dir.join("REVERT_HEAD").exists() {
-            return Ok(Some(InProgressOperation::Revert));
-        }
-
-        // The two `_HEAD` files above exist only while a single pick is
-        // stopped: resolving one with `git commit` instead of `--continue`
-        // removes it and leaves the rest of the sequence queued, which git
-        // still reports as in progress.
-        if let Some(operation) = sequencer_operation(&git_dir) {
-            return Ok(Some(operation));
-        }
-
-        if git_dir.join("BISECT_LOG").exists() {
-            return Ok(Some(InProgressOperation::Bisect));
-        }
-
-        Ok(None)
+        Ok(operation_in_progress_at(&self.git_dir()?))
     }
 
     /// Paths the index still records as unmerged.

@@ -450,12 +450,16 @@ fn check_one(
     }
     // A detached stale entry can't be planned — `prepare_worktree_removal`'s
     // stale-entry fallback needs a branch to fall back to — and needs no plan:
-    // `try_remove` prunes the entry directly.
-    let stale_detached = matches!(
-        &item.source,
-        CheckSource::Prunable { wt_idx } if worktrees[*wt_idx].branch.is_none()
-    );
-    let plan = if stale_detached {
+    // `try_remove` prunes the entry directly. It still gets that fallback's
+    // check: an entry whose registration holds staged changes or an operation
+    // partway through stays, and so does one the check fails on.
+    let stale_detached = match &item.source {
+        CheckSource::Prunable { wt_idx } if worktrees[*wt_idx].branch.is_none() => {
+            Some(&worktrees[*wt_idx])
+        }
+        _ => None,
+    };
+    let plan = if stale_detached.is_some() {
         None
     } else {
         match &item.source {
@@ -490,7 +494,10 @@ fn check_one(
             }
         }
     };
-    let removable = stale_detached || plan.is_some();
+    let removable = match stale_detached {
+        Some(wt) => matches!(repo.stale_worktree_work(&wt.path), Ok(None)),
+        None => plan.is_some(),
+    };
     let deletes_branch = plan.as_ref().is_some_and(RemovalPlan::deletes_branch);
     let age = if min_age_duration > Duration::ZERO {
         match &item.source {

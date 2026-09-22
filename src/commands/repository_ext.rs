@@ -226,17 +226,31 @@ impl RepositoryCliExt for Repository {
                 // `--dry-run`, and `wt remove` plans before its approval
                 // prompt). The recorded prune names this worktree rather than
                 // sweeping the repo, so a sibling whose directory is merely
-                // absent right now keeps its registration.
+                // absent right now keeps its registration. An entry whose
+                // registration holds staged changes or an operation partway
+                // through is kept unless `--force` waives it, as it waives a
+                // live worktree's uncommitted changes: unregistering deletes
+                // those, and `git worktree repair` can still bring them back.
                 if wt.is_prunable() {
                     // A detached entry has no branch to fall back to, and no
                     // plan shape of its own, so it is reported rather than
                     // removed. `wt step prune` unregisters one without a plan.
                     let Some(branch) = wt.branch.clone() else {
-                        return Err(GitError::WorktreeMissing {
-                            branch: wt.dir_name().to_string(),
-                        }
+                        return Err(GitError::worktree_missing(
+                            wt.dir_name().to_string(),
+                            &wt.path,
+                        )
                         .into());
                     };
+                    if !force_worktree && let Some(work) = self.stale_worktree_work(&wt.path)? {
+                        return Err(GitError::StaleWorktreeHoldsWork {
+                            branch,
+                            path: wt.path.clone(),
+                            directory_remains: wt.path.is_dir(),
+                            work,
+                        }
+                        .into());
+                    }
                     Resolved::BranchOnly {
                         pruned_from: Some(wt.path.clone()),
                         branch,

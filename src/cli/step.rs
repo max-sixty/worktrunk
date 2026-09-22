@@ -615,7 +615,7 @@ Gitignored files (build artifacts, `node_modules/`, `.env`) are swapped along wi
 
     /// Remove worktrees and branches merged into the default branch
     #[command(
-        after_long_help = r#"Bulk-removes worktrees and branches that are integrated into the default branch, using the same criteria as `wt remove`'s branch cleanup. Stale worktree entries are cleaned up too.
+        after_long_help = r#"Bulk-removes worktrees and branches that are integrated into the default branch, using the same criteria as `wt remove`'s branch cleanup. Stale worktree entries are cleaned up too, except one whose git metadata holds staged changes or an operation in progress; `git worktree repair` can still restore those.
 
 In `wt list`, candidates show `_` (same commit) or `⊂` (content integrated). Run `--dry-run` to preview. See `wt remove --help` for the full integration criteria.
 

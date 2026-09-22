@@ -764,10 +764,7 @@ fn validate_worktree_creation(
     if let Some((existing_path, occupant)) = repo.worktree_at_path(path)? {
         if !existing_path.exists() {
             let occupant_branch = occupant.unwrap_or_else(|| branch.to_string());
-            return Err(GitError::WorktreeMissing {
-                branch: occupant_branch,
-            }
-            .into());
+            return Err(GitError::worktree_missing(occupant_branch, &existing_path).into());
         }
         return Err(GitError::WorktreePathOccupied {
             branch: branch.to_string(),
@@ -948,10 +945,10 @@ fn plan_switch(
             // A registration whose directory is gone or broken has nothing to
             // switch into; `wt remove` is the one command that still wants it.
             if repo.worktree_is_unusable(&path)? {
-                return Err(GitError::WorktreeMissing {
-                    branch: branch
-                        .unwrap_or_else(|| worktrunk::git::path_dir_name(&path).to_string()),
-                }
+                return Err(GitError::worktree_missing(
+                    branch.unwrap_or_else(|| worktrunk::git::path_dir_name(&path).to_string()),
+                    &path,
+                )
                 .into());
             }
             return Ok(SwitchPlan::Existing {

@@ -2279,6 +2279,60 @@ fn prune_worktree_entry_keeps_an_entry_it_cannot_check() {
     );
 }
 
+/// A stale registration is asked what unregistering it would destroy: its
+/// index against `HEAD`, and git's in-progress state files. A registration
+/// with no index has nothing staged, and a `HEAD` the index can't be read
+/// against is an error rather than a clean answer.
+#[test]
+fn stale_worktree_work_reads_the_registration() {
+    use crate::git::{InProgressOperation, Repository, StaleWorktreeWork};
+    use crate::testing::TestRepo;
+
+    let mut test = TestRepo::with_initial_commit();
+    let clean = test.add_worktree("clean");
+    let staged = test.add_worktree("staged");
+    std::fs::write(staged.join("new.txt"), "work").unwrap();
+    test.run_git_in(&staged, &["add", "new.txt"]);
+    let bisecting = test.add_worktree("bisecting");
+    test.run_git_in(&bisecting, &["bisect", "start"]);
+    let parent = test.root_path().parent().unwrap().to_path_buf();
+    let no_checkout = parent.join("repo.no-checkout");
+    test.run_git(&[
+        "worktree",
+        "add",
+        "--no-checkout",
+        "--detach",
+        no_checkout.to_str().unwrap(),
+    ]);
+    let unborn = parent.join("repo.unborn");
+    test.run_git(&[
+        "worktree",
+        "add",
+        "--orphan",
+        "-b",
+        "fresh",
+        unborn.to_str().unwrap(),
+    ]);
+    std::fs::write(unborn.join("first.txt"), "work").unwrap();
+    test.run_git_in(&unborn, &["add", "first.txt"]);
+    for path in [&clean, &staged, &bisecting, &no_checkout, &unborn] {
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    let repo = Repository::at(test.root_path()).unwrap();
+    assert_eq!(repo.stale_worktree_work(&clean).unwrap(), None);
+    assert_eq!(
+        repo.stale_worktree_work(&staged).unwrap(),
+        Some(StaleWorktreeWork::StagedChanges)
+    );
+    assert_eq!(
+        repo.stale_worktree_work(&bisecting).unwrap(),
+        Some(StaleWorktreeWork::Operation(InProgressOperation::Bisect))
+    );
+    assert_eq!(repo.stale_worktree_work(&no_checkout).unwrap(), None);
+    assert!(repo.stale_worktree_work(&unborn).is_err());
+}
+
 /// The deletion waits for in-process registry readers: `git worktree list`
 /// reads every entry's files, so one overlapping the deletion could read the
 /// entry half-deleted and fail. A held read guard keeps the entry intact; its

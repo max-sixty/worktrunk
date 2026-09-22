@@ -769,6 +769,61 @@ fn test_prune_unregisters_stale_entries_whose_directory_remains(mut repo: TestRe
     }
 }
 
+/// Prune keeps a stale entry whose registration holds what unregistering it
+/// would destroy — staged changes, or a git operation partway through — and
+/// removes a clean one beside them. `git worktree repair` can bring either
+/// back only while the registration survives.
+#[rstest]
+fn test_prune_keeps_stale_entries_holding_work(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.add_worktree("merged");
+    std::fs::remove_dir_all(repo.worktree_path("merged")).unwrap();
+
+    // Staged work, and only the `.git` file gone: the shape repair restores.
+    let staged = repo.add_worktree("staged");
+    std::fs::write(staged.join("new.txt"), "work").unwrap();
+    repo.run_git_in(&staged, &["add", "new.txt"]);
+    std::fs::remove_file(staged.join(".git")).unwrap();
+
+    let bisecting = repo.root_path().parent().unwrap().join("repo.bisecting");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "--detach",
+        bisecting.to_str().unwrap(),
+        "HEAD",
+    ]);
+    repo.run_git_in(&bisecting, &["bisect", "start"]);
+    std::fs::remove_dir_all(&bisecting).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "prune",
+            "--yes",
+            "--min-age=0s",
+            "--format=json",
+            "--foreground",
+        ])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(output.status.success(), "prune failed\nstderr:\n{stderr}");
+
+    let items: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let branches: Vec<_> = items.iter().map(|item| item["branch"].as_str()).collect();
+    assert_eq!(branches, [Some("merged")], "stderr:\n{stderr}");
+    let list = repo.git_output(&["worktree", "list", "--porcelain"]);
+    assert_eq!(
+        list.matches("prunable").count(),
+        2,
+        "the entries holding work should stay registered; worktrees:\n{list}"
+    );
+}
+
 /// Min-age check passes when worktrees are old enough.
 ///
 /// Uses a far-future epoch (2030) so real worktrees (created Feb 2026) appear

@@ -542,6 +542,36 @@ fn test_remove_worktree_directory_recreated(mut repo: TestRepo) {
     );
 }
 
+/// A stale worktree whose registration holds staged changes is refused, with
+/// the repair that restores it; `--force` discards them as it discards a live
+/// worktree's uncommitted changes.
+#[rstest]
+fn test_remove_stale_worktree_holding_staged_changes(mut repo: TestRepo) {
+    let wt_path = repo.add_worktree("feature");
+    std::fs::write(wt_path.join("new.txt"), "work").unwrap();
+    repo.run_git_in(&wt_path, &["add", "new.txt"]);
+    std::fs::remove_file(wt_path.join(".git")).unwrap();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["feature"], None));
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "-f", "feature", "--yes"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let list = repo.git_output(&["worktree", "list", "--porcelain"]);
+    assert!(!list.contains("prunable"), "worktrees:\n{list}");
+    assert!(
+        wt_path.join("new.txt").is_file(),
+        "the directory's files stay"
+    );
+}
+
 /// A detached stale entry has no branch for the removal to fall back to, so
 /// `wt remove` reports it rather than removing it; `wt step prune` is what
 /// unregisters one.
