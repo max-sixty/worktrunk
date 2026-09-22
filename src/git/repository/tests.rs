@@ -2635,3 +2635,20 @@ fn repo_path_declines_a_stale_separate_git_dir_backlink() {
         "a backlink whose work tree no longer points back must not be used"
     );
 }
+
+#[test]
+fn repo_path_declines_a_relative_separate_git_dir_backlink() {
+    // Git writes the backlink absolute. A relative one would resolve against
+    // the process cwd — whatever directory `wt` happened to be run from — so
+    // it is declined rather than followed.
+    use super::{Repository, canonicalize};
+
+    let (_tmp, store, _work_tree) = build_separate_git_dir_layout();
+    std::fs::write(store.join("gitdir"), "../work/.git\n").unwrap();
+
+    let repo = Repository::at(&store).unwrap();
+    assert_eq!(
+        canonicalize(repo.repo_path().unwrap()).unwrap(),
+        canonicalize(store.parent().unwrap()).unwrap(),
+    );
+}

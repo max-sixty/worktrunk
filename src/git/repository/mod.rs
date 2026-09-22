@@ -1619,7 +1619,7 @@ impl Repository {
     /// (`--separate-git-dir`) has neither signal, and `parent(git_common_dir)`
     /// names the store's parent rather than the work tree. The backlink git
     /// writes there covers it where it exists; see
-    /// [`Self::separate_git_dir_work_tree`] for when that is.
+    /// `separate_git_dir_work_tree` for when that is.
     ///
     /// # Errors
     ///
