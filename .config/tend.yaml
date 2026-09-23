@@ -1,28 +1,9 @@
 bot_name: worktrunk-bot
 setup:
 - uses: ./.github/actions/tend-setup
-# tend 0.2.14 deprecated `sandbox_setup:` and runs its commands as an ordinary
-# `runner` step after `setup:`; the agent then sees what they install through a
-# copy-on-write view of the job's home (see "Sandbox toolchain" in
-# .github/AGENTS.md). #4222 kept the key so a release reverting 0.2.14 would
-# still find it, so this block outliving its original rationale is deliberate,
-# not drift.
-#
-# What that rationale was: `setup:` ran as `runner` and the sandbox denied
-# reads under the runner's home, so pre-commit had to be installed from here,
-# into the sandbox's own home. It now duplicates `tend-setup`'s own pre-commit
-# step and goes when the key does. The probe is what still earns its place:
-# the block runs under `bash -eo pipefail`, so a tool that goes missing fails
-# the job with an `::error::` annotation naming it. No tend-outage issue is
-# filed any more — that is `report_failure.py`, a step inside the tend action
-# under `if: failure()`, and the generator now emits this block ahead of that
-# action, so a failure here skips it. Of the five tools it asserts, four are
-# what the pre-merge gate needs, whichever step installed them; `nix` is for
-# the weekly toolchain bump's `flake.lock` refresh.
-sandbox_setup:
-- mkdir -p ~/.local/bin
-- uv tool install --quiet pre-commit
-- 'for t in cargo-insta cargo-nextest pre-commit nu nix; do command -v "$t" >/dev/null || { echo "::error::tend sandbox is missing $t; see Sandbox toolchain in .github/AGENTS.md"; exit 1; }; done'
+# Verify the toolchain installed above before the agent starts. Four tools
+# support the pre-merge gate; nix supports the weekly flake.lock refresh.
+- run: 'for t in cargo-insta cargo-nextest pre-commit nu nix; do command -v "$t" >/dev/null || { echo "::error::tend setup is missing $t; see Sandbox toolchain in .github/AGENTS.md"; exit 1; }; done'
 secrets:
   allowed:
   - CODECOV_TOKEN

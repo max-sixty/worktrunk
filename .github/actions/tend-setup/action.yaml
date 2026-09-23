@@ -28,8 +28,8 @@ runs:
     # agent reads that directly, with the entry ahead of /usr/local/bin on its
     # PATH. The publish was the only route while the sandbox denied reads under
     # the runner's home (0.2.5–0.2.13) and is now a second copy of the same two
-    # binaries; it stays as what keeps `.config/tend.yaml`'s probe green if
-    # that isolation returns (see "Sandbox toolchain" in .github/AGENTS.md).
+    # binaries. It stays as a system-path fallback if that isolation returns
+    # (see "Sandbox toolchain" in .github/AGENTS.md).
     # Swapping these steps for an action with a different layout breaks the
     # publish step, which hardcodes this root; update both sides.
     - name: Install cargo-insta
