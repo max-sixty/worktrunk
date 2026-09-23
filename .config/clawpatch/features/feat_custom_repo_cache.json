@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "featureId": "feat_custom_repo_cache",
   "title": "Repository caching invariants and worktree list mutation",
-  "summary": "Repository<Arc<RepoCache>> caches read-only values to avoid re-querying git. Mutating paths (switch --create / remove) must NOT read list_worktrees() through the same Repository after their own mutation - cache is now stale. Per AGENTS.md, dirty/HEAD must NOT be cached. Stale cache reads here surface as missing worktrees or wrong commit in hook template vars.",
+  "summary": "Repository<Arc<RepoCache>> caches read-only values to avoid re-querying git. Mutating paths (switch --create / remove) must NOT read list_worktrees() through the same Repository after their own mutation - cache is now stale. The Caching spec in src/git/repository/mod.rs excludes dirty and HEAD from the cache. Stale cache reads here surface as missing worktrees or wrong commit in hook template vars.",
   "kind": "library",
   "source": "manual",
   "confidence": "high",
@@ -56,10 +56,6 @@
     {
       "path": "src/commands/picker/mod.rs",
       "reason": "mutating caller (remove)"
-    },
-    {
-      "path": "AGENTS.md",
-      "reason": "caching contract"
     }
   ],
   "tests": [
