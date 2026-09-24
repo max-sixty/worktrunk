@@ -57,7 +57,7 @@ runs:
         done
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v10.1.0
+      uses: astral-sh/setup-uv@v10.2.0
       with:
         cache-dependency-glob: .pre-commit-config.yaml
 
