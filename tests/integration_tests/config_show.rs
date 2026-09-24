@@ -799,6 +799,38 @@ fn test_config_show_outside_git_repo(mut repo: TestRepo, temp_home: TempDir) {
     });
 }
 
+/// `--full` outside a repository still renders every section: the
+/// diagnostics skip the repo-specific CI check instead of failing the report.
+#[rstest]
+fn test_config_show_full_outside_git_repo(mut repo: TestRepo, temp_home: TempDir) {
+    let temp_dir = worktrunk::testing::test_tempdir();
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    let mut cmd = wt_command();
+    repo.configure_mock_commands(&mut cmd);
+    cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
+    cmd.args(["config", "show", "--full"])
+        .current_dir(temp_dir.path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    set_xdg_config_path(&mut cmd, temp_home.path());
+
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout)
+        .ansi_strip()
+        .to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "config show --full outside a repo failed: {stderr}"
+    );
+    assert!(stdout.contains("USER CONFIG"), "stdout: {stdout}");
+    assert!(stdout.contains("DIAGNOSTICS"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("CI status requires"),
+        "outside a repo the CI check should fall back to its hint, stdout: {stdout}"
+    );
+}
+
 #[rstest]
 fn test_config_show_zsh_compinit_warning(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
