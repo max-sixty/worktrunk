@@ -140,7 +140,7 @@ Worktrunk checks six conditions:
 5. [1mMerge adds nothing[0m — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced with changes to different files. Shows [2m⊂[0m.
 6. [1mPatch-id match[0m — Branch's entire diff matches a single squash-merge commit on target. Fallback for when the simulated merge conflicts because target later modified the same files the branch touched. Shows [2m⊂[0m.
 
-The default-branch walk is capped so a single check stays fast; a squash merge with hundreds of commits landed since the merge point falls outside the cap and needs [2m-D[0m to remove.
+The patch-id check only diffs default-branch commits that touch the branch's files, oldest first and capped so a single check stays fast; a squash merge that landed after hundreds of other commits to the same files falls outside the cap and needs [2m-D[0m to remove.
 
 The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., [2morigin/main[0m) when strictly ahead.
 
