@@ -47,6 +47,12 @@
 //!   worktrunk's one accepted wire-path exception — see AGENTS.md →
 //!   "Network Access".
 //!
+//! **Stale default branch warning:** before the skeleton, `warn_stale_default`
+//! compares the persisted `default_branch()` against #5's local branch
+//! inventory. `wt list` always runs #5, so the check adds no fork there; the
+//! picker skips #5 when branches are hidden, so it forks one `for-each-ref`
+//! only when the persisted default isn't a worktree branch.
+//!
 //! ### #6 — the batched commit-details fork
 //!
 //! ```text
@@ -129,9 +135,11 @@
 //! ├─ is_builtin_fsmonitor_enabled()             (5ms, sequential - gate)
 //! ├─ rayon::scope(
 //! │    ├─ switch_previous()                     (5ms)
-//! │    ├─ integration_targets()                 (10ms)
+//! │    ├─ capture_refs[_with_ahead_behind]()    (ref snapshot)
+//! │    │    └─ prime_upstream_ahead_behind_cache()  (nested; reads the snapshot)
 //! │    ├─ start_fsmonitor_daemon × N worktrees  (6ms each, all parallel)
-//! │  )                                          // ~10ms total (max of all spawns)
+//! │  )                                          // joins on the slowest spawn
+//! ├─ integration_targets(snapshot)              (sequential; needs the snapshot)
 //! ├─ populate ListItem.commit from cache        (cache-hit lookups, sub-ms)
 //! Worker thread spawns
 //! └─ paint Age/Message columns                  (workers already running)
@@ -156,11 +164,6 @@
 //! **Why fsmonitor starts are in the parallel scope:** The `git fsmonitor--daemon start`
 //! command returns quickly after signaling the daemon. By the time the worker thread
 //! starts executing `git status` commands, daemons have had time to initialize.
-//!
-//! **Stale default branch warning:** The post-skeleton `warn_stale_default`
-//! check compares `default_branch()` (resolved pre-skeleton) against the
-//! local branch list — reusing the list fetched for `--branches`, otherwise
-//! adding one `for-each-ref` fork when the persisted default isn't a worktree branch.
 //!
 //! When adding new features, ask: "Can this be computed after skeleton?" If yes, defer it.
 //! The skeleton shows `·` placeholder for gutter symbols, filled in when data loads.
@@ -1713,8 +1716,9 @@ pub fn collect(
     // captured above carries the same batched data, and all tasks consume
     // it by SHA.
 
-    // Note: URL template expansion is deferred to task spawning (in collect_worktree_progressive
-    // and collect_branch_progressive). This parallelizes the work and minimizes time-to-skeleton.
+    // Note: URL template expansion is deferred to work-item generation (in
+    // work_items_for_worktree; branch-only rows have no URL), keeping it off
+    // the skeleton's critical path.
 
     // Create channel for task results
     let (tx, rx) = chan::unbounded::<Result<TaskResult, TaskError>>();
