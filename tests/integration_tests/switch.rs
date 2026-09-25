@@ -2565,10 +2565,27 @@ fn test_switch_create_no_hint_with_custom_worktree_path(repo: TestRepo) {
         .unwrap();
     assert!(output.status.success());
 
+    const HINT: &str = "customize worktree locations";
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !stderr.contains("Customize worktree locations"),
-        "Hint should be suppressed when user has custom worktree-path config"
+        !stderr.contains(HINT),
+        "Hint should be suppressed when user has custom worktree-path config. stderr: {stderr}"
+    );
+
+    // Control: without the custom config the same needle matches the hint, so
+    // the negative assertion above can fail. Suppression doesn't mark the hint
+    // shown, so it still appears once here.
+    repo.write_test_config("");
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "test-hint"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(HINT),
+        "Hint should appear without custom worktree-path config. stderr: {stderr}"
     );
 }
 
