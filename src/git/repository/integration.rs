@@ -309,7 +309,18 @@ impl Repository {
         // unresolvable args — callers pass pre-resolved commit SHAs, see
         // `run_merge_tree`), anything else = error (corrupt repo, bad usage)
         let args = ["merge-tree", "--write-tree", a, b];
-        let output = self.run_command_output(&args)?;
+        // Not signalled on picker exit: a merge driver interrupted mid-run
+        // strands `.merge_file_*` temp files in the worktree (#4273).
+        let output = self
+            .with_object_store_env(
+                Cmd::new("git")
+                    .args(args)
+                    .current_dir(&self.discovery_path)
+                    .context(self.logging_context())
+                    .finish_once_started(),
+            )
+            .run()
+            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
 
         if output.status.code() == Some(1) {
             return Ok(MergeTreeOutcome::Conflict);
@@ -1379,6 +1390,74 @@ mod merge_tree_cache_tests {
             repo.cache.merge_tree.contains_key(&(main_sha, feature_sha)),
             "the shared entry must be keyed (target, branch)"
         );
+    }
+
+    /// A merge-tree probe mid-merge-driver must not be signalled when the
+    /// picker cancels background work: git removes the driver's
+    /// `.merge_file_*` temp files only on a normal return, so a SIGTERM strands
+    /// them in the worktree (#4273). The driver records its parent — the
+    /// running `git merge-tree` — so the test can check that PID isn't
+    /// registered for cancellation while the driver runs.
+    #[cfg(unix)]
+    #[test]
+    fn merge_tree_probe_is_not_signalled_on_cancel() {
+        let test = TestRepo::with_initial_commit();
+        let root = test.root_path().to_path_buf();
+        std::fs::write(root.join("f.txt"), "a\nb\nc\n").unwrap();
+        test.run_git(&["add", "f.txt"]);
+        test.run_git(&["commit", "-m", "base"]);
+        test.run_git(&["checkout", "-b", "feature"]);
+        std::fs::write(root.join("f.txt"), "a\nFEAT\nc\n").unwrap();
+        test.run_git(&["commit", "-am", "feature"]);
+        test.run_git(&["checkout", "main"]);
+        std::fs::write(root.join("f.txt"), "a\nMAIN\nc\n").unwrap();
+        test.run_git(&["commit", "-am", "main"]);
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+        let feature_sha = test.git_output(&["rev-parse", "feature"]);
+
+        let dir = crate::testing::test_tempdir();
+        let marker = dir.path().join("driver-parent");
+        let release = dir.path().join("release");
+        let driver = format!(
+            "echo $PPID > '{}'; while [ ! -e '{}' ]; do sleep 0.05; done; exit 1",
+            marker.display(),
+            release.display()
+        );
+        test.run_git(&["config", "merge.slow.driver", &driver]);
+        let git_dir = test.git_output(&["rev-parse", "--absolute-git-dir"]);
+        std::fs::create_dir_all(std::path::Path::new(&git_dir).join("info")).unwrap();
+        std::fs::write(
+            std::path::Path::new(&git_dir).join("info/attributes"),
+            "* merge=slow\n",
+        )
+        .unwrap();
+
+        let repo = Repository::at(&root).unwrap();
+        std::thread::scope(|s| {
+            let probe = s.spawn(|| repo.merge_tree_outcome(&main_sha, &feature_sha));
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            let pid = loop {
+                if let Some(pid) = std::fs::read_to_string(&marker)
+                    .ok()
+                    .and_then(|s| s.trim().parse::<u32>().ok())
+                {
+                    break pid;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "merge driver never ran"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            };
+            let cancellable = crate::shell_exec::is_cancellable_pid(pid);
+            std::fs::write(&release, "").unwrap();
+            let outcome = probe.join().unwrap().unwrap();
+            assert!(
+                !cancellable,
+                "a running merge-tree must not be a cancellation target"
+            );
+            assert!(matches!(outcome, MergeTreeOutcome::Conflict));
+        });
     }
 }
 

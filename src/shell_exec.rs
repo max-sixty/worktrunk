@@ -205,6 +205,12 @@ fn track_if_cancellable(pid: u32) -> Option<BackgroundPid> {
     })
 }
 
+/// Whether a cancellation would signal `pid` right now.
+#[cfg(test)]
+pub(crate) fn is_cancellable_pid(pid: u32) -> bool {
+    BACKGROUND_PIDS.lock().unwrap().contains(&pid)
+}
+
 /// Set once the foreground thread has cancelled background work, so commands
 /// that haven't spawned yet never do.
 ///
@@ -938,6 +944,7 @@ fn format_stream_bounded(bytes: &[u8], prefix: &str) -> Vec<String> {
 fn run_with_timeout_impl(
     cmd: &mut Command,
     timeout: std::time::Duration,
+    cancellable: bool,
 ) -> std::io::Result<std::process::Output> {
     #[cfg(unix)]
     {
@@ -950,7 +957,9 @@ fn run_with_timeout_impl(
             .stdout(Stdio::piped())
             .stderr(Stdio::piped()),
     )?;
-    let _tracked = track_if_cancellable(child.id());
+    let _tracked = cancellable
+        .then(|| track_if_cancellable(child.id()))
+        .flatten();
 
     let mut child_stdout = child.take_stdout();
     let mut child_stderr = child.take_stderr();
@@ -1115,6 +1124,9 @@ pub struct Cmd {
     /// shell bodies may emit cd directives (the file holds a raw path, no shell
     /// injection surface).
     directive_cd_file: Option<std::path::PathBuf>,
+    /// If true, cancellation stops this command from spawning but never
+    /// signals it once running. Set via [`Cmd::finish_once_started`].
+    finish_once_started: bool,
 }
 
 struct ExternalCommandLog {
@@ -1280,6 +1292,7 @@ impl Cmd {
             ignore_sigpipe: true,
             external_label: None,
             directive_cd_file: None,
+            finish_once_started: false,
         }
     }
 
@@ -1433,6 +1446,28 @@ impl Cmd {
     pub fn timeout(mut self, duration: std::time::Duration) -> Self {
         self.timeout = Some(duration);
         self
+    }
+
+    /// Let this command run to completion once spawned, even if background
+    /// work is cancelled meanwhile ([`cancel_background_commands`]). A
+    /// cancelled command that hasn't spawned yet still never does.
+    ///
+    /// For commands whose interruption leaves debris SIGTERM doesn't clean:
+    /// `git merge-tree` writes its external merge driver's inputs as
+    /// `.merge_file_XXXXXX` files in its cwd and removes them only on a normal
+    /// return, so a signal mid-driver strands them in the user's worktree.
+    ///
+    /// Only affects `.run()`.
+    pub fn finish_once_started(mut self) -> Self {
+        self.finish_once_started = true;
+        self
+    }
+
+    /// [`track_if_cancellable`], unless [`Cmd::finish_once_started`] opted out.
+    fn track_if_cancellable(&self, pid: u32) -> Option<BackgroundPid> {
+        (!self.finish_once_started)
+            .then(|| track_if_cancellable(pid))
+            .flatten()
     }
 
     /// Set an environment variable.
@@ -1638,7 +1673,7 @@ impl Cmd {
 
             match cmd.spawn() {
                 Ok(mut child) => {
-                    let _tracked = track_if_cancellable(child.id());
+                    let _tracked = self.track_if_cancellable(child.id());
                     // Write stdin data in an inner scope so the handle DROPS
                     // (closing the pipe) before `wait_with_output` — otherwise a
                     // child that reads stdin to EOF (e.g. `git … --stdin`) blocks
@@ -1656,7 +1691,7 @@ impl Cmd {
             }
         } else if let Some(timeout_duration) = self.timeout {
             // Timeout handling uses the existing impl
-            run_with_timeout_impl(&mut cmd, timeout_duration)
+            run_with_timeout_impl(&mut cmd, timeout_duration, !self.finish_once_started)
         } else {
             // Simple case: run and capture output. Spawned explicitly rather
             // than via `cmd.output()` — which matches these stdio defaults —
@@ -1668,7 +1703,7 @@ impl Cmd {
                 .stderr(Stdio::piped());
             match cmd.spawn() {
                 Ok(child) => {
-                    let _tracked = track_if_cancellable(child.id());
+                    let _tracked = self.track_if_cancellable(child.id());
                     child.wait_with_output()
                 }
                 Err(e) => Err(e),
