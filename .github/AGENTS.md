@@ -8,16 +8,17 @@ worktrunk-bot is a PAT-backed GitHub user with write access. Only the repo owner
 
 ## Tokens and environments
 
-- tend admits main and holds CLAUDE_CODE_OAUTH_TOKEN and TEND_BOT_TOKEN.
+- tend admits main and holds CODEX_AUTH_JSON and TEND_BOT_TOKEN for concurrent agent jobs.
+- tend-codex-refresh admits main and holds CODEX_REFRESH_AUTH_JSON and CODEX_REFRESH_PAT for the serialized subscription refresh job.
 - release admits tags and holds AUR_SSH_PRIVATE_KEY and TEND_BOT_TOKEN.
 - signing admits tags and holds SIGNPATH_API_TOKEN.
 - github-pages admits main and uses OIDC without a stored secret.
 - CODECOV_TOKEN is a repo secret allowlisted for coverage upload.
 - crates.io uses Trusted Publishing through release, not a stored token.
 
-A job naming an environment can read all its secrets. The branch and tag policies are therefore security gates: do not broaden them to make a workflow run. Tag environments admit every tag because the Tag operations ruleset controls creation and movement. tend and release each hold TEND_BOT_TOKEN because their admitted refs differ.
+A job naming an environment can read all its secrets. The branch and tag policies are therefore security gates: do not broaden them to make a workflow run. The refresh token and secret-writing PAT stay outside the environment used by agent jobs. Tag environments admit every tag because the Tag operations ruleset controls creation and movement. tend and release each hold TEND_BOT_TOKEN because their admitted refs differ.
 
-Generated tend workflows use environment {name: tend, deployment: false}. The deployment flag prevents pull_request_target runs from creating misleading deployment records on PRs. Edit the generator or its config, not generated tend-*.yaml files.
+Generated tend agent workflows use environment {name: tend, deployment: false}; the Codex subscription refresh workflow uses tend-codex-refresh. The deployment flag prevents pull_request_target runs from creating misleading deployment records on PRs. Edit the generator or its config, not generated tend-*.yaml files.
 
 ## Sandbox toolchain
 
