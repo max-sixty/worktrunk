@@ -191,8 +191,10 @@ Generate commit messages automatically during merge. Requires an external CLI to
 
 [32mCodex[0m
 
+Create [2m~/.codex/worktrunk-commit-instructions.txt[0m containing just [2m.[0m (no newline). Accepting Worktrunk's first-run Codex setup creates the file for you.
+
 [107m [0m [2m[36m[commit.generation][0m
-[107m [0m [2mcommand = [0m[2m[32m"codex exec -m gpt-6-luna -c model_reasoning_effort='none' -c project_doc_max_bytes=0 -c web_search=disabled --ephemeral --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"[0m
+[107m [0m [2mcommand = [0m[2m[32m"codex exec -m gpt-6-luna -c model_reasoning_effort='none' -c project_doc_max_bytes=0 -c web_search=disabled -c 'model_instructions_file=\"~/.codex/worktrunk-commit-instructions.txt\"' --ephemeral --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"[0m
 
 [32mOpenCode[0m
 

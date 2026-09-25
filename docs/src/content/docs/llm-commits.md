@@ -30,13 +30,15 @@ command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haik
 
 ### Codex
 
+Create `~/.codex/worktrunk-commit-instructions.txt` containing just `.` (no newline). Accepting Worktrunk's first-run Codex setup creates the file for you.
+
 ```toml
 # ~/.config/worktrunk/config.toml
 [commit.generation]
-command = "codex exec -m gpt-6-luna -c model_reasoning_effort='none' -c project_doc_max_bytes=0 -c web_search=disabled --ephemeral --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
+command = "codex exec -m gpt-6-luna -c model_reasoning_effort='none' -c project_doc_max_bytes=0 -c web_search=disabled -c 'model_instructions_file=\"~/.codex/worktrunk-commit-instructions.txt\"' --ephemeral --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 ```
 
-`web_search=disabled` removes the search tool, while the command keeps user provider settings and authentication, limits project instructions, and skips session persistence. Codex can still load global `AGENTS.md` instructions and its own agent context, so a short commit prompt can use thousands of input tokens. Requires `jq` for JSON parsing. See [Codex CLI docs](https://developers.openai.com/codex/cli/).
+`model_instructions_file` replaces Codex's built-in instructions with that one character. `web_search=disabled` removes the search tool; the command also keeps user provider settings and authentication, limits project instructions, and skips session persistence. Codex can still load global `AGENTS.md` and tool context, so a short commit prompt can use thousands of input tokens. Requires `jq` for JSON parsing. See [Codex CLI docs](https://developers.openai.com/codex/cli/).
 
 ### Other tools
 

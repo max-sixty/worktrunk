@@ -365,7 +365,7 @@ tasks:
         COMMANDS["claude"]='MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='"'"''"'"' --safe-mode --setting-sources='"'"'user'"'"' --system-prompt='"'"''"'"''
         COMMANDS["llm"]='llm -m claude-haiku-4.5'
         COMMANDS["aichat"]='aichat -m claude:claude-haiku-4.5'
-        COMMANDS["codex"]='codex exec -m gpt-6-luna -c model_reasoning_effort='"'"'none'"'"' -c project_doc_max_bytes=0 -c web_search=disabled --ephemeral --sandbox=read-only --json - | jq -sr '"'"'[.[] | select(.item.type? == "agent_message")] | last.item.text'"'"''
+        COMMANDS["codex"]='codex exec -m gpt-6-luna -c model_reasoning_effort='"'"'none'"'"' -c project_doc_max_bytes=0 -c web_search=disabled -c '"'"'model_instructions_file="~/.codex/worktrunk-commit-instructions.txt"'"'"' --ephemeral --sandbox=read-only --json - | jq -sr '"'"'[.[] | select(.item.type? == "agent_message")] | last.item.text'"'"''
         COMMANDS["opencode"]='opencode run -m anthropic/claude-haiku-4.5 --variant fast'
 
         # Check which tools are available
@@ -381,10 +381,20 @@ tasks:
             echo "  ✗ $tool (not installed)"
           fi
         done
+        CODEX_READY=true
         if command -v jq &>/dev/null; then
           echo "  ✓ jq (required for codex)"
         else
           echo "  ✗ jq (required for codex)"
+          CODEX_READY=false
+        fi
+        if [ -s "$HOME/.codex/worktrunk-commit-instructions.txt" ]; then
+          echo "  ✓ Codex commit instructions"
+        else
+          echo "  ✗ Codex commit instructions (see llm-commits.md)"
+          CODEX_READY=false
+        fi
+        if [ "$CODEX_READY" = false ]; then
           # Drop codex from the list. String substitution (${AVAILABLE[@]/codex})
           # would rewrite the element to "" rather than remove it, leaving an
           # empty tool name to iterate over later — rebuild the array instead.

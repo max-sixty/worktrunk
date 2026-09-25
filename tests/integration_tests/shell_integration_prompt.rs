@@ -694,16 +694,16 @@ mod commit_generation_prompt_tests {
     use std::path::{Path, PathBuf};
     use tempfile::TempDir;
 
-    fn setup_fake_claude(temp_home: &Path) -> PathBuf {
-        // Create a fake claude executable that does nothing
+    fn setup_fake_tool(temp_home: &Path, tool: &str) -> PathBuf {
+        // Create a fake LLM executable that does nothing
         let bin_dir = temp_home.join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
-        let claude_path = bin_dir.join("claude");
-        fs::write(&claude_path, "#!/bin/sh\nexit 0\n").unwrap();
+        let tool_path = bin_dir.join(tool);
+        fs::write(&tool_path, "#!/bin/sh\nexit 0\n").unwrap();
         // Make executable
-        let mut perms = fs::metadata(&claude_path).unwrap().permissions();
+        let mut perms = fs::metadata(&tool_path).unwrap().permissions();
         perms.set_mode(0o755);
-        fs::set_permissions(&claude_path, perms).unwrap();
+        fs::set_permissions(&tool_path, perms).unwrap();
         bin_dir
     }
 
@@ -747,7 +747,7 @@ mod commit_generation_prompt_tests {
     #[rstest]
     fn test_user_declines_llm_prompt(repo: TestRepo) {
         let temp_home = TempDir::new().unwrap();
-        let bin_dir = setup_fake_claude(temp_home.path());
+        let bin_dir = setup_fake_tool(temp_home.path(), "claude");
 
         // Stage a change
         let test_file = repo.root_path().join("test.txt");
@@ -788,7 +788,7 @@ mod commit_generation_prompt_tests {
     #[rstest]
     fn test_user_accepts_llm_prompt(repo: TestRepo) {
         let temp_home = TempDir::new().unwrap();
-        let bin_dir = setup_fake_claude(temp_home.path());
+        let bin_dir = setup_fake_tool(temp_home.path(), "claude");
 
         // Stage a change
         let test_file = repo.root_path().join("test.txt");
@@ -825,11 +825,47 @@ mod commit_generation_prompt_tests {
         );
     }
 
+    #[rstest]
+    fn test_user_accepts_codex_prompt(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        let bin_dir = setup_fake_tool(temp_home.path(), "codex");
+
+        let test_file = repo.root_path().join("test.txt");
+        fs::write(&test_file, "test content\n").unwrap();
+        repo.run_git(&["add", "test.txt"]);
+
+        let mut env_vars = repo.test_env_vars();
+        let path = crate::common::setup_minimal_path_with_git(&bin_dir);
+        env_vars.push(("PATH".to_string(), path));
+
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["step", "commit"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, _exit_code) = exec_cmd_in_pty_prompted(cmd, &["y\n"], "[y/N");
+
+        assert!(output.contains("Added to user config"), "{output}");
+        let config_content = fs::read_to_string(repo.test_config_path()).unwrap();
+        assert!(config_content.contains("model_instructions_file"));
+        assert_eq!(
+            fs::read(
+                temp_home
+                    .path()
+                    .join(".codex/worktrunk-commit-instructions.txt")
+            )
+            .unwrap(),
+            b"."
+        );
+    }
+
     /// Test: User requests preview (?)
     #[rstest]
     fn test_user_requests_preview(repo: TestRepo) {
         let temp_home = TempDir::new().unwrap();
-        let bin_dir = setup_fake_claude(temp_home.path());
+        let bin_dir = setup_fake_tool(temp_home.path(), "claude");
 
         // Stage a change
         let test_file = repo.root_path().join("test.txt");
@@ -867,7 +903,7 @@ mod commit_generation_prompt_tests {
     #[rstest]
     fn test_user_accepts_but_save_fails_shows_manual_hint(repo: TestRepo) {
         let temp_home = TempDir::new().unwrap();
-        let bin_dir = setup_fake_claude(temp_home.path());
+        let bin_dir = setup_fake_tool(temp_home.path(), "claude");
 
         // Stage a change
         let test_file = repo.root_path().join("test.txt");

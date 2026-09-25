@@ -7,11 +7,12 @@
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::io::{self, IsTerminal};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use color_print::cformat;
 use worktrunk::config::{UserConfig, require_config_path};
+use worktrunk::path::{format_path_for_display, home_dir};
 use worktrunk::styling::{eprintln, format_toml, hint_message, info_message, success_message};
 
 use super::prompt::{PromptResponse, prompt_yes_no_preview};
@@ -24,6 +25,32 @@ const CONFIG_EXAMPLE: &str = include_str!("../../dev/config.example.toml");
 /// Keyed by the h3 heading text in the config example (e.g., "Claude Code", "Codex").
 static RECOMMENDED_COMMANDS: LazyLock<HashMap<String, String>> =
     LazyLock::new(|| parse_recommended_commands(CONFIG_EXAMPLE));
+
+/// Codex expands `~` in `model_instructions_file`, including when the path is
+/// passed through `-c`. Keep the file outside the current repository so every
+/// commit uses the same short instructions.
+const CODEX_COMMIT_INSTRUCTIONS_FILE: &str = "worktrunk-commit-instructions.txt";
+
+fn codex_instructions_path() -> anyhow::Result<PathBuf> {
+    let home = home_dir().ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
+    Ok(home.join(".codex").join(CODEX_COMMIT_INSTRUCTIONS_FILE))
+}
+
+fn ensure_codex_instructions_file(path: &Path) -> anyhow::Result<()> {
+    if path.exists() {
+        anyhow::ensure!(
+            path.is_file() && path.metadata()?.len() > 0,
+            "Codex instructions file must be a nonempty file: {}",
+            path.display()
+        );
+        return Ok(());
+    }
+
+    let parent = path.parent().expect("Codex instructions file has a parent");
+    std::fs::create_dir_all(parent)?;
+    worktrunk::utils::write_new_atomically(path, ".")?;
+    Ok(())
+}
 
 /// Detected LLM tool available on the system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -189,6 +216,9 @@ pub fn prompt_commit_generation(config: &mut UserConfig) -> anyhow::Result<bool>
     let command = tool.recommended_config();
     let formatted_command = format_command_for_display(command);
     let config_preview = format!("[commit.generation]\ncommand = {formatted_command}");
+    let codex_instructions = (tool == LlmTool::Codex)
+        .then(codex_instructions_path)
+        .transpose()?;
 
     // Point at the config file wt actually writes to — respecting --config,
     // WORKTRUNK_CONFIG_PATH, and $XDG_CONFIG_HOME — rather than a hardcoded
@@ -204,12 +234,30 @@ pub fn prompt_commit_generation(config: &mut UserConfig) -> anyhow::Result<bool>
                 info_message(cformat!("Would add to <bold>{config_path}</>:"))
             );
             eprintln!("{}", format_toml(&config_preview));
+            if let Some(path) = &codex_instructions {
+                eprintln!(
+                    "{}",
+                    info_message(format!(
+                        "Uses {}; creates a one-character file there if absent",
+                        format_path_for_display(path)
+                    ))
+                );
+            }
             eprintln!();
         },
     )?;
 
     match response {
         PromptResponse::Accepted => {
+            if let Some(path) = &codex_instructions {
+                let setup_result = ensure_codex_instructions_file(path);
+                if let Err(e) = setup_result {
+                    tracing::error!(error = %e, "Failed to prepare Codex instructions");
+                    eprintln!("{}", hint_message(format!("Codex setup failed: {e}")));
+                    return Ok(false);
+                }
+            }
+
             // Set the configuration
             let command = command.to_string();
             let save_result = require_config_path()
@@ -262,8 +310,27 @@ mod tests {
     #[test]
     fn test_llm_tool_recommended_config() {
         assert_snapshot!(LlmTool::Claude.recommended_config(), @"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''");
-        assert_snapshot!(LlmTool::Codex.recommended_config(), @r#"codex exec -m gpt-6-luna -c model_reasoning_effort='none' -c project_doc_max_bytes=0 -c web_search=disabled --ephemeral --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == "agent_message")] | last.item.text'"#);
+        assert_snapshot!(LlmTool::Codex.recommended_config(), @r#"codex exec -m gpt-6-luna -c model_reasoning_effort='none' -c project_doc_max_bytes=0 -c web_search=disabled -c 'model_instructions_file="~/.codex/worktrunk-commit-instructions.txt"' --ephemeral --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == "agent_message")] | last.item.text'"#);
         assert_snapshot!(LlmTool::OpenCode.recommended_config(), @"opencode run -m anthropic/claude-haiku-4.5 --variant fast");
+    }
+
+    #[test]
+    fn test_codex_instructions_file_is_minimal_and_preserves_existing_content() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(".codex/worktrunk-commit-instructions.txt");
+
+        ensure_codex_instructions_file(&path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b".");
+
+        std::fs::write(&path, "Use my instructions").unwrap();
+        ensure_codex_instructions_file(&path).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "Use my instructions"
+        );
+
+        std::fs::write(&path, "").unwrap();
+        assert!(ensure_codex_instructions_file(&path).is_err());
     }
 
     #[test]
