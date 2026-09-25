@@ -336,7 +336,7 @@ mod tests {
     #[test]
     fn test_llm_tool_recommended_config() {
         assert_snapshot!(LlmTool::Claude.recommended_config(), @"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''");
-        assert_snapshot!(LlmTool::Codex.recommended_config(), @r#"codex exec -m gpt-6-luna -c model_reasoning_effort='none' -c project_doc_max_bytes=0 -c skills.max_context_tokens=1 -c agents.enabled=false -c web_search=disabled -c 'model_instructions_file="~/.codex/worktrunk-commit-instructions.txt"' --disable shell_tool --disable unified_exec --disable apps --disable plugins --disable goals --ephemeral --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == "agent_message")] | last.item.text'"#);
+        assert_snapshot!(LlmTool::Codex.recommended_config(), @r#"codex exec -m gpt-6-luna -c model_reasoning_effort='none' -c project_doc_max_bytes=0 -c skills.max_context_tokens=1 -c agents.enabled=false -c features.goals=false -c web_search=disabled -c 'model_instructions_file="~/.codex/worktrunk-commit-instructions.txt"' --disable shell_tool --disable unified_exec --disable apps --disable plugins --ephemeral --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == "agent_message")] | last.item.text'"#);
         assert_snapshot!(LlmTool::OpenCode.recommended_config(), @"opencode run -m anthropic/claude-haiku-4.5 --variant fast");
     }
 
