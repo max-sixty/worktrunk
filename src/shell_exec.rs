@@ -129,7 +129,8 @@ fn is_foreground_thread() -> bool {
 /// foreground thread is the one that cancels, and is never itself inside a
 /// tracked command while doing so, so the work the user is actually waiting
 /// on is never a target; an [`uninterruptible`] thread finishes what it
-/// started.
+/// started. A command marked [`Cmd::finish_once_started`] doesn't register
+/// either, so it runs to completion once spawned.
 static BACKGROUND_PIDS: Mutex<BTreeSet<u32>> = Mutex::new(BTreeSet::new());
 
 /// Deregisters a background command's PID however the command finishes.
@@ -231,7 +232,8 @@ fn cancelled_error() -> std::io::Error {
 }
 
 /// Abandon background work: nothing further spawns, and whatever is already
-/// running is signalled rather than left to finish as an orphan.
+/// running is signalled rather than left to finish as an orphan — except
+/// commands marked [`Cmd::finish_once_started`], which run to completion.
 ///
 /// Callers see either as an ordinary command failure, which every background
 /// caller already treats as "no result".
