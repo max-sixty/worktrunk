@@ -217,8 +217,12 @@
 //! cores unless `RAYON_NUM_THREADS` is set).
 //!
 //! **Task ordering**: Work items are sorted so local git operations run first, network tasks
-//! (CI status, URL health checks) run last. This ensures the table fills in quickly with local
-//! data while slower network requests complete in the background.
+//! (CI status, URL health checks) run last, and within each class rows run in display order.
+//! Workers pull items through `par_bridge`, which hands them out in that order. A splitting
+//! `into_par_iter` would not: it gives each worker a contiguous slice, so the slices holding
+//! the last rows and the network tasks start at once, and the top rows a user is looking at
+//! could settle last. This ensures the table fills in quickly with local data, from the top,
+//! while slower network requests complete in the background.
 //!
 //! ## Caching
 //!
@@ -1776,7 +1780,8 @@ pub fn collect(
         ));
     }
 
-    // Sort work items: network tasks last to avoid blocking local operations
+    // Sort work items: network tasks last to avoid blocking local operations.
+    // Stable, so rows keep display order within each class.
     all_work_items.sort_by_key(|item| item.kind.is_network());
 
     // Phase 2: Execute all work items in a single Rayon pool on a worker
@@ -1789,9 +1794,10 @@ pub fn collect(
         worktrunk::trace::instant("Parallel execution started");
         // Run on the dedicated `COLLECT_POOL` so the blocking git subprocess
         // tasks leave the global pool free for skim's per-keystroke matcher
-        // when the picker is open. See `COLLECT_POOL`.
+        // when the picker is open. See `COLLECT_POOL`. `par_bridge` hands
+        // items out in queue order (see "Task ordering" above).
         COLLECT_POOL.install(|| {
-            all_work_items.into_par_iter().for_each(|item| {
+            all_work_items.into_iter().par_bridge().for_each(|item| {
                 let result = item.execute();
                 let _ = tx_worker.send(result);
             });
