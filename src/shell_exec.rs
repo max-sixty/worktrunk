@@ -207,7 +207,7 @@ fn track_if_cancellable(pid: u32) -> Option<BackgroundPid> {
 }
 
 /// Whether a cancellation would signal `pid` right now.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) fn is_cancellable_pid(pid: u32) -> bool {
     BACKGROUND_PIDS.lock().unwrap().contains(&pid)
 }
