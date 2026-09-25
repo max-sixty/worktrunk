@@ -99,10 +99,8 @@ fn test_finalize_worktree_detached_with_branch() {
 
 #[test]
 fn test_finalize_worktree_detached_no_branch() {
-    // Detached worktree with no branch should attempt rebase detection
-    // Note: This test validates the logic flow but doesn't test actual file reading
-    // since that would require setting up git rebase state files.
-    // Actual rebase detection has been manually verified.
+    // A detached worktree at a nonexistent path fails the git-dir lookup,
+    // so the branch stays empty.
     let wt = WorktreeInfo {
         path: PathBuf::from("/nonexistent/path"),
         head: "abcd1234".to_string(),
@@ -114,9 +112,41 @@ fn test_finalize_worktree_detached_no_branch() {
     };
 
     let finalized = finalize_worktree(wt);
-    // With a nonexistent path, rebase detection should fail gracefully
-    // and branch should remain None
     assert_eq!(finalized.branch, None);
+}
+
+#[test]
+fn test_finalize_worktree_linked_mid_rebase() {
+    // A linked worktree stopped mid-rebase is detached, so `git worktree list`
+    // reports no branch; the branch comes from `rebase-merge/head-name` under
+    // its git dir.
+    use crate::git::Repository;
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+    let linked = test.root_path().parent().unwrap().join("linked-rebase");
+    test.run_git(&["worktree", "add", "-b", "feature", linked.to_str().unwrap()]);
+    std::fs::write(linked.join("feature.txt"), "feature\n").unwrap();
+    test.run_git_in(&linked, &["add", "feature.txt"]);
+    test.run_git_in(&linked, &["commit", "-m", "Feature"]);
+    // `--exec` stops the rebase after replaying the commit, leaving it open.
+    let _ = test
+        .git_command()
+        .current_dir(&linked)
+        .args(["rebase", "--exec", "false", "HEAD~1"])
+        .run();
+
+    let repo = Repository::at(test.root_path()).unwrap();
+    let linked = dunce::canonicalize(&linked).unwrap();
+    let wt = repo
+        .list_worktrees()
+        .unwrap()
+        .iter()
+        .find(|wt| dunce::canonicalize(&wt.path).unwrap() == linked)
+        .unwrap()
+        .clone();
+    assert!(wt.detached, "precondition: the rebase detaches HEAD");
+    assert_eq!(wt.branch.as_deref(), Some("feature"));
 }
 
 #[test]
