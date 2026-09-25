@@ -115,11 +115,12 @@ Created by `wt switch <branch>` when switching to a branch that doesn't have a w
 |------|------------|---------|
 | `~/.config/worktrunk/config.toml` | `wt config create` | User preferences |
 | `~/.config/worktrunk/approvals.toml` | Approving project commands | Approved hook and alias commands |
+| `~/.codex/worktrunk-commit-instructions.txt` | Accepting first-run Codex commit setup | Minimal Codex instructions used by the saved commit command |
 | `.config/wt.toml` | `wt config create --project` | Project hooks (checked into repo) |
 
 User config location: `$XDG_CONFIG_HOME/worktrunk/` (or `~/.config/worktrunk/`) on Linux/macOS, `%APPDATA%\worktrunk\` on Windows.
 
-**To remove:** Delete directly. User config: `rm ~/.config/worktrunk/config.toml`. Project config: `rm .config/wt.toml` (and commit).
+**To remove:** Delete directly. User config: `rm ~/.config/worktrunk/config.toml`. Project config: `rm .config/wt.toml` (and commit). Codex instructions: `rm ~/.codex/worktrunk-commit-instructions.txt` after changing or removing the saved Codex commit command. That command fails if the file is removed first.
 
 ### 3. Shell integration
 

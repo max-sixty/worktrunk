@@ -10,6 +10,7 @@ use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
+use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{UserConfig, require_config_path};
 use worktrunk::path::{format_path_for_display, home_dir};
@@ -36,20 +37,27 @@ fn codex_instructions_path() -> anyhow::Result<PathBuf> {
     Ok(home.join(".codex").join(CODEX_COMMIT_INSTRUCTIONS_FILE))
 }
 
-fn ensure_codex_instructions_file(path: &Path) -> anyhow::Result<()> {
+fn ensure_codex_instructions_file(path: &Path) -> anyhow::Result<bool> {
     if path.exists() {
+        let metadata = path
+            .metadata()
+            .with_context(|| format!("Failed to inspect {}", path.display()))?;
         anyhow::ensure!(
-            path.is_file() && path.metadata()?.len() > 0,
+            metadata.is_file() && metadata.len() > 0,
             "Codex instructions file must be a nonempty file: {}",
             path.display()
         );
-        return Ok(());
+        return Ok(false);
     }
 
-    let parent = path.parent().expect("Codex instructions file has a parent");
-    std::fs::create_dir_all(parent)?;
-    worktrunk::utils::write_new_atomically(path, ".")?;
-    Ok(())
+    let parent = path
+        .parent()
+        .context("Codex instructions path has no parent directory")?;
+    std::fs::create_dir_all(parent)
+        .with_context(|| format!("Failed to create {}", parent.display()))?;
+    worktrunk::utils::write_new_atomically(path, ".")
+        .with_context(|| format!("Failed to write {}", path.display()))?;
+    Ok(true)
 }
 
 /// Detected LLM tool available on the system.
@@ -250,11 +258,20 @@ pub fn prompt_commit_generation(config: &mut UserConfig) -> anyhow::Result<bool>
     match response {
         PromptResponse::Accepted => {
             if let Some(path) = &codex_instructions {
-                let setup_result = ensure_codex_instructions_file(path);
-                if let Err(e) = setup_result {
-                    tracing::error!(error = %e, "Failed to prepare Codex instructions");
-                    eprintln!("{}", hint_message(format!("Codex setup failed: {e}")));
-                    return Ok(false);
+                match ensure_codex_instructions_file(path) {
+                    Ok(true) => eprintln!(
+                        "{}",
+                        success_message(format!(
+                            "Created Codex instructions: {}",
+                            format_path_for_display(path)
+                        ))
+                    ),
+                    Ok(false) => {}
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to prepare Codex instructions");
+                        eprintln!("{}", hint_message(format!("Codex setup failed: {e:#}")));
+                        return Ok(false);
+                    }
                 }
             }
 
@@ -276,6 +293,15 @@ pub fn prompt_commit_generation(config: &mut UserConfig) -> anyhow::Result<bool>
             // Show what was added
             eprintln!("{}", success_message(cformat!("Added to user config:")));
             eprintln!("{}", format_toml(&config_preview));
+            if let Some(path) = &codex_instructions {
+                let display_path = format_path_for_display(path);
+                eprintln!(
+                    "{}",
+                    hint_message(format!(
+                        "Keep {display_path}; the saved Codex command requires it"
+                    ))
+                );
+            }
             eprintln!(
                 "{}",
                 hint_message(cformat!("View config: <underline>wt config show</>"))
@@ -319,11 +345,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join(".codex/worktrunk-commit-instructions.txt");
 
-        ensure_codex_instructions_file(&path).unwrap();
+        assert!(ensure_codex_instructions_file(&path).unwrap());
         assert_eq!(std::fs::read(&path).unwrap(), b".");
 
         std::fs::write(&path, "Use my instructions").unwrap();
-        ensure_codex_instructions_file(&path).unwrap();
+        assert!(!ensure_codex_instructions_file(&path).unwrap());
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "Use my instructions"
@@ -331,6 +357,15 @@ mod tests {
 
         std::fs::write(&path, "").unwrap();
         assert!(ensure_codex_instructions_file(&path).is_err());
+
+        let blocked_parent = tmp.path().join("not-a-directory");
+        std::fs::write(&blocked_parent, "file").unwrap();
+        let err =
+            ensure_codex_instructions_file(&blocked_parent.join("instructions.txt")).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains(&blocked_parent.display().to_string())
+        );
     }
 
     #[test]

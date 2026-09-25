@@ -848,6 +848,11 @@ mod commit_generation_prompt_tests {
         let (output, _exit_code) = exec_cmd_in_pty_prompted(cmd, &["y\n"], "[y/N");
 
         assert!(output.contains("Added to user config"), "{output}");
+        assert!(output.contains("Created Codex instructions"), "{output}");
+        assert!(
+            output.contains("the saved Codex command requires it"),
+            "{output}"
+        );
         let config_content = fs::read_to_string(repo.test_config_path()).unwrap();
         assert!(config_content.contains("model_instructions_file"));
         assert_eq!(
