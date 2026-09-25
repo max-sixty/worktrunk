@@ -35,10 +35,10 @@ Create `~/.codex/worktrunk-commit-instructions.txt` containing just `.` (no newl
 ```toml
 # ~/.config/worktrunk/config.toml
 [commit.generation]
-command = "codex exec -m gpt-6-luna -c model_reasoning_effort='none' -c project_doc_max_bytes=0 -c web_search=disabled -c 'model_instructions_file=\"~/.codex/worktrunk-commit-instructions.txt\"' --ephemeral --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
+command = "codex exec -m gpt-6-luna -c model_reasoning_effort='none' -c project_doc_max_bytes=0 -c skills.max_context_tokens=1 -c web_search=disabled -c 'model_instructions_file=\"~/.codex/worktrunk-commit-instructions.txt\"' --ephemeral --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 ```
 
-`model_instructions_file` replaces Codex's built-in instructions with that one character. `web_search=disabled` removes the search tool; the command also keeps user provider settings and authentication, limits project instructions, and skips session persistence. Codex can still load global `AGENTS.md` and tool context, so a short commit prompt can use thousands of input tokens. Requires `jq` for JSON parsing. See [Codex CLI docs](https://developers.openai.com/codex/cli/).
+`model_instructions_file` replaces Codex's built-in instructions with that one character. `project_doc_max_bytes=0` limits project instructions, `skills.max_context_tokens=1` limits the skills catalog, and `web_search=disabled` removes the search tool. The command keeps user provider settings and authentication and skips session persistence. Codex can still load global `AGENTS.md` and tool context, so a short commit prompt can use thousands of input tokens. Requires `jq` for JSON parsing. See [Codex CLI docs](https://developers.openai.com/codex/cli/).
 
 ### Other tools
 
