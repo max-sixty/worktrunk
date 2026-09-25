@@ -707,6 +707,26 @@ mod commit_generation_prompt_tests {
         bin_dir
     }
 
+    fn run_codex_prompt(repo: &TestRepo, temp_home: &Path, answers: &[&str]) -> String {
+        let bin_dir = setup_fake_tool(temp_home, "codex");
+        let test_file = repo.root_path().join("test.txt");
+        fs::write(&test_file, "test content\n").unwrap();
+        repo.run_git(&["add", "test.txt"]);
+
+        let mut env_vars = repo.test_env_vars();
+        let path = crate::common::setup_minimal_path_with_git(&bin_dir);
+        env_vars.push(("PATH".to_string(), path));
+
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["step", "commit"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home),
+        );
+        exec_cmd_in_pty_prompted(cmd, answers, "[y/N").0
+    }
+
     /// Test: No LLM tool available, prompt is skipped and skip flag is set
     #[rstest]
     fn test_no_llm_tool_sets_skip_flag(repo: TestRepo) {
@@ -828,24 +848,7 @@ mod commit_generation_prompt_tests {
     #[rstest]
     fn test_user_accepts_codex_prompt(repo: TestRepo) {
         let temp_home = TempDir::new().unwrap();
-        let bin_dir = setup_fake_tool(temp_home.path(), "codex");
-
-        let test_file = repo.root_path().join("test.txt");
-        fs::write(&test_file, "test content\n").unwrap();
-        repo.run_git(&["add", "test.txt"]);
-
-        let mut env_vars = repo.test_env_vars();
-        let path = crate::common::setup_minimal_path_with_git(&bin_dir);
-        env_vars.push(("PATH".to_string(), path));
-
-        let cmd = build_pty_command(
-            wt_bin().to_str().unwrap(),
-            &["step", "commit"],
-            repo.root_path(),
-            &env_vars,
-            Some(temp_home.path()),
-        );
-        let (output, _exit_code) = exec_cmd_in_pty_prompted(cmd, &["y\n"], "[y/N");
+        let output = run_codex_prompt(&repo, temp_home.path(), &["y\n"]);
 
         assert!(output.contains("Added to user config"), "{output}");
         assert!(output.contains("Created Codex instructions"), "{output}");
@@ -864,6 +867,65 @@ mod commit_generation_prompt_tests {
             .unwrap(),
             b"."
         );
+    }
+
+    #[rstest]
+    fn test_codex_preview_then_decline_does_not_create_instructions(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        let output = run_codex_prompt(&repo, temp_home.path(), &["?\n", "n\n"]);
+
+        assert!(
+            output.contains("creates a one-character file there if absent"),
+            "{output}"
+        );
+        assert!(
+            !temp_home
+                .path()
+                .join(".codex/worktrunk-commit-instructions.txt")
+                .exists()
+        );
+        let config_content = fs::read_to_string(repo.test_config_path()).unwrap_or_default();
+        assert!(!config_content.contains("model_instructions_file"));
+    }
+
+    #[rstest]
+    fn test_codex_prompt_reuses_existing_instructions(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        let instructions = temp_home
+            .path()
+            .join(".codex/worktrunk-commit-instructions.txt");
+        fs::create_dir_all(instructions.parent().unwrap()).unwrap();
+        fs::write(&instructions, "Existing instructions").unwrap();
+
+        let output = run_codex_prompt(&repo, temp_home.path(), &["y\n"]);
+
+        assert!(!output.contains("Created Codex instructions"), "{output}");
+        assert!(
+            output.contains("the saved Codex command requires it"),
+            "{output}"
+        );
+        assert_eq!(
+            fs::read_to_string(&instructions).unwrap(),
+            "Existing instructions"
+        );
+        let config_content = fs::read_to_string(repo.test_config_path()).unwrap();
+        assert!(config_content.contains("model_instructions_file"));
+    }
+
+    #[rstest]
+    fn test_codex_prompt_file_creation_failure_does_not_save_command(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        fs::write(temp_home.path().join(".codex"), "not a directory").unwrap();
+
+        let output = run_codex_prompt(&repo, temp_home.path(), &["y\n"]);
+
+        assert!(
+            output.contains("Codex setup failed: Failed to create"),
+            "{output}"
+        );
+        assert!(output.contains(".codex"), "{output}");
+        let config_content = fs::read_to_string(repo.test_config_path()).unwrap_or_default();
+        assert!(!config_content.contains("model_instructions_file"));
     }
 
     /// Test: User requests preview (?)
