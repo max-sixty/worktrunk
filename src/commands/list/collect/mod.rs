@@ -24,8 +24,8 @@
 //! | 1 | `git rev-parse --git-common-dir --is-inside-work-tree --show-toplevel --git-dir --symbolic-full-name HEAD` | [`Repository::prewarm`] (`prewarm_rev_parse`) | Five facts in one fork: shared `.git`, in-worktree gate, worktree root, per-worktree `.git/worktrees/<name>`, current branch. Populates process-global caches. Parallel with #2 at process startup. |
 //! | 2 | `git config --list -z` (cwd = discovery path) | [`Repository::prewarm`] (`prewarm_git_config`) | Whole merged config (system + global + local) in one shot, NUL-delimited so values containing `\n` or `=` parse unambiguously. Stashed in `GIT_CONFIG_PRELOAD` keyed by discovery path; every later `config_last("…")` reads from memory. Parallel with #1. |
 //! | 3 | `git config --list -z` (cwd = `git_common_dir`) | [`Repository::prewarm`] post-pass (`prewarm_git_config_from_common_dir`) | **Conditional.** [`Repository::at`] consumes #2's preload into `cache.all_config`, so `all_config()` is a memory hit on a normal repo. In `extensions.worktreeConfig=true` repos, #2's read is declined — `--list` from a linked worktree misses the main-worktree `config.worktree` overrides (most importantly `core.bare = true` for the `myproject/.git + sibling worktrees` layout) — and prewarm re-forks from the common dir after its threads join, preloading the full merged set. [`Repository::all_config`] forks the same command on demand only when prewarm never ran for the path (a non-base `Repository::at`, tests). See `prewarm_git_config` for the full reasoning. |
-//! | 4 | `git worktree list --porcelain` | [`Repository::list_worktrees`] | Path, HEAD SHA, branch, and flags per worktree — the row source for the skeleton. The picker prelude triggers this once for `num_items_estimate`; collect's rayon scope then hits the cache. |
-//! | 5 | `git for-each-ref --format=… refs/heads/` | [`Repository::local_branches`] inside collect's `rayon::scope` | Local branch tips (name, SHA, committer date, upstream) for branch-only rows (`branches=true`) and for the stale-default-branch check. `remotes=true` adds a sibling `refs/remotes/` fork. The scope joins; this fork gates the skeleton. |
+//! | 4 | `git worktree list --porcelain` | [`Repository::list_worktrees`] | Path, HEAD SHA, branch, and flags per worktree — the row source for the skeleton. The picker prelude triggers this once for `num_items_estimate`; collect's rayon scope then hits the cache. **Plus one `git rev-parse --git-dir` per detached worktree**, run inside the same cache initializer (`finalize_worktrees`): git lists a mid-rebase worktree only as detached, so each detached worktree's git dir is resolved and its `rebase-{merge,apply}/head-name` read to recover the branch. These are the one O(N) fork group before the skeleton — O(detached worktrees), forked together through `Cmd::run_concurrently`. |
+//! | 5 | `git for-each-ref --format=… refs/heads/` | [`Repository::local_branches`] inside collect's `rayon::scope` | Local branch tips (name, SHA, committer date, upstream) for branch-only rows (`branches=true`) and for the stale-default-branch check. `remotes=true` adds a sibling `refs/remotes/` fork. Runs beside #4, which is the longer of the two on a repo with many worktrees. The post-skeleton ref snapshot scans `refs/heads/` again rather than reusing this inventory (see "Pipeline"). |
 //! | 6 | `git log --no-walk --no-show-signature --format=… SHA₁ … SHA_N` | collect, after the scope | Batched commit metadata for every worktree HEAD + branch tip. See breakdown below. |
 //!
 //! Things that *look* like forks but aren't, on the steady-state path:
@@ -125,80 +125,185 @@
 //! The result is cached to `worktrunk.default-branch` so every subsequent
 //! run is a memory hit served from #2.
 //!
-//! ### Post-Skeleton Operations
+//! ## Pipeline
 //!
-//! After the skeleton renders, remaining setup runs before spawning the worker thread.
-//! These operations are parallelized using `rayon::scope` with single-level parallelism:
+//! Every step from `collect()`'s entry to the first task result, with the
+//! thread each runs on and every point where one thread blocks on another.
+//! `wt list` runs `collect()` on the main thread; the picker runs it on its
+//! `picker-collect` thread after a prelude on the main thread (below). Both
+//! phase scopes are `rayon::scope` calls made from outside any pool, so they
+//! run on the **global** rayon pool — the pool skim's matcher uses — while
+//! the task pool and the picker's previews run on [`COLLECT_POOL`].
 //!
 //! ```text
-//! Skeleton render
-//! ├─ is_builtin_fsmonitor_enabled()             (5ms, sequential - gate)
-//! ├─ rayon::scope(
-//! │    ├─ switch_previous()                     (5ms)
-//! │    ├─ capture_refs[_with_ahead_behind]()    (ref snapshot)
-//! │    │    └─ prime_upstream_ahead_behind_cache()  (nested; reads the snapshot)
-//! │    ├─ start_fsmonitor_daemon × N worktrees  (socket probe; fork only when no daemon answers)
-//! │  )                                          // joins on the slowest spawn
-//! ├─ integration_targets(snapshot)              (sequential; needs the snapshot)
-//! ├─ populate ListItem.commit from cache        (cache-hit lookups, sub-ms)
-//! Worker thread spawns
-//! └─ paint Age/Message columns                  (workers already running)
+//! collect() thread                         rayon workers
+//! ────────────────                         ─────────────
+//! redirect_objects_for_observation
+//! J1 rayon::scope ───────────────────────┬─ list_worktrees        [cell]  worktree list --porcelain
+//!    (global pool; body = spawns only)   │     └─ finalize_worktrees:     rev-parse --git-dir × detached
+//!                                        │        (run_concurrently: children only, no pool wait)
+//!                                        │        + read rebase-{merge,apply}/head-name
+//!                                        ├─ local_branches        [cell]  for-each-ref refs/heads/
+//!                                        ├─ remote_branches       [cell]  for-each-ref refs/remotes/ (--remotes)
+//!                                        ├─ default_branch, is_bare, url_template, config()
+//!                                        │                        [cells] config map / .config/wt.toml
+//!    join ◄──────────────────────────────┘ (waits for the slowest: worktree list + backfill)
+//! stale-default check, branch-only rows    CPU
+//! commit_details_many                      git log --no-walk (1 fork, serial)
+//! sort; build rows                         CPU + is_worktree_at_expected_path × worktrees
+//! custom columns, task plan                CPU
+//! [picker] ci_status::populate_from_cache  one ci-status/<branch>.json read per row (serial)
+//! layout; render skeleton ─────────────────── FIRST PAINT (wt list)
+//! [picker] on_skeleton: rows → skim ───────── FIRST PAINT (picker)
+//!          then spawn preview precompute onto COLLECT_POOL (first row: every mode;
+//!          branch-only rows: default mode), then maybe_spawn_comments, whose
+//!          ci_platform() may fork `git remote get-url` (serial, before J2)
+//! prime_worktree_path_caches               canonicalize + read .git × worktrees (serial fs)
+//! J2 rayon::scope ───────────────────────┬─ switch_previous
+//!    (global pool)                       ├─ capture_refs[_with_ahead_behind]
+//!                                        │     for-each-ref refs/heads/ (again), then refs/remotes/
+//!                                        │     + ahead-behind/ cache reads; cold: %(ahead-behind) walk
+//!                                        │     └─ spawn prime_upstream_ahead_behind_cache
+//!                                        │           cold: one %(ahead-behind) walk per upstream
+//!                                        └─ start_fsmonitor_daemon_at × worktrees
+//!                                              socket connect; fork `start` on a miss
+//!    join ◄──────────────────────────────┘ (waits for the slowest: usually the snapshot)
+//! integration_targets, prime_comparison_base, is_previous, commit fields    CPU
+//! generate + sort work items               CPU
+//! std::thread ─► J3 COLLECT_POOL.install(par_bridge) ── work items in queue order,
+//!                                                      each: git subprocess(es) → tx.send
+//! paint Age/Message
+//! W4 drain_results: rx.recv_timeout until every sender drops or the deadline passes
 //! ```
 //!
-//! **Why the Age/Message paint:** those two columns carry no task — their
-//! data is the `ListItem.commit` populated above — so without an explicit
-//! repaint they'd sit on the skeleton placeholder until the row's first *task*
-//! result happened to redraw it, lagging behind the slower task-driven columns
-//! (and a cache-warm Summary preview). The paint runs *after* the worker pool
-//! is spawned — so the slow git subprocesses (the long pole) aren't delayed by
-//! it — but *before* the drain renders any result, so Age/Message still reach
-//! the screen ahead of every task-driven column. Reading `all_items` here is
-//! race-free: the worker thread only sends results through the channel, and the
-//! drain (the sole `all_items` mutator) hasn't started. `render_skeleton_row`
-//! fills Age/Message from `item.commit` while every task column keeps its
-//! placeholder.
+//! Nothing between J1's join and the skeleton overlaps with anything else:
+//! the commit-details fork, row building, and (picker) the CI-cache reads run
+//! one after another on the collect thread. Nothing between the skeleton and
+//! J3 overlaps with the task pool either: the pool opens only after J2 joins,
+//! and J2 joins on the ref snapshot, whose two `for-each-ref` scans run one
+//! after the other and repeat J1's `refs/heads/` scan.
 //!
-//! **Why fsmonitor check is sequential:** It gates whether daemon starts are needed.
-//! The check is fast (~5ms) and must complete before we know which spawns to add.
+//! ### Picker prelude
 //!
-//! **Why fsmonitor starts are in the parallel scope:** The `git fsmonitor--daemon start`
-//! command returns quickly after signaling the daemon. By the time the worker thread
-//! starts executing `git status` commands, daemons have had time to initialize. In the
-//! steady state every daemon is already up, and the in-process socket probe in
-//! `start_fsmonitor_daemon_at` skips the fork entirely; without it, a 128-worktree
-//! repo spent 100–300ms of forks here before the worker pool could start.
+//! Before `collect()` starts, the picker's main thread runs, in order:
+//! `prewarm_info` (one `rev-parse`), `head_sha` (one `rev-parse HEAD`), a
+//! speculative `UnifiedDiff` preview for the current worktree on
+//! [`COLLECT_POOL`] (not joined), and the `num_items_estimate` — which calls
+//! `list_worktrees` (worktree list + rebase backfill) and, with branches or
+//! remotes shown, `local_branches` / `remote_branches`. The estimate only
+//! counts rows, so it does not need the backfill, but it pays for it on the
+//! main thread before skim starts. The speculative preview resolves its
+//! comparison base through `capture_refs`, which fills the same
+//! `local_branches` / `remote_branches` cells, so the estimate may block on a
+//! cell that preview job is initializing. `collect()`'s J1 then finds every
+//! inventory cached.
+//!
+//! ### Blocking waits
+//!
+//! | Wait | Site | Blocked thread | Released when |
+//! |------|------|----------------|---------------|
+//! | J1, J2 `rayon::scope` join | `collect()` | collect thread (outside the pool: parked, doesn't steal); scope bodies and spawns run on global-pool workers, which steal while waiting | every spawn returns |
+//! | J3 `install` + `par_bridge` | work-item thread | the spawned `std::thread`; pool workers steal | every item returns |
+//! | W4 channel receive | `drain_results` | collect thread | all senders drop, or the drain deadline |
+//! | `RepoCache` `OnceCell` (`worktrees`, `local_branches`, `remote_branches`, `default_branch`, `project_config`, `resolved_config`, `comparison_base`, `sparse_checkout_paths`, …) | any accessor | any thread that reads a cell while another thread is initializing it (a caller that finds it empty runs the initializer itself) | the running initializer returns |
+//! | `DashMap` entry (`GIT_DIRS`, `WORKTREE_ROOTS`, `commit_tree`, `effective_remote_urls`, …) | per-key accessors | a thread touching the same shard while `or_insert_with` forks under the shard lock | that fork returns |
+//! | `CMD_SEMAPHORE` (32) | `Cmd::run`, `run_concurrently`, `pipe_into` on background threads | the caller | a running command exits (a permit spans one child, or one `run_concurrently` batch) |
+//! | `HEAVY_OPS_SEMAPHORE` (4), `LLM_SEMAPHORE` (8) | heavy diff/rev-list tasks; summaries | the task | a heavy op / LLM call finishes; each is taken before `CMD_SEMAPHORE`, never after |
+//! | Child processes | every fork | the forking thread | the child exits |
+//!
+//! ### Deadlock freedom
+//!
+//! The waits above cannot form a cycle as long as one rule holds: **a cell
+//! initializer waits only on its own child processes, on semaphore permits,
+//! and on other cells — never on a rayon join, scope, or parallel iterator,
+//! and never on a channel.** Rayon joins happen only at the phase boundaries
+//! drawn above (J1–J3) and in command-level orchestration, never inside a
+//! repository accessor.
+//!
+//! Why the rule suffices: a thread that waits on a cell is waiting on a
+//! thread that is *running* that cell's initializer (a caller that finds the
+//! cell empty runs the initializer itself, so no one waits on an initializer
+//! that is merely queued). That initializer waits only on children, which
+//! wait on nothing in this process; on permits, which are held only across a
+//! child's lifetime (or taken in a fixed order: heavy/LLM before command);
+//! and on other cells, whose initializers obey the same rule. So every chain
+//! of waits ends at a child process. What the rule excludes is a rayon wait
+//! inside an initializer: a waiting rayon thread runs other queued jobs, and
+//! if one of those reads the cell being initialized, it waits on its own
+//! thread's stack frame and never returns. `wt step prune` reads
+//! `list_worktrees` from inside its own `par_iter`, which is how a
+//! `par_iter` inside the worktree-list initializer deadlocked. The rebase
+//! backfill therefore forks through `Cmd::run_concurrently`, which waits on
+//! children only.
+//!
+//! ### Direct reads of git's files
+//!
+//! Four steps read state from the git directory instead of asking git:
+//! the rebase backfill's `head-name` read (inside `list_worktrees`), the `.git` reads in
+//! `prime_worktree_path_caches` (before J2), the fsmonitor socket connect
+//! (in J2), and the `GitOperation` task's `operation_in_progress_at` (in J3).
+//!
+//! ### Why the Age/Message paint
+//!
+//! Those two columns carry no task — their data is the `ListItem.commit`
+//! populated after J2 — so without an explicit repaint they'd sit on the
+//! skeleton placeholder until the row's first *task* result happened to
+//! redraw it, lagging behind the slower task-driven columns (and a cache-warm
+//! Summary preview). The paint runs *after* the worker pool is spawned — so
+//! the slow git subprocesses (the long pole) aren't delayed by it — but
+//! *before* the drain renders any result, so Age/Message still reach the
+//! screen ahead of every task-driven column. Reading `all_items` here is
+//! race-free: the worker thread only sends results through the channel, and
+//! the drain (the sole `all_items` mutator) hasn't started.
+//! `render_skeleton_row` fills Age/Message from `item.commit` while every task
+//! column keeps its placeholder.
+//!
+//! ### Why fsmonitor daemons are started before the task pool
+//!
+//! When git's builtin fsmonitor is enabled and no daemon runs for a worktree,
+//! the first git command there spawns one itself, and a command that does so
+//! under parallel load can hang (the workaround scalar adopted in
+//! <https://gitlab.com/gitlab-org/git/-/merge_requests/148>; jj hit the same
+//! hang in <https://github.com/jj-vcs/jj/issues/6440>). The requirement is per
+//! worktree — a daemon started before that worktree's first command — but J2
+//! meets it with a barrier: every start returns before any task runs. In the
+//! steady state every daemon is already up, and `start_fsmonitor_daemon_at`
+//! detects that by connecting to `<git-dir>/fsmonitor--daemon.ipc` without
+//! forking. The connect fails when that path exceeds the platform's socket
+//! path limit (104 bytes on macOS, which git itself works around), so
+//! worktrees with long git-dir paths still fork `git fsmonitor--daemon start`
+//! on every run, which reports the daemon already running.
 //!
 //! When adding new features, ask: "Can this be computed after skeleton?" If yes, defer it.
 //! The skeleton shows `·` placeholder for gutter symbols, filled in when data loads.
 //!
-//! ### Measured Phase Timings
+//! ### Measured phase timings
 //!
-//! Representative medians on the worktrunk dev repo (7 worktrees, 6
-//! branches, warm caches, release build, `--progressive` forced so the
-//! progressive-table path fires even with stdout piped).
+//! One traced run each on a 143-worktree repo (16 detached, ~90 local
+//! branches, 5 worktrees whose socket path exceeds the limit), warm caches,
+//! release build, `-vv` tracing. Milliseconds from process start.
 //!
-//! | Phase | median | cmds |
-//! |-------|-------:|-----:|
-//! | `List collect started → Skeleton rendered` (pre-skeleton) | ~60ms | 23 |
-//! | `Skeleton rendered → Spawning worker thread` (rayon::scope + work-item setup) | ~41ms | 7 |
-//! | `Spawning worker thread → Parallel execution started` | <100µs | 0 |
-//! | `Parallel execution started → First result received` | <100µs | 0 |
-//! | `First result received → All results drained` (parallel work) | ~436ms | 154 |
-//! | `All results drained → List collect complete` (final render) | ~344µs | 0 |
-//! | Wall clock | ~549ms | — |
+//! | Milestone | `wt list --progressive` | picker (`WORKTRUNK_PICKER_DRY_RUN`) |
+//! |-----------|------:|------:|
+//! | `List collect started` | 41 | 161 (after an ~85ms prelude) |
+//! | worktree list returns (runs beside `refs/heads/` scan) | 82 | 127 (prelude) |
+//! | rebase backfill returns | 95 | 156 (prelude) |
+//! | commit-details `git log` returns | 123 | 222 |
+//! | skeleton / rows sent to skim | ~130 | ~294 |
+//! | `Spawning worker thread` (J2 joined) | 171 | 494 |
+//! | `All results drained` | 984 | — |
 //!
-//! The 23-command pre-skeleton count is well above the five-to-six
-//! critical-path forks documented above — worth an audit. Most of the extras
-//! come from per-worktree probes that creep into the phase.
+//! In the picker, the preview precompute spawned at the skeleton (one
+//! `diff-tree` per branch-only row) competes with J2 and the work that
+//! precedes it for CPU, which is why its skeleton-to-pool gap is 200ms
+//! against `wt list`'s 46ms.
 //!
 //! Reproduce end-to-end via
 //! `cargo bench --bench time_to_first_output -- list`; for a per-phase
-//! breakdown, capture a trace and inspect it as described in
-//! `benches/AGENTS.md` under "Analyzing a trace":
+//! breakdown, see `benches/AGENTS.md` under "Analyzing a trace":
 //!
 //! ```bash
-//! RUST_LOG=debug ./target/release/wt -C <repo> list --progressive \
-//!   2> >(cargo run -p wt-perf --release -q -- trace > trace.json)
+//! cargo run -p wt-perf --release -- timeline -- -C <repo> list --progressive
 //! ```
 //!
 //! ## Unified Collection Architecture
