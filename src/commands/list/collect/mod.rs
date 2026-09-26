@@ -137,7 +137,7 @@
 //! │    ├─ switch_previous()                     (5ms)
 //! │    ├─ capture_refs[_with_ahead_behind]()    (ref snapshot)
 //! │    │    └─ prime_upstream_ahead_behind_cache()  (nested; reads the snapshot)
-//! │    ├─ start_fsmonitor_daemon × N worktrees  (6ms each, all parallel)
+//! │    ├─ start_fsmonitor_daemon × N worktrees  (socket probe; fork only when no daemon answers)
 //! │  )                                          // joins on the slowest spawn
 //! ├─ integration_targets(snapshot)              (sequential; needs the snapshot)
 //! ├─ populate ListItem.commit from cache        (cache-hit lookups, sub-ms)
@@ -163,7 +163,9 @@
 //!
 //! **Why fsmonitor starts are in the parallel scope:** The `git fsmonitor--daemon start`
 //! command returns quickly after signaling the daemon. By the time the worker thread
-//! starts executing `git status` commands, daemons have had time to initialize.
+//! starts executing `git status` commands, daemons have had time to initialize. In the
+//! steady state every daemon is already up, and the in-process socket probe in
+//! `start_fsmonitor_daemon_at` returns without forking.
 //!
 //! When adding new features, ask: "Can this be computed after skeleton?" If yes, defer it.
 //! The skeleton shows `·` placeholder for gutter symbols, filled in when data loads.

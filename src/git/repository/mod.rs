@@ -1841,12 +1841,29 @@ impl Repository {
     /// Idempotent — if the daemon is already running, this is a no-op.
     /// Used to avoid auto-start races when running many parallel git commands.
     ///
+    /// A running daemon is detected in-process first, the way `git
+    /// fsmonitor--daemon start` itself checks before refusing with "already
+    /// running": connect to `<git-dir>/fsmonitor--daemon.ipc` and close. That
+    /// skips a ~20ms fork per worktree in the steady state, where every daemon
+    /// is already up. Any failure to connect (no daemon, stale socket, a path
+    /// too long for `sun_path`, an unresolvable git dir) falls through to the
+    /// fork, which starts the daemon or reports it running.
+    ///
     /// Uses `Command::status()` with null stdio instead of `Cmd::run()` to avoid
     /// pipe inheritance: the daemon process (`git fsmonitor--daemon run --detach`)
     /// inherits pipe file descriptors from its parent, keeping them open
     /// indefinitely. `read_to_end()` in `Command::output()` then blocks forever
     /// waiting for EOF that never comes.
     pub fn start_fsmonitor_daemon_at(&self, path: &Path) {
+        #[cfg(unix)]
+        if let Ok(git_dir) = self.worktree_at(path).git_dir()
+            && std::os::unix::net::UnixStream::connect(
+                git_dir.join(super::fsmonitor::IPC_SOCKET_NAME),
+            )
+            .is_ok()
+        {
+            return;
+        }
         let context = path_to_logging_context(path);
         let cmd_str = "git fsmonitor--daemon start";
         tracing::debug!(cmd = cmd_str, context = %context, "$ {cmd_str} [{context}]");
