@@ -43,22 +43,19 @@ pub struct CiBranchName {
 impl CiBranchName {
     /// Create from a [`BranchRef`], using its short name and remote/local kind.
     ///
-    /// For remote branches (e.g., "origin/feature"), splits at the first `/`
-    /// to extract the remote name and bare branch name.
+    /// For remote branches, uses the remote and branch components retained by
+    /// [`BranchRef`] when the repository inventory parsed the ref.
     /// For local branches, the name is already bare.
     ///
     /// Returns `None` for detached HEAD (no short name).
     pub fn from_branch_ref(branch_ref: &BranchRef) -> Option<Self> {
         let short = branch_ref.short_name()?;
-        if branch_ref.is_remote() {
-            // Remote branch — split "origin/feature" into remote + bare name.
-            if let Some((remote, name)) = short.split_once('/') {
-                return Some(Self {
-                    full_name: short.to_string(),
-                    remote: Some(remote.to_string()),
-                    name: name.to_string(),
-                });
-            }
+        if let Some((remote, name)) = branch_ref.remote_parts() {
+            return Some(Self {
+                full_name: short.to_string(),
+                remote: Some(remote.to_string()),
+                name: name.to_string(),
+            });
         }
         // Local branch — name is already bare
         Some(Self {
@@ -969,11 +966,21 @@ mod tests {
 
     #[test]
     fn test_ci_branch_name_from_remote_branch_ref() {
-        let branch_ref = BranchRef::remote_branch("origin/feature", "abc123");
+        let branch_ref = BranchRef::remote_branch("origin", "feature", "abc123");
         let ci = CiBranchName::from_branch_ref(&branch_ref).expect("remote has short_name");
         assert_eq!(ci.full_name, "origin/feature");
         assert_eq!(ci.name, "feature");
         assert_eq!(ci.remote.as_deref(), Some("origin"));
+        assert!(ci.is_remote());
+    }
+
+    #[test]
+    fn test_ci_branch_name_from_slash_named_remote_branch_ref() {
+        let branch_ref = BranchRef::remote_branch("team/fork", "feature", "abc123");
+        let ci = CiBranchName::from_branch_ref(&branch_ref).expect("remote has short_name");
+        assert_eq!(ci.full_name, "team/fork/feature");
+        assert_eq!(ci.name, "feature");
+        assert_eq!(ci.remote.as_deref(), Some("team/fork"));
         assert!(ci.is_remote());
     }
 

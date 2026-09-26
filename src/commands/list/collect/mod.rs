@@ -318,7 +318,9 @@ use color_print::cformat;
 use crossbeam_channel as chan;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
-use worktrunk::git::{ErrorExt, LocalBranch, Repository, WorktreeId, WorktreeInfo, WorktreeRef};
+use worktrunk::git::{
+    ErrorExt, LocalBranch, RemoteBranch, Repository, WorktreeId, WorktreeInfo, WorktreeRef,
+};
 use worktrunk::styling::{
     INFO_SYMBOL, eprintln, format_with_gutter, hint_message, info_message, terminal_width,
     truncate_visible, warning_message,
@@ -1028,7 +1030,7 @@ pub fn collect(
     };
     // Remote branches that aren't tracked by any local branch. Filtering
     // happens over the cached inventories — no extra subprocess.
-    let remote_branches: Vec<(String, String)> = if show_remotes {
+    let remote_branches: Vec<RemoteBranch> = if show_remotes {
         let tracked: HashSet<&str> = repo
             .local_branches()?
             .iter()
@@ -1037,7 +1039,7 @@ pub fn collect(
         repo.remote_branches()?
             .iter()
             .filter(|r| !tracked.contains(r.short_name.as_str()))
-            .map(|r| (r.short_name.clone(), r.commit_sha.clone()))
+            .cloned()
             .collect()
     } else {
         Vec::new()
@@ -1099,7 +1101,11 @@ pub fn collect(
                 .iter()
                 .map(|(_, sha)| sha.as_str()),
         )
-        .chain(remote_branches.iter().map(|(_, sha)| sha.as_str()))
+        .chain(
+            remote_branches
+                .iter()
+                .map(|branch| branch.commit_sha.as_str()),
+        )
         .filter(|sha| *sha != worktrunk::git::NULL_OID)
         .collect();
     let commit_details_map = repo.commit_details_many(&all_shas).unwrap_or_else(|err| {
@@ -1127,8 +1133,8 @@ pub fn collect(
         |(_, sha)| sha.as_str(),
     );
     let remote_branches =
-        sort_by_timestamp_desc_with_cache(remote_branches, &commit_details_map, |(_, sha)| {
-            sha.as_str()
+        sort_by_timestamp_desc_with_cache(remote_branches, &commit_details_map, |branch| {
+            branch.commit_sha.as_str()
         });
 
     // Branches living in more than one worktree. Every row on such a branch
@@ -1175,11 +1181,13 @@ pub fn collect(
     );
 
     let remote_start_idx = all_items.len();
-    all_items.extend(
-        remote_branches
-            .iter()
-            .map(|(name, sha)| ListItem::new_remote_branch(sha.clone(), name.clone())),
-    );
+    all_items.extend(remote_branches.iter().map(|branch| {
+        ListItem::new_remote_branch(
+            branch.commit_sha.clone(),
+            branch.remote_name.clone(),
+            branch.local_name.clone(),
+        )
+    }));
 
     // Abbreviated SHAs land here, before layout and the skeleton, rather than
     // with the rest of the commit bundle below. The Commit cell and a detached

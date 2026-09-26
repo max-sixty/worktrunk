@@ -152,7 +152,7 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
 
 [1m[32mCreating a branch[0m
 
-The [2m--create[0m flag creates a new branch from [2m--base[0m — the default branch unless specified. Without [2m--create[0m, the branch must already exist. Switching to a remote branch (e.g., [2mwt switch feature[0m when only [2morigin/feature[0m exists) creates a local tracking branch.
+The [2m--create[0m flag creates a new branch from [2m--base[0m — the default branch unless specified. Without [2m--create[0m, the branch must already exist. Switching to a remote branch (e.g., [2mwt switch feature[0m when only [2morigin/feature[0m exists) creates a local tracking branch. This also works when the remote name contains a slash, such as [2mteam/fork[0m.
 
 A new branch tracks the remote branch it starts from only when the two share a name: [2m--create release --base origin/release[0m tracks [2morigin/release[0m, while [2m--create feature --base origin/release[0m gets no upstream. Publish such a branch with [2mgit push --set-upstream origin <branch>[0m, or set git's [2mpush.autoSetupRemote = true[0m once.
 

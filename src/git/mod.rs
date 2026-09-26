@@ -551,7 +551,7 @@ impl HookType {
 /// - From a worktree: `worktree_info.worktree_ref()` and then
 ///   [`WorktreeRef::into_branch_ref()`]
 /// - For a local branch: `BranchRef::local_branch("feature", "abc123")`
-/// - For a remote branch: `BranchRef::remote_branch("origin/feature", "abc123")`
+/// - For a remote branch: `BranchRef::remote_branch("origin", "feature", "abc123")`
 ///
 /// # Working Tree Access
 ///
@@ -576,6 +576,10 @@ pub struct BranchRef {
     /// Path to worktree, if this branch has one.
     /// None for branch-only items (remote branches, local branches without worktrees).
     worktree_path: Option<PathBuf>,
+    /// Configured remote name for a remote-tracking branch.
+    remote_name: Option<String>,
+    /// Branch name after removing the exact configured remote prefix.
+    remote_branch_name: Option<String>,
 }
 
 /// Canonical snapshot of a registered worktree.
@@ -680,21 +684,27 @@ impl BranchRef {
             full_ref: Some(full_ref),
             commit_sha: commit_sha.to_string(),
             worktree_path: None,
+            remote_name: None,
+            remote_branch_name: None,
         }
     }
 
     /// Create a BranchRef for a remote-tracking branch.
     ///
-    /// `branch` is the short remote-qualified name (e.g., `"origin/feature"`),
-    /// as produced by `%(refname:lstrip=2)` in `list_remote_branches`. It is
-    /// stored as `refs/remotes/<branch>`.
-    pub fn remote_branch(branch: &str, commit_sha: &str) -> Self {
-        let full_ref = remote_ref(branch);
+    /// `remote_name` and `branch` come from the remote-branch inventory, which
+    /// resolves their boundary against configured remote names. Keeping them
+    /// separate here avoids reparsing ambiguous names such as
+    /// `"team/fork/feature"`.
+    pub fn remote_branch(remote_name: &str, branch: &str, commit_sha: &str) -> Self {
+        let short_name = format!("{remote_name}/{branch}");
+        let full_ref = remote_ref(&short_name);
         Self {
-            id: GitItemId::remote_branch(branch),
+            id: GitItemId::remote_branch(&short_name),
             full_ref: Some(full_ref),
             commit_sha: commit_sha.to_string(),
             worktree_path: None,
+            remote_name: Some(remote_name.to_string()),
+            remote_branch_name: Some(branch.to_string()),
         }
     }
 
@@ -751,9 +761,15 @@ impl BranchRef {
 
     /// True if this is a remote-tracking ref (under `refs/remotes/`).
     pub fn is_remote(&self) -> bool {
-        self.full_ref
-            .as_deref()
-            .is_some_and(|r| r.starts_with("refs/remotes/"))
+        self.remote_name.is_some()
+    }
+
+    /// Configured remote and branch names for a remote-tracking ref.
+    pub fn remote_parts(&self) -> Option<(&str, &str)> {
+        Some((
+            self.remote_name.as_deref()?,
+            self.remote_branch_name.as_deref()?,
+        ))
     }
 }
 
@@ -767,6 +783,8 @@ impl WorktreeRef {
             full_ref: branch.map(local_ref),
             commit_sha: commit_sha.to_string(),
             worktree_path: Some(path),
+            remote_name: None,
+            remote_branch_name: None,
         })
     }
 
@@ -1116,10 +1134,11 @@ mod tests {
 
     #[test]
     fn test_branch_ref_remote_branch() {
-        let branch_ref = BranchRef::remote_branch("origin/feature", "abc123");
+        let branch_ref = BranchRef::remote_branch("origin", "feature", "abc123");
 
         assert_eq!(branch_ref.full_ref(), Some("refs/remotes/origin/feature"));
         assert_eq!(branch_ref.short_name(), Some("origin/feature"));
+        assert_eq!(branch_ref.remote_parts(), Some(("origin", "feature")));
         assert_eq!(branch_ref.commit_sha, "abc123");
         assert_eq!(branch_ref.worktree_path, None);
         assert!(branch_ref.worktree_path().is_none());
@@ -1135,7 +1154,7 @@ mod tests {
         // `git rev-parse` picking the wrong ref lives at
         // `test_list_remote_row_not_shadowed_by_same_named_local_branch` in
         // `tests/integration_tests/list.rs`.
-        let remote = BranchRef::remote_branch("origin/foo", "abc");
+        let remote = BranchRef::remote_branch("origin", "foo", "abc");
         let local = BranchRef::local_branch("origin/foo", "def");
 
         assert_eq!(remote.full_ref(), Some("refs/remotes/origin/foo"));
@@ -1172,7 +1191,7 @@ mod tests {
         // A short name is presentation; the full ref is identity.
         assert_ne!(
             BranchRef::local_branch("origin/foo", "abc").id(),
-            BranchRef::remote_branch("origin/foo", "abc").id()
+            BranchRef::remote_branch("origin", "foo", "abc").id()
         );
     }
 

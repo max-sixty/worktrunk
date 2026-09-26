@@ -58,7 +58,7 @@ use super::preview::PreviewMode;
 use super::preview_notify::PrStatusDelta;
 use super::preview_orchestrator::{PreviewOrchestrator, SpawnGeneration};
 use crate::commands::list::collect::PickerProgressHandler;
-use crate::commands::list::model::{BranchScope, ItemKind, ListItem};
+use crate::commands::list::model::ListItem;
 
 /// Handler owned by the background collect thread. Implements the
 /// `PickerProgressHandler` trait that `collect` drives.
@@ -249,9 +249,9 @@ impl PickerHandler {
 
 /// Branch names the skeleton shows, for the `--prs` thread's dedup: a PR whose
 /// head branch is in this set is already on screen, so its row is dropped. A
-/// remote row ("origin/foo") also contributes its bare "foo" — remote names
-/// carry no '/', so the first segment is the remote — so a PR for "foo" dedups
-/// against a shown "origin/foo". Detached rows (no branch) contribute nothing.
+/// remote row ("origin/foo") also contributes its bare "foo", so a PR for
+/// "foo" dedups against a shown "origin/foo". Detached rows (no branch)
+/// contribute nothing.
 fn collect_shown_branches(items: &[ListItem]) -> HashSet<String> {
     let mut shown = HashSet::new();
     for item in items {
@@ -259,9 +259,7 @@ fn collect_shown_branches(items: &[ListItem]) -> HashSet<String> {
             continue;
         };
         shown.insert(name.to_string());
-        if matches!(item.kind(), ItemKind::Branch(BranchScope::Remote))
-            && let Some((_, bare)) = name.split_once('/')
-        {
+        if let Some((_, bare)) = item.branch_ref().remote_parts() {
             shown.insert(bare.to_string());
         }
     }
@@ -1291,7 +1289,7 @@ mod tests {
         let (handler, _test, rx) = make_handler();
         let items = vec![
             ListItem::new_branch("abc".into(), "localbr".into()),
-            ListItem::new_remote_branch("abc".into(), "origin/remotebr".into()),
+            ListItem::new_remote_branch("abc".into(), "origin".into(), "remotebr".into()),
         ];
         handler.on_skeleton(
             items,
@@ -1409,7 +1407,8 @@ mod tests {
     fn collect_shown_branches_adds_remote_bare_names() {
         let items = vec![
             ListItem::new_branch("a".into(), "local-feat".into()),
-            ListItem::new_remote_branch("b".into(), "origin/remote-feat".into()),
+            ListItem::new_remote_branch("b".into(), "origin".into(), "remote-feat".into()),
+            ListItem::new_remote_branch("c".into(), "team/fork".into(), "slash-feat".into()),
         ];
         let shown = collect_shown_branches(&items);
         assert!(shown.contains("local-feat"), "local branch name");
@@ -1417,6 +1416,11 @@ mod tests {
         assert!(
             shown.contains("remote-feat"),
             "bare name so a PR head dedups against the remote row"
+        );
+        assert!(shown.contains("team/fork/slash-feat"), "slash remote ref");
+        assert!(
+            shown.contains("slash-feat"),
+            "bare name from a slash-named remote"
         );
     }
 

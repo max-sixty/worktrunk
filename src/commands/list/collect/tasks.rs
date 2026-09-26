@@ -669,7 +669,11 @@ fn compute_upstream(ctx: &TaskContext) -> anyhow::Result<TaskResult> {
         });
     };
 
-    let remote = upstream_branch.split_once('/').map(|(r, _)| r.to_string());
+    let remote = repo
+        .remote_branches()?
+        .iter()
+        .find(|branch| branch.short_name == upstream_branch)
+        .map(|branch| branch.remote_name.clone());
     // Resolve upstream ref to a SHA via the snapshot, then compute
     // ahead/behind by SHA. Branch SHA is taken from `branch_ref.commit_sha`
     // — for the upstream comparison we want the branch's actual tip,

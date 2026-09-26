@@ -789,7 +789,20 @@ pub fn handle_state_get(
 
             let branch_ref = match (local_sha, remote_sha) {
                 (Some(sha), _) => BranchRef::local_branch(&branch_name, sha),
-                (None, Some(sha)) => BranchRef::remote_branch(&branch_name, sha),
+                (None, Some(sha)) => {
+                    let remote_branch = repo
+                        .remote_branches()?
+                        .iter()
+                        .find(|remote| remote.short_name == branch_name)
+                        .with_context(|| {
+                            format!("remote branch metadata missing for {branch_name}")
+                        })?;
+                    BranchRef::remote_branch(
+                        &remote_branch.remote_name,
+                        &remote_branch.local_name,
+                        sha,
+                    )
+                }
                 (None, None) => {
                     return Err(worktrunk::git::GitError::BranchNotFound {
                         // Offering `--create` for a name git rejects sends the
