@@ -781,7 +781,8 @@ impl Repository {
     /// topology.
     ///
     /// The rewrite steps (`wt step squash`, `wt step rebase`, and `wt merge`
-    /// through them) measure "the branch's own commits" as
+    /// through them), and `wt step diff` previewing them, measure "the
+    /// branch's own commits" as
     /// `merge-base(target, HEAD)..HEAD`. When the local target ref lags its
     /// upstream (e.g. the primary checkout's `main` left behind `origin/main`)
     /// and the branch was built on the newer upstream tip, that span sweeps in
