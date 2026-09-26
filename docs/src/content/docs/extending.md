@@ -187,9 +187,9 @@ To copy instead of move, add `git stash apply --index --quiet` right after the p
 # ~/.config/worktrunk/config.toml
 [aliases]
 hook-log = '''
-tail -f "$(wt config state logs --format=json | jq -r --arg name "{{ name | sanitize_hash }}" --arg kind "{{ kind }}" '
+tail -f "$(wt config state logs --format=json | jq -r --arg branch {{ branch }} --arg name {{ name | sanitize_hash }} --arg kind {{ kind }} '
   .hook_output[]
-  | select([.branch, .hook_type, .name] == ["{{ branch }}", $kind, $name])
+  | select([.branch, .hook_type, .name] == [$branch, $kind, $name])
   | .path
 ' | head -1)"
 '''
