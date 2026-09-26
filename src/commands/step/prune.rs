@@ -30,7 +30,7 @@ use rayon::prelude::*;
 use worktrunk::HookType;
 use worktrunk::config::{Approvals, ProjectConfig, UserConfig};
 use worktrunk::git::{
-    BranchDeletionMode, IntegrationReason, RefSnapshot, Repository, WorktreeInfo,
+    BranchDeletionMode, GitError, IntegrationReason, RefSnapshot, Repository, WorktreeInfo,
 };
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
@@ -409,7 +409,8 @@ struct CheckOutcome {
     /// double as `--dry-run` and plan every source. `None` means not
     /// removable (dirty, locked, primary — filtered silently, never reported
     /// as "younger than") — except detached stale entries, which need no
-    /// plan: `try_remove` prunes them directly.
+    /// plan: `try_remove` prunes them directly. Unexpected planning errors
+    /// propagate instead of being reported as an empty prune result.
     plan: Option<RemovalPlan>,
     /// Whether the item passed the removability gate (see `plan`).
     removable: bool,
@@ -418,6 +419,27 @@ struct CheckOutcome {
     /// `Some(_)` if `min_age` is set and the age could be resolved; the
     /// caller compares against `min_age_duration` to decide on the skip.
     age: Option<Duration>,
+}
+
+fn plan_if_removable(result: anyhow::Result<RemovalPlan>) -> anyhow::Result<Option<RemovalPlan>> {
+    match result {
+        Ok(plan) => Ok(Some(plan)),
+        Err(error)
+            if matches!(
+                error.downcast_ref::<GitError>(),
+                Some(
+                    GitError::UncommittedChanges { .. }
+                        | GitError::CannotRemoveMainWorktree
+                        | GitError::CannotRemoveDefaultBranch { .. }
+                        | GitError::WorktreeLocked { .. }
+                        | GitError::StaleWorktreeHoldsWork { .. }
+                )
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// One check item's full parallel work: integration + removability + age.
@@ -462,17 +484,15 @@ fn check_one(
     let plan = if stale_detached.is_some() {
         None
     } else {
-        match &item.source {
-            CheckSource::Orphan => repo
-                .prepare_worktree_removal(
-                    RemoveTarget::BranchOnly(item.integration_ref.clone()),
-                    BranchDeletionMode::SafeDelete,
-                    false,
-                    current_path,
-                    Some(worktrees),
-                    Some(snapshot),
-                )
-                .ok(),
+        let result = match &item.source {
+            CheckSource::Orphan => repo.prepare_worktree_removal(
+                RemoveTarget::BranchOnly(item.integration_ref.clone()),
+                BranchDeletionMode::SafeDelete,
+                false,
+                current_path,
+                Some(worktrees),
+                Some(snapshot),
+            ),
             CheckSource::Linked { wt_idx } | CheckSource::Prunable { wt_idx } => {
                 let wt = &worktrees[*wt_idx];
                 repo.prepare_worktree_removal(
@@ -490,9 +510,9 @@ fn check_one(
                     Some(worktrees),
                     Some(snapshot),
                 )
-                .ok()
             }
-        }
+        };
+        plan_if_removable(result)?
     };
     let removable = match stale_detached {
         Some(wt) => matches!(repo.stale_worktree_work(&wt.path), Ok(None)),

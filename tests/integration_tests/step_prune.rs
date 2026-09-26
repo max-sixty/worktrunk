@@ -79,6 +79,46 @@ fn test_prune_removes_merged(mut repo: TestRepo) {
     assert!(!worktree_path.exists(), "Worktree should be fully removed");
 }
 
+/// A registered worktree path occupied by another repository is an unsafe
+/// removal target, not a normal non-removable candidate to skip.
+#[rstest]
+fn test_prune_surfaces_foreign_repository_at_worktree_path(mut repo: TestRepo) {
+    repo.commit("initial");
+    let worktree_path = repo.add_worktree("merged-branch");
+    let parent = worktree_path.parent().unwrap().to_path_buf();
+    let dir_name = worktree_path.file_name().unwrap().to_str().unwrap();
+
+    std::fs::remove_dir_all(&worktree_path).unwrap();
+    repo.run_git_in(&parent, &["init", "-b", "main", dir_name]);
+    std::fs::write(worktree_path.join("precious.txt"), "unpushed work").unwrap();
+
+    for mode in ["--dry-run", "--yes"] {
+        let output = repo
+            .wt_command()
+            .args(["step", "prune", mode, "--min-age=0s"])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            !output.status.success(),
+            "{mode} must surface an unsafe candidate instead of reporting an empty result.\nstderr: {stderr}"
+        );
+        assert!(
+            stderr.contains("does not hold the worktree registered there"),
+            "{mode} must preserve the ownership diagnostic.\nstderr: {stderr}"
+        );
+    }
+    assert!(
+        worktree_path.join("precious.txt").exists(),
+        "the foreign repository's uncommitted file must survive"
+    );
+    assert!(
+        worktree_path.join(".git").is_dir(),
+        "the foreign repository's object store must survive"
+    );
+}
+
 /// Prune skips worktrees with unique commits (not merged)
 #[rstest]
 fn test_prune_skips_unmerged(mut repo: TestRepo) {
