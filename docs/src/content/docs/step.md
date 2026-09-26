@@ -213,7 +213,7 @@ Controls what to stage before squashing:
 |-------|----------|
 | `all` | Stage all changes including untracked files (default) |
 | `tracked` | Stage only modified tracked files |
-| `none` | Don't stage anything, squash only committed changes |
+| `none` | Don't stage anything; squash commits plus what's already staged |
 
 ```console
 $ wt step squash --stage=none
@@ -817,7 +817,7 @@ Bulk-removes worktrees and branches that are integrated into the default branch,
 
 In `wt list`, candidates show `_` (same commit) or `⊂` (content integrated). Run `--dry-run` to preview. See `wt remove --help` for the full integration criteria.
 
-Locked worktrees and the main worktree are always skipped. The current worktree is removed last, triggering cd to the primary worktree. Pre-remove and post-remove hooks run for each removal; a candidate whose hooks include an unapproved project command is skipped with `(approval required)` (pre-approve with `wt config approvals add`, or pass `--yes`).
+Locked worktrees, worktrees with uncommitted changes, and the main worktree are always skipped. The current worktree is removed last, triggering cd to the primary worktree. Pre-remove and post-remove hooks run for each removal; a candidate whose hooks include an unapproved project command is skipped with `(approval required)` (pre-approve with `wt config approvals add`, or pass `--yes`).
 
 ### Min-age guard
 

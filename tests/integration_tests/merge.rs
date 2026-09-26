@@ -5671,6 +5671,35 @@ fn test_step_squash_measures_against_upstream_when_local_main_stale(
     );
 }
 
+/// #3519 (standalone step): `wt step diff` shows what `wt merge` would squash,
+/// so with a stale local main it diffs from the upstream fork point — the
+/// branch's own files, not the upstream commits it was built on.
+#[rstest]
+fn test_step_diff_measures_against_upstream_when_local_main_stale(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    setup_stale_local_main(&repo);
+    let feature_wt =
+        add_feature_worktree(&repo, "origin/main", &[("feature.txt", "feature commit")]);
+    fs::write(feature_wt.join("untracked.txt"), "untracked").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "diff", "--", "--name-only"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "step diff failed\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"
+    feature.txt
+    untracked.txt
+    ");
+}
+
 /// #3519 (standalone step): `wt step rebase` with a stale local target rebases
 /// onto the target's *upstream*, replaying only the branch's own commits.
 /// Rebasing onto the stale local ref would replay the upstream commits too,

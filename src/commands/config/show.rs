@@ -298,17 +298,6 @@ pub(super) fn is_codex_available() -> bool {
     which::which("codex").is_ok()
 }
 
-/// Get the home directory for Claude Code config detection
-pub(super) fn home_dir() -> Option<PathBuf> {
-    // Try HOME/USERPROFILE env vars first (for tests and explicit overrides),
-    // then fall back to the OS lookup
-    std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .ok()
-        .map(PathBuf::from)
-        .or_else(worktrunk::path::home_dir)
-}
-
 /// Get the Claude Code config directory.
 ///
 /// This locates `settings.json`, the one Claude Code file wt reads. It reads
@@ -327,14 +316,15 @@ pub(super) fn claude_config_dir() -> Option<PathBuf> {
         && !dir.is_empty()
     {
         if dir == "~" {
-            return home_dir();
+            return worktrunk::path::home_dir();
         }
         if let Ok(rest) = Path::new(&dir).strip_prefix("~") {
-            return home_dir().map(|home| home.join(rest));
+            return worktrunk::path::home_dir().map(|home| home.join(rest));
         }
         return Some(PathBuf::from(dir));
     }
-    home_dir().map(|home| home.join(".claude"))
+    // Claude Code defaults to os.homedir(): USERPROFILE on Windows, not HOME.
+    worktrunk::path::home_dir().map(|home| home.join(".claude"))
 }
 
 /// Whether Claude Code's statusline runs worktrunk's.

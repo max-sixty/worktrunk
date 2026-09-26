@@ -724,14 +724,18 @@ impl Repository {
     // Private helpers for default_branch detection
 
     fn local_default_branch(&self, remote: &str) -> anyhow::Result<String> {
-        let stdout =
-            self.run_command(&["rev-parse", "--abbrev-ref", &format!("{}/HEAD", remote)])?;
+        let stdout = self.run_command(&[
+            "rev-parse",
+            "--abbrev-ref",
+            "--verify",
+            &format!("refs/remotes/{remote}/HEAD"),
+        ])?;
         DefaultBranchName::from_local(remote, &stdout).map(DefaultBranchName::into_string)
     }
 
     pub(super) fn query_remote_default_branch(&self, remote: &str) -> anyhow::Result<String> {
         let stdout = self.run_command_bounded(
-            &["ls-remote", "--symref", remote, "HEAD"],
+            &["ls-remote", "--symref", "--", remote, "HEAD"],
             Some(REMOTE_DETECTION_TIMEOUT),
         )?;
         DefaultBranchName::from_remote(&stdout).map(DefaultBranchName::into_string)
@@ -951,7 +955,7 @@ impl Repository {
         }
 
         let spec = format!("{}:.config/wt.toml", self.default_branch()?);
-        match self.run_command_output(&["show", &spec]) {
+        match self.run_command_output(&["show", "--end-of-options", &spec]) {
             Ok(output) if output.status.success() => Some((
                 String::from_utf8_lossy(&output.stdout).into_owned(),
                 PathBuf::from(&spec),

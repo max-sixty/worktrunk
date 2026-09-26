@@ -2178,7 +2178,9 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
 
 #[rstest]
 fn test_state_get_json_with_logs(repo: TestRepo) {
-    // Create hook output and command log files
+    // Create hook output and command log files. `feature` exists, so its log
+    // reports the branch; `bugfix` stands for a deleted branch (`branch: null`).
+    repo.run_git(&["branch", "feature"]);
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
@@ -2229,7 +2231,7 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
           "hints": [],
           "hook_output": [
             {
-              "branch": "bugfix",
+              "branch": null,
               "file": "bugfix/internal/remove.log",
               "hook_type": null,
               "modified_at": "<MTIME>",
@@ -3024,6 +3026,7 @@ fn test_logs_get_json_with_files(repo: TestRepo) {
 /// work the same as for user/project hooks.
 #[rstest]
 fn test_logs_get_json_internal_op_structure(repo: TestRepo) {
+    repo.run_git(&["branch", "feature"]);
     let log_dir = repo.root_path().join(".git/wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     write_log_at(
@@ -3043,7 +3046,54 @@ fn test_logs_get_json_internal_op_structure(repo: TestRepo) {
     assert_eq!(hook["source"], "internal");
     assert_eq!(hook["hook_type"], serde_json::Value::Null);
     assert_eq!(hook["name"], "remove");
-    assert!(hook["branch"].as_str().unwrap().starts_with("feature"));
+    assert_eq!(hook["branch"], "feature");
+}
+
+/// `branch` is the real branch name, not the sanitized log directory, so
+/// `select(.branch == "feature/x")` matches exactly. A directory no local
+/// branch maps to — a deleted branch, or one two branches share — is `null`.
+#[rstest]
+fn test_logs_get_json_branch_is_unsanitized(repo: TestRepo) {
+    let feature_dir = sanitize_for_filename("feature/x");
+    let shared_dir = sanitize_for_filename("shared/x");
+    for branch in ["feature/x", "shared/x", shared_dir.as_str()] {
+        repo.run_git(&["branch", branch]);
+    }
+    let log_dir = repo.root_path().join(".git/wt/logs");
+    for branch in ["main", "feature/x", "shared/x", "gone/x"] {
+        write_log_at(
+            &log_dir,
+            &hook_log_rel_path(branch, "user", "post-start", "server"),
+            "output",
+        );
+    }
+
+    let output = wt_state_cmd(&repo, "logs", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let mut branches: Vec<(String, serde_json::Value)> = parsed["hook_output"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| {
+            let dir = h["file"].as_str().unwrap().split('/').next().unwrap();
+            (dir.to_string(), h["branch"].clone())
+        })
+        .collect();
+    branches.sort_by(|a, b| a.0.cmp(&b.0));
+    let gone_dir = sanitize_for_filename("gone/x");
+    let mut expected = vec![
+        (feature_dir, serde_json::json!("feature/x")),
+        (gone_dir, serde_json::Value::Null),
+        ("main".to_string(), serde_json::json!("main")),
+        (shared_dir, serde_json::Value::Null),
+    ];
+    expected.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(branches, expected);
 }
 
 /// Repo-wide internal logs are top-level shared files, not branch subtrees.
