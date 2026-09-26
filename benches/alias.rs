@@ -67,6 +67,7 @@ fn bench_dispatch(c: &mut Criterion) {
             linked_worktrees: total_worktrees - 1,
             branchless_branches: 0,
             remote_tracking_refs: 0,
+            detached_worktrees: 0,
         }
         .create();
         let user_config = fixture.root().join("config.toml");
