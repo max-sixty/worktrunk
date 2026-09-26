@@ -23,6 +23,8 @@ A quick demo:
 
 ![Worktrunk Demo](https://cdn.jsdelivr.net/gh/max-sixty/worktrunk-assets@main/assets/docs/light/wt-core.gif)
 
+[![Live demo by Demoshell](https://build.demoshell.com/v1/embed/badge.svg)](https://build.demoshell.com/launch?snapshot=demoshell%2Ftui%3Aworktrunk&utm_source=badge)
+
 > ### 📚 Full documentation at [worktrunk.dev](https://worktrunk.dev) 📚
 
 <!-- ⚠️ AUTO-GENERATED from docs/src/content/docs/worktrunk.md#context-git-worktrees..worktrunk-makes-git-worktrees-as-easy-as-branches — edit source to update -->
