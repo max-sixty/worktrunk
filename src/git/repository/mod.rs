@@ -1857,8 +1857,10 @@ impl Repository {
     pub fn start_fsmonitor_daemon_at(&self, path: &Path) {
         #[cfg(unix)]
         if let Ok(git_dir) = self.worktree_at(path).git_dir()
-            && std::os::unix::net::UnixStream::connect(git_dir.join("fsmonitor--daemon.ipc"))
-                .is_ok()
+            && std::os::unix::net::UnixStream::connect(
+                git_dir.join(super::fsmonitor::IPC_SOCKET_NAME),
+            )
+            .is_ok()
         {
             return;
         }

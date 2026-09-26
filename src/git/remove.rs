@@ -158,7 +158,7 @@ pub fn stop_fsmonitor_daemon(worktree: &WorkingTree) {
     // linked worktree uses — never hand-construct `<path>/.git`). The daemon
     // binds its IPC socket at `<git-dir>/fsmonitor--daemon.ipc`.
     let socket = match worktree.git_dir() {
-        Ok(git_dir) => git_dir.join("fsmonitor--daemon.ipc"),
+        Ok(git_dir) => git_dir.join(super::fsmonitor::IPC_SOCKET_NAME),
         Err(e) => {
             tracing::debug!(error = %e, "fsmonitor: could not resolve git dir, skipping force-kill: {e}");
             return;

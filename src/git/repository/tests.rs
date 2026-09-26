@@ -741,6 +741,84 @@ fn is_builtin_fsmonitor_enabled_variants() {
     assert!(!repo_with_fsmonitor(None).is_builtin_fsmonitor_enabled());
 }
 
+/// A daemon answering on the worktree's IPC socket means no `git
+/// fsmonitor--daemon start` fork; with no socket to reach, the fork runs.
+/// The listener stands in for a running daemon, so no real daemon starts.
+#[cfg(all(unix, feature = "cli"))]
+#[test]
+fn start_fsmonitor_daemon_skips_fork_when_daemon_answers() {
+    use std::os::unix::net::UnixListener;
+    use std::sync::{Arc, Mutex};
+
+    use tracing::field::{Field, Visit};
+    use tracing_subscriber::Registry;
+    use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
+
+    use crate::git::Repository;
+    use crate::testing::{TestRepo, test_tempdir};
+    use crate::trace::WT_TRACE_TARGET;
+
+    /// Collects the `cmd` of every traced subprocess.
+    struct Commands(Arc<Mutex<Vec<String>>>);
+    struct CmdField(Option<String>);
+    impl Visit for CmdField {
+        fn record_str(&mut self, field: &Field, value: &str) {
+            if field.name() == "cmd" {
+                self.0 = Some(value.to_string());
+            }
+        }
+        fn record_debug(&mut self, _: &Field, _: &dyn std::fmt::Debug) {}
+    }
+    impl<S: tracing::Subscriber> Layer<S> for Commands {
+        fn on_event(&self, event: &tracing::Event<'_>, _: Context<'_, S>) {
+            if event.metadata().target() != WT_TRACE_TARGET {
+                return;
+            }
+            let mut cmd = CmdField(None);
+            event.record(&mut cmd);
+            self.0.lock().unwrap().extend(cmd.0);
+        }
+    }
+    let traced_starts = |start: &dyn Fn()| {
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = Registry::default().with(Commands(commands.clone()));
+        tracing::subscriber::with_default(subscriber, start);
+        let commands = commands.lock().unwrap();
+        commands
+            .iter()
+            .filter(|cmd| *cmd == "git fsmonitor--daemon start")
+            .count()
+    };
+
+    let test = TestRepo::with_initial_commit();
+    let repo = Repository::at(test.root_path()).unwrap();
+    let socket = repo
+        .worktree_at(test.root_path())
+        .git_dir()
+        .unwrap()
+        .join(super::super::fsmonitor::IPC_SOCKET_NAME);
+    let listener = UnixListener::bind(&socket).unwrap_or_else(|e| {
+        panic!(
+            "bind {} ({} bytes; sun_path holds 103 on macOS): {e}",
+            socket.display(),
+            socket.as_os_str().len()
+        )
+    });
+    listener.set_nonblocking(true).unwrap();
+
+    let starts = traced_starts(&|| repo.start_fsmonitor_daemon_at(test.root_path()));
+    assert_eq!(starts, 0, "a daemon answered, so nothing should fork");
+    listener
+        .accept()
+        .expect("the probe should have connected to the daemon socket");
+
+    // A directory outside any repository has no git dir to probe, so the
+    // start forks (and git exits "not a git repository").
+    let outside = test_tempdir();
+    let starts = traced_starts(&|| repo.start_fsmonitor_daemon_at(outside.path()));
+    assert_eq!(starts, 1, "nothing answered, so the start should fork");
+}
+
 #[test]
 fn commit_details_many_returns_subject_with_spaces() {
     use crate::testing::TestRepo;
