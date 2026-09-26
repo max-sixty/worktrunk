@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use super::super::{DefaultBranchName, WorktreeInfo, finalize_worktree};
+use super::super::{DefaultBranchName, WorktreeInfo, finalize_worktrees};
 
 #[cfg(unix)]
 #[test]
@@ -76,7 +76,9 @@ fn test_finalize_worktree_with_branch() {
         prunable: None,
     };
 
-    let finalized = finalize_worktree(wt.clone());
+    let mut worktrees = [wt];
+    finalize_worktrees(&mut worktrees);
+    let [finalized] = worktrees;
     assert_eq!(finalized.branch, Some("feature".to_string()));
 }
 
@@ -93,7 +95,9 @@ fn test_finalize_worktree_detached_with_branch() {
         prunable: None,
     };
 
-    let finalized = finalize_worktree(wt.clone());
+    let mut worktrees = [wt];
+    finalize_worktrees(&mut worktrees);
+    let [finalized] = worktrees;
     assert_eq!(finalized.branch, Some("feature".to_string()));
 }
 
@@ -111,7 +115,9 @@ fn test_finalize_worktree_detached_no_branch() {
         prunable: None,
     };
 
-    let finalized = finalize_worktree(wt);
+    let mut worktrees = [wt];
+    finalize_worktrees(&mut worktrees);
+    let [finalized] = worktrees;
     assert_eq!(finalized.branch, None);
 }
 

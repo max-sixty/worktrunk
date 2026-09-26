@@ -1163,6 +1163,27 @@ fn record_captured(
     log_output(trace, stdin, result.as_ref().ok());
 }
 
+/// A child from [`Cmd::spawn_captured`], traced from spawn until
+/// [`Self::wait`] reaps it.
+struct CapturedChild {
+    child: std::process::Child,
+    trace: CommandTrace,
+    _tracked: Option<BackgroundPid>,
+}
+
+impl CapturedChild {
+    fn wait(self) -> std::io::Result<std::process::Output> {
+        let CapturedChild {
+            child,
+            mut trace,
+            _tracked,
+        } = self;
+        let result = child.wait_with_output();
+        record_captured(&mut trace, None, &result);
+        result
+    }
+}
+
 /// Structured error from [`Cmd::delayed_stream`].
 ///
 /// Separates command output from command identity so callers can format each
@@ -1681,6 +1702,82 @@ impl Cmd {
         external_log.record(exit_code);
 
         result
+    }
+
+    /// Run `cmds` as concurrent child processes and return each one's output,
+    /// in input order.
+    ///
+    /// Every child is spawned before any is waited on, so a batch of short
+    /// commands costs about one command's latency without a thread per
+    /// command. The caller waits only on its own children, which makes this
+    /// safe where a thread pool is not: inside a cache initializer that pool
+    /// jobs also read. A rayon thread that waits runs other pool jobs, and a
+    /// job that reads the cache being initialized then deadlocks.
+    ///
+    /// On a background thread the batch takes one semaphore permit, as
+    /// [`Self::pipe_into`] does: one permit per child could deadlock two
+    /// batches that each hold part of the pool. At most
+    /// `max_concurrent_commands()` children run at once. Stdin, timeouts,
+    /// `external()` logging and shell commands are not supported.
+    pub fn run_concurrently(cmds: &[Cmd]) -> Vec<std::io::Result<std::process::Output>> {
+        assert!(
+            cmds.iter().all(|cmd| !cmd.shell_wrap
+                && cmd.stdin_data.is_none()
+                && cmd.timeout.is_none()
+                && cmd.external_label.is_none()),
+            "run_concurrently supports captured commands without stdin, timeout, external() or shell"
+        );
+
+        let _guard = (!is_foreground_thread()).then(|| semaphore().acquire());
+
+        let mut results = Vec::with_capacity(cmds.len());
+        for chunk in cmds.chunks(max_concurrent_commands()) {
+            let children: Vec<_> = chunk.iter().map(Cmd::spawn_captured).collect();
+            results.extend(
+                children
+                    .into_iter()
+                    .map(|child| child.and_then(CapturedChild::wait)),
+            );
+        }
+        results
+    }
+
+    /// Spawn `self` with piped stdout/stderr and null stdin, without waiting.
+    /// A failure to spawn resolves the trace before returning.
+    fn spawn_captured(&self) -> std::io::Result<CapturedChild> {
+        let cmd_str = self.command_string();
+        self.log_run_start(&cmd_str);
+        let mut trace = CommandTrace::new(self.context.as_deref(), &cmd_str);
+
+        if background_cancelled() {
+            let e = cancelled_error();
+            trace.fail(&e);
+            return Err(e);
+        }
+        if let Err(e) = self.check_spawn_preconditions() {
+            trace.fail(&e);
+            return Err(e);
+        }
+
+        let mut cmd = self.direct_command();
+        self.apply_common_settings(&mut cmd);
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        match cmd.spawn() {
+            Ok(child) => {
+                let tracked = track_if_cancellable(child.id());
+                Ok(CapturedChild {
+                    child,
+                    trace,
+                    _tracked: tracked,
+                })
+            }
+            Err(e) => {
+                trace.fail(&e);
+                Err(e)
+            }
+        }
     }
 
     /// Run `self` with its stdout piped directly into `next`'s stdin, and
@@ -3078,6 +3175,34 @@ mod tests {
         // via `fail` rather than dropping it unresolved.
         let err = Cmd::new(MISSING_CMD).delayed_stream(-1, None).unwrap_err();
         assert!(err.to_string().contains("Failed to spawn"), "{err}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_run_concurrently_overlaps_children_and_keeps_order() {
+        // The first child waits for a file that only the last child creates, so
+        // it succeeds only if both run at once. A spawn failure in between
+        // stays in its own slot rather than shifting the results after it.
+        let dir = tempfile::tempdir().unwrap();
+        let flag = dir.path().join("flag");
+        let wait_for_flag = format!(
+            "for _ in $(seq 500); do [ -e '{}' ] && exit 0; sleep 0.01; done; exit 1",
+            flag.display()
+        );
+        let results = Cmd::run_concurrently(&[
+            Cmd::new("sh").args(["-c", wait_for_flag.as_str()]),
+            Cmd::new(MISSING_CMD),
+            Cmd::new("sh").args(["-c", "exit 3"]),
+            Cmd::new("touch").arg(flag.to_str().unwrap()),
+        ]);
+        let [waiter, missing, exit3, toucher]: [_; 4] = results.try_into().unwrap();
+        assert!(
+            waiter.unwrap().status.success(),
+            "children ran one at a time"
+        );
+        assert_eq!(missing.unwrap_err().kind(), ErrorKind::NotFound);
+        assert_eq!(exit3.unwrap().status.code(), Some(3));
+        assert!(toucher.unwrap().status.success());
     }
 
     #[test]
