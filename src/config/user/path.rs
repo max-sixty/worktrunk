@@ -137,9 +137,8 @@ pub fn system_config_path() -> Option<PathBuf> {
         return None;
     }
 
-    // Priority 2+3: Check XDG_CONFIG_DIRS (if set), otherwise platform defaults.
-    // When XDG_CONFIG_DIRS is set, system_config_dirs() returns only those dirs
-    // (per XDG spec, no fallback to platform defaults).
+    // Priority 2+3: XDG_CONFIG_DIRS when it names an absolute directory
+    // (exclusively, per XDG spec), otherwise platform defaults.
     //
     // Deliberately unguarded, unlike `config_path()`: this resolves a
     // machine-wide file (`/etc/xdg`, `/Library/Application Support`) rather than
@@ -171,17 +170,22 @@ pub fn default_system_config_path() -> Option<PathBuf> {
 
 /// System config directories in priority order.
 ///
-/// On Unix, checks `XDG_CONFIG_DIRS` first. When set, it defines the search
-/// path exclusively (per XDG spec) — no fallback to platform defaults.
-/// Otherwise, returns platform-specific defaults (macOS: `/Library/Application
+/// On Unix, checks `XDG_CONFIG_DIRS` first. When it names at least one absolute
+/// directory, those define the search path exclusively (per XDG spec) — no
+/// fallback to platform defaults. Otherwise — unset, empty, or naming nothing
+/// absolute — returns platform-specific defaults (macOS: `/Library/Application
 /// Support`, Windows: `%PROGRAMDATA%`, Unix: `/etc/xdg`).
+///
+/// Relative entries are dropped, which is what the XDG spec asks for and what
+/// `etcetera` does for the `XDG_*_HOME` variables it resolves for us; it
+/// exposes no accessor for `XDG_CONFIG_DIRS`, so the rule is applied here.
 fn system_config_dirs() -> Vec<PathBuf> {
     #[cfg(unix)]
     if let Ok(dirs_str) = std::env::var("XDG_CONFIG_DIRS") {
         let dirs: Vec<PathBuf> = dirs_str
             .split(':')
-            .filter(|d| !d.is_empty())
             .map(PathBuf::from)
+            .filter(|d| d.is_absolute())
             .collect();
         if !dirs.is_empty() {
             return dirs;
