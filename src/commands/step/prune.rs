@@ -233,6 +233,7 @@ struct RemovalContext<'a> {
     repo: &'a Repository,
     foreground: bool,
     hook_plan: &'a ApprovedHookPlan,
+    user_config: &'a UserConfig,
     /// Coordinates the parallel workers (scan checks and removals, both on
     /// the read side) against the few removals that need exclusivity (write
     /// side — see [`removal_needs_write`]).
@@ -360,7 +361,14 @@ fn try_remove(
     } else {
         RemovalExecution::Background(BackgroundFallbackMode::SynchronousForNonCurrent)
     };
-    let fate = handle_remove_output(&plan, execution, ctx.hook_plan, true, &mut announcer)?;
+    let fate = handle_remove_output(
+        &plan,
+        execution,
+        ctx.hook_plan,
+        ctx.user_config,
+        true,
+        &mut announcer,
+    )?;
     announcer.flush()?;
     let branch_deleted = fate.deleted();
     // A branch-only candidate that kept its branch removed nothing at all —
@@ -1198,6 +1206,7 @@ pub fn step_prune(
         repo: &repo,
         foreground,
         hook_plan: &hook_plan,
+        user_config: &config,
         check_lock: &check_lock,
     };
     // Flipped by the first failing removal: the rest of the queue drains

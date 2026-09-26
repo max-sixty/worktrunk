@@ -176,9 +176,9 @@ pub fn finish_after_merge(
             )
         };
 
-        // No config snapshot: `pre-remove` / `post-remove` were selected and
-        // frozen into `plan` at the gate (anchored at `feature_path`), so the
-        // executor needs no config — it runs only the frozen `plan`.
+        // `pre-remove` / `post-remove` were selected and frozen into `plan` at
+        // the gate (anchored at `feature_path`). Rendering reuses the same
+        // command-entry user-config snapshot instead of loading from disk.
         let remove_result = RemovalPlan::Worktree {
             main_path: destination_path.clone(),
             worktree_path: worktree_root,
@@ -198,6 +198,7 @@ pub fn finish_after_merge(
             &remove_result,
             RemovalExecution::Background(BackgroundFallbackMode::Detached),
             plan,
+            config,
             false,
             announcer,
         )?;

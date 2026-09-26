@@ -381,6 +381,7 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                     &result,
                     removal_execution(args.foreground),
                     &plan,
+                    &config,
                     false,
                     &mut announcer,
                 )?;
@@ -442,6 +443,7 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                         result,
                         removal_execution(args.foreground),
                         &plan,
+                        &config,
                         false,
                         &mut announcer,
                     )?;
