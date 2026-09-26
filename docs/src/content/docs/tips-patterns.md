@@ -237,10 +237,9 @@ Each worktree can have its own isolated database. A pipeline sets up names and p
 # .config/wt.toml
 [[post-start]]
 set-vars = """
-wt config state vars set \
-  container='{{ repo }}-{{ branch | sanitize }}-postgres' \
-  port='{{ ('db-' ~ branch) | hash_port }}' \
-  db_url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'
+wt config state vars set container='{{ repo }}-{{ branch | sanitize }}-postgres' &&
+wt config state vars set port='{{ ('db-' ~ branch) | hash_port }}' &&
+wt config state vars set db-url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'
 """
 
 [[post-start]]
@@ -264,7 +263,7 @@ The `('db-' ~ branch)` concatenation hashes differently than plain `branch`, so 
 The connection string is accessible anywhere — not just in hooks:
 
 ```bash
-DATABASE_URL=$(wt config state vars get db_url) npm start
+DATABASE_URL=$(wt config state vars get db-url) npm start
 ```
 
 ### Per-worktree env vars
@@ -530,13 +529,15 @@ Then `wt mc` opens an editor for the commit message while plain `wt merge` conti
 Follow background hook output:
 
 ```bash
-tail -f "$(wt config state logs get --hook=user:post-start:server)"
+tail -f "$(wt config state logs --format=json | jq -r --arg branch "$(git branch --show-current)" '.hook_output[] | select([.branch, .source, .hook_type, .name] == [$branch, "user", "post-start", "server"]) | .path')"
 ```
 
-The `--hook` format is `source:hook-type:name` — e.g., `project:post-start:build` for project-defined hooks. Use `wt config state logs get` to list all available logs.
+Each `hook_output` entry carries `branch`, `source` (`user`, `project`, or `internal`), `hook_type`, `name`, and `path` — adjust the `select` to pick a different hook or branch. Run `wt config state logs` to list all available logs.
 
-Create an alias for frequent use:
+Create a shell function for frequent use (`wtlog server`):
 
 ```bash
-alias wtlog='f() { tail -f "$(wt config state logs get --hook="$1")"; }; f'
+wtlog() {
+  tail -f "$(wt config state logs --format=json | jq -r --arg branch "$(git branch --show-current)" --arg name "$1" '.hook_output[] | select([.branch, .source, .hook_type, .name] == [$branch, "user", "post-start", $name]) | .path')"
+}
 ```

@@ -396,18 +396,16 @@ fn test_doc_hash_port_repo_branch_concatenation(repo: TestRepo) {
 fn test_doc_example_database_vars(repo: TestRepo) {
     // From docs/src/content/docs/tips-patterns.md, "Database per worktree" —
     // the `set-vars` step that derives the container name and port:
-    //   wt config state vars set \
-    //     container='{{ repo }}-{{ branch | sanitize }}-postgres' \
-    //     port='{{ ('db-' ~ branch) | hash_port }}'
+    //   wt config state vars set container='{{ repo }}-{{ branch | sanitize }}-postgres' &&
+    //   wt config state vars set port='{{ ('db-' ~ branch) | hash_port }}'
 
     let repository = Repository::at(repo.root_path()).unwrap();
     let mut vars = HashMap::new();
     vars.insert("repo", "myproject");
     vars.insert("branch", "feature-auth");
 
-    let template = r#"wt config state vars set \
-  container='{{ repo }}-{{ branch | sanitize }}-postgres' \
-  port='{{ ('db-' ~ branch) | hash_port }}'"#;
+    let template = r#"wt config state vars set container='{{ repo }}-{{ branch | sanitize }}-postgres' &&
+wt config state vars set port='{{ ('db-' ~ branch) | hash_port }}'"#;
 
     let result = expand_template(
         template,
@@ -432,11 +430,69 @@ fn test_doc_example_database_vars(repo: TestRepo) {
     );
 }
 
+/// Runs the "Database per worktree" `set-vars` step exactly as the docs write
+/// it (read from the page, not copied here), through a `wt` alias so templates
+/// expand as in a hook. The expansion test above can't catch a command `wt`
+/// rejects — the recipe once passed three pairs to one `vars set`, which takes
+/// a single `KEY=VALUE`.
+#[cfg(unix)]
+#[rstest]
+fn test_doc_example_database_set_vars_step_runs(repo: TestRepo) {
+    let doc = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("docs/src/content/docs/tips-patterns.md"),
+    )
+    .unwrap();
+    let section = doc.split_once("### Database per worktree").unwrap().1;
+    let block = section
+        .split_once("```toml\n")
+        .unwrap()
+        .1
+        .split_once("```")
+        .unwrap()
+        .0;
+    let config: toml::Table = toml::from_str(block).unwrap();
+    let set_vars = config["post-start"][0]["set-vars"].as_str().unwrap();
+
+    let mut aliases = toml::Table::new();
+    aliases.insert("set-vars".into(), set_vars.into());
+    let mut user_config = toml::Table::new();
+    user_config.insert("aliases".into(), aliases.into());
+    repo.write_test_config(&toml::to_string(&user_config).unwrap());
+
+    let path = format!(
+        "{}:{}",
+        crate::common::wt_bin().parent().unwrap().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let output = repo
+        .wt_command()
+        .args(["step", "set-vars"])
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "set-vars step from the docs failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let port = repo
+        .wt_command()
+        .args(["config", "state", "vars", "get", "port"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&port.stdout).trim(),
+        hash_port("db-main").to_string()
+    );
+}
+
 #[rstest]
 fn test_doc_example_database_url(repo: TestRepo) {
     // From docs/src/content/docs/tips-patterns.md, "Database per worktree" —
-    // the `db_url` var the `set-vars` step stores:
-    //   db_url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'
+    // the `db-url` var the `set-vars` step stores:
+    //   db-url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'
 
     let repository = Repository::at(repo.root_path()).unwrap();
     let mut vars = HashMap::new();
@@ -459,7 +515,7 @@ fn test_doc_example_database_url(repo: TestRepo) {
         result.starts_with(&format!(
             "postgres://postgres:dev@localhost:{expected_port}/feature_"
         )),
-        "db_url should carry the 'db-feature' port and the sanitized database name, got: {result}"
+        "db-url should carry the 'db-feature' port and the sanitized database name, got: {result}"
     );
 }
 
