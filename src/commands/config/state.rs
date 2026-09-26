@@ -1765,29 +1765,27 @@ pub fn handle_vars_clear(
 /// Clear all branch markers. Used by `state clear marker --all` and
 /// `state clear --all`.
 ///
-/// `get_config_regexp` returns an empty string when no keys match (git exit 1)
-/// and `Err` for real config errors — both the listing step and each
-/// `unset_config` call propagate errors so user-initiated clears never lie
-/// about success.
+/// `config_regexp_entries` returns an empty list when Git reports no matches.
+/// It returns `Err` for real config errors. Both the listing step and each
+/// `unset_config` call propagate errors so user-initiated clears never report
+/// false success.
 fn clear_all_markers(repo: &Repository) -> anyhow::Result<usize> {
     clear_matching_config(repo, r"^worktrunk\.state\..+\.marker$")
 }
 
 fn clear_matching_config(repo: &Repository, pattern: &str) -> anyhow::Result<usize> {
-    let output = repo.get_config_regexp(pattern)?;
+    let entries = repo.config_regexp_entries(pattern)?;
     let mut cleared = 0;
-    for line in output.lines() {
-        if let Some(config_key) = line.split_whitespace().next() {
-            repo.unset_config(config_key)?;
-            cleared += 1;
-        }
+    for (config_key, _) in entries {
+        repo.unset_config(&config_key)?;
+        cleared += 1;
     }
     Ok(cleared)
 }
 
 /// Clear all vars entries across all branches (used by handle_state_clear_all).
 ///
-/// Enumerates keys via `get_config_regexp` (not `all_vars_entries`) so a
+/// Enumerates keys via `config_regexp_entries` (not `all_vars_entries`) so a
 /// config read failure surfaces as an error — the display-path helper
 /// absorbs errors as empty, which would silently report "cleared 0" here.
 fn clear_all_vars(repo: &Repository) -> anyhow::Result<usize> {
@@ -1805,23 +1803,19 @@ pub(super) struct MarkerEntry {
 
 /// Get all branch markers from git config with timestamps
 pub(super) fn all_markers(repo: &Repository) -> Vec<MarkerEntry> {
-    let output = repo
-        .get_config_regexp(r"^worktrunk\.state\..+\.marker$")
+    let entries = repo
+        .config_regexp_entries(r"^worktrunk\.state\..+\.marker$")
         .unwrap_or_default();
 
     let mut markers = Vec::new();
-    for line in output.lines() {
-        // Format: "worktrunk.state.<branch>.marker json_value"
-        let Some((key, value)) = line.split_once(' ') else {
-            continue;
-        };
+    for (key, value) in entries {
         let Some(branch) = key
             .strip_prefix("worktrunk.state.")
             .and_then(|s| s.strip_suffix(".marker"))
         else {
             continue;
         };
-        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(value) else {
+        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&value) else {
             continue; // Skip invalid JSON
         };
         let Some(marker) = parsed.get("marker").and_then(|v| v.as_str()) else {

@@ -131,20 +131,18 @@ impl Repository {
         Ok(existed)
     }
 
-    /// Run `git config --get-regexp <pattern>` and return stdout.
+    /// Read matching config entries without using newlines as record boundaries.
     ///
-    /// Distinguishes exit 1 (no matching keys — expected, returns empty
-    /// string) from real config errors (corrupt config, permission denied —
-    /// surfaced as `Err`). Use this instead of `run_command` + `.unwrap_or_default()`,
-    /// which conflates the two.
-    pub fn get_config_regexp(&self, pattern: &str) -> anyhow::Result<String> {
-        let args = ["config", "--get-regexp", pattern];
+    /// `git config --null --get-regexp` emits `key\nvalue\0` records, so values
+    /// containing newlines remain intact. Valueless keys are emitted as
+    /// `key\0` and represented with an empty value.
+    pub fn config_regexp_entries(&self, pattern: &str) -> anyhow::Result<Vec<(String, String)>> {
+        let args = ["config", "--null", "--get-regexp", pattern];
         let output = self.run_command_output(&args)?;
         if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+            Ok(parse_config_regexp_z(&output.stdout))
         } else if output.status.code() == Some(1) {
-            // Exit 1 = no keys matched the pattern
-            Ok(String::new())
+            Ok(Vec::new())
         } else {
             Err(CommandError::from_failed_output("git", &args, &output).into())
         }
@@ -186,15 +184,13 @@ impl Repository {
     pub fn vars_entries(&self, branch: &str) -> std::collections::BTreeMap<String, String> {
         let escaped = regex::escape(branch);
         let pattern = format!(r"^worktrunk\.state\.{escaped}\.vars\.");
-        let output = self.get_config_regexp(&pattern).unwrap_or_default();
-
         let prefix = format!("worktrunk.state.{branch}.vars.");
-        output
-            .lines()
-            .filter_map(|line| {
-                let (config_key, value) = line.split_once(' ')?;
+        self.config_regexp_entries(&pattern)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|(config_key, value)| {
                 let key = config_key.strip_prefix(&prefix)?;
-                Some((key.to_string(), value.to_string()))
+                Some((key.to_string(), value))
             })
             .collect()
     }
@@ -207,25 +203,21 @@ impl Repository {
     pub fn all_vars_entries(
         &self,
     ) -> std::collections::HashMap<String, std::collections::BTreeMap<String, String>> {
-        let output = self
-            .get_config_regexp(r"^worktrunk\.state\..+\.vars\.")
+        let entries = self
+            .config_regexp_entries(r"^worktrunk\.state\..+\.vars\.")
             .unwrap_or_default();
 
         let mut result: std::collections::HashMap<
             String,
             std::collections::BTreeMap<String, String>,
         > = std::collections::HashMap::new();
-        for line in output.lines() {
-            let Some((config_key, value)) = line.split_once(' ') else {
-                continue;
-            };
-            let Some((branch, key)) = parse_vars_config_key(config_key) else {
-                continue;
-            };
+        for (config_key, value) in entries {
+            let (branch, key) =
+                parse_vars_config_key(&config_key).expect("config key matched vars pattern");
             result
                 .entry(branch.to_string())
                 .or_default()
-                .insert(key.to_string(), value.to_string());
+                .insert(key.to_string(), value);
         }
         result
     }
@@ -1059,35 +1051,52 @@ fn parse_branch_config_key(config_key: &str) -> Option<(&str, &str)> {
     config_key.strip_prefix("branch.")?.rsplit_once('.')
 }
 
+/// Parse `git config --null --get-regexp` output.
+///
+/// Each NUL-terminated record contains `key\nvalue` or a valueless `key`.
+/// Only the first newline separates the fields; later newlines are part of
+/// the value.
+fn parse_config_regexp_z(stdout: &[u8]) -> Vec<(String, String)> {
+    stdout
+        .split(|byte| *byte == 0)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            let text = String::from_utf8_lossy(entry);
+            let (key, value) = text.split_once('\n').unwrap_or((text.as_ref(), ""));
+            (key.to_string(), value.to_string())
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::testing::TestRepo;
 
     #[test]
-    fn test_get_config_regexp_no_match_returns_empty() {
+    fn test_config_regexp_entries_no_match_returns_empty() {
         // Exit 1 from git config --get-regexp means "no keys matched" — must
-        // surface as Ok("") rather than an error so callers don't conflate
+        // surface as an empty list rather than an error so callers don't conflate
         // no-matches with real config failures.
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        let output = repo
-            .get_config_regexp(r"^worktrunk\.state\..+\.marker$")
+        let entries = repo
+            .config_regexp_entries(r"^worktrunk\.state\..+\.marker$")
             .unwrap();
-        assert_eq!(output, "");
+        assert!(entries.is_empty());
     }
 
     #[test]
-    fn test_get_config_regexp_failure_is_command_error() {
+    fn test_config_regexp_entries_failure_is_command_error() {
         // A real failure (invalid pattern, exit 6) must surface as a typed
         // `CommandError` — unlike exit 1, which means "no keys matched".
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        let err = repo.get_config_regexp("(").unwrap_err();
+        let err = repo.config_regexp_entries("(").unwrap_err();
         let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
-        assert_eq!(cmd_err.command_string(), "git config --get-regexp (");
+        assert_eq!(cmd_err.command_string(), "git config --null --get-regexp (");
     }
 
     #[test]
@@ -1117,7 +1126,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_config_regexp_returns_matches() {
+    fn test_config_regexp_entries_returns_matches() {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
@@ -1126,11 +1135,17 @@ mod tests {
         repo.set_config("worktrunk.state.bugfix.marker", r#"{"marker":"fix"}"#)
             .unwrap();
 
-        let output = repo
-            .get_config_regexp(r"^worktrunk\.state\..+\.marker$")
+        let entries = repo
+            .config_regexp_entries(r"^worktrunk\.state\..+\.marker$")
             .unwrap();
-        assert!(output.contains("worktrunk.state.feature.marker"));
-        assert!(output.contains("worktrunk.state.bugfix.marker"));
+        assert!(entries.contains(&(
+            "worktrunk.state.feature.marker".to_string(),
+            r#"{"marker":"wip"}"#.to_string()
+        )));
+        assert!(entries.contains(&(
+            "worktrunk.state.bugfix.marker".to_string(),
+            r#"{"marker":"fix"}"#.to_string()
+        )));
     }
 
     /// `mark_hint_shown` writes 1 on first call and increments on each
@@ -1187,7 +1202,7 @@ mod tests {
     }
 
     /// The snapshot read must parse the same entries as the subprocess read,
-    /// including branch names that themselves contain `.vars.`.
+    /// including multiline values and branch names containing `.vars.`.
     #[test]
     fn test_all_vars_from_snapshot_matches_subprocess_read() {
         let test = TestRepo::with_initial_commit();
@@ -1195,7 +1210,7 @@ mod tests {
 
         repo.set_config("worktrunk.state.feature.vars.ticket", "JIRA-1")
             .unwrap();
-        repo.set_config("worktrunk.state.feature.vars.note", "a note")
+        repo.set_config("worktrunk.state.feature.vars.note", "a note\ncontinued")
             .unwrap();
         repo.set_config("worktrunk.state.weird.vars.branch.vars.key", "v")
             .unwrap();
@@ -1203,7 +1218,7 @@ mod tests {
         let snapshot = repo.all_vars_from_snapshot().unwrap();
         assert_eq!(snapshot, repo.all_vars_entries());
         assert_eq!(snapshot["feature"]["ticket"], "JIRA-1");
-        assert_eq!(snapshot["feature"]["note"], "a note");
+        assert_eq!(snapshot["feature"]["note"], "a note\ncontinued");
         assert_eq!(snapshot["weird.vars.branch"]["key"], "v");
     }
 
