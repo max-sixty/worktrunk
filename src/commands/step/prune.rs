@@ -852,7 +852,7 @@ fn render_dry_run(
             .map(|(c, info)| {
                 serde_json::json!({
                     "branch": c.branch,
-                    "path": c.path,
+                    "path": c.path.as_deref().map(Path::to_string_lossy),
                     "kind": c.kind.as_str(),
                     "branch_deleted": c.deletes_branch,
                     "reason": info.reason_desc,
@@ -1426,7 +1426,7 @@ pub fn step_prune(
             .map(|c| {
                 serde_json::json!({
                     "branch": c.branch,
-                    "path": c.path,
+                    "path": c.path.as_deref().map(Path::to_string_lossy),
                     "kind": c.kind.as_str(),
                     "branch_outcome": c.fate.map(|f| f.json_outcome()),
                 })

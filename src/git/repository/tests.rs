@@ -25,17 +25,9 @@ fn alternate_object_directory_uses_git_c_style_quoting() {
 
 #[test]
 fn test_parse_worktree_list() {
-    let output = "worktree /path/to/main
-HEAD abcd1234
-branch refs/heads/main
+    let output = b"worktree /path/to/main\0HEAD abcd1234\0branch refs/heads/main\0\0worktree /path/to/feature\0HEAD efgh5678\0branch refs/heads/feature\0\0";
 
-worktree /path/to/feature
-HEAD efgh5678
-branch refs/heads/feature
-
-";
-
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let worktrees = WorktreeInfo::parse_porcelain_list_z(output).unwrap();
     let [main_wt, feature_wt]: [WorktreeInfo; 2] = worktrees.try_into().unwrap();
 
     assert_eq!(main_wt.path, PathBuf::from("/path/to/main"));
@@ -51,13 +43,9 @@ branch refs/heads/feature
 
 #[test]
 fn test_parse_detached_worktree() {
-    let output = "worktree /path/to/detached
-HEAD abcd1234
-detached
+    let output = b"worktree /path/to/detached\0HEAD abcd1234\0detached\0\0";
 
-";
-
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let worktrees = WorktreeInfo::parse_porcelain_list_z(output).unwrap();
     let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
     assert!(wt.detached);
     assert_eq!(wt.branch, None);
@@ -121,27 +109,18 @@ fn test_finalize_worktree_detached_no_branch() {
 
 #[test]
 fn test_parse_locked_worktree() {
-    let output = "worktree /path/to/locked
-HEAD abcd1234
-branch refs/heads/main
-locked reason for lock
+    let output = b"worktree /path/to/locked\0HEAD abcd1234\0branch refs/heads/main\0locked reason for lock\0\0";
 
-";
-
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let worktrees = WorktreeInfo::parse_porcelain_list_z(output).unwrap();
     let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
     assert_eq!(wt.locked, Some("reason for lock".to_string()));
 }
 
 #[test]
 fn test_parse_bare_worktree() {
-    let output = "worktree /path/to/bare
-HEAD abcd1234
-bare
+    let output = b"worktree /path/to/bare\0HEAD abcd1234\0bare\0\0";
 
-";
-
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let worktrees = WorktreeInfo::parse_porcelain_list_z(output).unwrap();
     let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
     assert!(wt.bare);
 }
@@ -320,14 +299,9 @@ fn test_resolved_worktree_none_branch() {
 
 #[test]
 fn test_worktree_locked_empty_reason() {
-    let output = "worktree /path/to/locked
-HEAD abcd1234
-branch refs/heads/main
-locked
+    let output = b"worktree /path/to/locked\0HEAD abcd1234\0branch refs/heads/main\0locked\0\0";
 
-";
-
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let worktrees = WorktreeInfo::parse_porcelain_list_z(output).unwrap();
     let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
     // Empty lock reason should still be recorded
     assert_eq!(wt.locked, Some(String::new()));
@@ -335,14 +309,9 @@ locked
 
 #[test]
 fn test_worktree_prunable() {
-    let output = "worktree /path/to/prunable
-HEAD abcd1234
-detached
-prunable gitdir file points to non-existent location
+    let output = b"worktree /path/to/prunable\0HEAD abcd1234\0detached\0prunable gitdir file points to non-existent location\0\0";
 
-";
-
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let worktrees = WorktreeInfo::parse_porcelain_list_z(output).unwrap();
     let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
     assert!(wt.prunable.is_some());
     assert!(wt.prunable.as_ref().unwrap().contains("non-existent"));
@@ -350,25 +319,9 @@ prunable gitdir file points to non-existent location
 
 #[test]
 fn test_parse_multiple_worktrees() {
-    let output = "worktree /main
-HEAD 1111111111111111111111111111111111111111
-branch refs/heads/main
+    let output = b"worktree /main\0HEAD 1111111111111111111111111111111111111111\0branch refs/heads/main\0\0worktree /feature-a\0HEAD 2222222222222222222222222222222222222222\0branch refs/heads/feature-a\0\0worktree /feature-b\0HEAD 3333333333333333333333333333333333333333\0branch refs/heads/feature-b\0\0worktree /detached\0HEAD 4444444444444444444444444444444444444444\0detached\0\0";
 
-worktree /feature-a
-HEAD 2222222222222222222222222222222222222222
-branch refs/heads/feature-a
-
-worktree /feature-b
-HEAD 3333333333333333333333333333333333333333
-branch refs/heads/feature-b
-
-worktree /detached
-HEAD 4444444444444444444444444444444444444444
-detached
-
-";
-
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let worktrees = WorktreeInfo::parse_porcelain_list_z(output).unwrap();
     let [main_wt, feature_a, feature_b, detached_wt]: [WorktreeInfo; 4] =
         worktrees.try_into().unwrap();
     assert_eq!(main_wt.branch, Some("main".to_string()));
@@ -1181,6 +1134,26 @@ fn prewarm_from_linked_worktree_under_worktree_config_preserves_is_bare() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn prewarm_from_worktree_with_newline_path_preserves_current_branch() {
+    use super::Repository;
+    use crate::testing::TestRepo;
+
+    let mut test = TestRepo::with_initial_commit();
+    let linked = test.root_path().parent().unwrap().join("linked-\nworktree");
+    let linked = test.add_worktree_at_path("feature", &linked);
+
+    Repository::prewarm_at(&linked);
+    let repo = Repository::at(&linked).unwrap();
+
+    assert_eq!(
+        repo.current_worktree().branch().unwrap().as_deref(),
+        Some("feature"),
+        "prewarm must not cache a newline-split rev-parse field as detached HEAD"
+    );
+}
+
 #[test]
 fn repo_path_from_linked_worktree_under_worktree_config_is_git_common_dir() {
     // Companion to the is_bare regression above: once `is_bare()` reads
@@ -1920,24 +1893,8 @@ fn test_worktree_paths_for_branch_detects_duplicates() {
     // Two worktrees on `feature` — the state `git worktree add --force`
     // produces. Porcelain retains every entry; only resolution collapses it.
     // The detached worktree has no branch to duplicate.
-    let output = "worktree /path/to/main
-HEAD abcd1234
-branch refs/heads/main
-
-worktree /path/to/feature
-HEAD efgh5678
-branch refs/heads/feature
-
-worktree /path/to/feature-dup
-HEAD efgh5678
-branch refs/heads/feature
-
-worktree /path/to/detached
-HEAD efgh5678
-detached
-
-";
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let output = b"worktree /path/to/main\0HEAD abcd1234\0branch refs/heads/main\0\0worktree /path/to/feature\0HEAD efgh5678\0branch refs/heads/feature\0\0worktree /path/to/feature-dup\0HEAD efgh5678\0branch refs/heads/feature\0\0worktree /path/to/detached\0HEAD efgh5678\0detached\0\0";
+    let worktrees = WorktreeInfo::parse_porcelain_list_z(output).unwrap();
 
     // The duplicated branch yields both paths, in git's listing order — the
     // first is what resolution uses, the rest are what the warning surfaces.

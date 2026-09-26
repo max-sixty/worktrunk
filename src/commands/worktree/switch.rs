@@ -1427,6 +1427,7 @@ struct SwitchJsonOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     branch: Option<String>,
     /// Absolute worktree path
+    #[serde(serialize_with = "crate::output::serialize_path_lossy")]
     path: PathBuf,
     /// True if branch was created (--create flag)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2199,6 +2200,25 @@ fn validate_switch_templates(
 mod tests {
     use super::*;
     use worktrunk::testing::TestRepo;
+
+    #[cfg(unix)]
+    #[test]
+    fn switch_json_serializes_non_utf8_path_lossily() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let output = SwitchJsonOutput {
+            action: "existing",
+            branch: Some("non-utf8-json".to_string()),
+            path: PathBuf::from(OsString::from_vec(b"/path/linked-\xff".to_vec())),
+            created_branch: None,
+            base_branch: None,
+            from_remote: None,
+        };
+
+        let json = serde_json::to_value(output).unwrap();
+        assert_eq!(json["path"], "/path/linked-\u{fffd}");
+    }
 
     /// Windows needs two representations of a deep worktree path: the
     /// verbatim spelling that filesystem operations accept, and the

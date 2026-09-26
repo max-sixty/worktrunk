@@ -55,5 +55,5 @@ pub(crate) use shell_integration::{
 };
 // Re-export commit generation functions
 pub(crate) use commit_generation::prompt_commit_generation;
-// Re-export the JSON answer printer
-pub(crate) use json::print_json;
+// Re-export JSON output helpers
+pub(crate) use json::{print_json, serialize_path_lossy};

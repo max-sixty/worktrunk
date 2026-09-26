@@ -1,7 +1,17 @@
 //! Machine-readable output for commands with a `--format=json` mode.
 
+use std::path::Path;
+
 use anyhow::Context;
+use serde::Serializer;
 use worktrunk::styling::println;
+
+pub(crate) fn serialize_path_lossy<S>(path: &Path, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&path.to_string_lossy())
+}
 
 /// Serialize a JSON answer to stdout (pretty, one trailing newline).
 ///

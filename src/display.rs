@@ -53,6 +53,20 @@ fn format_relative_time_impl(timestamp: i64, now: i64) -> String {
     "now".to_string()
 }
 
+fn escape_path_for_table(path: &str) -> String {
+    let mut escaped = String::with_capacity(path.len());
+    for ch in path.chars() {
+        if ch == '\\' {
+            escaped.push_str("\\\\");
+        } else if ch.is_control() {
+            escaped.extend(ch.escape_default());
+        } else {
+            escaped.push(ch);
+        }
+    }
+    escaped
+}
+
 /// Shorten a path relative to the main worktree.
 ///
 /// Returns paths relative to main worktree using `..` components where needed:
@@ -69,11 +83,11 @@ pub(crate) fn shorten_path(path: &Path, main_worktree_path: &Path) -> String {
     // Try to compute relative path
     if let Some(relative) = pathdiff::diff_paths(path, main_worktree_path) {
         // Use forward slashes on all platforms (worktrunk's display convention).
-        let rendered = relative.to_slash_lossy();
+        let rendered = escape_path_for_table(&relative.to_slash_lossy());
         // If relative path starts with "..", it's a sibling/ancestor
         // Otherwise prefix with "./" for clarity
         if relative.components().next() == Some(Component::ParentDir) {
-            rendered.into_owned()
+            rendered
         } else {
             format!("./{rendered}")
         }
@@ -151,6 +165,18 @@ mod tests {
             result.starts_with("..") || result.starts_with("/"),
             "Expected relative or absolute path for distant location, got: {}",
             result
+        );
+
+        let with_control = PathBuf::from("/home/user/project-\nfeature");
+        assert_eq!(
+            shorten_path(&with_control, &main_worktree),
+            r"../project-\nfeature"
+        );
+
+        let with_backslash = PathBuf::from(r"/home/user/project-\nfeature");
+        assert_eq!(
+            shorten_path(&with_backslash, &main_worktree),
+            r"../project-\\nfeature"
         );
     }
 

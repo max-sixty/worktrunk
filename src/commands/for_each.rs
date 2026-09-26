@@ -97,7 +97,7 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                 if json_mode {
                     json_results.push(serde_json::json!({
                         "branch": wt.branch,
-                        "path": wt.path,
+                        "path": wt.path.to_string_lossy(),
                         "exit_code": 0,
                         "success": true,
                     }));
@@ -138,7 +138,7 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                 if json_mode {
                     json_results.push(serde_json::json!({
                         "branch": wt.branch,
-                        "path": wt.path,
+                        "path": wt.path.to_string_lossy(),
                         "exit_code": exit_code,
                         "success": false,
                         "error": json_detail,

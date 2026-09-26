@@ -184,8 +184,8 @@ fn print_relocate_json(
         "dry_run": dry_run,
         "entries": entries.iter().map(|e| serde_json::json!({
             "branch": e.branch,
-            "from": e.from,
-            "to": e.to,
+            "from": e.from.to_string_lossy(),
+            "to": e.to.to_string_lossy(),
         })).collect::<Vec<_>>(),
         "skipped": skipped.iter().map(|s| serde_json::json!({
             "branch": s.branch,

@@ -92,8 +92,8 @@ pub fn step_copy_ignored(
         if json_mode {
             let mut payload = serde_json::json!({
                 "outcome": "same_worktree",
-                "from": source_path,
-                "to": dest_path,
+                "from": source_path.to_string_lossy(),
+                "to": dest_path.to_string_lossy(),
                 "entries": Vec::<serde_json::Value>::new(),
             });
             insert_empty_counts(&mut payload);
@@ -122,8 +122,8 @@ pub fn step_copy_ignored(
             let mut payload = serde_json::json!({
                 "outcome": if dry_run { "planned" } else { "copied" },
                 "dry_run": dry_run,
-                "from": source_path,
-                "to": dest_path,
+                "from": source_path.to_string_lossy(),
+                "to": dest_path.to_string_lossy(),
                 "reason": "require-include-no-worktreeinclude",
                 "entries": Vec::<serde_json::Value>::new(),
             });
@@ -160,8 +160,8 @@ pub fn step_copy_ignored(
             let mut payload = serde_json::json!({
                 "outcome": if dry_run { "planned" } else { "copied" },
                 "dry_run": dry_run,
-                "from": source_path,
-                "to": dest_path,
+                "from": source_path.to_string_lossy(),
+                "to": dest_path.to_string_lossy(),
                 "entries": Vec::<serde_json::Value>::new(),
             });
             if !dry_run {
@@ -193,8 +193,8 @@ pub fn step_copy_ignored(
             let payload = serde_json::json!({
                 "outcome": "planned",
                 "dry_run": true,
-                "from": source_path,
-                "to": dest_path,
+                "from": source_path.to_string_lossy(),
+                "to": dest_path.to_string_lossy(),
                 "entries": entries,
             });
             print_json(&payload)?;
@@ -311,8 +311,8 @@ pub fn step_copy_ignored(
         let payload = serde_json::json!({
             "outcome": "copied",
             "dry_run": false,
-            "from": source_path,
-            "to": dest_path,
+            "from": source_path.to_string_lossy(),
+            "to": dest_path.to_string_lossy(),
             "entries": entries,
             "files": copied_count,
             "bytes": copied_bytes,

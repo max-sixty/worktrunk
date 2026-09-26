@@ -430,9 +430,11 @@ impl RemovalPlan {
             } => serde_json::json!({
                 "kind": "worktree",
                 "branch": branch_name,
-                "path": worktree_path,
+                "path": worktree_path.to_string_lossy(),
                 "branch_outcome": branch_outcome,
-                "branch_checked_out_at": branch_checked_out_at.as_ref().map(|c| &c.path),
+                "branch_checked_out_at": branch_checked_out_at
+                    .as_ref()
+                    .map(|c| c.path.to_string_lossy()),
             }),
             RemovalPlan::BranchOnly {
                 branch_name,
@@ -444,7 +446,9 @@ impl RemovalPlan {
                 "branch": branch_name,
                 "pruned": prune_entry.is_some(),
                 "branch_outcome": branch_outcome,
-                "branch_checked_out_at": branch_checked_out_at.as_ref().map(|c| &c.path),
+                "branch_checked_out_at": branch_checked_out_at
+                    .as_ref()
+                    .map(|c| c.path.to_string_lossy()),
             }),
         }
     }
@@ -532,6 +536,60 @@ mod tests {
         }
         let names: std::collections::BTreeSet<_> = cases.iter().map(|(_, name)| *name).collect();
         assert_eq!(names.len(), cases.len(), "outcome names must be distinct");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn removal_plan_json_serializes_non_utf8_paths_lossily() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let worktree_path = PathBuf::from(OsString::from_vec(b"/worktree-\xff".to_vec()));
+        let checkout_path = PathBuf::from(OsString::from_vec(b"/checkout-\xfe".to_vec()));
+        let plan = RemovalPlan::Worktree {
+            main_path: PathBuf::from("/main"),
+            worktree_path: worktree_path.clone(),
+            changed_directory: false,
+            branch_name: Some("feature".to_string()),
+            deletion_mode: BranchDeletionMode::Keep,
+            target_branch: None,
+            integration_reason: None,
+            force_worktree: false,
+            removed_commit: None,
+            branch_checked_out_at: Some(SharedBranchCheckout {
+                path: checkout_path.clone(),
+                refused_force_delete: false,
+            }),
+        };
+
+        let json = plan.to_json(BranchFate::Retained(RetainedReason::CheckedOut));
+
+        assert_eq!(
+            json["path"].as_str(),
+            Some(worktree_path.to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            json["branch_checked_out_at"].as_str(),
+            Some(checkout_path.to_string_lossy().as_ref())
+        );
+
+        let branch_only = RemovalPlan::BranchOnly {
+            branch_name: "feature".to_string(),
+            deletion_mode: BranchDeletionMode::Keep,
+            prune_entry: None,
+            target_branch: None,
+            integration_reason: None,
+            branch_checked_out_at: Some(SharedBranchCheckout {
+                path: checkout_path.clone(),
+                refused_force_delete: false,
+            }),
+        };
+        let json = branch_only.to_json(BranchFate::Retained(RetainedReason::CheckedOut));
+
+        assert_eq!(
+            json["branch_checked_out_at"].as_str(),
+            Some(checkout_path.to_string_lossy().as_ref())
+        );
     }
 
     /// Synchronous deletion results map onto fates: deletions count, each

@@ -144,6 +144,7 @@ use anyhow::Context;
 use dunce::canonicalize;
 
 use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
+use crate::git::parse::{path_from_git_bytes, path_from_git_stdout};
 
 // Import types from parent module
 use super::{
@@ -599,6 +600,15 @@ pub(super) static GIT_CONFIG_PRELOAD: LazyLock<
 /// path inside [`Repository::user_config`] reloads from disk exactly as
 /// before.
 pub(super) static WORKTRUNK_USER_CONFIG_PRELOAD: OnceLock<UserConfig> = OnceLock::new();
+
+fn exact_output_lines<const N: usize>(stdout: &[u8]) -> Option<[&[u8]; N]> {
+    let stdout = stdout.strip_suffix(b"\n").unwrap_or(stdout);
+    stdout
+        .split(|byte| *byte == b'\n')
+        .collect::<Vec<_>>()
+        .try_into()
+        .ok()
+}
 
 /// Initialize the global base path for repository operations.
 ///
@@ -1101,10 +1111,12 @@ impl Repository {
     /// `CURRENT_BRANCHES` from a single `git rev-parse` fork. See
     /// [`Self::prewarm`] for the partial-success contract.
     fn prewarm_rev_parse(discovery_path: &Path) {
-        // Order matters: `git rev-parse` emits one stdout line per selector in
-        // argument order, and we parse positionally. `--git-common-dir` first
-        // so even when later selectors fail (bare repo at the bare root, no
-        // worktree, …) the common dir still lands.
+        // Order matters: normal output has one line per selector in argument
+        // order, and we parse it positionally only when the field count is
+        // exact. A path may itself contain a newline; that makes the batch
+        // ambiguous, so the on-demand single-selector reads handle it instead.
+        // `--git-common-dir` stays first so even when later selectors fail
+        // (bare repo at the bare root, no worktree, ...) the common dir lands.
         let Ok(output) = Cmd::new("git")
             .args([
                 "rev-parse",
@@ -1122,15 +1134,31 @@ impl Repository {
             return;
         };
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut lines = stdout.lines();
+        let fields = match exact_output_lines::<5>(&output.stdout) {
+            Some(fields) => fields,
+            None => {
+                let Some([common_raw, is_inside]) = exact_output_lines::<2>(&output.stdout) else {
+                    return;
+                };
+                if is_inside != b"false" {
+                    return;
+                }
+                let common_path = path_from_git_bytes(common_raw);
+                let common_absolute = if common_path.is_relative() {
+                    discovery_path.join(&common_path)
+                } else {
+                    common_path
+                };
+                if let Ok(common_resolved) = canonicalize(&common_absolute) {
+                    GIT_COMMON_DIR_CACHE.insert(discovery_path.to_path_buf(), common_resolved);
+                }
+                return;
+            }
+        };
 
         // Line 1: --git-common-dir. Cache even on non-zero exit — git emits
         // this line before bailing out of `--show-toplevel` in a bare repo.
-        let Some(common_raw) = lines.next() else {
-            return;
-        };
-        let common_path = PathBuf::from(common_raw.trim());
+        let common_path = path_from_git_bytes(fields[0]);
         let common_absolute = if common_path.is_relative() {
             discovery_path.join(&common_path)
         } else {
@@ -1153,31 +1181,30 @@ impl Repository {
         // `WORKTREE_ROOTS` ("contains_key ⇔ inside a worktree") forbids
         // recording a sentinel here; `WorkingTree::root` and `prewarm_info`
         // would misclassify the path as inside a worktree on the next call.
-        let is_inside = lines.next().is_some_and(|s| s.trim() == "true");
+        let is_inside = fields[1] == b"true";
         if !is_inside {
             return;
         }
 
         // Line 3: --show-toplevel. Always emits when is_inside=true; mirror
         // `prewarm_info`'s `self.path` fallback when canonicalize fails.
-        let raw_toplevel = lines.next().unwrap_or("").trim();
         let canonical_root =
-            canonicalize(PathBuf::from(raw_toplevel)).unwrap_or_else(|_| worktree_key.clone());
+            canonicalize(path_from_git_bytes(fields[2])).unwrap_or_else(|_| worktree_key.clone());
         WORKTREE_ROOTS
             .entry(worktree_key.clone())
             .or_insert(canonical_root);
 
         // Line 4: --git-dir. Resolve relative-to-discovery and canonicalize;
         // only land it when canonicalize succeeds, matching `prewarm_info`.
-        if let Some(git_dir) = lines.next().and_then(|raw| {
-            let path = PathBuf::from(raw.trim());
+        if let Some(git_dir) = {
+            let path = path_from_git_bytes(fields[3]);
             let absolute = if path.is_relative() {
                 discovery_path.join(&path)
             } else {
                 path
             };
             canonicalize(&absolute).ok()
-        }) {
+        } {
             GIT_DIRS.entry(worktree_key.clone()).or_insert(git_dir);
         }
 
@@ -1187,10 +1214,9 @@ impl Repository {
         // On unborn HEAD we leave `CURRENT_BRANCHES` empty so the
         // `symbolic-ref --short HEAD` fallback in `WorkingTree::branch`
         // resolves the unborn branch name.
-        if output.status.success()
-            && let Some(raw) = lines.next()
-        {
-            let branch = raw.trim().strip_prefix("refs/heads/").map(str::to_owned);
+        if output.status.success() {
+            let raw = String::from_utf8_lossy(fields[4]);
+            let branch = raw.strip_prefix("refs/heads/").map(str::to_owned);
             CURRENT_BRANCHES.entry(worktree_key).or_insert(branch);
         }
     }
@@ -1368,8 +1394,7 @@ impl Repository {
             );
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let path = PathBuf::from(stdout.trim());
+        let path = path_from_git_stdout(&output.stdout);
         // Always canonicalize to resolve symlinks (e.g., /var -> /private/var on macOS)
         let absolute_path = if path.is_relative() {
             discovery_path.join(&path)

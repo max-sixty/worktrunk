@@ -213,12 +213,12 @@ fn handle_config_show_json() -> anyhow::Result<()> {
 
     let output = serde_json::json!({
         "user": {
-            "path": user_path,
+            "path": user_path.to_string_lossy(),
             "exists": user_exists,
             "config": user_config,
         },
         "project": {
-            "path": project_path,
+            "path": project_path.as_deref().map(Path::to_string_lossy),
             // An invalid on-disk source still exists even though `config` is
             // null. The object-store fallback counts as existing too, though
             // its revision spec is not a filesystem path.
@@ -227,7 +227,7 @@ fn handle_config_show_json() -> anyhow::Result<()> {
             "config": project_config,
         },
         "system": {
-            "path": system_path,
+            "path": system_path.as_deref().map(Path::to_string_lossy),
             "exists": system_exists,
         },
     });

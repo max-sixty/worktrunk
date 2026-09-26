@@ -40,11 +40,15 @@ impl Repository {
         self.cache
             .worktrees
             .get_or_try_init(|| {
-                let stdout = {
+                let args = ["worktree", "list", "--porcelain", "-z"];
+                let output = {
                     let _registry = self.worktree_registry_read();
-                    self.run_command(&["worktree", "list", "--porcelain"])?
+                    self.run_command_output(&args)?
                 };
-                let raw_worktrees = WorktreeInfo::parse_porcelain_list(&stdout)?;
+                if !output.status.success() {
+                    return Err(CommandError::from_failed_output("git", &args, &output).into());
+                }
+                let raw_worktrees = WorktreeInfo::parse_porcelain_list_z(&output.stdout)?;
                 let mut worktrees: Vec<_> =
                     raw_worktrees.into_iter().filter(|wt| !wt.bare).collect();
 

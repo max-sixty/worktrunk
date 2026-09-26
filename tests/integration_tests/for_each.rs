@@ -425,6 +425,59 @@ fn test_for_each_json(mut repo: TestRepo) {
     );
 }
 
+/// Git paths are arbitrary bytes on Unix, while JSON strings are UTF-8.
+/// For-each should render such paths lossily instead of panicking in `json!`.
+#[cfg(target_os = "linux")]
+#[rstest]
+fn test_for_each_json_serializes_non_utf8_worktree_path(repo: TestRepo) {
+    use crate::common::configure_git_cmd;
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    use std::process::Command;
+
+    let worktree_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(OsString::from_vec(b"linked-\xff-worktree".to_vec()));
+    let mut git = Command::new("git");
+    configure_git_cmd(&mut git);
+    let output = git
+        .args(["worktree", "add", "-b", "non-utf8-path"])
+        .arg(&worktree_path)
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git worktree add should succeed; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["step", "for-each", "--format=json", "--", "true"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "for-each should serialize the path; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let item = json
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["branch"] == "non-utf8-path")
+        .expect("non-UTF-8 worktree should be visited");
+    assert_eq!(
+        item["path"].as_str(),
+        Some(worktree_path.to_string_lossy().as_ref())
+    );
+}
+
 /// `{{ commit }}` must resolve per-worktree when iterating across worktrees
 /// whose branches differ from the running worktree's branch. This exercises
 /// the `rev-parse <branch>` fallback in `build_hook_context` — the on-branch

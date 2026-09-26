@@ -36,6 +36,8 @@ use worktrunk::git::{
     check_integration,
 };
 
+use crate::output::serialize_path_lossy;
+
 use super::ci_status::{CiSource, CiStatus, PrStatus, ReviewState};
 use super::custom_columns::ResolvedCustomColumn;
 use super::json_output::{JsonDiff, format_raw_symbols};
@@ -227,6 +229,7 @@ pub struct JsonHead {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct JsonWorktreeV2 {
     /// Filesystem path.
+    #[serde(serialize_with = "serialize_path_lossy")]
     pub path: PathBuf,
 
     /// This is the main worktree.
@@ -943,6 +946,30 @@ mod tests {
     fn convert(item: &ListItem, collected: Collected) -> JsonItemV2 {
         let mut all_vars = HashMap::new();
         JsonItemV2::from_list_item(item, &mut all_vars, Some("main"), collected, None, &[])
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_worktree_path_serializes_non_utf8_bytes_lossily() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let worktree = JsonWorktreeV2 {
+            path: PathBuf::from(OsString::from_vec(b"/path/linked-\xff".to_vec())),
+            main: false,
+            current: false,
+            previous: false,
+            detached: false,
+            locked: None,
+            prunable: None,
+            branch_mismatch: false,
+            duplicate_branch: false,
+            operation: Tri::Absent,
+            changes: None,
+        };
+
+        let json = serde_json::to_value(worktree).unwrap();
+        assert_eq!(json["path"], "/path/linked-\u{fffd}");
     }
 
     fn pr_status(ci_status: CiStatus, source: CiSource) -> PrStatus {

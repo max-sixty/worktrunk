@@ -62,6 +62,11 @@ use std::process::{Child, ExitStatus, Stdio};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
+#[cfg(unix)]
+use std::ffi::OsString;
+#[cfg(unix)]
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
 use worktrunk::HookType;
 use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::shell_exec::{ShellConfig, scrub_git_discovery_env_vars};
@@ -81,11 +86,35 @@ use super::process::HookLog;
 /// boundary.
 #[derive(Serialize, Deserialize)]
 pub(super) struct PipelineSpec {
+    #[cfg_attr(
+        unix,
+        serde(
+            serialize_with = "serialize_path_bytes",
+            deserialize_with = "deserialize_path_bytes"
+        )
+    )]
     pub worktree_path: PathBuf,
     pub branch: String,
     pub hook_type: HookType,
     pub source: HookSource,
     pub steps: Vec<PreparedStep>,
+}
+
+#[cfg(unix)]
+fn serialize_path_bytes<S>(path: &Path, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_bytes(path.as_os_str().as_bytes())
+}
+
+#[cfg(unix)]
+fn deserialize_path_bytes<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let bytes = Vec::<u8>::deserialize(deserializer)?;
+    Ok(PathBuf::from(OsString::from_vec(bytes)))
 }
 
 /// Run a serialized pipeline from stdin.

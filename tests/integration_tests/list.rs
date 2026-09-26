@@ -94,6 +94,149 @@ fn test_list_multiple_worktrees(repo: TestRepo) {
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
+/// `git worktree list --porcelain` does not delimit path fields safely: a
+/// newline in a valid worktree path looks like a new attribute. The `-z`
+/// format must carry that path intact through discovery and JSON output.
+#[cfg(unix)]
+#[rstest]
+fn test_list_preserves_worktree_path_with_newline(repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
+    let worktree_path = repo.root_path().parent().unwrap().join("linked-\nworktree");
+    repo.git_command()
+        .args(["worktree", "add", "-b", "newline-path"])
+        .arg(worktree_path.to_str().unwrap())
+        .run()
+        .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt list should succeed; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let items: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let item = items
+        .iter()
+        .find(|item| item["branch"] == "newline-path")
+        .expect("newline-path worktree should be listed");
+    assert_eq!(
+        item["path"].as_str(),
+        worktree_path.to_str(),
+        "list should preserve the complete worktree path"
+    );
+
+    let output = repo
+        .wt_command()
+        .arg("list")
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt list should succeed; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(r"../linked-\nworktree"),
+        "the table should render the path on one line:\n{stdout}"
+    );
+}
+
+/// Git paths are arbitrary bytes on Unix, while JSON strings are UTF-8. Both
+/// JSON schemas should render such paths lossily instead of failing the list.
+#[cfg(target_os = "linux")]
+#[rstest]
+fn test_list_json_serializes_non_utf8_worktree_path(repo: TestRepo) {
+    use crate::common::configure_git_cmd;
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    use std::process::Command;
+
+    let worktree_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(OsString::from_vec(b"linked-\xff-worktree".to_vec()));
+    let mut git = Command::new("git");
+    configure_git_cmd(&mut git);
+    let output = git
+        .args(["worktree", "add", "-b", "non-utf8-path"])
+        .arg(&worktree_path)
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git worktree add should succeed; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    for schema in [1, 2] {
+        repo.write_test_config(&format!("[list]\njson-schema = {schema}\n"));
+        let output = repo
+            .wt_command()
+            .args(["list", "--format=json"])
+            .current_dir(repo.root_path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "schema {schema} should serialize the path; stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let items = if schema == 1 {
+            json.as_array().unwrap()
+        } else {
+            json["items"].as_array().unwrap()
+        };
+        let item = items
+            .iter()
+            .find(|item| item["branch"] == "non-utf8-path")
+            .expect("non-UTF-8 worktree should be listed");
+        let path = if schema == 1 {
+            &item["path"]
+        } else {
+            &item["worktree"]["path"]
+        };
+        assert_eq!(
+            path.as_str(),
+            Some(worktree_path.to_string_lossy().as_ref()),
+            "schema {schema} should emit the display-safe path"
+        );
+    }
+
+    let output = repo
+        .wt_command()
+        .arg("list")
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "table output should succeed; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("non-utf8-path"),
+        "the non-UTF-8 worktree row should be rendered:\n{stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("operation-state check"),
+        "the worktree git directory should remain addressable:\n{stderr}"
+    );
+}
+
 ///
 /// Simulates realistic usage by running switch commands from the correct worktree directories.
 #[rstest]
