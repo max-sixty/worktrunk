@@ -4,12 +4,19 @@ rem hook commands lead with: it finds Git Bash by path, then runs wt.sh through
 rem it, so every integration resolves the worktrunk binary through that one
 rem script.
 rem
-rem Codex runs hook commands through `cmd.exe /C` on Windows, where a bare
-rem `bash` resolves through PATH to System32\bash.exe -- the WSL launcher, not
-rem Git Bash -- and in a sandboxed session refuses to start at all (#4007). Only
-rem the bare name is the problem, so this resolves bash.exe the way find_git_bash
-rem does in src/shell_exec.rs and changes nothing else.
+rem Codex runs a hook command through a shell, where a bare `bash` resolves
+rem through PATH to System32\bash.exe -- the WSL launcher, not Git Bash -- and in
+rem a sandboxed session refuses to start at all (#4007). Only the bare name is
+rem the problem, so this resolves bash.exe the way find_git_bash does in
+rem src/shell_exec.rs and changes nothing else.
 rem Usage: wt.cmd [args...]
+rem
+rem This shim always exits 0, because it is where the hooks' `|| true` lives. The
+rem shell running `commandWindows` is the session shell -- PowerShell on most
+rem Windows machines, cmd.exe only when Codex knows of no session shell (#4239) --
+rem and no spelling of `|| true` parses in both, so the swallow cannot live in
+rem the hook command line. A marker is decoration; a nonzero exit is what raises
+rem Codex's repeated "Hook failed" banner. Diagnostics still go to stderr.
 rem
 rem Every branch here is a bare `goto` or `call`: `if <cond> <cmd1> & <cmd2>`
 rem runs cmd2 unconditionally, and `if <cond> <cmd1> || <cmd2>` tests the `if`
@@ -39,7 +46,7 @@ if not defined BASH call :accept "%LOCALAPPDATA%\Programs\Git\bin\bash.exe"
 if not defined BASH goto :missing
 
 "%BASH%" "%~dp0wt.sh" %*
-exit /b %ERRORLEVEL%
+exit /b 0
 
 rem %1 is a Git install's cmd\ or bin\ directory, with the trailing separator
 rem `%~dpI` leaves on. Git\bin\bash.exe first, as find_git_bash does: it is the
@@ -56,4 +63,4 @@ goto :eof
 
 :missing
 echo worktrunk: Git for Windows is required but bash.exe was not found. Install from https://git-scm.com/download/win 1>&2
-exit /b 1
+exit /b 0
