@@ -783,6 +783,87 @@ fn test_relocate_swap(repo: TestRepo) {
     assert!(path_for_beta.exists(), "beta should be at repo.beta");
 }
 
+/// Two independent relocation cycles must not share a temporary worktree path.
+///
+/// These branch names produce the same filename under the current 3-character
+/// hash. The first cycle keeps its worktree in staging until all cycles have
+/// been broken, so the second cycle used to fail when it tried to reuse that
+/// live path.
+#[rstest]
+fn test_relocate_disjoint_swaps_with_colliding_temp_names(repo: TestRepo) {
+    const FIRST: &str = "a/a-a-a/a-a/a/a-a/a";
+    const SECOND: &str = "a-a-a-a/a/a-a/a/a-a";
+    assert_eq!(
+        worktrunk::path::sanitize_for_filename(FIRST),
+        worktrunk::path::sanitize_for_filename(SECOND),
+        "test premise: both branches must sanitize to the same filename"
+    );
+
+    let parent = worktree_parent(&repo);
+    let first_source = parent.join("aaa-first");
+    let first_target = parent.join("bbb-first-partner");
+    let second_source = parent.join("ccc-second");
+    let second_target = parent.join("ddd-second-partner");
+
+    for (branch, path) in [
+        (FIRST, &first_source),
+        ("first-partner", &first_target),
+        (SECOND, &second_source),
+        ("second-partner", &second_target),
+    ] {
+        repo.run_git(&["worktree", "add", "-b", branch, path.to_str().unwrap()]);
+    }
+
+    let worktrunk_config = format!(
+        r#"
+worktree-path = "{{% if branch == '{FIRST}' %}}{}{{% elif branch == 'first-partner' %}}{}{{% elif branch == '{SECOND}' %}}{}{{% elif branch == 'second-partner' %}}{}{{% else %}}../{{{{ repo }}}}.{{{{ branch | sanitize }}}}{{% endif %}}"
+"#,
+        first_target.to_slash_lossy(),
+        first_source.to_slash_lossy(),
+        second_target.to_slash_lossy(),
+        second_source.to_slash_lossy(),
+    );
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "relocate",
+            FIRST,
+            "first-partner",
+            SECOND,
+            "second-partner",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "both swaps should relocate; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    for (path, branch) in [
+        (&first_target, FIRST),
+        (&first_source, "first-partner"),
+        (&second_target, SECOND),
+        (&second_source, "second-partner"),
+    ] {
+        let output = repo
+            .git_command()
+            .current_dir(path)
+            .args(["branch", "--show-current"])
+            .run()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            branch,
+            "{} should contain {branch}",
+            path.display()
+        );
+    }
+}
+
 /// A worktree whose target is occupied by a *blocked* worktree must itself be
 /// skipped, not temp-moved.
 ///
