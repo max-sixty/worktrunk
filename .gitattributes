@@ -34,6 +34,9 @@ templates/* text eol=lf
 # label specified"). The hook shim is only ever run by cmd.exe, so pin its
 # checkout to CRLF regardless of the platform cloning it.
 plugins/worktrunk/hooks/*.cmd text eol=crlf
+# Bash reads `set -o pipefail\r` as an invalid option and carries on, so a
+# CRLF checkout of the hook scripts silently drops their pipefail.
+plugins/worktrunk/hooks/*.sh text eol=lf
 # A fixture's object store and index are git's own binary formats, but git only
 # calls a file binary when it finds a NUL in the first 8000 bytes, and a small
 # enough zlib object may have none. Those diff as text, so `git diff` writes raw

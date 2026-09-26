@@ -192,8 +192,8 @@ command's user config, where `list.full` adds CI fetches and LLM summaries
 the output's shape. A `wt` too old to have the subcommand fails it, which
 leaves the dialog as it was before the hook existed.
 
-The approval shares one `hooks.json` command with the 💬 marker,
-`wt … approve-enter-worktree || wt … marker set 💬`, because Claude Code runs
+The approval shares one hook with the 💬 marker, `hooks/permission-request.sh`
+(`wt … approve-enter-worktree || marker.sh set 💬`), because Claude Code runs
 all matching hooks in parallel. A separate `EnterWorktree` entry would still
 fire the catch-all marker hook, and the launch worktree would read 💬 while the
 session works on. With one command, an approval skips the marker and every
@@ -292,20 +292,17 @@ fires only on an actual reset. Cheap to attempt, and the handback is actionable
 and durable (a `~/workspace` entry, set once, covers every future cross-repo
 task).
 
-## The hooks.json pipefail wrapper (agent-isolation path, not this skill)
+## The WorktreeCreate pipefail (agent-isolation path, not this skill)
 
-`WorktreeCreate` pipes `jq | xargs wt | jq`; without `pipefail` the trailing
-`jq` exits 0 on empty input and swallows a `wt` failure, so Claude Code saw a
-"successful" hook with no path. Hook commands are spawned with an empty args
-array and `shell: true` (binary), i.e. `/bin/sh -c` on Unix — bash 3.2 on
-macOS but dash on many Linuxes. dash rejects `set -o pipefail` fatally
-(`set` is a POSIX special builtin; no dash release through 0.5.12 supports
-pipefail — only post-0.5.12 upstream git and distro backports such as
-Debian's 0.5.12-7). And `/bin/sh -c` is evidently not universal: one user's
-hooks ran under fish (worktrunk PR #2962), which has no shell options at
-all. Hence the explicit `bash -c 'set -o pipefail; …'` wrapper. Verified
+`WorktreeCreate` pipes `wt … --format=json | jq -er .path`; without `pipefail`
+the trailing `jq` exits 0 on empty input and swallows a `wt` failure, so Claude
+Code saw a "successful" hook with no path. Claude Code hands hook commands to a
+shell it picks: `/bin/sh` is dash on Debian, which rejects `set -o pipefail`
+fatally, and one user's hooks ran under fish (worktrunk PR #2962), which has no
+shell options at all. So the pipeline lives in
+`hooks/worktree-create.sh`, which `hooks.json` runs with `bash`. Verified
 end-to-end: success prints the path and exits 0; an existing-branch failure
-exits 1 with empty stdout.
+exits nonzero with empty stdout.
 
 ## Known limits (deliberate)
 

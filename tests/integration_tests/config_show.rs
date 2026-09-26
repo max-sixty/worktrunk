@@ -5491,110 +5491,116 @@ fn test_plugin_layout_is_consolidated() {
     }
     assert!(skill_dirs > 0, "skills/ holds no skill directories");
 
-    // The WorktreeRemove hook must not force-delete unmerged branches (#2939).
-    // Claude Code auto-fires WorktreeRemove on session exit for any worktree
-    // with a clean working tree, so a hook command containing `-D` /
-    // `--force-delete` silently discards committed-but-unpushed work — the only
-    // recovery path is `git fsck`. The safe default retains unmerged branches
-    // and prints a `wt remove -D <branch>` hint for the user to act on.
-    let hooks = read("plugins/worktrunk/hooks/hooks.json");
     let hooks_json = json("plugins/worktrunk/hooks/hooks.json");
-
-    // Claude hands each hook command to the user's LOGIN shell before `bash`
-    // launches, so the outer command line must parse under fish/zsh/bash. fish
-    // rejects bash brace syntax ("Variables cannot be bracketed"), so the plugin
-    // root must be referenced as `$CLAUDE_PLUGIN_ROOT`, never `${CLAUDE_PLUGIN_ROOT}`.
-    let all_commands: Vec<&str> = hooks_json["hooks"]
+    let commands: Vec<(&str, &str)> = hooks_json["hooks"]
         .as_object()
         .expect("hooks.json must have a `hooks` object")
-        .values()
-        .flat_map(|event| event.as_array().expect("each hook event must be an array"))
-        .flat_map(|group| {
-            group["hooks"]
+        .iter()
+        .flat_map(|(event, groups)| {
+            groups
                 .as_array()
-                .expect("each hook group must have a `hooks` array")
-        })
-        .map(|hook| {
-            hook["command"]
-                .as_str()
-                .expect("each hook must define a command")
+                .expect("each hook event must be an array")
+                .iter()
+                .flat_map(|group| {
+                    group["hooks"]
+                        .as_array()
+                        .expect("each hook group must have a `hooks` array")
+                })
+                .map(move |hook| {
+                    (
+                        event.as_str(),
+                        hook["command"]
+                            .as_str()
+                            .expect("each hook must define a command"),
+                    )
+                })
         })
         .collect();
-    for cmd in &all_commands {
-        assert!(
-            cmd.contains("$CLAUDE_PLUGIN_ROOT") && !cmd.contains("${CLAUDE_PLUGIN_ROOT}"),
-            "hook command must use unbraced $CLAUDE_PLUGIN_ROOT (braces break fish \
-             login-shell parsing: \"fish: Variables cannot be bracketed\"). command:\n{cmd}"
-        );
-    }
 
-    let marker_commands = all_commands
+    // Each hook command runs one script under hooks/ by a literal
+    // `$CLAUDE_PLUGIN_ROOT` path, with literal arguments. Anthropic's plugin
+    // directory refuses a hook command whose path the shell computes (another
+    // variable, a command substitution) or that carries an inline program
+    // (`bash -c '…'`), so the logic lives in the scripts. The root stays
+    // unbraced: Claude hands each command to the user's login shell before
+    // `bash` launches, and fish rejects `${CLAUDE_PLUGIN_ROOT}` ("Variables
+    // cannot be bracketed").
+    let script = |name: &str| format!(r#"bash "$CLAUDE_PLUGIN_ROOT/hooks/{name}""#);
+    let marker = |args: &str| format!("{} {args}", script("marker.sh"));
+    let mut expected = vec![
+        ("Notification", marker("set 💬")),
+        ("PermissionRequest", script("permission-request.sh")),
+        ("PreToolUse", marker("set 💬")),
+        ("SessionEnd", marker("clear")),
+        ("Stop", marker("set 💬")),
+        ("UserPromptSubmit", marker("set 🤖")),
+        ("WorktreeCreate", script("worktree-create.sh")),
+        ("WorktreeRemove", script("worktree-remove.sh")),
+    ];
+    expected.sort_unstable();
+    let mut actual: Vec<(&str, String)> = commands
         .iter()
-        .filter(|command| command.contains("config state marker"))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        marker_commands.len(),
-        6,
-        "expected all 6 Claude marker hooks (UserPromptSubmit, Notification, \
-         PreToolUse, PermissionRequest, Stop, SessionEnd); a newly added one \
-         must be pinned too. hooks.json:\n{hooks}"
-    );
-    for command in marker_commands {
-        assert!(
-            command.contains(r#"-C "$CLAUDE_PROJECT_DIR""#),
-            "marker hook must pin the directory it resolves against, or a shell \
-             `cd` during a turn retargets it to another repository (#3921). \
-             command:\n{command}"
-        );
-    }
-    let worktree_remove_cmd = hooks_json["hooks"]["WorktreeRemove"][0]["hooks"][0]["command"]
-        .as_str()
-        .expect("WorktreeRemove hook must define a command");
+        .map(|(event, command)| (*event, command.to_string()))
+        .collect();
+    actual.sort_unstable();
+    assert_eq!(actual, expected, "hooks.json commands drifted");
+
+    // Markers resolve against the session's launch directory, or a shell `cd`
+    // during a turn retargets them to another repository (#3921).
+    let marker_sh = read("plugins/worktrunk/hooks/marker.sh");
     assert!(
-        !worktree_remove_cmd.contains(" -D") && !worktree_remove_cmd.contains("--force-delete"),
-        "WorktreeRemove hook must not pass -D / --force-delete (silently destroys \
-         committed-but-unpushed work on session-exit auto-remove; see #2939). \
-         hooks.json:\n{hooks}"
+        marker_sh.contains(r#"-C "$CLAUDE_PROJECT_DIR""#),
+        "marker.sh must pin the directory it resolves against (#3921):\n{marker_sh}"
+    );
+    // A marker failure must never surface as a hook error, and a permission
+    // request the approval hook declines still marks the session waiting.
+    assert!(
+        marker_sh.trim_end().ends_with("|| true"),
+        "marker.sh must swallow wt failures:\n{marker_sh}"
+    );
+    let permission_request = read("plugins/worktrunk/hooks/permission-request.sh");
+    assert!(
+        permission_request.contains("approve-enter-worktree ||")
+            && permission_request.contains("marker.sh\" set 💬"),
+        "permission-request.sh must fall back to the 💬 marker:\n{permission_request}"
     );
 
-    // The WorktreeRemove hook must resolve against the worktree path Claude
-    // Code hands it, not the session's project dir. The `claude agents` view
-    // spans every repo with a background session and is often launched from a
-    // parent directory that merely contains them, so `CLAUDE_PROJECT_DIR` names
-    // the wrong repo or none at all, `wt remove <path>` dies with `fatal: not a
-    // git repository`, and the session row is left undeletable (#3754, after
-    // the #3489 anchor proved insufficient). `-C "$p"` is layout-independent: a
-    // linked worktree carries a `.git` file pointing at its owning repository.
+    // The WorktreeRemove hook must not force-delete unmerged branches (#2939).
+    // Claude Code auto-fires WorktreeRemove on session exit for any worktree
+    // with a clean working tree, so `-D` / `--force-delete` silently discards
+    // committed-but-unpushed work — the only recovery path is `git fsck`.
+    //
+    // It must also resolve against the worktree path Claude Code hands it, not
+    // the session's project dir. The `claude agents` view spans every repo
+    // with a background session and is often launched from a parent directory
+    // that merely contains them, so `CLAUDE_PROJECT_DIR` names the wrong repo
+    // or none at all, `wt remove <path>` dies with `fatal: not a git
+    // repository`, and the session row is left undeletable (#3754). `-C "$p"`
+    // is layout-independent: a linked worktree carries a `.git` file pointing
+    // at its owning repository.
+    let worktree_remove = read("plugins/worktrunk/hooks/worktree-remove.sh");
     assert!(
-        worktree_remove_cmd.contains("-C \"$p\"")
-            && !worktree_remove_cmd.contains("CLAUDE_PROJECT_DIR"),
-        "WorktreeRemove hook must resolve via -C \"$p\" (the worktree path Claude Code \
-         handed it), never CLAUDE_PROJECT_DIR — the agents view is multi-repo, so no \
-         single project dir is correct for every session (#3754). \
-         command:\n{worktree_remove_cmd}"
+        !worktree_remove.contains(" -D") && !worktree_remove.contains("--force-delete"),
+        "worktree-remove.sh must not pass -D / --force-delete (#2939):\n{worktree_remove}"
+    );
+    assert!(
+        worktree_remove.contains("-C \"$p\"")
+            && !worktree_remove.contains("$CLAUDE_PROJECT_DIR")
+            && !worktree_remove.contains("${CLAUDE_PROJECT_DIR"),
+        "worktree-remove.sh must resolve via -C \"$p\", never CLAUDE_PROJECT_DIR (#3754):\n\
+         {worktree_remove}"
     );
 
     // The WorktreeCreate hook pipes `wt … --format=json | jq -er .path`. Without
     // `set -o pipefail` the pipeline's exit status is jq's, and `jq -er .path`
     // on the empty stdout of a failed `wt` exits 0 on jq 1.6 — so a `wt` failure
-    // (e.g. an existing-branch collision after the branch/worktree were already
-    // created) is swallowed and Claude Code reports the misleading "hook
-    // succeeded but returned no worktree path" instead of wt's real error
-    // (#3545). pipefail makes the pipeline surface wt's nonzero exit regardless
-    // of jq version. The wrapper must be `bash -c` (dash rejects `set -o
-    // pipefail` fatally; some login shells are fish, which has no shell options)
-    // — see skills/wt-switch-create/rationale.md, "The hooks.json pipefail wrapper".
-    let worktree_create_cmd = hooks_json["hooks"]["WorktreeCreate"][0]["hooks"][0]["command"]
-        .as_str()
-        .expect("WorktreeCreate hook must define a command");
+    // is swallowed and Claude Code reports the misleading "hook succeeded but
+    // returned no worktree path" instead of wt's real error (#3545).
+    let worktree_create = read("plugins/worktrunk/hooks/worktree-create.sh");
     assert!(
-        worktree_create_cmd.contains("set -o pipefail"),
-        "WorktreeCreate hook pipes `wt … | jq -er .path`; without `set -o pipefail` a \
-         failed wt with empty stdout is swallowed (jq 1.6 exits 0 on empty input) and \
-         Claude Code reports \"hook succeeded but returned no worktree path\" instead \
-         of wt's real error (#3545). command:\n{worktree_create_cmd}"
+        worktree_create.contains("set -o pipefail"),
+        "worktree-create.sh must set pipefail (#3545):\n{worktree_create}"
     );
-
     // The product description must not drift across tools. Byte-identical is
     // schema-impossible (Codex omits the activity clause, Gemini says
     // "extension"), but every manifest shares the canonical opening sentence.
