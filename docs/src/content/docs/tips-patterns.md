@@ -274,7 +274,7 @@ To scope environment variables to a worktree — a tool's package path, a profil
 
 ```sh
 # .envrc
-export MY_PACKAGES_PATH="$PWD/.packages"
+export MY_PACKAGES_PATH="$(expand_path .packages)"
 ```
 
 Run `direnv allow` once per worktree to trust the file ([getting started](https://direnv.net/#getting-started)). After that, switching into a worktree loads the env; switching out unloads it.
