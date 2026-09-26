@@ -28,6 +28,8 @@ Each worktree maps to one branch. Worktree arguments resolve branch first throug
 
 Behavior changes require documentation updates. src/cli/mod.rs is primary for command help and generated command pages; docs/AGENTS.md explains sync. Check that --help matches behavior. Run cargo test --test integration test_docs_are_in_sync, then refresh help snapshots when help text changes.
 
+Docs describe behavior for a user, not the history of a fix. A fix that makes a feature work the way a reader already assumed needs no new doc sentence; do not add lines announcing that an edge case now works. LLM-generated changes add these often, so cut them in review.
+
 ## Plugin Layout
 
 The loader paths, generated skills mirror, and cross-tool hook requirements are in plugins/worktrunk/AGENTS.md.
