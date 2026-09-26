@@ -63,6 +63,15 @@ When a PR changes behavior, check that related documentation still matches:
 - Do inline TOML comments in config examples match the actual behavior?
 - If a new feature was added, does the relevant help text mention it?
 
+**Documentation cruft:**
+
+LLM-generated PRs tend to add doc sentences that teach a reader nothing: a note
+that the edge case a fix covers now works, or a restatement of what the
+surrounding text already implies. For each added doc sentence, ask what a reader
+learns that they wouldn't already assume, and how many readers need it. When the
+answer is nothing, ask for its removal in the review rather than approving past
+it.
+
 **Duplication search patterns (Rust-specific):**
 
 ```bash
