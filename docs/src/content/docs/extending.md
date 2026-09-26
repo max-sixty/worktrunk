@@ -189,13 +189,13 @@ To copy instead of move, add `git stash apply --index --quiet` right after the p
 hook-log = '''
 tail -f "$(wt config state logs --format=json | jq -r --arg name "{{ name | sanitize_hash }}" --arg kind "{{ kind }}" '
   .hook_output[]
-  | select(.branch == "{{ branch | sanitize_hash }}" and .hook_type == $kind and .name == $name)
+  | select([.branch, .hook_type, .name] == ["{{ branch }}", $kind, $name])
   | .path
 ' | head -1)"
 '''
 ```
 
-Run with `wt hook-log --kind=post-start --name=server` to tail the log for the `server` hook on the current branch. `--kind` picks the hook type; the branch is pulled from the current worktree via `{{ branch }}`. `sanitize_hash` rewrites `branch` and `name` to filesystem-safe forms with a hash suffix that keeps distinct originals unique (the same transformation Worktrunk applies on disk), so the alias resolves the right log even when either contains characters like `/`.
+Run with `wt hook-log --kind=post-start --name=server` to tail the log for the `server` hook on the current branch. `--kind` picks the hook type; the branch is pulled from the current worktree via `{{ branch }}`. `branch` in the JSON is the branch name itself, while `name` is the hook name as it appears on disk; `sanitize_hash` applies the same transformation to `{{ name }}`, so the alias resolves the right log even when the hook name contains characters like `/`.
 
 ## Custom subcommands
 

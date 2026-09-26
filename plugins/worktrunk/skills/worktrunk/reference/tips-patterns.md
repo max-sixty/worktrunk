@@ -521,7 +521,7 @@ Then `wt mc` opens an editor for the commit message while plain `wt merge` conti
 Follow background hook output:
 
 ```bash
-tail -f "$(wt config state logs --format=json | jq -r --arg branch "$(git branch --show-current)" '.hook_output[] | select(.branch == $branch and .source == "user" and .hook_type == "post-start" and .name == "server") | .path')"
+tail -f "$(wt config state logs --format=json | jq -r --arg branch "$(git branch --show-current)" '.hook_output[] | select([.branch, .source, .hook_type, .name] == [$branch, "user", "post-start", "server"]) | .path')"
 ```
 
 Each `hook_output` entry carries `branch`, `source` (`user`, `project`, or `internal`), `hook_type`, `name`, and `path` — adjust the `select` to pick a different hook or branch. Run `wt config state logs` to list all available logs.
@@ -530,6 +530,6 @@ Create a shell function for frequent use (`wtlog server`):
 
 ```bash
 wtlog() {
-  tail -f "$(wt config state logs --format=json | jq -r --arg branch "$(git branch --show-current)" --arg name "$1" '.hook_output[] | select(.branch == $branch and .source == "user" and .hook_type == "post-start" and .name == $name) | .path')"
+  tail -f "$(wt config state logs --format=json | jq -r --arg branch "$(git branch --show-current)" --arg name "$1" '.hook_output[] | select([.branch, .source, .hook_type, .name] == [$branch, "user", "post-start", $name]) | .path')"
 }
 ```
