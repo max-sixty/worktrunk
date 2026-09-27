@@ -784,6 +784,14 @@ fn start_fsmonitor_daemon_skips_fork_when_daemon_answers() {
             self.0.lock().unwrap().extend(cmd.0);
         }
     }
+    // While exactly one dispatcher is registered, tracing-core resolves a
+    // callsite first hit on *another* thread against that thread's default
+    // (no subscriber here) and caches `Interest::never` process-wide. A
+    // parallel test's git command reaching the shared `cmd_completed`
+    // callsite first would then silence the fork event below. A second live
+    // dispatcher makes tracing-core resolve against every registered
+    // dispatcher instead.
+    let _pin = tracing::Dispatch::new(Registry::default());
     let traced_starts = |start: &dyn Fn()| {
         let commands = Arc::new(Mutex::new(Vec::new()));
         let subscriber = Registry::default().with(Commands(commands.clone()));
