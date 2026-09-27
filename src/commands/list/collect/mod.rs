@@ -156,17 +156,18 @@
 //! layout; render skeleton ─────────────────── FIRST PAINT (wt list)
 //! [picker] on_skeleton: rows → skim ───────── FIRST PAINT (picker)
 //!          then spawn preview precompute onto COLLECT_POOL (first row: every mode;
-//!          branch-only rows: default mode), then maybe_spawn_comments, whose
-//!          ci_platform() may fork `git remote get-url` (serial, before J2)
-//! prime_worktree_path_caches               canonicalize + read .git × worktrees (serial fs)
+//!          branch-only rows: default mode), then maybe_spawn_comments (its job
+//!          resolves the forge, which may fork `git remote get-url`)
 //! J2 rayon::scope ───────────────────────┬─ switch_previous
 //!    (global pool)                       ├─ capture_refs[_with_ahead_behind]
 //!                                        │     for-each-ref refs/heads/ (again), then refs/remotes/
 //!                                        │     + ahead-behind/ cache reads; cold: %(ahead-behind) walk
 //!                                        │     └─ spawn prime_upstream_ahead_behind_cache
 //!                                        │           cold: one %(ahead-behind) walk per upstream
-//!                                        └─ start_fsmonitor_daemon_at × worktrees
-//!                                              socket connect; fork `start` on a miss
+//!                                        └─ prime_worktree_path_caches
+//!                                              canonicalize + read .git × worktrees
+//!                                              └─ spawn start_fsmonitor_daemon_at × worktrees
+//!                                                    socket connect; fork `start` on a miss
 //!    join ◄──────────────────────────────┘ (waits for the slowest: usually the snapshot)
 //! integration_targets, prime_comparison_base, is_previous, commit fields    CPU
 //! generate + sort work items               CPU
@@ -240,7 +241,7 @@
 //!
 //! Four steps read state from the git directory instead of asking git:
 //! the rebase backfill's `head-name` read (inside `list_worktrees`), the `.git` reads in
-//! `prime_worktree_path_caches` (before J2), the fsmonitor socket connect
+//! `prime_worktree_path_caches` (in J2), the fsmonitor socket connect
 //! (in J2), and the `GitOperation` task's `operation_in_progress_at` (in J3).
 //!
 //! ### Why the Age/Message paint
@@ -1639,15 +1640,6 @@ pub fn collect(
     // These operations run in parallel using rayon::scope with single-level parallelism.
     // See module docs for the timing diagram.
 
-    // Seed root/git-dir for every worktree from the list we already fetched, so
-    // the per-worktree tasks below don't each fork `git rev-parse
-    // --show-toplevel` / `--git-dir`. Deferred to post-skeleton: only the
-    // worker-pool tasks consume these (the pre-skeleton current-worktree probe
-    // uses the prewarmed discovery-worktree root), so seeding here keeps the
-    // local fs reads off the skeleton critical path — and skips them entirely
-    // on the `WORKTRUNK_SKELETON_ONLY` exit above, which runs no tasks.
-    repo.prime_worktree_path_caches(worktrees);
-
     // Collect worktree paths for fsmonitor starts (macOS only, fast, no git commands).
     // Git's builtin fsmonitor has race conditions under parallel load - pre-starting
     // daemons before parallel operations avoids hangs.
@@ -1754,12 +1746,24 @@ pub fn collect(
             let _ = snapshot_cell.set(snap);
         });
 
-        // Fsmonitor daemon starts (one spawn per worktree)
-        for wt in &fsmonitor_worktrees {
-            s.spawn(|_| {
-                repo.start_fsmonitor_daemon_at(&wt.path);
-            });
-        }
+        // Seed root/git-dir for every worktree from the list we already
+        // fetched, so the per-worktree tasks don't each fork `git rev-parse
+        // --show-toplevel` / `--git-dir`. Post-skeleton, because only the
+        // fsmonitor probes and the worker-pool tasks consume these (the
+        // pre-skeleton current-worktree probe uses the prewarmed
+        // discovery-worktree root); in this scope, because the fs reads then
+        // overlap the ref snapshot instead of delaying it.
+        //
+        // The fsmonitor starts (one spawn per worktree) nest under the seed:
+        // each probe reads its worktree's git dir, which the seed supplies.
+        s.spawn(|s| {
+            repo.prime_worktree_path_caches(worktrees);
+            for wt in &fsmonitor_worktrees {
+                s.spawn(|_| {
+                    repo.start_fsmonitor_daemon_at(&wt.path);
+                });
+            }
+        });
     });
 
     // Extract results from cells
