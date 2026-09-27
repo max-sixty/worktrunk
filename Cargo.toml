@@ -104,7 +104,7 @@ cli = [
     "dep:tracing-subscriber",
 ]
 syntax-highlighting = ["dep:tree-sitter-bash", "dep:tree-sitter-highlight"]
-# Enable shell/PTY integration tests (needs bash, zsh, fish, nu, pwsh, and jq on PATH)
+# Enable shell/PTY integration tests (needs bash, zsh, fish, nu, and pwsh on PATH)
 # Includes: shell wrapper tests, PTY-based approval prompts, TUI select, progressive rendering
 shell-integration-tests = []
 # Enable benchmarks whose fixture is too large for hosted CI: the
