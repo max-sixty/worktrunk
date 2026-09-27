@@ -4,7 +4,13 @@
 # Note: nushell's completion engine bypasses custom completers when the current
 # token starts with `-`, so flag completions (e.g. `wt switch --<TAB>`) don't
 # appear. Subcommand and value completions work. (nushell/nushell#14504)
-export def "nu-complete {{ cmd }}" [spans: list<string>] {
+#
+# Nushell 0.116 binds completer inputs by parameter name and hands `place` a
+# record whose `command` field is the old spans list; a parameter still named
+# `spans` works but warns as deprecated every time this file is sourced.
+# Earlier versions pass the spans list positionally, whatever the name.
+export def "nu-complete {{ cmd }}" [place] {
+    let spans = if ($place | describe | str starts-with "record") { $place.command } else { $place }
     let worktrunk_bin = if ($env.WORKTRUNK_BIN? | is-not-empty) {
         $env.WORKTRUNK_BIN
     } else {
