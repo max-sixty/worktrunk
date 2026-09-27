@@ -307,14 +307,6 @@ pub(super) struct RepoCache {
     /// Separate from `all_config` because `git remote get-url` applies
     /// `url.insteadOf` rewrites that aren't visible in raw config.
     pub(super) effective_remote_urls: DashMap<String, Option<String>>,
-    /// Per-branch effective push URL: branch_name -> push URL (or None if
-    /// no push remote is configured). One `for-each-ref %(push:remotename)`
-    /// per branch, then `effective_remote_url` for the resolved remote name.
-    /// `wt list`'s CI-status detection calls `push_remote_url` from both the
-    /// PR-based path and the branch fallback (via `branch_remote_url`), so
-    /// the same branch is queried twice on the no-PR path — this cache
-    /// collapses that to one subprocess.
-    pub(super) push_remote_urls: DashMap<String, Option<String>>,
 
     /// Local branch inventory: one `git for-each-ref refs/heads/` scan, cached
     /// for the lifetime of the repository. Entries are sorted by most recent

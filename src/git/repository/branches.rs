@@ -74,8 +74,9 @@ const FIELD_SEP: char = '\0';
 ///
 /// Fields, in order: short name, object SHA, committer Unix timestamp,
 /// upstream short name (empty if none), upstream track (`[gone]` if the
-/// configured upstream no longer exists on the remote).
-const LOCAL_BRANCH_FORMAT: &str = "--format=%(refname:lstrip=2)%00%(objectname)%00%(committerdate:unix)%00%(upstream:short)%00%(upstream:track)";
+/// configured upstream no longer exists on the remote), push remote (a remote
+/// name or URL; empty if none).
+const LOCAL_BRANCH_FORMAT: &str = "--format=%(refname:lstrip=2)%00%(objectname)%00%(committerdate:unix)%00%(upstream:short)%00%(upstream:track)%00%(push:remotename)";
 
 /// Format string for the remote-branch scan.
 ///
@@ -389,11 +390,15 @@ fn parse_local_branch_line(line: &str) -> Option<LocalBranch> {
     } else {
         Some(upstream_short_raw.to_string())
     };
+    let push_remote = Some(parts.next()?)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
     Some(LocalBranch {
         name,
         commit_sha,
         committer_ts,
         upstream_short,
+        push_remote,
     })
 }
 

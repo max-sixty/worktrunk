@@ -379,6 +379,10 @@ pub struct LocalBranch {
     /// `None` when no upstream is set, or when the configured upstream is gone
     /// (git reports `[gone]` via `%(upstream:track)`).
     pub upstream_short: Option<String>,
+    /// Where this branch pushes, from `%(push:remotename)`: a remote name, or a
+    /// URL when `branch.<name>.pushRemote` is one (`gh pr checkout` sets that
+    /// for a fork's PR). `None` when no push remote is configured.
+    pub push_remote: Option<String>,
 }
 
 /// A single remote-tracking branch entry from the branch inventory.

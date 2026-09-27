@@ -700,6 +700,55 @@ fn test_gitlab_project_id_resolved_once_per_command(mut repo: TestRepo) {
     );
 }
 
+/// A PR's head is a branch on the forge, so a local branch no remote has under
+/// its name can't head one and costs no `gh pr list`. A branch that pushes to a
+/// URL (a fork's PR checked out with `gh pr checkout`) has no `refs/remotes/`
+/// copy, so it's still asked about. Assert the spawns, not the rendering: an
+/// unpushed branch shows no CI either way.
+#[rstest]
+fn test_pr_lookup_skips_branches_on_no_remote(mut repo: TestRepo) {
+    setup_github_repo_with_feature(&mut repo);
+    repo.add_worktree("local-only");
+    repo.add_worktree("fork-pr");
+    repo.run_git(&[
+        "config",
+        "branch.fork-pr.pushremote",
+        "https://github.com/fork-owner/test-repo.git",
+    ]);
+    repo.setup_mock_gh_with_ci_data("[]");
+
+    let call_log = tempfile::tempdir().unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.args(["list", "--full"]);
+    repo.configure_mock_commands(&mut cmd);
+    cmd.env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path());
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt list --full should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let calls = mock_calls(call_log.path(), "gh");
+    let asked = |branch: &str| {
+        calls
+            .iter()
+            .any(|call| call.starts_with(&format!("pr list --head {branch} ")))
+    };
+    assert!(
+        asked("feature"),
+        "a pushed branch is asked about. calls: {calls:#?}"
+    );
+    assert!(
+        asked("fork-pr"),
+        "a URL push remote is asked about. calls: {calls:#?}"
+    );
+    assert!(
+        !asked("local-only"),
+        "a branch on no remote is skipped. calls: {calls:#?}"
+    );
+}
+
 // =============================================================================
 // GitLab project ID edge cases (PR #846 panic prevention)
 // =============================================================================

@@ -178,17 +178,17 @@ The leftmost column marks each row by physical presence, from most present to le
 
 The CI column shows the branch's open PR/MR — [2m#3035[0m on GitHub, Gitea, and Azure DevOps, [2m!3035[0m on GitLab — colored by pipeline status, or a bare [2m#[0m when no number is available (e.g. branch workflows without a PR/MR). Green, blue, red, yellow, and gray show the pipeline state; magenta and cyan show the review state. checks object and review states give the JSON form of each value:
 
- Indicator        Value                                     Meaning                             
- ───────── ──────────────────── ─────────────────────────────────────────────────────────────── 
- [32m#[0m green   [2m"passed"[0m             All checks passed                                               
- [34m#[0m blue    [2m"running"[0m            Checks in progress                                              
- [31m#[0m red     [2m"failed"[0m             One or more checks failed                                       
- [33m#[0m yellow  [2m"conflicts"[0m          Merge conflicts with the target branch                          
- [90m#[0m gray    [2m"no-ci"[0m              No PR/MR, or no checks configured                               
- [33m⚠[0m yellow  [2m"error"[0m              CI status could not be fetched (rate limit, network, etc.)      
- [35m#[0m magenta [2m"changes_requested"[0m  A reviewer requested changes                                    
- [36m#[0m cyan    [2m"pending"[0m            A review is required (e.g. branch protection) but not yet given 
- (blank)   [2mpr[0m and [2mchecks[0m absent No upstream, or no PR/MR and no branch workflow                 
+ Indicator        Value                                               Meaning                                       
+ ───────── ──────────────────── ─────────────────────────────────────────────────────────────────────────────────── 
+ [32m#[0m green   [2m"passed"[0m             All checks passed                                                                   
+ [34m#[0m blue    [2m"running"[0m            Checks in progress                                                                  
+ [31m#[0m red     [2m"failed"[0m             One or more checks failed                                                           
+ [33m#[0m yellow  [2m"conflicts"[0m          Merge conflicts with the target branch                                              
+ [90m#[0m gray    [2m"no-ci"[0m              No PR/MR, or no checks configured                                                   
+ [33m⚠[0m yellow  [2m"error"[0m              CI status could not be fetched (rate limit, network, etc.)                          
+ [35m#[0m magenta [2m"changes_requested"[0m  A reviewer requested changes                                                        
+ [36m#[0m cyan    [2m"pending"[0m            A review is required (e.g. branch protection) but not yet given                     
+ (blank)   [2mpr[0m and [2mchecks[0m absent Branch not on any remote (as of the last fetch), or no PR/MR and no branch workflow 
 
 The two remaining review states have no indicator of their own: [2m"draft"[0m only dims the cell and [2m"approved"[0m leaves the color unchanged.
 
