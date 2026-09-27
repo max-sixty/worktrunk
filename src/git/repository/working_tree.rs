@@ -1144,13 +1144,21 @@ impl<'a> WorkingTree<'a> {
         Ok(has_initialized_submodules_from_status(&output))
     }
 
-    /// Create a safety backup of current working tree state without affecting the working tree.
+    /// Back up the index, as a squash is about to commit it, to `refs/wt-backup/<branch>`.
     ///
-    /// This creates a backup commit containing all changes (staged, unstaged, and untracked files)
-    /// and stores it in a custom ref (`refs/wt-backup/<branch>`). This creates a reflog entry
-    /// for recovery without polluting the stash list. The working tree remains unchanged.
+    /// Writes the index as a commit whose parent is `HEAD`, so one commit holds
+    /// both the branch tip being rewritten and the changes the squash sweeps in,
+    /// and records it in the ref's reflog. Unstaged and untracked files are not
+    /// captured; the squash leaves them in place. The index, the working tree and
+    /// the stash list are untouched.
     ///
-    /// Users can find safety backups with: `git reflog show refs/wt-backup/<branch>`
+    /// Plumbing throughout, so no config hides part of the index: `git stash
+    /// create` honors `submodule.<name>.ignore=all` and sees nothing in a staged
+    /// gitlink bump. The backup commit is never signed.
+    ///
+    /// To recover, `git reflog show refs/wt-backup/<branch>` lists the backups;
+    /// `git read-tree <sha>` restores that index, `git checkout <sha> -- .` also
+    /// restores the files, and `<sha>^` is the branch tip before the squash.
     ///
     /// Returns the short SHA of the backup commit.
     ///
@@ -1165,19 +1173,20 @@ impl<'a> WorkingTree<'a> {
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn create_safety_backup(&self, message: &str) -> anyhow::Result<String> {
-        // Create a backup commit using git stash create (without storing it in the stash list)
+        let tree = self.run_command(&["write-tree"])?;
         let backup_sha = self
-            .run_command(&["stash", "create", "--include-untracked"])?
+            .run_command(&[
+                "commit-tree",
+                "--no-gpg-sign",
+                tree.trim(),
+                "-p",
+                "HEAD",
+                "-m",
+                message,
+            ])
+            .context("Failed to create backup commit")?
             .trim()
             .to_string();
-
-        // Validate that we got a SHA back
-        if backup_sha.is_empty() {
-            return Err(GitError::Other {
-                message: "git stash create returned empty SHA - no changes to backup".into(),
-            }
-            .into());
-        }
 
         // Get current branch name to use in the ref name
         let stdout = self.run_command(&["rev-parse", "--symbolic-full-name", "HEAD"])?;
@@ -1728,11 +1737,8 @@ mod tests {
 
         for branch in ["a/b", "a-b"] {
             test.run_git(&["switch", "-c", branch]);
-            // Modify the tracked file so `git stash create` picks up changes.
-            std::fs::write(test.root_path().join("file.txt"), branch).unwrap();
             wt.create_safety_backup(&format!("{branch} (squash)"))
                 .unwrap();
-            test.run_git(&["checkout", "--", "file.txt"]);
             test.run_git(&["switch", "main"]);
         }
 
