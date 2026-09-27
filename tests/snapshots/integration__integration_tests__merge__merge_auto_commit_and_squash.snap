@@ -60,7 +60,7 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mSquashing 2 commits & working tree changes into a single commit [90m(2 files, [32m+2[39m[39m[90m)[39m...[39m
-[2m↳[22m [2mBackup created @ d5452aa[22m
+[2m↳[22m [2mBackup created @ 650fba7[22m
 [36m◎[39m [36mGenerating squash commit message...[39m
 [107m [0m [1mfix: update file 1 content[22m
 [32m✓[39m [32mSquashed @ [HASH][39m

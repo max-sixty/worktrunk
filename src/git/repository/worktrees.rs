@@ -15,7 +15,7 @@ use super::{
     GitError, InProgressOperation, Repository, ResolvedWorktree, Selector, WorktreeInfo,
     is_valid_branch_name, normalize_selector, resolve_input_path,
 };
-use crate::git::{CommandError, PlumbingDiff, WorktreeId, is_bare_repo_dir};
+use crate::git::{CommandError, PlumbingDiff, WorktreeId, finalize_worktrees, is_bare_repo_dir};
 use crate::path::{format_path_for_display, paths_match};
 use crate::shell_exec::Cmd;
 use crate::styling::{
@@ -75,6 +75,7 @@ impl Repository {
                     first.path = self.repo_path()?.to_path_buf();
                 }
 
+                finalize_worktrees(self, &mut worktrees);
                 Ok(worktrees)
             })
             .map(Vec::as_slice)
@@ -334,7 +335,7 @@ impl Repository {
     ///
     /// Unreadable siblings (an entry another process is deleting) are not
     /// this one, so they are passed over rather than failing the lookup.
-    fn registration_at(&self, path: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
+    pub(crate) fn registration_at(&self, path: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
         let registrations = self.git_common_dir().join("worktrees");
         std::fs::read_dir(&registrations)
             .with_context(|| format!("Failed to read {}", format_path_for_display(&registrations)))?

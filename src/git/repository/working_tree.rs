@@ -361,16 +361,20 @@ impl<'a> WorkingTree<'a> {
     /// applies env mutations in call order. Repo-level
     /// [`Repository::run_command`] keeps the inherited context on purpose.
     pub fn run_command_output(&self, args: &[&str]) -> anyhow::Result<std::process::Output> {
-        self.repo
-            .with_object_store_env(
-                Cmd::new("git")
-                    .args(args.iter().copied())
-                    .current_dir(&self.path)
-                    .context(path_to_logging_context(&self.path))
-                    .scrub_git_discovery_env(),
-            )
+        self.git_command(args)
             .run()
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))
+    }
+
+    /// The `git` command [`Self::run_command_output`] runs, unexecuted.
+    fn git_command(&self, args: &[&str]) -> Cmd {
+        self.repo.with_object_store_env(
+            Cmd::new("git")
+                .args(args.iter().copied())
+                .current_dir(&self.path)
+                .context(path_to_logging_context(&self.path))
+                .scrub_git_discovery_env(),
+        )
     }
 
     // =========================================================================
@@ -654,20 +658,60 @@ impl<'a> WorkingTree<'a> {
             Entry::Occupied(e) => Ok(e.get().clone()),
             Entry::Vacant(e) => {
                 let stdout = self.run_command(&["rev-parse", "--git-dir"])?;
-                let path = PathBuf::from(stdout.trim());
-
-                // Always canonicalize to resolve symlinks (e.g., /var -> /private/var on macOS)
-                let absolute_path = if path.is_relative() {
-                    self.path.join(&path)
-                } else {
-                    path
-                };
-                let resolved =
-                    canonicalize(&absolute_path).context("Failed to resolve git directory")?;
-
-                Ok(e.insert(resolved).clone())
+                Ok(e.insert(self.resolve_git_dir(&stdout)?).clone())
             }
         }
+    }
+
+    /// [`Self::git_dir`] for several worktrees, forking the uncached
+    /// `git rev-parse --git-dir` lookups concurrently through
+    /// [`Cmd::run_concurrently`]. Results are in input order.
+    pub fn git_dirs(worktrees: &[WorkingTree<'_>]) -> Vec<anyhow::Result<PathBuf>> {
+        const ARGS: [&str; 2] = ["rev-parse", "--git-dir"];
+        let cached: Vec<Option<PathBuf>> = worktrees
+            .iter()
+            .map(|wt| super::GIT_DIRS.get(&wt.path).map(|e| e.value().clone()))
+            .collect();
+        let cmds: Vec<Cmd> = worktrees
+            .iter()
+            .zip(&cached)
+            .filter(|(_, cached)| cached.is_none())
+            .map(|(wt, _)| wt.git_command(&ARGS))
+            .collect();
+        let mut fetched = Cmd::run_concurrently(&cmds).into_iter();
+        worktrees
+            .iter()
+            .zip(cached)
+            .map(|(wt, cached)| {
+                if let Some(git_dir) = cached {
+                    return Ok(git_dir);
+                }
+                let output = fetched
+                    .next()
+                    .context("run_concurrently returned fewer results than commands")??;
+                if !output.status.success() {
+                    return Err(CommandError::from_failed_output("git", &ARGS, &output).into());
+                }
+                let git_dir = wt.resolve_git_dir(&String::from_utf8_lossy(&output.stdout))?;
+                Ok(super::GIT_DIRS
+                    .entry(wt.path.clone())
+                    .or_insert(git_dir)
+                    .clone())
+            })
+            .collect()
+    }
+
+    /// Canonicalize `git rev-parse --git-dir` output run in this worktree.
+    fn resolve_git_dir(&self, stdout: &str) -> anyhow::Result<PathBuf> {
+        let path = PathBuf::from(stdout.trim());
+
+        // Always canonicalize to resolve symlinks (e.g., /var -> /private/var on macOS)
+        let absolute_path = if path.is_relative() {
+            self.path.join(&path)
+        } else {
+            path
+        };
+        canonicalize(&absolute_path).context("Failed to resolve git directory")
     }
 
     /// Reason recorded by `git worktree lock`, if this worktree is locked.
@@ -1100,13 +1144,21 @@ impl<'a> WorkingTree<'a> {
         Ok(has_initialized_submodules_from_status(&output))
     }
 
-    /// Create a safety backup of current working tree state without affecting the working tree.
+    /// Back up the index, as a squash is about to commit it, to `refs/wt-backup/<branch>`.
     ///
-    /// This creates a backup commit containing all changes (staged, unstaged, and untracked files)
-    /// and stores it in a custom ref (`refs/wt-backup/<branch>`). This creates a reflog entry
-    /// for recovery without polluting the stash list. The working tree remains unchanged.
+    /// Writes the index as a commit whose parent is `HEAD`, so one commit holds
+    /// both the branch tip being rewritten and the changes the squash sweeps in,
+    /// and records it in the ref's reflog. Unstaged and untracked files are not
+    /// captured; the squash leaves them in place. The index, the working tree and
+    /// the stash list are untouched.
     ///
-    /// Users can find safety backups with: `git reflog show refs/wt-backup/<branch>`
+    /// Plumbing throughout, so no config hides part of the index: `git stash
+    /// create` honors `submodule.<name>.ignore=all` and sees nothing in a staged
+    /// gitlink bump. The backup commit is never signed.
+    ///
+    /// To recover, `git reflog show refs/wt-backup/<branch>` lists the backups;
+    /// `git read-tree <sha>` restores that index, `git checkout <sha> -- .` also
+    /// restores the files, and `<sha>^` is the branch tip before the squash.
     ///
     /// Returns the short SHA of the backup commit.
     ///
@@ -1121,19 +1173,20 @@ impl<'a> WorkingTree<'a> {
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn create_safety_backup(&self, message: &str) -> anyhow::Result<String> {
-        // Create a backup commit using git stash create (without storing it in the stash list)
+        let tree = self.run_command(&["write-tree"])?;
         let backup_sha = self
-            .run_command(&["stash", "create", "--include-untracked"])?
+            .run_command(&[
+                "commit-tree",
+                "--no-gpg-sign",
+                tree.trim(),
+                "-p",
+                "HEAD",
+                "-m",
+                message,
+            ])
+            .context("Failed to create backup commit")?
             .trim()
             .to_string();
-
-        // Validate that we got a SHA back
-        if backup_sha.is_empty() {
-            return Err(GitError::Other {
-                message: "git stash create returned empty SHA - no changes to backup".into(),
-            }
-            .into());
-        }
 
         // Get current branch name to use in the ref name
         let stdout = self.run_command(&["rev-parse", "--symbolic-full-name", "HEAD"])?;
@@ -1684,11 +1737,8 @@ mod tests {
 
         for branch in ["a/b", "a-b"] {
             test.run_git(&["switch", "-c", branch]);
-            // Modify the tracked file so `git stash create` picks up changes.
-            std::fs::write(test.root_path().join("file.txt"), branch).unwrap();
             wt.create_safety_backup(&format!("{branch} (squash)"))
                 .unwrap();
-            test.run_git(&["checkout", "--", "file.txt"]);
             test.run_git(&["switch", "main"]);
         }
 

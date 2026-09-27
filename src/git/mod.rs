@@ -379,6 +379,10 @@ pub struct LocalBranch {
     /// `None` when no upstream is set, or when the configured upstream is gone
     /// (git reports `[gone]` via `%(upstream:track)`).
     pub upstream_short: Option<String>,
+    /// Where this branch pushes, from `%(push:remotename)`: a remote name, or a
+    /// URL when `branch.<name>.pushRemote` is one (`gh pr checkout` sets that
+    /// for a fork's PR). `None` when no push remote is configured.
+    pub push_remote: Option<String>,
 }
 
 /// A single remote-tracking branch entry from the branch inventory.
@@ -856,17 +860,13 @@ impl WorktreeInfo {
 // Helper functions for worktree parsing
 //
 // These live in mod.rs rather than parse.rs because they bridge multiple concerns:
-// - read_rebase_branch() uses Repository (from repository.rs) to access git internals
-// - finalize_worktree() operates on WorktreeInfo (defined here in mod.rs)
-// - Both are tightly coupled to the WorktreeInfo type definition
+// - finalize_worktrees() uses Repository (from repository.rs) to access git internals
+// - it operates on WorktreeInfo (defined here in mod.rs)
 //
 // Placing them here avoids circular dependencies and keeps them close to WorktreeInfo.
 
-/// Helper function to read rebase branch information
-fn read_rebase_branch(worktree_path: &PathBuf) -> Option<String> {
-    let repo = Repository::current().ok()?;
-    let git_dir = repo.worktree_at(worktree_path).git_dir().ok()?;
-
+/// The branch a rebase in this git dir is rewriting, from `head-name`.
+fn rebase_branch(git_dir: &Path) -> Option<String> {
     // Check both rebase-merge and rebase-apply
     for rebase_dir in ["rebase-merge", "rebase-apply"] {
         let head_name_path = git_dir.join(rebase_dir).join("head-name");
@@ -884,16 +884,43 @@ fn read_rebase_branch(worktree_path: &PathBuf) -> Option<String> {
     None
 }
 
-/// Finalize a worktree after parsing, filling in branch name from rebase state if needed.
-pub(crate) fn finalize_worktree(mut wt: WorktreeInfo) -> WorktreeInfo {
-    // If detached but no branch, check if we're rebasing
-    if wt.detached
-        && wt.branch.is_none()
-        && let Some(branch) = read_rebase_branch(&wt.path)
-    {
-        wt.branch = Some(branch);
+/// Finalize worktrees after parsing: a detached worktree mid-rebase takes the
+/// name of the branch it is rebasing.
+///
+/// `git worktree list` reports a rebasing worktree only as `detached`, so each
+/// detached worktree needs its own `git rev-parse --git-dir` to find its rebase
+/// state. [`WorkingTree::git_dirs`] runs those forks concurrently as child
+/// processes rather than on a thread pool: this runs inside the
+/// `list_worktrees` cache initializer, and a pool thread waiting there would
+/// run other pool jobs, one of which could wait on the same cache.
+///
+/// A stale (prunable) entry's rebase state is read from its registration
+/// instead. With its `.git` gone, a `rev-parse` from its path finds nothing
+/// there and walks up to whatever repository encloses the directory — for a
+/// worktree nested in the main one, the main worktree's git dir — and would
+/// name the entry after a rebase that is not its own.
+pub(crate) fn finalize_worktrees(repo: &Repository, worktrees: &mut [WorktreeInfo]) {
+    let (stale, mut detached): (Vec<&mut WorktreeInfo>, Vec<&mut WorktreeInfo>) = worktrees
+        .iter_mut()
+        .filter(|wt| wt.detached && wt.branch.is_none())
+        .partition(|wt| wt.is_prunable());
+    for wt in stale {
+        if let Ok((registration, _)) = repo.registration_at(&wt.path) {
+            wt.branch = rebase_branch(&registration);
+        }
     }
-    wt
+    if detached.is_empty() {
+        return;
+    }
+    let trees: Vec<WorkingTree<'_>> = detached
+        .iter()
+        .map(|wt| repo.worktree_at(&wt.path))
+        .collect();
+    for (wt, git_dir) in detached.iter_mut().zip(WorkingTree::git_dirs(&trees)) {
+        if let Ok(git_dir) = git_dir {
+            wt.branch = rebase_branch(&git_dir);
+        }
+    }
 }
 
 #[cfg(test)]

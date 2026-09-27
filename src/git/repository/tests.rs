@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-use super::super::{DefaultBranchName, WorktreeInfo, finalize_worktree};
+use super::super::{DefaultBranchName, WorktreeInfo, finalize_worktrees};
+use crate::git::Repository;
+use crate::testing::TestRepo;
 
 #[cfg(unix)]
 #[test]
@@ -76,7 +78,11 @@ fn test_finalize_worktree_with_branch() {
         prunable: None,
     };
 
-    let finalized = finalize_worktree(wt.clone());
+    let test = TestRepo::with_initial_commit();
+    let repo = Repository::at(test.root_path()).unwrap();
+    let mut worktrees = [wt];
+    finalize_worktrees(&repo, &mut worktrees);
+    let [finalized] = worktrees;
     assert_eq!(finalized.branch, Some("feature".to_string()));
 }
 
@@ -93,16 +99,18 @@ fn test_finalize_worktree_detached_with_branch() {
         prunable: None,
     };
 
-    let finalized = finalize_worktree(wt.clone());
+    let test = TestRepo::with_initial_commit();
+    let repo = Repository::at(test.root_path()).unwrap();
+    let mut worktrees = [wt];
+    finalize_worktrees(&repo, &mut worktrees);
+    let [finalized] = worktrees;
     assert_eq!(finalized.branch, Some("feature".to_string()));
 }
 
 #[test]
 fn test_finalize_worktree_detached_no_branch() {
-    // Detached worktree with no branch should attempt rebase detection
-    // Note: This test validates the logic flow but doesn't test actual file reading
-    // since that would require setting up git rebase state files.
-    // Actual rebase detection has been manually verified.
+    // A detached worktree at a nonexistent path fails the git-dir lookup,
+    // so the branch stays empty.
     let wt = WorktreeInfo {
         path: PathBuf::from("/nonexistent/path"),
         head: "abcd1234".to_string(),
@@ -113,10 +121,91 @@ fn test_finalize_worktree_detached_no_branch() {
         prunable: None,
     };
 
-    let finalized = finalize_worktree(wt);
-    // With a nonexistent path, rebase detection should fail gracefully
-    // and branch should remain None
+    let test = TestRepo::with_initial_commit();
+    let repo = Repository::at(test.root_path()).unwrap();
+    let mut worktrees = [wt];
+    finalize_worktrees(&repo, &mut worktrees);
+    let [finalized] = worktrees;
     assert_eq!(finalized.branch, None);
+}
+
+#[test]
+fn test_finalize_worktree_linked_mid_rebase() {
+    // A linked worktree stopped mid-rebase is detached, so `git worktree list`
+    // reports no branch; the branch comes from `rebase-merge/head-name` under
+    // its git dir.
+    let test = TestRepo::with_initial_commit();
+    let linked = test.root_path().parent().unwrap().join("linked-rebase");
+    test.run_git(&["worktree", "add", "-b", "feature", linked.to_str().unwrap()]);
+    std::fs::write(linked.join("feature.txt"), "feature\n").unwrap();
+    test.run_git_in(&linked, &["add", "feature.txt"]);
+    test.run_git_in(&linked, &["commit", "-m", "Feature"]);
+    // `--exec` stops the rebase after replaying the commit, leaving it open.
+    let _ = test
+        .git_command()
+        .current_dir(&linked)
+        .args(["rebase", "--exec", "false", "HEAD~1"])
+        .run();
+
+    let repo = Repository::at(test.root_path()).unwrap();
+    let linked = dunce::canonicalize(&linked).unwrap();
+    let wt = repo
+        .list_worktrees()
+        .unwrap()
+        .iter()
+        .find(|wt| dunce::canonicalize(&wt.path).unwrap() == linked)
+        .unwrap()
+        .clone();
+    assert!(wt.detached, "precondition: the rebase detaches HEAD");
+    assert_eq!(wt.branch.as_deref(), Some("feature"));
+}
+
+#[test]
+fn test_finalize_worktree_stale_reads_its_own_rebase() {
+    // A stale entry's rebase state is in its registration. A lookup from its
+    // path would walk up past the missing `.git`: `nested` sits inside the main
+    // worktree, which is itself rebasing `main-work`, so that lookup would
+    // name `nested` after a rebase that is not its own — and `wt step prune`
+    // would then judge the entry by `main-work`, not by its own detached HEAD.
+    let test = TestRepo::with_initial_commit();
+    let root = test.root_path().to_path_buf();
+    let rebase_stopped = |dir: &std::path::Path, branch: &str| {
+        test.run_git_in(dir, &["switch", "-c", branch]);
+        std::fs::write(dir.join(format!("{branch}.txt")), "work\n").unwrap();
+        test.run_git_in(dir, &["add", "."]);
+        test.run_git_in(dir, &["commit", "-m", branch]);
+        // `--exec` stops the rebase after replaying the commit, leaving it open.
+        let _ = test
+            .git_command()
+            .current_dir(dir)
+            .args(["rebase", "--exec", "false", "HEAD~1"])
+            .run();
+    };
+
+    let nested = root.join(".worktrees").join("nested");
+    test.run_git(&["worktree", "add", "--detach", nested.to_str().unwrap()]);
+    let rebasing = root.parent().unwrap().join("stale-rebase");
+    test.run_git(&["worktree", "add", "--detach", rebasing.to_str().unwrap()]);
+    rebase_stopped(&rebasing, "feature");
+    rebase_stopped(&root, "main-work");
+    std::fs::remove_file(nested.join(".git")).unwrap();
+    std::fs::remove_file(rebasing.join(".git")).unwrap();
+
+    let repo = Repository::at(&root).unwrap();
+    let worktrees = repo.list_worktrees().unwrap();
+    let find = |path: &std::path::Path| {
+        let path = dunce::canonicalize(path).unwrap();
+        worktrees
+            .iter()
+            .find(|wt| dunce::canonicalize(&wt.path).unwrap() == path)
+            .unwrap()
+    };
+    let (main, nested, rebasing) = (find(&root), find(&nested), find(&rebasing));
+    assert_eq!(main.branch.as_deref(), Some("main-work"));
+    assert!(nested.is_prunable() && rebasing.is_prunable());
+    assert!(nested.detached && rebasing.detached);
+    assert_eq!(nested.branch, None);
+    assert_eq!(rebasing.branch.as_deref(), Some("feature"));
 }
 
 #[test]
@@ -703,6 +792,92 @@ fn is_builtin_fsmonitor_enabled_variants() {
         );
     }
     assert!(!repo_with_fsmonitor(None).is_builtin_fsmonitor_enabled());
+}
+
+/// A daemon answering on the worktree's IPC socket means no `git
+/// fsmonitor--daemon start` fork; with no socket to reach, the fork runs.
+/// The listener stands in for a running daemon, so no real daemon starts.
+#[cfg(all(unix, feature = "cli"))]
+#[test]
+fn start_fsmonitor_daemon_skips_fork_when_daemon_answers() {
+    use std::os::unix::net::UnixListener;
+    use std::sync::{Arc, Mutex};
+
+    use tracing::field::{Field, Visit};
+    use tracing_subscriber::Registry;
+    use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
+
+    use crate::git::Repository;
+    use crate::testing::{TestRepo, test_tempdir};
+    use crate::trace::WT_TRACE_TARGET;
+
+    /// Collects the `cmd` of every traced subprocess.
+    struct Commands(Arc<Mutex<Vec<String>>>);
+    struct CmdField(Option<String>);
+    impl Visit for CmdField {
+        fn record_str(&mut self, field: &Field, value: &str) {
+            if field.name() == "cmd" {
+                self.0 = Some(value.to_string());
+            }
+        }
+        fn record_debug(&mut self, _: &Field, _: &dyn std::fmt::Debug) {}
+    }
+    impl<S: tracing::Subscriber> Layer<S> for Commands {
+        fn on_event(&self, event: &tracing::Event<'_>, _: Context<'_, S>) {
+            if event.metadata().target() != WT_TRACE_TARGET {
+                return;
+            }
+            let mut cmd = CmdField(None);
+            event.record(&mut cmd);
+            self.0.lock().unwrap().extend(cmd.0);
+        }
+    }
+    // While exactly one dispatcher is registered, tracing-core resolves a
+    // callsite first hit on *another* thread against that thread's default
+    // (no subscriber here) and caches `Interest::never` process-wide. A
+    // parallel test's git command reaching the shared `cmd_completed`
+    // callsite first would then silence the fork event below. A second live
+    // dispatcher makes tracing-core resolve against every registered
+    // dispatcher instead.
+    let _pin = tracing::Dispatch::new(Registry::default());
+    let traced_starts = |start: &dyn Fn()| {
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = Registry::default().with(Commands(commands.clone()));
+        tracing::subscriber::with_default(subscriber, start);
+        let commands = commands.lock().unwrap();
+        commands
+            .iter()
+            .filter(|cmd| *cmd == "git fsmonitor--daemon start")
+            .count()
+    };
+
+    let test = TestRepo::with_initial_commit();
+    let repo = Repository::at(test.root_path()).unwrap();
+    let socket = repo
+        .worktree_at(test.root_path())
+        .git_dir()
+        .unwrap()
+        .join(super::super::fsmonitor::IPC_SOCKET_NAME);
+    let listener = UnixListener::bind(&socket).unwrap_or_else(|e| {
+        panic!(
+            "bind {} ({} bytes; sun_path holds 103 on macOS): {e}",
+            socket.display(),
+            socket.as_os_str().len()
+        )
+    });
+    listener.set_nonblocking(true).unwrap();
+
+    let starts = traced_starts(&|| repo.start_fsmonitor_daemon_at(test.root_path()));
+    assert_eq!(starts, 0, "a daemon answered, so nothing should fork");
+    listener
+        .accept()
+        .expect("the probe should have connected to the daemon socket");
+
+    // A directory outside any repository has no git dir to probe, so the
+    // start forks (and git exits "not a git repository").
+    let outside = test_tempdir();
+    let starts = traced_starts(&|| repo.start_fsmonitor_daemon_at(outside.path()));
+    assert_eq!(starts, 1, "nothing answered, so the start should fork");
 }
 
 #[test]

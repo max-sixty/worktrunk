@@ -103,6 +103,26 @@ impl Repository {
         first_remote.ok_or_else(|| anyhow::anyhow!("No remotes configured"))
     }
 
+    /// Whether `remote`'s fetch refspecs record `branch` under `refs/remotes/`.
+    ///
+    /// A push updates the remote-tracking ref only where these refspecs map
+    /// one, so this decides whether a missing `refs/remotes/<remote>/<branch>`
+    /// means the branch isn't on `remote`. A normal clone maps every branch;
+    /// one made with `--single-branch` or `--depth` maps only the branch it
+    /// cloned. A URL, or a remote with no fetch refspecs, maps nothing.
+    ///
+    /// Resolved from the bulk config map — O(1) once populated.
+    pub fn fetch_tracks_branch(&self, remote: &str, branch: &str) -> bool {
+        let key = super::canonical_config_key(&format!("remote.{remote}.fetch"));
+        let Ok(config) = self.all_config() else {
+            return false;
+        };
+        let guard = config.read().unwrap();
+        guard
+            .get(&key)
+            .is_some_and(|refspecs| refspecs_track_ref(refspecs, &format!("refs/heads/{branch}")))
+    }
+
     /// Get the URL for a remote, if configured.
     ///
     /// Returns the raw value from `.git/config` without applying `url.insteadOf`
@@ -443,9 +463,69 @@ impl Repository {
     }
 }
 
+/// Whether fetch `refspecs` map `refname` to a remote-tracking ref: some
+/// positive refspec's source matches it and its destination is under
+/// `refs/remotes/`, and no negative (`^`) refspec matches it.
+fn refspecs_track_ref(refspecs: &[String], refname: &str) -> bool {
+    let mut tracked = false;
+    for spec in refspecs {
+        if let Some(excluded) = spec.strip_prefix('^') {
+            if refspec_side_matches(excluded, refname) {
+                return false;
+            }
+            continue;
+        }
+        let spec = spec.strip_prefix('+').unwrap_or(spec);
+        if let Some((src, dst)) = spec.split_once(':')
+            && dst.starts_with("refs/remotes/")
+            && refspec_side_matches(src, refname)
+        {
+            tracked = true;
+        }
+    }
+    tracked
+}
+
+/// Match `refname` against one side of a refspec, where a single `*` matches
+/// any run of characters, `/` included.
+fn refspec_side_matches(pattern: &str, refname: &str) -> bool {
+    match pattern.split_once('*') {
+        Some((prefix, suffix)) => {
+            refname.len() >= prefix.len() + suffix.len()
+                && refname.starts_with(prefix)
+                && refname.ends_with(suffix)
+        }
+        None => pattern == refname,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::testing::TestRepo;
+
+    #[test]
+    fn refspecs_track_ref_follows_the_fetch_mapping() {
+        let track = |specs: &[&str], refname: &str| {
+            let specs: Vec<String> = specs.iter().map(|s| s.to_string()).collect();
+            super::refspecs_track_ref(&specs, refname)
+        };
+        let full = "+refs/heads/*:refs/remotes/origin/*";
+        assert!(track(&[full], "refs/heads/feature"));
+        assert!(track(&[full], "refs/heads/nested/feature"));
+        // `--single-branch` / `--depth` clone: only the cloned branch.
+        let single = "+refs/heads/main:refs/remotes/origin/main";
+        assert!(track(&[single], "refs/heads/main"));
+        assert!(!track(&[single], "refs/heads/feature"));
+        // A mapping outside `refs/remotes/` records no remote-tracking ref.
+        assert!(!track(
+            &["+refs/heads/*:refs/heads/*"],
+            "refs/heads/feature"
+        ));
+        // A negative refspec excludes what a positive one would map.
+        assert!(!track(&[full, "^refs/heads/wip/*"], "refs/heads/wip/x"));
+        assert!(track(&[full, "^refs/heads/wip/*"], "refs/heads/feature"));
+        assert!(!track(&[], "refs/heads/feature"));
+    }
 
     #[test]
     fn test_find_remote_for_azure_dev_azure() {

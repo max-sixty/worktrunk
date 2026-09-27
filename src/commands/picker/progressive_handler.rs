@@ -975,10 +975,9 @@ mod tests {
         // still in flight land, while `awaiting` is a key none of them match.
         // `on_skeleton` spawns a `LOCAL_GIT_MODES` precompute for this row,
         // which ends at `PreviewOrchestrator::fill` → `notify_filled` and pokes
-        // the same unlabelled `Event::RunPreview` this oracle counts. (The
-        // `comments` fetch is the other producer in production; on this
-        // no-forge `TestRepo` it fills synchronously through `fill_external`,
-        // so it is never in flight here.) Left in flight, a fill for the one
+        // the same unlabelled `Event::RunPreview` this oracle counts, as does
+        // the `comments` fetch the first live CI report spawns. Left in
+        // flight, a fill for the one
         // precompute key a later step also awaits (`WorkingTree`) pokes
         // legitimately but lands after that step's drain — charged to the *next*
         // step, which is the flake in #3725. Quiescing before each
@@ -1071,9 +1070,9 @@ mod tests {
     /// live CI fetch corrects the PR number (a stale prime, a reused branch), the
     /// now-wrong cached thread is dropped and re-fetched, so the `comments` tab
     /// can't keep serving the old PR's thread under the new number. The
-    /// `make_handler` repo has no forge, so the fetch caches a terminal pane
-    /// synchronously; the test watches the cache key being invalidated and
-    /// repopulated across the number change.
+    /// `make_handler` repo has no forge, so the fetch caches a terminal pane;
+    /// the test watches the cache key being invalidated and repopulated across
+    /// the number change.
     #[test]
     fn comments_refetch_on_pr_number_change() {
         use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef, PrStatus};
@@ -1826,16 +1825,18 @@ mod tests {
         let _ = rx.recv();
         let mut item = ListItem::new_branch("abc".into(), "b".into());
         let row_id = PickerRowId::local(&item);
-        // Record PR #5 in this handler's dedup slot (the fetch resolves
-        // synchronously to the "unsupported forge" pane — the test repo has
-        // no forge remote — only the recorded number matters here).
+        // Record PR #5 in this handler's dedup slot (the fetch resolves to
+        // the "unsupported forge" pane — the test repo has no forge remote —
+        // only the recorded number matters here).
         item.pr_status = status(5);
         handler.maybe_spawn_comments(0, &item);
 
         // A refresh supersedes this handler; the live spawn fetches the thread.
         handler.orchestrator.refresh(test.repo.clone());
         let key = (row_id.clone(), PreviewMode::Comments);
-        handler.orchestrator.fill_external(
+        PreviewOrchestrator::fill(
+            &handler.orchestrator.cache,
+            handler.orchestrator.notifier(),
             &handler.orchestrator.generation(),
             key.clone(),
             "live thread".to_string(),

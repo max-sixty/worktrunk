@@ -252,7 +252,8 @@ pub(super) struct RepoCache {
     pub(super) default_branch: OnceCell<Option<String>>,
     /// Upstream-aware comparison base for the diff/summary preview panes —
     /// [`integration::IntegrationTargets::primary`], resolved once. Repo-wide
-    /// like `default_branch`; captures a [`RefSnapshot`] on first access via
+    /// like `default_branch`; builds a [`RefSnapshot`] from the branch
+    /// inventories on first access via
     /// [`Repository::branch_diff_spec`]. `None` when no default branch resolves.
     pub(super) comparison_base: OnceCell<Option<integration::ComparisonBase>>,
     /// Project identifier derived from remote URL
@@ -307,14 +308,6 @@ pub(super) struct RepoCache {
     /// Separate from `all_config` because `git remote get-url` applies
     /// `url.insteadOf` rewrites that aren't visible in raw config.
     pub(super) effective_remote_urls: DashMap<String, Option<String>>,
-    /// Per-branch effective push URL: branch_name -> push URL (or None if
-    /// no push remote is configured). One `for-each-ref %(push:remotename)`
-    /// per branch, then `effective_remote_url` for the resolved remote name.
-    /// `wt list`'s CI-status detection calls `push_remote_url` from both the
-    /// PR-based path and the branch fallback (via `branch_remote_url`), so
-    /// the same branch is queried twice on the no-PR path — this cache
-    /// collapses that to one subprocess.
-    pub(super) push_remote_urls: DashMap<String, Option<String>>,
 
     /// Local branch inventory: one `git for-each-ref refs/heads/` scan, cached
     /// for the lifetime of the repository. Entries are sorted by most recent
@@ -323,8 +316,9 @@ pub(super) struct RepoCache {
     /// [`Repository::local_branches`].
     ///
     /// **The `commit_sha` field on each entry is a snapshot at scan time.**
-    /// Code that needs a current SHA must resolve through a [`RefSnapshot`]
-    /// captured at the moment the read happens — not through this inventory.
+    /// Code that needs a current SHA must resolve through
+    /// [`Repository::capture_refs`] at the moment the read happens — not
+    /// through this inventory or a snapshot built from it.
     /// Everything else the inventory holds goes stale the same way once the
     /// command runs a hook; [`Repository::local_branches`] owns that contract.
     pub(super) local_branches: OnceCell<branches::LocalBranchInventory>,
@@ -1841,12 +1835,29 @@ impl Repository {
     /// Idempotent — if the daemon is already running, this is a no-op.
     /// Used to avoid auto-start races when running many parallel git commands.
     ///
+    /// A running daemon is detected in-process first, the way `git
+    /// fsmonitor--daemon start` itself checks before refusing with "already
+    /// running": connect to `<git-dir>/fsmonitor--daemon.ipc` and close. That
+    /// skips a ~20ms fork per worktree in the steady state, where every daemon
+    /// is already up. Any failure to connect (no daemon, stale socket, a path
+    /// too long for `sun_path`, an unresolvable git dir) falls through to the
+    /// fork, which starts the daemon or reports it running.
+    ///
     /// Uses `Command::status()` with null stdio instead of `Cmd::run()` to avoid
     /// pipe inheritance: the daemon process (`git fsmonitor--daemon run --detach`)
     /// inherits pipe file descriptors from its parent, keeping them open
     /// indefinitely. `read_to_end()` in `Command::output()` then blocks forever
     /// waiting for EOF that never comes.
     pub fn start_fsmonitor_daemon_at(&self, path: &Path) {
+        #[cfg(unix)]
+        if let Ok(git_dir) = self.worktree_at(path).git_dir()
+            && std::os::unix::net::UnixStream::connect(
+                git_dir.join(super::fsmonitor::IPC_SOCKET_NAME),
+            )
+            .is_ok()
+        {
+            return;
+        }
         let context = path_to_logging_context(path);
         let cmd_str = "git fsmonitor--daemon start";
         tracing::debug!(cmd = cmd_str, context = %context, "$ {cmd_str} [{context}]");

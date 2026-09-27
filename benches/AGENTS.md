@@ -4,7 +4,7 @@ Bench groups and examples are documented at the top of their Rust files. Criteri
 
 ## Fixtures and benches
 
-Generated fixtures vary linked worktrees, branchless branches, and remote-tracking refs. Imported fixtures copy the pinned corpus in benches/imported-fixture. Prune candidates and backdrop are overlays on either base, not new fixture identities. wt-perf setup --help lists recipes. Each benchmark uses FixtureRepo for lifecycle and wt_command for subprocess isolation.
+Generated fixtures vary linked worktrees, branchless branches, remote-tracking refs, and how many linked worktrees are on a detached HEAD. Imported fixtures copy the pinned corpus in benches/imported-fixture. Prune candidates and backdrop are overlays on either base, not new fixture identities. wt-perf setup --help lists recipes. Each benchmark uses FixtureRepo for lifecycle and wt_command for subprocess isolation.
 
 ## Cache handling
 
