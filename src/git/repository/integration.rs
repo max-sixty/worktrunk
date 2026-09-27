@@ -616,9 +616,10 @@ impl Repository {
     /// Selects the base via the shared [`select_comparison_base`] rule
     /// ([`IntegrationTargets::primary`] else the raw local default), so the
     /// preview panes and the `wt list` columns can't pick different bases.
-    /// Captures a [`RefSnapshot`] on first call unless already primed via
-    /// [`Self::prime_comparison_base`]; safe in the read-only preview contexts
-    /// that use it (wt doesn't move refs there). Fully local — no network.
+    /// Builds a [`RefSnapshot`] from the branch inventories on first call
+    /// unless already primed via [`Self::prime_comparison_base`]; safe in the
+    /// read-only preview contexts that use it (wt doesn't move refs there).
+    /// Fully local — no network.
     fn comparison_base(&self) -> Option<&ComparisonBase> {
         self.cache
             .comparison_base
@@ -641,12 +642,12 @@ impl Repository {
     fn resolve_comparison_base(&self) -> Option<ComparisonBase> {
         // No default branch → no comparison base; skip the ref scan entirely.
         self.default_branch()?;
-        let snapshot = self.capture_refs().ok()?;
+        let snapshot = self.inventory_snapshot(None).ok()?;
         self.comparison_base_from(&snapshot)
     }
 
     /// Resolve the comparison base from a captured snapshot. The shared core of
-    /// the lazy [`Self::resolve_comparison_base`] (captures its own snapshot)
+    /// the lazy [`Self::resolve_comparison_base`] (builds its own snapshot)
     /// and [`Self::prime_comparison_base`] (reuses the collector's), so both
     /// select the base by the same [`select_comparison_base`] rule.
     fn comparison_base_from(&self, snapshot: &RefSnapshot) -> Option<ComparisonBase> {
