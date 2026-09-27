@@ -1746,10 +1746,14 @@ impl Cmd {
     ///
     /// Every child is spawned before any is waited on, so a batch of short
     /// commands costs about one command's latency without a thread per
-    /// command. The caller waits only on its own children, which makes this
-    /// safe where a thread pool is not: inside a cache initializer that pool
-    /// jobs also read. A rayon thread that waits runs other pool jobs, and a
-    /// job that reads the cache being initialized then deadlocks.
+    /// command. Outputs are read one child at a time, in order, so a child
+    /// that writes more than a pipe buffer blocks until its turn: use this
+    /// for commands with small output.
+    ///
+    /// The caller waits only on its own children, which makes this safe where
+    /// a thread pool is not: inside a cache initializer that pool jobs also
+    /// read. A rayon thread that waits runs other pool jobs, and a job that
+    /// reads the cache being initialized then deadlocks.
     ///
     /// On a background thread the batch takes one semaphore permit, as
     /// [`Self::pipe_into`] does: one permit per child could deadlock two
