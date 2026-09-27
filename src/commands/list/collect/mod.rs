@@ -1057,9 +1057,9 @@ pub fn collect(
     // if it's been deleted externally. When `show_branches` is off but a
     // persisted default is set and isn't a worktree branch, check the local
     // branch inventory anyway (scanned above) so the warning fires on plain
-    // `wt list` too — otherwise downstream
-    // tasks resolve against the stale ref and emit a cascade of "ambiguous
-    // argument" noise instead of one clean warning.
+    // `wt list` too — otherwise downstream tasks resolve against the stale
+    // ref and emit a cascade of "ambiguous argument" noise instead of one
+    // clean warning.
     let worktree_branches = worktree_branch_set(worktrees);
     let needs_stale_check = default_branch
         .as_deref()
@@ -1656,11 +1656,12 @@ pub fn collect(
         });
 
         // Build the ref snapshot from the branch inventories (J1 scanned the
-        // locals, and the remotes when rows show them), plus — when default_branch is known and the per-base
-        // ahead-behind cache doesn't already cover the branches — one
-        // `for-each-ref %(ahead-behind:BASE)` walk (scoped to the cold
-        // subset; warm runs do neither). Tasks consume the snapshot by
-        // SHA, dodging ref→SHA cache staleness.
+        // locals, and the remotes when rows show them), so tasks resolve
+        // refs to the same SHAs the rows were built from. When
+        // default_branch is known and the per-base ahead-behind cache
+        // doesn't already cover the branches, add one `for-each-ref
+        // %(ahead-behind:BASE)` walk (scoped to the cold subset; warm runs
+        // do neither).
         //
         // TODO(ahead-behind-pool): the `%(ahead-behind)` walk that runs
         // here on a cold cache is serial — it blocks this scope, and the
@@ -1695,22 +1696,20 @@ pub fn collect(
         // repo with many stale tracking branches would block the worker
         // pool on a serial batch for rows nobody sees.
         s.spawn(|_| {
-            let (Ok(all_locals), Ok(remotes)) = (repo.local_branches(), repo.remote_branches())
-            else {
-                return;
-            };
-            let filtered_locals: Vec<LocalBranch>;
-            let candidates: &[LocalBranch] = if show_branches {
-                all_locals
-            } else {
-                filtered_locals = all_locals
-                    .iter()
-                    .filter(|b| worktree_branches.contains(b.name.as_str()))
-                    .cloned()
-                    .collect();
-                &filtered_locals
-            };
-            repo.prime_upstream_ahead_behind_cache(candidates, remotes);
+            if let (Ok(all_locals), Ok(remotes)) = (repo.local_branches(), repo.remote_branches()) {
+                let filtered_locals: Vec<LocalBranch>;
+                let candidates: &[LocalBranch] = if show_branches {
+                    all_locals
+                } else {
+                    filtered_locals = all_locals
+                        .iter()
+                        .filter(|b| worktree_branches.contains(b.name.as_str()))
+                        .cloned()
+                        .collect();
+                    &filtered_locals
+                };
+                repo.prime_upstream_ahead_behind_cache(candidates, remotes);
+            }
         });
 
         // Seed root/git-dir for every worktree from the list we already

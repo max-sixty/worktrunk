@@ -252,7 +252,8 @@ pub(super) struct RepoCache {
     pub(super) default_branch: OnceCell<Option<String>>,
     /// Upstream-aware comparison base for the diff/summary preview panes —
     /// [`integration::IntegrationTargets::primary`], resolved once. Repo-wide
-    /// like `default_branch`; captures a [`RefSnapshot`] on first access via
+    /// like `default_branch`; builds a [`RefSnapshot`] from the branch
+    /// inventories on first access via
     /// [`Repository::branch_diff_spec`]. `None` when no default branch resolves.
     pub(super) comparison_base: OnceCell<Option<integration::ComparisonBase>>,
     /// Project identifier derived from remote URL
@@ -315,8 +316,9 @@ pub(super) struct RepoCache {
     /// [`Repository::local_branches`].
     ///
     /// **The `commit_sha` field on each entry is a snapshot at scan time.**
-    /// Code that needs a current SHA must resolve through a [`RefSnapshot`]
-    /// captured at the moment the read happens — not through this inventory.
+    /// Code that needs a current SHA must resolve through
+    /// [`Repository::capture_refs`] at the moment the read happens — not
+    /// through this inventory or a snapshot built from it.
     /// Everything else the inventory holds goes stale the same way once the
     /// command runs a hook; [`Repository::local_branches`] owns that contract.
     pub(super) local_branches: OnceCell<branches::LocalBranchInventory>,

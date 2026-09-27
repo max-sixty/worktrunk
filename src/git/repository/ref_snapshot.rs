@@ -1,12 +1,14 @@
 //! `RefSnapshot` — a captured, immutable view of repository ref state.
 //!
 //! A `RefSnapshot` is an explicit, named, point-in-time value: callers
-//! capture it once and thread it through. Unlike an ambient ref-name → SHA
-//! cache, it cannot go stale invisibly when wt updates a ref mid-command —
-//! `wt merge`'s `git update-ref refs/heads/main` is the canonical example.
-//! After a ref-mutating write, the caller captures a new snapshot and uses
-//! it for downstream reads — the old snapshot remains valid as a pre-write
-//! view, but cannot masquerade as current state.
+//! capture it once and thread it through. Which point in time depends on
+//! the constructor. [`Repository::capture_refs`] scans at the call, so after
+//! a ref-mutating write (`wt merge`'s `git update-ref refs/heads/main` is the
+//! canonical example) the caller captures a new snapshot for downstream
+//! reads — the old one remains valid as a pre-write view, but cannot
+//! masquerade as current state. [`Repository::inventory_snapshot`] is as of
+//! the repository's cached branch inventories, for read-only commands whose
+//! rows come from those same inventories.
 //!
 //! # Construction
 //!
@@ -26,11 +28,9 @@
 //!
 //! # Lifetime
 //!
-//! The snapshot is a value, not a cache field. There is no `OnceCell`,
-//! no `Arc<DashMap>`, no shared mutable state. Two `capture_refs()`
-//! calls within one command produce two distinct snapshots; neither
-//! invalidates the other. This is intentional — it removes the
-//! "invisible refresh" surface that ambient caching introduces.
+//! The snapshot is a value, not a cache field: nothing refreshes it after
+//! construction. Two `capture_refs()` calls within one command produce two
+//! distinct snapshots; neither invalidates the other.
 
 use std::collections::HashMap;
 
@@ -186,7 +186,7 @@ impl Repository {
         let full_ref = |b: &LocalBranch| format!("refs/heads/{}", b.name);
 
         // The cache is SHA-keyed; we need base's SHA, and it's a branch —
-        // so it's among the refs we just scanned. If somehow it isn't, the
+        // so it's among the inventoried refs. If somehow it isn't, the
         // cache is unreachable for this run: run the batch against the
         // refname (git resolves it), key the snapshot map by refname, and
         // cache nothing.
