@@ -5517,90 +5517,40 @@ fn test_plugin_layout_is_consolidated() {
         })
         .collect();
 
-    // Each hook command runs one script under hooks/ by a literal
-    // `$CLAUDE_PLUGIN_ROOT` path, with literal arguments. Anthropic's plugin
-    // directory refuses a hook command whose path the shell computes (another
-    // variable, a command substitution) or that carries an inline program
-    // (`bash -c '…'`), so the logic lives in the scripts. The root stays
-    // unbraced: Claude hands each command to the user's login shell before
-    // `bash` launches, and fish rejects `${CLAUDE_PLUGIN_ROOT}` ("Variables
-    // cannot be bracketed").
-    let script = |name: &str| format!(r#"bash "$CLAUDE_PLUGIN_ROOT/hooks/{name}""#);
-    let marker = |args: &str| format!("{} {args}", script("marker.sh"));
-    let mut expected = vec![
-        ("Notification", marker("set 💬")),
-        ("PermissionRequest", script("permission-request.sh")),
-        ("PreToolUse", marker("set 💬")),
-        ("SessionEnd", marker("clear")),
-        ("Stop", marker("set 💬")),
-        ("UserPromptSubmit", marker("set 🤖")),
-        ("WorktreeCreate", script("worktree-create.sh")),
-        ("WorktreeRemove", script("worktree-remove.sh")),
-    ];
-    expected.sort_unstable();
-    let mut actual: Vec<(&str, String)> = commands
-        .iter()
-        .map(|(event, command)| (*event, command.to_string()))
-        .collect();
-    actual.sort_unstable();
-    assert_eq!(actual, expected, "hooks.json commands drifted");
-
-    // Markers resolve against the session's launch directory, or a shell `cd`
-    // during a turn retargets them to another repository (#3921).
-    let marker_sh = read("plugins/worktrunk/hooks/marker.sh");
-    assert!(
-        marker_sh.contains(r#"-C "$CLAUDE_PROJECT_DIR""#),
-        "marker.sh must pin the directory it resolves against (#3921):\n{marker_sh}"
+    // Every hook runs the same literal command: `wt config plugins claude
+    // hook` reads Claude Code's payload and dispatches on the event, so the
+    // behavior lives in `wt` and is tested in `claude_hook.rs`. Anthropic's
+    // plugin directory refuses a hook command whose path the shell computes or
+    // that carries an inline program. The root stays unbraced: Claude hands
+    // each command to the user's login shell before `bash` launches, and fish
+    // rejects `${CLAUDE_PLUGIN_ROOT}` ("Variables cannot be bracketed"). The
+    // marker events end in `|| true`: a `wt` too old to have `hook` exits 2,
+    // which Claude Code reads as blocking the prompt, tool call, permission,
+    // or stop. The worktree events must fail when `wt` does.
+    const HOOK: &str = r#"bash "$CLAUDE_PLUGIN_ROOT/hooks/wt.sh" config plugins claude hook"#;
+    let mut events: Vec<&str> = commands.iter().map(|(event, _)| *event).collect();
+    events.sort_unstable();
+    assert_eq!(
+        events,
+        [
+            "Notification",
+            "PermissionRequest",
+            "PreToolUse",
+            "SessionEnd",
+            "Stop",
+            "UserPromptSubmit",
+            "WorktreeCreate",
+            "WorktreeRemove",
+        ]
     );
-    // A marker failure must never surface as a hook error, and a permission
-    // request the approval hook declines still marks the session waiting.
-    assert!(
-        marker_sh.trim_end().ends_with("|| true"),
-        "marker.sh must swallow wt failures:\n{marker_sh}"
-    );
-    let permission_request = read("plugins/worktrunk/hooks/permission-request.sh");
-    assert!(
-        permission_request.contains("approve-enter-worktree ||")
-            && permission_request.contains("marker.sh\" set 💬"),
-        "permission-request.sh must fall back to the 💬 marker:\n{permission_request}"
-    );
-
-    // The WorktreeRemove hook must not force-delete unmerged branches (#2939).
-    // Claude Code auto-fires WorktreeRemove on session exit for any worktree
-    // with a clean working tree, so `-D` / `--force-delete` silently discards
-    // committed-but-unpushed work — the only recovery path is `git fsck`.
-    //
-    // It must also resolve against the worktree path Claude Code hands it, not
-    // the session's project dir. The `claude agents` view spans every repo
-    // with a background session and is often launched from a parent directory
-    // that merely contains them, so `CLAUDE_PROJECT_DIR` names the wrong repo
-    // or none at all, `wt remove <path>` dies with `fatal: not a git
-    // repository`, and the session row is left undeletable (#3754). `-C "$p"`
-    // is layout-independent: a linked worktree carries a `.git` file pointing
-    // at its owning repository.
-    let worktree_remove = read("plugins/worktrunk/hooks/worktree-remove.sh");
-    assert!(
-        !worktree_remove.contains(" -D") && !worktree_remove.contains("--force-delete"),
-        "worktree-remove.sh must not pass -D / --force-delete (#2939):\n{worktree_remove}"
-    );
-    assert!(
-        worktree_remove.contains("-C \"$p\"")
-            && !worktree_remove.contains("$CLAUDE_PROJECT_DIR")
-            && !worktree_remove.contains("${CLAUDE_PROJECT_DIR"),
-        "worktree-remove.sh must resolve via -C \"$p\", never CLAUDE_PROJECT_DIR (#3754):\n\
-         {worktree_remove}"
-    );
-
-    // The WorktreeCreate hook pipes `wt … --format=json | jq -er .path`. Without
-    // `set -o pipefail` the pipeline's exit status is jq's, and `jq -er .path`
-    // on the empty stdout of a failed `wt` exits 0 on jq 1.6 — so a `wt` failure
-    // is swallowed and Claude Code reports the misleading "hook succeeded but
-    // returned no worktree path" instead of wt's real error (#3545).
-    let worktree_create = read("plugins/worktrunk/hooks/worktree-create.sh");
-    assert!(
-        worktree_create.contains("set -o pipefail"),
-        "worktree-create.sh must set pipefail (#3545):\n{worktree_create}"
-    );
+    for (event, command) in &commands {
+        let expected = if event.starts_with("Worktree") {
+            HOOK.to_string()
+        } else {
+            format!("{HOOK} || true")
+        };
+        assert_eq!(*command, expected, "{event} hook command drifted");
+    }
     // The product description must not drift across tools. Byte-identical is
     // schema-impossible (Codex omits the activity clause, Gemini says
     // "extension"), but every manifest shares the canonical opening sentence.
@@ -6216,7 +6166,7 @@ fn test_claude_hook_commands_parse_in_all_shells() {
 /// directions are pinned below — a skeleton is a no-op, a clean worktree is
 /// still removed, a dirty one still fails — so neither a blanket `exit 0` nor a
 /// swallowed `wt remove` failure can satisfy this test. It runs the real command
-/// out of `hooks.json`, which parses its stdin with `jq`.
+/// out of `hooks.json`.
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 #[rstest]
 fn test_worktree_remove_hook_skips_path_holding_no_worktree(mut repo: TestRepo) {
@@ -6241,9 +6191,8 @@ fn test_worktree_remove_hook_skips_path_holding_no_worktree(mut repo: TestRepo) 
 
     // Fire the hook exactly as Claude Code does: the recorded path on stdin, the
     // plugin root in the environment. No `CLAUDE_PROJECT_DIR` — the hook
-    // resolves the repository from the worktree path via `-C "$p"` and must
-    // never consult a project dir (#3754), so setting one here would be dead
-    // setup.
+    // resolves the repository from the worktree path and must never consult a
+    // project dir (#3754), so setting one here would be dead setup.
     let run_hook = |worktree_path: &Path| -> Output {
         let mut cmd = std::process::Command::new("bash");
         repo.configure_wt_cmd(&mut cmd);
@@ -6257,7 +6206,10 @@ fn test_worktree_remove_hook_skips_path_holding_no_worktree(mut repo: TestRepo) 
             .stderr(Stdio::piped())
             .spawn()
             .expect("failed to spawn bash");
-        let payload = serde_json::json!({ "worktree_path": worktree_path.to_str().unwrap() });
+        let payload = serde_json::json!({
+            "hook_event_name": "WorktreeRemove",
+            "worktree_path": worktree_path.to_str().unwrap(),
+        });
         child
             .stdin
             .take()

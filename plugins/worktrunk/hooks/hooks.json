@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/marker.sh\" set 🤖"
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config plugins claude hook || true"
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/marker.sh\" set 💬"
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config plugins claude hook || true"
           }
         ]
       }
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/marker.sh\" set 💬"
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config plugins claude hook || true"
           }
         ]
       }
@@ -38,7 +38,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/permission-request.sh\""
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config plugins claude hook || true"
           }
         ]
       }
@@ -48,7 +48,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/marker.sh\" set 💬"
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config plugins claude hook || true"
           }
         ]
       }
@@ -59,7 +59,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/marker.sh\" clear"
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config plugins claude hook || true"
           }
         ]
       }
@@ -69,7 +69,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/worktree-create.sh\""
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config plugins claude hook"
           }
         ]
       }
@@ -79,7 +79,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/worktree-remove.sh\""
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config plugins claude hook"
           }
         ]
       }

@@ -548,7 +548,11 @@ Skips gracefully if the statusline is already configured."#
     )]
     InstallStatusline,
 
-    /// Internal: the plugin's PermissionRequest hook, reading its payload from stdin
+    /// Internal: the plugin's hook command, reading Claude Code's hook payload from stdin
+    #[command(hide = true)]
+    Hook,
+
+    /// Internal: the PermissionRequest hook of plugin copies that predate `hook`
     #[command(hide = true, name = "approve-enter-worktree")]
     ApproveEnterWorktree,
 }

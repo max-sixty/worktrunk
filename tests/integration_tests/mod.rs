@@ -11,6 +11,7 @@ pub mod approval_ui;
 pub mod approvals;
 pub mod bare_repository;
 pub mod ci_status;
+pub mod claude_hook;
 pub mod completion;
 pub mod completion_validation;
 pub mod config_init;
