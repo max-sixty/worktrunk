@@ -279,8 +279,10 @@ Also check:
 - Are there user-facing changes NOT covered by these entries?
 - Verify each "thanks @..." attribution (right person, right role — author vs reporter)
 - Within each section, is any entry ranked above one that more readers will notice?
-- Read each headline alone: does it imply a wider reach than the entry's conditions
-  allow, and does a fix almost no reader will notice have a bullet of its own?
+- Read each headline alone, as a skimming reader does. Flag one that states the
+  consequence (what was lost or broken) rather than the situation it needed, and a
+  fix almost no reader will notice that has its own bullet rather than a clause in
+  a closing roll-up.
 
 Report format:
 - Entry: [entry text]

@@ -224,3 +224,33 @@ Four of the fixes are user-facing and reproduced cleanly against v0.79.0. The fi
   - #4283 (69d02a03a) adds a doc-cruft rule to `AGENTS.md` and tend review.
   - #4207 (5d994f93c) and #4269 (1f71c08dd) are test-only.
   - #4232, #4244 and #4254 (22bd6beba, ce1862450, f4563a279) are comment-only; I confirmed no code lines changed.
+
+## The Fixed section as first drafted
+
+- **A failed squash no longer rewinds the branch**: when `git commit` failed during `wt merge` or `wt step squash` — a pre-commit hook rejecting it, or signing failing — the branch was left at the merge base with its commits collapsed into staged changes. The squash now commits on a detached HEAD and moves the branch only once the commit exists. (Breaking: git commit hooks see `HEAD`, not the branch name, during a squash.) ([#4206](https://github.com/max-sixty/worktrunk/pull/4206), thanks @Bennyjitsu for finding it in [#4193](https://github.com/max-sixty/worktrunk/pull/4193))
+
+- **`wt remove` no longer deletes submodule changes hidden by config**: with `submodule.<name>.ignore` (`all` or `dirty`, including from `.gitmodules`) or `diff.ignoreSubmodules` set, *and* uncommitted changes inside a submodule, the worktree read as clean and was removed with them. `wt merge`, `wt step prune`, and `wt step promote` shared the check. ([#4252](https://github.com/max-sixty/worktrunk/pull/4252), thanks @Duang777)
+
+- **`wt step diff` shows only the branch's changes when local `main` is stale**: with a target that tracks an upstream *and* a branch forked from a newer `origin/main` than local `main`, the diff included every upstream commit in between. It now uses the same base as `wt merge`. ([#4281](https://github.com/max-sixty/worktrunk/pull/4281), thanks @starlightromero for reporting [#3519](https://github.com/max-sixty/worktrunk/issues/3519))
+
+- **Leaving the picker no longer strands `.merge_file_*` files**: with an external merge driver set in gitattributes *and* a conflicting branch, exiting `wt switch` while a conflict probe ran left the driver's temp files in the main worktree. A started probe now runs to completion. Fixes [#4273](https://github.com/max-sixty/worktrunk/issues/4273). ([#4274](https://github.com/max-sixty/worktrunk/pull/4274), thanks @brndnmtthws for reporting)
+
+- **`wt merge --no-squash` merges when the stage mode stages nothing**: with `--stage=tracked` or `none` and only untracked files, or dirty submodule contents, it aborted with "Nothing to commit". ([#4251](https://github.com/max-sixty/worktrunk/pull/4251), thanks @Duang777)
+
+- **Commit and squash see a staged submodule pointer hidden by `submodule.<name>.ignore=all`**: `wt step commit` reported "Nothing to commit", and squash left the pointer out or reported "No changes after squashing". ([#4192](https://github.com/max-sixty/worktrunk/pull/4192), [#4206](https://github.com/max-sixty/worktrunk/pull/4206), thanks @Duang777)
+
+- **Hook-log JSON reports real branch names**: `wt config state logs --format=json` put the sanitized log directory name (`feature-x-x2d`) in `branch`; it now holds `feature/x`, or `null` when no local branch owns the directory. (Breaking: filters on the sanitized form need updating.) ([#4279](https://github.com/max-sixty/worktrunk/pull/4279))
+
+- **Removal hooks run after a pre-remove hook rewrites the user config**: if the config file stopped parsing mid-command, `post-remove` and `post-switch` hooks were skipped silently. They now use the config read at startup. ([#4276](https://github.com/max-sixty/worktrunk/pull/4276), thanks @Duang777)
+
+- **`wt merge --no-ff` signs merge commits whenever git would**: a bare `gpgsign` key, or one set in worktree-scoped config, read as off, so the merge commit went unsigned. ([#4206](https://github.com/max-sixty/worktrunk/pull/4206))
+
+- **`wt config show --full` works outside a git repository**: it printed only a `git rev-parse` failure; it now shows the user config and diagnostics. ([#4255](https://github.com/max-sixty/worktrunk/pull/4255))
+
+- **Repositories created with `--separate-git-dir` resolve their path**: after `git worktree repair`, `{{ repo_path }}` pointed at the git store's parent, so new worktrees landed outside the project and `wt remove` failed. Fixes [#4235](https://github.com/max-sixty/worktrunk/issues/4235). ([#4236](https://github.com/max-sixty/worktrunk/pull/4236), thanks @zengzheqing for reporting)
+
+- **Statusline install finds Claude Code's config directory**: on Windows with `HOME` differing from `USERPROFILE`, it wrote where Claude Code never reads; a literal `~` in `CLAUDE_CONFIG_DIR` created a directory named `~`. ([#4262](https://github.com/max-sixty/worktrunk/pull/4262), [#4247](https://github.com/max-sixty/worktrunk/pull/4247), thanks @hiro-nikaitou)
+
+- **Branch and remote names starting with `-`**: a background removal left such a branch undeleted, a remote named that way broke default-branch detection, and a bare repo with such a default branch loaded no project config. ([#4253](https://github.com/max-sixty/worktrunk/pull/4253), [#4267](https://github.com/max-sixty/worktrunk/pull/4267), [#4277](https://github.com/max-sixty/worktrunk/pull/4277), thanks @Duang777)
+
+- **Non-UTF-8 file names**: `wt step copy-ignored` and `wt step promote` skipped ignored files with such names, and `wt step push` could report a false conflict between two of them. ([#4257](https://github.com/max-sixty/worktrunk/pull/4257), [#4259](https://github.com/max-sixty/worktrunk/pull/4259), thanks @Duang777)

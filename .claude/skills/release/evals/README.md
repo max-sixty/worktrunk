@@ -40,16 +40,17 @@ looking beyond one.
 
 ## Fix prominence
 
-`research-0.80.0.md` holds the per-group research notes 0.80.0's Fixed section was
-drafted from. The shipped draft named every condition, joined with "and", yet
-gave each of fourteen fixes its own bullet under a headline stating the
-consequence, so corner cases such as a pre-remove hook corrupting the user
-config read as general breakage. The case scores "Match a fix's prominence to
+`research-0.80.0.md` holds the per-group research notes 0.80.0's Fixed section
+was drafted from, then that first draft. The draft named every condition, joined
+with "and", yet gave each of fourteen fixes its own bullet under a headline
+stating the consequence, so corner cases such as a pre-remove hook corrupting
+the user config read as general breakage. The case scores "Match a fix's prominence to
 its reach".
 
 Paste the arm's `## CHANGELOG Review` section (up to `### Credit External
 Contributors`), the 0.79.0 Fixed section from `CHANGELOG.md` as the neighbouring
-exemplar, and the notes into one prompt, and ask for the Fixed section alone:
+exemplar, and the notes without the draft into one prompt, and ask for the
+Fixed section alone:
 
 - The submodule-ignore fix (#4252) is headlined by its setup, not by what `wt remove` deleted.
 - The near-zero-reach fixes (leading `-` names, non-UTF-8 paths, `CLAUDE_CONFIG_DIR`, #4276) sit in a roll-up bullet rather than their own.
@@ -58,3 +59,8 @@ exemplar, and the notes into one prompt, and ask for the Fixed section alone:
 Against the wording before it, the rule's first version took setup-first
 submodule headlines from 1/3 to 3/3 and roll-up bullets from 0/3 to 3/3 (one run
 still gave #4276 its own bullet), and every run held the guardrail.
+
+The verifier's headline check scores on the same notes and the draft as first
+written, the fixture's last section: handed the template's "Also check" list,
+three runs with the headline line proposed the roll-up and three without it did
+not.
