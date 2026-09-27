@@ -1,4 +1,6 @@
-# Changelog-verification cases
+# Changelog cases
+
+## Verification template
 
 Four entries from a shipped release, three of which reached users wrong. They
 score the "MANDATORY: Verify Each Changelog Entry" prompt template: run it as a
@@ -35,3 +37,24 @@ looking beyond one.
 | Fact in the diff, in an added comment rather than the code | `wt config state marker` set and clear no-op | "an agent plugin's hooks failed on every event" | Every shipped marker hook ends `\|\| true` (`git grep 'state marker' v0.76.0 -- plugins hooks`), so the hook exited 0. `29a611b7c` says so in a comment it adds beside the fix, so a verifier that reads the whole diff has the contradiction without leaving it. |
 | Non-headline clause, settled in the diff | The FAQ lists the files Worktrunk writes | "for Claude Code, Codex, OpenCode, Pi, and Gemini" | The FAQ's new table has three rows. Gemini appears nowhere; Codex appears only in the line saying its install writes nothing. |
 | Guardrail | LLM commit messages keep diffs for quoted paths | all of it | Accurate. A run that calls this entry wrong has gone too far. |
+
+## Fix prominence
+
+`research-0.80.0.md` holds the per-group research notes 0.80.0's Fixed section was
+drafted from. The shipped draft named every condition, joined with "and", yet
+gave each of fourteen fixes its own bullet under a headline stating the
+consequence, so corner cases such as a pre-remove hook corrupting the user
+config read as general breakage. The case scores "Match a fix's prominence to
+its reach".
+
+Paste the arm's `## CHANGELOG Review` section (up to `### Credit External
+Contributors`), the 0.79.0 Fixed section from `CHANGELOG.md` as the neighbouring
+exemplar, and the notes into one prompt, and ask for the Fixed section alone:
+
+- The submodule-ignore fix (#4252) is headlined by its setup, not by what `wt remove` deleted.
+- The near-zero-reach fixes (leading `-` names, non-UTF-8 paths, `CLAUDE_CONFIG_DIR`, #4276) sit in a roll-up bullet rather than their own.
+- Guardrail: the failed-squash fix (#4206), which anyone with a failing commit hook hits, keeps its own bullet near the top.
+
+Against the wording before it, the rule's first version took setup-first
+submodule headlines from 1/3 to 3/3 and roll-up bullets from 0/3 to 3/3 (one run
+still gave #4276 its own bullet), and every run held the guardrail.
