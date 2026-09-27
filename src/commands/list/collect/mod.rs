@@ -49,9 +49,8 @@
 //!
 //! **Stale default branch warning:** before the skeleton, `warn_stale_default`
 //! compares the persisted `default_branch()` against #5's local branch
-//! inventory. `wt list` always runs #5, so the check adds no fork there; the
-//! picker skips #5 when branches are hidden, so it forks one `for-each-ref`
-//! only when the persisted default isn't a worktree branch.
+//! inventory. #5 always runs, in `wt list` and the picker alike, so the check
+//! never adds a fork.
 //!
 //! ### #6 — the batched commit-details fork
 //!
