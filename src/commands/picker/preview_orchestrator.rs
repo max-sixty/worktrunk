@@ -493,12 +493,12 @@ impl PreviewOrchestrator {
 
     /// Insert a computed preview into the cache and surface it if the selected
     /// row is awaiting exactly this key. The single fill path: every background
-    /// producer routes through this (or the `&self` [`Self::fill_external`]) so a
-    /// finished compute can never reach the cache without giving skim the chance
-    /// to repaint it — and, symmetrically, so a producer whose spawn a refresh
-    /// superseded can never re-seed the just-cleared cache with stale content
-    /// (the write is dropped, and nothing notifies).
-    fn fill(
+    /// producer routes through this so a finished compute can never reach the
+    /// cache without giving skim the chance to repaint it — and, symmetrically,
+    /// so a producer whose spawn a refresh superseded can never re-seed the
+    /// just-cleared cache with stale content (the write is dropped, and nothing
+    /// notifies).
+    pub(super) fn fill(
         cache: &PreviewCache,
         notifier: &PreviewNotifier,
         spawn_gen: &SpawnGeneration,
@@ -523,18 +523,6 @@ impl PreviewOrchestrator {
             entry.insert(value);
         }
         notifier.notify_filled(&key);
-    }
-
-    /// [`Self::fill`] for callers that hold the orchestrator rather than the
-    /// captured `cache` / `notifier` clones — the `--prs` comments path's
-    /// synchronous "unsupported forge" pane.
-    pub(super) fn fill_external(
-        &self,
-        spawn_gen: &SpawnGeneration,
-        key: PreviewCacheKey,
-        value: String,
-    ) {
-        Self::fill(&self.cache, &self.notifier, spawn_gen, key, value);
     }
 
     /// Spawn a preview compute task. Returns immediately.
@@ -1335,7 +1323,13 @@ mod tests {
         let orch = orch_for(&t);
         let row_id = item_key(&item);
         let key = (row_id.clone(), PreviewMode::WorkingTree);
-        orch.fill_external(&orch.generation(), key.clone(), "already here".to_string());
+        PreviewOrchestrator::fill(
+            &orch.cache,
+            orch.notifier(),
+            &orch.generation(),
+            key.clone(),
+            "already here".to_string(),
+        );
 
         PreviewOrchestrator::serve_demand(
             &orch.cache,
@@ -1609,7 +1603,9 @@ mod tests {
             .note_awaiting(&main, PreviewMode::WorkingTree);
 
         // The awaited compute lands → skim is poked to repaint.
-        orch.fill_external(
+        PreviewOrchestrator::fill(
+            &orch.cache,
+            orch.notifier(),
             &orch.generation(),
             (main.clone(), PreviewMode::WorkingTree),
             "diff".to_string(),
@@ -1620,12 +1616,16 @@ mod tests {
         );
 
         // Fills for other rows / other tabs must not poke — no preview thrash.
-        orch.fill_external(
+        PreviewOrchestrator::fill(
+            &orch.cache,
+            orch.notifier(),
             &orch.generation(),
             (feature, PreviewMode::WorkingTree),
             "x".to_string(),
         );
-        orch.fill_external(
+        PreviewOrchestrator::fill(
+            &orch.cache,
+            orch.notifier(),
             &orch.generation(),
             (main, PreviewMode::Log),
             "y".to_string(),

@@ -137,7 +137,9 @@
 //! │    ├─ switch_previous()                     (5ms)
 //! │    ├─ capture_refs[_with_ahead_behind]()    (ref snapshot)
 //! │    │    └─ prime_upstream_ahead_behind_cache()  (nested; reads the snapshot)
-//! │    ├─ start_fsmonitor_daemon × N worktrees  (socket probe; fork only when no daemon answers)
+//! │    ├─ prime_worktree_path_caches()          (fs reads: root + git dir per worktree)
+//! │    │    └─ start_fsmonitor_daemon × N worktrees  (nested; socket probe reads the git dir;
+//! │    │                                             fork only when no daemon answers)
 //! │  )                                          // joins on the slowest spawn
 //! ├─ integration_targets(snapshot)              (sequential; needs the snapshot)
 //! ├─ populate ListItem.commit from cache        (cache-hit lookups, sub-ms)
@@ -1529,15 +1531,6 @@ pub fn collect(
     // These operations run in parallel using rayon::scope with single-level parallelism.
     // See module docs for the timing diagram.
 
-    // Seed root/git-dir for every worktree from the list we already fetched, so
-    // the per-worktree tasks below don't each fork `git rev-parse
-    // --show-toplevel` / `--git-dir`. Deferred to post-skeleton: only the
-    // worker-pool tasks consume these (the pre-skeleton current-worktree probe
-    // uses the prewarmed discovery-worktree root), so seeding here keeps the
-    // local fs reads off the skeleton critical path — and skips them entirely
-    // on the `WORKTRUNK_SKELETON_ONLY` exit above, which runs no tasks.
-    repo.prime_worktree_path_caches(worktrees);
-
     // Collect worktree paths for fsmonitor starts (macOS only, fast, no git commands).
     // Git's builtin fsmonitor has race conditions under parallel load - pre-starting
     // daemons before parallel operations avoids hangs.
@@ -1644,12 +1637,24 @@ pub fn collect(
             let _ = snapshot_cell.set(snap);
         });
 
-        // Fsmonitor daemon starts (one spawn per worktree)
-        for wt in &fsmonitor_worktrees {
-            s.spawn(|_| {
-                repo.start_fsmonitor_daemon_at(&wt.path);
-            });
-        }
+        // Seed root/git-dir for every worktree from the list we already
+        // fetched, so the per-worktree tasks don't each fork `git rev-parse
+        // --show-toplevel` / `--git-dir`. Post-skeleton, because only the
+        // fsmonitor probes and the worker-pool tasks consume these (the
+        // pre-skeleton current-worktree probe uses the prewarmed
+        // discovery-worktree root); in this scope, because the fs reads then
+        // overlap the ref snapshot instead of delaying it.
+        //
+        // The fsmonitor starts (one spawn per worktree) nest under the seed:
+        // each probe reads its worktree's git dir, which the seed supplies.
+        s.spawn(|s| {
+            repo.prime_worktree_path_caches(worktrees);
+            for wt in &fsmonitor_worktrees {
+                s.spawn(|_| {
+                    repo.start_fsmonitor_daemon_at(&wt.path);
+                });
+            }
+        });
     });
 
     // Extract results from cells
