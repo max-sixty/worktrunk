@@ -1758,8 +1758,9 @@ impl Cmd {
     ///
     /// On a background thread the batch takes one semaphore permit, as
     /// [`Self::pipe_into`] does: one permit per child could deadlock two
-    /// batches that each hold part of the pool. At most
-    /// `max_concurrent_commands()` children run at once. Stdin, timeouts,
+    /// batches that each hold part of the pool. A batch runs at most
+    /// `max_concurrent_commands()` children at once; other threads' commands
+    /// are not counted against it. Stdin, timeouts,
     /// `external()` logging and shell commands are not supported.
     pub fn run_concurrently(cmds: &[Cmd]) -> Vec<std::io::Result<std::process::Output>> {
         assert!(
