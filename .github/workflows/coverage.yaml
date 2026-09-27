@@ -40,7 +40,7 @@ jobs:
     - uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-nextest
-        version: "=0.9.145"
+        version: "=0.9.146"
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
@@ -56,7 +56,7 @@ jobs:
     - name: Install nushell
       uses: hustcer/setup-nu@v3
       with:
-        version: '0.115.1'
+        version: '0.116.0'
 
     # Ensure nothing remains from caching
     - run: cargo llvm-cov clean --workspace

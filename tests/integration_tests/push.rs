@@ -491,7 +491,7 @@ fn test_push_dirty_target_overlap_in_untracked_dir(mut repo: TestRepo) {
 /// cherry-pick keeps HEAD on the branch, so `worktree_for_branch` finds the
 /// worktree directly; a rebase detaches HEAD, and `git worktree list
 /// --porcelain` reports that worktree with no branch at all — the lookup
-/// succeeds only because `finalize_worktree` backfills the branch from
+/// succeeds only because `finalize_worktrees` backfills the branch from
 /// `rebase-merge/head-name`. Were that backfill to stop covering the rebase
 /// case, `target_worktree_path` would go `None`, the gate would be skipped, and
 /// `advance_target` would return right after its compare-and-swap: the ref
