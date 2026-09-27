@@ -1351,6 +1351,17 @@ impl Cmd {
         cmd
     }
 
+    /// [`Self::check_spawn_preconditions`], after checking that this thread's
+    /// commands haven't been cancelled. Background callers check after taking
+    /// their semaphore permit: a command can be cancelled while parked on the
+    /// semaphore, and that is the common case in a large fan-out.
+    fn check_before_spawn(&self) -> std::io::Result<()> {
+        if background_cancelled() {
+            return Err(cancelled_error());
+        }
+        self.check_spawn_preconditions()
+    }
+
     fn check_spawn_preconditions(&self) -> std::io::Result<()> {
         if let Some(dir) = &self.current_dir {
             let metadata = std::fs::metadata(dir)?;
@@ -1664,17 +1675,7 @@ impl Cmd {
         let mut trace = CommandTrace::new(self.context.as_deref(), &cmd_str)
             .reads_stdin(self.stdin_data.is_some());
 
-        // Checked after the permit, not before: a command can be cancelled
-        // while parked on the semaphore, and that is the common case in a
-        // large fan-out.
-        if background_cancelled() {
-            let e = cancelled_error();
-            trace.fail(&e);
-            external_log.record(None);
-            return Err(e);
-        }
-
-        if let Err(e) = self.check_spawn_preconditions() {
+        if let Err(e) = self.check_before_spawn() {
             trace.fail(&e);
             external_log.record(None);
             return Err(e);
@@ -1790,12 +1791,7 @@ impl Cmd {
         self.log_run_start(&cmd_str);
         let mut trace = CommandTrace::new(self.context.as_deref(), &cmd_str);
 
-        if background_cancelled() {
-            let e = cancelled_error();
-            trace.fail(&e);
-            return Err(e);
-        }
-        if let Err(e) = self.check_spawn_preconditions() {
+        if let Err(e) = self.check_before_spawn() {
             trace.fail(&e);
             return Err(e);
         }
@@ -1807,7 +1803,7 @@ impl Cmd {
             .stderr(Stdio::piped());
         match cmd.spawn() {
             Ok(child) => {
-                let tracked = track_if_cancellable(child.id());
+                let tracked = self.track_if_cancellable(child.id());
                 Ok(CapturedChild {
                     child,
                     trace,
@@ -1878,23 +1874,11 @@ impl Cmd {
 
         let _guard = (!is_foreground_thread()).then(|| semaphore().acquire());
 
-        // Cancelled, possibly while parked on the semaphore above (see
-        // `background_cancelled`). Nothing has spawned, so neither half runs.
-        if background_cancelled() {
-            let e = cancelled_error();
-            CommandTrace::record_failed(
-                self.context.as_deref(),
-                &first_cmd_str,
-                self.stdin_data.is_some(),
-                &e,
-            );
-            return Err(e);
-        }
-
         // Validate both commands before spawning either. Nothing has spawned
-        // yet, so a precondition failure emits a one-shot failed record rather
-        // than holding a guard across an execution that never happens.
-        if let Err(e) = self.check_spawn_preconditions() {
+        // yet, so a cancellation or precondition failure emits a one-shot
+        // failed record rather than holding a guard across an execution that
+        // never happens.
+        if let Err(e) = self.check_before_spawn() {
             // stdin_data is still owned here (taken below), so it reflects
             // whether the source would have read a buffer; the sink always reads
             // the upstream pipe.

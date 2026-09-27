@@ -889,7 +889,7 @@ fn rebase_branch(git_dir: &Path) -> Option<String> {
 /// processes rather than on a thread pool: this runs inside the
 /// `list_worktrees` cache initializer, and a pool thread waiting there would
 /// run other pool jobs, one of which could wait on the same cache.
-pub(crate) fn finalize_worktrees(worktrees: &mut [WorktreeInfo]) {
+pub(crate) fn finalize_worktrees(repo: &Repository, worktrees: &mut [WorktreeInfo]) {
     let mut detached: Vec<&mut WorktreeInfo> = worktrees
         .iter_mut()
         .filter(|wt| wt.detached && wt.branch.is_none())
@@ -897,9 +897,6 @@ pub(crate) fn finalize_worktrees(worktrees: &mut [WorktreeInfo]) {
     if detached.is_empty() {
         return;
     }
-    let Ok(repo) = Repository::current() else {
-        return;
-    };
     let trees: Vec<WorkingTree<'_>> = detached
         .iter()
         .map(|wt| repo.worktree_at(&wt.path))

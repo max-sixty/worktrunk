@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
 use super::super::{DefaultBranchName, WorktreeInfo, finalize_worktrees};
+use crate::git::Repository;
+use crate::testing::TestRepo;
 
 #[cfg(unix)]
 #[test]
@@ -76,8 +78,10 @@ fn test_finalize_worktree_with_branch() {
         prunable: None,
     };
 
+    let test = TestRepo::with_initial_commit();
+    let repo = Repository::at(test.root_path()).unwrap();
     let mut worktrees = [wt];
-    finalize_worktrees(&mut worktrees);
+    finalize_worktrees(&repo, &mut worktrees);
     let [finalized] = worktrees;
     assert_eq!(finalized.branch, Some("feature".to_string()));
 }
@@ -95,8 +99,10 @@ fn test_finalize_worktree_detached_with_branch() {
         prunable: None,
     };
 
+    let test = TestRepo::with_initial_commit();
+    let repo = Repository::at(test.root_path()).unwrap();
     let mut worktrees = [wt];
-    finalize_worktrees(&mut worktrees);
+    finalize_worktrees(&repo, &mut worktrees);
     let [finalized] = worktrees;
     assert_eq!(finalized.branch, Some("feature".to_string()));
 }
@@ -115,8 +121,10 @@ fn test_finalize_worktree_detached_no_branch() {
         prunable: None,
     };
 
+    let test = TestRepo::with_initial_commit();
+    let repo = Repository::at(test.root_path()).unwrap();
     let mut worktrees = [wt];
-    finalize_worktrees(&mut worktrees);
+    finalize_worktrees(&repo, &mut worktrees);
     let [finalized] = worktrees;
     assert_eq!(finalized.branch, None);
 }
@@ -126,9 +134,6 @@ fn test_finalize_worktree_linked_mid_rebase() {
     // A linked worktree stopped mid-rebase is detached, so `git worktree list`
     // reports no branch; the branch comes from `rebase-merge/head-name` under
     // its git dir.
-    use crate::git::Repository;
-    use crate::testing::TestRepo;
-
     let test = TestRepo::with_initial_commit();
     let linked = test.root_path().parent().unwrap().join("linked-rebase");
     test.run_git(&["worktree", "add", "-b", "feature", linked.to_str().unwrap()]);

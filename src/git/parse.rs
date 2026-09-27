@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use super::{GitError, WorktreeInfo, finalize_worktrees};
+use super::{GitError, WorktreeInfo};
 
 impl WorktreeInfo {
     pub(crate) fn parse_porcelain_list(output: &str) -> anyhow::Result<Vec<Self>> {
@@ -87,8 +87,6 @@ impl WorktreeInfo {
         if let Some(wt) = current {
             worktrees.push(wt);
         }
-
-        finalize_worktrees(&mut worktrees);
         Ok(worktrees)
     }
 }
