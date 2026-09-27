@@ -207,7 +207,8 @@
             cargo-release
             cargo-llvm-cov
 
-            # Shells the `shell-integration-tests` feature drives. The
+            # Shells the `shell-integration-tests` feature drives, plus the
+            # `jq` its Claude-hook tests pipe the hook payload through. The
             # pre-merge gate runs `--all-features`, so a run here exercises
             # every one.
             bash
@@ -215,6 +216,7 @@
             fish
             nushell
             powershell
+            jq
 
             # Development tools. `git` comes from the `checks` above: crane
             # folds each check's `nativeBuildInputs` in via `inputsFrom`.

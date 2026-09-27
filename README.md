@@ -237,7 +237,7 @@ The `-x` flag runs a command after switching; arguments after `--` are passed to
 cargo test
 ```
 
-The shell integration tests need bash, zsh, fish, nushell, and pwsh:
+The shell integration tests need bash, zsh, fish, nushell, and pwsh, plus `jq`:
 
 ```bash
 cargo test --test integration --features shell-integration-tests

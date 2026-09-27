@@ -2,7 +2,8 @@
 
 Git worktree management CLI integration with activity tracking.
 
-Requires the `wt` CLI ([worktrunk.dev](https://worktrunk.dev)).
+Requires the `wt` CLI ([worktrunk.dev](https://worktrunk.dev)) and `jq` (used
+by the worktree-lifecycle hooks).
 
 ## Features
 
@@ -12,7 +13,7 @@ Requires the `wt` CLI ([worktrunk.dev](https://worktrunk.dev)).
 
 ## What the hooks run
 
-Every hook runs `wt config plugins claude hook` through `hooks/wt.sh`, which reads Claude Code's hook payload and acts on its event:
+Every hook calls `wt` through `hooks/wt.sh`:
 
 - **Activity markers**: `UserPromptSubmit`, `Notification`, `Stop`, and `PreToolUse` on `AskUserQuestion` set the branch's marker with `wt config state marker set`; `SessionEnd` clears it.
 - **Worktree creation and removal**: when Claude Code creates or removes a worktree, the `WorktreeCreate` and `WorktreeRemove` hooks run `wt switch --create` and `wt remove` in place of Claude Code's own `git worktree` commands, so the worktree follows worktrunk's path layout and runs the project's approved worktrunk hooks.
