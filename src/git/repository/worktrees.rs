@@ -15,7 +15,7 @@ use super::{
     GitError, InProgressOperation, Repository, ResolvedWorktree, Selector, WorktreeInfo,
     is_valid_branch_name, normalize_selector, resolve_input_path,
 };
-use crate::git::{CommandError, PlumbingDiff, WorktreeId, is_bare_repo_dir};
+use crate::git::{CommandError, PlumbingDiff, WorktreeId, finalize_worktrees, is_bare_repo_dir};
 use crate::path::{format_path_for_display, paths_match};
 use crate::shell_exec::Cmd;
 use crate::styling::{
@@ -75,6 +75,7 @@ impl Repository {
                     first.path = self.repo_path()?.to_path_buf();
                 }
 
+                finalize_worktrees(self, &mut worktrees);
                 Ok(worktrees)
             })
             .map(Vec::as_slice)
