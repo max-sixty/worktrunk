@@ -917,10 +917,101 @@ fn test_configure_shell_fish_legacy_removal_accepted_when_already_configured(
     );
 }
 
+/// Installing from inside a shell whose wrapper already intercepted the command
+/// doesn't tell it to restart.
+///
+/// Single-factor contrast with `test_configure_shell_with_yes`, which runs the
+/// same zsh install without `WORKTRUNK_DIRECTIVE_CD_FILE` and asserts
+/// `Restart shell to activate shell integration` fires. Reinstalling from a
+/// wrapped shell is how a version bump or the fish conf.d relocation is done,
+/// and integration plainly doesn't need activating there.
+#[rstest]
+fn test_configure_shell_no_restart_hint_when_integration_active(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    fs::write(temp_home.path().join(".zshrc"), "# Existing config\n").unwrap();
+    let directive_file = temp_home.path().join("directive");
+    fs::write(&directive_file, "").unwrap();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/zsh");
+        cmd.env("WORKTRUNK_TEST_COMPINIT_MISSING", "1");
+        cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", &directive_file);
+        cmd.args(["config", "shell", "install", "--yes"])
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd, @"
+        success: true
+        exit_code: 0
+        ----- stdout -----
+
+        ----- stderr -----
+        [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
+
+        [32m✓[39m [32mConfigured 1 shell[39m
+        [33m▲[39m [33mCompletions require compinit; add to ~/.zshrc before the wt line:[39m
+        [107m [0m [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m
+        [0m
+        ");
+    });
+}
+
+/// A bare `wt config shell install` migrates a wrapper at fish's deprecated
+/// conf.d path, with no `functions/` directory and fish not on PATH.
+///
+/// This is the command `wt config show` points at, so it has to cover every
+/// state that section reports. Fish would otherwise be skipped for want of a
+/// config location, leaving the deprecated wrapper running with a remedy that
+/// did nothing for it.
+#[rstest]
+fn test_configure_shell_bare_install_migrates_fish_legacy_conf_d(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    let conf_d = temp_home.path().join(".config/fish/conf.d");
+    fs::create_dir_all(&conf_d).unwrap();
+    let legacy_file = conf_d.join("wt.fish");
+    fs::write(&legacy_file, "wt config shell init fish | source").unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/zsh");
+    cmd.args(["config", "shell", "install", "--yes"])
+        .current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "bare install should succeed: {output:?}"
+    );
+    assert!(
+        !legacy_file.exists(),
+        "bare install must remove the deprecated conf.d/wt.fish: {legacy_file:?}"
+    );
+    assert!(
+        temp_home
+            .path()
+            .join(".config/fish/functions/wt.fish")
+            .exists(),
+        "bare install must write the canonical functions/wt.fish"
+    );
+}
+
 /// Test that detection finds fish integration in legacy conf.d location
 ///
 /// `wt config show` should detect shell integration whether it's in the
-/// old conf.d location or the new functions location.
+/// old conf.d location or the new functions location. Fish is neither on PATH
+/// nor has a `functions/` directory here, so the deprecated wrapper is the only
+/// thing putting fish in the report at all — `scan_shell_configs` treats it as
+/// a config location, which is also what makes the section's bare
+/// `wt config shell install` hint migrate it.
 #[rstest]
 fn test_config_show_detects_fish_legacy_conf_d(mut repo: TestRepo, temp_home: TempDir) {
     // Create ONLY the legacy conf.d file (simulating user who installed before #566)
@@ -947,11 +1038,9 @@ fn test_config_show_detects_fish_legacy_conf_d(mut repo: TestRepo, temp_home: Te
 
 /// Test config show when functions/ exists but wt.fish doesn't, with legacy conf.d
 ///
-/// This tests a different code path than test_config_show_detects_fish_legacy_conf_d:
-/// - That test: functions/ doesn't exist -> fish is "skipped"
-/// - This test: functions/ exists but empty -> fish is "configured" with WouldCreate
-///
-/// Both should show the migration hint for the legacy conf.d location.
+/// Pairs with `test_config_show_detects_fish_legacy_conf_d`, which has no
+/// `functions/` directory. Both report the same deprecated-location row: the
+/// wrapper at the legacy path is a config location either way.
 #[rstest]
 fn test_config_show_fish_legacy_with_functions_dir(mut repo: TestRepo, temp_home: TempDir) {
     // Create functions/ directory (empty - no wt.fish)
@@ -2460,7 +2549,7 @@ mod pty_tests {
 
         assert_eq!(exit_code, 0);
         install_pty_settings(&temp_home).bind(|| {
-            assert_snapshot!(output.trim_start_matches('\n'));
+            assert_snapshot!(output);
         });
     }
 
@@ -2475,7 +2564,7 @@ mod pty_tests {
         // User declined, so exit code is 1
         assert_eq!(exit_code, 1);
         install_pty_settings(&temp_home).bind(|| {
-            assert_snapshot!(output.trim_start_matches('\n'));
+            assert_snapshot!(output);
         });
 
         // Verify file was not modified
@@ -2600,7 +2689,7 @@ mod pty_tests {
         assert_eq!(exit_code, 0, "uninstall should succeed:\n{output}");
         assert_eq!(fs::read(&zshrc_path).unwrap(), replacement);
         install_pty_settings(&temp_home).bind(|| {
-            assert_snapshot!(output.trim_start_matches('\n'), @r#"
+            assert_snapshot!(output, @r#"
             [2m○[22m Will remove shell extension & completions for [1mzsh[0m @ [1m~/.zshrc[0m
             [107m [0m [2m[0m[2m[35mif[0m[2m [0m[2m[34mcommand[0m[2m [0m[2m[36m-v[0m[2m wt [0m[2m[36m>[0m[2m/dev/null [0m[2m[33m2[0m[2m>&1; [0m[2m[35mthen[0m[2m [0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mcommand[0m[2m wt config shell init zsh)"[0m[2m; [0m[2m[35mfi[0m
 
@@ -2833,6 +2922,68 @@ fn test_uninstall_nushell_cleans_all_candidate_locations(repo: TestRepo, temp_ho
     assert!(
         !legacy_config.exists(),
         "Stranded legacy wrapper should be deleted: {legacy_config:?}"
+    );
+}
+
+/// Uninstall finds a wrapper under `$XDG_DATA_HOME`, the data-dir candidate
+/// `nushell_data_dir_fallback` derives when `nu` can't be queried.
+///
+/// An absolute `XDG_DATA_HOME` wins over `dirs::data_dir()` on every platform,
+/// matching `nu_path::data_dir`. Only macOS and Windows discriminate: `dirs`
+/// reads the variable itself on Linux, so there the assertion holds with or
+/// without `nushell_data_dir_fallback`'s own branch, while on macOS it
+/// separates `$XDG_DATA_HOME` from `~/Library/Application Support`.
+#[rstest]
+fn test_uninstall_nushell_finds_wrapper_under_xdg_data_home(repo: TestRepo, temp_home: TempDir) {
+    let home = canonical_temp_home(&temp_home);
+    // Distinct from the pinned canonical dir, so the stranded wrapper can only
+    // be found by way of the data-dir candidate.
+    let xdg_data = home.join("xdg-data");
+    let canonical_dir = home.join(".local/share/nushell/vendor/autoload");
+    let canonical = canonical_dir.join("wt.nu");
+
+    let configure = |cmd: &mut std::process::Command| {
+        repo.configure_wt_cmd(cmd);
+        set_temp_home_env(cmd, temp_home.path());
+        cmd.env("XDG_DATA_HOME", &xdg_data);
+        cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &canonical_dir);
+        cmd.env("SHELL", "/bin/nu");
+    };
+
+    // Install to the pinned canonical dir, then strand a copy under
+    // `$XDG_DATA_HOME` — the shape an older worktrunk, or a `nu` that was
+    // queryable at install time and isn't now, leaves behind.
+    let mut install_cmd = wt_command();
+    configure(&mut install_cmd);
+    install_cmd
+        .args(["config", "shell", "install", "nu", "--yes"])
+        .current_dir(repo.root_path());
+    let install_output = install_cmd.output().expect("Failed to execute install");
+    assert!(
+        install_output.status.success(),
+        "Install should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&install_output.stderr)
+    );
+
+    let stranded_dir = xdg_data.join("nushell/vendor/autoload");
+    fs::create_dir_all(&stranded_dir).unwrap();
+    let stranded = stranded_dir.join("wt.nu");
+    fs::copy(&canonical, &stranded).unwrap();
+
+    let mut cmd = wt_command();
+    configure(&mut cmd);
+    cmd.args(["config", "shell", "uninstall", "nu", "--yes"])
+        .current_dir(repo.root_path());
+    let output = cmd.output().expect("Failed to execute uninstall");
+    assert!(
+        output.status.success(),
+        "Uninstall should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        !stranded.exists(),
+        "Wrapper under $XDG_DATA_HOME should be deleted: {stranded:?}"
     );
 }
 
@@ -3153,5 +3304,184 @@ fn test_nushell_install_target_is_a_vendor_autoload_dir(repo: TestRepo, temp_hom
         installed_in_autoload,
         "worktrunk must install wt.nu into one of nu's vendor-autoload dirs (issue #2878).\n\
          vendor-autoload-dirs:\n{dirs}"
+    );
+}
+
+/// A `ZDOTDIR` that isn't an absolute path is ignored, and the zsh integration
+/// line lands in `$HOME/.zshrc`.
+///
+/// Regression guard: the value used to be taken at face value, so an empty one
+/// collapsed zsh's config path to the relative `.zshrc` and a bare `dotfiles`
+/// to `dotfiles/.zshrc` — either way install appended the integration line
+/// under whatever directory `wt` was run from, a dotfiles checkout being the
+/// obvious way to have a `.zshrc` sitting there, while the file zsh reads went
+/// untouched. `wt config shell uninstall` rewrites rc files whole, so the same
+/// resolution decides which file that rewrite lands on.
+#[rstest]
+#[case::empty("")]
+#[case::relative("dotfiles")]
+fn test_configure_shell_non_absolute_zdotdir_uses_home(
+    #[case] zdotdir: &str,
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    let home_zshrc = temp_home.path().join(".zshrc");
+    fs::write(&home_zshrc, "# Existing config\n").unwrap();
+
+    // A decoy `.zshrc` where the unguarded value would have resolved: under the
+    // invocation directory, joined with `ZDOTDIR` itself.
+    let run_dir = temp_home.path().join("work");
+    let decoy_zshrc = run_dir.join(zdotdir).join(".zshrc");
+    fs::create_dir_all(decoy_zshrc.parent().unwrap()).unwrap();
+    fs::write(&decoy_zshrc, "# Decoy\n").unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/zsh");
+    cmd.env("ZDOTDIR", zdotdir);
+    cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
+    cmd.args(["config", "shell", "install", "zsh", "--yes"]);
+    cmd.current_dir(&run_dir);
+
+    let output = cmd.output().expect("install command should run");
+    assert!(
+        output.status.success(),
+        "install failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let home_contents = fs::read_to_string(&home_zshrc).unwrap();
+    assert!(
+        home_contents.contains("config shell init zsh"),
+        "integration line should land in $HOME/.zshrc, got:\n{home_contents}"
+    );
+    assert_eq!(
+        fs::read_to_string(&decoy_zshrc).unwrap(),
+        "# Decoy\n",
+        "the .zshrc under the invocation directory must be left alone"
+    );
+}
+
+/// An absolute `ZDOTDIR` is honoured: the zsh integration line lands under it,
+/// not under `$HOME`.
+///
+/// The companion to the non-absolute cases above, and the one that makes them
+/// mean something. Every other zsh test points `ZDOTDIR` at `$HOME` itself or
+/// at `/dev/null` for shell isolation, so without this case a `zsh_config_dir`
+/// that ignored the variable outright — the over-tightening the guard invites
+/// — would pass the whole suite.
+#[rstest]
+fn test_configure_shell_absolute_zdotdir_is_honoured(repo: TestRepo, temp_home: TempDir) {
+    let home = canonical_temp_home(&temp_home);
+    // Distinct from `$HOME`, so only honouring `ZDOTDIR` reaches it.
+    let zdotdir = home.join("zsh-config");
+    fs::create_dir_all(&zdotdir).unwrap();
+    fs::write(zdotdir.join(".zshrc"), "# Existing config\n").unwrap();
+    // A decoy at the fallback, so the assertion separates the two answers.
+    fs::write(home.join(".zshrc"), "# Decoy\n").unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/zsh");
+    cmd.env("ZDOTDIR", &zdotdir);
+    cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
+    cmd.args(["config", "shell", "install", "zsh", "--yes"]);
+    cmd.current_dir(repo.root_path());
+
+    let output = cmd.output().expect("install command should run");
+    assert!(
+        output.status.success(),
+        "install failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let zdotdir_contents = fs::read_to_string(zdotdir.join(".zshrc")).unwrap();
+    assert!(
+        zdotdir_contents.contains("config shell init zsh"),
+        "integration line should land in $ZDOTDIR/.zshrc, got:\n{zdotdir_contents}"
+    );
+    assert_eq!(
+        fs::read_to_string(home.join(".zshrc")).unwrap(),
+        "# Decoy\n",
+        "$HOME/.zshrc must be left alone when $ZDOTDIR is absolute"
+    );
+}
+
+/// A non-default `XDG_CONFIG_HOME` sends the fish wrapper and the fish
+/// completion to the same fish config directory.
+///
+/// Regression guard: `config_paths` hardcoded `~/.config/fish` while
+/// `completion_path` resolved the XDG config dir, so with the variable pointing
+/// anywhere else worktrunk wrote the wrapper where fish never looks and the
+/// completion where it does — install reported success for both and `wt` was
+/// never defined as a function.
+#[rstest]
+#[cfg(unix)]
+fn test_configure_shell_fish_honors_xdg_config_home(repo: TestRepo, temp_home: TempDir) {
+    let xdg_config = temp_home.path().join("xdg-config");
+    fs::create_dir_all(&xdg_config).unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    // After `set_temp_home_env`, which pins the variable to `$HOME/.config` —
+    // the one value that makes the hardcode and the XDG lookup agree.
+    cmd.env("XDG_CONFIG_HOME", &xdg_config);
+    cmd.env("SHELL", "/bin/fish");
+    cmd.args(["config", "shell", "install", "fish", "--yes"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().expect("install command should run");
+    assert!(
+        output.status.success(),
+        "install failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let wrapper = xdg_config.join("fish/functions/wt.fish");
+    let completion = xdg_config.join("fish/completions/wt.fish");
+    assert!(
+        wrapper.exists(),
+        "wrapper should land under $XDG_CONFIG_HOME: {wrapper:?}"
+    );
+    assert!(
+        completion.exists(),
+        "completion should land under $XDG_CONFIG_HOME: {completion:?}"
+    );
+    assert!(
+        !temp_home
+            .path()
+            .join(".config/fish/functions/wt.fish")
+            .exists(),
+        "nothing should be written to ~/.config/fish when $XDG_CONFIG_HOME points elsewhere"
+    );
+
+    // Uninstall scans the same directory install wrote to, so what install
+    // creates is what uninstall can remove.
+    let mut uninstall = wt_command();
+    repo.configure_wt_cmd(&mut uninstall);
+    set_temp_home_env(&mut uninstall, temp_home.path());
+    uninstall.env("XDG_CONFIG_HOME", &xdg_config);
+    uninstall.env("SHELL", "/bin/fish");
+    uninstall
+        .args(["config", "shell", "uninstall", "fish", "--yes"])
+        .current_dir(repo.root_path());
+
+    let output = uninstall.output().expect("uninstall command should run");
+    assert!(
+        output.status.success(),
+        "uninstall failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(!wrapper.exists(), "uninstall should remove {wrapper:?}");
+    assert!(
+        !completion.exists(),
+        "uninstall should remove {completion:?}"
     );
 }

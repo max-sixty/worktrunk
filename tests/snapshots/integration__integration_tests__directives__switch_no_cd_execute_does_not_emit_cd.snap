@@ -62,7 +62,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-_REPO_
+_REPO_.exec-test
 
 ----- stderr -----
 [32m✓[39m [32mCreated branch [1mexec-test[22m from [1mmain[22m and worktree @ [1m_REPO_.exec-test[22m[39m

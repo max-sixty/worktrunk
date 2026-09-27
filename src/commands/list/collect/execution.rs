@@ -32,7 +32,7 @@ use super::types::{TaskError, TaskKind, TaskResult};
 /// Tasks that require a valid commit SHA. Skipped for unborn branches (no commits yet).
 /// Without this, these tasks would fail on the null OID and show as errors in the table.
 ///
-/// `WorkingTreeDiff` runs `git diff HEAD` and `WorkingTreeConflicts` runs
+/// `WorkingTreeDiff` runs `git diff-index HEAD` and `WorkingTreeConflicts` runs
 /// `git merge-tree` against the worktree's HEAD SHA — both fail on a null OID
 /// with `fatal: ambiguous argument 'HEAD'` / `fatal: 0000… is not a valid
 /// object`. Their seed defaults (`None` for the diff, `Some(None)` for the
@@ -245,7 +245,7 @@ pub(super) fn seed_unborn_main_state(item: &mut ListItem) {
 /// Pre-seed every gate on a prunable worktree so the only visible symbol
 /// is `⊟` (from the metadata `worktree_state`).
 ///
-/// Prunable worktrees have their directory missing from disk, so no task
+/// Prunable worktrees have lost their directory or its `.git`, so no task
 /// can run for them. Without this seeding, every gate would stay `None`
 /// forever and the cell would render as seven `·` placeholders. This
 /// helper replaces the runtime fallback in `refresh_status_symbols`
@@ -302,7 +302,8 @@ pub fn work_items_for_worktree(
     tx: &chan::Sender<Result<TaskResult, TaskError>>,
     item: &mut ListItem,
 ) -> Vec<WorkItem> {
-    // Prunable worktrees have their directory missing — no task can run.
+    // Prunable worktrees have lost their directory or its `.git` — no task
+    // can run.
     // Seed every gate directly so the cell shows just the `⊟` metadata
     // symbol rather than seven `·` placeholders.
     if item.worktree_data().is_some_and(|data| data.is_prunable()) {

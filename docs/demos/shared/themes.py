@@ -1,65 +1,72 @@
-"""VHS themes coordinated with the documentation site's color palette.
+"""Demo recording palettes, read from the documentation site's stylesheet.
 
-The base surfaces and accents follow ``docs/src/styles/custom.css``. ANSI hues
-are tuned separately for legible terminal captures in each theme.
+The VHS terminal, Zellij, and starship colors come from hex ``--wt-*`` custom
+properties in ``docs/src/styles/custom.css``: the light theme from its
+``:root`` block, the dark theme from ``:root[data-theme='dark']``. A recording
+uses whatever palette the site has when the build runs. Each property a
+recording uses must be declared as a lowercase six-digit hex color in both
+blocks; any other form is a ``KeyError`` rather than a silently wrong color.
+
+The VHS terminal theme maps ANSI colors to properties the way the site renders
+snapshot output (``terminal_color_class`` and ``terminal_background_class`` in
+``tests/integration_tests/readme_sync.rs``). A bright hue uses its normal hue's
+property. Bright black and white text use ``--wt-ink-muted``, the site's gray;
+black, which the site never renders, matches them. Bright white uses
+``--wt-terminal-gutter``, because Worktrunk draws its gutter with a bright-white
+background.
 """
 
 import json
+import re
+from pathlib import Path
 
-# Light theme — based on the default ``--wt-*`` palette in custom.css.
-LIGHT_THEME = {
-    "name": "Warm Gold Light",
-    "black": "#6b7280",  # --bright-black
-    "red": "#dc2626",  # --red
-    "green": "#357a59",  # --green (desaturated from website's #1b7f4b)
-    "yellow": "#ca8a04",  # --yellow
-    "blue": "#2563eb",  # --blue
-    "magenta": "#9333ea",  # --magenta
-    "cyan": "#3d7f7f",  # --cyan (muted from website's #0a8080)
-    "white": "#8c959f",
-    "brightBlack": "#6b7280",  # --bright-black
-    "brightRed": "#ef4444",
-    "brightGreen": "#4a9b76",
-    "brightYellow": "#eab308",
-    "brightBlue": "#3b82f6",
-    "brightMagenta": "#a855f7",
-    "brightCyan": "#5a9e9e",
-    "brightWhite": "#8c959f",
-    "background": "#f7f3eb",  # --wt-paper
-    "foreground": "#27231f",  # --wt-ink
-    "cursor": "#d85d22",  # --wt-orange
-    "selection": "#f7d6c1",  # --sl-color-accent-low
-}
+CUSTOM_CSS = Path(__file__).parents[2] / "src" / "styles" / "custom.css"
 
-# Dark theme — based on the ``data-theme='dark'`` palette in custom.css.
-DARK_THEME = {
-    "name": "Warm Workbench Dark",
-    "black": "#6b7280",  # --bright-black from CSS
-    "red": "#f87171",  # --red dark mode
-    "green": "#4ade80",  # --green dark mode
-    "yellow": "#fbbf24",  # --yellow dark mode
-    "blue": "#60a5fa",  # --blue dark mode
-    "magenta": "#c084fc",  # --magenta dark mode
-    "cyan": "#67d4d4",  # --cyan dark mode
-    "white": "#a8a29e",
-    "brightBlack": "#6b7280",  # same as black
-    "brightRed": "#fca5a5",  # lighter red
-    "brightGreen": "#86efac",  # lighter green
-    "brightYellow": "#fde047",  # lighter yellow
-    "brightBlue": "#93c5fd",  # lighter blue
-    "brightMagenta": "#d8b4fe",  # lighter magenta
-    "brightCyan": "#a5f3fc",  # lighter cyan
-    "brightWhite": "#eee8de",  # --wt-ink
-    "background": "#1d1a18",  # --wt-paper
-    "foreground": "#eee8de",  # --wt-ink
-    "cursor": "#ef8a50",  # --wt-orange
-    "selection": "#49200f",  # --sl-color-accent-low
-}
 
-THEMES = {
-    "light": LIGHT_THEME,
-    "dark": DARK_THEME,
-}
+def _hex_properties(css: str, selector: str) -> dict[str, str]:
+    """Hex ``--wt-*`` properties declared in the top-level ``selector`` block."""
+    start = css.index(f"\n{selector} {{\n")
+    end = css.index("\n}\n", start)
+    declarations = re.findall(
+        r"^\s+(--wt-[\w-]+): (#[0-9a-f]{6});$", css[start:end], re.MULTILINE
+    )
+    return dict(declarations)
+
+
+def _site_palettes() -> dict[str, dict[str, str]]:
+    css = CUSTOM_CSS.read_text()
+    return {
+        "light": _hex_properties(css, ":root"),
+        "dark": _hex_properties(css, ":root[data-theme='dark']"),
+    }
+
+
+PALETTES = _site_palettes()
+
+
+def _vhs_theme(theme: str) -> dict[str, str]:
+    palette = PALETTES[theme]
+    hues = {
+        hue: palette[f"--wt-terminal-{hue}"]
+        for hue in ("red", "green", "yellow", "blue", "magenta", "cyan")
+    }
+    gray = palette["--wt-ink-muted"]
+    return {
+        "name": f"worktrunk-{theme}",
+        "black": gray,
+        **hues,
+        "white": gray,
+        "brightBlack": gray,
+        **{f"bright{hue.title()}": color for hue, color in hues.items()},
+        "brightWhite": palette["--wt-terminal-gutter"],
+        "background": palette["--wt-paper"],
+        "foreground": palette["--wt-terminal-ink"],
+        "cursor": palette["--wt-copper"],
+        "selection": palette["--wt-gold-wash"],
+    }
+
+
+THEMES = {theme: _vhs_theme(theme) for theme in PALETTES}
 
 
 def format_theme_for_vhs(theme: dict) -> str:

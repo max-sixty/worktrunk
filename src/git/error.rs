@@ -22,12 +22,12 @@
 //!   emits its rendered output.
 
 use std::borrow::Cow;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use color_print::cformat;
 use shell_escape::unix::escape;
 
-use super::HookType;
+use super::{HookType, InProgressOperation, StaleWorktreeWork};
 use crate::path::format_path_for_display;
 use crate::styling::{
     error_message, format_bash_with_gutter, format_with_gutter, hint_message, info_message,
@@ -142,7 +142,7 @@ pub trait ErrorExt {
     /// per the shell convention (130 SIGINT, 143 SIGTERM) — rather than
     /// continuing.
     ///
-    /// See the "Signal Handling" section of the project `CLAUDE.md` for
+    /// See the "Signal Handling" section of the project `AGENTS.md` for
     /// the rationale and the full list of loops that apply this policy.
     fn interrupt_signal(&self) -> Option<i32>;
 }
@@ -480,8 +480,22 @@ pub enum GitError {
         /// The action that requires being in a worktree
         action: Option<String>,
     },
+    /// A registered worktree git calls prunable, or whose directory is gone.
+    /// Built with [`GitError::worktree_missing`].
     WorktreeMissing {
         branch: String,
+        /// The worktree's path while its directory remains, where `git
+        /// worktree repair` can reconnect it; `None` once the directory is gone.
+        repairable_at: Option<PathBuf>,
+    },
+    /// A stale worktree whose registration holds what unregistering it would
+    /// destroy — see [`Repository::stale_worktree_work`](super::Repository::stale_worktree_work).
+    StaleWorktreeHoldsWork {
+        branch: String,
+        path: PathBuf,
+        /// Whether the directory remains, so repair needs no recreating first.
+        directory_remains: bool,
+        work: StaleWorktreeWork,
     },
     RemoteOnlyBranch {
         branch: String,
@@ -503,6 +517,11 @@ pub enum GitError {
         error: String,
         /// The git command that failed, shown separately from git output
         command: Option<FailedCommand>,
+        /// `git worktree add -b <branch>` created the ref and then failed, so
+        /// the branch is present with nothing checked out on it. Adds a hint
+        /// naming the leftover; see `failed_add_left_branch` in
+        /// `commands/worktree/switch.rs` for why nothing deletes it.
+        leftover_branch: bool,
     },
     /// A new branch can't be created because its name collides with the
     /// directory namespace of an existing branch. Git stores refs as file
@@ -569,6 +588,19 @@ pub enum GitError {
     HookCommandNotFound {
         name: String,
         available: Vec<String>,
+    },
+    /// A bare source filter (`wt hook pre-merge user:`) selected a source that
+    /// configures no hooks of this type.
+    ///
+    /// Distinct from [`GitError::HookCommandNotFound`], which means a filter
+    /// named a command: there the fix is to correct the name, here there is no
+    /// name to correct. `other_source` names the source that does configure
+    /// hooks of this type, when one does, so the hint can offer the working
+    /// invocation.
+    HookSourceNotConfigured {
+        source: String,
+        hook_type: HookType,
+        other_source: Option<String>,
     },
     ParseError {
         message: String,
@@ -696,7 +728,27 @@ pub fn format_unresolved_conflicts(count: usize) -> String {
     format!("{count} {paths} with unresolved conflicts")
 }
 
+/// The operation's name as a message reads it ("a rebase in progress").
+fn operation_noun(operation: InProgressOperation) -> &'static str {
+    match operation {
+        InProgressOperation::Merge => "merge",
+        InProgressOperation::Rebase => "rebase",
+        InProgressOperation::CherryPick => "cherry-pick",
+        InProgressOperation::Revert => "revert",
+        InProgressOperation::Bisect => "bisect",
+    }
+}
+
 impl GitError {
+    /// [`GitError::WorktreeMissing`] for the worktree registered at `path`,
+    /// recording whether its directory remains for the hint to offer repair.
+    pub fn worktree_missing(branch: String, path: &Path) -> Self {
+        GitError::WorktreeMissing {
+            branch,
+            repairable_at: path.is_dir().then(|| path.to_path_buf()),
+        }
+    }
+
     /// Styled title for this variant (first line, with inline `<bold>`
     /// highlights on entity names like branch and path).
     ///
@@ -770,9 +822,19 @@ impl GitError {
                 None => "Not in a worktree".to_string(),
             },
 
-            GitError::WorktreeMissing { branch } => {
-                cformat!("Worktree directory missing for <bold>{branch}</>")
+            GitError::WorktreeMissing { branch, .. } => {
+                cformat!("Worktree for <bold>{branch}</> is stale; its directory or .git is gone")
             }
+
+            GitError::StaleWorktreeHoldsWork { branch, work, .. } => match work {
+                StaleWorktreeWork::StagedChanges => {
+                    cformat!("Worktree for <bold>{branch}</> is stale but holds staged changes")
+                }
+                StaleWorktreeWork::Operation(operation) => cformat!(
+                    "Worktree for <bold>{branch}</> is stale with a {} in progress",
+                    operation_noun(*operation)
+                ),
+            },
 
             GitError::RemoteOnlyBranch { branch, remote } => {
                 cformat!("Branch <bold>{branch}</> exists only on remote ({remote}/{branch})")
@@ -881,6 +943,10 @@ impl GitError {
                     cformat!("No command named <bold>{name}</> (available: {styled_list})")
                 }
             }
+
+            GitError::HookSourceNotConfigured {
+                source, hook_type, ..
+            } => format!("No {source} {hook_type} hooks configured"),
 
             GitError::LlmCommandFailed { .. } => "Commit generation command failed".to_string(),
 
@@ -1116,14 +1182,42 @@ impl GitError {
                 )
             }
 
-            GitError::WorktreeMissing { .. } => {
+            GitError::WorktreeMissing { repairable_at, .. } => {
                 let title = self.title();
+                // Repair reconnects a directory that remains, whatever it holds;
+                // once the directory is gone there is nothing to reconnect.
+                let hint = match repairable_at {
+                    Some(path) => cformat!(
+                        "To restore the worktree, run <underline>git worktree repair {}</>",
+                        format_path_for_display(path)
+                    ),
+                    None => cformat!("To clean up, run <underline>git worktree prune</>"),
+                };
+                write!(f, "{}\n{}", error_message(&title), hint_message(hint))
+            }
+
+            GitError::StaleWorktreeHoldsWork {
+                branch,
+                path,
+                directory_remains,
+                ..
+            } => {
+                let title = self.title();
+                let discard = suggest_command("remove", &[branch], &["-f"]);
+                let path_display = format_path_for_display(path);
+                let restore = if *directory_remains {
+                    cformat!("run <underline>git worktree repair {path_display}</>")
+                } else {
+                    cformat!(
+                        "recreate its directory, then run <underline>git worktree repair {path_display}</>"
+                    )
+                };
                 write!(
                     f,
                     "{}\n{}",
                     error_message(&title),
                     hint_message(cformat!(
-                        "To clean up, run <underline>git worktree prune</>"
+                        "To discard the stale worktree, run <underline>{discard}</>; to restore it, {restore}"
                     ))
                 )
             }
@@ -1183,7 +1277,13 @@ impl GitError {
                 )
             }
 
-            GitError::WorktreeCreationFailed { error, command, .. } => {
+            GitError::WorktreeCreationFailed {
+                branch,
+                error,
+                command,
+                leftover_branch,
+                ..
+            } => {
                 let title = self.title();
                 write!(f, "{}", format_error_block(error_message(&title), error))?;
                 if let Some(cmd) = command {
@@ -1194,7 +1294,22 @@ impl GitError {
                         format_bash_with_gutter(&cmd.command)
                     )?;
                 }
-                Ok(())
+                if !*leftover_branch {
+                    return Ok(());
+                }
+                // `git worktree add -b` writes the ref before it populates the
+                // worktree, so the branch outlives a failure in between. Naming
+                // it here is what keeps the next `--create` run's `Branch …
+                // already exists` from reading as a fresh name collision.
+                let escaped = escape(Cow::Borrowed(branch.as_str()));
+                let switch_cmd = suggest_command("switch", &[branch], &[]);
+                write!(
+                    f,
+                    "\n{}",
+                    hint_message(cformat!(
+                        "Branch <underline>{branch}</> was created before the failure, with no worktree; to delete it, run <underline>git branch -d -- {escaped}</>; to use it, run <underline>{switch_cmd}</>"
+                    ))
+                )
             }
 
             GitError::BranchNamespaceConflict {
@@ -1403,6 +1518,28 @@ impl GitError {
             GitError::HookCommandNotFound { .. } => {
                 let title = self.title();
                 write!(f, "{}", error_message(&title))
+            }
+
+            GitError::HookSourceNotConfigured {
+                hook_type,
+                other_source,
+                ..
+            } => {
+                let title = self.title();
+                write!(f, "{}", error_message(&title))?;
+                // The filter syntax is `<source>:`, so the working invocation
+                // is the same command with the other prefix — when that source
+                // has hooks of this type to run.
+                match other_source {
+                    Some(other) => write!(
+                        f,
+                        "\n{}",
+                        hint_message(cformat!(
+                            "To run the {other} hooks, run <underline>wt hook {hook_type} {other}:</>"
+                        ))
+                    ),
+                    None => Ok(()),
+                }
             }
 
             GitError::LlmCommandFailed {
@@ -2368,6 +2505,7 @@ mod tests {
             base_branch: Some("main".into()),
             error: "git error".into(),
             command: None,
+            leftover_branch: false,
         };
         assert_snapshot!(err.render(), @"
         [31m✗[39m [31mFailed to create worktree for [1mfeature[22m from base [1mmain[22m[39m
@@ -2379,6 +2517,7 @@ mod tests {
             base_branch: None,
             error: "git error".into(),
             command: None,
+            leftover_branch: false,
         };
         assert_snapshot!(err.render(), @"
         [31m✗[39m [31mFailed to create worktree for [1mfeature[22m[39m
@@ -2393,12 +2532,32 @@ mod tests {
                 command: "git worktree add /path -b feature main".into(),
                 exit_info: "exit code 128".into(),
             }),
+            leftover_branch: false,
         };
         assert_snapshot!(err.render(), @"
         [31m✗[39m [31mFailed to create worktree for [1mfeature[22m from base [1mmain[22m[39m
         [107m [0m fatal: ref exists
         [2m↳[22m [2mFailed command, [4mexit code 128[24m:[22m
         [107m [0m [2m[0m[2m[34mgit[0m[2m worktree add /path [0m[2m[36m-b[0m[2m feature main[0m
+        ");
+    }
+
+    #[test]
+    fn snapshot_worktree_creation_failed_leftover_branch() {
+        // `git worktree add -b` wrote the ref and then failed, so the branch
+        // outlives the command with nothing checked out on it. The hint names
+        // it so the next `--create` run's "already exists" reads as fallout.
+        let err = GitError::WorktreeCreationFailed {
+            branch: "feature/auth".into(),
+            base_branch: Some("main".into()),
+            error: "fatal: could not create leading directories".into(),
+            command: None,
+            leftover_branch: true,
+        };
+        assert_snapshot!(err.render(), @"
+        [31m✗[39m [31mFailed to create worktree for [1mfeature/auth[22m from base [1mmain[22m[39m
+        [107m [0m fatal: could not create leading directories
+        [2m↳[22m [2mBranch [4mfeature/auth[24m was created before the failure, with no worktree; to delete it, run [4mgit branch -d -- feature/auth[24m; to use it, run [4mwt switch feature/auth[24m[22m
         ");
     }
 

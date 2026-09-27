@@ -604,12 +604,12 @@ approved-commands = ["cat > context.json"]
         "Branch should be sanitized (feature-json)"
     );
     assert!(
-        json.get("worktree").is_some(),
-        "JSON should contain 'worktree' field"
+        json.get("worktree_path").is_some(),
+        "JSON should contain 'worktree_path' field"
     );
     assert!(
-        json.get("repo_root").is_some(),
-        "JSON should contain 'repo_root' field"
+        json.get("repo_path").is_some(),
+        "JSON should contain 'repo_path' field"
     );
     assert_eq!(
         json["hook_type"].as_str(),

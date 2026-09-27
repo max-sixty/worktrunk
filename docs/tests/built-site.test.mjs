@@ -9,6 +9,8 @@ import {
   syncTocCurrentToHash,
 } from '../src/components/toc-scroll.mjs';
 
+import { withoutTrailingShellComments } from '../src/plugins/worktrunk-terminal.mjs';
+
 const docsRoot = fileURLToPath(new URL('..', import.meta.url));
 const dist = path.join(docsRoot, 'dist');
 const publicRoutes = [
@@ -146,8 +148,8 @@ test('build preserves the public route contract', async () => {
     homepage,
     /<div\b[^>]*class="wt-home"[^>]*>[\s\S]*?<p>Worktrunk is a CLI for Git worktree management, designed for <strong>parallel AI agent\s+workflows<\/strong>\.<\/p>/,
   );
-  assert.match(homepage, /<button\b[^>]*aria-label="Menu"[^>]*aria-controls="starlight__sidebar"/);
-  assert.match(homepage, /<div id="starlight__sidebar" class="sidebar-pane\b/);
+  assert.match(homepage, /<button\b[^>]*popovertarget="starlight__sidebar"[^>]*class="[^"]*\bsl-menu-button\b[^"]*"[^>]*>[\s\S]*?<span class="sr-only[^"]*">Menu<\/span><\/button>/);
+  assert.match(homepage, /<sl-sidebar-pane\b[^>]*\bpopover\b[^>]*id="starlight__sidebar"[^>]*class="sidebar-pane\b/);
   assert.match(homepage, /<a\b[^>]*href="\/switch\/"[^>]*><span\b[^>]*>wt switch<\/span><\/a>/);
   assert.match(homepage, /<a\b[^>]*href="\/faq\/"[^>]*><span\b[^>]*>FAQ<\/span><\/a>/);
   assert.doesNotMatch(homepage, /data-has-toc/);
@@ -239,7 +241,7 @@ test('build preserves the public route contract', async () => {
     );
   }
   assert.doesNotMatch(configToc, /href="#claude-code"/);
-  assert.doesNotMatch(configToc, /href="#command-reference-1"/);
+  assert.doesNotMatch(configToc, /href="#wt-config-[^"]*--command-reference"/);
 
   const structuralSections = new Map([
     ['/hook/', ['hook-types', 'security', 'configuration', 'running-hooks-manually', 'recipes']],
@@ -276,9 +278,12 @@ test('nested command references expose unique search-only fragment titles', asyn
   assert.match(stepPage, /<h2 id="command-reference">Command reference<\/h2>/);
 
   const references = [...stepPage.matchAll(
-    /<h3 id="command-reference-\d+"><span class="wt-pagefind-fragment-title" hidden aria-hidden="true">(wt step [^<]+) — <\/span>Command reference<\/h3>/g,
-  )].map((match) => match[1]);
-  assert.deepEqual(references, [
+    /<h3 id="([^"]+)"><span class="wt-pagefind-fragment-title" hidden aria-hidden="true">(wt step [^<]+) — <\/span>Command reference<\/h3>/g,
+  )];
+  for (const [, id, command] of references) {
+    assert.equal(id, `${command.replaceAll(' ', '-')}--command-reference`);
+  }
+  assert.deepEqual(references.map((match) => match[2]), [
     'wt step commit',
     'wt step squash',
     'wt step rebase',
@@ -296,7 +301,7 @@ test('nested command references expose unique search-only fragment titles', asyn
   const listPage = await readFile(routeFile('/list/'), 'utf8');
   assert.match(
     listPage,
-    /<h3 id="command-reference-1"><span class="wt-pagefind-fragment-title" hidden aria-hidden="true">wt list statusline — <\/span>Command reference<\/h3>/,
+    /<h3 id="wt-list-statusline--command-reference"><span class="wt-pagefind-fragment-title" hidden aria-hidden="true">wt list statusline — <\/span>Command reference<\/h3>/,
   );
 });
 
@@ -362,7 +367,7 @@ test('output-only console blocks do not expose copy controls', async () => {
   let outputOnlyBlocks = 0;
   for (const page of renderedPages) {
     const html = await readFile(page, 'utf8');
-    for (const match of html.matchAll(/<figure class="frame is-terminal[^"]*">([\s\S]*?)<\/figure>/g)) {
+    for (const match of html.matchAll(/<figure class="frame[^"]*">([\s\S]*?)<\/figure>/g)) {
       const frame = match[1];
       if (!/class="ec-line wt-output"/.test(frame)) continue;
       if (/class="ec-line wt-(?:command|copyable)"/.test(frame)) continue;
@@ -375,25 +380,83 @@ test('output-only console blocks do not expose copy controls', async () => {
 
 test('command-bearing console blocks emit command-only copy payloads', async () => {
   let commandBearingBlocks = 0;
+  let perLineBlocks = 0;
   for (const page of renderedPages) {
     const html = await readFile(page, 'utf8');
-    for (const match of html.matchAll(/<figure class="frame is-terminal[^"]*">([\s\S]*?)<\/figure>/g)) {
+    for (const match of html.matchAll(/<figure class="frame[^"]*">([\s\S]*?)<\/figure>/g)) {
       const frame = match[1];
       const lines = [...frame.matchAll(
-        /<div class="ec-line wt-(command|copyable|output)"><div class="code">([\s\S]*?)<\/div><\/div>/g,
+        /<div class="ec-line wt-(command|copyable|output)"><div class="code">([\s\S]*?)<\/div>/g,
       )];
       const expected = lines
         .filter((line) => line[1] !== 'output')
-        .map((line) => renderedText(line[2]).replace(/\n$/u, ''));
+        .map((line) => {
+          const text = renderedText(line[2]).replace(/\n$/u, '');
+          return line[1] === 'command' ? withoutTrailingShellComments(text) : text;
+        });
       if (expected.length === 0) continue;
 
       commandBearingBlocks += 1;
-      const encodedPayload = frame.match(/<button\b[^>]*\bdata-code="([^"]*)"/)?.[1];
-      assert.notEqual(encodedPayload, undefined, `${page} is missing a terminal copy payload`);
-      assert.equal(renderedText(encodedPayload), expected.join('\u007f'), `${page} copies captured output`);
+      // The block control carries the bare `copy` class; per-line controls add
+      // `wt-line-copy`.
+      const encodedPayload = frame.match(
+        /<div class="copy">[\s\S]*?<button\b[^>]*\bdata-code="([^"]*)"/,
+      )?.[1];
+      const commands = lines
+        .filter((line) => line[1] === 'command')
+        .map((line) => withoutTrailingShellComments(renderedText(line[2]).replace(/\n$/u, '')));
+      const perLine = [...frame.matchAll(
+        /<div class="copy wt-line-copy">[\s\S]*?<button\b[^>]*\bdata-code="([^"]*)"/g,
+      )].map((line) => renderedText(line[1]));
+      // Most blocks listing several commands are menus of alternatives, so
+      // each command line offers its own payload in place of the block's.
+      if (commands.length > 1) {
+        perLineBlocks += 1;
+        assert.equal(encodedPayload, undefined, `${page} offers a block copy beside per-line copies`);
+        assert.deepEqual(perLine, commands, `${page} per-line copy payloads do not match its commands`);
+      } else {
+        assert.notEqual(encodedPayload, undefined, `${page} is missing a terminal copy payload`);
+        assert.equal(renderedText(encodedPayload), expected.join('\u007f'), `${page} copies captured output`);
+        assert.deepEqual(perLine, [], `${page} adds per-line copy to a single-command block`);
+      }
     }
   }
   assert.ok(commandBearingBlocks > 0, 'expected command-bearing console blocks');
+  assert.ok(perLineBlocks > 0, 'expected blocks listing several commands');
+});
+
+test('shell copy payloads leave out trailing comments', async () => {
+  let payloads = 0;
+  for (const page of renderedPages) {
+    const html = await readFile(page, 'utf8');
+    for (const match of html.matchAll(/<figure class="frame[^"]*">([\s\S]*?)<\/figure>/g)) {
+      if (!/<pre\b[^>]*\bdata-language="(?:bash|sh)"/.test(match[1])) continue;
+      for (const button of match[1].matchAll(/<button\b[^>]*\bdata-code="([^"]*)"/g)) {
+        payloads += 1;
+        const code = renderedText(button[1]).replaceAll('\u007f', '\n');
+        assert.equal(code, withoutTrailingShellComments(code), `${page} copies a trailing shell comment`);
+      }
+    }
+  }
+  assert.ok(payloads > 0, 'expected shell copy payloads');
+});
+
+test('generated command references expose no copy control', async () => {
+  let references = 0;
+  for (const page of renderedPages) {
+    const html = await readFile(page, 'utf8');
+    for (const match of html.matchAll(
+      /<figure class="frame[^"]*\bwt-command-reference\b[^"]*">([\s\S]*?)<\/figure>/g,
+    )) {
+      references += 1;
+      assert.doesNotMatch(
+        match[1],
+        /class="copy/,
+        `${page} offers to copy a page of generated help text`,
+      );
+    }
+  }
+  assert.ok(references > 0, 'expected generated command references');
 });
 
 test('titleless code frames do not render decorative headers', async () => {
@@ -543,7 +606,7 @@ test('short wide tables become labeled records without capturing dense tables', 
     /\bwt-responsive-records\b/,
   );
   assert.doesNotMatch(
-    findTable('/claude-code/', ['Capability', 'Claude Code', 'Codex', 'OpenCode', 'Gemini CLI']).attributes,
+    findTable('/claude-code/', ['Capability', 'Claude Code', 'Codex', 'OpenCode', 'Pi', 'oh-my-pi', 'Gemini CLI']).attributes,
     /\bwt-responsive-records\b/,
   );
   assert.doesNotMatch(
@@ -560,13 +623,13 @@ test('short wide tables become labeled records without capturing dense tables', 
   );
 });
 
-test('mobile menu control is hidden until its script is available', async () => {
+test('mobile menu control works without JavaScript', async () => {
   const faqPage = await readFile(routeFile('/faq/'), 'utf8');
-  assert.match(faqPage, /<starlight-menu-button\b/);
-  assert.match(
-    faqPage,
-    /<style>\s*starlight-menu-button:not\(:defined\)\s*\{\s*display:\s*none;\s*\}\s*<\/style>/,
-  );
+  assert.match(faqPage, /<button\b[^>]*popovertarget="starlight__sidebar"/);
+  assert.match(faqPage, /<sl-sidebar-pane\b[^>]*\bpopover\b[^>]*id="starlight__sidebar"/);
+  // Starlight 0.42 drives the menu from the popover API, so nothing hydrates
+  // first and the pre-hydration hiding this page used to carry is obsolete.
+  assert.doesNotMatch(faqPage, /starlight-menu-button/);
 });
 
 test('built pages have unique IDs and valid internal page links', async () => {

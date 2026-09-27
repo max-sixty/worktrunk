@@ -35,7 +35,11 @@
 //!
 //! "Runs in" is the *anchor* — the executor's plan lookup key and render root,
 //! not a config source. A `pre-start`'s new worktree need not exist when the
-//! gate runs; the config came from the invoking worktree regardless.
+//! gate runs; the config came from the invoking worktree regardless. A
+//! background pipeline anchored on a worktree the command removed is dropped
+//! and reported rather than spawned (see [`report_dropped_pipelines`]); only
+//! `wt merge` reaches that, since it removes `post-commit`'s anchor before the
+//! flush.
 //!
 //! **Invocation-resolved (no gate→exec mutation):** `pre-commit`,
 //! `post-commit`, `pre-switch`, `wt hook <type>`, aliases. They resolve config
@@ -71,7 +75,8 @@ use worktrunk::config::{CommandConfig, format_hook_variables};
 use worktrunk::git::{Repository, add_hook_skip_hint};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
-    eprintln, format_with_gutter, info_message, progress_message, verbosity, warning_message,
+    eprintln, format_with_gutter, hint_message, info_message, progress_message, verbosity,
+    warning_message,
 };
 
 use super::command_executor::{
@@ -141,6 +146,7 @@ pub(crate) fn prepare_and_check(
     // under a non-empty filter means nothing matched.
     if !name_filters.is_empty() && result.is_empty() {
         return Err(no_matching_commands_error(
+            hook_type,
             name_filters,
             user_config,
             project_config,
@@ -180,9 +186,17 @@ fn filter_step_by_name(
     }
 }
 
-/// Build the error for a name filter that matched no commands, listing the
-/// available command names across the filters' source scopes.
+/// Build the error for a filter that matched no commands.
+///
+/// A bare source filter (`user:` / `project:`) asks for every hook from one
+/// source rather than naming a command, so a miss means that source
+/// configures no hooks of this type — there is no name to have misspelled.
+/// That gets [`worktrunk::git::GitError::HookSourceNotConfigured`], pointing
+/// at the other source; a filter that did name a command gets
+/// [`worktrunk::git::GitError::HookCommandNotFound`], listing the available
+/// names across the filters' source scopes.
 fn no_matching_commands_error(
+    hook_type: HookType,
     name_filters: &[String],
     user_config: Option<&CommandConfig>,
     project_config: Option<&CommandConfig>,
@@ -194,6 +208,41 @@ fn no_matching_commands_error(
         .iter()
         .map(|f| ParsedFilter::parse(f))
         .collect();
+
+    let configured = |source: HookSource| {
+        let config = match source {
+            HookSource::User => user_config,
+            HookSource::Project => project_config,
+        };
+        config.is_some_and(|c| c.commands().next().is_some())
+    };
+    // Only when every filter is a bare source. A list that also names a
+    // command asked about that name, and answering about a source instead
+    // would leave the name unmentioned and offer an invocation nobody typed —
+    // so a mixed list falls through to `HookCommandNotFound`, which lists what
+    // is available across the scopes the filters named.
+    let all_bare = parsed_filters.iter().all(|f| f.name.is_empty());
+    if let Some(source) = all_bare
+        .then(|| {
+            parsed_filters
+                .iter()
+                .filter_map(|f| f.source)
+                .find(|source| !configured(*source))
+        })
+        .flatten()
+    {
+        let other = match source {
+            HookSource::User => HookSource::Project,
+            HookSource::Project => HookSource::User,
+        };
+        return worktrunk::git::GitError::HookSourceNotConfigured {
+            source: source.to_string(),
+            hook_type,
+            other_source: configured(other).then(|| other.to_string()),
+        }
+        .into();
+    }
+
     let mut available = Vec::new();
 
     let sources = [
@@ -234,6 +283,7 @@ fn no_matching_commands_error(
 /// emitted at `flush`, not at registration time.
 pub struct HookAnnouncer<'a> {
     pending: Vec<PendingPipeline>,
+    removed_worktrees: Vec<PathBuf>,
     repo: &'a Repository,
     show_branch: bool,
 }
@@ -258,6 +308,7 @@ impl<'a> HookAnnouncer<'a> {
     pub fn new(repo: &'a Repository, show_branch: bool) -> Self {
         Self {
             pending: Vec::new(),
+            removed_worktrees: Vec::new(),
             repo,
             show_branch,
         }
@@ -319,16 +370,36 @@ impl<'a> HookAnnouncer<'a> {
         Ok(())
     }
 
+    /// Record that this command removed the worktree at `path`, so a pipeline
+    /// anchored there is dropped at [`flush`](Self::flush) rather than spawned
+    /// into it — see [`report_dropped_pipelines`].
+    ///
+    /// The removal is the only thing that knows: on the fast path the worktree
+    /// is already renamed into `.git/wt/trash/` by the time `flush` runs, but
+    /// where that rename fails (cross-filesystem, permissions, Windows file
+    /// locks) the fallback `git worktree remove` runs detached and the anchor
+    /// is still on disk, intact, at the flush. Probing the filesystem would
+    /// answer differently in those two cases; the removal's own report doesn't.
+    pub fn mark_worktree_removed(&mut self, path: &Path) {
+        self.removed_worktrees.push(path.to_path_buf());
+    }
+
     /// Emit the combined announce line and spawn all registered pipelines.
     ///
     /// No-op when nothing was registered. Drains `pending` so the announcer
-    /// can be reused (though one-per-command is the intended pattern).
+    /// can be reused (though one-per-command is the intended pattern); the
+    /// removed-worktree marks persist, since a removed worktree stays removed.
     pub fn flush(&mut self) -> anyhow::Result<()> {
         let pending = std::mem::take(&mut self.pending);
         if pending.is_empty() {
             return Ok(());
         }
-        run_hooks_background(self.repo, pending, self.show_branch)
+        run_hooks_background(
+            self.repo,
+            pending,
+            &self.removed_worktrees,
+            self.show_branch,
+        )
     }
 }
 
@@ -367,11 +438,23 @@ impl Drop for HookAnnouncer<'_> {
 /// When `show_branch` is true, the announce includes the branch name for
 /// disambiguation in batch contexts (e.g., prune removing multiple worktrees):
 /// `Running post-remove for feature: docs (user)`.
+///
+/// Pipelines anchored on one of `removed_worktrees` are dropped first, so the
+/// announce describes only what starts — see [`report_dropped_pipelines`].
 fn run_hooks_background(
     repo: &Repository,
     pipelines: Vec<PendingPipeline>,
+    removed_worktrees: &[PathBuf],
     show_branch: bool,
 ) -> anyhow::Result<()> {
+    let (pipelines, dropped): (Vec<_>, Vec<_>) = pipelines
+        .into_iter()
+        .partition(|p| !removed_worktrees.contains(&p.worktree_path));
+    report_dropped_pipelines(&dropped);
+    if pipelines.is_empty() {
+        return Ok(());
+    }
+
     // Merge per-source summaries by hook type so user+project for the same
     // type render as one clause: `post-merge: sync, push (user); build (project)`.
     // Pull `display_path` off the first pipeline that has one — every hook
@@ -432,6 +515,43 @@ fn run_hooks_background(
     Ok(())
 }
 
+/// Report background hook pipelines dropped because this command removed the
+/// worktree they are anchored on.
+///
+/// A pipeline runs with its anchor as cwd, and the runner
+/// ([`run_pipeline`](super::run_pipeline::run_pipeline)) opens the repository
+/// by discovery from there. Discovery walks up, so once the anchor is emptied
+/// a worktree nested inside its repository resolves to the *primary* worktree
+/// and the steps — arbitrary project code — run in a worktree the user never
+/// chose. A worktree outside the repository has nothing to walk up to, and the
+/// runner writes `failed to open repository for pipeline` to a log nothing
+/// reads back. Both are silent, so the drop is reported here instead.
+///
+/// Only `wt merge` reaches this. `post-commit` is anchored on the feature
+/// worktree the merge then removes; every other background hook anchors on a
+/// worktree its command keeps.
+fn report_dropped_pipelines(dropped: &[PendingPipeline]) {
+    for pipeline in dropped {
+        let hook_type = pipeline.hook_type;
+        let summary = format_pipeline_summary(&pipeline.steps);
+        let path = format_path_for_display(&pipeline.worktree_path);
+        eprintln!(
+            "{}",
+            warning_message(cformat!(
+                "Skipped {hook_type}: {summary} — worktree removed @ <bold>{path}</>"
+            ))
+        );
+    }
+    if !dropped.is_empty() {
+        eprintln!(
+            "{}",
+            hint_message(cformat!(
+                "To run commands in a worktree before it is removed, use <underline>pre-remove</>"
+            ))
+        );
+    }
+}
+
 /// Group sourced steps into one Vec per source, preserving insertion order.
 ///
 /// Used by background callers that want one pipeline per source (the canonical
@@ -484,7 +604,9 @@ fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: PendingPipeline) -> an
     // so `steps[0]` is safe.
     let source = pipeline.steps[0].source;
 
-    // "HEAD" fallback matches `CommandContext::branch_or_head` for detached HEAD.
+    // Only names the pipeline's log file, so a detached worktree needs some
+    // literal here — unlike the `branch` template variable, which stays unset
+    // rather than claiming a branch the worktree isn't on (issue #4009).
     let branch = pipeline.branch.unwrap_or_else(|| "HEAD".to_string());
     let hook_type = pipeline.hook_type;
     let spec = PipelineSpec {

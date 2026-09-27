@@ -2,7 +2,7 @@
 //!
 //! Those guards assert *absence*, which is what makes a swallowed read
 //! dangerous here in a way it isn't for code that acts on what it finds — see
-//! "Guards that scan source text" in `tests/CLAUDE.md` for the shape of that
+//! "Guards that scan source text" in `tests/AGENTS.md` for the shape of that
 //! failure and the rules it sets.
 //!
 //! Every read below panics rather than skipping, so the walk either covers the

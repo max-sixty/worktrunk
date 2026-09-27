@@ -126,7 +126,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# worktree-path = "~/development/{{ owner }}/{{ repo }}/{{ branch }}"[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Bare repository (`~/code/myproject/feature-auth`):[0m
+[107m [0m [2m# Bare repository cloned to `~/code/myproject/.git` (`~/code/myproject/feature-auth`):[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"[0m
 [107m [0m [2m#[0m
@@ -143,8 +143,11 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Codex[0m
 [107m [0m [2m#[0m
+[107m [0m [2m# Create `~/.codex/worktrunk-commit-instructions.txt` containing just `.` (no newline). Accepting Worktrunk's first-run Codex setup creates the file for you.[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# [commit.generation][0m
-[107m [0m [2m# command = "codex exec -m gpt-5.6-luna -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"[0m
+[107m [0m [2m# command = "codex exec -m gpt-6-luna -c model_reasoning_effort='none' -c project_doc_max_bytes=0 -c skills.max_context_tokens=1 -c agents.enabled=false -c features.goals=false -c web_search=disabled -c 'model_instructions_file=\"~/.codex/worktrunk-commit-instructions.txt\"' -c features.shell_tool=false -c features.unified_exec=false -c features.apps=false -c features.plugins=false --ephemeral --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] |
+[107m [0m last.item.text'"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### OpenCode[0m
 [107m [0m [2m#[0m
@@ -176,7 +179,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# branches = false   # Include branches without worktrees (--branches)[0m
 [107m [0m [2m# remotes = false    # Include remote-only branches (--remotes)[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# json-schema = 2    # JSON output schema: 2 (envelope) or 1 (bare array, the current default); unset emits 1 with a warning[0m
+[107m [0m [2m# json-schema = 2    # JSON output schema: 2 (envelope, default) or 1 (bare array)[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# columns = ["branch", "status", "ci", "path"]   # Columns to show, in order — built-ins or custom headers (omit for the default set)[0m
 [107m [0m [2m#[0m
@@ -209,14 +212,11 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# A selection mixes built-ins with custom columns (#custom-columns), each named[0m
 [107m [0m [2m# by its `[list.custom-columns]` header (`columns = ["branch", "Ticket", "ci"]`),[0m
 [107m [0m [2m# and is exhaustive: only the listed columns render. Omit `columns` to keep the[0m
-[107m [0m [2m# default set, where custom columns append automatically. A built-in name wins a[0m
-[107m [0m [2m# header collision; the gutter type indicator always shows.[0m
+[107m [0m [2m# default set, where custom columns append automatically.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Listing a column forces it on, space permitting: `ci` shows without `--full`,[0m
-[107m [0m [2m# since `--full` only bundles columns into the default table rather than gating a[0m
-[107m [0m [2m# named one. A column whose data source is missing still stays hidden — `summary`[0m
-[107m [0m [2m# needs an LLM command (`[commit.generation]`), `url` needs a `[list] url`[0m
-[107m [0m [2m# template — since listing can't supply the data.[0m
+[107m [0m [2m# Listing a column forces it on, space permitting: `ci` shows without `--full`. A[0m
+[107m [0m [2m# column whose data source is missing still stays hidden — `summary` needs an LLM[0m
+[107m [0m [2m# command (`[commit.generation]`), `url` needs a `[list] url` template.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# #### Custom columns [experimental][0m
 [107m [0m [2m#[0m
@@ -244,7 +244,8 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# All standard filters work (`sanitize`, `hash_port`, `codename`, …). A row[0m
 [107m [0m [2m# where the template renders empty (e.g. a branch without the key) shows an[0m
 [107m [0m [2m# empty cell; a column that is empty for every row is dropped from the table.[0m
-[107m [0m [2m# `wt list --format json` includes the rendered values under `columns`.[0m
+[107m [0m [2m# `wt list --format json` includes the rendered values under[0m
+[107m [0m [2m# `items[].display.columns` in schema 2, or under `columns` in schema 1.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# A `Jira` column reading a key kept in git config, and a `Summary` column[0m
 [107m [0m [2m# showing just the first line of the git-native branch description:[0m
@@ -296,7 +297,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# Built-in excludes (VCS metadata and tool-state directories) always apply; the `wt step copy-ignored` docs (https://worktrunk.dev/step/#wt-step-copy-ignored) list them. User config and project config exclusions are combined.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# ### Aliases[0m
+[107m [0m [2m# ### User aliases[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Command templates that run as `wt <name>`. See the Extending Worktrunk guide (https://worktrunk.dev/extending/#aliases) for usage and flags.[0m
 [107m [0m [2m#[0m
@@ -304,7 +305,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# greet = "echo Hello from {{ branch }}"[0m
 [107m [0m [2m# url = "echo http://localhost:{{ branch | hash_port }}"[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Aliases defined here apply to all projects. For project-specific aliases, use the project config (https://worktrunk.dev/config/#project-configuration) `[aliases]` section instead.[0m
+[107m [0m [2m# Aliases defined here apply to all projects. For project-specific aliases, use the project config (https://worktrunk.dev/config/#project-aliases) `[aliases]` section instead.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### User project-specific settings[0m
 [107m [0m [2m#[0m
@@ -338,7 +339,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# Every matching entry applies, least- to most-specific, following the rule above: a more specific entry — `git.company.example/platform/*` over `git.company.example/*` — wins where both set the same setting, while hooks and aliases from every matching entry all run, least-specific first. A literal key is the most specific of all; specificity is the count of non-`*` characters in the key. End a host-wide key with `/*` — a bare `git.company.example*` also covers hosts whose names merely start
 [107m [0m with that string.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# `approved-commands` matches the same way, so a pattern entry approves its commands for every repository it covers. Only a key written by hand is ever a pattern: `wt config approvals add` and the interactive prompt record under the exact identifier, and `wt config approvals clear` removes only that exact entry, leaving a pattern other repositories share intact.[0m
+[107m [0m [2m# Entries in `approvals.toml` match the same way, so a hand-written pattern entry approves its commands for every repository it covers.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# #### Forge platform and hostname[0m
 [107m [0m [2m#[0m
@@ -348,9 +349,9 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# forge.platform = "gitlab"                    # or "github", "gitea" (experimental), "azure-devops" (experimental)[0m
 [107m [0m [2m# forge.hostname = "api.git.company.example"   # API host, when the remote's own host isn't it[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Both fields describe the host rather than the repository, which is why a pattern keyed to a hostname suits them, and why an SSH alias resolved through `~/.ssh/config` — where the name in the remote URL is local to one machine — belongs here rather than in a repository's committed config. A repository's own `[forge]` block still wins over any entry here, field by field: a repository that sets only `platform` still takes a matching entry's `hostname`.[0m
+[107m [0m [2m# A repository's own `[forge]` block still wins over any entry here, field by field.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Hooks support all three hook forms (https://worktrunk.dev/hook/#hook-forms). A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence. The dotted-key examples below are equivalent to the table forms — TOML treats `projects."github.com/user/repo".post-start.server = "..."` and a `[projects."github.com/user/repo".post-start]` table the same way:[0m
+[107m [0m [2m# Hooks support all three hook forms (https://worktrunk.dev/hook/#hook-forms). A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence:[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# # Single command[0m
 [107m [0m [2m# [projects."github.com/user/repo"][0m
@@ -439,7 +440,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# <!-- DEFAULT_SQUASH_TEMPLATE_START -->[0m
 [107m [0m [2m# [commit.generation][0m
 [107m [0m [2m# squash-template = """[0m
-[107m [0m [2m# <task>Write a commit message for the combined effect of these commits.</task>[0m
+[107m [0m [2m# <task>Write a commit message for the change in <diff>, which is everything the squash will record. <commits> lists what it folds in.</task>[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# <format>[0m
 [107m [0m [2m# - Subject line under 50 chars[0m
@@ -485,11 +486,11 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# - Explain the rationale in the body, not just the change[0m
 [107m [0m [2m# """[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# How the fragment renders, and the project-config counterpart: the LLM commits guide (https://worktrunk.dev/llm-commits/#appending-to-the-prompt).[0m
+[107m [0m [2m# See the LLM commits guide (https://worktrunk.dev/llm-commits/#appending-to-the-prompt) for how the fragment renders and its project-config counterpart.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# ## Hooks[0m
+[107m [0m [2m# ## User hooks[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# See `wt hook` (https://worktrunk.dev/hook/) for hook types, execution order, template variables, and examples. User hooks apply to all projects; project hooks (https://worktrunk.dev/config/#project-configuration) apply only to that repository.[0m
+[107m [0m [2m# See `wt hook` (https://worktrunk.dev/hook/) for hook types, execution order, template variables, and examples. User hooks apply to all projects; project hooks (https://worktrunk.dev/config/#project-hooks) apply only to that repository.[0m
 
 [1m[32mProject config[0m
 
@@ -501,7 +502,7 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m#[0m
 [107m [0m [2m# To create a starter file with commented-out examples, run `wt config create --project`.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# ## Hooks[0m
+[107m [0m [2m# ## Project hooks[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Project hooks apply to this repository only. See `wt hook` (https://worktrunk.dev/hook/) for hook types, execution order, and examples.[0m
 [107m [0m [2m#[0m
@@ -536,8 +537,7 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m# - Reference the relevant issue ID in the body[0m
 [107m [0m [2m# """[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# The first time the fragment is used (and whenever it changes), `wt` prompts the user to approve it — the same one-shot gate as project-defined hooks. Only `template-append` is honored from the project file; the LLM command and the main prompt template stay in user config (https://worktrunk.dev/config/), since they describe per-developer environment (which CLI is installed, which agent the developer prefers). How the fragment renders: the LLM commits guide
-[107m [0m (https://worktrunk.dev/llm-commits/#appending-to-the-prompt).[0m
+[107m [0m [2m# The first time the fragment is used (and whenever it changes), `wt` prompts the user to approve it — the same one-shot gate as project-defined hooks. Only `template-append` is honored from the project file; the LLM command and the main prompt template stay in user config (https://worktrunk.dev/config/). See the LLM commits guide (https://worktrunk.dev/llm-commits/#appending-to-the-prompt) for how the fragment renders.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Copy-ignored excludes[0m
 [107m [0m [2m#[0m
@@ -548,7 +548,7 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m#[0m
 [107m [0m [2m# Built-in excludes (VCS metadata and tool-state directories) always apply; the `wt step copy-ignored` docs (https://worktrunk.dev/step/#wt-step-copy-ignored) list them. User config and project config exclusions are combined.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# ## Aliases[0m
+[107m [0m [2m# ## Project aliases[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Command templates that run as `wt <name>`. See the Extending Worktrunk guide (https://worktrunk.dev/extending/#aliases) for usage and flags.[0m
 [107m [0m [2m#[0m
@@ -556,6 +556,6 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m# deploy = "make deploy BRANCH={{ branch }}"[0m
 [107m [0m [2m# url = "echo http://localhost:{{ branch | hash_port }}"[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Aliases defined here are shared with teammates. For personal aliases, use the user config (https://worktrunk.dev/config/#aliases) `[aliases]` section instead.[0m
+[107m [0m [2m# Aliases defined here are shared with teammates. For personal aliases, use the user config (https://worktrunk.dev/config/#user-aliases) `[aliases]` section instead.[0m
 
 ----- stderr -----

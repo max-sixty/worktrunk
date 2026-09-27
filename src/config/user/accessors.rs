@@ -229,8 +229,7 @@ impl UserConfig {
     /// Format a worktree path using this configuration's template.
     ///
     /// # Arguments
-    /// * `main_worktree` - Main worktree directory name; supplies both
-    ///   `{{ main_worktree }}` and `{{ repo }}`
+    /// * `main_worktree` - Main worktree directory name; supplies `{{ repo }}`
     /// * `branch` - Branch name (replaces {{ branch }} in template; use `{{ branch | sanitize }}` for paths)
     /// * `repo` - Repository, for template function access and for the
     ///   `{{ repo_path }}`, `{{ owner }}`, and {{ remote_repo }} values read off it —
@@ -255,7 +254,6 @@ impl UserConfig {
         // Use native path format (not POSIX) since this is used for filesystem operations
         let repo_path = repo.repo_path()?.to_string_lossy().to_string();
         let mut vars = HashMap::new();
-        vars.insert("main_worktree", main_worktree);
         vars.insert("repo", main_worktree);
         vars.insert("branch", branch);
         vars.insert("repo_path", repo_path.as_str());

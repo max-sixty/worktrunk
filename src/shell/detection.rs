@@ -9,7 +9,7 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
-use super::paths::{home_dir_required, powershell_profile_paths};
+use super::paths::{home_dir_required, powershell_profile_paths, zsh_config_dir};
 
 /// Detect if a line contains shell integration for a specific command.
 ///
@@ -65,25 +65,49 @@ use super::paths::{home_dir_required, powershell_profile_paths};
 /// # Usage
 ///
 /// Used by:
-/// - `Shell::is_shell_configured()` - detect "configured but not restarted" state
-/// - `uninstall` - identify lines to remove from shell config
-/// - `wt config show` - display shell integration status
+/// - `Shell::is_shell_configured()` - detect the "configured but not restarted"
+///   state behind the shell-integration warnings
+/// - `wt config show` - render the matched integration line, and report a line
+///   that names the command but did not match as a possible false negative
+/// - `contains_shell_integration` - the install scan's idempotency check, which
+///   decides whether an rc file already carries this shell's line. It runs
+///   under `scan_shell_configs`, so three commands read it: `wt config shell
+///   install` skips the append when it answers yes, and `wt config show`'s
+///   per-shell rows and `wt switch`'s first-run integration offer read the same
+///   answer without writing
+///
+/// Not by uninstall, which reads
+/// [`is_shell_integration_line_for_uninstall_any_cmd`] instead: it asks only
+/// whether a line is worktrunk's, whatever binary name it was installed under.
 ///
 /// # Impact of False Negatives
 ///
-/// Detection is ONLY used when shell integration is NOT active (i.e., user ran
-/// the binary directly without the shell wrapper). Once the shell wrapper is
-/// active (after shell restart), `WORKTRUNK_DIRECTIVE_CD_FILE` is set and no
-/// detection is needed.
+/// The messaging cases are benign, but they are not all gated the same way.
+/// `Shell::is_shell_configured()`'s callers ask only when shell integration is
+/// NOT active (i.e., user ran the binary directly without the shell wrapper);
+/// once the wrapper is active, `WORKTRUNK_DIRECTIVE_CD_FILE` is set and they
+/// stop asking.
 ///
 /// **When binary is run directly (wrapper not active):**
 /// - If detection finds integration → "installed but not active" (restart hint)
 /// - If detection misses (false negative) → "shell integration not installed"
 ///
-/// **When wrapper is active:** No warnings shown regardless of detection.
+/// **When wrapper is active:** none of those warnings are shown, regardless of
+/// detection.
 ///
-/// This means false negatives only cause incorrect messaging in `wt config show`
-/// and when users run the binary directly before restarting their shell.
+/// `wt config show` is not gated that way — it scans on every run, so a line
+/// that names the command but doesn't match is reported as a possible false
+/// negative whether or not the wrapper is active. That is still messaging, but
+/// it is a warning the user sees rather than silence.
+///
+/// Install is the case that isn't benign: a miss there reads an
+/// already-configured rc file as unconfigured and appends a second copy of the
+/// line. `wt switch`'s offer reaches that same write by a longer route — a miss
+/// makes it offer an install the user doesn't need, and accepting appends the
+/// duplicate. Uninstall removes every line it matches, so the duplicate is not
+/// stranded — but this is a write to a user-owned file rather than a message,
+/// which is why the bar for a change here is higher than the messaging cases
+/// alone would set it.
 pub fn is_shell_integration_line(line: &str, cmd: &str) -> bool {
     has_init_invocation(line_code_portion(line), cmd)
 }
@@ -548,14 +572,15 @@ pub fn scan_for_detection_details(cmd: &str) -> Result<Vec<FileDetectionResult>,
         home.join(".profile"),
         // Zsh
         home.join(".zshrc"),
-        std::env::var("ZDOTDIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| home.clone())
-            .join(".zshrc"),
-        // Fish functions/ (current location)
-        home.join(".config/fish/functions")
+        zsh_config_dir(&home).join(".zshrc"),
+        // Fish functions/ (current location) — fish's own config dir, so
+        // detection reads the file install wrote.
+        super::paths::fish_config_dir(&home)
+            .join("functions")
             .join(format!("{cmd}.fish")),
-        // Fish conf.d (legacy location - for detecting existing installs)
+        // Fish conf.d (legacy location - for detecting existing installs).
+        // Pinned to `~/.config`, matching `legacy_fish_conf_d_path`: that is
+        // where worktrunk wrote it, and `wt config show` compares the two.
         home.join(".config/fish/conf.d").join(format!("{cmd}.fish")),
     ];
 

@@ -50,8 +50,9 @@
   --sl-color-hairline-light: var(--wt-line);
   --sl-color-hairline: var(--wt-line);
   --sl-color-hairline-shade: var(--wt-line);
-  --sl-content-width: 50rem;
-  --sl-sidebar-width: 17rem;
+  /* The 99-column documentation terminal plus its inline gutters. */
+  --sl-content-width: 53.75rem;
+  --sl-sidebar-width: 14rem;
 }
 
 :root[data-theme='dark'] {
@@ -530,10 +531,14 @@ header.header {
   background: transparent;
 }
 
+.expressive-code .frame.has-title .header::before {
+  content: none;
+}
+
+/* The file tab shares the left edge of its code. */
 .expressive-code .frame.has-title .title {
   width: auto;
-  max-width: calc(100% - 1.2rem);
-  margin-inline-start: 0.6rem;
+  max-width: 100%;
   overflow: hidden;
   border: 1px solid var(--wt-line);
   border-block-end: 0;
@@ -566,21 +571,18 @@ header.header {
   -webkit-overflow-scrolling: touch;
 }
 
+/* Captured command output keeps its columns and scrolls; other code wraps. */
 @media (max-width: 42rem) {
-  .expressive-code .frame:not(.is-terminal) pre,
-  .expressive-code .frame.is-terminal.wt-commands-only pre {
+  .expressive-code .frame:not(:has(.wt-output)) pre {
     overflow-x: clip;
   }
 
-  .expressive-code .frame:not(.is-terminal) .ec-line,
-  .expressive-code .frame:not(.is-terminal) .code,
-  .expressive-code .frame.is-terminal.wt-commands-only .ec-line,
-  .expressive-code .frame.is-terminal.wt-commands-only .code {
+  .expressive-code .frame:not(:has(.wt-output)) .ec-line,
+  .expressive-code .frame:not(:has(.wt-output)) .code {
     min-width: 0;
   }
 
-  .expressive-code .frame:not(.is-terminal) .code,
-  .expressive-code .frame.is-terminal.wt-commands-only .code {
+  .expressive-code .frame:not(:has(.wt-output)) .code {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
@@ -625,7 +627,7 @@ figure.demo {
   margin-block-start: 0.75rem;
 }
 
-.wt-home figure.demo figcaption {
+figure.demo figcaption {
   margin-block-start: 0.65rem;
   color: var(--wt-ink-muted);
   font-family: var(--wt-font-display);
@@ -711,6 +713,41 @@ figure.demo img {
           (100% - var(--sl-content-width) - var(--sl-sidebar-width)) / 2
       )
     );
+  }
+}
+
+/* Keep the compact table of contents until both sidebars leave room for examples. */
+@media (min-width: 72rem) and (max-width: 87.5rem) {
+  :root {
+    --sl-mobile-toc-height: 3rem;
+  }
+
+  [data-has-toc] .lg\:sl-flex:has(> .right-sidebar-container) {
+    flex-wrap: wrap;
+  }
+
+  [data-has-toc] .right-sidebar-container,
+  [data-has-sidebar][data-has-toc] .main-pane,
+  html:has(.wt-home) .main-pane {
+    flex-basis: 100%;
+    width: 100%;
+  }
+
+  [data-has-toc] .right-sidebar {
+    position: static;
+    border-inline-start: 0;
+    padding-top: 0;
+    width: auto;
+    height: auto;
+    overflow-y: visible;
+  }
+
+  [data-has-toc] .right-sidebar .lg\:sl-hidden {
+    display: block;
+  }
+
+  [data-has-toc] .right-sidebar-panel {
+    display: none;
   }
 }
 

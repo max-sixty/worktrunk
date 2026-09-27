@@ -4,8 +4,9 @@
 //   - skeleton: Time until the skeleton paints (1 and 8 worktrees; warm + cold)
 //   - worktree_scaling: Full execution at 1 and 8 worktrees (warm + cold)
 //   - full: One combined full-surface fixture — many worktrees AND many branches
-//       in varied states, with branch divergence spread across history depth.
-//       The realistic "everything at once" workload (warm + cold).
+//       in varied states, some worktrees on a detached HEAD, with branch
+//       divergence spread across history depth. The realistic "everything at
+//       once" workload (warm + cold).
 //   - divergent_branches: 200 branches spread across history depth / GH #461 stress (warm + cold)
 //   - large_repository: one pinned upstream corpus with 8 worktrees and 50 branches
 //       spread through history; default list (warm + cold) and --branches (warm)
@@ -13,7 +14,7 @@
 // Attribution: a `full` wall time can't be split by side (worktree- and
 // branch-side git subprocesses overlap on the rayon pool), so to see where a
 // regression lands, trace one invocation and read the profile's BY CONTEXT /
-// BY COMMAND TYPE tables — see `benches/CLAUDE.md` ("Analyzing a trace").
+// BY COMMAND TYPE tables — see `benches/AGENTS.md` ("Analyzing a trace").
 // For per-side regression tracking at criterion cadence, `worktree_scaling`
 // is the worktree side and `divergent_branches` the branch side.
 //
@@ -161,6 +162,7 @@ fn bench_divergent_branches(c: &mut Criterion) {
                 linked_worktrees: 0,
                 branchless_branches: 200,
                 remote_tracking_refs: 0,
+                detached_worktrees: 0,
             }
             .create();
             run_git(fixture.path(), &["status"]);
@@ -187,10 +189,12 @@ fn bench_divergent_branches(c: &mut Criterion) {
 /// clean/dirty/staged working trees, merged/ahead/diverged branches, and the
 /// GH #461 deep-divergence shape (branches forking at points spread across
 /// history depth, so the `git for-each-ref %(ahead-behind)` walk has real
-/// history to traverse).
+/// history to traverse). Six of the worktrees are on a detached HEAD: each is
+/// a row with no branch, its branch becomes a branch-only row, and resolving
+/// its branch from rebase state costs a `git rev-parse --git-dir` in it.
 ///
 /// To see *where* a regression lands, trace one invocation and read the
-/// profile's BY CONTEXT / BY COMMAND TYPE tables — see `benches/CLAUDE.md`
+/// profile's BY CONTEXT / BY COMMAND TYPE tables — see `benches/AGENTS.md`
 /// ("Analyzing a trace"); a criterion wall time can't be decomposed by side
 /// because the worktree- and branch-side git subprocesses run concurrently on
 /// the rayon pool. For
@@ -211,22 +215,21 @@ fn bench_divergent_branches(c: &mut Criterion) {
 /// network-touching `ci` column that `--full` would add.
 fn bench_full(c: &mut Criterion) {
     let mut group = c.benchmark_group("full");
-    // Heavy fixture (24 linked worktrees + 120 branchless branches, deep
-    // history): the cold variant runs well over the inherited 30-sample / 15s
-    // budget. Cap samples at criterion's minimum and give a 20s window (≈ a
-    // few iters per sample), matching the other heavy groups.
+    // Heavy fixture (24 linked worktrees, 6 of them detached, + 120 branchless
+    // branches, deep history): the cold variant runs well over the inherited
+    // 30-sample / 15s budget. Cap samples at criterion's minimum and give a 20s
+    // window (≈ a few iters per sample), matching the other heavy groups.
     group.measurement_time(std::time::Duration::from_secs(20));
     group.sample_size(10);
 
     let binary = &worktrunk::testing::wt_bin();
-    let (linked_worktrees, branchless_branches) = (24usize, 120usize);
-
     for cache in CacheState::WARM_AND_COLD {
         group.bench_function(cache.label(), |b| {
             let fixture = FixtureRecipe::Generated {
-                linked_worktrees,
-                branchless_branches,
+                linked_worktrees: 24,
+                branchless_branches: 120,
                 remote_tracking_refs: 0,
+                detached_worktrees: 6,
             }
             .create();
             run_benchmark(

@@ -51,6 +51,10 @@ on:
     tags:
       - '**[0-9]+.[0-9]+.[0-9]+*'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # Run 'dist plan' (or host) to determine what tasks we need to do
   plan:
@@ -118,7 +122,7 @@ jobs:
     # This job doesn't deploy anything; the environment scopes
     # SIGNPATH_API_TOKEN so it isn't readable by every workflow the repo runs.
     # It is deliberately not `release`, which also holds the publish
-    # credentials — see .github/CLAUDE.md. The policy admits tags only, so
+    # credentials — see .github/AGENTS.md. The policy admits tags only, so
     # setting `pr-run-mode = "upload"` in dist-workspace.toml would make GitHub
     # reject this job on a PR ref.
     environment: signing
@@ -177,7 +181,7 @@ jobs:
         id: signpath
         if: contains(matrix.targets, 'x86_64-pc-windows-msvc') && steps.upload-unsigned-windows-artifact.outcome == 'success'
         continue-on-error: true
-        uses: signpath/github-action-submit-signing-request@v2
+        uses: signpath/github-action-submit-signing-request@v3
         with:
           api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
           organization-id: '56bf7020-7661-4b4e-ad77-b627278eaefd'

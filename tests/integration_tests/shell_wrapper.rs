@@ -2423,7 +2423,7 @@ approved-commands = ["echo 'bash background'"]
     // These tests generate snapshots for README.md examples. They use PTY execution
     // to capture stdout/stderr interleaved in the order users see them.
     //
-    // See tests/CLAUDE.md for background on why PTY-based tests are needed for README examples.
+    // See tests/AGENTS.md for background on why PTY-based tests are needed for README examples.
 
     /// README example: Pre-merge hooks with squash and LLM commit message
     ///

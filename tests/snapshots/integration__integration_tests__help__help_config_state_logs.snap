@@ -10,6 +10,14 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_ALLOW_PROTOCOL: file
+    GIT_CONFIG_COUNT: "2"
+    GIT_CONFIG_GLOBAL: /nonexistent/wt/gitconfig
+    GIT_CONFIG_KEY_0: user.useConfigOnly
+    GIT_CONFIG_KEY_1: rerere.enabled
+    GIT_CONFIG_SYSTEM: /nonexistent/wt/gitconfig
+    GIT_CONFIG_VALUE_0: "true"
+    GIT_CONFIG_VALUE_1: "false"
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -26,8 +34,10 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
+    WORKTRUNK_TEST_PROBE_TIMEOUT_MS: "60000"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
@@ -97,7 +107,7 @@ Hook output lives in per-branch subtrees under [2m.git/wt/logs/{branch}/[0m:
  Background hooks   [2m{branch}/{source}/{hook-type}/{name}.log[0m 
  Background removal [2m{branch}/internal/remove.log[0m             
 
-All [2mpost-*[0m hooks (post-start, post-switch, post-commit, post-merge) run in the background and produce log files. Source is [2muser[0m or [2mproject[0m. Branch and hook names are sanitized for filesystem safety (invalid characters → [2m-[0m; short collision-avoidance hash appended). Same operation on same branch overwrites the previous log. Removing a branch clears its subtree; orphans from deleted branches can be swept with [2mwt config state logs clear[0m.
+All [2mpost-*[0m hooks (post-start, post-switch, post-commit, post-merge) run in the background and produce log files. Source is [2muser[0m or [2mproject[0m. Branch and hook names are sanitized for filesystem safety. Same operation on same branch overwrites the previous log. Removing a branch clears its subtree; orphans from deleted branches can be swept with [2mwt config state logs clear[0m.
 
 [32mDiagnostic files[0m
 
@@ -108,16 +118,16 @@ All [2mpost-*[0m hooks (post-start, post-switch, post-commit, post-merge) run 
  [2msubprocess.log[0m Running with [2m-vv[0m 
  [2mdiagnostic.md[0m  Running with [2m-vv[0m 
 
-[2mtrace.log[0m is the human-readable trace at [2m-vv[0m — each command's start ([2m$ …[0m) and completion ([2m✓[0m/[2m✗ … 12.3ms[0m), in-process spans, milestones, and bounded subprocess previews. [2mtrace.jsonl[0m is the same event stream as one JSON object per line, for machines ([2mjq[0m, chrome://tracing); [2mwt config state logs profile[0m reads it to summarize a performance report (where time went, parallelism, redundant commands). [2msubprocess.log[0m holds the raw uncapped subprocess stdout/stderr bodies. [2mdiagnostic.md[0m is a markdown 
-bug-report bundle that leads with that same performance profile and inlines [2mtrace.log[0m; [2mwt[0m prints a [2mgh gist create[0m command pointing at it. All four are overwritten on each [2m-vv[0m run.
+[2mtrace.log[0m is the human-readable trace of commands and their timings. [2mtrace.jsonl[0m holds the same events as JSON lines, which [2mwt config state logs profile[0m summarizes into a performance report. [2msubprocess.log[0m holds full subprocess output. [2mdiagnostic.md[0m is a bug-report bundle; [2mwt[0m prints a [2mgh gist create[0m command for it. All four are overwritten on each [2m-vv[0m run.
 
 [1m[32mLocation[0m
 
-All logs are stored in [2m.git/wt/logs/[0m (in the main worktree's git directory). All worktrees write to the same directory. Top-level files are shared logs (command audit + diagnostics); top-level directories are per-branch log trees.
+All logs are stored in [2m.git/wt/logs/[0m (in the main worktree's git directory). All worktrees write to the same directory.
 
 [1m[32mStructured output[0m
 
-[2mwt config state logs --format=json[0m emits three arrays — [2mcommand_log[0m, [2mhook_output[0m, [2mdiagnostic[0m. Each entry carries a [2mfile[0m (relative), [2mpath[0m (absolute), [2msize[0m, and [2mmodified_at[0m (unix seconds). Hook-output entries additionally expose [2mbranch[0m, [2msource[0m ([2muser[0m / [2mproject[0m / [2minternal[0m), [2mhook_type[0m (the [2mpost-*[0m kind, or [2mnull[0m for internal ops), and [2mname[0m. Filter with [2mjq[0m to pick out a specific entry.
+[2mwt config state logs --format=json[0m emits three arrays — [2mcommand_log[0m, [2mhook_output[0m, [2mdiagnostic[0m. Each entry carries a [2mfile[0m (relative), [2mpath[0m (absolute), [2msize[0m, and [2mmodified_at[0m (unix seconds). Hook-output entries additionally expose [2mbranch[0m, [2msource[0m ([2muser[0m / [2mproject[0m / [2minternal[0m), [2mhook_type[0m (the [2mpost-*[0m kind, or [2mnull[0m for internal ops), and [2mname[0m. [2mbranch[0m is the branch name, or [2mnull[0m when no local branch writes to that log directory (e.g. the branch was deleted). [2mname[0m is the hook name as it appears in the log 
+path, which differs from the configured name only when that contains characters unsafe in a filename. Filter with [2mjq[0m to pick out a specific entry.
 
 [1m[32mExamples[0m
 
@@ -128,10 +138,10 @@ Query the command log:
 [107m [0m [2m[0m[2m[34mtail[0m[2m [0m[2m[36m-5[0m[2m .git/wt/logs/commands.jsonl [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m .[0m
 
 Path to one hook log (e.g. the [2mpost-start[0m [2mserver[0m hook for the current branch):
-[107m [0m [2m[0m[2m[34mwt[0m[2m config state logs [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[36m-r[0m[2m [0m[2m[32m'.hook_output[] | select(.source == "user" and .hook_type == "post-start" and (.name | startswith("server"))) | .path'[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config state logs [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[36m-r[0m[2m [0m[2m[36m--arg[0m[2m branch [0m[2m[32m"$([0m[2m[34mgit[0m[2m branch [0m[2m[36m--show-current[0m[2m)"[0m[2m [0m[2m[32m'.hook_output[] | select([.branch, .source, .hook_type, .name] == [$branch, "user", "post-start", "server"]) | .path'[0m
 
 Logs for a specific branch:
-[107m [0m [2m[0m[2m[34mwt[0m[2m config state logs [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.hook_output[] | select(.branch | startswith("feature"))'[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config state logs [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.hook_output[] | select(.branch == "feature/auth")'[0m
 
 Clear all logs:
 [107m [0m [2m[0m[2m[34mwt[0m[2m config state logs clear[0m

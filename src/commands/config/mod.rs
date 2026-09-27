@@ -7,7 +7,9 @@ mod approvals;
 mod codex;
 mod create;
 mod hints;
+mod omp;
 pub mod opencode;
+mod pi;
 mod plugins;
 mod show;
 mod state;
@@ -19,9 +21,12 @@ pub use approvals::{add_approvals, clear_approvals, list_approvals};
 pub use codex::{handle_codex_install, handle_codex_uninstall};
 pub use create::handle_config_create;
 pub use hints::{handle_hints_clear, handle_hints_get};
+pub use omp::{handle_omp_install, handle_omp_uninstall};
 pub use opencode::{handle_opencode_install, handle_opencode_uninstall};
+pub use pi::{handle_pi_install, handle_pi_uninstall};
 pub use plugins::{
-    handle_claude_install, handle_claude_install_statusline, handle_claude_uninstall,
+    handle_claude_approve_enter_worktree, handle_claude_install, handle_claude_install_statusline,
+    handle_claude_uninstall,
 };
 pub use show::handle_config_show;
 pub use state::{
@@ -30,6 +35,99 @@ pub use state::{
     handle_state_show, handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set,
 };
 pub use update::handle_config_update;
+use worktrunk::styling::{eprintln, hint_message, info_message, success_message};
+
+/// Install or update a file-based agent plugin after confirmation.
+fn install_file_plugin(
+    name: &str,
+    target: &std::path::Path,
+    source: &str,
+    yes: bool,
+) -> anyhow::Result<()> {
+    use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
+    use anyhow::Context;
+    use color_print::cformat;
+    use worktrunk::path::format_path_for_display;
+
+    let target_display = format_path_for_display(target);
+    if target.exists()
+        && let Ok(existing) = std::fs::read_to_string(target)
+        && existing == source
+    {
+        eprintln!(
+            "{}",
+            info_message(cformat!(
+                "Plugin already installed @ <bold>{target_display}</>"
+            ))
+        );
+        return Ok(());
+    }
+
+    let action = if target.exists() { "Update" } else { "Install" };
+    let preview_msg = info_message(cformat!("Would write to <bold>{target_display}</>"));
+    let preview = || eprintln!("{}", preview_msg);
+    let confirmed = yes
+        || prompt_yes_no_preview(
+            &cformat!("{action} {name} plugin @ <bold>{target_display}</>?"),
+            preview,
+        )? == PromptResponse::Accepted;
+    if !confirmed {
+        return Ok(());
+    }
+
+    let parent = target
+        .parent()
+        .context("Plugin path has no parent directory")?;
+    std::fs::create_dir_all(parent)
+        .with_context(|| format!("Failed to create directory {}", parent.display()))?;
+    worktrunk::utils::write_atomically(target, source)
+        .with_context(|| format!("Failed to write plugin to {target_display}"))?;
+
+    eprintln!(
+        "{}",
+        success_message(cformat!("Plugin installed @ <bold>{target_display}</>"))
+    );
+    eprintln!(
+        "{}",
+        hint_message(cformat!(
+            "Activity markers (🤖/💬) will appear in <underline>wt list</>"
+        ))
+    );
+    Ok(())
+}
+
+/// Remove a file-based agent plugin after confirmation.
+fn uninstall_file_plugin(name: &str, target: &std::path::Path, yes: bool) -> anyhow::Result<()> {
+    use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
+    use anyhow::Context;
+    use color_print::cformat;
+    use worktrunk::path::format_path_for_display;
+
+    let target_display = format_path_for_display(target);
+    if !target.exists() {
+        eprintln!("{}", info_message("Plugin not installed"));
+        return Ok(());
+    }
+
+    let preview_msg = info_message(cformat!("Would remove <bold>{target_display}</>"));
+    let preview = || eprintln!("{}", preview_msg);
+    let confirmed = yes
+        || prompt_yes_no_preview(
+            &cformat!("Remove {name} plugin @ <bold>{target_display}</>?"),
+            preview,
+        )? == PromptResponse::Accepted;
+    if !confirmed {
+        return Ok(());
+    }
+
+    std::fs::remove_file(target)
+        .with_context(|| format!("Failed to remove plugin at {target_display}"))?;
+    eprintln!(
+        "{}",
+        success_message(cformat!("Plugin removed from <bold>{target_display}</>"))
+    );
+    Ok(())
+}
 
 /// Run a plugin-CLI command (`claude` / `codex`), surfacing a non-zero exit
 /// as a typed [`worktrunk::git::CommandError`].
@@ -46,6 +144,73 @@ fn run_plugin_cli(program: &str, args: &[&str]) -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+/// The JSON a harness prints for a `--json` listing of its own state, or
+/// `None` where it did not answer.
+///
+/// Every question wt asks about what another harness holds goes through here.
+/// The alternative — reading the file the harness keeps them in — is a guess
+/// at private layout, and a guess that cannot fail loudly: a record that moved
+/// looks exactly like a record that was never written, so an installed plugin
+/// reads as absent and a failed removal reads as one already finished. Asking
+/// has no such gap, and a harness that will not answer at all leaves the
+/// question open rather than answering it wrong.
+fn harness_listing(program: &str, args: &[&str]) -> Option<serde_json::Value> {
+    let output = worktrunk::shell_exec::Cmd::new(program)
+        .args(args.iter().copied())
+        .run()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    serde_json::from_slice(&output.stdout).ok()
+}
+
+/// Whether any of `entries` carries `field` equal to `value`, or `None` where
+/// they are not objects carrying that field as a string.
+///
+/// An empty list is a confident `Some(false)`: the harness has said it holds
+/// nothing. An entry of a shape this does not understand answers nothing
+/// rather than reporting an absence it inferred from a field that moved.
+fn listing_names(entries: &[serde_json::Value], field: &str, value: &str) -> Option<bool> {
+    let mut listed = false;
+    for entry in entries {
+        listed |= entry.get(field)?.as_str()? == value;
+    }
+    Some(listed)
+}
+
+/// Run a removal whose goal is that the target is gone.
+///
+/// `claude plugin uninstall`, and both harnesses' `plugin marketplace remove`,
+/// exit non-zero when the target is not there — the state the removal is
+/// trying to reach — so running `uninstall` twice would otherwise fail with
+/// nothing left to do. Asking `still_present` after the attempt tells that
+/// apart from a removal that genuinely failed, which still surfaces the
+/// harness's own stderr in the gutter.
+///
+/// Only a confident `Some(false)` drops the error. `None` — the harness would
+/// not list what it holds, or listed it in a shape this does not recognize —
+/// keeps it, because an answer that could not be read has not established that
+/// the removal worked. Reporting success there would fail open on exactly the
+/// silent case, printing `Plugin & marketplace removed` over a plugin or
+/// marketplace that is still there.
+///
+/// The command runs either way, so the `?` preview lists what the uninstall
+/// actually invokes.
+fn run_plugin_removal(
+    program: &str,
+    args: &[&str],
+    still_present: impl Fn() -> Option<bool>,
+) -> anyhow::Result<()> {
+    match run_plugin_cli(program, args) {
+        Ok(()) => Ok(()),
+        Err(err) => match still_present() {
+            Some(false) => Ok(()),
+            _ => Err(err),
+        },
+    }
 }
 
 #[cfg(test)]

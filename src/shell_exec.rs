@@ -90,6 +90,7 @@ use anyhow::Context;
 use shared_child::SharedChild;
 
 use crate::git::{GitError, WorktrunkError};
+use crate::styling::eprintln;
 use crate::sync::Semaphore;
 use crate::trace::CommandTrace;
 
@@ -128,7 +129,8 @@ fn is_foreground_thread() -> bool {
 /// foreground thread is the one that cancels, and is never itself inside a
 /// tracked command while doing so, so the work the user is actually waiting
 /// on is never a target; an [`uninterruptible`] thread finishes what it
-/// started.
+/// started. A command marked [`Cmd::finish_once_started`] doesn't register
+/// either, so it runs to completion once spawned.
 static BACKGROUND_PIDS: Mutex<BTreeSet<u32>> = Mutex::new(BTreeSet::new());
 
 /// Deregisters a background command's PID however the command finishes.
@@ -204,6 +206,12 @@ fn track_if_cancellable(pid: u32) -> Option<BackgroundPid> {
     })
 }
 
+/// Whether a cancellation would signal `pid` right now.
+#[cfg(all(test, unix))]
+pub(crate) fn is_cancellable_pid(pid: u32) -> bool {
+    BACKGROUND_PIDS.lock().unwrap().contains(&pid)
+}
+
 /// Set once the foreground thread has cancelled background work, so commands
 /// that haven't spawned yet never do.
 ///
@@ -224,7 +232,8 @@ fn cancelled_error() -> std::io::Error {
 }
 
 /// Abandon background work: nothing further spawns, and whatever is already
-/// running is signalled rather than left to finish as an orphan.
+/// running is signalled rather than left to finish as an orphan — except
+/// commands marked [`Cmd::finish_once_started`], which run to completion.
 ///
 /// Callers see either as an ordinary command failure, which every background
 /// caller already treats as "no result".
@@ -643,14 +652,35 @@ pub fn apply_cd_directive_env(cmd: &mut std::process::Command, cd_file: &std::pa
 ///   commands (spawned with no `current_dir`) — the inherited context *is* the
 ///   user's context, so it is forwarded untouched.
 ///
-/// - **`wt`'s own git plumbing** ([`Cmd`] via `Repository::run_command`) keeps
-///   the inherited context on purpose (relative values absolutized, see issue
-///   #1914): `wt` honoring the context it was handed is the point of running
-///   `wt` under `git`.
+/// - **`wt`'s own git plumbing** splits on the same question. Repo-level
+///   ([`Cmd`] via `Repository::run_command`) keeps the inherited context on
+///   purpose (relative values absolutized, see issue #1914): `wt` honoring
+///   the context it was handed is the point of running `wt` under `git`. Its
+///   cwd is `discovery_path`, which is often but not always where the user
+///   invoked `wt` — `Repository::at` is handed a `wt`-chosen worktree at
+///   several sites (the post-switch hook repo, the pipeline repo, `finish`'s
+///   destination repo, the `pre-remove` render repo). The exemption rests on
+///   scope rather than cwd: repo-level questions are worktree-agnostic within
+///   one repository, and every worktree-scoped answer routes through
+///   [`crate::git::WorkingTree`], which scrubs.
+///   **Worktree-local** plumbing — [`crate::git::WorkingTree::run_command`],
+///   `TempIndex::command`, `list_ignored_entries` — relocates git into a
+///   worktree `wt` resolved, so it scrubs, the same way hooks and `for-each`
+///   do. Otherwise a `!wt` alias from a linked worktree (`GIT_DIR` pinned to
+///   that worktree's private gitdir) makes `status` / `read-tree` on a
+///   *different* worktree use the invoking tree's index.
 ///
-/// Any new spawn site that relocates a user command into a `wt`-chosen
-/// worktree must apply this scrub, via this helper or
-/// [`Cmd::scrub_git_discovery_env`].
+/// Every site uses this one list; a site that needs its own value for a
+/// scrubbed var sets it *after* the scrub rather than subsetting the list
+/// ([`Cmd::scrub_git_discovery_env`]). That includes `GIT_OBJECT_DIRECTORY`:
+/// a redirected repository re-sets its own immediately after, so the only
+/// value a worktree-local scrub drops is an **inherited** one — which git
+/// supplies to push-quarantine hooks, and which is pinned to the invoking
+/// context exactly as `GIT_DIR` is. Dropping it is the deliberate call, not
+/// an artifact of reusing the list.
+///
+/// Any new spawn site whose cwd names a `wt`-chosen worktree must apply this
+/// scrub, via this helper or [`Cmd::scrub_git_discovery_env`].
 pub fn scrub_git_discovery_env_vars(cmd: &mut std::process::Command) {
     for var in INHERITED_GIT_PATH_VARS {
         cmd.env_remove(var);
@@ -662,7 +692,7 @@ pub fn scrub_git_discovery_env_vars(cmd: &mut std::process::Command) {
 /// missing config file as empty), and `GIT_CONFIG_COUNT` with its numbered
 /// keys and values — git's environment spelling of `-c` — supplies the two
 /// settings the suite needs in the denied config's place. What each entry is
-/// for, and why `-c` precedence keeps this list short: `tests/CLAUDE.md` →
+/// for, and why `-c` precedence keeps this list short: `tests/AGENTS.md` →
 /// Git Config Isolation.
 pub const HERMETIC_TEST_GIT_ENV: [(&str, &str); 7] = [
     ("GIT_CONFIG_GLOBAL", "/nonexistent/wt/gitconfig"),
@@ -916,6 +946,7 @@ fn format_stream_bounded(bytes: &[u8], prefix: &str) -> Vec<String> {
 fn run_with_timeout_impl(
     cmd: &mut Command,
     timeout: std::time::Duration,
+    cancellable: bool,
 ) -> std::io::Result<std::process::Output> {
     #[cfg(unix)]
     {
@@ -928,7 +959,9 @@ fn run_with_timeout_impl(
             .stdout(Stdio::piped())
             .stderr(Stdio::piped()),
     )?;
-    let _tracked = track_if_cancellable(child.id());
+    let _tracked = cancellable
+        .then(|| track_if_cancellable(child.id()))
+        .flatten();
 
     let mut child_stdout = child.take_stdout();
     let mut child_stderr = child.take_stderr();
@@ -1060,8 +1093,14 @@ pub struct Cmd {
     context: Option<String>,
     stdin_data: Option<Vec<u8>>,
     timeout: Option<std::time::Duration>,
-    envs: Vec<(OsString, OsString)>,
-    env_removes: Vec<OsString>,
+    /// Environment mutations in call order: `Some(value)` sets, `None`
+    /// removes. One ordered list rather than a set list plus a remove list, so
+    /// the last builder call naming a variable wins — the property
+    /// [`Cmd::scrub_git_discovery_env`] relies on when a caller drops the whole
+    /// inherited git context and then supplies its own value for one of those
+    /// vars (`TempIndex`'s `GIT_INDEX_FILE`, a redirected repository's
+    /// `GIT_OBJECT_DIRECTORY`).
+    env_ops: Vec<(OsString, Option<OsString>)>,
     /// If true, wrap command through ShellConfig (for stream())
     shell_wrap: bool,
     /// Stdout configuration for stream() (defaults to inherit)
@@ -1087,6 +1126,9 @@ pub struct Cmd {
     /// shell bodies may emit cd directives (the file holds a raw path, no shell
     /// injection surface).
     directive_cd_file: Option<std::path::PathBuf>,
+    /// If true, cancellation stops this command from spawning but never
+    /// signals it once running. Set via [`Cmd::finish_once_started`].
+    finish_once_started: bool,
 }
 
 struct ExternalCommandLog {
@@ -1135,6 +1177,27 @@ fn record_captured(
     log_output(trace, stdin, result.as_ref().ok());
 }
 
+/// A child from [`Cmd::spawn_captured`], traced from spawn until
+/// [`Self::wait`] reaps it.
+struct CapturedChild {
+    child: std::process::Child,
+    trace: CommandTrace,
+    _tracked: Option<BackgroundPid>,
+}
+
+impl CapturedChild {
+    fn wait(self) -> std::io::Result<std::process::Output> {
+        let CapturedChild {
+            child,
+            mut trace,
+            _tracked,
+        } = self;
+        let result = child.wait_with_output();
+        record_captured(&mut trace, None, &result);
+        result
+    }
+}
+
 /// Structured error from [`Cmd::delayed_stream`].
 ///
 /// Separates command output from command identity so callers can format each
@@ -1164,17 +1227,34 @@ impl std::fmt::Display for StreamCommandError {
 
 impl std::error::Error for StreamCommandError {}
 
+/// Shared state between [`Cmd::delayed_stream`] and its two reader threads.
+///
+/// `streaming` lives *inside* the mutex rather than beside it as an atomic so
+/// that a reader cannot consult it without also holding the buffer. The
+/// ordering guarantee this type exists for depends on the check and the write
+/// being one critical section (see [`spawn_delayed_reader`]), and an atomic
+/// makes a lock-free read the natural thing to write.
+#[derive(Default)]
+struct DelayedOutput {
+    /// Once set, readers write to stderr instead of buffering.
+    streaming: bool,
+    /// Lines held back before the switch: drained to stderr behind the
+    /// progress message, or joined into the error body when the command fails
+    /// before streaming ever starts.
+    lines: Vec<String>,
+}
+
 /// Convert a finished child's exit status into `Ok(())` or a
 /// [`StreamCommandError`] carrying the buffered output.
 fn stream_exit_result(
     status: std::process::ExitStatus,
-    buffer: &Arc<Mutex<Vec<String>>>,
+    state: &Arc<Mutex<DelayedOutput>>,
     cmd_str: &str,
 ) -> anyhow::Result<()> {
     if status.success() {
         return Ok(());
     }
-    let lines = buffer.lock().unwrap();
+    let lines = &state.lock().unwrap().lines;
     let exit_info = status
         .code()
         .map(|c| format!("exit code {c}"))
@@ -1188,22 +1268,30 @@ fn stream_exit_result(
 }
 
 /// Spawn a reader thread for [`Cmd::delayed_stream`]: each line is written to
-/// stderr live once `streaming` is set, or buffered (for the quiet-fast and
-/// pre-threshold cases) until then. Both the child's stdout and stderr use
-/// this; everything routes to stderr to keep our stdout clean.
+/// stderr live once the switch to streaming has happened, or buffered (for the
+/// quiet-fast and pre-threshold cases) until then. Both the child's stdout and
+/// stderr use this; everything routes to stderr to keep our stdout clean.
+///
+/// One [`DelayedOutput`] guard covers both reading `streaming` and writing the
+/// line, and the switch sets that same field under that same lock. So each
+/// line lands on one side of the switch or the other: it is either buffered,
+/// and so drained in order behind the progress message, or written after that
+/// drain has finished. Were the flag readable without the lock, a reader could
+/// observe the flip and print between the progress message and the drain — or
+/// ahead of the progress message entirely, which is what a zero delay makes
+/// routine, since nothing has to be buffered first.
 fn spawn_delayed_reader<R: Read + Send + 'static>(
     stream: R,
-    streaming: Arc<AtomicBool>,
-    buffer: Arc<Mutex<Vec<String>>>,
+    state: Arc<Mutex<DelayedOutput>>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let reader = BufReader::new(stream);
         for line in reader.lines().map_while(Result::ok) {
-            if streaming.load(Ordering::Relaxed) {
-                let _ = writeln!(std::io::stderr(), "{}", line);
-                let _ = std::io::stderr().flush();
+            let mut state = state.lock().unwrap();
+            if state.streaming {
+                eprintln!("{}", line);
             } else {
-                buffer.lock().unwrap().push(line);
+                state.lines.push(line);
             }
         }
     })
@@ -1218,8 +1306,7 @@ impl Cmd {
             context: None,
             stdin_data: None,
             timeout: None,
-            envs: Vec::new(),
-            env_removes: Vec::new(),
+            env_ops: Vec::new(),
             shell_wrap,
             stdout_cfg: None,
             stdin_cfg: None,
@@ -1228,6 +1315,7 @@ impl Cmd {
             ignore_sigpipe: true,
             external_label: None,
             directive_cd_file: None,
+            finish_once_started: false,
         }
     }
 
@@ -1263,6 +1351,17 @@ impl Cmd {
         cmd
     }
 
+    /// [`Self::check_spawn_preconditions`], after checking that this thread's
+    /// commands haven't been cancelled. Background callers check after taking
+    /// their semaphore permit: a command can be cancelled while parked on the
+    /// semaphore, and that is the common case in a large fan-out.
+    fn check_before_spawn(&self) -> std::io::Result<()> {
+        if background_cancelled() {
+            return Err(cancelled_error());
+        }
+        self.check_spawn_preconditions()
+    }
+
     fn check_spawn_preconditions(&self) -> std::io::Result<()> {
         if let Some(dir) = &self.current_dir {
             let metadata = std::fs::metadata(dir)?;
@@ -1295,14 +1394,15 @@ impl Cmd {
             cmd.env(key, val);
         }
 
-        // Before `self.envs`, so a per-command env can override the floor.
+        // Before `self.env_ops`, so a per-command env can override the floor.
         apply_hermetic_test_env(cmd);
 
-        for (key, val) in &self.envs {
-            cmd.env(key, val);
-        }
-        for key in &self.env_removes {
-            cmd.env_remove(key);
+        // In builder-call order, so the last mutation naming a variable wins.
+        for (key, val) in &self.env_ops {
+            match val {
+                Some(val) => cmd.env(key, val),
+                None => cmd.env_remove(key),
+            };
         }
 
         // Prevent subprocesses from writing shell directives (security).
@@ -1382,35 +1482,66 @@ impl Cmd {
         self
     }
 
+    /// Let this command run to completion once spawned, even if background
+    /// work is cancelled meanwhile ([`cancel_background_commands`]). A
+    /// cancelled command that hasn't spawned yet still never does.
+    ///
+    /// For commands whose interruption leaves debris SIGTERM doesn't clean:
+    /// `git merge-tree` writes its external merge driver's inputs as
+    /// `.merge_file_XXXXXX` files in its cwd and removes them only on a normal
+    /// return, so a signal mid-driver strands them in the user's worktree.
+    ///
+    /// Only affects `.run()`.
+    pub fn finish_once_started(mut self) -> Self {
+        self.finish_once_started = true;
+        self
+    }
+
+    /// [`track_if_cancellable`], unless [`Cmd::finish_once_started`] opted out.
+    fn track_if_cancellable(&self, pid: u32) -> Option<BackgroundPid> {
+        (!self.finish_once_started)
+            .then(|| track_if_cancellable(pid))
+            .flatten()
+    }
+
     /// Set an environment variable.
     ///
     /// Accepts the same types as [`Command::env`]: string literals, `String`,
     /// `&Path`, `PathBuf`, `OsString`, etc.
     pub fn env(mut self, key: impl AsRef<OsStr>, val: impl AsRef<OsStr>) -> Self {
-        self.envs
-            .push((key.as_ref().to_os_string(), val.as_ref().to_os_string()));
+        self.env_ops.push((
+            key.as_ref().to_os_string(),
+            Some(val.as_ref().to_os_string()),
+        ));
         self
     }
 
     /// Remove an environment variable.
+    ///
+    /// A later [`Cmd::env`] for the same variable overrides this.
     pub fn env_remove(mut self, key: impl AsRef<OsStr>) -> Self {
-        self.env_removes.push(key.as_ref().to_os_string());
+        self.env_ops.push((key.as_ref().to_os_string(), None));
         self
     }
 
     /// Scrub inherited git-discovery vars ([`INHERITED_GIT_PATH_VARS`]) from the
-    /// child environment. Applied by spawn sites that relocate a user command
-    /// into a `wt`-chosen worktree (hooks, `wt step for-each`) so the command's
-    /// `git` calls discover the repository from the working directory `wt` sets,
-    /// not a `GIT_DIR`/`GIT_WORK_TREE` `wt` inherited. See
+    /// child environment. Applied by every spawn site whose `current_dir` names
+    /// a worktree `wt` chose — relocated user commands (hooks, `wt step
+    /// for-each`, the `--execute` program) and `wt`'s own worktree-local
+    /// plumbing ([`crate::git::WorkingTree::run_command`], `TempIndex`) alike —
+    /// so git discovers the repository from that working directory, not a
+    /// `GIT_DIR`/`GIT_WORK_TREE` `wt` inherited. See
     /// [`scrub_git_discovery_env_vars`] for the site classification (issue #3373).
     ///
     /// Applied after the inherited-`GIT_*` absolutization in
-    /// `apply_common_settings` (env-removes run last), so it also overrides the
-    /// relative-path absolutization that would otherwise re-add these vars.
+    /// `apply_common_settings`, so it also drops the relative-path
+    /// absolutization that would otherwise re-add these vars.
+    ///
+    /// A site that supplies its own value for one of the scrubbed vars calls
+    /// [`Cmd::env`] *after* this: `env_ops` is call-ordered, so the set wins.
     pub fn scrub_git_discovery_env(mut self) -> Self {
         for var in INHERITED_GIT_PATH_VARS {
-            self.env_removes.push(OsString::from(*var));
+            self.env_ops.push((OsString::from(*var), None));
         }
         self
     }
@@ -1544,17 +1675,7 @@ impl Cmd {
         let mut trace = CommandTrace::new(self.context.as_deref(), &cmd_str)
             .reads_stdin(self.stdin_data.is_some());
 
-        // Checked after the permit, not before: a command can be cancelled
-        // while parked on the semaphore, and that is the common case in a
-        // large fan-out.
-        if background_cancelled() {
-            let e = cancelled_error();
-            trace.fail(&e);
-            external_log.record(None);
-            return Err(e);
-        }
-
-        if let Err(e) = self.check_spawn_preconditions() {
+        if let Err(e) = self.check_before_spawn() {
             trace.fail(&e);
             external_log.record(None);
             return Err(e);
@@ -1576,7 +1697,7 @@ impl Cmd {
 
             match cmd.spawn() {
                 Ok(mut child) => {
-                    let _tracked = track_if_cancellable(child.id());
+                    let _tracked = self.track_if_cancellable(child.id());
                     // Write stdin data in an inner scope so the handle DROPS
                     // (closing the pipe) before `wait_with_output` — otherwise a
                     // child that reads stdin to EOF (e.g. `git … --stdin`) blocks
@@ -1594,7 +1715,7 @@ impl Cmd {
             }
         } else if let Some(timeout_duration) = self.timeout {
             // Timeout handling uses the existing impl
-            run_with_timeout_impl(&mut cmd, timeout_duration)
+            run_with_timeout_impl(&mut cmd, timeout_duration, !self.finish_once_started)
         } else {
             // Simple case: run and capture output. Spawned explicitly rather
             // than via `cmd.output()` — which matches these stdio defaults —
@@ -1606,7 +1727,7 @@ impl Cmd {
                 .stderr(Stdio::piped());
             match cmd.spawn() {
                 Ok(child) => {
-                    let _tracked = track_if_cancellable(child.id());
+                    let _tracked = self.track_if_cancellable(child.id());
                     child.wait_with_output()
                 }
                 Err(e) => Err(e),
@@ -1619,6 +1740,81 @@ impl Cmd {
         external_log.record(exit_code);
 
         result
+    }
+
+    /// Run `cmds` as concurrent child processes and return each one's output,
+    /// in input order.
+    ///
+    /// Every child is spawned before any is waited on, so a batch of short
+    /// commands costs about one command's latency without a thread per
+    /// command. Outputs are read one child at a time, in order, so a child
+    /// that writes more than a pipe buffer blocks until its turn: use this
+    /// for commands with small output.
+    ///
+    /// The caller waits only on its own children, which makes this safe where
+    /// a thread pool is not: inside a cache initializer that pool jobs also
+    /// read. A rayon thread that waits runs other pool jobs, and a job that
+    /// reads the cache being initialized then deadlocks.
+    ///
+    /// On a background thread the batch takes one semaphore permit, as
+    /// [`Self::pipe_into`] does: one permit per child could deadlock two
+    /// batches that each hold part of the pool. At most
+    /// `max_concurrent_commands()` children run at once. Stdin, timeouts,
+    /// `external()` logging and shell commands are not supported.
+    pub fn run_concurrently(cmds: &[Cmd]) -> Vec<std::io::Result<std::process::Output>> {
+        assert!(
+            cmds.iter().all(|cmd| !cmd.shell_wrap
+                && cmd.stdin_data.is_none()
+                && cmd.timeout.is_none()
+                && cmd.external_label.is_none()),
+            "run_concurrently supports captured commands without stdin, timeout, external() or shell"
+        );
+
+        let _guard = (!is_foreground_thread()).then(|| semaphore().acquire());
+
+        let mut results = Vec::with_capacity(cmds.len());
+        for chunk in cmds.chunks(max_concurrent_commands()) {
+            let children: Vec<_> = chunk.iter().map(Cmd::spawn_captured).collect();
+            results.extend(
+                children
+                    .into_iter()
+                    .map(|child| child.and_then(CapturedChild::wait)),
+            );
+        }
+        results
+    }
+
+    /// Spawn `self` with piped stdout/stderr and null stdin, without waiting.
+    /// A failure to spawn resolves the trace before returning.
+    fn spawn_captured(&self) -> std::io::Result<CapturedChild> {
+        let cmd_str = self.command_string();
+        self.log_run_start(&cmd_str);
+        let mut trace = CommandTrace::new(self.context.as_deref(), &cmd_str);
+
+        if let Err(e) = self.check_before_spawn() {
+            trace.fail(&e);
+            return Err(e);
+        }
+
+        let mut cmd = self.direct_command();
+        self.apply_common_settings(&mut cmd);
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        match cmd.spawn() {
+            Ok(child) => {
+                let tracked = self.track_if_cancellable(child.id());
+                Ok(CapturedChild {
+                    child,
+                    trace,
+                    _tracked: tracked,
+                })
+            }
+            Err(e) => {
+                trace.fail(&e);
+                Err(e)
+            }
+        }
     }
 
     /// Run `self` with its stdout piped directly into `next`'s stdin, and
@@ -1678,23 +1874,11 @@ impl Cmd {
 
         let _guard = (!is_foreground_thread()).then(|| semaphore().acquire());
 
-        // Cancelled, possibly while parked on the semaphore above (see
-        // `background_cancelled`). Nothing has spawned, so neither half runs.
-        if background_cancelled() {
-            let e = cancelled_error();
-            CommandTrace::record_failed(
-                self.context.as_deref(),
-                &first_cmd_str,
-                self.stdin_data.is_some(),
-                &e,
-            );
-            return Err(e);
-        }
-
         // Validate both commands before spawning either. Nothing has spawned
-        // yet, so a precondition failure emits a one-shot failed record rather
-        // than holding a guard across an execution that never happens.
-        if let Err(e) = self.check_spawn_preconditions() {
+        // yet, so a cancellation or precondition failure emits a one-shot
+        // failed record rather than holding a guard across an execution that
+        // never happens.
+        if let Err(e) = self.check_before_spawn() {
             // stdin_data is still owned here (taken below), so it reflects
             // whether the source would have read a buffer; the sink always reads
             // the upstream pipe.
@@ -2059,7 +2243,15 @@ impl Cmd {
     /// to never switch to streaming (always buffer); `0` streams immediately.
     ///
     /// `progress_message`, when set, prints to stderr at the moment streaming
-    /// starts.
+    /// starts. It arrives pre-rendered with its ANSI already in it, so — like
+    /// every relayed line — it goes out through [`crate::styling`]'s
+    /// `eprintln!` rather than a raw handle: anstream is the only thing that
+    /// strips those escapes when stderr is redirected and honors `NO_COLOR`,
+    /// and a single raw write here is enough to make one line of a log
+    /// disagree with the rest. No `flush()` follows, and none did any work
+    /// before: `AutoStream<Stderr>` writes through a locked `std::io::Stderr`,
+    /// which is unbuffered. anstream's macro does not flush either, so a
+    /// buffered stream would still need one.
     ///
     /// Like [`Cmd::stream`], this does **not** acquire the concurrency
     /// semaphore: a delayed-stream command runs in the foreground and would
@@ -2118,11 +2310,11 @@ impl Cmd {
         let stdout = child.take_stdout().expect("stdout was piped");
         let stderr = child.take_stderr().expect("stderr was piped");
 
-        // Shared state: when true, output streams directly; when false, buffers.
-        let streaming = Arc::new(AtomicBool::new(false));
-        let buffer = Arc::new(Mutex::new(Vec::new()));
-        let stdout_handle = spawn_delayed_reader(stdout, streaming.clone(), buffer.clone());
-        let stderr_handle = spawn_delayed_reader(stderr, streaming.clone(), buffer.clone());
+        // Shared state: readers stream directly once `streaming` is set, and
+        // buffer until then.
+        let state = Arc::new(Mutex::new(DelayedOutput::default()));
+        let stdout_handle = spawn_delayed_reader(stdout, state.clone());
+        let stderr_handle = spawn_delayed_reader(stderr, state.clone());
 
         let start = Instant::now();
 
@@ -2140,7 +2332,7 @@ impl Cmd {
                         let _ = stdout_handle.join();
                         let _ = stderr_handle.join();
                         trace.complete(status.success());
-                        return stream_exit_result(status, &buffer, &cmd_str);
+                        return stream_exit_result(status, &state, &cmd_str);
                     }
                     // No status yet: the threshold passed, or the timed wait
                     // itself failed. Both fall through to streaming. A failed
@@ -2157,15 +2349,19 @@ impl Cmd {
                 }
             }
 
-            // Delay threshold exceeded — switch to streaming.
-            streaming.store(true, Ordering::Relaxed);
-            if let Some(ref msg) = progress_message {
-                let _ = writeln!(std::io::stderr(), "{}", msg);
+            // Delay threshold exceeded — switch to streaming. The flip, the
+            // progress message, and the drain happen under the same lock the
+            // readers take per line, so no reader can print between them.
+            {
+                let mut state = state.lock().unwrap();
+                state.streaming = true;
+                if let Some(ref msg) = progress_message {
+                    eprintln!("{}", msg);
+                }
+                for line in state.lines.drain(..) {
+                    eprintln!("{}", line);
+                }
             }
-            for line in buffer.lock().unwrap().drain(..) {
-                let _ = writeln!(std::io::stderr(), "{}", line);
-            }
-            let _ = std::io::stderr().flush();
         }
 
         // Phase 2: Block until the child exits (no polling).
@@ -2180,7 +2376,7 @@ impl Cmd {
             }
         };
         trace.complete(status.success());
-        stream_exit_result(status, &buffer, &cmd_str)
+        stream_exit_result(status, &state, &cmd_str)
     }
 }
 
@@ -2294,6 +2490,57 @@ pub fn forward_signal_with_escalation(pgid: i32, sig: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The property the worktree-local scrub sites rest on: `TempIndex` and a
+    /// redirected repository's object store scrub the whole
+    /// [`INHERITED_GIT_PATH_VARS`] list and then set their own value for one of
+    /// those vars. If `Cmd` ever applies removes after sets again, that set is
+    /// silently dropped and those sites fall back to the ambient index / object
+    /// store — so pin call order rather than the split-vector shape.
+    #[test]
+    fn test_env_mutations_apply_in_call_order() {
+        let scrubbed = Cmd::new("child")
+            .scrub_git_discovery_env()
+            .env("GIT_INDEX_FILE", "chosen-index");
+        let mut cmd = std::process::Command::new("child");
+        scrubbed.apply_common_settings(&mut cmd);
+
+        let env = |var: &str| {
+            cmd.get_envs()
+                .find(|(key, _)| *key == std::ffi::OsStr::new(var))
+                .map(|(_, value)| value)
+        };
+
+        assert_eq!(
+            env("GIT_INDEX_FILE"),
+            Some(Some(std::ffi::OsStr::new("chosen-index"))),
+            "a set after the scrub must win"
+        );
+        for var in INHERITED_GIT_PATH_VARS
+            .iter()
+            .filter(|var| **var != "GIT_INDEX_FILE")
+        {
+            assert_eq!(
+                env(var),
+                Some(None),
+                "{var} should be removed from the child environment"
+            );
+        }
+
+        // And the reverse order still removes, so `env_remove` isn't inert.
+        let set_then_removed = Cmd::new("child")
+            .env("GIT_INDEX_FILE", "chosen-index")
+            .scrub_git_discovery_env();
+        let mut cmd = std::process::Command::new("child");
+        set_then_removed.apply_common_settings(&mut cmd);
+        assert_eq!(
+            cmd.get_envs()
+                .find(|(key, _)| *key == std::ffi::OsStr::new("GIT_INDEX_FILE"))
+                .map(|(_, value)| value),
+            Some(None),
+            "a scrub after the set must win"
+        );
+    }
 
     #[test]
     fn test_scrub_directive_env_vars_covers_every_directive_variable() {
@@ -2896,6 +3143,43 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
+    fn test_cmd_delayed_stream_flushes_what_it_buffered() {
+        // Output written *before* the threshold is buffered, and the switch to
+        // streaming drains that buffer to stderr before phase 2 begins. This
+        // ordering is what reaches the drain loop:
+        // `test_cmd_delayed_stream_crosses_the_threshold` writes after the
+        // switch, so its line streams from the reader thread and the buffer
+        // stays empty throughout.
+        //
+        // The error's `output` is empty either way — the reader relays a line
+        // it picks up after the switch, and the drain empties one it picked up
+        // before — so the assertion pins the switch, not the drain itself. A
+        // unit test cannot capture stderr, so the window is the only lever on
+        // which of the two runs; the integration test next door
+        // (`test_delayed_stream_progress_strips_ansi_when_piped`) is what
+        // asserts on the relayed text.
+        //
+        // The threshold is the whole window the reader has to get `early` into
+        // the buffer: spawning `sh` and reading its first line has to land
+        // inside it, or the switch goes first and the drain runs over nothing.
+        // 250 ms absorbs a slow spawn on a loaded runner, and the child's
+        // 500 ms still outlasts the threshold by the same margin.
+        let err = Cmd::new("sh")
+            .args(["-c", "echo early 1>&2; sleep 0.5; exit 3"])
+            .delayed_stream(250, None)
+            .unwrap_err();
+        let stream_err = err
+            .downcast_ref::<StreamCommandError>()
+            .expect("non-zero delayed_stream exit should be a StreamCommandError");
+        assert_eq!(stream_err.exit_info, "exit code 3");
+        assert_eq!(
+            stream_err.output, "",
+            "output buffered before the switch must be drained to stderr, not reported"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
     fn test_cmd_delayed_stream_streams_then_reports_failure() {
         // delay_ms=0 streams immediately (phase-1 threshold crossed → progress
         // message + buffer drain), and a non-zero exit surfaces as a
@@ -2916,6 +3200,34 @@ mod tests {
         // via `fail` rather than dropping it unresolved.
         let err = Cmd::new(MISSING_CMD).delayed_stream(-1, None).unwrap_err();
         assert!(err.to_string().contains("Failed to spawn"), "{err}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_run_concurrently_overlaps_children_and_keeps_order() {
+        // The first child waits for a file that only the last child creates, so
+        // it succeeds only if both run at once. A spawn failure in between
+        // stays in its own slot rather than shifting the results after it.
+        let dir = tempfile::tempdir().unwrap();
+        let flag = dir.path().join("flag");
+        let wait_for_flag = format!(
+            "for _ in $(seq 500); do [ -e '{}' ] && exit 0; sleep 0.01; done; exit 1",
+            flag.display()
+        );
+        let results = Cmd::run_concurrently(&[
+            Cmd::new("sh").args(["-c", wait_for_flag.as_str()]),
+            Cmd::new(MISSING_CMD),
+            Cmd::new("sh").args(["-c", "exit 3"]),
+            Cmd::new("touch").arg(flag.to_str().unwrap()),
+        ]);
+        let [waiter, missing, exit3, toucher]: [_; 4] = results.try_into().unwrap();
+        assert!(
+            waiter.unwrap().status.success(),
+            "children ran one at a time"
+        );
+        assert_eq!(missing.unwrap_err().kind(), ErrorKind::NotFound);
+        assert_eq!(exit3.unwrap().status.code(), Some(3));
+        assert!(toucher.unwrap().status.success());
     }
 
     #[test]

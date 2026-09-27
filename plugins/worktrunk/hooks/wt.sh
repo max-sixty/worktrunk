@@ -6,6 +6,12 @@
 # On other platforms, uses wt directly.
 # Usage: wt.sh [args...]
 
+# Clear WT before the branches below: on Windows they leave it unset when
+# neither git-wt.exe nor wt is on PATH, and a hook is handed the caller's whole
+# environment -- so an inherited WT would be what the final check accepts and
+# runs, Windows Terminal included.
+WT=""
+
 if [[ -n "$WORKTRUNK_BIN" ]]; then
     if ! command -v "$WORKTRUNK_BIN" >/dev/null 2>&1; then
         echo "worktrunk: WORKTRUNK_BIN is set to '$WORKTRUNK_BIN' but it was not found" >&2
@@ -20,7 +26,7 @@ elif [[ "$(uname -o 2>/dev/null)" =~ ^(Msys|Cygwin)$ ]]; then
     elif command -v wt >/dev/null 2>&1; then
         # reject wt if it's the Windows Terminal alias
         if [[ "$(command -v wt)" == *WindowsApps* ]]; then
-            echo "worktrunk: 'wt' resolves to Windows Terminal; install worktrunk as git-wt.exe or remove the Windows Terminal alias. See https://worktrunk.dev/worktrunk/#install" >&2
+            echo "worktrunk: 'wt' resolves to Windows Terminal; install worktrunk as git-wt.exe or remove the Windows Terminal alias. See https://worktrunk.dev/#install" >&2
             exit 1
         fi
 

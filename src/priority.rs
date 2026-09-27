@@ -80,7 +80,7 @@ pub fn in_background_hook() -> bool {
 }
 
 /// Extracted comparison so tests can exercise the match without mutating
-/// process-global environment state (forbidden per `tests/CLAUDE.md`).
+/// process-global environment state (forbidden per `tests/AGENTS.md`).
 fn is_background_hook_value(value: Option<&OsStr>) -> bool {
     value == Some(OsStr::new(BACKGROUND_HOOK_VALUE))
 }

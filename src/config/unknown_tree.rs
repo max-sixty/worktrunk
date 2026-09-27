@@ -1,16 +1,11 @@
 //! Nested schema-unknown analysis for worktrunk config files.
 //!
-//! A single round-trip through a [`WorktrunkConfig`] type answers both
-//! load-time questions ("which keys does serde silently drop?") and save-time
-//! questions ("which keys must survive the diff-based merge?"). Reserializing
-//! the parsed config and diffing against the raw TOML identifies every
-//! schema-unknown path at any nesting depth.
+//! A round-trip through a [`WorktrunkConfig`] type answers "which keys does
+//! serde silently drop?": reserializing the parsed config and diffing against
+//! the raw TOML identifies every schema-unknown path at any nesting depth.
 //!
-//! The same tree drives:
-//! - Unknown-key warnings (`warn_unknown_fields`, `config show`) — emits one
-//!   message at the shallowest level where a path is unknown.
-//! - Save-path preservation (`UserConfig::save_to`) — prevents the merge from
-//!   dropping hand-edited or forward-compat fields.
+//! The tree drives unknown-key warnings (`warn_unknown_fields`, `config show`),
+//! which emit one message at the shallowest level where a path is unknown.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -18,11 +13,9 @@ use crate::config::WorktrunkConfig;
 
 /// A nested set of schema-unknown paths within a config file.
 ///
-/// `keys` holds unknown keys at the current level. Entries in `nested` are for
-/// keys that are themselves *known* but contain unknown children. A key may
-/// appear in both when the entire subtree is unknown — `keys` captures the top
-/// of the unknown subtree, `nested` mirrors it so save-path merges still
-/// preserve individual descendants if a mutation later introduces the table.
+/// `keys` holds unknown keys at the current level, each covering its whole
+/// subtree. Entries in `nested` are for keys that are themselves *known* but
+/// contain unknown children.
 #[derive(Default, Debug, Clone)]
 pub struct UnknownTree {
     pub keys: BTreeSet<String>,
@@ -35,76 +28,64 @@ impl UnknownTree {
     }
 }
 
-/// Outcome of analyzing a config file for schema-unknown paths.
-///
-/// The `Unreliable` variant covers both syntax errors and type mismatches
-/// (e.g., a hand edit like `commit = "scalar"`). In those cases we can't tell
-/// schema-unknown paths from schema-known-but-wrong-type ones, so:
-/// - Save paths must preserve every on-disk key (the tree marks everything).
-/// - Warning paths must stay silent (the parse/type error is surfaced by the
-///   regular load path with accurate line/column info).
-#[derive(Debug)]
-pub enum UnknownAnalysis {
-    /// `try_into<C>` succeeded; the tree lists schema-unknown paths only.
-    Parsed(UnknownTree),
-    /// Raw TOML was unparsable or failed type-checking against `C`. The tree
-    /// still marks every on-disk key so save-path merges preserve data.
-    Unreliable(UnknownTree),
-}
-
-impl UnknownAnalysis {
-    /// Tree suitable for the save-path merge (preserves unknowns, and
-    /// preserves everything on unreliable input).
-    pub fn preserve_tree(&self) -> &UnknownTree {
-        match self {
-            Self::Parsed(t) | Self::Unreliable(t) => t,
-        }
-    }
-
-    /// Tree suitable for unknown-key warnings (empty on unreliable input).
-    pub fn warn_tree(&self) -> Option<&UnknownTree> {
-        match self {
-            Self::Parsed(t) => Some(t),
-            Self::Unreliable(_) => None,
-        }
-    }
-}
-
 /// Analyze `contents` against config type `C` by round-tripping through serde.
 ///
-/// On success, the returned tree captures every path in `contents` that
+/// `None` when `contents` is unparsable or fails type-checking against `C`
+/// (e.g., a hand edit like `commit = "scalar"`): schema-unknown paths can't be
+/// told from schema-known-but-wrong-type ones, so warning callers stay silent
+/// and leave the error to the regular load path, which reports it with line
+/// and column.
+///
+/// Otherwise the returned tree captures every path in `contents` that
 /// reserialization drops — i.e., every schema-unknown path. Top-level keys
 /// that serialize away when empty (e.g., `[merge]` with only unknown children
 /// leaves `MergeConfig::default()`, which `skip_serializing_if` omits) are
 /// rescued by seeding the comparison with the JsonSchema key list: a known
 /// section that isn't in the reserialized form is treated as present-but-empty
 /// so only its unknown *children* get flagged, not the section itself.
-pub fn compute_unknown_tree<C>(contents: &str) -> UnknownAnalysis
+pub fn compute_unknown_tree<C>(contents: &str) -> Option<UnknownTree>
 where
     C: WorktrunkConfig,
 {
-    let Ok(raw) = contents.parse::<toml::Table>() else {
-        return UnknownAnalysis::Unreliable(UnknownTree::default());
-    };
-
-    let parsed: Result<C, _> = toml::Value::Table(raw.clone()).try_into();
-    let Ok(config) = parsed else {
-        return UnknownAnalysis::Unreliable(diff_tables(&raw, &toml::Table::new()));
-    };
+    let raw = contents.parse::<toml::Table>().ok()?;
+    let config: C = toml::Value::Table(raw.clone()).try_into().ok()?;
 
     let mut reserialized: toml::Table = toml::to_string(&config)
         .expect("config type is serializable")
         .parse()
         .expect("serialized config is valid TOML");
     seed_schema_skeleton::<C>(&mut reserialized);
-    UnknownAnalysis::Parsed(diff_tables(&raw, &reserialized))
+    Some(diff_tables(&raw, &reserialized))
 }
 
 /// Seed `reserialized` with every schema-valid top-level key as an empty
-/// table so `diff_tables` treats valid-but-omitted sections as known.
+/// table so `diff_tables` treats valid-but-omitted sections as known, then do
+/// the same one level down inside each entry of the scoped map
+/// ([`WorktrunkConfig::valid_scoped_keys`] — `projects` in user config).
+///
+/// Both levels need it for the same reason: a section equal to its default is
+/// skipped during serialization, so it is missing from the round-tripped view
+/// `diff_tables` compares against and would be reported as unknown.
 fn seed_schema_skeleton<C: WorktrunkConfig>(reserialized: &mut toml::Table) {
-    for key in C::valid_top_level_keys() {
-        reserialized
+    seed_keys(reserialized, C::valid_top_level_keys());
+
+    // The top-level pass above already put `scope_key` in place as an empty
+    // table where the round-trip omitted it, so this lookup finds the scoped
+    // map whether or not any entry survived serialization.
+    if let Some((scope_key, entry_keys)) = C::valid_scoped_keys()
+        && let Some(toml::Value::Table(entries)) = reserialized.get_mut(scope_key)
+    {
+        for (_, entry) in entries.iter_mut() {
+            if let toml::Value::Table(entry_table) = entry {
+                seed_keys(entry_table, entry_keys);
+            }
+        }
+    }
+}
+
+fn seed_keys(table: &mut toml::Table, keys: &[String]) {
+    for key in keys {
+        table
             .entry(key.clone())
             .or_insert_with(|| toml::Value::Table(toml::Table::new()));
     }
@@ -124,16 +105,6 @@ fn diff_tables(raw: &toml::Table, known: &toml::Table) -> UnknownTree {
                 }
             }
             (Some(_), _) => {}
-            (None, toml::Value::Table(raw_t)) => {
-                // Whole subtree is schema-unknown. Mark the key at this level
-                // and recurse so the preserve set is populated if a later
-                // mutation causes `desired` to introduce this table.
-                tree.keys.insert(key.clone());
-                let nested = diff_tables(raw_t, &toml::Table::new());
-                if !nested.is_empty() {
-                    tree.nested.insert(key.clone(), nested);
-                }
-            }
             (None, _) => {
                 tree.keys.insert(key.clone());
             }
@@ -232,28 +203,33 @@ impl<'a> OtherStatus<'a> {
 ///
 /// A misplaced *nested* key is redirected to `C::Other` when it's valid there
 /// — determined by walking `C::Other`'s own unknown tree for the same content
-/// (see the private `OtherStatus` helper). If that other-config analysis is
-/// unreliable, the walk falls back to treating nested keys as unknown, so only
+/// (see the private `OtherStatus` helper). If the content doesn't parse as
+/// `C::Other`, the walk falls back to treating nested keys as unknown, so only
 /// the hard-coded
 /// [`nested_key_belongs_in`](crate::config::nested_key_belongs_in) redirects
 /// still fire.
 ///
-/// Returns an empty vec if either analysis is unreliable — the load path
-/// surfaces parse/type errors elsewhere.
+/// A deprecated top-level section is left to the deprecation channel only
+/// when migration removed it; one that survived non-empty is reported here
+/// (see the private `deprecated_key_declined` helper).
+///
+/// Returns an empty vec if the raw or migrated content doesn't parse as `C` —
+/// the load path surfaces parse/type errors elsewhere.
 pub fn collect_unknown_warnings<C: WorktrunkConfig>(raw_contents: &str) -> Vec<UnknownWarning> {
-    let raw_tree = match compute_unknown_tree::<C>(raw_contents) {
-        UnknownAnalysis::Parsed(t) => t,
-        UnknownAnalysis::Unreliable(_) => return Vec::new(),
+    let Some(raw_tree) = compute_unknown_tree::<C>(raw_contents) else {
+        return Vec::new();
     };
     let migrated = crate::config::migrate_content(raw_contents);
-    let migrated_tree = match compute_unknown_tree::<C>(&migrated) {
-        UnknownAnalysis::Parsed(t) => t,
-        UnknownAnalysis::Unreliable(_) => return Vec::new(),
+    let Some(migrated_tree) = compute_unknown_tree::<C>(&migrated) else {
+        return Vec::new();
     };
+    // `compute_unknown_tree` returned a tree above, so this parse cannot
+    // fail; the fallback just keeps the path panic-free.
+    let migrated_root = migrated.parse::<toml::Table>().unwrap_or_default();
     // The same content viewed as the *other* config type: a nested key absent
-    // from this tree is valid there. Unreliable → no generalized redirect.
-    let other_analysis = compute_unknown_tree::<C::Other>(&migrated);
-    let other_root = match other_analysis.warn_tree() {
+    // from this tree is valid there. No tree → no generalized redirect.
+    let other_tree = compute_unknown_tree::<C::Other>(&migrated);
+    let other_root = match &other_tree {
         Some(t) => OtherStatus::Known(Some(t)),
         None => OtherStatus::UnknownSection,
     };
@@ -262,6 +238,9 @@ pub fn collect_unknown_warnings<C: WorktrunkConfig>(raw_contents: &str) -> Vec<U
     for key in &raw_tree.keys {
         use crate::config::UnknownKeyKind;
         let warning = match crate::config::classify_unknown_key::<C>(key) {
+            UnknownKeyKind::DeprecatedHandled if deprecated_key_declined(&migrated_root, key) => {
+                UnknownWarning::TopLevelUnknown { key: key.clone() }
+            }
             UnknownKeyKind::DeprecatedHandled => continue,
             UnknownKeyKind::DeprecatedWrongConfig {
                 other_description,
@@ -290,6 +269,28 @@ pub fn collect_unknown_warnings<C: WorktrunkConfig>(raw_contents: &str) -> Vec<U
     out
 }
 
+/// Whether `key` — a registered deprecated section — still carries config
+/// after migration.
+///
+/// [`classify_unknown_key`](crate::config::classify_unknown_key) answers from
+/// the registry alone: the name is deprecated, so the deprecation channel owns
+/// the message. That holds only when the rewrite actually ran. A migration
+/// that declines — a malformed scalar (`select = "x"`), a destination already
+/// occupied — deliberately leaves the key in place and emits nothing, and the
+/// documented handoff is for the unknown-field message to speak instead. Left
+/// suppressed, the setting is read by nobody and reported by no one.
+///
+/// An empty deprecated section is the one survivor that stays silent: it
+/// contributes no config, which is why the migration leaves it alone in the
+/// first place.
+fn deprecated_key_declined(migrated: &toml::Table, key: &str) -> bool {
+    match migrated.get(key) {
+        Some(toml::Value::Table(t)) => !t.is_empty(),
+        Some(_) => true,
+        None => false,
+    }
+}
+
 fn walk_nested<C: WorktrunkConfig>(
     tree: &UnknownTree,
     prefix: &str,
@@ -299,7 +300,7 @@ fn walk_nested<C: WorktrunkConfig>(
     for key in &tree.keys {
         let path = format!("{prefix}.{key}");
         // Hard-coded redirects (commit.generation leaves) take precedence and
-        // fire even when the other-config analysis is unreliable; otherwise
+        // fire even when the content doesn't parse as the other config; otherwise
         // fall back to the general "valid in the other config" check.
         let belongs = crate::config::nested_key_belongs_in::<C>(&path)
             .or_else(|| other.key_is_valid_in_other(key).then(C::Other::description));
@@ -312,9 +313,6 @@ fn walk_nested<C: WorktrunkConfig>(
         });
     }
     for (key, sub) in &tree.nested {
-        if tree.keys.contains(key) {
-            continue;
-        }
         let path = format!("{prefix}.{key}");
         walk_nested::<C>(sub, &path, other.descend(key), out);
     }
@@ -326,10 +324,7 @@ mod tests {
     use crate::config::{ProjectConfig, UserConfig};
 
     fn parsed<C: WorktrunkConfig>(contents: &str) -> UnknownTree {
-        match compute_unknown_tree::<C>(contents) {
-            UnknownAnalysis::Parsed(t) => t,
-            UnknownAnalysis::Unreliable(_) => panic!("expected Parsed"),
-        }
+        compute_unknown_tree::<C>(contents).expect("contents should parse as C")
     }
 
     #[test]
@@ -410,28 +405,63 @@ b = 2
     }
 
     #[test]
-    fn syntax_error_yields_unreliable() {
-        let analysis = compute_unknown_tree::<UserConfig>("not valid {{{");
-        assert!(matches!(analysis, UnknownAnalysis::Unreliable(_)));
-        assert!(analysis.warn_tree().is_none());
+    fn empty_per_project_section_is_known() {
+        // `[projects."<id>".list]` is valid and accepted on load. It equals
+        // its default, so it serializes away and is missing from the
+        // round-trip — the skeleton has to put it back one level down too.
+        let tree = parsed::<UserConfig>("[projects.\"example.com/org/repo\".list]\n");
+        assert!(tree.is_empty(), "unexpected unknown keys: {tree:?}");
+        assert!(
+            collect_unknown_warnings::<UserConfig>("[projects.\"example.com/org/repo\".list]\n")
+                .is_empty()
+        );
     }
 
     #[test]
-    fn type_mismatch_yields_unreliable_but_preserves_all() {
+    fn unknown_key_in_per_project_scope_still_warns() {
+        // The skeleton seeds only schema-valid keys, so a genuine unknown in
+        // the same scope keeps its warning — as does one nested inside a
+        // known section, and a user key that has no per-project form.
+        for (content, expected) in [
+            (
+                "[projects.\"example.com/org/repo\".nonsense]\n",
+                "projects.example.com/org/repo.nonsense",
+            ),
+            (
+                "[projects.\"example.com/org/repo\".list]\nbogus = 1\n",
+                "projects.example.com/org/repo.list.bogus",
+            ),
+            (
+                "[projects.\"example.com/org/repo\"]\nskip-shell-integration-prompt = true\n",
+                "projects.example.com/org/repo.skip-shell-integration-prompt",
+            ),
+        ] {
+            let warnings = collect_unknown_warnings::<UserConfig>(content);
+            assert!(
+                warnings.iter().any(|w| matches!(
+                    w,
+                    UnknownWarning::NestedUnknown { path } if path == expected
+                )),
+                "expected {expected} to warn, got {warnings:?} for:\n{content}"
+            );
+        }
+    }
+
+    #[test]
+    fn syntax_error_yields_no_tree() {
+        assert!(compute_unknown_tree::<UserConfig>("not valid {{{").is_none());
+    }
+
+    #[test]
+    fn type_mismatch_yields_no_tree() {
         // A hand-edit like `commit = "scalar"` can't round-trip through
-        // UserConfig. The warn tree must be empty (parse error is surfaced
-        // elsewhere) but the preserve tree must mark every on-disk key so
-        // save_to doesn't drop data.
-        let analysis = compute_unknown_tree::<UserConfig>(
+        // UserConfig; the parse error is surfaced elsewhere.
+        let tree = compute_unknown_tree::<UserConfig>(
             r#"
 commit = "scalar"
 skip-shell-integration-prompt = true
 "#,
         );
-        assert!(matches!(analysis, UnknownAnalysis::Unreliable(_)));
-        assert!(analysis.warn_tree().is_none());
-        let preserve = analysis.preserve_tree();
-        assert!(preserve.keys.contains("commit"));
-        assert!(preserve.keys.contains("skip-shell-integration-prompt"));
+        assert!(tree.is_none());
     }
 }

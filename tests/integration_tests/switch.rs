@@ -939,6 +939,92 @@ fn test_switch_execute_does_not_inherit_git_discovery_vars(mut repo: TestRepo) {
     );
 }
 
+/// `--no-cd` governs where the user's shell lands, not where the `--execute`
+/// program runs: the program starts in the worktree the switch selected either
+/// way, so `wt switch feature --no-cd -x code -- .` opens the worktree while
+/// the terminal stays put (issue #4042). The header names that worktree,
+/// because the shell won't be there.
+#[rstest]
+fn test_switch_no_cd_execute_runs_in_worktree(mut repo: TestRepo) {
+    let worktree = repo.add_worktree("feature");
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "feature", "--no-cd", "--execute", "pwd"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch --no-cd --execute failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        dunce::canonicalize(stdout.trim()).unwrap(),
+        dunce::canonicalize(&worktree).unwrap(),
+        "--no-cd ran the program outside the worktree: {stdout}"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let header = stderr
+        .lines()
+        .find(|line| line.contains("Executing (--execute)"))
+        .unwrap_or_else(|| panic!("no --execute header in stderr:\n{stderr}"));
+    assert!(
+        header.contains('@'),
+        "--no-cd leaves the shell behind, so the header must name the program's directory: {header}"
+    );
+}
+
+/// A switch from a subdirectory keeps the user's position, so the `--execute`
+/// program starts in `<worktree>/<subdir>` — not at the worktree root the
+/// background hooks run in. The header names the program's own directory
+/// (issue #4042), which is the same claim `--no-cd` breaks one tree over.
+#[rstest]
+fn test_switch_execute_header_names_preserved_subdirectory(mut repo: TestRepo) {
+    // The subdirectory has to exist in both worktrees for the position to
+    // carry over, so commit it before branching.
+    let subdir = repo.root_path().join("apps").join("gateway");
+    fs::create_dir_all(&subdir).unwrap();
+    fs::write(subdir.join("main.rs"), "fn main() {}\n").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.commit("Add apps/gateway");
+    let worktree = repo.add_worktree("feature");
+    assert!(worktree.join("apps").join("gateway").is_dir());
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "feature", "--execute", "pwd"])
+        .current_dir(&subdir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch --execute from a subdirectory failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout).replace('\\', "/");
+    assert!(
+        stdout.trim_end().ends_with("apps/gateway"),
+        "the program should have started in the target's subdirectory: {stdout}"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let header = stderr
+        .lines()
+        .find(|line| line.contains("Executing (--execute)"))
+        .unwrap_or_else(|| panic!("no --execute header in stderr:\n{stderr}"));
+    assert!(
+        header.contains("apps/gateway"),
+        "the header named the worktree root, not the directory the program ran in: {header}"
+    );
+}
+
 /// `--execute` computes only the template variables its command names.
 ///
 /// The context map built at that call site feeds `expand_template` and nothing
@@ -1406,7 +1492,7 @@ approved-commands = ["{}"]
 
     // post-start runs in the background; with --no-hooks it is never spawned,
     // but sleep briefly so a regression that incorrectly spawns it has time to
-    // create the marker (per tests/CLAUDE.md "Testing absence").
+    // create the marker (per tests/AGENTS.md "Testing absence").
     std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
     let worktree = repo
@@ -1464,7 +1550,7 @@ fn test_switch_no_config_commands_with_yes(repo: TestRepo) {
 
     // post-start runs in the background; with --no-hooks it is never spawned,
     // but sleep briefly so a regression that incorrectly spawns it has time to
-    // create the marker (per tests/CLAUDE.md "Testing absence").
+    // create the marker (per tests/AGENTS.md "Testing absence").
     std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
     let worktree = repo
@@ -2479,10 +2565,27 @@ fn test_switch_create_no_hint_with_custom_worktree_path(repo: TestRepo) {
         .unwrap();
     assert!(output.status.success());
 
+    const HINT: &str = "customize worktree locations";
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !stderr.contains("Customize worktree locations"),
-        "Hint should be suppressed when user has custom worktree-path config"
+        !stderr.contains(HINT),
+        "Hint should be suppressed when user has custom worktree-path config. stderr: {stderr}"
+    );
+
+    // Control: without the custom config the same needle matches the hint, so
+    // the negative assertion above can fail. Suppression doesn't mark the hint
+    // shown, so it still appears once here.
+    repo.write_test_config("");
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "test-hint"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(HINT),
+        "Hint should appear without custom worktree-path config. stderr: {stderr}"
     );
 }
 
@@ -3524,6 +3627,191 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_fork", cmd);
     });
+}
+
+/// A failed fork `pr:N` switch leaves a branch it did not create alone.
+///
+/// The fork path used to create the branch, its tracking config, and its
+/// worktree as separate git calls, compensating with a force-delete of the
+/// branch on any error. Only the first call created anything, and its likeliest
+/// failure is git refusing a name that is already taken — so the rollback
+/// deleted a branch someone else owned, took whatever commits only it held with
+/// it, and then printed "a branch named 'X' already exists", which reads as if
+/// nothing happened. `git worktree add -b` creates the branch and the worktree
+/// in one call, and writes nothing when the name is taken, so there is nothing
+/// to roll back.
+///
+/// The `pre-switch` hook claims the name after the forge answered (which is
+/// what selects the fork path) and before the worktree is created, standing in
+/// for the concurrent session that does the same in real use. It renames a
+/// never-pushed local branch onto the PR's branch name, so `feature-fix` is the
+/// only ref holding that commit when the switch fails.
+#[rstest]
+fn test_switch_pr_fork_failure_keeps_existing_branch(#[from(repo_with_remote)] repo: TestRepo) {
+    // Same fork-PR fixture as test_switch_pr_fork: refs/pull/42/head on the
+    // bare remote, origin redirected to a GitHub-style URL, `gh api` mocked.
+    repo.run_git(&["checkout", "-b", "pr-source"]);
+    fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
+    repo.run_git(&["add", "pr-file.txt"]);
+    repo.run_git(&["commit", "-m", "PR commit"]);
+    let sha = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["rev-parse", "HEAD"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
+    repo.run_git(&["checkout", "main"]);
+
+    // Local work that exists nowhere else.
+    repo.run_git(&["checkout", "-b", "stale-work"]);
+    fs::write(repo.root_path().join("stale.txt"), "unpushed work").unwrap();
+    repo.run_git(&["add", "stale.txt"]);
+    repo.run_git(&["commit", "-m", "Unpushed local work"]);
+    let stale_sha = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["rev-parse", "HEAD"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&["checkout", "main"]);
+
+    fs::create_dir_all(repo.root_path().join(".config")).unwrap();
+    fs::write(
+        repo.root_path().join(".config/wt.toml"),
+        r#"pre-switch = "git -C '{{ repo_path }}' branch -m stale-work feature-fix"
+"#,
+    )
+    .unwrap();
+
+    set_github_remote_url(&repo);
+
+    let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, gh_response);
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "pr:42", "--yes"]);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().expect("wt switch pr:42 should run");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "wt switch pr:42 should fail once the branch name is taken: stderr={stderr}"
+    );
+    assert!(
+        stderr.contains("already exists"),
+        "the failure should name the branch collision: stderr={stderr}"
+    );
+
+    let head = repo
+        .git_command()
+        .args(["rev-parse", "--verify", "refs/heads/feature-fix"])
+        .run()
+        .unwrap();
+    assert!(
+        head.status.success(),
+        "feature-fix must survive the failed switch: stderr={stderr}"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&head.stdout).trim(),
+        stale_sha,
+        "feature-fix must still point at the unpushed commit"
+    );
+}
+
+/// A fork PR whose head ref collides with an existing branch's namespace names
+/// the conflicting branch rather than passing on git's raw "cannot lock ref".
+///
+/// Git stores refs as file paths, so `feature-fix` and `feature-fix/nested`
+/// can't both exist. The fork path creates its branch with the same
+/// `git worktree add -b` as the `Regular` arm, so it maps the failure the same
+/// way; the user can't rename a PR's head ref, so the message has to point at
+/// the local branch that's in the way.
+#[rstest]
+fn test_switch_pr_fork_namespace_conflict(#[from(repo_with_remote)] repo: TestRepo) {
+    // Same fork-PR fixture as test_switch_pr_fork: refs/pull/42/head on the
+    // bare remote, origin redirected to a GitHub-style URL, `gh api` mocked.
+    repo.run_git(&["checkout", "-b", "pr-source"]);
+    fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
+    repo.run_git(&["add", "pr-file.txt"]);
+    repo.run_git(&["commit", "-m", "PR commit"]);
+    let sha = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["rev-parse", "HEAD"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
+    repo.run_git(&["checkout", "main"]);
+
+    // Occupy the namespace the PR's branch name needs.
+    repo.run_git(&["branch", "feature-fix/nested"]);
+
+    set_github_remote_url(&repo);
+
+    let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, gh_response);
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "pr:42", "--yes"]);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().expect("wt switch pr:42 should run");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "wt switch pr:42 should fail when the branch name is unavailable: stderr={stderr}"
+    );
+    // `collides with existing branch` is `BranchNamespaceConflict`'s own
+    // wording. Asserting only on `feature-fix/nested` would pass against the
+    // unmapped error too — git names the conflicting ref in its raw text.
+    assert!(
+        stderr.contains("collides with existing branch") && stderr.contains("feature-fix/nested"),
+        "the failure should name the branch in the way: stderr={stderr}"
+    );
+    assert!(
+        !stderr.contains("cannot lock ref"),
+        "git's raw ref-lock text should not reach the user: stderr={stderr}"
+    );
 }
 
 /// Every hook on a PR/MR-created worktree — `pre-switch`, `pre-start`,
@@ -8132,5 +8420,53 @@ fn switch_base_accepts_worktree_path(mut repo: TestRepo) {
     assert!(
         output.status.success() && stderr.contains("from base-branch"),
         "--base should resolve the worktree path to its branch: {stderr}"
+    );
+}
+
+#[rstest]
+fn test_switch_create_names_branch_left_by_failed_worktree_add(repo: TestRepo) {
+    // `git worktree add -b` writes the branch ref before it populates the
+    // worktree, so a failure in between leaves the branch with nothing checked
+    // out on it (issue #4108). A regular file where the worktree's leading
+    // directories would go is the portable way to fail git exactly there.
+    repo.write_test_config(r#"worktree-path = "blocked/{{ branch | sanitize }}""#);
+    fs::write(repo.root_path().join("blocked"), "not a directory").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "stranded"])
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "switch --create should fail when git cannot create the worktree"
+    );
+
+    // The branch git left behind is what makes a retry with --create report
+    // "already exists"; the first failure has to name it.
+    let branches = repo.git_output(&["branch", "--list", "stranded"]);
+    assert!(
+        branches.contains("stranded"),
+        "expected git to leave the branch behind, got: {branches:?}"
+    );
+    let worktrees = repo.git_output(&["worktree", "list", "--porcelain"]);
+    assert!(
+        !worktrees.contains("refs/heads/stranded"),
+        "expected no worktree on the leftover branch, got: {worktrees:?}"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr.ansi_strip();
+    assert!(
+        stderr.contains("Branch stranded was created before the failure, with no worktree"),
+        "expected the failure to name the leftover branch, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("git branch -d -- stranded"),
+        "expected a delete suggestion for the leftover branch, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("wt switch stranded"),
+        "expected a recovery suggestion for the leftover branch, got: {stderr}"
     );
 }

@@ -251,7 +251,7 @@ fn print_promote_announcement(is_restoring: bool, default_branch: Option<&str>) 
         eprintln!(
             "{}",
             hint_message(cformat!(
-                "Run <underline>wt step promote {default}</> to restore canonical locations"
+                "To restore canonical locations, run <underline>wt step promote {default}</>"
             ))
         );
     }

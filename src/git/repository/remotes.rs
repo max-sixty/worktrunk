@@ -130,7 +130,7 @@ impl Repository {
             .effective_remote_urls
             .entry(remote.to_string())
             .or_insert_with(|| {
-                self.run_command(&["remote", "get-url", remote])
+                self.run_command(&["remote", "get-url", "--", remote])
                     .ok()
                     .map(|url| url.trim().to_string())
                     .filter(|url| !url.is_empty())

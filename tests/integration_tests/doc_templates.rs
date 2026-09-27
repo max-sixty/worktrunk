@@ -35,7 +35,7 @@ fn test_doc_basic_variables(repo: TestRepo) {
     let mut vars = HashMap::new();
     vars.insert("repo", "myproject");
     vars.insert("branch", "feature/auth");
-    vars.insert("worktree", "/home/user/myproject.feature-auth");
+    vars.insert("worktree_path", "/home/user/myproject.feature-auth");
     vars.insert("default_branch", "main");
 
     // Each variable substitutes correctly
@@ -63,7 +63,7 @@ fn test_doc_basic_variables(repo: TestRepo) {
     );
     assert_eq!(
         expand_template(
-            "{{ worktree }}",
+            "{{ worktree_path }}",
             &vars,
             ShellEscapeMode::Literal,
             &repository,
@@ -360,7 +360,8 @@ fn test_doc_hash_port_concatenation_precedence(repo: TestRepo) {
 
 #[rstest]
 fn test_doc_hash_port_repo_branch_concatenation(repo: TestRepo) {
-    // From docs/src/content/docs/hook.md line 176:
+    // From docs/src/content/docs/hook.md, "Worktrunk filters"
+    // ("Hash any string, including concatenations"):
     // dev = "npm run dev --port {{ (repo ~ '-' ~ branch) | hash_port }}"
 
     let repository = Repository::at(repo.root_path()).unwrap();
@@ -392,19 +393,19 @@ fn test_doc_hash_port_repo_branch_concatenation(repo: TestRepo) {
 // =============================================================================
 
 #[rstest]
-fn test_doc_example_docker_postgres(repo: TestRepo) {
-    // From docs/src/content/docs/tips-patterns.md lines 75-84:
-    // docker run ... -p {{ ('db-' ~ branch) | hash_port }}:5432
+fn test_doc_example_database_vars(repo: TestRepo) {
+    // From docs/src/content/docs/tips-patterns.md, "Database per worktree" —
+    // the `set-vars` step that derives the container name and port:
+    //   wt config state vars set container='{{ repo }}-{{ branch | sanitize }}-postgres' &&
+    //   wt config state vars set port='{{ ('db-' ~ branch) | hash_port }}'
 
     let repository = Repository::at(repo.root_path()).unwrap();
     let mut vars = HashMap::new();
     vars.insert("repo", "myproject");
     vars.insert("branch", "feature-auth");
 
-    let template = r#"docker run -d --rm \
-  --name {{ repo }}-{{ branch | sanitize }}-postgres \
-  -p {{ ('db-' ~ branch) | hash_port }}:5432 \
-  postgres:16"#;
+    let template = r#"wt config state vars set container='{{ repo }}-{{ branch | sanitize }}-postgres' &&
+wt config state vars set port='{{ ('db-' ~ branch) | hash_port }}'"#;
 
     let result = expand_template(
         template,
@@ -417,29 +418,87 @@ fn test_doc_example_docker_postgres(repo: TestRepo) {
 
     // Check the container name uses sanitized branch
     assert!(
-        result.contains("--name myproject-feature-auth-postgres"),
-        "Container name should use sanitized branch"
+        result.contains("container='myproject-feature-auth-postgres'"),
+        "Container name should use sanitized branch, got: {result}"
     );
 
     // Check the port is a hash of "db-feature-auth"
     let expected_port = hash_port("db-feature-auth");
     assert!(
-        result.contains(&format!("-p {expected_port}:5432")),
-        "Port should be hash of 'db-feature-auth', expected {expected_port}"
+        result.contains(&format!("port='{expected_port}'")),
+        "Port should be hash of 'db-feature-auth', expected {expected_port}, got: {result}"
+    );
+}
+
+/// Runs the "Database per worktree" `set-vars` step exactly as the docs write
+/// it (read from the page, not copied here), through a `wt` alias so templates
+/// expand as in a hook. The expansion test above can't catch a command `wt`
+/// rejects — the recipe once passed three pairs to one `vars set`, which takes
+/// a single `KEY=VALUE`.
+#[cfg(unix)]
+#[rstest]
+fn test_doc_example_database_set_vars_step_runs(repo: TestRepo) {
+    let doc = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("docs/src/content/docs/tips-patterns.md"),
+    )
+    .unwrap();
+    let section = doc.split_once("### Database per worktree").unwrap().1;
+    let block = section
+        .split_once("```toml\n")
+        .unwrap()
+        .1
+        .split_once("```")
+        .unwrap()
+        .0;
+    let config: toml::Table = toml::from_str(block).unwrap();
+    let set_vars = config["post-start"][0]["set-vars"].as_str().unwrap();
+
+    let mut aliases = toml::Table::new();
+    aliases.insert("set-vars".into(), set_vars.into());
+    let mut user_config = toml::Table::new();
+    user_config.insert("aliases".into(), aliases.into());
+    repo.write_test_config(&toml::to_string(&user_config).unwrap());
+
+    let path = format!(
+        "{}:{}",
+        crate::common::wt_bin().parent().unwrap().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let output = repo
+        .wt_command()
+        .args(["step", "set-vars"])
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "set-vars step from the docs failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let port = repo
+        .wt_command()
+        .args(["config", "state", "vars", "get", "port"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&port.stdout).trim(),
+        hash_port("db-main").to_string()
     );
 }
 
 #[rstest]
 fn test_doc_example_database_url(repo: TestRepo) {
-    // From docs/src/content/docs/tips-patterns.md lines 96-101:
-    // DATABASE_URL=postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ repo }}
+    // From docs/src/content/docs/tips-patterns.md, "Database per worktree" —
+    // the `db-url` var the `set-vars` step stores:
+    //   db-url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'
 
     let repository = Repository::at(repo.root_path()).unwrap();
     let mut vars = HashMap::new();
-    vars.insert("repo", "myproject");
     vars.insert("branch", "feature");
 
-    let template = "DATABASE_URL=postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ repo }}";
+    let template = "postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}";
 
     let result = expand_template(
         template,
@@ -450,16 +509,19 @@ fn test_doc_example_database_url(repo: TestRepo) {
     )
     .unwrap();
 
+    // `sanitize_db` appends a short hash suffix, so match the stable prefix.
     let expected_port = hash_port("db-feature");
-    assert_eq!(
-        result,
-        format!("DATABASE_URL=postgres://postgres:dev@localhost:{expected_port}/myproject")
+    assert!(
+        result.starts_with(&format!(
+            "postgres://postgres:dev@localhost:{expected_port}/feature_"
+        )),
+        "db-url should carry the 'db-feature' port and the sanitized database name, got: {result}"
     );
 }
 
 #[rstest]
 fn test_doc_example_dev_server(repo: TestRepo) {
-    // From docs/src/content/docs/hook.md lines 168-170:
+    // From docs/src/content/docs/hook.md, "Worktrunk filters":
     // dev = "npm run dev -- --host {{ branch }}.localhost --port {{ branch | hash_port }}"
 
     let repository = Repository::at(repo.root_path()).unwrap();
@@ -486,15 +548,15 @@ fn test_doc_example_dev_server(repo: TestRepo) {
 
 #[rstest]
 fn test_doc_example_worktree_path_sanitize(repo: TestRepo) {
-    // From docs/src/content/docs/tips-patterns.md line 217:
-    // worktree-path = "{{ branch | sanitize }}"
+    // From docs/src/content/docs/tips-patterns.md, "Bare repository layout":
+    // worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
 
     let repository = Repository::at(repo.root_path()).unwrap();
     let mut vars = HashMap::new();
     vars.insert("branch", "feature/user/auth");
-    vars.insert("main_worktree", "/home/user/project");
+    vars.insert("repo_path", "/home/user/myproject/.git");
 
-    let template = "{{ main_worktree }}.{{ branch | sanitize }}";
+    let template = "{{ repo_path }}/../{{ branch | sanitize }}";
 
     let result = expand_template(
         template,
@@ -504,7 +566,7 @@ fn test_doc_example_worktree_path_sanitize(repo: TestRepo) {
         "test",
     )
     .unwrap();
-    assert_eq!(result, "/home/user/project.feature-user-auth");
+    assert_eq!(result, "/home/user/myproject/.git/../feature-user-auth");
 }
 
 // =============================================================================

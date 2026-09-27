@@ -2,7 +2,7 @@
 title: "Extending Worktrunk"
 description: "Three ways to add custom behavior: hooks for lifecycle automation, aliases for reusable commands, and custom subcommands for standalone tools."
 sidebar:
-  order: 21
+  order: 22
 ---
 Worktrunk has three extension mechanisms.
 
@@ -27,6 +27,7 @@ Hooks and aliases live in the same TOML config and share the [template engine](/
 Ten hooks cover five lifecycle events — switch, start, commit, merge, remove — each with a blocking `pre-` variant (failure aborts the operation) and a background `post-` variant. [`wt hook`](/hook/#hook-types) maps each hook to its timing and typical uses.
 
 ```toml
+# .config/wt.toml
 [pre-start]
 deps = "npm ci"
 
@@ -41,11 +42,12 @@ See [`wt hook`](/hook/) for the full reference and built-in recipes (dev server 
 
 ## Aliases
 
-Aliases are configured under `[aliases]`:
+Aliases are configured under `[aliases]`, in project or user config:
 
 ```toml
+# .config/wt.toml
 [aliases]
-deploy = "fly deploy --config=fly.{{ env }}.toml --app=myapp-{{ branch }}"
+deploy = "fly deploy --config=fly.{{ env }}.toml --app=myproject-{{ branch }}"
 open = "open http://localhost:{{ branch | hash_port }}"
 since-main = "git log --oneline {{ default_branch }}..HEAD"
 ```
@@ -68,6 +70,7 @@ Alias templates add `{{ args }}` for positional CLI arguments. Operation-context
 `{{ args }}` renders as a space-joined, shell-escaped string, ready to splice into a command:
 
 ```toml
+# ~/.config/worktrunk/config.toml
 [aliases]
 s = "wt switch {{ args }}"
 ```
@@ -100,6 +103,7 @@ wt config alias dry-run deploy -- --env=staging
 `[[aliases.NAME]]` defines a pipeline using the [same `[[block]]` semantics as hooks](/hook/#hook-forms): blocks run in order, keys within a block run concurrently, and a step failure aborts the remainder.
 
 ```toml
+# .config/wt.toml
 [[aliases.release]]
 test = "cargo test"
 
@@ -117,31 +121,25 @@ Every step sees the same `{{ args }}` and bound variables. `wt release -- --dry-
 
 `wt switch`, `wt merge` (when it leaves the removed source), and `wt remove` of the current worktree change the parent shell's directory even when invoked from an alias; the Worktrunk shell integration propagates the change through. Other shell state doesn't persist: the alias runs in a subshell, so `cd`, `export`, and similar commands only affect that subshell.
 
-### Deferring expansion to a nested `wt` command
+### Nesting templates
 
-A `wt step for-each` alias that prints the same branch in every worktree is rendering `{{ branch }}` too early. An alias body renders once at dispatch, in the invoking worktree, so a bare `{{ branch }}` is baked to that worktree's branch before for-each iterates. (`wt config alias dry-run <name>` shows the rendered body, with the value already baked in.)
-
-`{% raw %}…{% endraw %}` defers the variable: it survives the dispatch render as a literal `{{ branch }}`, and for-each expands it per worktree. One catch for `for-each`: the deferred `{{ branch }}` has spaces, so the alias body's `sh -c` splits it into `{{`, `branch`, `}}` before for-each sees it (`Failed to expand for-each argument: syntax error`). Give for-each its own `sh -c '…'` to keep the value one token:
+An alias that calls a `wt` command may want to pass it a template for that command to expand — each worktree's own branch, or the worktree `wt switch` is about to create:
 
 ```toml
+# ~/.config/worktrunk/config.toml
 [aliases]
-show-branches = "wt step for-each -- sh -c 'echo {% raw %}{{ branch }}{% endraw %}'"
-```
-
-`wt show-branches` prints each worktree's own branch.
-
-`wt switch --execute` defers the same way. `-x` names the program and arguments after `--` stay separate, so quote the deferred template as one alias-body token. Here `{{ worktree_path }}` expands against the worktree being created, not the one the alias ran from:
-
-```toml
-[aliases]
+show-branches = "wt step for-each -- echo '{% raw %}{{ branch }}{% endraw %}'"
 echo-target = "wt switch {{ args }} --no-cd --execute echo -- '{% raw %}{{ worktree_path }}{% endraw %}'"
 ```
 
-A repo-level variable like `{{ default_branch }}` needs no deferral: it is identical in every worktree, so a bare `{{ default_branch }}` is already correct everywhere.
+An alias body renders once, at dispatch, so a bare `{{ branch }}` would reach the nested command already resolved to the invoking worktree's branch. `{% raw %}…{% endraw %}` passes it through unrendered instead. Quote it — the deferred text contains spaces, and the alias body is a shell command line.
+
+Repo-level variables like `{{ default_branch }}` are identical in every worktree, so they need no deferral.
 
 ### Recipe: rebase every worktree onto its upstream
 
 ```toml
+# ~/.config/worktrunk/config.toml
 [aliases]
 up = '''
 git fetch --all --prune; wt step for-each -- sh -c '
@@ -156,14 +154,7 @@ git fetch --all --prune; wt step for-each -- sh -c '
 
 `wt up` fetches every remote, then brings each worktree up to date with its upstream: skip if there is no upstream or a rebase is already in progress, fast-forward if a tracked file is modified or staged, otherwise rebase, aborting on conflict. It rebases onto git-native `@{u}` rather than a `{{ … }}` template, so git resolves each worktree's own upstream and there is nothing to defer.
 
-A sweep finds each worktree in whatever state you left it, so most of the script is guards:
-
-- `git fetch --all` exits non-zero when any single remote fails. With `&&`, one remote with lapsed credentials is enough to skip the whole sweep, so even worktrees whose refs fetched fine go unrebased. With `;` the sweep runs on what did fetch, and the fetch error still prints.
-- `git rebase` refuses to run in a worktree with a modified or staged tracked file, whether or not there is anything to rebase — so a worktree you are editing would fail the sweep. `git merge --ff-only` is the piece of the rebase git will still do there: it advances a branch that is simply behind, and otherwise changes nothing — a diverged branch, or an incoming file that collides with your edits, leaves the worktree exactly as it was, with the reason printed. Untracked files trigger neither the refusal nor the `git diff` guard, so a worktree carrying only new files still rebases — unless one of them has the same name as a file the incoming commits add, which git declines to overwrite.
-- `rebasing` tells the two ways `git rebase` fails apart. Conflicting partway leaves a rebase in progress, which the abort winds back. Refusing to start — a tracked file modified under you, an untracked file in the way of an incoming one, a `pre-rebase` hook saying no — leaves nothing to abort and nothing to clean up, so the sweep moves on; an unconditional `git rebase --abort` there would answer `fatal: no rebase in progress` and exit 128 in place of git's own message.
-- Both arms pass `--no-autostash`, because a global `rebase.autostash` or `merge.autostash` breaks what each arm relies on. An autostash that pops with conflicts leaves the markers in the worktree and still exits 0, so the sweep would report success on a worktree it had just left in conflict — and an autostashed tree is momentarily clean, so a fast-forward that should have refused goes through and the collision lands on the pop instead.
-
-So the sweep exits non-zero only when it leaves a worktree needing attention — an abort that itself failed. Everything git declines to do, it declines atomically, and the sweep carries on to the next worktree with git's reason in the output. That matters where the alias is a hook step, since a failing step stops the rest of the pipeline.
+`--no-autostash` overrides a global `rebase.autostash` or `merge.autostash`, whose conflicting pop would leave conflict markers behind and still exit 0.
 
 ### Recipe: move or copy in-progress changes to a new worktree
 
@@ -193,17 +184,18 @@ To copy instead of move, add `git stash apply --index --quiet` right after the p
 `wt config state logs --format=json` emits structured entries (`branch`, `source`, `hook_type`, `name`, `path`). Pipe through `jq` to resolve one entry, then wrap in an alias for quick access:
 
 ```toml
+# ~/.config/worktrunk/config.toml
 [aliases]
 hook-log = '''
-tail -f "$(wt config state logs --format=json | jq -r --arg name "{{ name | sanitize_hash }}" --arg kind "{{ kind }}" '
+tail -f "$(wt config state logs --format=json | jq -r --arg branch {{ branch }} --arg name {{ name | sanitize_hash }} --arg kind {{ kind }} '
   .hook_output[]
-  | select(.branch == "{{ branch | sanitize_hash }}" and .hook_type == $kind and .name == $name)
+  | select([.branch, .hook_type, .name] == [$branch, $kind, $name])
   | .path
 ' | head -1)"
 '''
 ```
 
-Run with `wt hook-log --kind=post-start --name=server` to tail the log for the `server` hook on the current branch. `--kind` picks the hook type; the branch is pulled from the current worktree via `{{ branch }}`. `sanitize_hash` rewrites `branch` and `name` to filesystem-safe forms with a hash suffix that keeps distinct originals unique (the same transformation Worktrunk applies on disk), so the alias resolves the right log even when either contains characters like `/`.
+Run with `wt hook-log --kind=post-start --name=server` to tail the log for the `server` hook on the current branch. `--kind` picks the hook type; the branch is pulled from the current worktree via `{{ branch }}`. `branch` in the JSON is the branch name itself, while `name` is the hook name as it appears on disk; `sanitize_hash` applies the same transformation to `{{ name }}`, so the alias resolves the right log even when the hook name contains characters like `/`.
 
 ## Custom subcommands
 
@@ -237,7 +229,6 @@ Aside from the differences below, hooks and aliases behave the same.
 | Reach `{{ args }}` from positionals | Must use `--` (`wt hook pre-merge -- extra`) | Any bare positional lands there |
 | Approval skip flag | Post-subcommand `--yes` / `-y` supported (`wt hook pre-merge --yes`) | Only the global form (`wt -y <alias>`); post-alias `--yes` falls through to `{{ args }}` |
 | Source discrimination | `user:` / `project:` / `user:name` / `project:name` filter syntax | Run user first, then project; no filter syntax |
-| Force-bind escape | `--var KEY=VALUE` (deprecated in favor of `--KEY=VALUE`, but still force-binds) | None; smart routing is the only path |
 | `--help` | `wt hook --help` lists hook types; `wt hook <type> --help` shows flags and arguments for that type | The template body is the documentation: `wt <alias> --help` redirects to `wt config alias show` / `dry-run`. `wt --help` and `wt step --help` list configured aliases alongside built-in commands |
 | Inspection | `wt hook show [type] [--expanded]` | `wt config alias show <name>` / `wt config alias dry-run <name>` |
 | Stdin | All template variables as JSON (parse with `json.load(sys.stdin)`) | Inherits parent stdin (pipes pass through; interactive TUIs like `wt switch` keep the tty) |

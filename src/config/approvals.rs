@@ -70,7 +70,7 @@ struct ApprovedProject {
 /// the guard is compiled out and step 3 resolves the real user config
 /// directory. In-process unit tests must not resolve here, directly or via
 /// [`Approvals::load`]; they pass tempdir-backed paths instead. See
-/// `tests/CLAUDE.md`.
+/// `tests/AGENTS.md`.
 pub fn approvals_path() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("WORKTRUNK_APPROVALS_PATH") {
         return Some(PathBuf::from(path));
@@ -80,7 +80,7 @@ pub fn approvals_path() -> Option<PathBuf> {
     panic!(
         "WORKTRUNK_APPROVALS_PATH not set in test. Subprocess tests set it via TestRepo. \
          An in-process unit test must pass explicit tempdir paths to the mutation \
-         methods and must not resolve the approvals path globally. See tests/CLAUDE.md."
+         methods and must not resolve the approvals path globally. See tests/AGENTS.md."
     );
 
     #[cfg(not(test))]

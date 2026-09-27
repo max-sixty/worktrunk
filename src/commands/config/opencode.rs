@@ -4,15 +4,13 @@
 //! The plugin source (`dev/opencode-plugin.ts`) is embedded in the binary via
 //! `include_str!()` and written under the OpenCode global-config directory (see
 //! `opencode_plugins_dir` for the precedence rules) at `…/plugins/worktrunk.ts`.
+//! That one file exports both plugin shapes OpenCode has shipped, so the same
+//! install works on OpenCode 1 and OpenCode 2.
 
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use color_print::cformat;
-use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{eprintln, hint_message, info_message, success_message};
-
-use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
+use etcetera::base_strategy::{BaseStrategy, Xdg};
 
 /// The plugin source, embedded at compile time.
 const PLUGIN_SOURCE: &str = include_str!("../../../dev/opencode-plugin.ts");
@@ -24,18 +22,26 @@ const PLUGIN_SOURCE: &str = include_str!("../../../dev/opencode-plugin.ts");
 /// `~/Library/Application Support/opencode/` path is reserved for *managed* settings and is
 /// not where OpenCode looks for user plugins, so we deliberately avoid `dirs::config_dir()`
 /// here — it would put the plugin in the wrong place on macOS.
+///
+/// `OPENCODE_CONFIG_DIR` reads an exported-but-empty value as unset, matching
+/// `CLAUDE_CONFIG_DIR` in `config::show` and `PI_CONFIG_DIR` in `config::omp`.
+/// An empty value taken at face value yields the relative path `plugins/`, so
+/// the install writes the plugin into whatever directory `wt` was run from.
+///
+/// The two lower rungs are etcetera's XDG strategy — `$XDG_CONFIG_HOME` when
+/// absolute, `~/.config` otherwise — which rules out the same mistake for that
+/// variable. `Xdg` rather than `choose_base_strategy` keeps `~/.config` on
+/// Windows too, for the same reason the macOS path is avoided above.
 fn opencode_plugins_dir() -> Result<PathBuf> {
-    let config_dir = if let Ok(dir) = std::env::var("OPENCODE_CONFIG_DIR") {
-        PathBuf::from(dir)
-    } else if let Some(xdg) = std::env::var("XDG_CONFIG_HOME")
+    let config_dir = if let Some(dir) = std::env::var("OPENCODE_CONFIG_DIR")
         .ok()
         .filter(|s| !s.is_empty())
     {
-        PathBuf::from(xdg).join("opencode")
+        PathBuf::from(dir)
     } else {
-        worktrunk::path::home_dir()
+        Xdg::new()
             .context("Could not determine home directory")?
-            .join(".config")
+            .config_dir()
             .join("opencode")
     };
     Ok(config_dir.join("plugins"))
@@ -59,97 +65,14 @@ pub fn plugin_file_exists() -> bool {
     plugin_path().map(|p| p.exists()).unwrap_or(false)
 }
 
-/// Confirm an action via prompt, or accept automatically with `--yes`.
-fn confirm_or_yes(yes: bool, prompt: &str, preview: impl Fn()) -> Result<bool> {
-    Ok(yes || prompt_yes_no_preview(prompt, preview)? == PromptResponse::Accepted)
-}
-
 /// Handle `wt config plugins opencode install`.
 pub fn handle_opencode_install(yes: bool) -> Result<()> {
     let target = plugin_path()?;
-    let target_display = format_path_for_display(&target);
-
-    // Check if already installed with current content
-    if target.exists()
-        && let Ok(existing) = std::fs::read_to_string(&target)
-        && existing == PLUGIN_SOURCE
-    {
-        eprintln!(
-            "{}",
-            info_message(cformat!(
-                "Plugin already installed @ <bold>{target_display}</>"
-            ))
-        );
-        return Ok(());
-    }
-
-    let action = if target.exists() { "Update" } else { "Install" };
-    let preview_msg = info_message(cformat!("Would write to <bold>{target_display}</>"));
-    let preview = || eprintln!("{}", preview_msg);
-
-    let confirmed = confirm_or_yes(
-        yes,
-        &cformat!("{action} OpenCode plugin @ <bold>{target_display}</>?"),
-        preview,
-    );
-    if !confirmed? {
-        return Ok(());
-    }
-
-    // Create parent directories if needed
-    let parent = target
-        .parent()
-        .context("Plugin path has no parent directory")?;
-    std::fs::create_dir_all(parent)
-        .with_context(|| format!("Failed to create directory {}", parent.display()))?;
-
-    // Write the plugin file
-    worktrunk::utils::write_atomically(&target, PLUGIN_SOURCE)
-        .with_context(|| format!("Failed to write plugin to {target_display}"))?;
-
-    eprintln!(
-        "{}",
-        success_message(cformat!("Plugin installed @ <bold>{target_display}</>"))
-    );
-    eprintln!(
-        "{}",
-        hint_message(cformat!(
-            "Activity markers (🤖/💬) will appear in <underline>wt list</>"
-        ))
-    );
-
-    Ok(())
+    super::install_file_plugin("OpenCode", &target, PLUGIN_SOURCE, yes)
 }
 
 /// Handle `wt config plugins opencode uninstall`.
 pub fn handle_opencode_uninstall(yes: bool) -> Result<()> {
     let target = plugin_path()?;
-    let target_display = format_path_for_display(&target);
-
-    if !target.exists() {
-        eprintln!("{}", info_message("Plugin not installed"));
-        return Ok(());
-    }
-
-    let preview_msg = info_message(cformat!("Would remove <bold>{target_display}</>"));
-    let preview = || eprintln!("{}", preview_msg);
-
-    let confirmed = confirm_or_yes(
-        yes,
-        &cformat!("Remove OpenCode plugin @ <bold>{target_display}</>?"),
-        preview,
-    );
-    if !confirmed? {
-        return Ok(());
-    }
-
-    std::fs::remove_file(&target)
-        .with_context(|| format!("Failed to remove plugin at {target_display}"))?;
-
-    eprintln!(
-        "{}",
-        success_message(cformat!("Plugin removed from <bold>{target_display}</>"))
-    );
-
-    Ok(())
+    super::uninstall_file_plugin("OpenCode", &target, yes)
 }

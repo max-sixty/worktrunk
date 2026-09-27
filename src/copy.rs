@@ -12,11 +12,19 @@
 //! Callers that want low-priority I/O (e.g. `step_copy_ignored`) should call
 //! [`crate::priority::lower_current_process`] before starting work.
 //!
-//! Every successful leaf copy calls `progress.record(bytes)` on the caller's
+//! Every successful leaf copy calls `progress.record(..)` on the caller's
 //! [`Progress`], which both feeds the TTY spinner (when enabled) and
 //! accumulates the `(files, bytes)` totals the caller reads back via
 //! [`Progress::totals`]. Non-interactive callers pass [`Progress::disabled`]
 //! to skip the spinner; counting still happens.
+//!
+//! Each record carries a [`DataCopy`] saying whether the filesystem shared the
+//! source's extents or wrote the bytes out, so a caller can report what the
+//! copy actually cost on disk. `reflink_or_copy` returns that for free: `None`
+//! when the platform's clone syscall succeeded, `Some(bytes)` when it fell
+//! through to `fs::copy`. The signal is exact per file but says only that a
+//! clone did not happen, never why — an unsupported filesystem and a
+//! cross-device copy are indistinguishable here.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -28,7 +36,39 @@ use anyhow::Context;
 use rayon::prelude::*;
 
 use crate::path::{canonicalize_with_parents, format_path_for_display};
-use crate::progress::Progress;
+use crate::progress::{DataCopy, Progress};
+
+/// Pins the reflink classification so snapshot tests can assert the summary
+/// line: `1` reports every copied file as reflinked, `0` as written in full.
+///
+/// Whether a clone succeeds is a property of the filesystem under the test's
+/// temp directory, and CI spans APFS, ext4, and NTFS — so without this seam no
+/// single snapshot could hold on all three, and the branch a given run took
+/// would be invisible. It overrides only the label; the copy itself still
+/// attempts a reflink and behaves identically either way.
+static FORCED_DATA_COPY: LazyLock<Option<DataCopy>> =
+    LazyLock::new(
+        || match std::env::var("WORKTRUNK_TEST_REFLINK").as_deref() {
+            Ok("1") => Some(DataCopy::Reflinked),
+            Ok("0") => Some(DataCopy::Written),
+            _ => None,
+        },
+    );
+
+/// Read `reflink_or_copy`'s success value, which reports the *fallback*: `None`
+/// is the platform's clone syscall having succeeded, `Some(bytes)` the byte copy
+/// that stood in for it.
+///
+/// A named function rather than an inline `if`, because no filesystem exercises
+/// both arms — a run on APFS never sees the fallback, one on ext4 never sees the
+/// clone — so the mapping is pinned by a unit test rather than by whichever
+/// runner happens to execute it.
+fn classify_copy(fallback: Option<u64>) -> DataCopy {
+    match fallback {
+        None => DataCopy::Reflinked,
+        Some(_) => DataCopy::Written,
+    }
+}
 
 /// Capped at 4 threads to avoid saturating the CPU — the global rayon pool is
 /// much larger (2× CPU cores, tuned for network I/O in `wt list`).
@@ -41,12 +81,16 @@ static COPY_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
 
 /// Copy a single file or symlink, using reflink (COW) when possible.
 ///
-/// Detects symlinks via `symlink_metadata` on the source. Returns `Some(bytes)`
-/// when the entry was copied (reporting the source's logical byte size), or
-/// `None` if skipped because the destination already exists, or because the
-/// source vanished after the caller's directory walk collected it (e.g. a
-/// concurrent build deleting/replacing a build artifact). When `force` is
-/// true, existing entries are removed before copying.
+/// Detects symlinks via `symlink_metadata` on the source. Returns
+/// `Some((bytes, data))` when the entry was copied — the source's logical byte
+/// size, and whether the filesystem shared its extents — or `None` if skipped
+/// because the destination already exists, or because the source vanished after
+/// the caller's directory walk collected it (e.g. a concurrent build
+/// deleting/replacing a build artifact). A symlink reports
+/// [`DataCopy::Neither`]: its content is a path, so there are no extents either
+/// to share or to write, and counting it on either side would make a tree full
+/// of symlinks read as a partial reflink failure. When `force` is true,
+/// existing entries are removed before copying.
 ///
 /// The vanished-source skip never costs the destination a file: the source is
 /// stat'd before `force` removes anything, so a source that is already gone
@@ -68,7 +112,7 @@ pub fn copy_leaf(
     dest: &Path,
     root: Option<&Path>,
     force: bool,
-) -> anyhow::Result<Option<u64>> {
+) -> anyhow::Result<Option<(u64, DataCopy)>> {
     if let Some(root) = root {
         ensure_path_within_root(dest.parent().unwrap_or(dest), root)?;
     }
@@ -105,7 +149,7 @@ pub fn copy_leaf(
     let is_symlink = src_meta.file_type().is_symlink();
     let bytes = src_meta.len();
 
-    if is_symlink {
+    let data = if is_symlink {
         let target = match fs::read_link(src) {
             Ok(target) => target,
             // The source vanished after the stat above. If `force` removed a
@@ -121,9 +165,10 @@ pub fn copy_leaf(
             }
         };
         create_symlink(&target, src, dest)?;
+        DataCopy::Neither
     } else {
         match reflink_copy::reflink_or_copy(src, dest) {
-            Ok(_) => {
+            Ok(fallback) => {
                 // Preserve file permissions (especially the execute bit) —
                 // needed on Linux, skipped on macOS.
                 //
@@ -142,6 +187,7 @@ pub fn copy_leaf(
                     fs::set_permissions(dest, src_meta.permissions())
                         .context("setting destination file permissions")?;
                 }
+                FORCED_DATA_COPY.unwrap_or(classify_copy(fallback))
             }
             Err(e) if e.kind() == ErrorKind::AlreadyExists => {
                 tracing::debug!(path = %dest.display(), "skipping existing destination: {}", dest.display());
@@ -160,8 +206,8 @@ pub fn copy_leaf(
                 return Err(anyhow::Error::from(e).context(format!("copying {}", src.display())));
             }
         }
-    }
-    Ok(Some(bytes))
+    };
+    Ok(Some((bytes, data)))
 }
 
 fn ensure_path_within_root(path: &Path, root: &Path) -> anyhow::Result<()> {
@@ -301,7 +347,7 @@ pub fn copy_dir_recursive(
             .par_iter()
             .try_for_each(|leaf| -> anyhow::Result<()> {
                 match copy_leaf(&leaf.src, &leaf.dest, None, force)? {
-                    Some(bytes) => progress.record(bytes),
+                    Some((bytes, data)) => progress.record(bytes, data),
                     None => {
                         skipped_leaves.fetch_add(1, Ordering::Relaxed);
                     }
@@ -450,6 +496,15 @@ mod tests {
     }
 
     #[test]
+    fn test_classify_copy_reads_the_fallback() {
+        // `reflink_or_copy` reports what it fell back to, so the absent value
+        // is the successful clone. Asserted here because a filesystem only ever
+        // produces one of the two.
+        assert_eq!(classify_copy(None), DataCopy::Reflinked);
+        assert_eq!(classify_copy(Some(4096)), DataCopy::Written);
+    }
+
+    #[test]
     fn test_copy_leaf_force_replaces_existing_destination() {
         // The counterpart: with `force` the destination is removed and the
         // source copied over it, reporting the source's byte count.
@@ -461,7 +516,12 @@ mod tests {
 
         let result = copy_leaf(&src, &dest, None, true).unwrap();
 
-        assert_eq!(result, Some(b"source content".len() as u64));
+        // Only the byte half is asserted: whether the copy reflinked depends on
+        // the filesystem under the temp dir, which varies across CI runners.
+        assert_eq!(
+            result.map(|(bytes, _)| bytes),
+            Some(b"source content".len() as u64)
+        );
         assert_eq!(fs::read(&dest).unwrap(), b"source content");
     }
 

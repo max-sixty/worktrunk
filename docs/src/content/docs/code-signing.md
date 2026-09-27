@@ -2,8 +2,7 @@
 title: "Code Signing Policy"
 description: "How Worktrunk's Windows release binaries are code-signed: certificate provenance, the build and signing pipeline, project roles, and per-release approval."
 sidebar:
-  order: 26
-  hidden: true
+  order: 27
 ---
 This page is Worktrunk's **code signing policy**. It describes what gets signed, which certificate is used, how the signing pipeline works, and who authorizes each release. It exists both to document the process for users and to satisfy the transparency requirements of the [SignPath Foundation](https://signpath.org/) open-source code signing program.
 

@@ -160,6 +160,58 @@ fn test_push_dirty_target_changes_stay_in_place(mut repo: TestRepo) {
     );
 }
 
+/// Distinct non-UTF-8 paths must not collapse to the same replacement string
+/// during target-conflict detection.
+#[cfg(target_os = "linux")]
+#[rstest]
+fn test_push_distinguishes_non_utf8_target_paths(mut repo: TestRepo) {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let target_path = OsString::from_vec(b"collision-\xfe".to_vec());
+    let pushed_path = OsString::from_vec(b"collision-\xff".to_vec());
+    let root = repo.root_path().to_path_buf();
+    std::fs::write(root.join(&target_path), "target").unwrap();
+    std::fs::write(root.join(&pushed_path), "pushed").unwrap();
+    repo.run_git(&["add", "-A"]);
+    repo.run_git(&["commit", "-m", "Add raw paths"]);
+
+    let feature_wt = repo.add_worktree("feature");
+    std::fs::remove_file(feature_wt.join(&pushed_path)).unwrap();
+    repo.run_git_in(&feature_wt, &["add", "-A"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Delete pushed path"]);
+    std::fs::remove_file(root.join(&target_path)).unwrap();
+
+    let target_status = repo
+        .git_command()
+        .args(["status", "--porcelain", "-z"])
+        .run()
+        .unwrap();
+    assert_eq!(target_status.stdout, b" D collision-\xfe\0");
+    let repository = worktrunk::git::Repository::at(&root).unwrap();
+    assert_eq!(
+        repository.changed_files("main", "feature").unwrap(),
+        [b"collision-\xff".to_vec()]
+    );
+
+    let output = repo
+        .wt_command()
+        .current_dir(&feature_wt)
+        .args(["step", "push", "main"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "distinct raw paths must not conflict: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "main"]),
+        repo.git_output(&["rev-parse", "feature"])
+    );
+    assert!(!root.join(target_path).exists());
+}
+
 #[rstest]
 fn test_push_dirty_target_overlap_renamed_file(mut repo: TestRepo) {
     // Regression test: overlap detection must detect conflicts when a file is renamed

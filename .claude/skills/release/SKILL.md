@@ -36,7 +36,7 @@ metadata:
    cargo release X.Y.Z -p worktrunk -x --no-publish --no-push --no-tag --no-verify --no-confirm && cargo check
    ```
    This bumps `Cargo.toml` and `Cargo.lock`, then auto-commits. We'll reset this commit in step 10 to fold in the CHANGELOG.
-9. **Update CHANGELOG**: Add `## X.Y.Z` section at top with changes (see MANDATORY verification below)
+9. **Update CHANGELOG**: the top section holds this release's changes (see MANDATORY verification below). If it is `## Unreleased`, rename that heading to `## X.Y.Z` and fold the remaining entries into it — inserting a new heading above it ships a stale `## Unreleased` in the release notes. Otherwise the top section is the last shipped version: add a `## X.Y.Z` section above it, never append to it.
 10. **Commit**: Reset the auto-commit from step 8, stage everything, and create the final release commit:
     ```bash
     git reset --soft HEAD~1 && git add -A && git commit -m "Release vX.Y.Z"
@@ -89,13 +89,13 @@ Give each a distinct charter. At least two receive no grep and no keyword list, 
 
 ### Analyze: adjudicate each candidate
 
-Pool the candidates, dedupe, and analyze each against the data-safety invariants in `CLAUDE.md` and the FAQ "What can Worktrunk delete?" inventory: does it preserve data on failure, require explicit consent for destructive ops, and avoid silent side-effect deletion? Mark each real risk / acceptable / needs change, with the reasoning.
+Pool the candidates, dedupe, and analyze each against the data-safety invariants in `AGENTS.md` and the FAQ "What can Worktrunk delete?" inventory: does it preserve data on failure, require explicit consent for destructive ops, and avoid silent side-effect deletion? Mark each real risk / acceptable / needs change, with the reasoning.
 
 Surface the full adjudicated list and get explicit sign-off before tagging. Do not tag a release with an unresolved deletion-surface candidate, even if it looks acceptable.
 
 ## CHANGELOG Review
 
-Check commits since last release for missing entries:
+Draft entries from the commits since the last release:
 
 ```bash
 git log v<last-version>..HEAD --oneline
@@ -145,10 +145,17 @@ awk '/^## /{if (f) exit; f=1} f' CHANGELOG.md \
 
 **Calibrate against the ceiling, not against the last release.** Length ratchets: each release is drafted beside the previous section, and an abstract rule loses to a concrete neighbouring exemplar every time. Entries grew from 49 to 101 words on average across five releases while this skill said "be brief" throughout. Read the previous section for what it drifted to, then ignore it and write to the ceiling.
 
+**Entries describe.** An entry records what the old behavior was and what it is now. Give imperative guidance only for a material issue that affects a sizable share of users, which is rare; otherwise remediation belongs in the PR description.
+
 **No editorial framing.** Describe what changed, not what was wrong with the previous decision in subjective terms. Avoid words like "sledgehammer", "ugly", "noisy", "wrong" applied to past code. State the prior behavior neutrally and the new behavior plainly.
 
 **Good:** "Removed `.pi/` from the default excludes list; users who need it can add it via `[step.copy-ignored]`."
 **Bad:** "Removed `.pi/` — a sledgehammer fix from an unrelated debugging session that has no place as a project-agnostic default."
+
+**Name the conditions a bug needed, so the entry carries its magnitude.** A correctness or data-loss entry reads as though it fired for everyone unless it says what it took. These are usually narrow — a non-default git config, a command run from a particular place, a change of a particular shape — and naming each condition lets a reader decide in one pass whether it reached them. Join the conditions with "and": "X set *and* run from Y" is a corner case, while "X or Y" reads as two common triggers. Establish each one by reproducing against the previous release's binary rather than reading it off the diff — a condition assumed is a condition the entry overstates, and overstating a data-loss bug is its own kind of inaccuracy.
+
+**Good:** "`diff.relative` set *and* the command run from a subdirectory the branch's changes sat entirely outside"
+**Bad:** "`diff.relative` could hide a branch's changes from the integration check"
 
 ### Credit External Contributors
 
@@ -223,35 +230,45 @@ Link when there's substantial documentation the user would benefit from reading 
 
 ### MANDATORY: Verify Each Changelog Entry
 
-**After drafting changelog entries, you MUST spawn a subagent to verify each bullet point is accurate.** This is non-negotiable — changelog mistakes are a recurring problem.
+**After drafting changelog entries, you MUST spawn a subagent to verify each bullet point is accurate.** The tag publishes this text as the GitHub release body, so a correction afterwards takes a follow-up PR to `CHANGELOG.md` and a hand-edit of the release page, and people have read the wrong line by then. This pass is worth as much time as it takes.
 
 **The gate cuts both ways.** Checking only accuracy pushes every entry longer: "understates" and "not covered" have no counterweight, so each pass adds and none subtracts. That asymmetry is what drove the ratchet above. An entry that is too long, too internal, or ranked above one more readers will notice is reported on the same footing as one that is wrong.
-
-The subagent should:
-1. Take the list of drafted changelog entries
-2. For each entry, find the commit(s) it describes and read the actual diff
-3. Verify the entry accurately describes what changed
-4. Check for missing changes that should be documented
-5. Check each entry against the length ceiling and the ordering rule
-6. Report inaccuracies, omissions, overlong entries, and misordering
 
 **Subagent prompt template:**
 
 ```
-Verify these changelog entries for version X.Y.Z are accurate.
+Verify these changelog entries for version X.Y.Z are accurate. They publish with
+the tag, and by the time anyone corrects a wrong line, readers have acted on it.
+Spend the time to read a source for each one: reading the entry and finding it
+plausible is not a check, because the entry was written from the same commits you
+are about to read.
 
 Previous version: [e.g., v0.1.9]
 Commits to check: git log v<previous>..HEAD
 
-Entries to verify:
-[paste drafted entries]
+Entries to verify: the top section of CHANGELOG.md as it stands on disk. Read it
+there rather than from a paste:
+awk '/^## /{if (f) exit; f=1} f' CHANGELOG.md
 
-For EACH entry:
+Verify claim by claim, not entry by entry: an entry carries several independent
+claims, and one verdict over the whole entry waves through every claim that is not
+its headline.
+
 1. Find the relevant commit(s) using git log and git show
-2. Read the actual diff, not just the commit message
-3. Confirm the entry accurately describes the user-facing change
-4. Flag if the entry overstates, understates, or misdescribes the change
-5. Flag if the entry runs over 60 words (80 for one of the two or three headline
+2. Read the diff, not the commit message. The diff settles what changed, and
+   nothing else: not what the behavior was before, not what the user sees, not
+   what a file it doesn't touch does. Settle a "previously" / "no longer" / "so X
+   broke" claim by reading the old file (`git show <sha>^:<path>`) and confirming
+   the old behavior there. The new code's handling of the old case is not that
+   confirmation: a case added together with a comment about why it produces
+   nothing reads in a diff exactly like a case that used to produce something.
+   Some claims have no source in the commit at all — a version floor, what a
+   rendered page shows, how another component behaves. Read that source: the
+   rendered output, the other component's own file, the upstream project's own
+   releases
+3. Flag any claim its source does not support, whether it overstates,
+   understates, or misdescribes
+4. Flag if the entry runs over 60 words (80 for one of the two or three headline
    entries), restates the PR description, or explains mechanism the reader cannot
    act on — report these as seriously as an inaccuracy, and quote a shorter
    rewrite that keeps every user-facing claim
@@ -265,11 +282,13 @@ Report format:
 - Entry: [entry text]
   Status: ✅ Accurate / ⚠️ Needs revision / ❌ Incorrect
   Length: [word count] — ✅ / ⚠️ over ceiling
-  Evidence: [what you found in the diff]
+  Evidence: [for each claim, the source you read and what it said]
   Suggested fix: [if needed]
 ```
 
-**Do not finalize the changelog until the subagent confirms every entry is accurate and within the ceiling.**
+**The pass ends on a clean run, not on the first run's findings.** A rewrite the verifier suggests has no more evidence behind it than one you wrote yourself, and an entry you edit while the pass runs is in the same state — both leave that entry unverified. Re-run over the section as it now stands, and finalize only once a run comes back clean.
+
+`evals/README.md` beside this skill holds four entries from a shipped release, three of them wrong, for scoring a change to this template against what the last wording missed.
 
 **If verification finds problems:** Escalate to the user. Show them the subagent's findings and ask how to proceed. Don't attempt to resolve ambiguous changelog entries autonomously — the user knows the intent behind their changes better than you do.
 
@@ -306,11 +325,11 @@ Recommendation: Minor release (0.3.0) — new features, no breaking changes
 - **Second digit** (0.1.0 → 0.2.0): Backward incompatible changes
 - **Third digit** (0.1.0 → 0.1.1): Everything else
 
-Current project status: maturing mode (see [CLAUDE.md › Project Status](../../../CLAUDE.md)). External interfaces — the config file format (`wt.toml`, user config) and CLI flags/arguments — carry compatibility weight, so breaks there need justification (a real improvement, not cleanup) and prefer deprecation warnings over silent breaks. Everything else, including the internal and library APIs, stays flexible: worktrunk ships breaking library changes freely and bumps the version each time, putting no weight on the existing internal APIs.
+Current project status: maturing mode (see [AGENTS.md › Project Status](../../../AGENTS.md)). External interfaces — the config file format (`wt.toml`, user config) and CLI flags/arguments — carry compatibility weight, so breaks there need justification (a real improvement, not cleanup) and prefer deprecation warnings over silent breaks. Everything else, including the internal and library APIs, stays flexible: worktrunk ships breaking library changes freely and bumps the version each time, putting no weight on the existing internal APIs.
 
 ## Library API Compatibility
 
-Worktrunk is a CLI tool. The `[lib]` crate in `Cargo.toml` does expose a public API, but it is **not a compatibility surface** — per [CLAUDE.md › Project Status](../../../CLAUDE.md) there are no Rust library compatibility concerns, and the project ships breaking library changes freely, bumping the version each time (see the "Breaking library API" entries in `CHANGELOG.md`). Downstream crates are expected to pin.
+Worktrunk is a CLI tool. The `[lib]` crate in `Cargo.toml` does expose a public API, but it is **not a compatibility surface** — per [AGENTS.md › Project Status](../../../AGENTS.md) there are no Rust library compatibility concerns, and the project ships breaking library changes freely, bumping the version each time (see the "Breaking library API" entries in `CHANGELOG.md`). Downstream crates are expected to pin.
 
 `cargo-semver-checks` is therefore an **advisory bump-level input**, not a gate that commits us to keeping the API stable for downstream crates. It compares the current public API against the last version published to crates.io and reports semver-relevant changes — a useful signal for choosing the bump:
 

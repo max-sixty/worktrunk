@@ -11,6 +11,14 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_ALLOW_PROTOCOL: file
+    GIT_CONFIG_COUNT: "2"
+    GIT_CONFIG_GLOBAL: /nonexistent/wt/gitconfig
+    GIT_CONFIG_KEY_0: user.useConfigOnly
+    GIT_CONFIG_KEY_1: rerere.enabled
+    GIT_CONFIG_SYSTEM: /nonexistent/wt/gitconfig
+    GIT_CONFIG_VALUE_0: "true"
+    GIT_CONFIG_VALUE_1: "false"
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -27,15 +35,17 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
+    WORKTRUNK_TEST_PROBE_TIMEOUT_MS: "60000"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-wt config plugins codex install - Configure the Worktrunk marketplace in Codex
+wt config plugins codex install - Install the Worktrunk plugin
 
 Usage: [1m[36mwt config plugins codex install[0m [36m[OPTIONS][0m
 
@@ -59,10 +69,11 @@ Usage: [1m[36mwt config plugins codex install[0m [36m[OPTIONS][0m
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
-Configures the Worktrunk plugin marketplace in Codex. Equivalent to:
+Adds the Worktrunk plugin from the marketplace and installs it. Equivalent to:
 
 [107m [0m [2m[0m[2m[34mcodex[0m[2m plugin marketplace add max-sixty/worktrunk[0m
+[107m [0m [2m[0m[2m[34mcodex[0m[2m plugin add worktrunk@worktrunk[0m
 
-This does not install the plugin by itself. Afterward, open [2m/plugins[0m in Codex and install Worktrunk from the marketplace.
+Requires [2mcodex[0m CLI.
 
 ----- stderr -----

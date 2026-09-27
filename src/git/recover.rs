@@ -12,7 +12,7 @@ use color_print::cformat;
 use crate::path::canonicalize_with_parents;
 use crate::styling::eprintln;
 
-use super::Repository;
+use super::{Repository, is_bare_repo_dir};
 
 /// Try to get the current repository, recovering from a deleted CWD if possible.
 ///
@@ -75,10 +75,12 @@ fn hint_for_repo(repo: &Repository) -> String {
             .flatten()
             .is_some_and(|p| !repo.worktree_is_unusable(&p).unwrap_or(true))
     {
-        return cformat!("Current directory was removed. Try: <underline>wt switch ^</>");
+        return cformat!(
+            "Current directory was removed; to switch to the default branch, run <underline>wt switch ^</>"
+        );
     }
 
-    cformat!("Current directory was removed. Run <underline>wt list</> to see worktrees")
+    cformat!("Current directory was removed; to see worktrees, run <underline>wt list</>")
 }
 
 /// Attempt to recover a repository when the current directory has been deleted.
@@ -135,8 +137,9 @@ fn recover_from_path(deleted_path: &Path) -> Option<Repository> {
 /// Look for a git repository at `dir` or its immediate children that recognizes
 /// `deleted_path` as a (former) worktree.
 ///
-/// Only checks for `.git` **directories** (main repos), not `.git` files
-/// (which are linked worktrees — we need the main repo to recover).
+/// Matches `.git` **directories** (main worktrees) and bare repositories, not
+/// `.git` files (which are linked worktrees — we need the repository that owns
+/// the worktree to recover).
 fn find_validated_repo_near(dir: &Path, deleted_path: &Path) -> Option<Repository> {
     // Check the directory itself first
     if let Some(repo) = try_repo_at(dir)
@@ -145,7 +148,9 @@ fn find_validated_repo_near(dir: &Path, deleted_path: &Path) -> Option<Repositor
         return Some(repo);
     }
 
-    // Check immediate children for .git directories.
+    // Check immediate children for either shape, which is where a sibling
+    // layout keeps the repository: `<root>/repo` beside the worktrees, or
+    // `<root>/.bare`.
     // Uses is_some_and instead of ? so an unreadable entry (e.g., broken symlink)
     // skips that entry rather than aborting the entire search.
     let entries = std::fs::read_dir(dir).ok()?;
@@ -163,16 +168,16 @@ fn find_validated_repo_near(dir: &Path, deleted_path: &Path) -> Option<Repositor
 
 /// Try to discover a repository at the given path.
 ///
-/// Returns `Some(repo)` if the path contains a `.git` directory (not a file)
-/// and `Repository::at()` succeeds.
+/// Returns `Some(repo)` if the path holds a `.git` directory (a main worktree)
+/// or is itself a bare repository, and `Repository::at()` succeeds. A `.git`
+/// *file* is a linked worktree — recovery needs the repository that owns it,
+/// which the ancestor walk reaches separately.
 ///
-/// Note: This only matches `.git` directories, so bare repos (which have no
-/// `.git` subdirectory) won't be discovered. `cwd_removed_hint()` handles
-/// this gracefully by falling back to progressively less specific hints.
+/// The bare arm is what a bare layout needs: a bare repo has no `.git` entry
+/// anywhere, and its worktrees typically sit *inside* the bare directory, so
+/// without it the ancestor walk has nowhere to land.
 fn try_repo_at(dir: &Path) -> Option<Repository> {
-    let git_path = dir.join(".git");
-    // Only match .git directories (main repos), not .git files (linked worktrees)
-    if git_path.is_dir() {
+    if dir.join(".git").is_dir() || is_bare_repo_dir(dir) {
         Repository::at(dir).ok()
     } else {
         None
@@ -219,7 +224,7 @@ fn paths_match(worktree_path: &Path, deleted_path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{TestRepo, test_tempdir};
+    use crate::testing::{BareRepoTest, TestRepo, TestRepoBase, test_tempdir};
     use ansi_str::AnsiStr;
 
     #[test]
@@ -234,6 +239,18 @@ mod tests {
     fn test_try_repo_at_accepts_git_dir() {
         let test = TestRepo::new();
         assert!(try_repo_at(test.path()).is_some());
+    }
+
+    #[test]
+    fn test_try_repo_at_accepts_bare_repo_dir() {
+        let test = TestRepo::bare();
+        assert!(try_repo_at(test.path()).is_some());
+    }
+
+    #[test]
+    fn test_try_repo_at_rejects_plain_directory() {
+        let tmp = test_tempdir();
+        assert!(try_repo_at(tmp.path()).is_none());
     }
 
     #[test]
@@ -417,6 +434,23 @@ mod tests {
         assert!(recover_from_path(&wt_path).is_some());
     }
 
+    /// A bare repo has no `.git` entry anywhere in the ancestor walk, so
+    /// before `is_bare_repo_dir` every bare layout fell through to "no
+    /// repository found" and `wt switch` reported the raw CWD error instead
+    /// of recovering.
+    #[test]
+    fn test_recover_from_path_bare_repo_worktree() {
+        let test = BareRepoTest::new();
+        let wt_path = test.create_worktree("feature", "feature");
+        test.commit_in(&wt_path, "init");
+
+        std::fs::remove_dir_all(&wt_path).unwrap();
+
+        let recovered =
+            recover_from_path(&wt_path).expect("recovery should find the bare repository");
+        assert_eq!(recovered.git_common_dir(), test.bare_repo_path());
+    }
+
     #[test]
     fn test_recover_from_path_deep_pwd() {
         let tmp = test_tempdir();
@@ -481,7 +515,7 @@ mod tests {
         // A normal repo with a main worktree should suggest `wt switch ^`.
         let test = TestRepo::with_initial_commit();
         let hint = hint_for_repo(&test.repo);
-        insta::assert_snapshot!(hint.ansi_strip(), @"Current directory was removed. Try: wt switch ^");
+        insta::assert_snapshot!(hint.ansi_strip(), @"Current directory was removed; to switch to the default branch, run wt switch ^");
     }
 
     #[test]
@@ -490,6 +524,6 @@ mod tests {
         // so it should suggest `wt list` instead of `wt switch ^`.
         let test = TestRepo::bare();
         let hint = hint_for_repo(&test.repo);
-        insta::assert_snapshot!(hint.ansi_strip(), @"Current directory was removed. Run wt list to see worktrees");
+        insta::assert_snapshot!(hint.ansi_strip(), @"Current directory was removed; to see worktrees, run wt list");
     }
 }

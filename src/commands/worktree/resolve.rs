@@ -117,10 +117,12 @@ pub fn worktree_display_name(
 /// Uses an absolute path (`repo_path`/../) to avoid ambiguity with relative resolution.
 const BARE_REPO_WORKTREE_PATH: &str = "{{ repo_path }}/../{{ branch | sanitize }}";
 
-/// Check whether a template string references `{{ repo }}` or `{{ main_worktree }}`.
+/// Check whether a template string references `{{ repo }}`.
+///
+/// The template comes from the loaded config, so the deprecation layer has
+/// already renamed the retired `main_worktree` to `repo` before it gets here.
 fn template_references_repo_name(template: &str) -> bool {
     worktrunk::config::template_references_var(template, "repo")
-        || worktrunk::config::template_references_var(template, "main_worktree")
 }
 
 /// Offer to set a project-level `worktree-path` for bare repos with hidden directory names.
@@ -210,6 +212,10 @@ pub fn offer_bare_repo_worktree_path_fix(
         ))
     );
 
+    // Separate the prompt from the diagnosis above; prompt_yes_no_preview
+    // emits no leading blank of its own.
+    eprintln!();
+
     let config_path_for_preview = config_path_display.clone();
     let project_id_for_preview = project_id.clone();
     match prompt_yes_no_preview(
@@ -277,11 +283,6 @@ mod tests {
                 true,
             ),
             ("repo with filter", "{{ repo | sanitize }}", true),
-            (
-                "deprecated main_worktree alias",
-                "{{ main_worktree }}.{{ branch }}",
-                true,
-            ),
             (
                 "repo_path is a distinct variable",
                 "{{ repo_path }}/../{{ branch | sanitize }}",

@@ -20,7 +20,7 @@ concurrency:
 
 env:
   # Swatinem/rust-cache hashes CARGO*/RUST* into the cache key, so these track
-  # ci.yaml (.github/CLAUDE.md → Build environment).
+  # ci.yaml (.github/AGENTS.md → Build environment).
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUSTFLAGS: -C debuginfo=0
@@ -35,12 +35,12 @@ jobs:
     - uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-llvm-cov
-        version: "=0.9.0"
+        version: "=0.9.1"
 
     - uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-nextest
-        version: "=0.9.143"
+        version: "=0.9.145"
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
@@ -73,7 +73,7 @@ jobs:
         path: cobertura.xml
 
     - name: Upload to codecov.io
-      uses: codecov/codecov-action@v7.0.0
+      uses: codecov/codecov-action@v7.1.1
       with:
         files: cobertura.xml
         # Soft-fail on fork PRs: secrets aren't available there, so we rely on

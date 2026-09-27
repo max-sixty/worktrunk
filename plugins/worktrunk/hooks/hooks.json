@@ -38,7 +38,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" -C \"$CLAUDE_PROJECT_DIR\" config state marker set 💬 || true"
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config plugins claude approve-enter-worktree || bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" -C \"$CLAUDE_PROJECT_DIR\" config state marker set 💬 || true"
           }
         ]
       }

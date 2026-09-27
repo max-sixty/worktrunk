@@ -9,6 +9,14 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_ALLOW_PROTOCOL: file
+    GIT_CONFIG_COUNT: "2"
+    GIT_CONFIG_GLOBAL: /nonexistent/wt/gitconfig
+    GIT_CONFIG_KEY_0: user.useConfigOnly
+    GIT_CONFIG_KEY_1: rerere.enabled
+    GIT_CONFIG_SYSTEM: /nonexistent/wt/gitconfig
+    GIT_CONFIG_VALUE_0: "true"
+    GIT_CONFIG_VALUE_1: "false"
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -25,8 +33,10 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
+    WORKTRUNK_TEST_PROBE_TIMEOUT_MS: "60000"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
@@ -67,10 +77,9 @@ Usage: [1m[36mwt config show[0m [36m[OPTIONS][0m
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
-Shows location and contents of user config ([2m~/.config/worktrunk/config.toml[0m)
-and project config ([2m.config/wt.toml[0m). Also shows system config if present.
-
-If a config file doesn't exist, shows defaults that would be used.
+Shows config sources and checks for invalid TOML or list columns, misplaced or
+deprecated keys, and commands awaiting approval. It renders every section
+before failing; warnings exit zero.
 
 [1m[32mFull diagnostics[0m
 

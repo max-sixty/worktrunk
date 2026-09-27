@@ -81,6 +81,17 @@ color and a snapshot agrees whichever macro is in scope. Its
 `STD_STDERR_ALLOWED_PATHS` exempts whole files, not calls, so an entry is only
 right where std's macro is right throughout.
 
+A write that names no macro misses that scan entirely, since the scan looks for
+the name: `writeln!(std::io::stderr(), …)`, `std::io::stderr().write_all(…)`, a
+locked handle, a bound one. `check_raw_stderr_writes_go_through_anstream`
+refuses those shapes too, with its own `RAW_STDERR_ALLOWED_PATHS` — currently
+just `progress.rs`, whose spinner holds one lock across a frame (anstream's
+`stderr()` has none) and is tty-gated, so nothing of its output ever reaches a
+redirected stderr. The shape to watch for is a message rendered in one place
+and printed several layers below, where the printer has no idea it is handling
+narration: `Cmd::delayed_stream`'s progress line is the example, and a raw
+handle there made it the only colored line in a redirected `wt switch` log.
+
 **Output whose ANSI is already decided** declares that once at the top of the
 command with `worktrunk::styling::ColorChoice::Always.write_global()` and then
 prints through the same anstream macros — the statusline a shell prompt or
@@ -219,8 +230,8 @@ address the user. Imperatives like "Run", "Use", "Add" are fine — they're
 concise CLI idiom.
 
 ```rust
-// BAD - "Use 'wt merge' to rebase your changes onto main"
-// GOOD - "Use 'wt merge' to rebase onto main"
+// BAD - "To rebase your changes onto main, run wt merge"
+// GOOD - "To rebase onto main, run wt merge"
 ```
 
 **Avoid redundant parenthesized content:** Parenthesized text should add new
@@ -281,10 +292,10 @@ mentioned in the error message.
 ```rust
 // BAD - "it" refers to branch name in error message
 // Error: "Branch 'feature' not found"
-// Hint:  "Use --create to create it"
+// Hint:  "To create it, use --create"
 // GOOD - self-contained hint
 // Error: "Branch 'feature' not found"
-// Hint:  "Use --create to create a new branch"
+// Hint:  "To create a new branch, use --create"
 ```
 
 ## Heading Case
@@ -515,12 +526,13 @@ clearer:
 ```
 
 **Description + command in single message:** For warnings/errors that include a
-recovery command, join with semicolon. Use `<bold>` for commands in
+recovery command, join with semicolon, and order the recovery "To X, run Y" as
+hints do, so the command still ends the line. Use `<bold>` for commands in
 warnings/errors (only hints use `<underline>`):
 
 ```rust
 // Warning with inline recovery command (bold for commands)
-warning_message("Failed to restore stash; run <bold>git stash pop {ref}</> to restore manually")
+warning_message("Failed to restore stash; to restore manually, run <bold>git stash pop {ref}</>")
 warning_message("{tool} not authenticated; run <bold>{tool} auth login</>")
 
 // For longer suggestions, use separate hint message (underline for commands)
@@ -594,7 +606,12 @@ Specific rules:
 
 - **No leading/trailing blanks** — Start immediately, end cleanly
 - **Blank before prompts, not after** — Signal "pause, something interactive is
-  happening" before the prompt; once the user responds, output flows continuously
+  happening" before the prompt; once the user responds, output flows continuously.
+  The blank belongs to the narration it separates from, so the caller emits it
+  and `prompt_yes_no_preview` does not: a prompt that opens a command's output
+  (`wt config shell install`, `wt config plugins claude install`, the
+  commit-generation offer at the top of `wt merge`) starts flush, since a blank
+  there is a leading blank
 - **One blank between phases** — When a sub-operation completes and a different
   operation begins, add a blank line to visually separate them
 - **Never double blanks** — One blank line maximum between elements
@@ -613,14 +630,14 @@ Specific rules:
   ↳ To configure, run wt config shell install
   ```
 
-**Prompt spacing:** A blank line before the prompt signals "something different
-is about to happen" and gives the user's eye a natural stopping point before they
-need to read and respond. No blank line after — the user's input ends the
-interactive moment and subsequent output flows naturally from that decision.
+**Prompt spacing:** A blank line before a prompt that follows narration signals
+"something different is about to happen" and gives the user's eye a natural
+stopping point before they need to read and respond. No blank line after — the
+user's input ends the interactive moment and subsequent output flows naturally
+from that decision. A prompt with nothing above it, like the setup offer below
+at the top of `wt step commit`, has nothing to separate from and starts flush.
 
 ```
-◎ Detecting available LLM tools...
-
 ❯ Configure claude for commit messages? [y/N/?] y
 ✓ Added to user config:
    ┃ [commit.generation]
@@ -746,7 +763,7 @@ Use `eprintln!` with formatting functions. Use `cformat!` for inner styling:
 
 ```rust
 eprintln!("{}", success_message(cformat!("Created <bold>{branch}</> from <bold>{base}</>")));
-eprintln!("{}", hint_message(cformat!("Run <underline>wt merge</> to continue")));
+eprintln!("{}", hint_message(cformat!("To continue, run <underline>wt merge</>")));
 ```
 
 **color-print tags:** `<bold>`, `<dim>`, `<underline>`, `<bright-black>`, `<red>`,
@@ -773,11 +790,11 @@ Never quote commands or branch names. Use styling to make them stand out:
 
 ```rust
 // GOOD - bold in normal context
-eprintln!("{}", info_message(cformat!("Use <bold>wt merge</> to continue")));
+eprintln!("{}", info_message(cformat!("To continue, use <bold>wt merge</>")));
 // GOOD - underline for commands in hints
-eprintln!("{}", hint_message(cformat!("Run <underline>wt list</> to see worktrees")));
+eprintln!("{}", hint_message(cformat!("To see worktrees, run <underline>wt list</>")));
 // BAD - quoted commands
-eprintln!("{}", hint_message("Run 'wt list' to see worktrees"));
+eprintln!("{}", hint_message("To see worktrees, run 'wt list'"));
 ```
 
 ## Hyperlinks
@@ -805,7 +822,14 @@ to the render rather than to the cell emitting it: `LayoutConfig::link_style`
 answers it once for a whole row, so a CI reference and a dev-server port can't
 disagree. Two destinations carry no links, and so no underline: a terminal
 without OSC 8 support, where `wt list` prints the dev-server URL in full, and
-the picker, whose rows pass through skim.
+the picker's rows, which `Destination::picker` renders as
+`LinkStyle::Unlinked` (that variant's docstring has the reason). Nothing in the
+picker is clickable, by two routes: a row's link style is decided at render
+time, so it carries no OSC 8 to begin with, and the preview pane is parsed by
+skim through `ansi_to_tui`, which keeps none. Underline there is
+free to mean something else, and the preview pane spends it twice: on a URL,
+marking a reference rather than a link (`pr_pane::url_line`), and on the active
+tab in the tab bar (`items::render_preview_tabs`).
 
 ## Design Principles
 
@@ -1095,8 +1119,19 @@ eprintln!("{}", success_message(format!(
 
 ## Table Column Alignment
 
-- **Text columns** (Branch, Path): left-aligned
-- **Numeric columns** (HEAD±, main↕): right-aligned
+- **Text columns** (Branch, Path, Message): left-aligned
+- **Single-value numeric columns** (Age): right-aligned, so `now` and `4m` line
+  up on the unit
+- **Diff columns** (HEAD±, main↕): two right-aligned halves either side of a
+  separator (`+999 -999`); a state for the whole field, such as a loading or
+  in-sync marker, is centered
+
+A header follows its content, except over a diff column, where it centres:
+pushed to either edge it stands over one half and reads as that half's label,
+leaving a lone `+1` stranded left of `HEAD±`.
+
+Rows carry no trailing padding. Padding places a cell; past the last one it
+places nothing, and a reader who selects the row gets it anyway.
 
 ## Snapshot Testing
 

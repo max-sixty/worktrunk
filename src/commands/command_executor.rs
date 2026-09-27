@@ -200,11 +200,6 @@ impl<'a> CommandContext<'a> {
         }
     }
 
-    /// Get branch name, using "HEAD" as fallback for detached HEAD state.
-    pub fn branch_or_head(&self) -> &str {
-        self.branch.unwrap_or("HEAD")
-    }
-
     /// Get the project identifier for per-project config lookup.
     ///
     /// Uses the remote URL if available, otherwise the canonical repository path.
@@ -273,14 +268,18 @@ pub fn build_hook_context(
     // (subprocesses, git config / remote lookups) consult `scope`.
     let mut map = HashMap::new();
     map.insert("repo".into(), repo_name.into());
-    map.insert("branch".into(), ctx.branch_or_head().into());
+    // A detached worktree has no branch, so `branch` stays unset and
+    // `{% if branch %}` guards it the way every other optional variable is
+    // guarded. The old `HEAD` fallback was worse than useless: it is a string
+    // git resolves as a ref, so a guard passed and the command ran against the
+    // wrong thing (issue #4009). Unset also agrees with `wt list --json`,
+    // which reports `branch: null` for the same worktree.
+    if let Some(branch) = ctx.branch {
+        map.insert("branch".into(), branch.into());
+    }
     map.insert("worktree_name".into(), worktree_name.into());
-    map.insert("repo_path".into(), repo_path.clone());
-    map.insert("worktree_path".into(), worktree.clone());
-    // Deprecated aliases (kept for backward compatibility)
-    map.insert("main_worktree".into(), repo_name.into());
-    map.insert("repo_root".into(), repo_path);
-    map.insert("worktree".into(), worktree);
+    map.insert("repo_path".into(), repo_path);
+    map.insert("worktree_path".into(), worktree);
 
     if let Some(parsed_remote) = ctx.repo.primary_remote_parsed_url() {
         map.insert("owner".into(), parsed_remote.owner().to_string());
@@ -296,17 +295,13 @@ pub fn build_hook_context(
     }
 
     // Primary worktree path (where established files live)
-    if scope.wants("primary_worktree_path") || scope.wants("main_worktree_path") {
+    if scope.wants("primary_worktree_path") {
         let _span = Span::new("var_primary_worktree");
         if let Ok(Some(path)) = ctx.repo.primary_worktree() {
-            let path_str = to_posix_path(&path.to_string_lossy());
-            if scope.wants("primary_worktree_path") {
-                map.insert("primary_worktree_path".into(), path_str.clone());
-            }
-            // Deprecated alias
-            if scope.wants("main_worktree_path") {
-                map.insert("main_worktree_path".into(), path_str);
-            }
+            map.insert(
+                "primary_worktree_path".into(),
+                to_posix_path(&path.to_string_lossy()),
+            );
         }
     }
 
@@ -674,7 +669,7 @@ pub fn alias_error_wrapper(alias_name: String) -> ErrorWrapper {
 /// Signal-derived child exits bypass the wrapper and `failure_strategy`:
 /// the error is returned as `Interrupted` (exiting `128 + signal`) so the
 /// enclosing loop aborts. This enforces the project-wide Ctrl-C cancellation
-/// policy — see the "Signal Handling" section of the root `CLAUDE.md` for
+/// policy — see the "Signal Handling" section of the root `AGENTS.md` for
 /// the rationale.
 fn handle_command_error(
     err: anyhow::Error,

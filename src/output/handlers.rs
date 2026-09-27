@@ -16,6 +16,7 @@ use crate::commands::hooks::HookAnnouncer;
 use crate::commands::process::{
     HookLog, InternalOp, build_remove_command, build_remove_command_staged, spawn_detached,
 };
+use crate::commands::template_vars::TemplateVars;
 use crate::commands::worktree::hooks::PostRemoveContext;
 use crate::commands::worktree::{
     BranchFate, RemovalPlan, RetainedReason, SharedBranchCheckout, SwitchBranchInfo, SwitchResult,
@@ -86,7 +87,7 @@ struct BackgroundRemoval<'a> {
     force_worktree: bool,
     changed_directory: bool,
     /// `true` when the planner already decided the branch would be retained
-    /// (unmerged, or `--no-delete-branch`) — `print_hints` has explained why,
+    /// (unmerged, or a `Keep` plan) — `print_hints` has explained why,
     /// so [`warn_if_branch_retained`] stays silent on the expected
     /// `NotDeleted` outcome and only fires when the deletion command errors.
     /// `false` means the planner predicted deletion; a `NotDeleted` here is a
@@ -925,7 +926,12 @@ fn flag_note(
 ///
 /// # Warning Message Format
 ///
-/// Uses the standard "Cannot change directory — {reason}" pattern.
+/// Uses the standard "Worktree for X @ path, but cannot change directory —
+/// {reason}" pattern, the same shape `wt switch` uses for an existing worktree.
+/// Naming the destination matters more here than anywhere else: the removal
+/// deleted the directory the caller is standing in, and unless a post-merge or
+/// post-remove hook announcement happens to name its working directory, no
+/// other line of the run prints a path to move to.
 /// See [`compute_shell_warning_reason`] for the full list of reasons.
 fn print_switch_message_if_changed(
     changed_directory: bool,
@@ -958,9 +964,9 @@ fn print_switch_message_if_changed(
         // Running as `git wt` - explain why cd can't work
         eprintln!(
             "{}",
-            warning_message(
-                "Cannot change directory — ran git wt; running through git prevents cd",
-            )
+            warning_message(cformat!(
+                "Worktree for <bold>{dest_branch}</> @ <bold>{path_display}</>, but cannot change directory — ran git wt; running through git prevents cd"
+            ))
         );
         eprintln!("{}", hint_message(git_subcommand_warning()));
     } else {
@@ -968,7 +974,9 @@ fn print_switch_message_if_changed(
         let reason = compute_shell_warning_reason();
         eprintln!(
             "{}",
-            warning_message(cformat!("Cannot change directory — {reason}"))
+            warning_message(cformat!(
+                "Worktree for <bold>{dest_branch}</> @ <bold>{path_display}</>, but cannot change directory — {reason}"
+            ))
         );
         // Show appropriate hint based on invocation mode
         if super::retired_shell_wrapper_active() {
@@ -1017,6 +1025,26 @@ pub(crate) fn resolve_subdir_in_target(
     target_root.to_path_buf()
 }
 
+/// Where a switch's follow-on work runs, and which of those directories its
+/// output should annotate with "@ path".
+///
+/// The `--execute` program always starts in the switch target — the worktree
+/// root, or the subdirectory position [`resolve_subdir_in_target`] preserved —
+/// so `execute_dir` is unconditional. The two `Option`s are the annotations,
+/// `Some` only when the user's shell won't be where that work runs: background
+/// hooks always run at the worktree root, and `--no-cd` leaves the shell behind
+/// while the program still goes to the worktree (#4042).
+pub struct SwitchDisplayPaths {
+    /// Where the background `post-switch` / `post-start` hooks run, when that
+    /// isn't where the user's shell is (or will be).
+    pub hooks: Option<PathBuf>,
+    /// Where the `--execute` program starts.
+    pub execute_dir: PathBuf,
+    /// [`Self::execute_dir`], when that isn't where the user's shell is (or
+    /// will be).
+    pub execute: Option<PathBuf>,
+}
+
 /// Handle output for a switch operation
 ///
 /// # Shell Integration Warnings
@@ -1031,7 +1059,10 @@ pub(crate) fn resolve_subdir_in_target(
 /// - `AlreadyAt` — user is already in the target directory
 /// - Shell integration IS active — cd will happen automatically
 ///
-/// **Warning format:** `Cannot change directory — {reason}`
+/// **Warning format:** `Existing` shares the switch-to-existing shape,
+/// `Worktree for X @ path, but cannot change directory — {reason}`; `Created`
+/// warns with the bare `Cannot change directory — {reason}`, because the
+/// success line printed above it already names the path.
 ///
 /// See [`compute_shell_warning_reason`] for the full list of reasons.
 ///
@@ -1044,26 +1075,23 @@ pub(crate) fn resolve_subdir_in_target(
 ///
 /// # Return Value
 ///
-/// Returns `Some(path)` when post-switch hooks should show "@ path" in their
-/// announcements (because the user's shell won't be in that directory). This happens when:
-/// - Shell integration is not active (user's shell stays in original directory)
-/// - `change_dir` is false (user explicitly requested no directory change)
-///
-/// Returns `None` when the user will be in the worktree directory (shell integration
-/// active or already at the worktree), so no path annotation needed.
+/// See [`SwitchDisplayPaths`] — the two annotations differ, because the hooks
+/// and the `--execute` program don't always run in the same directory.
 pub fn handle_switch_output(
     result: &SwitchResult,
     branch_info: &SwitchBranchInfo,
     change_dir: bool,
     source_worktree_root: Option<&Path>,
     cwd: &Path,
-) -> anyhow::Result<Option<std::path::PathBuf>> {
-    // Set target directory for command execution, preserving subdirectory position.
-    // If the user is in apps/gateway/ in the source worktree and that directory exists
-    // in the target, cd to apps/gateway/ in the target instead of the root.
+) -> anyhow::Result<SwitchDisplayPaths> {
+    // Where the switch points, preserving subdirectory position: if the user is
+    // in apps/gateway/ in the source worktree and that directory exists in the
+    // target, that's apps/gateway/ in the target rather than its root. The
+    // `--execute` program starts there either way; `--no-cd` only declines to
+    // take the user's shell along.
+    let destination = resolve_subdir_in_target(result.path(), source_worktree_root, cwd);
     if change_dir {
-        let cd_target = resolve_subdir_in_target(result.path(), source_worktree_root, cwd);
-        super::change_directory(&cd_target)?;
+        super::change_directory(&destination)?;
     }
 
     // Translate to the user's logical (symlink-preserved) path for display messages.
@@ -1086,17 +1114,36 @@ pub fn handle_switch_output(
         ),
     };
 
+    // The program runs in `destination`, which is the worktree root only when
+    // the user was at the source worktree's root: otherwise
+    // `resolve_subdir_in_target` kept their subdirectory position, and the
+    // hooks' path names a directory one level out from the program's. Annotate
+    // it only when the user's shell won't be there — it follows the program
+    // only when the switch cd'd and shell integration carried it (#4042).
+    let shell_follows = change_dir && super::is_shell_integration_active();
+    let display_path_for_execute = (!shell_follows)
+        .then(|| destination.clone())
+        .filter(|dir| super::global::compute_hooks_display_path(dir, cwd).is_some());
+
     stderr().flush()?;
-    Ok(display_path_for_hooks)
+    Ok(SwitchDisplayPaths {
+        hooks: display_path_for_hooks,
+        execute_dir: destination,
+        execute: display_path_for_execute.map(|dir| super::to_logical_path(&dir)),
+    })
 }
 
 /// Execute the --execute command after hooks have run.
 ///
-/// `display_path` is shown when the user's shell won't be in the worktree
-/// directory (shell integration not active). This helps users understand where
-/// the command runs.
-///
-pub fn execute_user_command(argv: &[String], display_path: Option<&Path>) -> anyhow::Result<()> {
+/// The program runs in `dir` ([`SwitchDisplayPaths::execute_dir`]).
+/// `display_path` is that same directory ([`SwitchDisplayPaths::execute`]), and
+/// is `Some` only when the user's shell won't be there — otherwise the header
+/// has nothing to annotate.
+pub fn execute_user_command(
+    argv: &[String],
+    display_path: Option<&Path>,
+    dir: &Path,
+) -> anyhow::Result<()> {
     super::global::print_outdated_execute_wrapper_warning();
     let command = super::global::format_exec_argv(argv);
 
@@ -1112,7 +1159,7 @@ pub fn execute_user_command(argv: &[String], display_path: Option<&Path>) -> any
     eprintln!("{}", progress_message(header));
     eprintln!("{}", format_bash_with_gutter(&command));
 
-    super::execute(argv.to_vec())?;
+    super::execute(argv.to_vec(), dir)?;
 
     Ok(())
 }
@@ -1228,15 +1275,19 @@ fn handle_branch_only_output(
     } else {
         false
     };
+    // A stale entry's directory may remain (only its `.git` went), so the line
+    // names the entry rather than a missing directory.
     let branch_info = if pruned {
-        cformat!("Worktree directory missing for <bold>{branch_name}</>; pruned")
+        success_message(cformat!("Pruned stale worktree for <bold>{branch_name}</>"))
     } else {
-        cformat!("No worktree found for branch <bold>{branch_name}</>")
+        info_message(cformat!(
+            "No worktree found for branch <bold>{branch_name}</>"
+        ))
     };
 
     // If we won't delete the branch, show info and return early
     if deletion_mode.should_keep() {
-        eprintln!("{}", info_message(&branch_info));
+        eprintln!("{branch_info}");
         // A sibling `--force` checkout kept the branch alive; name it so the
         // user knows why the pruned branch survived rather than being deleted.
         if let Some(shared) = branch_checked_out_at {
@@ -1291,7 +1342,7 @@ fn handle_branch_only_output(
 
     let retained = match &deletion.result.outcome {
         BranchDeletionOutcome::RetainedCheckedOut { path } => {
-            eprintln!("{}", info_message(&branch_info));
+            eprintln!("{branch_info}");
             eprintln!(
                 "{}",
                 retained_checked_out_branch_message(branch_name, path, false)
@@ -1299,12 +1350,12 @@ fn handle_branch_only_output(
             true
         }
         BranchDeletionOutcome::RetainedRaced => {
-            eprintln!("{}", info_message(&branch_info));
+            eprintln!("{branch_info}");
             eprintln!("{}", retained_raced_branch_message(branch_name, false));
             true
         }
         BranchDeletionOutcome::NotDeleted => {
-            eprintln!("{}", info_message(&branch_info));
+            eprintln!("{branch_info}");
             if deletion.show_unmerged_hint {
                 print_retained_unmerged_branch(branch_name);
             }
@@ -1332,7 +1383,7 @@ fn handle_branch_only_output(
             );
         } else {
             if !quiet {
-                eprintln!("{}", info_message(&branch_info));
+                eprintln!("{branch_info}");
             }
             eprintln!(
                 "{}",
@@ -1357,13 +1408,22 @@ fn handle_branch_only_output(
 /// flushes — multi-phase callers (e.g. `wt merge`) batch with later phases,
 /// standalone callers (e.g. `wt remove`) flush immediately after.
 ///
-/// Only runs if `ctx.verify` is true (hooks approved).
+/// Hook selection is the frozen `ctx.hook_plan`, so an empty plan
+/// (`--no-hooks`, declined approval, or no project config) registers nothing.
+/// The removed-worktree mark below is not part of that: it records what the
+/// removal did, which no approval decision changes.
 fn spawn_hooks_after_remove(
     repo: &Repository,
     ctx: &WorktreeRemovalContext<'_>,
-    removed_branch: &str,
+    removed_branch: Option<&str>,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
+    // The worktree is gone (or, on the fallback path, being deleted by the
+    // detached `git worktree remove` this call follows), so a pipeline anchored
+    // on it must not be spawned into it. Recorded before the config load, which
+    // returns early on an unreadable user config.
+    announcer.mark_worktree_removed(ctx.worktree_path);
+
     let Ok(config) = UserConfig::load() else {
         return Ok(());
     };
@@ -1385,7 +1445,7 @@ fn spawn_hooks_after_remove(
 
     // All hooks use remove_ctx for spawning: log files are named after the removed
     // branch since both post-remove and post-switch are consequences of that removal.
-    let remove_ctx = CommandContext::new(repo, &config, Some(removed_branch), ctx.main_path, false);
+    let remove_ctx = CommandContext::new(repo, &config, removed_branch, ctx.main_path, false);
 
     // `post-remove` is *about* the removed worktree (gone by now); it was
     // selected and frozen into `hook_plan` at the gate, anchored at the removed
@@ -1714,17 +1774,15 @@ fn execute_pre_remove_hooks_if_needed(
     } else {
         Some(ctx.worktree_path)
     };
-    let target_branch = repo
-        .worktree_at(ctx.main_path)
-        .branch()
-        .ok()
-        .flatten()
-        .unwrap_or_default();
-    let target_path_str = worktrunk::path::to_posix_path(&ctx.main_path.to_string_lossy());
-    let extra_vars: Vec<(&str, &str)> = vec![
-        ("target", &target_branch),
-        ("target_worktree_path", &target_path_str),
-    ];
+    // `TemplateVars` rather than a hand-rolled vec: `as_extra_vars` omits an
+    // absent `target` instead of pushing `""`, so a detached primary worktree
+    // renders the same here as it does for the `post-remove` half of the same
+    // removal (issue #4009).
+    let target_branch = repo.worktree_at(ctx.main_path).branch().ok().flatten();
+    let vars = TemplateVars::new()
+        .with_target_opt(target_branch.as_deref())
+        .with_target_worktree_path(ctx.main_path);
+    let extra_vars = vars.as_extra_vars();
 
     execute_planned_hook(
         ctx.hook_plan,
@@ -1838,8 +1896,9 @@ fn handle_detached_removed_worktree_output(
         )?;
     }
 
-    // Post-remove hooks for detached HEAD use "HEAD" as the branch identifier
-    spawn_hooks_after_remove(repo, ctx, "HEAD", announcer)?;
+    // A detached worktree was on no branch, so `{{ branch }}` stays unset for
+    // the post-remove hooks (issue #4009).
+    spawn_hooks_after_remove(repo, ctx, None, announcer)?;
     stderr().flush()?;
     Ok(BranchFate::NotAttempted)
 }
@@ -1898,7 +1957,7 @@ fn handle_named_removed_worktree_foreground(
     }
     print_switch_message_if_changed(ctx.changed_directory, ctx.main_path)?;
 
-    spawn_hooks_after_remove(repo, ctx, branch_name, announcer)?;
+    spawn_hooks_after_remove(repo, ctx, Some(branch_name), announcer)?;
     stderr().flush()?;
     Ok(fate)
 }
@@ -1946,7 +2005,7 @@ fn handle_named_removed_worktree_background(
         ctx.background_fallback(),
     )?;
 
-    spawn_hooks_after_remove(repo, ctx, branch_name, announcer)?;
+    spawn_hooks_after_remove(repo, ctx, Some(branch_name), announcer)?;
     stderr().flush()?;
     Ok(fate)
 }
@@ -2027,7 +2086,7 @@ fn remove_removed_worktree_silently(
 
     // Post-remove (and post-switch when the picker cd'd away) hooks — registered
     // onto the caller's announcer, which `flush`es after this returns.
-    spawn_hooks_after_remove(repo, ctx, ctx.branch_name.unwrap_or("HEAD"), announcer)?;
+    spawn_hooks_after_remove(repo, ctx, ctx.branch_name, announcer)?;
     Ok(fate)
 }
 

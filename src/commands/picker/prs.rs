@@ -495,7 +495,7 @@ fn listed_pr_row(
 /// in-flight bookkeeping, so skim's UI thread never blocks and a row can't spawn
 /// a duplicate fetch on every repaint. `COLLECT_POOL` bounds how many run at once,
 /// and the picker's lifetime is user-bounded, so a slow forge call never blocks
-/// the command (see the "Network Access" notes in CLAUDE.md).
+/// the command (see the "Network Access" notes in AGENTS.md).
 ///
 /// The comments fetch goes through [`spawn_comments_fetch`], the same entry point
 /// a worktree row uses once its CI fetch surfaces a PR — so the two row types

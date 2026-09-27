@@ -14,7 +14,7 @@ Hooks are shell commands that run at key points in the worktree lifecycle — au
 | **merge** | `pre-merge` | `post-merge` |
 | **remove** | `pre-remove` | `post-remove` |
 
-`pre-*` hooks block — failure aborts the operation. `post-*` hooks run in the background with output logged (use [`wt config state logs`](https://worktrunk.dev/config/#wt-config-state-logs) to find and manage log files). Use `-v` to see the template variables for background hooks; `wt hook <type> --dry-run` previews the commands.
+`pre-*` hooks block — failure aborts the operation. `post-*` hooks run in the background with output logged (use [`wt config state logs`](https://worktrunk.dev/config/#wt-config-state-logs) to find and manage log files); `wt hook <type> --foreground` runs one inline instead, so its output arrives in the terminal. Use `-v` to see the template variables for background hooks; `wt hook <type> --dry-run` previews the commands.
 
 The most common creation hook is `post-start` — it runs background tasks (dev servers, file copying, builds) without blocking worktree creation. Prefer `post-start` over `pre-start` unless a later step needs the work completed first.
 
@@ -24,14 +24,14 @@ The most common creation hook is `post-start` — it runs background tasks (dev 
 | `post-switch` | Triggers on all switch results: creating, switching to existing, or staying on current |
 | `pre-start` | Runs once when a new worktree is created, blocking `post-start`/`--execute` until complete: dependency install, env file generation |
 | `post-start` | Runs once when a new worktree is created, in the background: dev servers, long builds, file watchers, copying caches |
-| `pre-commit` | Formatters, linters, type checking — runs during `wt merge` before the squash commit |
+| `pre-commit` | Formatters, linters, type checking — runs before any Worktrunk commit (`wt step commit`, `wt step squash`, and the commit `wt merge` makes) |
 | `post-commit` | CI triggers, notifications, background linting |
 | `pre-merge` | Tests, security scans, build verification — runs after rebase, before merge to target |
 | `post-merge` | Deployment, notifications, installing updated binaries. Runs in the target branch worktree if it exists, otherwise the primary worktree |
 | `pre-remove` | Cleanup before worktree deletion: saving test artifacts, backing up state. Runs in the worktree being removed |
 | `post-remove` | Stopping dev servers, removing containers, notifying external systems. Template variables reference the removed worktree |
 
-During `wt merge`, hooks run in this order: pre-commit → post-commit → pre-merge → pre-remove → post-remove + post-merge. See [`wt merge`](https://worktrunk.dev/merge/#pipeline) for the complete pipeline.
+During `wt merge`, the blocking hooks run in this order: pre-commit → pre-merge → pre-remove. The `post-*` hooks start together once the merge finishes. See [`wt merge`](https://worktrunk.dev/merge/#pipeline) for the complete pipeline.
 
 # Security
 
@@ -54,7 +54,7 @@ Project commands require approval on first run:
 - If a command changes, new approval is required
 - Declining skips every project command for that operation — including any already approved — and continues without them; saved approvals are unaffected
 - Use `--yes` to bypass prompts — useful for CI and automation
-- Use `--no-hooks` to skip hooks
+- Use `--no-hooks` to skip hooks — accepted by the commands that run them (`wt switch`, `wt merge`, `wt remove`, `wt step commit`, `wt step squash`), not by `wt hook`
 
 Manage approvals with `wt config approvals add` and `wt config approvals clear`.
 
@@ -69,12 +69,14 @@ Hooks take one of three forms, determined by their TOML shape.
 A string is a single command:
 
 ```toml
+# .config/wt.toml
 pre-start = "npm install"
 ```
 
 A table is multiple commands that run concurrently:
 
 ```toml
+# .config/wt.toml
 [post-start]
 server = "npm run dev"
 watch = "npm run watch"
@@ -83,6 +85,7 @@ watch = "npm run watch"
 A pipeline is a sequence of `[[hook]]` blocks run in order. Each block is one step; multiple keys within a block run concurrently. A failing step aborts the rest of the pipeline:
 
 ```toml
+# .config/wt.toml
 [[post-start]]
 install = "npm ci"
 
@@ -93,7 +96,7 @@ server = "npm run dev"
 
 Here `install` runs first, then `build` and `server` run together.
 
-Templates are syntax-checked before the pipeline starts and rendered as each step runs, so a step can store [per-branch vars](https://worktrunk.dev/config/#wt-config-state-vars) that later steps read via `{{ vars.<key> }}`. Because an earlier step can still change those values, a preview leaves them alone: `wt hook <type> --dry-run` and `wt hook show --expanded` render `{{ vars.<key> }}` as itself while every other variable expands.
+Templates are syntax-checked before the pipeline starts and rendered as each step runs, so a step can store [per-branch vars](https://worktrunk.dev/config/#wt-config-state-vars) that later steps read via `{{ vars.<key> }}`. Previews (`wt hook <type> --dry-run`, `wt hook show --expanded`) leave `{{ vars.* }}` references unexpanded for that reason.
 
 Most hooks don't need `[[hook]]` blocks. Reach for them when there's a dependency chain — typically setup that must complete before later steps, like installing dependencies before running a build and dev server concurrently.
 
@@ -104,9 +107,11 @@ Most hooks don't need `[[hook]]` blocks. Reach for them when there's a dependenc
 | Location | `.config/wt.toml` | `~/.config/worktrunk/config.toml` |
 | Scope | Single repository | All repositories (or [per-project](https://worktrunk.dev/config/#user-project-specific-settings)) |
 | Approval | Required | Not required |
-| Execution order | After user hooks | First |
+| Execution order | `pre-*`: after user hooks. `post-*`: alongside them | `pre-*`: first. `post-*`: alongside project hooks |
 
-Skip all hooks with `--no-hooks`. To run a specific hook when user and project both define the same name, use `user:name` or `project:name` syntax.
+To run a specific hook when user and project both define the same name, use `user:name` or `project:name` syntax.
+
+A `pre-*` hook blocks the command, so both sources run as one pipeline: user commands first, and a failure there skips the project's. A `post-*` hook runs in the background, where each source is its own detached pipeline — they start together, neither waits for the other, and a failure in one leaves the other running. Order within a source is still yours to set with `[[hook]]` blocks; across `post-*` sources there is none. Two `post-*` hooks that write the same file, or run `git` in the same worktree, will race, so put commands that depend on each other in one source.
 
 ## Template variables
 
@@ -114,7 +119,7 @@ Hooks can use template variables that expand at runtime:
 
 | Kind | Variable | Description |
 |------|----------|-------------|
-| active    | `{{ branch }}`                | Branch name |
+| active    | `{{ branch }}`                | Branch name; unset in a detached worktree |
 |           | `{{ worktree_path }}`         | Worktree path |
 |           | `{{ worktree_name }}`         | Worktree directory name |
 |           | `{{ commit }}`                | Branch HEAD SHA |
@@ -155,23 +160,27 @@ All hooks share the same perspective — `{{ branch | hash_port }}` produces the
 
 `cwd` is the worktree root where the hook command runs. It equals `worktree_path` except in three cases:
 
-- `pre-switch`: hook runs in the source worktree; `worktree_path` is the destination when that worktree already exists — a switch that creates one has no destination directory yet, so `worktree_path` stays on the source (use `pre-start` to work in the new worktree)
+- `pre-switch`: hook runs in the source worktree; `worktree_path` is the destination, or the source when the switch creates a new worktree (use `pre-start` to work in the new worktree)
 - `post-remove`: the active worktree is gone, so the hook runs in the primary worktree
-- `post-merge` with removal: the active worktree is gone, so the hook runs in the target worktree
+- `post-merge`: the hook runs in the target branch's worktree (the primary worktree if the target has none)
 
 Undefined variables error — use conditionals or defaults for optional behavior:
 
 ```toml
+# .config/wt.toml
 [pre-start]
 # Rebase onto upstream if tracking a remote branch (e.g., wt switch --create feature --base origin/feature)
 sync = "{% if upstream %}git fetch && git rebase {{ upstream }}{% endif %}"
 ```
+
+A detached worktree has no branch, so `branch` — and a `base` or `target` that names that worktree — is undefined there; guard with `{% if branch %}`.
 
 Run any hook-firing command with `-v` to see the resolved variables for the actual invocation — each hook prints a `template variables:` block showing every in-scope variable and its value (`(unset)` for conditional vars that didn't populate, like `target_worktree_path` during `wt switch -`). Aliases do the same under `-v`: `wt -v <alias>` prints the alias's in-scope variables before the pipeline runs.
 
 Variables use dot access and the `default` filter for missing keys. JSON object/array values are parsed automatically, so `{{ vars.config.port }}` works when the value is `{"port": 3000}`:
 
 ```toml
+# .config/wt.toml
 [post-start]
 dev = "ENV={{ vars.env | default('development') }} npm start -- --port {{ vars.config.port | default('3000') }}"
 ```
@@ -191,22 +200,12 @@ Templates support Jinja2 filters for transforming values:
 | `basename` | `{{ repo_path \| basename }}` | Keep only the last path component (`/a/b/c` → `c`) |
 | `codename(n)` | `{{ branch \| codename(2) }}` | Deterministic friendly words |
 
-The `sanitize_db` filter produces database-safe identifiers — lowercase alphanumeric and underscores, no leading digits, with a 3-character hash suffix to avoid collisions and reserved words. The `sanitize_hash` filter produces a filesystem-safe name and appends a 3-character hash suffix when sanitization changed the input, so distinct originals never collide — already-safe names pass through unchanged. The `codename(n)` filter produces deterministic friendly names from an input string: `codename(1)` returns a noun, `codename(2)` returns `adjective-noun`, and higher counts add more adjectives. The pool is large (~1.26M combinations for `codename(2)`), so it usually stands alone as a worktree leaf:
-
-```toml
-# Friendly branch-derived worktree names, e.g. myproject.malleable-opah
-worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | codename(2) }}"
-```
-
-When you want both a friendly name and the original branch identity in the path, put the branch name in a parent directory:
-
-```toml
-worktree-path = "{{ repo_path }}/../worktrees/{{ branch | sanitize }}/{{ branch | codename(2) }}"
-```
+The `sanitize_db` filter produces database-safe identifiers — lowercase alphanumeric and underscores, no leading digits, with a 3-character hash suffix to avoid collisions and reserved words. The `sanitize_hash` filter produces a filesystem-safe name and appends a 3-character hash suffix when sanitization changed the input, so distinct originals never collide — already-safe names pass through unchanged. The `codename(n)` filter produces deterministic friendly names from an input string: `codename(1)` returns a noun, `codename(2)` returns `adjective-noun`, and higher counts add more adjectives. The pool is large (~1.26M combinations for `codename(2)`), so it usually stands alone as a worktree leaf — the [`worktree-path` recipes](https://worktrunk.dev/config/#worktree-path-template) show it both alone and under a branch-named parent directory.
 
 The `hash` filter is the bare 3-character base36 digest, useful for composing your own truncate-with-collision-avoidance recipes when an output budget is tight (e.g., Unix socket paths capped at 107 bytes):
 
 ```toml
+# ~/.config/worktrunk/config.toml
 # Truncated branch slug + hash: collisions remain disambiguated even when prefixes match
 worktree-path = "/tmp/{{ (branch | sanitize)[:20] }}_{{ branch | sanitize | hash }}"
 ```
@@ -214,6 +213,7 @@ worktree-path = "/tmp/{{ (branch | sanitize)[:20] }}_{{ branch | sanitize | hash
 The `dirname` and `basename` filters traverse paths. They're useful for bare repos in a hidden directory like `myproject/.git`, where `{{ repo }}` resolves to `.git`:
 
 ```toml
+# ~/.config/worktrunk/config.toml
 # Place worktrees as siblings of the bare repo, named `<wrapper>.<branch>`
 worktree-path = "{{ repo_path }}/../{{ repo_path | dirname | basename }}.{{ branch | sanitize }}"
 ```
@@ -221,6 +221,7 @@ worktree-path = "{{ repo_path }}/../{{ repo_path | dirname | basename }}.{{ bran
 The `hash_port` filter is useful for running dev servers on unique ports per worktree:
 
 ```toml
+# .config/wt.toml
 [post-start]
 dev = "npm run dev -- --host {{ branch }}.localhost --port {{ branch | hash_port }}"
 ```
@@ -228,7 +229,9 @@ dev = "npm run dev -- --host {{ branch }}.localhost --port {{ branch | hash_port
 Hash any string, including concatenations:
 
 ```toml
+# .config/wt.toml
 # Unique port per repo+branch combination
+[post-start]
 dev = "npm run dev --port {{ (repo ~ '-' ~ branch) | hash_port }}"
 ```
 
@@ -245,6 +248,7 @@ Templates also support functions for dynamic lookups:
 The `worktree_path_of_branch` function returns the filesystem path of a worktree given a branch name, or an empty string if no worktree exists for that branch. This is useful for referencing files in other worktrees:
 
 ```toml
+# .config/wt.toml
 [pre-start]
 # Copy config from main worktree
 setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path }}"
@@ -252,25 +256,28 @@ setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path 
 
 ## JSON context
 
-Hooks receive all template variables as JSON on stdin, enabling complex logic that templates can't express:
+Hooks receive all template variables as JSON on stdin, enabling complex logic that templates can't express. Variables that are unset in a template are absent from the JSON too, so read the optional ones with a default — `branch` has none in a detached worktree:
 
 ```toml
+# .config/wt.toml
 [pre-start]
 setup = "python3 scripts/pre-start-setup.py"
 ```
 
 ```python
+# scripts/pre-start-setup.py
 import json, sys, subprocess
 ctx = json.load(sys.stdin)
-if ctx['branch'].startswith('feature/') and 'backend' in ctx['repo']:
+if ctx.get('branch', '').startswith('feature/') and 'backend' in ctx['repo']:
     subprocess.run(['make', 'seed-db'])
 ```
 
 ## Copying untracked files
 
-One specific command worth calling out: [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored). Git worktrees share the repository but not untracked files, and this copies gitignored files between worktrees:
+Git worktrees share the repository but not untracked files. [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored) copies gitignored files between worktrees:
 
 ```toml
+# .config/wt.toml
 [post-start]
 copy = "wt step copy-ignored"
 ```
@@ -323,8 +330,6 @@ $ wt hook post-start
 `--KEY=VALUE` binds `KEY` whenever `{{ KEY }}` appears in any command of the hook — the same smart-routing rule `wt <alias>` uses. Built-in variables can be overridden: `--branch=foo` sets `{{ branch }}` inside hook templates (the worktree's actual branch doesn't move). Hyphens in keys become underscores: `--my-var=x` sets `{{ my_var }}`.
 
 Any `--KEY=VALUE` whose key isn't referenced by a hook template forwards into `{{ args }}` as a literal `--KEY=VALUE` token. Tokens after `--` also forward into `{{ args }}` verbatim. `{{ args }}` renders as a space-joined, shell-escaped string; index with `{{ args[0] }}`, loop with `{% for a in args %}…{% endfor %}`, count with `{{ args | length }}`.
-
-The long form `--var KEY=VALUE` is deprecated but still supported. It force-binds regardless of whether any hook template references `KEY` — useful when a template only references the key conditionally (e.g. `{% if override %}…{% endif %}`).
 
 # Recipes
 

@@ -13,16 +13,16 @@
 //! over a series of deliberately lopsided repos and still can't say which call
 //! moved, because the calls within a wave overlap. Localizing a regression is a
 //! trace's job here, exactly as it is for `full` — see "Analyzing a trace" in
-//! benches/CLAUDE.md, and note that a `-vv` run skips prewarm's rev-parse
+//! benches/AGENTS.md, and note that a `-vv` run skips prewarm's rev-parse
 //! batch and so is not quite the run users get.
 //!
 //! The benchmark uses the same 24 linked worktrees and 120 branchless branches
-//! as `full`, plus 1400 remote-tracking refs. It covers all three categories
-//! `BranchCompleter` distinguishes and runs both candidate slow calls
-//! (`for-each-ref refs/remotes/` and `worktree list --porcelain`) in one
-//! process at a size where each is expensive. Its 145 local candidates also
-//! exceed the completer's 100-entry threshold, where remote refs are scanned
-//! and then discarded as they are on a long-lived clone.
+//! as `full`, all on their branches, plus 1400 remote-tracking refs. It covers
+//! all three categories `BranchCompleter` distinguishes and runs both candidate
+//! slow calls (`for-each-ref refs/remotes/` and `worktree list --porcelain`)
+//! in one process at a size where each is expensive. Its 145 local candidates
+//! also exceed the completer's 100-entry threshold, where remote refs are
+//! scanned and then discarded as they are on a long-lived clone.
 //!
 //! The remote-ref count is what this bench adds to the shared fixture; `full`
 //! passes 0 and is unaffected.
@@ -81,6 +81,7 @@ fn bench_completion_switch(c: &mut Criterion) {
             linked_worktrees,
             branchless_branches,
             remote_tracking_refs: 1400,
+            detached_worktrees: 0,
         }
         .create();
         let expected = expected_branches(branchless_branches, linked_worktrees);

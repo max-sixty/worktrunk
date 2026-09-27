@@ -311,7 +311,7 @@ fn create_command_log(spec: &PipelineSpec, log_dir: &Path, name: &str) -> anyhow
 /// convention established by `shell_exec`. That lets `exit_code()` and
 /// `interrupt_signal()` work consistently and the `wt hook run-pipeline`
 /// process exits 130 on SIGINT and 143 on SIGTERM — the expectation the
-/// "Signal Handling" section of the project `CLAUDE.md` sets for every
+/// "Signal Handling" section of the project `AGENTS.md` sets for every
 /// command loop.
 ///
 /// Non-signal failures carry the child's exit code verbatim so log readers

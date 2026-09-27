@@ -21,7 +21,7 @@ use std::sync::LazyLock;
 
 use rayon::prelude::*;
 
-use crate::progress::Progress;
+use crate::progress::{DataCopy, Progress};
 
 /// Capped at 4 threads — same reasoning as `copy::COPY_POOL` (filesystem I/O,
 /// don't oversubscribe CPU when many wt subprocesses run in parallel).
@@ -76,7 +76,9 @@ pub fn remove_dir_with_progress(path: &Path, progress: &Progress) {
             // count the leaf with zero bytes.
             let bytes = leaf.symlink_metadata().map(|m| m.len()).unwrap_or(0);
             if fs::remove_file(leaf).is_ok() {
-                progress.record(bytes);
+                // A removal frees extents rather than moving them, so it has no
+                // side of the reflink split to land on.
+                progress.record(bytes, DataCopy::Neither);
             }
         });
     });

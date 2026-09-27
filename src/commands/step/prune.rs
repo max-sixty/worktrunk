@@ -16,7 +16,7 @@
 //! current worktree is removed last, after the fan-out, because its removal
 //! cd's the shell to the primary.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
@@ -144,7 +144,7 @@ impl CandidateKind {
 
 /// Where a candidate originated, used to drive integration checks and dry-run labels.
 enum CheckSource {
-    /// Worktree with directory gone (prunable)
+    /// Stale worktree entry: git calls it prunable once its `.git` is gone
     Prunable { wt_idx: usize },
     /// Linked worktree
     Linked { wt_idx: usize },
@@ -322,8 +322,8 @@ fn try_remove(
         // Name the stale entry rather than sweeping the repository, so a
         // sibling whose directory is merely absent right now (unmounted
         // volume, half-finished `mv`) keeps its registration. `gather_check_items`
-        // never selects a locked worktree, so the scoped removal can't hit
-        // git's lock refusal.
+        // never selects a locked worktree, so the prune refuses one only when
+        // the lock was taken after the scan.
         let path = candidate
             .path
             .as_deref()
@@ -432,6 +432,7 @@ fn check_one(
     worktrees: &[WorktreeInfo],
     current_path: &Path,
     min_age_duration: Duration,
+    ref_write_times: &RefWriteTimes,
     now_secs: u64,
 ) -> anyhow::Result<CheckOutcome> {
     let _span = Span::new(format!("prune-check:{}", item.integration_ref));
@@ -448,11 +449,17 @@ fn check_one(
         });
     }
     // A detached stale entry can't be planned — `prepare_worktree_removal`'s
-    // missing-directory fallback needs a branch to fall back to — and needs
-    // no plan: `try_remove` prunes the entry directly.
-    let detached_stale = matches!(&item.source,
-        CheckSource::Prunable { wt_idx } if worktrees[*wt_idx].branch.is_none());
-    let plan = if detached_stale {
+    // stale-entry fallback needs a branch to fall back to — and needs no plan:
+    // `try_remove` prunes the entry directly. It still gets that fallback's
+    // check: an entry whose registration holds staged changes or an operation
+    // partway through stays, and so does one the check fails on.
+    let stale_detached = match &item.source {
+        CheckSource::Prunable { wt_idx } if worktrees[*wt_idx].branch.is_none() => {
+            Some(&worktrees[*wt_idx])
+        }
+        _ => None,
+    };
+    let plan = if stale_detached.is_some() {
         None
     } else {
         match &item.source {
@@ -474,7 +481,7 @@ fn check_one(
                     // checkout, which for a duplicated branch is a different
                     // worktree — and for a stale entry is the live one. A
                     // `WorktreePath` target degrades to branch-only deletion
-                    // when the directory is gone, so a stale entry plans its
+                    // when the entry is prunable, so a stale entry plans its
                     // prune.
                     RemoveTarget::WorktreePath(wt.path.clone()),
                     BranchDeletionMode::SafeDelete,
@@ -487,12 +494,20 @@ fn check_one(
             }
         }
     };
-    let removable = detached_stale || plan.is_some();
+    let removable = match stale_detached {
+        Some(wt) => matches!(repo.stale_worktree_work(&wt.path), Ok(None)),
+        None => plan.is_some(),
+    };
     let deletes_branch = plan.as_ref().is_some_and(RemovalPlan::deletes_branch);
     let age = if min_age_duration > Duration::ZERO {
         match &item.source {
             CheckSource::Linked { wt_idx } => worktree_age(repo, &worktrees[*wt_idx], now_secs)?,
-            CheckSource::Orphan => orphan_branch_age(repo, &item.integration_ref, now_secs),
+            CheckSource::Orphan => Some(orphan_branch_age(
+                repo,
+                &item.integration_ref,
+                ref_write_times,
+                now_secs,
+            )?),
             CheckSource::Prunable { .. } => None,
         }
     } else {
@@ -688,21 +703,135 @@ fn worktree_age(
     )))
 }
 
-/// Resolve the age of an orphan branch via its reflog creation timestamp.
+/// Resolve the age of an orphan branch from when its oldest reflog entry was
+/// written.
 ///
-/// Returns `None` if the reflog is missing or unparsable — callers treat
-/// "unknown age" as "old enough", matching the previous inline behavior.
-fn orphan_branch_age(repo: &Repository, branch: &str, now_secs: u64) -> Option<Duration> {
+/// That is the entry's own timestamp, not the committer date of the commit it
+/// points at: `git branch <name> main` on a days-old tip creates a new branch,
+/// and aging it by the commit would prune it before the guard saw it as young.
+/// `--date=unix` renders each entry's selector as `<name>@{<epoch>}`, and git
+/// forbids `@{` inside a ref name, so the last `@{` opens the timestamp.
+///
+/// A branch with no reflog entries is aged by [`RefWriteTimes`] instead.
+/// `core.logAllRefUpdates` defaults to whether the repository is bare as seen
+/// from where git runs, so in a bare repository only a ref written from inside
+/// a linked worktree gets a reflog: `git clone --bare`, a `git fetch` into
+/// `refs/heads/*`, and `wt switch --create` run from the bare directory all
+/// leave none. Expiry (`git gc`) can also empty a reflog.
+fn orphan_branch_age(
+    repo: &Repository,
+    branch: &str,
+    ref_write_times: &RefWriteTimes,
+    now_secs: u64,
+) -> anyhow::Result<Duration> {
     let ref_name = format!("refs/heads/{branch}");
-    let stdout = repo
-        .run_command(&["reflog", "show", "--format=%ct", &ref_name])
-        .ok()?;
-    let created_epoch = stdout
-        .trim()
-        .lines()
-        .last()
-        .and_then(|s| s.parse::<u64>().ok())?;
-    Some(Duration::from_secs(now_secs.saturating_sub(created_epoch)))
+    let stdout = repo.run_command(&[
+        "reflog",
+        "show",
+        "--no-show-signature",
+        "--date=unix",
+        "--format=%gd",
+        &ref_name,
+        "--",
+    ])?;
+    let created_epoch = match stdout.trim().lines().last() {
+        Some(selector) => selector
+            .rsplit_once("@{")
+            .and_then(|(_, epoch)| epoch.strip_suffix('}'))
+            .and_then(|epoch| epoch.parse::<u64>().ok())
+            .with_context(|| format!("parsing reflog selector {selector:?}"))?,
+        None => ref_write_times.epoch(branch)?,
+    };
+    Ok(Duration::from_secs(now_secs.saturating_sub(created_epoch)))
+}
+
+/// When git last wrote the storage holding each orphan branch's ref, read
+/// once before the scan fans out.
+///
+/// Git replaces ref storage by renaming a new file into place, so a file's
+/// mtime is its last write, and the branch it holds existed by then. An age
+/// measured from it is never older than the branch, so the guard errs toward
+/// keeping it. Which file holds the ref depends on the backend:
+///
+/// - **files** (the default): a loose `refs/heads/<branch>` shadows
+///   `packed-refs`. Creating or updating a ref writes it loose, including from
+///   `git fetch`, while `git clone` writes `packed-refs`. `git pack-refs` (run
+///   by `git gc`) and deleting any packed ref rewrite `packed-refs` whole,
+///   which makes every packed branch young again and delays its pruning by up
+///   to `--min-age`.
+/// - **reftable**: tables hold many refs, and every ref update rewrites
+///   `reftable/tables.list`, so a branch counts as no older than the
+///   repository's last ref update.
+///
+/// Prune's own removals are among those rewrites, and they run while the scan
+/// is still checking later candidates, so the times are captured before any
+/// removal starts. The loose refs are read before the shared file: a
+/// concurrent `git pack-refs` that packs a loose ref in between leaves that
+/// branch dated by the rewritten `packed-refs`, never by an older one.
+struct RefWriteTimes {
+    /// Loose `refs/heads/<branch>` mtimes, for the orphan branches that have one.
+    loose: HashMap<String, u64>,
+    /// The `packed-refs` or `reftable/tables.list` mtime, if the file exists.
+    shared: Option<u64>,
+}
+
+impl RefWriteTimes {
+    fn capture(repo: &Repository, check_items: &[CheckItem]) -> anyhow::Result<Self> {
+        let reftable = repo.config_value("extensions.refStorage")?.as_deref() == Some("reftable");
+        let orphans = check_items
+            .iter()
+            .filter(|item| matches!(item.source, CheckSource::Orphan))
+            .map(|item| item.integration_ref.as_str());
+        Self::read(repo.git_common_dir(), reftable, orphans)
+    }
+
+    /// Read the times for `branches` from a git common directory whose refs
+    /// use the reftable backend if `reftable`, else the files backend.
+    fn read<'a>(
+        common_dir: &Path,
+        reftable: bool,
+        branches: impl IntoIterator<Item = &'a str>,
+    ) -> anyhow::Result<Self> {
+        let mut loose = HashMap::new();
+        if !reftable {
+            for branch in branches {
+                if let Some(epoch) = mtime_epoch(&common_dir.join("refs/heads").join(branch))? {
+                    loose.insert(branch.to_string(), epoch);
+                }
+            }
+        }
+        let shared = if reftable {
+            common_dir.join("reftable").join("tables.list")
+        } else {
+            common_dir.join("packed-refs")
+        };
+        Ok(Self {
+            loose,
+            shared: mtime_epoch(&shared)?,
+        })
+    }
+
+    /// The Unix epoch of the last write to `branch`'s ref storage.
+    fn epoch(&self, branch: &str) -> anyhow::Result<u64> {
+        self.loose
+            .get(branch)
+            .copied()
+            .or(self.shared)
+            .with_context(|| format!("finding the ref storage for branch {branch}"))
+    }
+}
+
+/// A file's mtime as a Unix epoch, or `None` if the file doesn't exist.
+fn mtime_epoch(path: &Path) -> anyhow::Result<Option<u64>> {
+    match fs::metadata(path).and_then(|metadata| metadata.modified()) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        modified => {
+            let modified = modified.with_context(|| format!("reading {}", path.display()))?;
+            Ok(Some(
+                modified.duration_since(std::time::UNIX_EPOCH)?.as_secs(),
+            ))
+        }
+    }
 }
 
 /// Render dry-run output (text or JSON) and the `Skipped (younger than ...)`
@@ -785,7 +914,7 @@ fn render_dry_run(
     Ok(())
 }
 
-/// Build the pessimistic hook plan up front — every worktree entry in
+/// Build the pessimistic hook plan up front — every linked worktree in
 /// `check_items` × `pre-remove`/`post-remove`, plus the primary × `post-switch`
 /// when the current worktree appears in `check_items`. The actual scan may
 /// narrow this set; the pessimistic shape is what lets `try_remove` stream
@@ -793,15 +922,9 @@ fn render_dry_run(
 /// resolve against (every hook is selected from the invoking worktree's
 /// `.config/wt.toml`, whatever its anchor).
 ///
-/// `Orphan` items name no worktree, so they contribute nothing. `Prunable` ones
-/// do, even though the stale entry they usually describe plans a pure branch
-/// deletion that runs no hooks: git calls an entry prunable when the `.git` file
-/// its metadata points at is gone, which leaves the worktree *directory* still
-/// there whenever only that file went (an interrupted `rm -rf`, a copy that
-/// skipped dotfiles), and the scan then plans a full worktree removal whose
-/// hooks anchor at that path and must resolve (`ApprovedHookPlan::lookup`
-/// matches the anchor exactly, by design). For the ordinary stale entry the
-/// plan resolves to `BranchOnly` and the registration goes unused.
+/// Only `Linked` items can plan a worktree removal, the one plan that runs
+/// hooks. `Orphan` items name no worktree, and a `Prunable` entry plans a pure
+/// branch deletion, or nothing at all when it is detached.
 fn build_pessimistic_plan(
     repo: &Repository,
     check_items: &[CheckItem],
@@ -814,8 +937,7 @@ fn build_pessimistic_plan(
     let mut builder = HookPlanBuilder::new(project_config, user_config, project_id);
     let mut has_current = false;
     for item in check_items {
-        let (CheckSource::Linked { wt_idx } | CheckSource::Prunable { wt_idx }) = &item.source
-        else {
+        let CheckSource::Linked { wt_idx } = &item.source else {
             continue;
         };
         let wt = &worktrees[*wt_idx];
@@ -870,7 +992,7 @@ pub fn step_prune(
         humantime::parse_duration(min_age).context("Invalid --min-age duration")?;
 
     let repo = Repository::current()?;
-    let config = UserConfig::load()?;
+    let config = UserConfig::load().context("Failed to load config")?;
 
     // Capture once at command entry. Reused for every per-branch
     // `integration_reason` probe later in this function.
@@ -901,6 +1023,10 @@ pub fn step_prune(
         let _span = Span::new("prune-gather");
         gather_check_items(&repo, worktrees, default_branch.as_deref())?
     };
+    // Read before any removal, since prune's own deletions rewrite the files
+    // these times come from.
+    let ref_write_times =
+        RefWriteTimes::capture(&repo, &check_items).context("reading ref write times")?;
 
     let mut skipped_young: Vec<String> = Vec::new();
 
@@ -921,6 +1047,7 @@ pub fn step_prune(
             let integration_target_ref = integration_target.as_str();
             let current_path_ref = current_root.as_path();
             let check_lock_ref = &check_lock;
+            let ref_write_times_ref = &ref_write_times;
             s.spawn(move || {
                 check_items_ref
                     .par_iter()
@@ -936,6 +1063,7 @@ pub fn step_prune(
                                 worktrees,
                                 current_path_ref,
                                 min_age_duration,
+                                ref_write_times_ref,
                                 now_secs,
                             )
                         };
@@ -1097,6 +1225,7 @@ pub fn step_prune(
             let integration_target_ref = integration_target.as_str();
             let current_path_ref = current_root.as_path();
             let check_lock_ref = &check_lock;
+            let ref_write_times_ref = &ref_write_times;
             s.spawn(move || {
                 check_items_ref
                     .par_iter()
@@ -1112,6 +1241,7 @@ pub fn step_prune(
                                 worktrees,
                                 current_path_ref,
                                 min_age_duration,
+                                ref_write_times_ref,
                                 now_secs,
                             )
                         };
@@ -1200,9 +1330,7 @@ pub fn step_prune(
                     continue;
                 }
                 // Keyed on the plan, not the candidate's shape: only a
-                // worktree removal runs `pre-remove`/`post-remove`, and a
-                // stale entry whose directory turned out to still exist plans
-                // one like any other (see `build_pessimistic_plan`). Branch-
+                // worktree removal runs `pre-remove`/`post-remove`. Branch-
                 // only plans and detached stale entries run no hooks.
                 let needs_approval = match &outcome.plan {
                     Some(RemovalPlan::Worktree { .. }) => {
@@ -1408,6 +1536,41 @@ mod tests {
             deletes_branch: !matches!(kind, CandidateKind::StaleDetached),
             fate: None,
         }
+    }
+
+    #[test]
+    fn ref_write_times_follow_the_ref_backend() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |relative: &str, epoch: u64| {
+            let path = dir.path().join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::File::create(&path)
+                .unwrap()
+                .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(epoch))
+                .unwrap();
+        };
+        write("packed-refs", 100);
+        write("refs/heads/loose", 200);
+        write("refs/heads/nested/loose", 300);
+        write("reftable/tables.list", 400);
+
+        // A loose ref shadows `packed-refs`, which dates every other branch.
+        let files =
+            RefWriteTimes::read(dir.path(), false, ["loose", "nested/loose", "packed"]).unwrap();
+        let epochs = ["loose", "nested/loose", "packed"].map(|branch| files.epoch(branch).unwrap());
+        assert_eq!(epochs, [200, 300, 100]);
+
+        // Reftable keeps no per-ref files, so a stray loose file is not read.
+        let reftable = RefWriteTimes::read(dir.path(), true, ["loose"]).unwrap();
+        assert_eq!(reftable.epoch("loose").unwrap(), 400);
+
+        // With neither a loose ref nor shared storage, nothing dates the branch.
+        let empty = tempfile::tempdir().unwrap();
+        let none = RefWriteTimes::read(empty.path(), false, ["gone"]).unwrap();
+        assert_eq!(
+            none.epoch("gone").unwrap_err().to_string(),
+            "finding the ref storage for branch gone"
+        );
     }
 
     #[test]

@@ -17,7 +17,7 @@
 
 Worktrunk is a CLI for git worktree management, designed for running AI agents in parallel.
 
-Worktrunk's three core commands make worktrees as easy as branches. Plus, Worktrunk has a bunch of quality-of-life features to simplify working with many parallel changes, including hooks to automate local workflows.
+Worktrunk's three core commands make worktrees as easy as branches. Plus, Worktrunk has a bunch of quality-of-life features to simplify working with many parallel changes, including hooks to automate local workflows & copy-on-write build caches.
 
 A quick demo:
 
@@ -31,7 +31,7 @@ A quick demo:
 
 AI agents like Claude Code and Codex can handle longer tasks without
 supervision, such that it's possible to manage 5-10+ in parallel. Git's native
-worktree feature give each agent its own working directory, so they don't step
+worktree feature gives each agent its own working directory, so they don't step
 on each other's changes.
 
 But the git worktree UX is clunky. Even a task as small as starting a new
@@ -89,8 +89,8 @@ git branch -d feat</code></pre></td>
 - **[Hooks](https://worktrunk.dev/hook/)** — run commands on create, pre-merge, post-merge, etc
 - **[LLM commit messages](https://worktrunk.dev/llm-commits/)** — generate commit messages from diffs
 - **[Merge workflow](https://worktrunk.dev/merge/)** — squash, rebase, merge, clean up in one command
-- **[Interactive picker](https://worktrunk.dev/switch/#interactive-picker)** — browse worktrees with live diff and log previews
-- **[Copy build caches](https://worktrunk.dev/step/#wt-step-copy-ignored)** — skip cold starts by sharing `target/`, `node_modules/`, etc between worktrees
+- **[Interactive picker](https://worktrunk.dev/switch/#interactive-picker)** — browse worktrees with streaming CI status and diff, log, PR and comment previews
+- **[Share build caches](https://worktrunk.dev/step/#wt-step-copy-ignored)** — ten worktrees get `target/`, `node_modules/`, etc without building or copying them (on APFS, btrfs, and XFS)
 - **[`wt list --full`](https://worktrunk.dev/list/#full-mode)** — [CI status](https://worktrunk.dev/list/#ci-status) and [AI-generated summaries](https://worktrunk.dev/list/#llm-summaries) per branch
 - **[PR checkout](https://worktrunk.dev/switch/#pull-requests-and-merge-requests)** — `wt switch pr:123` to jump straight to a PR's branch
 - **[Dev server per worktree](https://worktrunk.dev/tips-patterns/#dev-server-per-worktree)** — `hash_port` template filter gives each worktree a unique port
@@ -103,7 +103,7 @@ Multiple parallel agents, same simple commands:
 
 <!-- END AUTO-GENERATED -->
 
-<!-- ⚠️ AUTO-GENERATED from docs/src/content/docs/worktrunk.md#install..further-reading — edit source to update -->
+<!-- ⚠️ AUTO-GENERATED from docs/src/content/docs/worktrunk.md#install..next-steps — edit source to update -->
 
 ## Install
 
@@ -164,11 +164,11 @@ This creates a new branch and worktree, then switches to it. Do your work, then 
 
 ```console
 $ wt list
-  Branch        Status        HEAD±    main↕     main…±  Remote⇅  Commit   Age   Message
-@ feature-auth  +   ↑      +27   -8   ↑1       +31                4bc72dc  2h    Add authenticati…
-^ main              ^⇡                                    ⇡1      0e631ad  1d    Initial commit
+  Branch        Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message
+@ feature-auth  +   ↑      +27   -8   ↑1       +31                4bc72dc    2h  Add authenticatio…
+^ main              ^⇡                                    ⇡1      0e631ad    1d  Initial commit
 
-○ Showing 2 worktrees, 1 with changes, 1 ahead, 1 column hidden
+○ Showing 2 worktrees, 1 with changes, 1 ahead, hidden: Path
 ```
 
 The `@` marks the current worktree. `+` means staged changes, `↑1` means 1 commit ahead of main, `⇡` means unpushed commits.
@@ -219,15 +219,8 @@ The `-x` flag runs a command after switching; arguments after `--` are passed to
   status & PR links](https://worktrunk.dev/list/#ci-status)
 - Browse [tips & patterns](https://worktrunk.dev/tips-patterns/) for recipes: aliases, dev servers, databases, agent handoffs, and more
 - [Extending Worktrunk](https://worktrunk.dev/extending/) — customize workflows with hooks & aliases
+- Watch [@DevOpsToolbox's video on Worktrunk](https://youtu.be/WBQiqr6LevQ?t=345)
 - Run `wt --help` or `wt <command> --help` for quick CLI reference
-
-## Further reading
-
-- [Claude Code: Best practices for agentic coding](https://www.anthropic.com/engineering/claude-code-best-practices) — Anthropic's official guide, including the worktree pattern
-- [Shipping faster with Claude Code and Git Worktrees](https://incident.io/blog/shipping-faster-with-claude-code-and-git-worktrees) — incident.io's workflow for parallel agents
-- [Git worktree pattern discussion](https://github.com/anthropics/claude-code/issues/1052) — Community discussion in the Claude Code repo
-- [@DevOpsToolbox's video on Worktrunk](https://youtu.be/WBQiqr6LevQ?t=345)
-- [git-worktree documentation](https://git-scm.com/docs/git-worktree) — Official git reference
 
 <!-- END AUTO-GENERATED -->
 
@@ -237,6 +230,18 @@ The `-x` flag runs a command after switching; arguments after `--` are passed to
 - Tell a friend about Worktrunk
 - [Open an issue](https://github.com/max-sixty/worktrunk/issues/new?title=&body=%23%23%20Description%0A%0A%3C!--%20Describe%20the%20bug%20or%20feature%20request%20--%3E%0A%0A%23%23%20Context%0A%0A%3C!--%20Any%20relevant%20context%3A%20your%20workflow%2C%20what%20you%20were%20trying%20to%20do%2C%20etc.%20--%3E) — feedback, feature requests, even a small friction or imperfect user message, or [a worktree pain not yet solved](https://github.com/max-sixty/worktrunk/issues/new?title=Worktree%20friction%3A%20&body=%23%23%20The%20friction%0A%0A%3C!--%20What%20worktree-related%20task%20is%20still%20painful%3F%20--%3E%0A%0A%23%23%20Current%20workaround%0A%0A%3C!--%20How%20do%20you%20handle%20this%20today%3F%20--%3E%0A%0A%23%23%20Ideal%20solution%0A%0A%3C!--%20What%20would%20make%20this%20easier%3F%20--%3E)
 - Share: [X](https://twitter.com/intent/tweet?text=Worktrunk%20%E2%80%94%20CLI%20for%20git%20worktree%20management&url=https%3A%2F%2Fworktrunk.dev) · [Reddit](https://www.reddit.com/submit?url=https%3A%2F%2Fworktrunk.dev&title=Worktrunk%20%E2%80%94%20CLI%20for%20git%20worktree%20management) · [LinkedIn](https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fworktrunk.dev)
+
+### Running the tests
+
+```bash
+cargo test
+```
+
+The shell integration tests need bash, zsh, fish, nushell, and pwsh, plus `jq`:
+
+```bash
+cargo test --test integration --features shell-integration-tests
+```
 
 > ### 📚 Full documentation at [worktrunk.dev](https://worktrunk.dev) 📚
 

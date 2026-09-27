@@ -61,22 +61,24 @@ function setCopyText(blockAst, copyText) {
   button.properties['data-code'] = copyText;
 }
 
-function removeTitlelessHeader(blockAst) {
-  blockAst.children = blockAst.children.filter((child) => {
-    if (
-      child?.type !== 'element'
-      || child.tagName !== 'figcaption'
-      || !child.properties?.className?.includes('header')
-    ) return true;
-
-    const title = child.children?.find((element) => (
-      element?.type === 'element'
-      && element.properties?.className?.includes('title')
-    ));
-    return Boolean(
-      title?.children?.some((element) => element.type !== 'text' || element.value.trim()),
-    );
-  });
+/// Expressive Code's copy script binds every `.expressive-code .copy button`
+/// and reads `data-code` (newlines encoded as U+007F), so a control built to
+/// the same shape works wherever it is placed inside the frame.
+function copyControl(text, className) {
+  return {
+    type: 'element',
+    tagName: 'div',
+    properties: { className: ['copy', className] },
+    children: [
+      { type: 'element', tagName: 'div', properties: { 'aria-live': 'polite' }, children: [] },
+      {
+        type: 'element',
+        tagName: 'button',
+        properties: { title: 'Copy this line', 'data-copied': 'Copied!', 'data-code': text },
+        children: [{ type: 'element', tagName: 'div', properties: {}, children: [] }],
+      },
+    ],
+  };
 }
 
 function markerTone(marker) {
@@ -171,6 +173,44 @@ export function shellCommandSegments(text) {
   appendSegment(segments, text.slice(cursor));
 
   return segments;
+}
+
+/**
+ * A `#` that begins an unquoted word starts a shell comment. Zsh passes one to
+ * the command as arguments unless `interactivecomments` is set, so copied
+ * commands leave trailing comments out. A line that is only a comment stays.
+ * Heredocs, backticks, and `$'…'` strings aren't parsed; no example uses them.
+ */
+export function withoutTrailingShellComments(code) {
+  let output = '';
+  let quote;
+  let wordStart = true;
+  for (let index = 0; index < code.length; index += 1) {
+    const char = code[index];
+    if (quote) {
+      output += char;
+      if (char === quote) quote = undefined;
+      else if (char === '\\' && quote === '"') output += code[++index] ?? '';
+      wordStart = false;
+    } else if (char === '\\') {
+      output += char + (code[++index] ?? '');
+      wordStart = false;
+    } else if (char === "'" || char === '"') {
+      output += char;
+      quote = char;
+      wordStart = false;
+    } else if (char === '#' && wordStart) {
+      const newline = code.indexOf('\n', index);
+      const lineEnd = newline === -1 ? code.length : newline;
+      const lineSoFar = output.slice(output.lastIndexOf('\n') + 1);
+      output = lineSoFar.trim() === '' ? output + code.slice(index, lineEnd) : output.trimEnd();
+      index = lineEnd - 1;
+    } else {
+      output += char;
+      wordStart = /[\s;&|()<>]/u.test(char);
+    }
+  }
+  return output;
 }
 
 function renderShellCommand(code) {
@@ -333,92 +373,124 @@ function renderCommandReference(lineAst, text) {
 }
 
 /**
- * Keeps terminal examples as ordinary Markdown while removing untitled frame
- * chrome, adding command prompts, and copying commands rather than output.
+ * Keeps terminal examples as ordinary Markdown while adding command prompts
+ * and copying commands rather than output.
  */
 export function pluginWorktrunkTerminal() {
   return {
     name: 'Worktrunk terminal prompts',
     baseStyles: `
-      .expressive-code .frame.is-terminal .ec-line.wt-command .code::before {
+      .expressive-code .frame .ec-line.wt-command .code::before {
         content: '$ ';
         color: var(--wt-ink-muted);
         user-select: none;
       }
-      .expressive-code .frame.is-terminal .ec-line.wt-output .code {
+      .expressive-code .frame .ec-line.wt-output .code {
         color: var(--wt-terminal-ink);
+        /* Only command rows need the full inline clearance for their copy control. */
+        padding-inline-end: 0.5rem;
       }
-      .expressive-code .frame.is-terminal .ec-line.wt-copyable .code {
+      .expressive-code .frame .ec-line.wt-copyable .code {
         color: var(--wt-terminal-dim);
       }
-      .expressive-code .frame.is-terminal .wt-positive {
+      .expressive-code .frame .wt-positive {
         color: var(--sl-color-green-high);
         font-weight: 650;
       }
-      .expressive-code .frame.is-terminal .wt-negative {
+      .expressive-code .frame .wt-negative {
         color: var(--sl-color-red-high);
         font-weight: 650;
       }
-      .expressive-code .frame.is-terminal .wt-warning {
+      .expressive-code .frame .wt-warning {
         color: var(--sl-color-orange-high);
         font-weight: 650;
       }
-      .expressive-code .frame.is-terminal .wt-terminal-red {
+      .expressive-code .frame .wt-terminal-red {
         color: var(--wt-terminal-red);
       }
-      .expressive-code .frame.is-terminal .wt-terminal-green {
+      .expressive-code .frame .wt-terminal-green {
         color: var(--wt-terminal-green);
       }
-      .expressive-code .frame.is-terminal .wt-terminal-yellow {
+      .expressive-code .frame .wt-terminal-yellow {
         color: var(--wt-terminal-yellow);
       }
-      .expressive-code .frame.is-terminal .wt-terminal-blue {
+      .expressive-code .frame .wt-terminal-blue {
         color: var(--wt-terminal-blue);
       }
-      .expressive-code .frame.is-terminal .wt-terminal-magenta {
+      .expressive-code .frame .wt-terminal-magenta {
         color: var(--wt-terminal-magenta);
       }
-      .expressive-code .frame.is-terminal .wt-terminal-cyan {
+      .expressive-code .frame .wt-terminal-cyan {
         color: var(--wt-terminal-cyan);
       }
-      .expressive-code .frame.is-terminal .wt-terminal-gray {
+      .expressive-code .frame .wt-terminal-gray {
         color: var(--wt-ink-muted);
       }
-      .expressive-code .frame.is-terminal .wt-terminal-gutter {
+      .expressive-code .frame .wt-terminal-gutter {
         display: inline-block;
         background: var(--wt-terminal-gutter);
       }
-      .expressive-code .frame.is-terminal .wt-terminal-bold {
+      .expressive-code .frame .wt-terminal-bold {
         font-weight: 600;
       }
-      .expressive-code .frame.is-terminal .wt-terminal-dim {
+      .expressive-code .frame .wt-terminal-dim {
         color: var(--wt-terminal-dim);
         opacity: 1;
       }
-      .expressive-code .frame.is-terminal .wt-terminal-red.wt-terminal-dim {
+      .expressive-code .frame .wt-terminal-red.wt-terminal-dim {
         color: color-mix(in srgb, var(--wt-terminal-red) 62%, var(--wt-terminal-dim));
       }
-      .expressive-code .frame.is-terminal .wt-terminal-green.wt-terminal-dim {
+      .expressive-code .frame .wt-terminal-green.wt-terminal-dim {
         color: color-mix(in srgb, var(--wt-terminal-green) 62%, var(--wt-terminal-dim));
       }
-      .expressive-code .frame.is-terminal .wt-terminal-yellow.wt-terminal-dim {
+      .expressive-code .frame .wt-terminal-yellow.wt-terminal-dim {
         color: color-mix(in srgb, var(--wt-terminal-yellow) 62%, var(--wt-terminal-dim));
       }
-      .expressive-code .frame.is-terminal .wt-terminal-blue.wt-terminal-dim {
+      .expressive-code .frame .wt-terminal-blue.wt-terminal-dim {
         color: color-mix(in srgb, var(--wt-terminal-blue) 62%, var(--wt-terminal-dim));
       }
-      .expressive-code .frame.is-terminal .wt-terminal-magenta.wt-terminal-dim {
+      .expressive-code .frame .wt-terminal-magenta.wt-terminal-dim {
         color: color-mix(in srgb, var(--wt-terminal-magenta) 62%, var(--wt-terminal-dim));
       }
-      .expressive-code .frame.is-terminal .wt-terminal-cyan.wt-terminal-dim {
+      .expressive-code .frame .wt-terminal-cyan.wt-terminal-dim {
         color: color-mix(in srgb, var(--wt-terminal-cyan) 62%, var(--wt-terminal-dim));
       }
-      .expressive-code .frame.is-terminal .wt-terminal-italic {
+      .expressive-code .frame .wt-terminal-italic {
         font-style: italic;
       }
-      .expressive-code .frame.is-terminal .wt-terminal-underline {
+      .expressive-code .frame .wt-terminal-underline {
         text-decoration: underline;
         text-underline-offset: 0.14em;
+      }
+      .expressive-code .frame.wt-line-copies .ec-line.wt-command {
+        position: relative;
+      }
+      .expressive-code .frame.wt-line-copies .ec-line.wt-command .code {
+        padding-inline-end: calc(2rem + var(--ec-codePadInl));
+      }
+      /* A line's control never outgrows its line, so adjacent controls can't overlap. */
+      .expressive-code .frame .wt-line-copy {
+        inset-block: 0;
+      }
+      .expressive-code .frame .wt-line-copy button {
+        align-self: flex-start;
+        max-height: 100%;
+      }
+      /* Expressive Code sizes the icon from the button's height; keep its desktop size. */
+      .expressive-code .frame .wt-line-copy button::after {
+        margin: 0;
+        -webkit-mask-position: center;
+        mask-position: center;
+        -webkit-mask-size: 1.05rem;
+        mask-size: 1.05rem;
+      }
+      @media (hover: hover) {
+        .expressive-code .frame:hover .wt-line-copy button:not(:hover) {
+          opacity: 0;
+        }
+        .expressive-code .frame .ec-line:hover .wt-line-copy button:not(:hover) {
+          opacity: 0.75;
+        }
       }
       .expressive-code .frame.wt-command-reference .wt-help-heading {
         color: var(--wt-copper);
@@ -464,7 +536,6 @@ export function pluginWorktrunkTerminal() {
         if (codeBlock.language === 'console') {
           consoleBlocks.add(codeBlock);
           codeBlock.language = 'bash';
-          codeBlock.props.frame = 'terminal';
           return;
         }
         if (codeBlock.metaOptions.value(commandReferenceMeta) === true) {
@@ -488,6 +559,10 @@ export function pluginWorktrunkTerminal() {
             copyableLines.add(lineIndex);
           }
         }
+        // Per-line copy controls sit at the end of their line, so a block with
+        // several commands wraps rather than scrolling them out of view. Captured
+        // output keeps its columns, so a block carrying it never wraps.
+        if (commandLines.size > 1 && !hasOutput) codeBlock.props.wrap = true;
         const outputLines = lines
           .map((line, lineIndex) => ({ line, lineIndex }))
           .filter(({ lineIndex }) => (
@@ -501,7 +576,6 @@ export function pluginWorktrunkTerminal() {
         terminalBlocks.set(codeBlock, {
           commandLines,
           copyableLines,
-          hasOutput,
           recordedByLine,
         });
       },
@@ -520,6 +594,14 @@ export function pluginWorktrunkTerminal() {
             : 'wt-output';
         addClass(renderData.lineAst, className);
         const text = line?.text ?? codeBlock.getLines()[lineIndex].text;
+        // Most blocks listing several commands are menus of alternatives, so
+        // each command line gets its own control in place of the block's.
+        if (className === 'wt-command' && terminal.commandLines.size > 1) {
+          renderData.lineAst.children ??= [];
+          renderData.lineAst.children.push(
+            copyControl(withoutTrailingShellComments(text), 'wt-line-copy'),
+          );
+        }
         if (className === 'wt-output') {
           const rendered = terminal.recordedByLine.has(lineIndex)
             && renderRecordedOutput(renderData.lineAst, terminal.recordedByLine.get(lineIndex));
@@ -527,27 +609,34 @@ export function pluginWorktrunkTerminal() {
         }
       },
       postprocessRenderedBlock({ codeBlock, renderData }) {
-        removeTitlelessHeader(renderData.blockAst);
         if (commandReferenceBlocks.has(codeBlock)) {
           addClass(renderData.blockAst, 'wt-command-reference');
+          // Generated `--help` output is reference material — its copy button
+          // offered thousands of characters nobody pastes anywhere.
+          removeCopyControl(renderData.blockAst);
+          return;
         }
         const terminal = terminalBlocks.get(codeBlock);
         if (!terminal) {
-          if (renderData.blockAst.properties?.className?.includes('is-terminal')) {
-            addClass(renderData.blockAst, 'wt-commands-only');
+          if (codeBlock.language === 'bash' || codeBlock.language === 'sh') {
+            setCopyText(renderData.blockAst, withoutTrailingShellComments(codeBlock.code).replaceAll('\n', '\u007f'));
           }
           return;
         }
-        if (!terminal.hasOutput) addClass(renderData.blockAst, 'wt-commands-only');
+        if (terminal.commandLines.size > 1) {
+          addClass(renderData.blockAst, 'wt-line-copies');
+          removeCopyControl(renderData.blockAst);
+          return;
+        }
         if (terminal.commandLines.size === 0 && terminal.copyableLines.size === 0) {
           removeCopyControl(renderData.blockAst);
           return;
         }
         const copyText = [...codeBlock.getLines()]
-          .filter((_, lineIndex) => (
-            terminal.commandLines.has(lineIndex) || terminal.copyableLines.has(lineIndex)
-          ))
-          .map((line) => line.text)
+          .flatMap((line, lineIndex) => {
+            if (terminal.commandLines.has(lineIndex)) return [withoutTrailingShellComments(line.text)];
+            return terminal.copyableLines.has(lineIndex) ? [line.text] : [];
+          })
           .join('\u007f');
         setCopyText(renderData.blockAst, copyText);
       },

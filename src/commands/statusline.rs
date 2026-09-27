@@ -911,9 +911,8 @@ fn current_worktree_item(worktree: &WorkingTree) -> Result<Option<list::model::L
 fn run_json() -> Result<()> {
     let repo = Repository::current().context("Not in a git repository")?;
 
-    // Warnings are suppressed on this surface, so an unset (or invalid) key
-    // resolves to schema 1 silently; the nag reaches the same user on their
-    // next interactive `wt list --format=json`.
+    // Warnings are suppressed on this surface, so an invalid key falls back
+    // to the default schema without corrupting the prompt.
     let json_schema = list::resolve_json_schema(&repo);
 
     let options = statusline_options(&repo);

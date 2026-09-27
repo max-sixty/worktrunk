@@ -40,7 +40,7 @@ use serde::{Deserialize, Serialize};
 pub struct Command {
     /// Optional name for the command (e.g., "build", "test")
     pub name: Option<String>,
-    /// Template string that may contain variables like {{ branch }}, {{ worktree }}
+    /// Template string that may contain variables like {{ branch }}, {{ worktree_path }}
     pub template: String,
 }
 

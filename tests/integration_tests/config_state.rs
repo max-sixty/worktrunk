@@ -164,7 +164,7 @@ fn test_state_get_default_branch_fails_when_undetermined(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[31m✗[39m [31mCannot determine default branch. To configure, run [1mwt config state default-branch set BRANCH[22m[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[31m✗[39m [31mCannot determine default branch; to configure one, run [1mwt config state default-branch set BRANCH[22m[39m");
 }
 
 #[rstest]
@@ -1094,6 +1094,78 @@ fn test_state_clear_marker_all_empty(repo: TestRepo) {
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No markers to clear");
 }
 
+/// `marker set`/`marker clear` run unconditionally from the Claude Code,
+/// Codex, and Gemini plugin hooks (`UserPromptSubmit`, `Stop`, `SessionEnd`,
+/// …), whether or not the session's directory is inside a git repository.
+/// Outside a repository, both must no-op silently — exit 0, nothing on
+/// stdout or stderr — rather than the pre-fix behavior of printing
+/// `git rev-parse --git-common-dir failed (exit 128)` and exiting 1, a
+/// failure the hooks' own `|| true` already discarded (#3921).
+#[rstest]
+fn test_state_set_marker_outside_repo_is_noop() {
+    let mut cmd = wt_command();
+    cmd.args(["config", "state", "marker", "set", "🤖"]);
+    let output = cmd.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "");
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+}
+
+#[rstest]
+fn test_state_clear_marker_outside_repo_is_noop() {
+    let mut cmd = wt_command();
+    cmd.args(["config", "state", "marker", "clear"]);
+    let output = cmd.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "");
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+}
+
+/// The no-op fallback is scoped to `marker` — a state key without a git
+/// hook depending on it, run outside a repository, must keep failing the
+/// way every `wt` command does. Guards against widening the `#3921` fix
+/// beyond the one command the hooks actually call unconditionally.
+#[rstest]
+fn test_state_set_default_branch_outside_repo_still_fails() {
+    let mut cmd = wt_command();
+    cmd.args(["config", "state", "default-branch", "set", "main"]);
+    let output = cmd.output().unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("git rev-parse --git-common-dir failed"),
+        "stderr: {stderr}"
+    );
+}
+
+/// Same guard as `test_state_set_default_branch_outside_repo_still_fails`,
+/// for the `clear` side — `handle_state_clear` has its own `Repository::current()`
+/// match with its own fallback arm.
+#[rstest]
+fn test_state_clear_default_branch_outside_repo_still_fails() {
+    let mut cmd = wt_command();
+    cmd.args(["config", "state", "default-branch", "clear"]);
+    let output = cmd.output().unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("git rev-parse --git-common-dir failed"),
+        "stderr: {stderr}"
+    );
+}
+
 // ============================================================================
 // logs
 // ============================================================================
@@ -1507,10 +1579,7 @@ fn test_state_clear_all_prompt_declines(repo: TestRepo) {
     cmd.stdin(Stdio::null());
     let output = cmd.output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
-
-    [36m❯[39m Clear all stored state, including branch markers and vars? [1m[y/N/?][22m [2m○[22m Clear cancelled
-    ");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[36m❯[39m Clear all stored state, including branch markers and vars? [1m[y/N/?][22m [2m○[22m Clear cancelled");
 
     // Previous branch must survive the declined prompt.
     assert!(
@@ -2109,7 +2178,9 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
 
 #[rstest]
 fn test_state_get_json_with_logs(repo: TestRepo) {
-    // Create hook output and command log files
+    // Create hook output and command log files. `feature` exists, so its log
+    // reports the branch; `bugfix` stands for a deleted branch (`branch: null`).
+    repo.run_git(&["branch", "feature"]);
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
@@ -2160,7 +2231,7 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
           "hints": [],
           "hook_output": [
             {
-              "branch": "bugfix",
+              "branch": null,
               "file": "bugfix/internal/remove.log",
               "hook_type": null,
               "modified_at": "<MTIME>",
@@ -2707,6 +2778,7 @@ fn test_vars_overwrite(repo: TestRepo) {
 
 #[rstest]
 fn test_vars_in_json_output(repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
     // Set vars data
     repo.git_command()
         .args(["config", "worktrunk.state.main.vars.env", "staging"])
@@ -2734,6 +2806,7 @@ fn test_vars_in_json_output(repo: TestRepo) {
 
 #[rstest]
 fn test_vars_absent_in_json_when_empty(repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
     // No vars data set — vars field should be absent from JSON
     let output = repo
         .wt_command()
@@ -2841,6 +2914,7 @@ fn test_vars_branch_with_dots_in_name(repo: TestRepo) {
 
 #[rstest]
 fn test_vars_json_branch_with_vars_in_name(repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
     // Regression: branch names containing ".vars." must not confuse the
     // all_vars_entries parser (which splits on ".vars." to find the separator).
     let wt_path = repo.root_path().join("..").join("fix-vars-cleanup-wt");
@@ -2952,6 +3026,7 @@ fn test_logs_get_json_with_files(repo: TestRepo) {
 /// work the same as for user/project hooks.
 #[rstest]
 fn test_logs_get_json_internal_op_structure(repo: TestRepo) {
+    repo.run_git(&["branch", "feature"]);
     let log_dir = repo.root_path().join(".git/wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     write_log_at(
@@ -2971,7 +3046,54 @@ fn test_logs_get_json_internal_op_structure(repo: TestRepo) {
     assert_eq!(hook["source"], "internal");
     assert_eq!(hook["hook_type"], serde_json::Value::Null);
     assert_eq!(hook["name"], "remove");
-    assert!(hook["branch"].as_str().unwrap().starts_with("feature"));
+    assert_eq!(hook["branch"], "feature");
+}
+
+/// `branch` is the real branch name, not the sanitized log directory, so
+/// `select(.branch == "feature/x")` matches exactly. A directory no local
+/// branch maps to — a deleted branch, or one two branches share — is `null`.
+#[rstest]
+fn test_logs_get_json_branch_is_unsanitized(repo: TestRepo) {
+    let feature_dir = sanitize_for_filename("feature/x");
+    let shared_dir = sanitize_for_filename("shared/x");
+    for branch in ["feature/x", "shared/x", shared_dir.as_str()] {
+        repo.run_git(&["branch", branch]);
+    }
+    let log_dir = repo.root_path().join(".git/wt/logs");
+    for branch in ["main", "feature/x", "shared/x", "gone/x"] {
+        write_log_at(
+            &log_dir,
+            &hook_log_rel_path(branch, "user", "post-start", "server"),
+            "output",
+        );
+    }
+
+    let output = wt_state_cmd(&repo, "logs", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let mut branches: Vec<(String, serde_json::Value)> = parsed["hook_output"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| {
+            let dir = h["file"].as_str().unwrap().split('/').next().unwrap();
+            (dir.to_string(), h["branch"].clone())
+        })
+        .collect();
+    branches.sort_by(|a, b| a.0.cmp(&b.0));
+    let gone_dir = sanitize_for_filename("gone/x");
+    let mut expected = vec![
+        (feature_dir, serde_json::json!("feature/x")),
+        (gone_dir, serde_json::Value::Null),
+        ("main".to_string(), serde_json::json!("main")),
+        (shared_dir, serde_json::Value::Null),
+    ];
+    expected.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(branches, expected);
 }
 
 /// Repo-wide internal logs are top-level shared files, not branch subtrees.

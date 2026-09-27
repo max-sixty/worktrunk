@@ -32,6 +32,7 @@
 //! resolves its own context.
 
 use anyhow::{Context, bail};
+use etcetera::base_strategy::{BaseStrategy, Xdg};
 use serde::Deserialize;
 
 use super::{
@@ -369,27 +370,28 @@ fn content_has_any_login(content: &str) -> bool {
 
 /// Read tea's config.yml, honoring `$XDG_CONFIG_HOME` and the legacy
 /// `~/.tea/tea.yml` fallback. Returns None if neither file is readable.
+///
+/// The base directory comes from etcetera's XDG strategy — the crate worktrunk
+/// already resolves its own config with — so the spec's exclusions apply: an
+/// exported-but-empty or relative value falls back to `~/.config` instead of
+/// resolving `tea/config.yml` against whatever directory `wt` was invoked
+/// from, which would leave the user's tea logins unread and silently drop the
+/// Gitea CI column from `wt list --full` and send `wt switch pr:<n>` to GitHub.
+///
+/// `Xdg` specifically, not `choose_base_strategy`: tea honors `$XDG_CONFIG_HOME`
+/// on every platform and this keeps that. Its *default* is
+/// `github.com/adrg/xdg`'s — `~/Library/Application Support` on macOS,
+/// `%LOCALAPPDATA%` on Windows, `~/.config` elsewhere — so only the Linux
+/// default is matched here; `choose_base_strategy` would pick
+/// `~/Library/Preferences` and `%APPDATA%`, matching tea on neither.
 fn read_tea_config() -> Option<String> {
-    let xdg = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from);
-    let home = crate::path::home_dir();
-
-    let primary = xdg
-        .clone()
-        .or_else(|| home.as_ref().map(|h| h.join(".config")))
-        .map(|base| base.join("tea").join("config.yml"));
-    if let Some(path) = primary
-        && let Ok(content) = std::fs::read_to_string(&path)
-    {
-        return Some(content);
-    }
-
-    let legacy = home.map(|h| h.join(".tea").join("tea.yml"));
-    if let Some(path) = legacy
-        && let Ok(content) = std::fs::read_to_string(&path)
-    {
-        return Some(content);
-    }
-    None
+    let xdg = Xdg::new().ok()?;
+    [
+        xdg.config_dir().join("tea").join("config.yml"),
+        xdg.home_dir().join(".tea").join("tea.yml"),
+    ]
+    .into_iter()
+    .find_map(|path| std::fs::read_to_string(path).ok())
 }
 
 #[cfg(test)]

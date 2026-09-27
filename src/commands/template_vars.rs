@@ -42,9 +42,11 @@ impl TemplateVars {
         Self::default()
     }
 
-    /// Set `base` (source branch) and `base_worktree_path` from a path.
-    pub fn with_base(mut self, branch: &str, worktree_path: &Path) -> Self {
-        self.base = Some(branch.to_string());
+    /// Set `base` (source branch) and `base_worktree_path` from a path. The
+    /// branch is optional because a detached worktree has a path but no branch
+    /// to name; the path is set either way.
+    pub fn with_base(mut self, branch: Option<&str>, worktree_path: &Path) -> Self {
+        self.base = branch.map(str::to_owned);
         self.base_worktree_path = Some(to_posix_path(&worktree_path.to_string_lossy()));
         self
     }
@@ -61,6 +63,13 @@ impl TemplateVars {
     /// Set `target` (destination branch).
     pub fn with_target(mut self, branch: &str) -> Self {
         self.target = Some(branch.to_string());
+        self
+    }
+
+    /// Set `target` when there is one — a detached worktree leaves it unset
+    /// rather than naming the literal `HEAD` (issue #4009).
+    pub fn with_target_opt(mut self, branch: Option<&str>) -> Self {
+        self.target = branch.map(str::to_owned);
         self
     }
 
@@ -193,7 +202,7 @@ mod tests {
     #[test]
     fn directional_pairs_round_trip() {
         let vars = TemplateVars::new()
-            .with_base("main", &PathBuf::from("/repo"))
+            .with_base(Some("main"), &PathBuf::from("/repo"))
             .with_target("feature")
             .with_target_worktree_path(&PathBuf::from("/repo.feature"));
         let pairs = vars.as_extra_vars();
