@@ -335,7 +335,7 @@ impl Repository {
     ///
     /// Unreadable siblings (an entry another process is deleting) are not
     /// this one, so they are passed over rather than failing the lookup.
-    fn registration_at(&self, path: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
+    pub(crate) fn registration_at(&self, path: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
         let registrations = self.git_common_dir().join("worktrees");
         std::fs::read_dir(&registrations)
             .with_context(|| format!("Failed to read {}", format_path_for_display(&registrations)))?
