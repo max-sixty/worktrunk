@@ -122,7 +122,7 @@ The CI column shows the branch's open PR/MR — `#3035` on GitHub, Gitea, and Az
 | <span style='color:#a60'>⚠</span> yellow | `"error"` | CI status could not be fetched (rate limit, network, etc.) |
 | <span style='color:#a0a'>#</span> magenta | `"changes_requested"` | A reviewer requested changes |
 | <span style='color:#0aa'>#</span> cyan | `"pending"` | A review is required (e.g. branch protection) but not yet given |
-| (blank) | `pr` and `checks` absent | Branch not on any remote (as of the last fetch), or no PR/MR and no branch workflow |
+| (blank) | `pr` and `checks` absent | Branch never pushed, or no PR/MR and no branch workflow |
 
 The two remaining review states have no indicator of their own: `"draft"` only dims the cell and `"approved"` leaves the color unchanged.
 

@@ -146,13 +146,6 @@ impl<'a> Branch<'a> {
             .and_then(|b| b.push_remote.clone())
     }
 
-    /// Whether [`push_remote`](Self::push_remote) is a URL rather than a
-    /// remote name. Git keeps no `refs/remotes/` copy of a URL remote's
-    /// branches.
-    pub fn pushes_to_url(&self) -> bool {
-        self.push_remote().is_some_and(|r| is_url(&r))
-    }
-
     /// Get the URL of the remote where this branch would be pushed.
     ///
     /// A remote name goes through `effective_remote_url` to apply

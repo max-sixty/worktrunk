@@ -700,11 +700,13 @@ fn test_gitlab_project_id_resolved_once_per_command(mut repo: TestRepo) {
     );
 }
 
-/// A PR's head is a branch on the forge, so a local branch no remote has under
-/// its name can't head one and costs no `gh pr list`. A branch that pushes to a
-/// URL (a fork's PR checked out with `gh pr checkout`) has no `refs/remotes/`
-/// copy, so it's still asked about. Assert the spawns, not the rendering: an
-/// unpushed branch shows no CI either way.
+/// A PR's head is a branch on the forge, so a never-pushed local branch can't
+/// head one and costs no `gh pr list`. A missing `refs/remotes/` copy shows a
+/// branch was never pushed only where a push would have recorded one: a URL
+/// push remote (a fork's PR checked out with `gh pr checkout`) records nothing,
+/// and a single-branch clone's remote records only the branch it cloned, so
+/// branches pushing to either are still asked about. Assert the spawns, not
+/// the rendering: an unpushed branch shows no CI either way.
 #[rstest]
 fn test_pr_lookup_skips_branches_on_no_remote(mut repo: TestRepo) {
     setup_github_repo_with_feature(&mut repo);
@@ -715,6 +717,17 @@ fn test_pr_lookup_skips_branches_on_no_remote(mut repo: TestRepo) {
         "branch.fork-pr.pushremote",
         "https://github.com/fork-owner/test-repo.git",
     ]);
+    // A remote fetched the way `git clone --single-branch` sets it up.
+    repo.add_worktree("narrow-pushed");
+    repo.run_git(&[
+        "remote",
+        "add",
+        "-t",
+        "main",
+        "narrow",
+        "https://github.com/test-owner/test-repo.git",
+    ]);
+    repo.run_git(&["config", "branch.narrow-pushed.pushremote", "narrow"]);
     repo.setup_mock_gh_with_ci_data("[]");
 
     let call_log = tempfile::tempdir().unwrap();
@@ -744,8 +757,12 @@ fn test_pr_lookup_skips_branches_on_no_remote(mut repo: TestRepo) {
         "a URL push remote is asked about. calls: {calls:#?}"
     );
     assert!(
+        asked("narrow-pushed"),
+        "a push remote that records no refs for the branch is asked about. calls: {calls:#?}"
+    );
+    assert!(
         !asked("local-only"),
-        "a branch on no remote is skipped. calls: {calls:#?}"
+        "a never-pushed branch is skipped. calls: {calls:#?}"
     );
 }
 
