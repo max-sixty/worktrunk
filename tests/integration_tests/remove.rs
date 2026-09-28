@@ -4792,6 +4792,48 @@ fn test_remove_json_reports_detached_worktree(mut repo: TestRepo) {
     );
 }
 
+/// Naming the detached worktree by path alongside the branch — the removal the
+/// hint above suggests — removes that directory in the same run, so the
+/// branch-only removal must not report it as left behind.
+#[rstest]
+fn test_remove_branch_and_its_detached_worktree_together(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("both-detached");
+    repo.detach_head_in_worktree("both-detached");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "both-detached",
+            worktree_path.to_str().unwrap(),
+            "--format=json",
+            "--yes",
+            "--foreground",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(!worktree_path.exists(), "detached worktree must be removed");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("a detached worktree is @"),
+        "must not point at a directory this run removed; stderr:\n{stderr}"
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    let branch_only = json
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["kind"] == "branch_only")
+        .unwrap_or_else(|| panic!("expected a branch_only entry: {json}"));
+    assert!(
+        branch_only["detached_worktree"].is_null(),
+        "json must not name a directory this run removed: {json}"
+    );
+}
+
 #[cfg(not(target_os = "windows"))]
 #[rstest]
 fn test_remove_json_multi_with_branch_only(mut repo: TestRepo) {

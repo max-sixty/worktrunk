@@ -250,6 +250,29 @@ fn validate_remove_targets(
         }
     }
 
+    // `wt remove <branch> <its-detached-path>` removes that directory in this
+    // run, so it isn't left behind. Checked after the loop because the path
+    // argument can come before or after the branch.
+    let removed: Vec<&Path> = plans
+        .others
+        .iter()
+        .chain(&plans.current)
+        .filter_map(RemovalPlan::removed_worktree_path)
+        .collect();
+    for plan in &mut plans.branch_only {
+        if let RemovalPlan::BranchOnly {
+            detached_worktree, ..
+        } = plan
+            && detached_worktree.as_deref().is_some_and(|detached| {
+                removed
+                    .iter()
+                    .any(|path| worktrunk::path::paths_match(path, detached))
+            })
+        {
+            *detached_worktree = None;
+        }
+    }
+
     plans
 }
 
