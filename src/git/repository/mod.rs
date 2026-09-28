@@ -1783,8 +1783,7 @@ impl Repository {
     /// a commit meant to match what porcelain would record passes `-S` itself.
     /// Asked of git from this worktree rather than read from the cached config
     /// map, which is read from the common dir and so misses worktree-scoped
-    /// config, and whose boolean parsing is not git's (a valueless key is true
-    /// to git).
+    /// config.
     pub fn signs_commits(&self) -> anyhow::Result<bool> {
         let args = ["config", "--type=bool", "--get", "commit.gpgSign"];
         let output = self.run_command_output(&args)?;

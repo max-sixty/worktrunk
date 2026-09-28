@@ -135,8 +135,9 @@ impl Repository {
     ///
     /// `git config --null --get-regexp` emits `key\nvalue\0` records, so values
     /// containing newlines remain intact. Valueless keys are emitted as
-    /// `key\0` and represented with an empty value. When a key has multiple
-    /// values, the last value wins, matching the other config readers.
+    /// `key\0` and read as `"true"`, git's boolean reading of them (see
+    /// `parse_config_list_z`). When a key has multiple values, the last value
+    /// wins, matching the other config readers.
     pub fn config_regexp_entries(&self, pattern: &str) -> anyhow::Result<Vec<(String, String)>> {
         let args = ["config", "--null", "--get-regexp", pattern];
         let output = self.run_command_output(&args)?;
