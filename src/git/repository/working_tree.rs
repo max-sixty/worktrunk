@@ -1335,18 +1335,15 @@ impl TempIndex {
             "--sparse",
             "--pathspec-from-file=-",
             "--pathspec-file-nul",
-        ];
-        let output = self
-            .command(args)
+        ]
+        .map(String::from);
+        let command = self
+            .command(args.iter().cloned())
             .env_remove("GIT_GLOB_PATHSPECS")
             .env_remove("GIT_ICASE_PATHSPECS")
             .env("GIT_LITERAL_PATHSPECS", "1")
-            .stdin_bytes(paths)
-            .run()
-            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
-        if !output.status.success() {
-            return Err(CommandError::from_failed_output("git", &args, &output).into());
-        }
+            .stdin_bytes(paths);
+        run_checked(command, &args)?;
         Ok(())
     }
 
@@ -1380,26 +1377,8 @@ impl TempIndex {
         &self,
         args: impl IntoIterator<Item = impl Into<String>>,
     ) -> anyhow::Result<std::process::Output> {
-        self.run_command_output_with_input(args, Vec::new())
-    }
-
-    fn run_command_output_with_input(
-        &self,
-        args: impl IntoIterator<Item = impl Into<String>>,
-        stdin: Vec<u8>,
-    ) -> anyhow::Result<std::process::Output> {
         let args: Vec<String> = args.into_iter().map(Into::into).collect();
-        let mut command = self.command(args.iter().cloned());
-        if !stdin.is_empty() {
-            command = command.stdin_bytes(stdin);
-        }
-        let output = command
-            .run()
-            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
-        if !output.status.success() {
-            return Err(CommandError::from_failed_output("git", &args, &output).into());
-        }
-        Ok(output)
+        run_checked(self.command(args.iter().cloned()), &args)
     }
 
     /// Build a `git` command pointed at this temp index.
@@ -1431,6 +1410,17 @@ impl TempIndex {
             None => command,
         }
     }
+}
+
+/// Run a `git` command built from `args`, turning a non-zero exit into an error.
+fn run_checked(command: Cmd, args: &[String]) -> anyhow::Result<std::process::Output> {
+    let output = command
+        .run()
+        .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
+    if !output.status.success() {
+        return Err(CommandError::from_failed_output("git", args, &output).into());
+    }
+    Ok(output)
 }
 
 #[cfg(test)]
@@ -1956,6 +1946,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn working_tree_diff_stats_with_untracked_counts_pathspec_magic_names() {
         // `ls-files` reports names verbatim; registering them must not read
