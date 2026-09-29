@@ -26,7 +26,7 @@ A new branch tracks the remote branch it starts from only when the two share a n
 If the branch already has a worktree, `wt switch` changes directories to it. Otherwise, it creates one:
 
 1. Runs [pre-switch hooks](https://worktrunk.dev/hook/#hook-types), blocking until complete
-2. Creates worktree at configured path
+2. Creates worktree at configured path (or at `--path`)
 3. Switches to new directory
 4. Runs [pre-start hooks](https://worktrunk.dev/hook/#hook-types), blocking until complete
 5. Spawns [post-start](https://worktrunk.dev/hook/#hook-types) and [post-switch hooks](https://worktrunk.dev/hook/#hook-types) in the background
@@ -37,6 +37,16 @@ $ wt switch --create feature               # New branch and worktree
 $ wt switch --create fix --base release    # New branch from release
 $ wt switch --create temp --no-hooks       # Skip hooks
 ```
+
+`--path` places one worktree outside the `worktree-path` template, keeping the branch name intact:
+
+```console
+$ wt switch --create feature/JIRA-1234 --path ../dark-mode
+$ wt switch ../dark-mode                   # Switch by path...
+$ wt switch feature/JIRA-1234              # ...or by branch
+```
+
+Worktrunk finds the worktree from git's own records, so only [`wt step relocate`](https://worktrunk.dev/step/#wt-step-relocate) treats it differently: it offers to move the worktree back to the template path.
 
 ## Naming a worktree
 
@@ -166,6 +176,13 @@ Options:
 
           Defaults to default branch. Supports the same shortcuts as the branch argument: ^, @, -,
           pr:{N}, mr:{N}.
+
+      --path <PATH>
+          Worktree directory for a new worktree
+
+          Overrides the worktree-path template for this worktree. Relative paths resolve from the
+          current directory, as with git worktree add. The branch keeps its own name; afterwards,
+          switch by branch or by path.
 
   -x, --execute <EXECUTE>
           Program to run after switch

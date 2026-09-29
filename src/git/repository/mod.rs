@@ -627,7 +627,7 @@ fn base_path() -> &'static PathBuf {
 /// prints its own paths in is a form wt also accepts.
 ///
 /// This is the one resolution point for those paths, so they cannot drift
-/// apart: worktree path arguments (`wt switch ../repo.feature`), `--config`,
+/// apart: worktree path arguments (`wt switch ../repo.feature`), `wt switch --path`, `--config`,
 /// `WORKTRUNK_CONFIG_PATH`, `WORKTRUNK_SYSTEM_CONFIG_PATH`, and the trace file
 /// of `wt config state logs profile`. The rule is "the user named a file for wt
 /// to open" — three neighbours look similar and are deliberately outside it:
