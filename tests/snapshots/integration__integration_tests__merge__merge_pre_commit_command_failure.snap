@@ -60,8 +60,6 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mAuto-staging 1 untracked path:[39m
-[107m [0m feature.txt
 [36m◎[39m [36mRunning pre-commit project hook[39m
 [107m [0m [2m[0m[2m[34mexit[0m[2m 1[0m
 [0m[31m✗[39m [31mpre-commit command failed: exit status: 1[39m

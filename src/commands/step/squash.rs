@@ -158,13 +158,9 @@ pub fn handle_squash(
         .unwrap_or_else(|| integration_target.clone());
     let template_vars = TemplateVars::new().with_target(&integration_target);
 
-    // Auto-stage changes before running pre-commit hooks so both beta and merge paths behave identically
-    if stage_mode == StageMode::All {
-        warn_about_untracked_files(&wt)?;
-    }
-    wt.stage(stage_mode)?;
-
-    // Run pre-commit hooks (user first, then project).
+    // Run pre-commit hooks (user first, then project) before staging, as
+    // `wt step commit` does, so the edits a formatter hook makes are staged
+    // into the squash commit rather than left in the working tree.
     if hooks.run() {
         execute_hook(
             &ctx,
@@ -173,6 +169,11 @@ pub fn handle_squash(
             FailureStrategy::FailFast,
         )?;
     }
+
+    if stage_mode == StageMode::All {
+        warn_about_untracked_files(&wt)?;
+    }
+    wt.stage(stage_mode)?;
 
     // Resolve HEAD once, so the span, the message's commit list, and the
     // compare-and-swap that finally moves the branch all describe one tip.
