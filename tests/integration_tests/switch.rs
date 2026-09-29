@@ -8546,3 +8546,31 @@ fn test_switch_path_occupied_suggests_path_in_clobber_hint(repo: TestRepo) {
         &["--create", "feature-y", "--path", "../occupied"],
     );
 }
+
+#[rstest]
+fn test_switch_path_rejects_directory_overlapping_repo(repo: TestRepo) {
+    std::fs::create_dir_all(repo.root_path().join("src")).unwrap();
+
+    // `--path ..` holds the repository and `--path src` sits inside it; with
+    // `--clobber` either would be moved aside, so both are refused outright.
+    for (path, relation) in [("..", "contains"), ("src", "is inside")] {
+        let output = repo
+            .wt_command()
+            .args([
+                "switch",
+                "--create",
+                "feature-o",
+                "--clobber",
+                "--path",
+                path,
+            ])
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{path}: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(relation), "{path}: {stderr}");
+    }
+
+    assert!(repo.root_path().join("src").is_dir());
+    assert!(repo.root_path().join(".git").exists());
+}
