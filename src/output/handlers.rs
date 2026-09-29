@@ -1240,6 +1240,7 @@ pub fn handle_remove_output(
             target_branch,
             integration_reason,
             branch_checked_out_at,
+            detached_worktree,
         } => handle_branch_only_output(
             branch_name,
             *deletion_mode,
@@ -1247,6 +1248,7 @@ pub fn handle_remove_output(
             *integration_reason,
             target_branch.as_deref(),
             branch_checked_out_at.as_ref(),
+            detached_worktree.as_deref(),
             quiet,
         ),
     }
@@ -1260,6 +1262,17 @@ pub fn handle_remove_output(
 ///
 /// When `quiet` is true, suppresses the "No worktree found for branch X"
 /// info line for non-pruned cases (noise in prune/batch context).
+///
+/// `detached_worktree` is a directory still sitting where this branch's
+/// worktree would go, detached and so nameless in the branch namespace. The
+/// removal is correct without it — the branch really has no worktree — but the
+/// info line above reads as "nothing there", so it is named alongside, with the
+/// path spelling that removes it. Only ever set for a branch the user typed.
+///
+/// The parameters are one `RemovalPlan::BranchOnly`'s fields, destructured by
+/// the sole caller, plus `quiet` — so the count tracks the variant rather than
+/// a signature anyone chose.
+#[allow(clippy::too_many_arguments)]
 fn handle_branch_only_output(
     branch_name: &str,
     deletion_mode: BranchDeletionMode,
@@ -1267,6 +1280,7 @@ fn handle_branch_only_output(
     integration_reason: Option<IntegrationReason>,
     target_branch: Option<&str>,
     branch_checked_out_at: Option<&SharedBranchCheckout>,
+    detached_worktree: Option<&Path>,
     quiet: bool,
 ) -> anyhow::Result<BranchFate> {
     let pruned = if let Some(path) = prune_entry {
@@ -1275,19 +1289,39 @@ fn handle_branch_only_output(
     } else {
         false
     };
-    // A stale entry's directory may remain (only its `.git` went), so the line
-    // names the entry rather than a missing directory.
+    // A stale registered entry and a detached worktree at the templated path
+    // can coexist. Name the detached directory even when pruning the entry.
     let branch_info = if pruned {
         success_message(cformat!("Pruned stale worktree for <bold>{branch_name}</>"))
+    } else if let Some(path) = detached_worktree {
+        let path = format_path_for_display(path);
+        info_message(cformat!(
+            "No worktree found for branch <bold>{branch_name}</>; a detached worktree is @ <bold>{path}</>"
+        ))
     } else {
         info_message(cformat!(
             "No worktree found for branch <bold>{branch_name}</>"
         ))
     };
+    let announce_detached_worktree = || {
+        if let Some(path) = detached_worktree {
+            let path = format_path_for_display(path);
+            eprintln!(
+                "{}",
+                hint_message(cformat!(
+                    "To remove the detached worktree, run <underline>wt remove {path}</>"
+                ))
+            );
+        }
+    };
+    let announce_branch_info = || {
+        eprintln!("{branch_info}");
+        announce_detached_worktree();
+    };
 
     // If we won't delete the branch, show info and return early
     if deletion_mode.should_keep() {
-        eprintln!("{branch_info}");
+        announce_branch_info();
         // A sibling `--force` checkout kept the branch alive; name it so the
         // user knows why the pruned branch survived rather than being deleted.
         if let Some(shared) = branch_checked_out_at {
@@ -1342,7 +1376,7 @@ fn handle_branch_only_output(
 
     let retained = match &deletion.result.outcome {
         BranchDeletionOutcome::RetainedCheckedOut { path } => {
-            eprintln!("{branch_info}");
+            announce_branch_info();
             eprintln!(
                 "{}",
                 retained_checked_out_branch_message(branch_name, path, false)
@@ -1350,12 +1384,12 @@ fn handle_branch_only_output(
             true
         }
         BranchDeletionOutcome::RetainedRaced => {
-            eprintln!("{branch_info}");
+            announce_branch_info();
             eprintln!("{}", retained_raced_branch_message(branch_name, false));
             true
         }
         BranchDeletionOutcome::NotDeleted => {
-            eprintln!("{branch_info}");
+            announce_branch_info();
             if deletion.show_unmerged_hint {
                 print_retained_unmerged_branch(branch_name);
             }
@@ -1381,9 +1415,10 @@ fn handle_branch_only_output(
                     "<green>✓ Pruned stale worktree & removed branch <bold>{branch_name}</>{flag_text}</>{flag_after}"
                 ))
             );
+            announce_detached_worktree();
         } else {
             if !quiet {
-                eprintln!("{branch_info}");
+                announce_branch_info();
             }
             eprintln!(
                 "{}",

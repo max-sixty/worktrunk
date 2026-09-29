@@ -1322,17 +1322,28 @@ impl TempIndex {
     }
 
     /// Register an exact NUL-separated set of untracked paths as intent-to-add.
+    ///
+    /// The paths are file names from `ls-files`, not pathspecs, so
+    /// `GIT_LITERAL_PATHSPECS` keeps a name like `:x` from parsing as magic and
+    /// `b[1].txt` from matching as a glob. Git refuses the literal setting
+    /// alongside the glob and icase ones, so a user's exported
+    /// `GIT_GLOB_PATHSPECS` or `GIT_ICASE_PATHSPECS` is dropped for this call.
     fn register_untracked_paths(&self, paths: Vec<u8>) -> anyhow::Result<()> {
-        self.run_command_output_with_input(
-            [
-                "add",
-                "--intent-to-add",
-                "--sparse",
-                "--pathspec-from-file=-",
-                "--pathspec-file-nul",
-            ],
-            paths,
-        )?;
+        let args = [
+            "add",
+            "--intent-to-add",
+            "--sparse",
+            "--pathspec-from-file=-",
+            "--pathspec-file-nul",
+        ]
+        .map(String::from);
+        let command = self
+            .command(args.iter().cloned())
+            .env_remove("GIT_GLOB_PATHSPECS")
+            .env_remove("GIT_ICASE_PATHSPECS")
+            .env("GIT_LITERAL_PATHSPECS", "1")
+            .stdin_bytes(paths);
+        run_checked(command, &args)?;
         Ok(())
     }
 
@@ -1366,26 +1377,8 @@ impl TempIndex {
         &self,
         args: impl IntoIterator<Item = impl Into<String>>,
     ) -> anyhow::Result<std::process::Output> {
-        self.run_command_output_with_input(args, Vec::new())
-    }
-
-    fn run_command_output_with_input(
-        &self,
-        args: impl IntoIterator<Item = impl Into<String>>,
-        stdin: Vec<u8>,
-    ) -> anyhow::Result<std::process::Output> {
         let args: Vec<String> = args.into_iter().map(Into::into).collect();
-        let mut command = self.command(args.iter().cloned());
-        if !stdin.is_empty() {
-            command = command.stdin_bytes(stdin);
-        }
-        let output = command
-            .run()
-            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
-        if !output.status.success() {
-            return Err(CommandError::from_failed_output("git", &args, &output).into());
-        }
-        Ok(output)
+        run_checked(self.command(args.iter().cloned()), &args)
     }
 
     /// Build a `git` command pointed at this temp index.
@@ -1417,6 +1410,17 @@ impl TempIndex {
             None => command,
         }
     }
+}
+
+/// Run a `git` command built from `args`, turning a non-zero exit into an error.
+fn run_checked(command: Cmd, args: &[String]) -> anyhow::Result<std::process::Output> {
+    let output = command
+        .run()
+        .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
+    if !output.status.success() {
+        return Err(CommandError::from_failed_output("git", args, &output).into());
+    }
+    Ok(output)
 }
 
 #[cfg(test)]
@@ -1939,6 +1943,28 @@ mod tests {
                 .working_tree_diff_stats_with_untracked()
                 .unwrap(),
             LineDiff::default()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn working_tree_diff_stats_with_untracked_counts_pathspec_magic_names() {
+        // `ls-files` reports names verbatim; registering them must not read
+        // `:x` as pathspec magic or `[1]` as a glob.
+        let test = TestRepo::with_initial_commit();
+        for name in [":x", "b[1].txt", "*"] {
+            std::fs::write(test.root_path().join(name), "one\ntwo\n").unwrap();
+        }
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        assert_eq!(
+            repo.current_worktree()
+                .working_tree_diff_stats_with_untracked()
+                .unwrap(),
+            LineDiff {
+                added: 6,
+                deleted: 0
+            }
         );
     }
 

@@ -63,7 +63,12 @@ Cloning a bare repo into `<project>/.git` puts all worktrees under one directory
 ```bash
 git clone --bare <url> myproject/.git
 cd myproject
+git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+git fetch origin
+git remote set-head origin --auto
 ```
+
+`git clone --bare` records the `origin` URL but no fetch refspec, so without the `git config` line `git fetch` never creates remote-tracking branches like `origin/main`, and tools that read them (lazygit, editor integrations) see no remote branches. `git remote set-head` then points `origin/HEAD` at the remote's default branch.
 
 With `worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"`, worktrees become subdirectories of `myproject/`:
 

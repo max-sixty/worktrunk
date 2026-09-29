@@ -4,15 +4,26 @@ use crate::common::{TestRepo, repo};
 use rstest::rstest;
 use std::io::Write as _;
 use std::path::Path;
-use std::process::{Output, Stdio};
+use std::process::{Command, Output, Stdio};
 
 /// Runs the hook with `payload` on stdin, as Claude Code does from `cwd` for
 /// a session launched in `project_dir`.
 fn run_hook(repo: &TestRepo, cwd: &Path, project_dir: &Path, payload: &str) -> Output {
     let mut cmd = repo.wt_command();
+    cmd.env("CLAUDE_PROJECT_DIR", project_dir);
+    spawn_hook(cmd, cwd, payload)
+}
+
+/// Runs the hook with no `CLAUDE_PROJECT_DIR`, so it falls back to `cwd`.
+fn run_hook_without_project_dir(repo: &TestRepo, cwd: &Path, payload: &str) -> Output {
+    let mut cmd = repo.wt_command();
+    cmd.env_remove("CLAUDE_PROJECT_DIR");
+    spawn_hook(cmd, cwd, payload)
+}
+
+fn spawn_hook(mut cmd: Command, cwd: &Path, payload: &str) -> Output {
     cmd.args(["config", "plugins", "claude", "hook"])
         .current_dir(cwd)
-        .env("CLAUDE_PROJECT_DIR", project_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -86,15 +97,59 @@ fn test_claude_hook_marker_failure_succeeds(repo: TestRepo) {
     assert_eq!(stdout(&output), "");
 }
 
+/// `PermissionRequest` answers an `EnterWorktree` into a managed worktree with
+/// the allow decision and leaves the marker unset; any other request prints
+/// nothing, so the dialog stays, and marks the session 💬 while it waits.
+#[rstest]
+fn test_claude_hook_permission_request(mut repo: TestRepo) {
+    let feature = repo.add_worktree("feature");
+    let root = repo.root_path().to_path_buf();
+    let request = |tool: &str, tool_input: serde_json::Value| {
+        serde_json::json!({
+            "hook_event_name": "PermissionRequest",
+            "tool_name": tool,
+            "cwd": root,
+            "tool_input": tool_input,
+        })
+        .to_string()
+    };
+
+    let allowed = run_hook(
+        &repo,
+        &root,
+        &root,
+        &request("EnterWorktree", serde_json::json!({ "path": feature })),
+    );
+    assert!(allowed.status.success(), "{allowed:?}");
+    let decision: serde_json::Value = serde_json::from_slice(&allowed.stdout).unwrap();
+    assert_eq!(
+        decision["hookSpecificOutput"]["decision"]["behavior"],
+        "allow"
+    );
+    assert_eq!(marker(&repo, &root), "");
+
+    for (tool, tool_input) in [
+        ("Bash", serde_json::json!({ "command": "ls" })),
+        ("EnterWorktree", serde_json::json!({})),
+    ] {
+        run_hook(&repo, &root, &root, r#"{"hook_event_name":"SessionEnd"}"#);
+        let declined = run_hook(&repo, &root, &root, &request(tool, tool_input));
+        assert!(declined.status.success(), "{declined:?}");
+        assert_eq!(stdout(&declined), "");
+        assert_eq!(marker(&repo, &root), "💬");
+    }
+}
+
 /// `WorktreeCreate` prints the new worktree's path; a failed create exits
 /// nonzero with nothing on stdout, so Claude Code reports wt's error rather
-/// than a successful hook with no path (#3545).
+/// than a successful hook with no path (#3545). Without `CLAUDE_PROJECT_DIR`
+/// the hook creates from its own cwd.
 #[rstest]
 fn test_claude_hook_worktree_create(repo: TestRepo) {
     let root = repo.root_path().to_path_buf();
     let payload = r#"{"hook_event_name":"WorktreeCreate","name":"agent-task"}"#;
 
-    let created = run_hook(&repo, &root, &root, payload);
+    let created = run_hook_without_project_dir(&repo, &root, payload);
     assert!(created.status.success(), "{created:?}");
     let path = stdout(&created);
     let path = Path::new(path.trim_end());

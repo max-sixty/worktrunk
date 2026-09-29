@@ -1289,6 +1289,50 @@ fn test_merge_pre_commit_collected_for_squash_clean_worktree(
     ));
 }
 
+/// A pre-commit hook's edits land in the squash commit, as they do in the
+/// commit `wt step commit` makes: the hook runs before staging, not after.
+#[rstest]
+fn test_step_squash_includes_pre_commit_hook_edits(repo_with_multi_commit_feature: TestRepo) {
+    let repo = &repo_with_multi_commit_feature;
+    let feature_wt = repo.worktrees["feature"].clone();
+
+    let config_dir = feature_wt.join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        "pre-commit = \"echo formatted > fmt.txt\"",
+    )
+    .unwrap();
+    repo.run_git_in(&feature_wt, &["add", ".config/wt.toml"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Add config"]);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "squash", "--yes"])
+        .current_dir(&feature_wt)
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: combined'",
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "step squash failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(
+        repo.git_output(&["rev-parse", "feature^"]),
+        repo.git_output(&["rev-parse", "main"])
+    );
+    assert_eq!(repo.git_output(&["show", "feature:fmt.txt"]), "formatted");
+    assert_eq!(
+        repo.git_output(&["-C", feature_wt.to_str().unwrap(), "status", "--porcelain"]),
+        ""
+    );
+}
+
 // README EXAMPLE GENERATION TESTS
 // These tests are specifically designed to generate realistic output examples for the README.
 // The snapshots from these tests are manually copied into README.md to show users what

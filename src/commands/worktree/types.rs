@@ -351,6 +351,22 @@ pub enum RemovalPlan {
         /// of the same branch survives the fallback to branch-only deletion.
         /// See [`SharedBranchCheckout`].
         branch_checked_out_at: Option<SharedBranchCheckout>,
+        /// A detached worktree occupying the directory `branch_name`'s worktree
+        /// would use, when one is there.
+        ///
+        /// Detaching severs the only link git records between a worktree and a
+        /// branch, so the branch truly has no worktree and this removal is the
+        /// right operation — but the directory is still on disk, and saying only
+        /// "no worktree found" leaves the user believing it isn't. Naming it is
+        /// the whole job: nothing here acts on it, and `wt remove <path>` is
+        /// what removes it.
+        ///
+        /// The command fills this rather than the planner, which has no
+        /// [`UserConfig`](worktrunk::config::UserConfig) to expand the
+        /// `worktree-path` template with. `None` everywhere else, which is also
+        /// what `wt step prune` and the picker want — neither has a user's typed
+        /// branch name to explain.
+        detached_worktree: Option<PathBuf>,
     },
 }
 
@@ -438,6 +454,7 @@ impl RemovalPlan {
                 branch_name,
                 prune_entry,
                 branch_checked_out_at,
+                detached_worktree,
                 ..
             } => serde_json::json!({
                 "kind": "branch_only",
@@ -445,6 +462,7 @@ impl RemovalPlan {
                 "pruned": prune_entry.is_some(),
                 "branch_outcome": branch_outcome,
                 "branch_checked_out_at": branch_checked_out_at.as_ref().map(|c| &c.path),
+                "detached_worktree": detached_worktree,
             }),
         }
     }
@@ -478,6 +496,7 @@ mod tests {
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
+            detached_worktree: None,
         };
         assert_eq!(branch_only.branch_name(), Some("solo"));
     }
@@ -673,6 +692,7 @@ mod tests {
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
+            detached_worktree: None,
         };
         match result {
             RemovalPlan::BranchOnly {
@@ -682,6 +702,7 @@ mod tests {
                 target_branch,
                 integration_reason,
                 branch_checked_out_at,
+                ..
             } => {
                 assert_eq!(branch_name, "stale-branch");
                 assert!(deletion_mode.should_keep());
@@ -704,6 +725,7 @@ mod tests {
             target_branch: Some("main".to_string()),
             integration_reason: None,
             branch_checked_out_at: None,
+            detached_worktree: None,
         };
         match result {
             RemovalPlan::BranchOnly {
@@ -713,6 +735,7 @@ mod tests {
                 target_branch,
                 integration_reason,
                 branch_checked_out_at,
+                ..
             } => {
                 assert_eq!(branch_name, "pruned-branch");
                 assert!(!deletion_mode.should_keep());

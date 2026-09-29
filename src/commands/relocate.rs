@@ -710,9 +710,11 @@ impl<'a> RelocationExecutor<'a> {
         // Create temp directory if needed
         std::fs::create_dir_all(&self.temp_dir)?;
 
-        // Sanitize branch name for temp path (feature/foo -> feature-foo)
+        // Prefix with the candidate index because sanitize_for_filename's
+        // short hash can collide for distinct branch names. Multiple cycles
+        // keep their temporary worktrees alive until finalization.
         let safe_branch = worktrunk::path::sanitize_for_filename(branch);
-        let temp_path = self.temp_dir.join(&safe_branch);
+        let temp_path = self.temp_dir.join(format!("{i}-{safe_branch}"));
 
         let msg = cformat!("Moving <bold>{branch}</> to temporary location...");
         eprintln!("{}", progress_message(msg));
