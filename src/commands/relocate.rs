@@ -482,10 +482,10 @@ impl<'a> RelocationExecutor<'a> {
 
     /// Execute all relocations in dependency order.
     pub fn execute(&mut self, default_branch: &str, cwd: Option<&Path>) -> anyhow::Result<()> {
-        let shell = match cwd {
-            Some(cwd) => self.shell_position(cwd)?,
-            None => None,
-        };
+        let shell = cwd
+            .map(|cwd| self.shell_position(cwd))
+            .transpose()?
+            .flatten();
 
         // Process until all pending are moved or in temp
         loop {
@@ -778,12 +778,8 @@ impl<'a> RelocationExecutor<'a> {
             let msg = cformat!("Relocated <bold>{branch}</>: {src_display} → {dest_display}");
             eprintln!("{}", success_message(msg));
 
-            follow_shell(
-                shell,
-                temp.index,
-                &temp.original_path,
-                &candidate.expected_path,
-            )?;
+            let (from, to) = (&temp.original_path, &candidate.expected_path);
+            follow_shell(shell, temp.index, from, to)?;
 
             self.relocated_entries.push(RelocatedEntry {
                 branch: branch.to_string(),
