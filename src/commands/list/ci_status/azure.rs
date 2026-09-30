@@ -12,8 +12,8 @@ use super::{
     parse_json, retriable_pr_error,
 };
 
-/// Resolve the Azure DevOps context (host, org, project, `--org` URL) for this
-/// branch's `az` invocations.
+/// Resolve the Azure DevOps context (host, org, project, repository, `--org`
+/// URL) for this branch's `az` invocations.
 ///
 /// Walks the shared [`branch_remote_url`] chain first — so a remote-branch
 /// row from `wt list --remotes --full` queries the right tenant in
@@ -30,11 +30,13 @@ fn azure_context(repo: &Repository, branch: &CiBranchName) -> Option<AzureContex
         let host = parsed.host().to_string();
         let organization = parsed.azure_organization()?.to_string();
         let project = parsed.azure_project()?.to_string();
+        let repository = parsed.repo().to_string();
         let org_url = az_url::az_org_url(&host, &organization);
         Some(AzureContext {
             host,
             organization,
             project,
+            repository,
             org_url,
         })
     };
@@ -56,12 +58,18 @@ struct AzureContext {
     host: String,
     organization: String,
     project: String,
+    /// Repository name. `az` infers it from the git remote only when `--org`
+    /// is absent, and we always pass `--org`, so a command scoped to this
+    /// repository has to name it.
+    repository: String,
     org_url: String,
 }
 
 /// Detect Azure DevOps PR CI status for a branch.
 ///
-/// Uses `az repos pr list` to find an open PR for the branch.
+/// Uses `az repos pr list` to find an open PR for the branch in this
+/// repository. Without `--repository` the list spans every repository in the
+/// project, so a same-named branch in a sibling repository would match.
 pub(super) fn detect_azure_pr(
     repo: &Repository,
     branch: &CiBranchName,
@@ -83,6 +91,8 @@ pub(super) fn detect_azure_pr(
             "active",
             "--project",
             &ctx.project,
+            "--repository",
+            &ctx.repository,
             "--org",
             &ctx.org_url,
             "--output",
@@ -364,6 +374,7 @@ mod tests {
         let ctx = azure_context(&repo, &branch).expect("scan should find the azure remote");
         assert_eq!(ctx.organization, "myorg");
         assert_eq!(ctx.project, "myproject");
+        assert_eq!(ctx.repository, "myrepo");
     }
 
     /// No Azure remote anywhere → `None`.
