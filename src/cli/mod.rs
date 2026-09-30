@@ -372,7 +372,7 @@ pub(crate) struct SwitchArgs {
     #[arg(short = 'b', long, requires = "branch", add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
     pub(crate) base: Option<String>,
 
-    /// Worktree directory for a new worktree
+    /// Worktree directory for a new worktree \[experimental\]
     ///
     /// Overrides the `worktree-path` template for this worktree. Relative
     /// paths resolve from the current directory, as with `git worktree add`.
@@ -673,6 +673,8 @@ $ wt switch --create feature               # New branch and worktree
 $ wt switch --create fix --base release    # New branch from release
 $ wt switch --create temp --no-hooks       # Skip hooks
 ```
+
+### Custom path [experimental]
 
 `--path` places one worktree outside the `worktree-path` template, keeping the branch name intact:
 

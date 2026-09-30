@@ -38,6 +38,8 @@ $ wt switch --create fix --base release    # New branch from release
 $ wt switch --create temp --no-hooks       # Skip hooks
 ```
 
+### Custom path [experimental]
+
 `--path` places one worktree outside the `worktree-path` template, keeping the branch name intact:
 
 ```console
@@ -178,7 +180,7 @@ Options:
           pr:{N}, mr:{N}.
 
       --path <PATH>
-          Worktree directory for a new worktree
+          Worktree directory for a new worktree [experimental]
 
           Overrides the worktree-path template for this worktree. Relative paths resolve from the
           current directory, as with git worktree add. The branch keeps its own name; afterwards,
