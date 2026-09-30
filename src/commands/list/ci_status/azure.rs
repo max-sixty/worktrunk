@@ -30,7 +30,11 @@ fn azure_context(repo: &Repository, branch: &CiBranchName) -> Option<AzureContex
         let host = parsed.host().to_string();
         let organization = parsed.azure_organization()?.to_string();
         let project = parsed.azure_project()?.to_string();
-        let repository = parsed.repo().to_string();
+        // Clone URLs percent-encode the name (`My%20Repo`), and `az` encodes
+        // `--repository` again when building the REST path.
+        let repository =
+            String::from_utf8_lossy(&urlencoding::decode_binary(parsed.repo().as_bytes()))
+                .into_owned();
         let org_url = az_url::az_org_url(&host, &organization);
         Some(AzureContext {
             host,
@@ -375,6 +379,27 @@ mod tests {
         assert_eq!(ctx.organization, "myorg");
         assert_eq!(ctx.project, "myproject");
         assert_eq!(ctx.repository, "myrepo");
+    }
+
+    /// The repository name is decoded, since `az` percent-encodes it again.
+    #[test]
+    fn test_azure_context_decodes_repository_name() {
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://dev.azure.com/myorg/myproject/_git/My%20Repo",
+        ]);
+        let repo = Repository::at(test.root_path()).unwrap();
+        let branch = CiBranchName {
+            full_name: "feature".to_string(),
+            remote: None,
+            name: "feature".to_string(),
+        };
+
+        let ctx = azure_context(&repo, &branch).expect("origin is an azure remote");
+        assert_eq!(ctx.repository, "My Repo");
     }
 
     /// No Azure remote anywhere → `None`.
