@@ -7,7 +7,7 @@ use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};
 
 use super::{RefSnapshot, Repository};
-use crate::git::{IntegrationReason, check_integration, compute_integration_lazy};
+use crate::git::{IntegrationReason, PlumbingDiff, check_integration, compute_integration_lazy};
 use crate::shell_exec::Cmd;
 
 /// Integration targets for `wt list`'s status column.
@@ -40,11 +40,15 @@ pub fn select_comparison_base<'a>(
     targets.map(|t| t.primary.as_str()).or(default_branch)
 }
 
-/// Git's well-known empty-tree object. Diffing a commit against it yields the
-/// commit's full content as additions — the orphan-branch fallback for the
-/// diff/summary preview panes, which can't three-dot-diff a branch that shares
-/// no history with the comparison base.
-pub(super) const EMPTY_TREE_SHA: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+/// Git's well-known empty-tree object in a SHA-1 repository. Diffing a commit
+/// against it yields the commit's full content as additions — the
+/// orphan-branch fallback for the diff/summary preview panes, and the staged
+/// diff's base on an unborn branch. [`Repository::empty_tree_sha`] picks the
+/// id for the repository's object format.
+pub(super) const EMPTY_TREE_SHA1: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+/// The empty-tree object in a SHA-256 repository.
+const EMPTY_TREE_SHA256: &str = "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321";
 
 /// The upstream-aware base a branch's content is measured against in the
 /// diff/summary preview panes — [`IntegrationTargets::primary`], resolved once
@@ -72,16 +76,12 @@ pub(in crate::git) struct ComparisonBase {
 /// [`Repository::branch_diff_spec`].
 #[derive(Debug, Clone)]
 pub struct BranchDiffSpec {
-    /// The `git diff` revision arguments to splice in after `diff` and any
-    /// options: a single three-dot range `["{base}...{head}"]` normally, or
-    /// `["{empty-tree}", "{head}"]` for an orphan.
-    pub revs: Vec<String>,
-    /// Single tree-ish to compare with the worktree when rendering a unified
-    /// committed + uncommitted diff: the merge-base SHA normally, or the empty
-    /// tree for an orphan. `None` only when merge-base resolution failed; unlike
-    /// the committed-only three-dot diff, a worktree diff has no correct range
-    /// fallback in that case.
-    pub working_base: Option<String>,
+    /// The tree-ish the branch's changes are measured from, for both the
+    /// committed diff (to the branch head) and the unified diff (to the
+    /// worktree): the merge-base SHA normally, or the empty tree for an
+    /// orphan. `None` when merge-base resolution failed, so the panes report
+    /// the diff as unavailable rather than guess a base.
+    pub diff_base: Option<String>,
     /// Display name of the comparison base, for "no file changes vs X".
     pub base_name: String,
     /// Stable SHA identifying the base for disk-cache keying: the base's commit
@@ -203,9 +203,17 @@ impl Repository {
             return Ok(true);
         };
 
-        let range = format!("{merge_base}..{branch_sha}");
-        let output = self.run_command(&["diff", "--name-only", &range])?;
-        let result = !output.trim().is_empty();
+        let args = PlumbingDiff::Tree.args(&["--quiet", &merge_base, branch_sha, "--"]);
+        let output = self.run_command_output(&args)?;
+        let result = match output.status.code() {
+            Some(0) => false,
+            Some(1) => true,
+            _ => {
+                return Err(
+                    crate::git::CommandError::from_failed_output("git", &args, &output).into(),
+                );
+            }
+        };
         super::sha_cache::put_has_added_changes(self, branch_sha, target_sha, result);
         Ok(result)
     }
@@ -311,7 +319,18 @@ impl Repository {
         // unresolvable args — callers pass pre-resolved commit SHAs, see
         // `run_merge_tree`), anything else = error (corrupt repo, bad usage)
         let args = ["merge-tree", "--write-tree", a, b];
-        let output = self.run_command_output(&args)?;
+        // Not signalled on picker exit: a merge driver interrupted mid-run
+        // strands `.merge_file_*` temp files in the worktree (#4273).
+        let output = self
+            .with_object_store_env(
+                Cmd::new("git")
+                    .args(args)
+                    .current_dir(&self.discovery_path)
+                    .context(self.logging_context())
+                    .finish_once_started(),
+            )
+            .run()
+            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
 
         if output.status.code() == Some(1) {
             return Ok(MergeTreeOutcome::Conflict);
@@ -487,7 +506,10 @@ impl Repository {
         }
 
         // Compute the squashed patch-id (combined diff of all branch changes).
-        let branch_pids = self.patch_ids_from(&["diff-tree", "-p", &merge_base, branch], None)?;
+        let branch_pids = self.patch_ids_from(
+            &PlumbingDiff::Tree.args(&["--patch", &merge_base, branch, "--"]),
+            None,
+        )?;
         let Some(branch_pid) = branch_pids.split_whitespace().next() else {
             return Ok(false);
         };
@@ -503,7 +525,7 @@ impl Repository {
         // here: each candidate's patch must cover its whole change, or a
         // commit that also touched other files would falsely match.
         let target_pids = self.patch_ids_from(
-            &["diff-tree", "--stdin", "-p"],
+            &PlumbingDiff::Tree.args(&["--stdin", "--patch"]),
             Some(target_commits.into_bytes()),
         )?;
 
@@ -664,9 +686,10 @@ impl Repository {
     /// Selects the base via the shared [`select_comparison_base`] rule
     /// ([`IntegrationTargets::primary`] else the raw local default), so the
     /// preview panes and the `wt list` columns can't pick different bases.
-    /// Captures a [`RefSnapshot`] on first call unless already primed via
-    /// [`Self::prime_comparison_base`]; safe in the read-only preview contexts
-    /// that use it (wt doesn't move refs there). Fully local — no network.
+    /// Builds a [`RefSnapshot`] from the branch inventories on first call
+    /// unless already primed via [`Self::prime_comparison_base`]; safe in the
+    /// read-only preview contexts that use it (wt doesn't move refs there).
+    /// Fully local — no network.
     fn comparison_base(&self) -> Option<&ComparisonBase> {
         self.cache
             .comparison_base
@@ -689,12 +712,12 @@ impl Repository {
     fn resolve_comparison_base(&self) -> Option<ComparisonBase> {
         // No default branch → no comparison base; skip the ref scan entirely.
         self.default_branch()?;
-        let snapshot = self.capture_refs().ok()?;
+        let snapshot = self.inventory_snapshot(None).ok()?;
         self.comparison_base_from(&snapshot)
     }
 
     /// Resolve the comparison base from a captured snapshot. The shared core of
-    /// the lazy [`Self::resolve_comparison_base`] (captures its own snapshot)
+    /// the lazy [`Self::resolve_comparison_base`] (builds its own snapshot)
     /// and [`Self::prime_comparison_base`] (reuses the collector's), so both
     /// select the base by the same [`select_comparison_base`] rule.
     fn comparison_base_from(&self, snapshot: &RefSnapshot) -> Option<ComparisonBase> {
@@ -709,6 +732,28 @@ impl Repository {
         Some(ComparisonBase { name, sha })
     }
 
+    /// The empty tree's object id in this repository's object format.
+    pub(super) fn empty_tree_sha(&self) -> anyhow::Result<&'static str> {
+        Ok(
+            match self.config_value("extensions.objectFormat")?.as_deref() {
+                Some("sha256") => EMPTY_TREE_SHA256,
+                _ => EMPTY_TREE_SHA1,
+            },
+        )
+    }
+
+    /// The tree-ish an index is compared against for staged changes: `head`,
+    /// or the empty tree when `head` is `None` (an unborn branch).
+    ///
+    /// Porcelain `git diff --cached` picks this itself; plumbing
+    /// (`diff-index --cached`) needs it spelled out.
+    pub(super) fn index_base_for(&self, head: Option<String>) -> anyhow::Result<String> {
+        match head {
+            Some(head) => Ok(head),
+            None => Ok(self.empty_tree_sha()?.to_string()),
+        }
+    }
+
     /// Resolve how to diff a branch's content against the mainline for the
     /// diff/summary preview panes. `head` is a resolved commit SHA. See
     /// [`BranchDiffSpec`]. Returns `None` when there's no comparison base (no
@@ -717,32 +762,21 @@ impl Repository {
         let base = self.comparison_base()?;
         let base_sha = base.sha.as_str();
 
-        // Orphan (no merge base with the base): a three-dot range is
-        // ill-defined, so diff the full content against the empty tree. A
-        // merge-base *error* (invalid/unreachable object) is NOT an orphan —
-        // fall through to the normal three-dot range and let the diff surface
-        // the failure rather than dumping the whole tree as "the branch".
-        let (revs, working_base, cache_sha) = match self.merge_base_by_sha(base_sha, head) {
-            Ok(None) => (
-                vec![EMPTY_TREE_SHA.to_string(), head.to_string()],
-                Some(EMPTY_TREE_SHA.to_string()),
-                EMPTY_TREE_SHA.to_string(),
-            ),
-            Ok(Some(merge_base)) => (
-                vec![format!("{base_sha}...{head}")],
-                Some(merge_base),
-                base_sha.to_string(),
-            ),
-            Err(_) => (
-                vec![format!("{base_sha}...{head}")],
-                None,
-                base_sha.to_string(),
-            ),
+        // Orphan (no merge base with the base): diff the full content against
+        // the empty tree. A merge-base *error* (invalid/unreachable object) is
+        // NOT an orphan — leave the base unresolved so the panes report the
+        // failure rather than dumping the whole tree as "the branch".
+        let (diff_base, cache_sha) = match self.merge_base_by_sha(base_sha, head) {
+            Ok(None) => {
+                let empty_tree = self.empty_tree_sha().ok()?;
+                (Some(empty_tree.to_string()), empty_tree.to_string())
+            }
+            Ok(Some(merge_base)) => (Some(merge_base), base_sha.to_string()),
+            Err(_) => (None, base_sha.to_string()),
         };
 
         Some(BranchDiffSpec {
-            revs,
-            working_base,
+            diff_base,
             base_name: base.name.clone(),
             cache_sha,
         })
@@ -818,7 +852,8 @@ impl Repository {
     /// topology.
     ///
     /// The rewrite steps (`wt step squash`, `wt step rebase`, and `wt merge`
-    /// through them) measure "the branch's own commits" as
+    /// through them), and `wt step diff` previewing them, measure "the
+    /// branch's own commits" as
     /// `merge-base(target, HEAD)..HEAD`. When the local target ref lags its
     /// upstream (e.g. the primary checkout's `main` left behind `origin/main`)
     /// and the branch was built on the newer upstream tip, that span sweeps in
@@ -1448,6 +1483,60 @@ mod patch_id_tests {
             "squash merge must be detected via patch-id regardless of diff.* config"
         );
     }
+
+    /// Patch-ids count a submodule bump under `submodule.<name>.ignore = all`,
+    /// which hides the bump from plain plumbing. The branch edits a file and
+    /// bumps a submodule: a target squash that dropped the bump must not
+    /// match, and one that carried it must. Each target re-touches the same
+    /// line afterwards so `merge-tree` conflicts and the patch-id fallback
+    /// runs.
+    #[test]
+    fn patch_id_counts_submodule_bump_under_submodule_ignore() {
+        let test = TestRepo::new();
+        let repo = &test.repo;
+        let path = test.path().join("file");
+        let gitlink = |sha: &str| format!("160000,{sha},sub");
+
+        std::fs::write(
+            test.path().join(".gitmodules"),
+            "[submodule \"sub\"]\n\tpath = sub\n\turl = ./sub\n",
+        )
+        .unwrap();
+        std::fs::write(&path, "one\ntwo\nthree\n").unwrap();
+        test.run_git(&["add", ".gitmodules", "file"]);
+        test.run_git(&["commit", "--message", "base"]);
+        let base = test.git_output(&["rev-parse", "HEAD"]);
+        test.run_git(&["update-index", "--add", "--cacheinfo", &gitlink(&base)]);
+        test.run_git(&["commit", "--message", "add submodule"]);
+        let fork = test.git_output(&["rev-parse", "HEAD"]);
+
+        let commit_on = |branch: &str, bump: bool| {
+            test.run_git(&["switch", "--create", branch, &fork]);
+            std::fs::write(&path, "one\nFEATURE\nthree\n").unwrap();
+            test.run_git(&["add", "file"]);
+            if bump {
+                test.run_git(&["update-index", "--cacheinfo", &gitlink(&fork)]);
+            }
+            test.run_git(&["commit", "--message", branch]);
+        };
+        commit_on("feature", true);
+        for (target, bump) in [("dropped", false), ("carried", true)] {
+            commit_on(target, bump);
+            std::fs::write(&path, "one\nPADDED\nthree\n").unwrap();
+            test.run_git(&["add", "file"]);
+            test.run_git(&["commit", "--message", "follow-up on same line"]);
+        }
+        test.run_git(&["config", "submodule.sub.ignore", "all"]);
+
+        let snapshot = repo.capture_refs().unwrap();
+        let reason = |target: &str| {
+            check_integration(
+                &compute_integration_lazy(repo, &snapshot, "feature", target).unwrap(),
+            )
+        };
+        assert_eq!(reason("dropped"), None);
+        assert_eq!(reason("carried"), Some(IntegrationReason::PatchIdMatch));
+    }
 }
 
 #[cfg(test)]
@@ -1470,6 +1559,41 @@ mod merge_tree_error_tests {
         assert_eq!(
             cmd_err.command_string(),
             "git merge-tree --write-tree HEAD HEAD"
+        );
+    }
+}
+
+#[cfg(test)]
+mod has_added_changes_error_tests {
+    use super::*;
+    use crate::testing::TestRepo;
+
+    /// A `git diff-tree` failure (here: the branch's tree object is missing)
+    /// must surface as a typed `CommandError`, not read as "no added changes",
+    /// which would let `wt remove` delete the branch.
+    #[test]
+    fn diff_tree_failure_is_command_error() {
+        let test = TestRepo::with_initial_commit();
+        let target_sha = test.git_output(&["rev-parse", "HEAD"]);
+        std::fs::write(test.root_path().join("added.txt"), "added\n").unwrap();
+        test.run_git(&["add", "added.txt"]);
+        test.run_git(&["commit", "--message", "add file"]);
+        let branch_sha = test.git_output(&["rev-parse", "HEAD"]);
+        let tree = test.git_output(&["rev-parse", "HEAD^{tree}"]);
+        let (dir, file) = tree.split_at(2);
+        std::fs::remove_file(test.root_path().join(".git/objects").join(dir).join(file)).unwrap();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let err = repo
+            .has_added_changes_by_sha(&branch_sha, &target_sha)
+            .unwrap_err();
+        let cmd_err =
+            crate::git::CommandError::find_in(&err).expect("error should carry a CommandError");
+        assert!(
+            cmd_err
+                .command_string()
+                .starts_with("git diff-tree --ignore-submodules=none --quiet"),
+            "{err:#}"
         );
     }
 }
@@ -1530,6 +1654,74 @@ mod merge_tree_cache_tests {
             repo.cache.merge_tree.contains_key(&(main_sha, feature_sha)),
             "the shared entry must be keyed (target, branch)"
         );
+    }
+
+    /// A merge-tree probe mid-merge-driver must not be signalled when the
+    /// picker cancels background work: git removes the driver's
+    /// `.merge_file_*` temp files only on a normal return, so a SIGTERM strands
+    /// them in the worktree (#4273). The driver records its parent — the
+    /// running `git merge-tree` — so the test can check that PID isn't
+    /// registered for cancellation while the driver runs.
+    #[cfg(unix)]
+    #[test]
+    fn merge_tree_probe_is_not_signalled_on_cancel() {
+        let test = TestRepo::with_initial_commit();
+        let root = test.root_path().to_path_buf();
+        std::fs::write(root.join("f.txt"), "a\nb\nc\n").unwrap();
+        test.run_git(&["add", "f.txt"]);
+        test.run_git(&["commit", "-m", "base"]);
+        test.run_git(&["checkout", "-b", "feature"]);
+        std::fs::write(root.join("f.txt"), "a\nFEAT\nc\n").unwrap();
+        test.run_git(&["commit", "-am", "feature"]);
+        test.run_git(&["checkout", "main"]);
+        std::fs::write(root.join("f.txt"), "a\nMAIN\nc\n").unwrap();
+        test.run_git(&["commit", "-am", "main"]);
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+        let feature_sha = test.git_output(&["rev-parse", "feature"]);
+
+        let dir = crate::testing::test_tempdir();
+        let marker = dir.path().join("driver-parent");
+        let release = dir.path().join("release");
+        let driver = format!(
+            "echo $PPID > '{}'; while [ ! -e '{}' ]; do sleep 0.05; done; exit 1",
+            marker.display(),
+            release.display()
+        );
+        test.run_git(&["config", "merge.slow.driver", &driver]);
+        let git_dir = test.git_output(&["rev-parse", "--absolute-git-dir"]);
+        std::fs::create_dir_all(std::path::Path::new(&git_dir).join("info")).unwrap();
+        std::fs::write(
+            std::path::Path::new(&git_dir).join("info/attributes"),
+            "* merge=slow\n",
+        )
+        .unwrap();
+
+        let repo = Repository::at(&root).unwrap();
+        std::thread::scope(|s| {
+            let probe = s.spawn(|| repo.merge_tree_outcome(&main_sha, &feature_sha));
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            let pid = loop {
+                if let Some(pid) = std::fs::read_to_string(&marker)
+                    .ok()
+                    .and_then(|s| s.trim().parse::<u32>().ok())
+                {
+                    break pid;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "merge driver never ran"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            };
+            let cancellable = crate::shell_exec::is_cancellable_pid(pid);
+            std::fs::write(&release, "").unwrap();
+            let outcome = probe.join().unwrap().unwrap();
+            assert!(
+                !cancellable,
+                "a running merge-tree must not be a cancellation target"
+            );
+            assert!(matches!(outcome, MergeTreeOutcome::Conflict));
+        });
     }
 }
 

@@ -27,7 +27,7 @@
 //! uses; see the call site. A change to any of this is measured against
 //! `benches/completion.rs`, which runs one repo big enough in every dimension
 //! to make the difference visible — and *not* against a `-vv` trace, which
-//! skips prewarm's rev-parse batch (benches/CLAUDE.md, "Analyzing a trace").
+//! skips prewarm's rev-parse batch (benches/AGENTS.md, "Analyzing a trace").
 
 use std::cell::RefCell;
 use std::ffi::{OsStr, OsString};
@@ -688,7 +688,7 @@ fn inject_alias_subcommands(cmd: Command) -> Command {
 /// - **`template_references_var` per command** (minijinja, not a substring) —
 ///   scoped to each command rather than the cross-command union returned by
 ///   `referenced_vars_for_config`, so a non-forwarding sibling referencing
-///   `{{ args }}` can't flip mirroring on. Satisfies CLAUDE.md's "Use Existing
+///   `{{ args }}` can't flip mirroring on. Satisfies AGENTS.md's "Use Existing
 ///   Dependencies" rule.
 /// - **Exactly one forwarder.** Zero means the alias ignores CLI positionals;
 ///   many means args fan out and mirroring any one would mislead.

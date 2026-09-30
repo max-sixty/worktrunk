@@ -3,6 +3,7 @@
 //! See `src/commands/relocate.rs` for the implementation details and algorithm.
 
 use anyhow::Context;
+use color_print::cformat;
 
 use std::path::PathBuf;
 
@@ -43,9 +44,9 @@ pub fn step_relocate(
 
     // Validate default branch early - needed for main worktree relocation
     if default_branch.is_empty() {
-        anyhow::bail!(
-            "Cannot determine default branch; set with: wt config state default-branch set main"
-        );
+        anyhow::bail!(cformat!(
+            "Cannot determine default branch; to configure one, run <bold>wt config state default-branch set BRANCH</>"
+        ));
     }
     let repo_path = repo.repo_path()?.to_path_buf();
 

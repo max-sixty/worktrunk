@@ -11,6 +11,14 @@ by the worktree-lifecycle hooks).
 2. **Activity tracking** — Shows which branches have active Claude sessions via indicators in `wt list`
 3. **`/wt-switch-create` command** — Creates a worktrunk worktree and moves the current Claude session into it
 
+## What the hooks run
+
+Every hook calls `wt` through `hooks/wt.sh`:
+
+- **Activity markers**: `UserPromptSubmit`, `Notification`, `Stop`, and `PreToolUse` on `AskUserQuestion` set the branch's marker with `wt config state marker set`; `SessionEnd` clears it.
+- **Worktree creation and removal**: when Claude Code creates or removes a worktree, the `WorktreeCreate` and `WorktreeRemove` hooks run `wt switch --create` and `wt remove` in place of Claude Code's own `git worktree` commands, so the worktree follows worktrunk's path layout and runs the project's approved worktrunk hooks.
+- **`EnterWorktree` approval**: the `PermissionRequest` hook allows an `EnterWorktree` call without a dialog when its path is a worktree of the current repository at the location worktrunk's `worktree-path` template gives its branch. Every other request shows Claude Code's usual dialog and sets the branch's marker to 💬 while it waits.
+
 ## Examples
 
 **Activity tracking across worktrees**
@@ -29,4 +37,4 @@ The skill configures `.config/wt.toml` with project hooks. Pre-start hooks run w
 
 **Start work in a fresh worktree**
 
-`/wt-switch-create fix-auth Investigate the 5-minute session timeout` creates a `fix-auth` worktree in worktrunk's normal sibling layout (`<repo>.fix-auth/`), switches the session into it, and starts the task there. The branch name is optional (`/wt-switch-create -- <task>`). The worktree persists after the session — merge or remove it with `wt merge` / `wt remove` like any other.
+`/wt-switch-create fix-auth -- Investigate the 5-minute session timeout` creates a `fix-auth` worktree in worktrunk's normal sibling layout (`<repo>.fix-auth/`), switches the session into it, and starts the task there. The branch name is optional (`/wt-switch-create -- <task>`). The worktree persists after the session — merge or remove it with `wt merge` / `wt remove` like any other.

@@ -230,8 +230,8 @@ address the user. Imperatives like "Run", "Use", "Add" are fine — they're
 concise CLI idiom.
 
 ```rust
-// BAD - "Use 'wt merge' to rebase your changes onto main"
-// GOOD - "Use 'wt merge' to rebase onto main"
+// BAD - "To rebase your changes onto main, run wt merge"
+// GOOD - "To rebase onto main, run wt merge"
 ```
 
 **Avoid redundant parenthesized content:** Parenthesized text should add new
@@ -292,10 +292,10 @@ mentioned in the error message.
 ```rust
 // BAD - "it" refers to branch name in error message
 // Error: "Branch 'feature' not found"
-// Hint:  "Use --create to create it"
+// Hint:  "To create it, use --create"
 // GOOD - self-contained hint
 // Error: "Branch 'feature' not found"
-// Hint:  "Use --create to create a new branch"
+// Hint:  "To create a new branch, use --create"
 ```
 
 ## Heading Case
@@ -526,12 +526,13 @@ clearer:
 ```
 
 **Description + command in single message:** For warnings/errors that include a
-recovery command, join with semicolon. Use `<bold>` for commands in
+recovery command, join with semicolon, and order the recovery "To X, run Y" as
+hints do, so the command still ends the line. Use `<bold>` for commands in
 warnings/errors (only hints use `<underline>`):
 
 ```rust
 // Warning with inline recovery command (bold for commands)
-warning_message("Failed to restore stash; run <bold>git stash pop {ref}</> to restore manually")
+warning_message("Failed to restore stash; to restore manually, run <bold>git stash pop {ref}</>")
 warning_message("{tool} not authenticated; run <bold>{tool} auth login</>")
 
 // For longer suggestions, use separate hint message (underline for commands)
@@ -762,7 +763,7 @@ Use `eprintln!` with formatting functions. Use `cformat!` for inner styling:
 
 ```rust
 eprintln!("{}", success_message(cformat!("Created <bold>{branch}</> from <bold>{base}</>")));
-eprintln!("{}", hint_message(cformat!("Run <underline>wt merge</> to continue")));
+eprintln!("{}", hint_message(cformat!("To continue, run <underline>wt merge</>")));
 ```
 
 **color-print tags:** `<bold>`, `<dim>`, `<underline>`, `<bright-black>`, `<red>`,
@@ -789,11 +790,11 @@ Never quote commands or branch names. Use styling to make them stand out:
 
 ```rust
 // GOOD - bold in normal context
-eprintln!("{}", info_message(cformat!("Use <bold>wt merge</> to continue")));
+eprintln!("{}", info_message(cformat!("To continue, use <bold>wt merge</>")));
 // GOOD - underline for commands in hints
-eprintln!("{}", hint_message(cformat!("Run <underline>wt list</> to see worktrees")));
+eprintln!("{}", hint_message(cformat!("To see worktrees, run <underline>wt list</>")));
 // BAD - quoted commands
-eprintln!("{}", hint_message("Run 'wt list' to see worktrees"));
+eprintln!("{}", hint_message("To see worktrees, run 'wt list'"));
 ```
 
 ## Hyperlinks
@@ -821,7 +822,14 @@ to the render rather than to the cell emitting it: `LayoutConfig::link_style`
 answers it once for a whole row, so a CI reference and a dev-server port can't
 disagree. Two destinations carry no links, and so no underline: a terminal
 without OSC 8 support, where `wt list` prints the dev-server URL in full, and
-the picker, whose rows pass through skim.
+the picker's rows, which `Destination::picker` renders as
+`LinkStyle::Unlinked` (that variant's docstring has the reason). Nothing in the
+picker is clickable, by two routes: a row's link style is decided at render
+time, so it carries no OSC 8 to begin with, and the preview pane is parsed by
+skim through `ansi_to_tui`, which keeps none. Underline there is
+free to mean something else, and the preview pane spends it twice: on a URL,
+marking a reference rather than a link (`pr_pane::url_line`), and on the active
+tab in the tab bar (`items::render_preview_tabs`).
 
 ## Design Principles
 

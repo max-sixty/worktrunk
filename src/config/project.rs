@@ -277,8 +277,8 @@ impl ProjectConfig {
             },
         };
 
-        // Check for deprecated template variables and create migration file if needed
-        // Only write migration file in main worktree, not linked worktrees
+        // Check for deprecated patterns. They are actionable only from the main
+        // worktree, where `wt config update` rewrites the file.
         // emit_inline_warnings=true: print per-kind warnings inline during config load
         let is_main_worktree = !repo.current_worktree().is_linked().unwrap_or(true);
         let repo_for_hints = if write_hints { Some(repo) } else { None };
@@ -293,16 +293,22 @@ impl ProjectConfig {
         .map_err(|e| ConfigError(e.to_string()))?
         .migrated_content;
 
-        // Warn about unknown fields (only in main worktree where it's actionable).
+        // Warn about unknown fields, from every worktree. Unlike the
+        // deprecation channel above — whose message points at `wt config
+        // update`, which needs the primary worktree — this one just reports
+        // that a key is being ignored, and its fix (edit the tracked file, or
+        // move the key to user config) is available from any worktree. Gating
+        // it on the primary hid it from the commands the keys govern: `wt
+        // merge` runs from the feature worktree, so a project `[merge]`
+        // section was silently dropped with nothing said (#4144).
+        //
         // Runs on the raw contents so deprecated keys are detected as written;
         // `DEPRECATED_SECTION_KEYS` defers them to the deprecation messaging.
-        if is_main_worktree {
-            super::deprecation::warn_unknown_fields::<ProjectConfig>(
-                &contents,
-                &config_path,
-                super::ConfigFileKind::Project,
-            );
-        }
+        super::deprecation::warn_unknown_fields::<ProjectConfig>(
+            &contents,
+            &config_path,
+            super::ConfigFileKind::Project,
+        );
 
         // Deserialize the structurally migrated content so deprecated keys
         // (e.g. `pre-start`/`post-start`) still load into their canonical fields.

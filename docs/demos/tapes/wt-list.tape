@@ -15,10 +15,12 @@ Sleep 300ms
 Enter
 Sleep 2.5s
 
-# Full view with CI and diff stats
+# Full view with CI and diff stats. The CI cells arrive from the forge behind
+# the table, so this waits out the slowest mocked response (DEMO_PRS) and
+# still leaves the settled table on screen.
 Type "wt list --full"
 Enter
-Sleep 2.5s
+Sleep 3.5s
 
 # Show all branches including remote-only
 Type "wt list --branches"

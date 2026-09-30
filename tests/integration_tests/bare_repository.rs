@@ -1311,6 +1311,50 @@ fn test_bare_repo_config_show_reflects_object_store_fallback() {
 }
 
 #[test]
+fn test_bare_repo_config_show_reads_dash_prefixed_default_branch() {
+    let test = BareRepoTest::new();
+
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit");
+
+    let config_dir = main_worktree.join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        "[list]\nurl = \"http://localhost:3000\"\n",
+    )
+    .unwrap();
+    test.run_git_in(&main_worktree, &["add", ".config/wt.toml"]);
+    test.run_git_in(&main_worktree, &["commit", "-m", "Add project config"]);
+
+    test.run_git_in(
+        test.bare_repo_path(),
+        &["update-ref", "refs/heads/-x", "refs/heads/main"],
+    );
+    test.run_git_in(
+        test.bare_repo_path(),
+        &["config", "worktrunk.default-branch", "-x"],
+    );
+
+    let mut cmd = test.wt_command();
+    cmd.args(["config", "show", "--format=json"])
+        .current_dir(test.bare_repo_path());
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    assert_eq!(
+        json["project"]["config"]["list"]["url"], "http://localhost:3000",
+        "config show must read the committed config when the default branch starts with a dash, got: {}",
+        json["project"]
+    );
+}
+
+#[test]
 fn test_bare_repo_project_config_found_with_dash_c_flag() {
     // Regression test for #1691 (comment): project config in the primary worktree
     // should be found when using `-C <repo>` from an unrelated directory.

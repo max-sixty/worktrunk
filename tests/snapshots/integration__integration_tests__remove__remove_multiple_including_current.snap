@@ -67,5 +67,5 @@ exit_code: 0
 [2m↳[22m [2mBranch unmerged; to delete, run [4mwt remove -D feature-c[24m[22m
 [36m◎[39m [36mRemoving [1mfeature-a[22m worktree in background[39m
 [2m↳[22m [2mBranch unmerged; to delete, run [4mwt remove -D feature-a[24m[22m
-[33m▲[39m [33mCannot change directory — shell integration not installed[39m
+[33m▲[39m [33mWorktree for [1mmain[22m @ [1m_REPO_[22m, but cannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m

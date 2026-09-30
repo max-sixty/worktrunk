@@ -298,6 +298,46 @@ fn test_copy_ignored_basic(mut repo: TestRepo) {
     );
 }
 
+/// Git paths are byte strings on Linux. The `-z` discovery output must reach
+/// the filesystem unchanged instead of replacing invalid UTF-8 with U+FFFD.
+#[cfg(target_os = "linux")]
+#[rstest]
+fn test_copy_ignored_preserves_non_utf8_filename(mut repo: TestRepo) {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let feature_path = repo.add_worktree("feature");
+    let name = OsString::from_vec(b"cache-\xff.bin".to_vec());
+    fs::write(repo.root_path().join(&name), "payload").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), "cache-*.bin\n").unwrap();
+
+    for (dry_run, outcome) in [(true, "planned"), (false, "copied")] {
+        let mut command = repo.wt_command();
+        command
+            .args(["step", "copy-ignored", "--format=json"])
+            .current_dir(&feature_path);
+        if dry_run {
+            command.arg("--dry-run");
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "copy-ignored JSON failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let payload: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(payload["outcome"], outcome);
+        assert_eq!(payload["entries"][0]["path"], "cache-\u{fffd}.bin");
+        assert_eq!(feature_path.join(&name).exists(), !dry_run);
+    }
+
+    assert_eq!(
+        fs::read(feature_path.join(name)).unwrap(),
+        b"payload",
+        "copy-ignored must preserve the filename's original bytes"
+    );
+}
+
 /// Test idempotent behavior: running twice should succeed (skips existing files)
 #[rstest]
 fn test_copy_ignored_idempotent(mut repo: TestRepo) {

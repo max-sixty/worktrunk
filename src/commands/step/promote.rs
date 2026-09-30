@@ -42,9 +42,9 @@ fn move_entry(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
 /// refusing over one would abort a promote after the branch exchange.
 fn copy_and_remove(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
     let skipped = if is_dir {
-        copy_dir_recursive(src, dest, None, true, &Progress::disabled())?
+        copy_dir_recursive(src, dest, None, true, None, &Progress::disabled())?
     } else {
-        usize::from(copy_leaf(src, dest, None, true)?.is_none())
+        usize::from(copy_leaf(src, dest, None, true, None)?.is_none())
     };
     if skipped > 0 {
         bail!(
@@ -251,7 +251,7 @@ fn print_promote_announcement(is_restoring: bool, default_branch: Option<&str>) 
         eprintln!(
             "{}",
             hint_message(cformat!(
-                "Run <underline>wt step promote {default}</> to restore canonical locations"
+                "To restore canonical locations, run <underline>wt step promote {default}</>"
             ))
         );
     }

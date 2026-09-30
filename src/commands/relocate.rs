@@ -165,12 +165,12 @@ pub fn gather_candidates(
         for arg in filter_branches {
             let path = repo.require_worktree(arg)?;
             let Some(wt) = worktrees.iter().find(|wt| paths_match(&path, &wt.path)) else {
-                // Resolved, but pruned out above: its directory is gone, so
-                // there is nothing to move.
+                // Resolved, but pruned out above: its directory or `.git` is
+                // gone, so there is nothing to move.
                 bail!(
                     "{}",
                     cformat!(
-                        "Cannot relocate worktree @ {} — its directory is gone; run <bold>wt step prune</> to clear the entry",
+                        "Cannot relocate worktree @ {} — it is stale; to clear the entry, run <bold>wt step prune</>",
                         format_path_for_display(&path)
                     )
                 );
@@ -710,9 +710,11 @@ impl<'a> RelocationExecutor<'a> {
         // Create temp directory if needed
         std::fs::create_dir_all(&self.temp_dir)?;
 
-        // Sanitize branch name for temp path (feature/foo -> feature-foo)
+        // Prefix with the candidate index because sanitize_for_filename's
+        // short hash can collide for distinct branch names. Multiple cycles
+        // keep their temporary worktrees alive until finalization.
         let safe_branch = worktrunk::path::sanitize_for_filename(branch);
-        let temp_path = self.temp_dir.join(&safe_branch);
+        let temp_path = self.temp_dir.join(format!("{i}-{safe_branch}"));
 
         let msg = cformat!("Moving <bold>{branch}</> to temporary location...");
         eprintln!("{}", progress_message(msg));

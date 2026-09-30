@@ -81,20 +81,16 @@ In a hook or alias template, prefer the [2m{{ default_branch }}[0m template va
 
 Without a subcommand, runs [2mget[0m. [2mset[0m stores the override in the repository's local git config. The override adds no project file and applies to every linked worktree in the clone. [2mclear[0m then [2mget[0m re-detects. The branch must exist locally for [2mwt list[0m comparisons.
 
-[2mdefault-branch get[0m resolves the value and caches it on a miss; the aggregate [2mwt config state get[0m only reports the cache (read-only), so it can show [2m(none)[0m until something populates it.
-
 [1m[32mDetection[0m
 
 Worktrunk detects the default branch automatically:
 
 1. [1mWorktrunk cache[0m — Checks [2mgit config worktrunk.default-branch[0m
 2. [1mGit cache[0m — Detects primary remote and checks its HEAD (e.g., [2morigin/HEAD[0m)
-3. [1mRemote query[0m — If not cached, queries [2mgit ls-remote[0m — typically 100ms–2s, abandoned after 10s
+3. [1mRemote query[0m — If not cached, queries [2mgit ls-remote[0m, giving up after 10s
 4. [1mLocal inference[0m — If no remote, or the query was abandoned, infers from local branches
 
-Once detected, the result is cached in [2mworktrunk.default-branch[0m for fast access. The cache isn't re-validated on every command, so a later change to [2morigin/HEAD[0m — a renamed default branch followed by [2mgit remote set-head origin -a[0m — isn't picked up automatically. [2mwt config state[0m flags the drift when the cached value differs from the remote's local HEAD — expected for a deliberate override; [2mset[0m adopts the new branch and [2mclear[0m re-detects.
-
-An abandoned remote query is the one case that isn't cached: the branch it inferred locally answers that command, but a value guessed while the remote was unreachable would otherwise become permanent, so the next command queries again.
+Once detected, the result is cached in [2mworktrunk.default-branch[0m — except a value inferred after the remote query was abandoned, so an outage can't make a guess permanent. A later change to [2morigin/HEAD[0m isn't picked up automatically: [2mwt config state[0m flags the mismatch, [2mset[0m adopts the new branch, and [2mclear[0m re-detects.
 
 The local inference fallback uses these heuristics in order:
 - If only one local branch exists, uses it

@@ -12,8 +12,12 @@ docs-install = "npm --prefix docs install --prefer-offline --no-audit --no-fund"
 # worktree is removed (any path — `wt remove`, `git worktree remove`, `rm -rf`),
 # so no `pre-remove`/`post-remove` cleanup is needed. The worktree root is still
 # what teardown watches even though the server runs from `docs/`.
+# When `astro dev` detects an AI agent (`CLAUDECODE`, `CODEX_THREAD_ID`, …), it
+# respawns itself as a detached process, which tether can't reach and which
+# drops `--force`. `ASTRO_DEV_BACKGROUND=1`, the variable Astro sets on that
+# respawned child, keeps the server in the foreground.
 [[post-start]]
-docs = "wt step tether -C docs -- npm run dev -- --host 127.0.0.1 --port {{ branch | hash_port }}"
+docs = "ASTRO_DEV_BACKGROUND=1 wt step tether -C docs -- npm run dev -- --host 127.0.0.1 --port {{ branch | hash_port }}"
 
 [post-merge]
 clippy = "pre-commit run clippy --all-files || true"

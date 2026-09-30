@@ -57,6 +57,7 @@ export default defineConfig({
       },
       customCss: ['./src/styles/custom.css'],
       components: {
+        Footer: './src/components/Footer.astro',
         Head: './src/components/Head.astro',
         PageTitle: './src/components/PageTitle.astro',
         Pagination: './src/components/Pagination.astro',
@@ -64,6 +65,8 @@ export default defineConfig({
         ThemeSelect: './src/components/ThemeSelect.astro',
       },
       expressiveCode: {
+        // Shell examples render as plain code, without terminal window chrome.
+        defaultProps: { frame: 'code' },
         plugins: [pluginWorktrunkTerminal()],
         themes: [worktrunkDarkCodeTheme, worktrunkLightCodeTheme],
         useStarlightUiThemeColors: true,

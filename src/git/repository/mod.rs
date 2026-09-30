@@ -56,7 +56,9 @@
 //!   [`Repository::commit_to_tree_sha`].
 //! - *Expensive, worth persisting across invocations* (merge-tree, patch-id,
 //!   diff stats, ahead/behind) → the disk [`sha_cache`]; content-addressed by
-//!   SHA, so never stale.
+//!   SHA. An entry is stable while its producer's semantics are unchanged;
+//!   changing the producer can leave old answers in place across upgrades.
+//!   Assess that effect when changing a cache kind and describe it in the PR.
 //! - *Both expensive and hot-in-parallel* → an in-memory `DashMap` front over
 //!   the disk back, so parallel tasks don't race through the file cache for the
 //!   same key (the in-memory layer pays the first miss once; the disk layer
@@ -173,8 +175,9 @@ pub use diff::{CommitMessageDetail, PreparedDiff};
 pub use integration::{BranchDiffSpec, IntegrationTargets, select_comparison_base};
 pub use ref_snapshot::RefSnapshot;
 pub(super) use working_tree::path_to_logging_context;
+use working_tree::registration_worktree_path;
 pub use working_tree::{InProgressOperation, TempIndex, WorkingTree};
-pub use worktrees::duplicated_branches;
+pub use worktrees::{StaleWorktreeWork, duplicated_branches};
 
 // ============================================================================
 // Repository Cache
@@ -249,7 +252,8 @@ pub(super) struct RepoCache {
     pub(super) default_branch: OnceCell<Option<String>>,
     /// Upstream-aware comparison base for the diff/summary preview panes —
     /// [`integration::IntegrationTargets::primary`], resolved once. Repo-wide
-    /// like `default_branch`; captures a [`RefSnapshot`] on first access via
+    /// like `default_branch`; builds a [`RefSnapshot`] from the branch
+    /// inventories on first access via
     /// [`Repository::branch_diff_spec`]. `None` when no default branch resolves.
     pub(super) comparison_base: OnceCell<Option<integration::ComparisonBase>>,
     /// Project identifier derived from remote URL
@@ -304,14 +308,6 @@ pub(super) struct RepoCache {
     /// Separate from `all_config` because `git remote get-url` applies
     /// `url.insteadOf` rewrites that aren't visible in raw config.
     pub(super) effective_remote_urls: DashMap<String, Option<String>>,
-    /// Per-branch effective push URL: branch_name -> push URL (or None if
-    /// no push remote is configured). One `for-each-ref %(push:remotename)`
-    /// per branch, then `effective_remote_url` for the resolved remote name.
-    /// `wt list`'s CI-status detection calls `push_remote_url` from both the
-    /// PR-based path and the branch fallback (via `branch_remote_url`), so
-    /// the same branch is queried twice on the no-PR path — this cache
-    /// collapses that to one subprocess.
-    pub(super) push_remote_urls: DashMap<String, Option<String>>,
 
     /// Local branch inventory: one `git for-each-ref refs/heads/` scan, cached
     /// for the lifetime of the repository. Entries are sorted by most recent
@@ -320,8 +316,9 @@ pub(super) struct RepoCache {
     /// [`Repository::local_branches`].
     ///
     /// **The `commit_sha` field on each entry is a snapshot at scan time.**
-    /// Code that needs a current SHA must resolve through a [`RefSnapshot`]
-    /// captured at the moment the read happens — not through this inventory.
+    /// Code that needs a current SHA must resolve through
+    /// [`Repository::capture_refs`] at the moment the read happens — not
+    /// through this inventory or a snapshot built from it.
     /// Everything else the inventory holds goes stale the same way once the
     /// command runs a hook; [`Repository::local_branches`] owns that contract.
     pub(super) local_branches: OnceCell<branches::LocalBranchInventory>,
@@ -1470,9 +1467,11 @@ impl Repository {
     /// the reason that gate uses it rather than the `GIT_DIRS`-cached
     /// [`WorkingTree::git_dir`].
     ///
-    /// Two callers, with opposite readings of `None`:
+    /// Three callers, with different readings of `None`:
     /// [`Self::prime_worktree_path_caches`] declines to seed a cache entry and
-    /// leaves the answer to the subprocess, while the removal gate refuses.
+    /// leaves the answer to the subprocess, `separate_git_dir_work_tree`
+    /// declines the backlink it was confirming and falls back to
+    /// `parent(git_common_dir)`, and the removal gate refuses.
     fn git_dir_at(dir: &Path) -> Option<PathBuf> {
         let dot_git = dir.join(".git");
         // Follows a symlinked `.git`, as git and the subprocess fallback do.
@@ -1598,7 +1597,8 @@ impl Repository {
     /// |----------------------------|----------------------------|-------------------------------|
     /// | Bare `.git`                | `core.bare = true`         | `git_common_dir` is the repo  |
     /// | Submodule `.git/modules/X` | `core.worktree` set by git | `rev-parse --show-toplevel`   |
-    /// | Normal `.git`              | neither set                | `parent(git_common_dir)`      |
+    /// | Separate git dir           | `<common>/gitdir` backlink | `parent(backlink)`            |
+    /// | Normal `.git`              | none of the above          | `parent(git_common_dir)`      |
     ///
     /// Submodules need `core.worktree` because their git data lives in the
     /// parent's `.git/modules/` — the `parent(.git)` rule would point at
@@ -1613,6 +1613,12 @@ impl Repository {
     /// the probe fails (non-local value, git ignored it) we fall through
     /// to the normal-repo path. The common case — no `core.worktree`
     /// anywhere — skips the subprocess, which is the point.
+    ///
+    /// A repository whose git directory lives outside its work tree
+    /// (`--separate-git-dir`) has neither signal, and `parent(git_common_dir)`
+    /// names the store's parent rather than the work tree. The backlink git
+    /// writes there covers it where it exists; see
+    /// `separate_git_dir_work_tree` for when that is.
     ///
     /// # Errors
     ///
@@ -1641,6 +1647,10 @@ impl Repository {
                     return Ok(PathBuf::from(String::from_utf8_lossy(&out.stdout).trim()));
                 }
 
+                if let Some(work_tree) = self.separate_git_dir_work_tree() {
+                    return Ok(work_tree);
+                }
+
                 Ok(self
                     .git_common_dir
                     .parent()
@@ -1648,6 +1658,42 @@ impl Repository {
                     .to_path_buf())
             })
             .map(|p| p.as_path())
+    }
+
+    /// The work tree a `--separate-git-dir` repository records in its `gitdir`
+    /// backlink, if it has one.
+    ///
+    /// When the git directory lives outside the work tree, the work tree's
+    /// `.git` is a *file* pointing at the store and `parent(git_common_dir)`
+    /// names the store's parent — the wrong answer, and the one
+    /// `git worktree list` gives too, since git derives its main-worktree
+    /// entry by stripping a trailing `/.git` that isn't there (see the
+    /// submodule correction in [`Self::list_worktrees`], which this layout
+    /// trips the same way).
+    ///
+    /// Git's own record of the other direction is `<git-common-dir>/gitdir`,
+    /// holding the path of the work tree's `.git` file — the same format as a
+    /// linked worktree's `.git/worktrees/<name>/gitdir`, down to the relative
+    /// form git writes under `worktree.useRelativePaths`, so
+    /// [`registration_worktree_path`] reads it. Only
+    /// `git worktree repair` writes it; `git init --separate-git-dir` and
+    /// `git clone --separate-git-dir` leave the store with no backlink, so a
+    /// repository that has never been repaired records its work tree nowhere
+    /// and still falls through to `parent(git_common_dir)`. Running
+    /// `git worktree repair` from the work tree is what materializes it.
+    ///
+    /// The backlink is one-way, so it is confirmed rather than trusted:
+    /// [`Self::git_dir_at`] reads the `.git` entry sitting at the work tree it
+    /// names, and only a work tree that points back at this common dir is
+    /// accepted. A backlink left behind by a work tree that has since moved,
+    /// been deleted, or been re-pointed at another repository resolves to
+    /// something else and falls through to `parent(git_common_dir)` — the
+    /// same answer as before, rather than a path that no longer holds this
+    /// repository. That round trip is also why a normal repository or a
+    /// submodule can't misfire here on a stray `gitdir` file.
+    fn separate_git_dir_work_tree(&self) -> Option<PathBuf> {
+        let work_tree = registration_worktree_path(&self.git_common_dir)?;
+        (Self::git_dir_at(&work_tree)? == self.git_common_dir).then_some(work_tree)
     }
 
     /// Access the bulk git config map, populating on first call.
@@ -1731,6 +1777,25 @@ impl Repository {
         self.config_bool("core.bare")
     }
 
+    /// Whether `commit.gpgSign` asks for signed commits.
+    ///
+    /// `git commit` and `git merge` honor it; `git commit-tree` ignores it, so
+    /// a commit meant to match what porcelain would record passes `-S` itself.
+    /// Asked of git from this worktree rather than read from the cached config
+    /// map, which is read from the common dir and so misses worktree-scoped
+    /// config, and whose boolean parsing is not git's (a valueless key is true
+    /// to git).
+    pub fn signs_commits(&self) -> anyhow::Result<bool> {
+        let args = ["config", "--type=bool", "--get", "commit.gpgSign"];
+        let output = self.run_command_output(&args)?;
+        match output.status.code() {
+            Some(0) => Ok(String::from_utf8_lossy(&output.stdout).trim() == "true"),
+            // Exit 1: the key is unset.
+            Some(1) => Ok(false),
+            _ => Err(super::error::CommandError::from_failed_output("git", &args, &output).into()),
+        }
+    }
+
     /// Get the sparse checkout paths for this repository.
     ///
     /// Returns the list of paths from `git sparse-checkout list`. For non-sparse
@@ -1770,12 +1835,29 @@ impl Repository {
     /// Idempotent — if the daemon is already running, this is a no-op.
     /// Used to avoid auto-start races when running many parallel git commands.
     ///
+    /// A running daemon is detected in-process first, the way `git
+    /// fsmonitor--daemon start` itself checks before refusing with "already
+    /// running": connect to `<git-dir>/fsmonitor--daemon.ipc` and close. That
+    /// skips a ~20ms fork per worktree in the steady state, where every daemon
+    /// is already up. Any failure to connect (no daemon, stale socket, a path
+    /// too long for `sun_path`, an unresolvable git dir) falls through to the
+    /// fork, which starts the daemon or reports it running.
+    ///
     /// Uses `Command::status()` with null stdio instead of `Cmd::run()` to avoid
     /// pipe inheritance: the daemon process (`git fsmonitor--daemon run --detach`)
     /// inherits pipe file descriptors from its parent, keeping them open
     /// indefinitely. `read_to_end()` in `Command::output()` then blocks forever
     /// waiting for EOF that never comes.
     pub fn start_fsmonitor_daemon_at(&self, path: &Path) {
+        #[cfg(unix)]
+        if let Ok(git_dir) = self.worktree_at(path).git_dir()
+            && std::os::unix::net::UnixStream::connect(
+                git_dir.join(super::fsmonitor::IPC_SOCKET_NAME),
+            )
+            .is_ok()
+        {
+            return;
+        }
         let context = path_to_logging_context(path);
         let cmd_str = "git fsmonitor--daemon start";
         tracing::debug!(cmd = cmd_str, context = %context, "$ {cmd_str} [{context}]");
@@ -1904,7 +1986,12 @@ impl Repository {
         args: &[&str],
         timeout: Option<std::time::Duration>,
     ) -> anyhow::Result<String> {
-        self.run_command_inner(args, timeout, None)
+        Ok(String::from_utf8_lossy(&self.run_command_bytes_bounded(args, timeout)?).into_owned())
+    }
+
+    /// Run a git command and return stdout without decoding paths.
+    pub fn run_command_bytes(&self, args: &[&str]) -> anyhow::Result<Vec<u8>> {
+        self.run_command_bytes_bounded(args, None)
     }
 
     /// [`run_command`](Self::run_command) with `stdin` fed to the child — for
@@ -1915,15 +2002,24 @@ impl Repository {
         args: &[&str],
         stdin: Vec<u8>,
     ) -> anyhow::Result<String> {
-        self.run_command_inner(args, None, Some(stdin))
+        let stdout = self.run_command_bytes_inner(args, None, Some(stdin))?;
+        Ok(String::from_utf8_lossy(&stdout).into_owned())
     }
 
-    fn run_command_inner(
+    fn run_command_bytes_bounded(
+        &self,
+        args: &[&str],
+        timeout: Option<std::time::Duration>,
+    ) -> anyhow::Result<Vec<u8>> {
+        self.run_command_bytes_inner(args, timeout, None)
+    }
+
+    fn run_command_bytes_inner(
         &self,
         args: &[&str],
         timeout: Option<std::time::Duration>,
         stdin: Option<Vec<u8>>,
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<Vec<u8>> {
         let mut cmd = self.with_object_store_env(
             Cmd::new("git")
                 .args(args.iter().copied())
@@ -1947,21 +2043,20 @@ impl Repository {
             );
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        Ok(stdout)
+        Ok(output.stdout)
     }
 
     /// Run a git command and return whether it succeeded (exit code 0).
     ///
     /// This is useful for commands that use exit codes for boolean results,
-    /// like `git merge-base --is-ancestor` or `git diff --quiet`.
+    /// like `git merge-base --is-ancestor`.
     ///
     /// # Examples
     /// ```no_run
     /// use worktrunk::git::Repository;
     ///
     /// let repo = Repository::current()?;
-    /// let is_clean = repo.run_command_check(&["diff", "--quiet", "--exit-code"])?;
+    /// let merged = repo.run_command_check(&["merge-base", "--is-ancestor", "feature", "main"])?;
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn run_command_check(&self, args: &[&str]) -> anyhow::Result<bool> {

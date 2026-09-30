@@ -380,7 +380,7 @@ impl WorkingTreeStatus {
 /// Priority: ✘ > ↻ > ⊟ > ⊞ > ⊘ > ⚑ > /
 /// - ✘: Actual conflicts (must resolve)
 /// - ↻: A git operation is in progress (rebase, merge, cherry-pick, revert, bisect)
-/// - ⊟: Prunable (directory missing)
+/// - ⊟: Prunable (directory or its `.git` gone)
 /// - ⊞: Locked worktree
 /// - ⊘: Detached HEAD — the worktree is on a commit, not a branch
 /// - ⚑: Irregular branch ⇔ worktree mapping — the branch is checked out in

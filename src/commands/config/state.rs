@@ -69,6 +69,7 @@
 //! must remain files. If a future category needs multiple files, it should live
 //! under a single reserved subdirectory rather than adding sibling top-level dirs.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -77,7 +78,7 @@ use anyhow::Context;
 use color_print::cformat;
 use path_slash::PathExt as _;
 use worktrunk::git::{BranchRef, CommandError, Repository, resolve_input_path, sha_cache};
-use worktrunk::path::format_path_for_display;
+use worktrunk::path::{format_path_for_display, sanitize_for_filename};
 use worktrunk::styling::{
     eprintln, format_heading, format_with_gutter, hint_message, info_message, println,
     success_message, warning_message,
@@ -360,11 +361,12 @@ struct LogRow {
 
 /// Structured view of a hook-output log path. Values are the on-disk (sanitized)
 /// names, so filters like `select(.source == "user")` work without splitting
-/// the relative path on `/`.
+/// the relative path on `/`. The JSON `branch` field is the exception: it maps
+/// `branch_dir` back to the branch name (see [`branch_by_log_dir`]).
 struct HookStructure {
     /// First path segment — sanitized branch directory (may include a short
     /// collision-avoidance hash).
-    branch: String,
+    branch_dir: String,
     /// `"user"`, `"project"`, or `"internal"`.
     source: String,
     /// Hook type (`post-start`, `post-switch`, …) for user/project hooks;
@@ -377,15 +379,22 @@ struct HookStructure {
 
 impl LogRow {
     fn to_json(&self) -> serde_json::Value {
-        let mut obj = serde_json::json!({
+        serde_json::json!({
             "file": self.display_name,
             "path": self.path,
             "size": self.size,
             "modified_at": self.modified_at,
-        });
+        })
+    }
+
+    /// JSON for a hook-output row: the base fields plus the structured
+    /// segments, with `branch` resolved through `branch_by_dir`.
+    fn to_hook_json(&self, branch_by_dir: &HashMap<String, Option<String>>) -> serde_json::Value {
+        let mut obj = self.to_json();
         if let Some(s) = &self.hook_structure {
             let map = obj.as_object_mut().expect("json! produced an object");
-            map.insert("branch".into(), s.branch.clone().into());
+            let branch = branch_by_dir.get(&s.branch_dir).cloned().flatten();
+            map.insert("branch".into(), branch.into());
             map.insert("source".into(), s.source.clone().into());
             map.insert(
                 "hook_type".into(),
@@ -451,14 +460,14 @@ fn hook_output_log_row(log_dir: &Path, entry: &HookOutputEntry) -> LogRow {
 fn parse_hook_structure(relative: &str) -> Option<HookStructure> {
     let parts: Vec<&str> = relative.split('/').collect();
     match parts.as_slice() {
-        [branch, "internal", op_log] => Some(HookStructure {
-            branch: (*branch).to_string(),
+        [branch_dir, "internal", op_log] => Some(HookStructure {
+            branch_dir: (*branch_dir).to_string(),
             source: "internal".to_string(),
             hook_type: None,
             name: op_log.strip_suffix(".log").unwrap_or(op_log).to_string(),
         }),
-        [branch, source, hook_type, name_log] => Some(HookStructure {
-            branch: (*branch).to_string(),
+        [branch_dir, source, hook_type, name_log] => Some(HookStructure {
+            branch_dir: (*branch_dir).to_string(),
             source: (*source).to_string(),
             hook_type: Some((*hook_type).to_string()),
             name: name_log
@@ -509,12 +518,34 @@ fn partition_log_files_json(
         .iter()
         .map(|e| hook_output_log_row(&log_dir, e))
         .collect();
+    let branch_by_dir = branch_by_log_dir(repo)?;
 
     Ok((
         cmd_rows.iter().map(LogRow::to_json).collect(),
-        hook_rows.iter().map(LogRow::to_json).collect(),
+        hook_rows
+            .iter()
+            .map(|r| r.to_hook_json(&branch_by_dir))
+            .collect(),
         diagnostic_rows.iter().map(LogRow::to_json).collect(),
     ))
+}
+
+/// Map each hook-log branch directory back to the local branch that writes it.
+///
+/// A branch's logs live under `sanitize_for_filename(branch)`, which appends a
+/// one-way hash to names that aren't filename-safe (`feature/x` →
+/// `feature-x-<hash>`), so the directory alone can't recover the name.
+/// Sanitizing every local branch inverts it for the branches that still exist.
+/// A directory two branches share maps to `None`, as does (by absence) one
+/// whose branch was deleted, so `branch` in JSON is either exact or `null`.
+fn branch_by_log_dir(repo: &Repository) -> anyhow::Result<HashMap<String, Option<String>>> {
+    let mut map = HashMap::new();
+    for branch in repo.local_branches()? {
+        map.entry(sanitize_for_filename(&branch.name))
+            .and_modify(|b| *b = None)
+            .or_insert_with(|| Some(branch.name.clone()));
+    }
+    Ok(map)
 }
 
 /// Sort log rows by mtime (newest first), stable on display name.
@@ -713,7 +744,7 @@ pub fn handle_state_get(
         "default-branch" => {
             let branch_name = repo.default_branch().ok_or_else(|| {
                 anyhow::anyhow!(cformat!(
-                    "Cannot determine default branch. To configure, run <bold>wt config state default-branch set BRANCH</>"
+                    "Cannot determine default branch; to configure one, run <bold>wt config state default-branch set BRANCH</>"
                 ))
             })?;
             println!("{branch_name}");
@@ -1765,29 +1796,27 @@ pub fn handle_vars_clear(
 /// Clear all branch markers. Used by `state clear marker --all` and
 /// `state clear --all`.
 ///
-/// `get_config_regexp` returns an empty string when no keys match (git exit 1)
-/// and `Err` for real config errors — both the listing step and each
-/// `unset_config` call propagate errors so user-initiated clears never lie
-/// about success.
+/// `config_regexp_entries` returns an empty list when Git reports no matches.
+/// It returns `Err` for real config errors. Both the listing step and each
+/// `unset_config` call propagate errors so user-initiated clears never report
+/// false success.
 fn clear_all_markers(repo: &Repository) -> anyhow::Result<usize> {
     clear_matching_config(repo, r"^worktrunk\.state\..+\.marker$")
 }
 
 fn clear_matching_config(repo: &Repository, pattern: &str) -> anyhow::Result<usize> {
-    let output = repo.get_config_regexp(pattern)?;
+    let entries = repo.config_regexp_entries(pattern)?;
     let mut cleared = 0;
-    for line in output.lines() {
-        if let Some(config_key) = line.split_whitespace().next() {
-            repo.unset_config(config_key)?;
-            cleared += 1;
-        }
+    for (config_key, _) in entries {
+        repo.unset_config(&config_key)?;
+        cleared += 1;
     }
     Ok(cleared)
 }
 
 /// Clear all vars entries across all branches (used by handle_state_clear_all).
 ///
-/// Enumerates keys via `get_config_regexp` (not `all_vars_entries`) so a
+/// Enumerates keys via `config_regexp_entries` (not `all_vars_entries`) so a
 /// config read failure surfaces as an error — the display-path helper
 /// absorbs errors as empty, which would silently report "cleared 0" here.
 fn clear_all_vars(repo: &Repository) -> anyhow::Result<usize> {
@@ -1805,23 +1834,19 @@ pub(super) struct MarkerEntry {
 
 /// Get all branch markers from git config with timestamps
 pub(super) fn all_markers(repo: &Repository) -> Vec<MarkerEntry> {
-    let output = repo
-        .get_config_regexp(r"^worktrunk\.state\..+\.marker$")
+    let entries = repo
+        .config_regexp_entries(r"^worktrunk\.state\..+\.marker$")
         .unwrap_or_default();
 
     let mut markers = Vec::new();
-    for line in output.lines() {
-        // Format: "worktrunk.state.<branch>.marker json_value"
-        let Some((key, value)) = line.split_once(' ') else {
-            continue;
-        };
+    for (key, value) in entries {
         let Some(branch) = key
             .strip_prefix("worktrunk.state.")
             .and_then(|s| s.strip_suffix(".marker"))
         else {
             continue;
         };
-        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(value) else {
+        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&value) else {
             continue; // Skip invalid JSON
         };
         let Some(marker) = parsed.get("marker").and_then(|v| v.as_str()) else {

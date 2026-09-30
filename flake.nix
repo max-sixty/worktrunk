@@ -76,7 +76,7 @@
               # Required for tree-sitter (syntax-highlighting feature, enabled by default)
               tree-sitter
             ]
-            ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
+            ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
               libiconv
             ];
 
@@ -155,7 +155,7 @@
           # tests/ fixtures (prebuilt _git/ trees, .sh scripts, no-extension
           # git database files). Default features only — shell-integration-
           # tests wants a PTY and more shells than this derivation carries;
-          # the devShell below is where that set lives (see tests/CLAUDE.md →
+          # the devShell below is where that set lives (see tests/AGENTS.md →
           # "Feature Flags, Not Runtime Skipping").
           worktrunk-tests = craneLib.cargoTest (
             commonArgs
@@ -165,13 +165,15 @@
               # Tests shell out to a few host tools — `git` for the harness,
               # `python3` for argv-quoting and post-start fixtures, `ps`
               # (procps) for the pgid invariant test, `lsof` for the
-              # `--reap` process-discovery test. Without these on PATH
+              # `--reap` process-discovery test, `ssh-keygen` (openssh) for
+              # the `--no-ff` commit-signing test. Without these on PATH
               # the sandbox surfaces them as `No such file or directory`.
               nativeBuildInputs = commonArgs.nativeBuildInputs ++ [
                 pkgs.git
                 pkgs.python3
                 pkgs.procps
                 pkgs.lsof
+                pkgs.openssh
               ];
             }
           );

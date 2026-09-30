@@ -10,11 +10,13 @@ use crate::commands::list::columns::ColumnKind;
 
 /// A segment of statusline output with priority for smart truncation.
 ///
-/// Priorities match `wt list` column priorities (lower = more important):
+/// Priorities match `wt list` column priorities (lower = more important), and
+/// the Claude Code-only segments sit alongside them:
 /// - 0: Directory (Claude Code only)
 /// - 1: Branch, Model (Claude Code only)
-/// - 2: Status symbols
-/// - 3-9: Various stats (working diff, commits, upstream, CI, URL)
+/// - 2: Status symbols, context gauge (Claude Code only)
+/// - 3: Working diff, rate-limit pace (Claude Code only)
+/// - 4-9: The remaining stats (commits, CI, branch diff, upstream, URL)
 ///
 /// Use [`StatuslineSegment::fit_to_width`] to truncate by dropping low-priority
 /// segments first.

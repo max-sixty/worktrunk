@@ -837,7 +837,7 @@ pub(super) fn parse_working_tree_status(status_output: &str) -> (WorkingTreeStat
             has_staged = true;
         }
 
-        if index_status == 'R' {
+        if index_status == 'R' || worktree_status == 'R' {
             has_renamed = true;
         }
 
@@ -990,5 +990,17 @@ mod tests {
     fn tracked_changes_ignore_untracked_porcelain_entries() {
         assert!(!has_tracked_changes("?? artifact.bin"));
         assert!(has_tracked_changes("?? artifact.bin\n M src/main.rs"));
+    }
+
+    #[test]
+    fn worktree_rename_is_reported_as_dirty() {
+        let (status, is_dirty, has_conflicts) = parse_working_tree_status(" R old.txt -> new.txt");
+
+        assert_eq!(
+            status,
+            WorkingTreeStatus::new(false, false, false, true, false)
+        );
+        assert!(is_dirty);
+        assert!(!has_conflicts);
     }
 }

@@ -12,12 +12,12 @@ every sampled frame. This makes validation resilient to timing shifts from UI
 changes without allowing transient errors.
 
 Usage:
-    from shared.validation import validate_tui_demo, TUI_CHECKPOINTS
+    from shared.validation import validate_tui_demo_verbose
 
-    # Validate after building
-    errors = validate_tui_demo("wt-zellij-omnibus", gif_path)
-    if errors:
-        print("Validation failed:", errors)
+    # Validate after building, for the target the GIF was recorded at
+    passed, report = validate_tui_demo_verbose("wt-zellij-omnibus", gif_path, "docs")
+    if not passed:
+        print(report)
 """
 
 from __future__ import annotations
@@ -30,17 +30,32 @@ from pathlib import Path
 
 @dataclass
 class Checkpoint:
-    """A validation checkpoint that scans a range of frames."""
+    """A validation checkpoint that scans a range of frames.
+
+    A negative ``start`` or ``end`` counts back from the GIF's last frame (-1),
+    for checkpoints on the state a recording ends in. How many frames a tape
+    produces varies between runs with the recording machine's speed, so a
+    fixed frame number near the end can fall past a faster recording's end.
+
+    ``targets`` restricts a checkpoint to the build targets whose geometry it
+    was calibrated against. One tape records at each target's own size, so how
+    long a given line stays on screen differs between them: the docs terminal
+    is ~33 rows and the social one ~24, and output that persists to the end of
+    the docs recording can scroll away within a second in social. A checkpoint
+    on such a line holds only where it was measured. Leave it unset for a
+    checkpoint whose window is generous in every target.
+    """
 
     start: int
     end: int
     expected: list[str] = field(default_factory=list)
     forbidden: list[str] = field(default_factory=list)
     step: int = 10
+    targets: tuple[str, ...] | None = None
 
 
 # Checkpoint definitions per TUI demo.
-# Ranges are calibrated from actual GIF content at 30fps.
+# Ranges are calibrated from actual GIF content, which plays at 25fps.
 # Expected patterns must ALL be present (case-insensitive) in at least one
 # frame within the range. Every forbidden pattern must be absent from every
 # sampled frame.
@@ -48,27 +63,66 @@ class Checkpoint:
 TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
     "wt-switch": [
         Checkpoint(
-            start=360,
-            end=455,
+            start=-100,
+            end=-1,
             expected=["Claude Code", "Opus", "acme.dashboard"],
             forbidden=[
                 "Not logged in",
                 "Unknown command",
                 "Fable 5 is now",
                 "Tackle your toughest",
+                # The recorder's own Claude Code session leaking in.
+                "claude.ai/code",
+                "Transcript saving",
             ],
+        ),
+    ],
+    "wt-switch-picker": [
+        # The alt-p beat. Both halves of it matter: the columns the preview was
+        # covering appear, and the preview's own tab bar goes with it — and that
+        # second half is the only evidence the Alt binding reached the picker at
+        # all. Where an Alt key degrades to a plain keypress (a recorder that
+        # doesn't send Option as Meta), the tape types a "p" into the query
+        # instead: the list filters, the preview stays open, and the recording
+        # is wrong without anything failing. Scoped to docs because the social
+        # terminal is too narrow for these columns.
+        Checkpoint(
+            start=45,
+            end=95,
+            expected=["Commit", "Summary", "Reissue tokens"],
+            forbidden=["ctrl-u/d"],
+            targets=("docs",),
+        ),
+        # The comment thread behind alt-8, every line of it from the mocked
+        # forge. `reopen the picker` is how a failed fetch reads, and a forge
+        # mock that isn't reachable fails exactly that way.
+        Checkpoint(
+            start=345,
+            end=470,
+            expected=["normalize_path", "rmurthy"],
+            forbidden=["reopen the picker"],
+        ),
+        # The PR itself behind alt-7.
+        Checkpoint(
+            start=495,
+            end=550,
+            expected=["utility functions", "BRANCH", "alpha"],
+            forbidden=["reopen the picker"],
         ),
     ],
     "wt-statusline": [
         Checkpoint(
-            start=280,
-            end=410,
+            start=-130,
+            end=-1,
             expected=["Claude Code", "Opus", "acme.alpha"],
             forbidden=[
                 "Not logged in",
                 "Unknown command",
                 "Fable 5 is now",
                 "Tackle your toughest",
+                # The recorder's own Claude Code session leaking in.
+                "claude.ai/code",
+                "Transcript saving",
             ],
         ),
     ],
@@ -87,6 +141,9 @@ TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
                 "Not logged in",
                 "Fable 5 is now",
                 "Tackle your toughest",
+                # The recorder's own Claude Code session leaking in.
+                "claude.ai/code",
+                "Transcript saving",
             ],
         ),
         # Claude UI visible on TAB 2 (billing), without referral or model ads.
@@ -99,15 +156,29 @@ TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
                 "Share Claude Code",
                 "Fable 5 is now",
                 "Tackle your toughest",
+                # The recorder's own Claude Code session leaking in.
+                "claude.ai/code",
+                "Transcript saving",
             ],
         ),
-        # The API agent adds a test. Commit generation should describe that
-        # diff rather than replaying the feature-tab fixture's message.
+        # The API agent adds a test, and `wt merge` squashes it together with
+        # api's own commit. The generated message must describe that combined
+        # diff rather than replaying the feature-tab fixture's message — the
+        # squash prompt once diffed only the commits and missed the staged work.
+        #
+        # docs only. The message is printed mid-way through `wt merge`'s output
+        # and then pushed up by the rest of it, so it survives to the end of the
+        # ~33-row docs recording but scrolls off the ~24-row social one inside a
+        # second — an 18-frame window there, too narrow to sample reliably.
         Checkpoint(
-            start=1400,
-            end=1750,
+            start=-430,
+            end=-1,
             expected=["expand", "coverage"],
+            # The fixture message belongs to TAB 3's own commit, which has
+            # scrolled away by here; the squash-prompt bug put it on the merge's
+            # commit instead, inside this window.
             forbidden=["user settings module", "script -q"],
+            targets=("docs",),
         ),
         # The feature push uses a local demo remote internally, but its
         # disposable filesystem path must never appear in the recording.
@@ -117,12 +188,12 @@ TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
             expected=["Removing feature"],
             forbidden=["/var/folders/", "wt-demo-"],
         ),
-        # Near end — wt list --full showing all worktrees.
+        # The recording ends on wt list --full showing all worktrees.
         # "billing" omitted: depends on timing of when the branch appears
         # in the list relative to the frame window.
         Checkpoint(
-            start=1650,
-            end=1850,
+            start=-100,
+            end=-1,
             expected=["Branch", "main"],
             forbidden=[
                 "CONFLICT",
@@ -183,6 +254,25 @@ def extract_frames(
         for i, frame in enumerate(frames)
         if (out_dir / f"frame_{i + 1:04d}.png").exists()
     }
+
+
+def frame_count(gif_path: Path) -> int:
+    """Number of frames in a GIF."""
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v", "error",
+            "-count_frames",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=nb_read_frames",
+            "-of", "csv=p=0",
+            str(gif_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return int(result.stdout)
 
 
 def ocr_image(image_path: Path) -> str:
@@ -298,11 +388,15 @@ def validate_checkpoint(
 
     Returns (passed, detail_message).
     """
-    frame_numbers = list(range(checkpoint.start, checkpoint.end + 1, checkpoint.step))
+    start, end = checkpoint.start, checkpoint.end
+    if start < 0 or end < 0:
+        total = frame_count(gif_path)
+        start, end = (total + n if n < 0 else n for n in (start, end))
+    label = f"frames {start}-{end}"
+    frame_numbers = list(range(start, end + 1, checkpoint.step))
     frame_paths = extract_frames(gif_path, frame_numbers, work_dir)
 
     if not frame_paths:
-        label = f"frames {checkpoint.start}-{checkpoint.end}"
         return False, f"failed to extract {label}"
 
     best_errors: list[str] = []
@@ -338,7 +432,6 @@ def validate_checkpoint(
         if not best_errors or len(errors) < len(best_errors):
             best_errors = errors
 
-    label = f"frames {checkpoint.start}-{checkpoint.end}"
     if not frames_checked:
         return False, f"no readable frames in {label}"
     if matched_frame is not None:
@@ -346,36 +439,18 @@ def validate_checkpoint(
     return False, f"no match in {label} ({frames_checked} checked): {'; '.join(best_errors)}"
 
 
-def validate_tui_demo(demo_name: str, gif_path: Path) -> list[str]:
-    """Validate a TUI demo GIF against its checkpoints.
-
-    Returns list of error messages. Empty list means validation passed.
-    """
-    if demo_name not in TUI_CHECKPOINTS:
-        return [f"No checkpoints defined for demo: {demo_name}"]
-
-    if not gif_path.exists():
-        return [f"GIF not found: {gif_path}"]
-
-    missing = check_dependencies()
-    if missing:
-        return [f"Missing required tools: {', '.join(missing)}"]
-
-    checkpoints = TUI_CHECKPOINTS[demo_name]
-    all_errors = []
-
-    with tempfile.TemporaryDirectory(prefix="wt-validate-") as work_dir:
-        work_path = Path(work_dir)
-
-        for checkpoint in checkpoints:
-            passed, detail = validate_checkpoint(gif_path, checkpoint, work_path)
-            if not passed:
-                all_errors.append(detail)
-
-    return all_errors
+def checkpoints_for(demo_name: str, target: str) -> list[Checkpoint]:
+    """The checkpoints that apply to this demo in this build target."""
+    return [
+        c
+        for c in TUI_CHECKPOINTS[demo_name]
+        if c.targets is None or target in c.targets
+    ]
 
 
-def validate_tui_demo_verbose(demo_name: str, gif_path: Path) -> tuple[bool, str]:
+def validate_tui_demo_verbose(
+    demo_name: str, gif_path: Path, target: str
+) -> tuple[bool, str]:
     """Validate a TUI demo with verbose output.
 
     Returns (success, output_message).
@@ -392,7 +467,7 @@ def validate_tui_demo_verbose(demo_name: str, gif_path: Path) -> tuple[bool, str
     if missing:
         return False, f"Missing required tools: {', '.join(missing)}"
 
-    checkpoints = TUI_CHECKPOINTS[demo_name]
+    checkpoints = checkpoints_for(demo_name, target)
     all_passed = True
 
     with tempfile.TemporaryDirectory(prefix="wt-validate-") as work_dir:

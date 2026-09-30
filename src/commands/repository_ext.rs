@@ -4,11 +4,11 @@ use super::worktree::{RemovalPlan, SharedBranchCheckout};
 use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::git::{
-    BranchDeletionMode, GitError, IntegrationReason, RefSnapshot, Repository, WorktreeInfo,
-    parse_porcelain_z, parse_untracked_files,
+    BranchDeletionMode, GitError, IntegrationReason, RefSnapshot, Repository, WorkingTree,
+    WorktreeInfo, parse_porcelain_z, parse_untracked_files,
 };
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{eprintln, format_with_gutter, suggest_command, warning_message};
+use worktrunk::styling::{eprintln, format_with_gutter, hint_message, warning_message};
 
 /// Target for worktree removal.
 #[derive(Debug)]
@@ -31,9 +31,6 @@ pub enum RemoveTarget {
 /// CLI-only helpers implemented on [`Repository`] via an extension trait so we can keep orphan
 /// implementations inside the binary crate.
 pub trait RepositoryCliExt {
-    /// Warn about untracked files being auto-staged.
-    fn warn_if_auto_staging_untracked(&self) -> anyhow::Result<()>;
-
     /// Prepare the removal of whichever worktree or branch [`RemoveTarget`]
     /// names.
     ///
@@ -99,14 +96,6 @@ pub trait RepositoryCliExt {
 }
 
 impl RepositoryCliExt for Repository {
-    fn warn_if_auto_staging_untracked(&self) -> anyhow::Result<()> {
-        // Use -z for NUL-separated output to handle filenames with spaces/newlines
-        let status = self
-            .run_command(&["status", "--porcelain", "-z"])
-            .context("Failed to get status")?;
-        warn_about_untracked_files(&status)
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn prepare_worktree_removal(
         &self,
@@ -167,10 +156,12 @@ impl RepositoryCliExt for Repository {
                     .iter()
                     .find(|wt| wt.branch.as_deref() == Some(branch.as_str()))
                 {
+                    // `path` is already shell-ready, so the suggested command
+                    // interpolates it rather than passing it through
+                    // `suggest_command`, which would escape it a second time.
                     let path = format_path_for_display(&wt.path);
                     bail!(cformat!(
-                        "Branch <bold>{branch}</> gained a worktree @ <bold>{path}</> since it was selected; to remove that worktree, run <bold>{}</>",
-                        suggest_command("remove", &[&path], &[])
+                        "Branch <bold>{branch}</> gained a worktree @ <bold>{path}</> since it was selected; to remove that worktree, run <bold>wt remove {path}</>"
                     ));
                 }
                 // Check the branch exists locally, so a typo or a remote-only
@@ -224,54 +215,46 @@ impl RepositoryCliExt for Repository {
                     }
                     .into());
                 }
-                // Directory missing (e.g. external `rm -rf`): fall back to
-                // branch-only deletion, recording the stale entry in the plan
-                // so execution unregisters it — planning stays a pure read
-                // (`wt step prune`'s scan doubles as `--dry-run`, and `wt
-                // remove` plans before its approval prompt). A detached
-                // worktree has no branch to fall back to, so an absent
-                // directory leaves it to the prunable arm below rather than
-                // here.
-                //
-                // The recorded prune names this worktree rather than sweeping
-                // the repo, so a sibling whose directory is merely absent
-                // right now keeps its registration. `git worktree remove`
-                // refuses a locked worktree where a repo-wide prune ignored
-                // one, which needs no guard here: the lock check above already
-                // returned for every locked entry in this arm.
-                //
-                // `exists()` is that cleanup's precondition rather than a
-                // proxy for health: `prune_worktree_entry` unregisters with
-                // `git worktree remove`, which skips its validation only while
-                // the directory is absent.
-                if let Some(branch) = wt.branch.as_deref()
-                    && !wt.path.exists()
-                {
+                // Stale entry — git calls it prunable once `<path>/.git` is
+                // gone, whether the whole directory went (an external `rm -rf`)
+                // or was recreated empty (an interrupted `wt switch`). Git
+                // withholds `prunable` from a locked entry, and the lock guard
+                // above has returned for those anyway. Fall back to branch-only
+                // deletion, recording the entry in the plan so execution
+                // unregisters it and leaves any directory in place — planning
+                // stays a pure read (`wt step prune`'s scan doubles as
+                // `--dry-run`, and `wt remove` plans before its approval
+                // prompt). The recorded prune names this worktree rather than
+                // sweeping the repo, so a sibling whose directory is merely
+                // absent right now keeps its registration. An entry whose
+                // registration holds staged changes or an operation partway
+                // through is kept unless `--force` waives it, as it waives a
+                // live worktree's uncommitted changes: unregistering deletes
+                // those, and `git worktree repair` can still bring them back.
+                if wt.is_prunable() {
+                    // A detached entry has no branch to fall back to, and no
+                    // plan shape of its own, so it is reported rather than
+                    // removed. `wt step prune` unregisters one without a plan.
+                    let Some(branch) = wt.branch.clone() else {
+                        return Err(GitError::worktree_missing(
+                            wt.dir_name().to_string(),
+                            &wt.path,
+                        )
+                        .into());
+                    };
+                    if !force_worktree && let Some(work) = self.stale_worktree_work(&wt.path)? {
+                        return Err(GitError::StaleWorktreeHoldsWork {
+                            branch,
+                            path: wt.path.clone(),
+                            directory_remains: wt.path.is_dir(),
+                            work,
+                        }
+                        .into());
+                    }
                     Resolved::BranchOnly {
                         pruned_from: Some(wt.path.clone()),
-                        branch: branch.to_string(),
+                        branch,
                     }
-                } else if wt.is_prunable() {
-                    // Still registered, but the directory no longer holds this
-                    // worktree. Two shapes reach here: one deleted and
-                    // recreated, which is what an interrupted `wt switch`
-                    // leaves behind; and a detached one simply deleted, which
-                    // the branch-only cleanup above cannot take because it has
-                    // no branch to fall back to. Neither route out of here
-                    // works: that cleanup wants a branch *and* an absent
-                    // directory, and for the recreated directory the removal
-                    // below walks into git's own validation a few calls later,
-                    // reaching the user as a raw `exit 128`. The hint names the
-                    // repo-wide `git worktree prune` because it is what clears
-                    // both; the detached one, whose directory is absent, a
-                    // targeted `git worktree remove <path>` would also clear.
-                    return Err(GitError::WorktreeMissing {
-                        branch: wt
-                            .branch
-                            .clone()
-                            .unwrap_or_else(|| wt.dir_name().to_string()),
-                    }
-                    .into());
                 } else {
                     let is_current = worktrunk::path::paths_match(&wt.path, current_path);
                     Resolved::Worktree {
@@ -299,6 +282,10 @@ impl RepositoryCliExt for Repository {
         if let Some(branch) = branch_name {
             check_not_default_branch(self, branch, &deletion_mode)?;
         }
+        // An orphan worktree's branch is unborn until its first commit: it has
+        // no ref, so there is nothing for the removal to delete.
+        let branch_unborn =
+            branch_name.is_some_and(|branch| snapshot.local_branch(branch).is_none());
 
         // Phase 4: Return BranchOnly early (after validation), or continue to
         // worktree-level checks. Branch-only removals have no pre-remove hook,
@@ -315,14 +302,18 @@ impl RepositoryCliExt for Repository {
                     live_sibling_checkout(worktrees, &branch, target)
                         .map(|sibling| SharedBranchCheckout::new(&sibling.path, &deletion_mode))
                 });
-                if let Some(shared) = shared {
+                // A shared branch stays for its sibling, and an unborn one has
+                // no ref to delete, so either way pruning the entry is the whole
+                // removal.
+                if shared.is_some() || branch_unborn {
                     return Ok(RemovalPlan::BranchOnly {
                         branch_name: branch,
                         deletion_mode: BranchDeletionMode::Keep,
                         prune_entry: pruned_from,
                         target_branch: None,
                         integration_reason: None,
-                        branch_checked_out_at: Some(shared),
+                        branch_checked_out_at: shared,
+                        detached_worktree: None,
                     });
                 }
                 let default_branch = self.default_branch();
@@ -341,6 +332,7 @@ impl RepositoryCliExt for Repository {
                     target_branch,
                     integration_reason,
                     branch_checked_out_at: None,
+                    detached_worktree: None,
                 });
             }
             Resolved::Worktree {
@@ -393,32 +385,32 @@ impl RepositoryCliExt for Repository {
         // retention prediction. The actual branch deletion re-decides against
         // fresh refs (`delete_branch_if_safe`'s CAS), so this is display-only.
         //
-        // A retained shared branch skips all of it: forcing `Keep` — the single
-        // chokepoint every deletion path honors — settles the outcome, so an
-        // integration verdict would only be computed to be ignored, and
-        // reporting one alongside a branch that survives reads as a
-        // contradiction.
-        let (deletion_mode, target_branch, integration_reason) = if branch_checked_out_at.is_some()
-        {
-            (BranchDeletionMode::Keep, None, None)
-        } else {
-            let default_branch = self.default_branch();
-            let target_branch = match (&default_branch, &branch_name) {
-                (Some(db), Some(bn)) if db == bn => None,
-                _ => default_branch,
+        // A shared branch, retained for its sibling, skips all of it, as does
+        // an unborn one, which has nothing to delete. Forcing `Keep` — the
+        // single chokepoint every deletion path honors — settles the outcome,
+        // so an integration verdict would only be computed to be ignored, and
+        // beside a branch that survives it reads as a contradiction.
+        let (deletion_mode, target_branch, integration_reason) =
+            if branch_checked_out_at.is_some() || branch_unborn {
+                (BranchDeletionMode::Keep, None, None)
+            } else {
+                let default_branch = self.default_branch();
+                let target_branch = match (&default_branch, &branch_name) {
+                    (Some(db), Some(bn)) if db == bn => None,
+                    _ => default_branch,
+                };
+                let (integration_reason, target_branch) = match compute_integration_reason(
+                    self,
+                    snapshot,
+                    branch_name.as_deref(),
+                    target_branch.as_deref(),
+                    deletion_mode,
+                ) {
+                    (reason, Some(effective_target)) => (reason, Some(effective_target)),
+                    (reason, None) => (reason, target_branch),
+                };
+                (deletion_mode, target_branch, integration_reason)
             };
-            let (integration_reason, target_branch) = match compute_integration_reason(
-                self,
-                snapshot,
-                branch_name.as_deref(),
-                target_branch.as_deref(),
-                deletion_mode,
-            ) {
-                (reason, Some(effective_target)) => (reason, Some(effective_target)),
-                (reason, None) => (reason, target_branch),
-            };
-            (deletion_mode, target_branch, integration_reason)
-        };
 
         // Capture commit SHA before removal for post-remove hook template variables.
         // This ensures {{ commit }} references the removed worktree's state.
@@ -461,18 +453,18 @@ impl RepositoryCliExt for Repository {
         // filenames with spaces and renames ("XY path\0" for normal files,
         // "XY new_path\0old_path\0" for renames/copies).
         let wt = self.worktree_at(wt_path);
-        let wt_status_output = wt.run_command(&["status", "--porcelain", "-z", "-uall"])?;
-        if wt_status_output.trim().is_empty() {
+        let wt_status_output = wt.run_command_bytes(&["status", "--porcelain", "-z", "-uall"])?;
+        if wt_status_output.is_empty() {
             return Ok(());
         }
 
         let push_files = self.changed_files(target_branch, "HEAD")?;
-        let wt_files: Vec<String> = parse_porcelain_z(&wt_status_output);
+        let wt_files = parse_porcelain_z(&wt_status_output);
 
         let overlapping: Vec<String> = push_files
             .iter()
             .filter(|f| wt_files.contains(f))
-            .cloned()
+            .map(|path| String::from_utf8_lossy(path).into_owned())
             .collect();
 
         if !overlapping.is_empty() {
@@ -583,10 +575,17 @@ pub(crate) fn compute_integration_reason(
 /// with an unresolvable `HEAD`, so every removal that could delete a branch
 /// asks this first.
 ///
-/// Only a live directory counts. A sibling entry whose directory is already
-/// gone is stale metadata awaiting `git worktree prune`, not a checkout with
-/// anything to lose — retaining a branch for it would strand the branch and
-/// point the user at a directory that isn't there.
+/// Only a live directory counts: a sibling entry whose directory is gone is
+/// stale metadata awaiting `git worktree prune`, not a checkout with anything
+/// to lose, and retaining a branch for it would strand the branch and point the
+/// user at a directory that isn't there.
+///
+/// `exists()` is the test, not [`Repository::worktree_is_unusable`], which the
+/// rest of the removal path uses. The two disagree on a directory that is
+/// present but no longer holds its worktree, and the disagreement is
+/// asymmetric: calling a dead sibling live retains a branch nobody needed,
+/// while calling a live one dead deletes a branch a checkout still resolves.
+/// This answer only ever gates a deletion, so it takes the conservative test.
 pub(crate) fn live_sibling_checkout<'a>(
     worktrees: &'a [WorktreeInfo],
     branch: &str,
@@ -619,8 +618,21 @@ pub(crate) fn check_not_default_branch(
 }
 
 /// Warn about untracked files that will be auto-staged.
-pub(crate) fn warn_about_untracked_files(status_output: &str) -> anyhow::Result<()> {
-    let files = parse_untracked_files(status_output);
+///
+/// Paths come from git's `normal` untracked mode, which overrides a
+/// `status.showUntrackedFiles=no` that would hide them and names a wholly
+/// untracked directory once as `dir/`. A directory of generated files then
+/// takes one row instead of pushing the paths beside it past the cap.
+///
+/// The listing has at most `MAX_ROWS` rows. Past that many paths, the last row
+/// is a hint counting the rest, which is always at least two paths.
+pub(crate) fn warn_about_untracked_files(wt: &WorkingTree) -> anyhow::Result<()> {
+    const MAX_ROWS: usize = 10;
+
+    let status = wt
+        .run_command(&["status", "--porcelain", "-z", "-unormal"])
+        .context("Failed to get status")?;
+    let files = parse_untracked_files(&status);
     if files.is_empty() {
         return Ok(());
     }
@@ -632,8 +644,16 @@ pub(crate) fn warn_about_untracked_files(status_output: &str) -> anyhow::Result<
         warning_message(format!("Auto-staging {count} untracked {path_word}:"))
     );
 
-    let joined_files = files.join("\n");
-    eprintln!("{}", format_with_gutter(&joined_files, None));
+    let listed = if count > MAX_ROWS {
+        MAX_ROWS - 1
+    } else {
+        count
+    };
+    eprintln!("{}", format_with_gutter(&files[..listed].join("\n"), None));
+    if listed < count {
+        let omitted = count - listed;
+        eprintln!("{}", hint_message(format!("… and {omitted} other paths")));
+    }
 
     Ok(())
 }
@@ -719,95 +739,6 @@ mod tests {
             worktrunk::path::paths_match(&found.path, &survivor),
             "only the canonical target path may be excluded"
         );
-    }
-
-    #[test]
-    fn test_parse_porcelain_z_modified_staged() {
-        // "M  file.txt\0" - staged modification
-        let output = "M  file.txt\0";
-        assert_eq!(parse_porcelain_z(output), vec!["file.txt"]);
-    }
-
-    #[test]
-    fn test_parse_porcelain_z_modified_unstaged() {
-        // " M file.txt\0" - unstaged modification (this was the bug case)
-        let output = " M file.txt\0";
-        assert_eq!(parse_porcelain_z(output), vec!["file.txt"]);
-    }
-
-    #[test]
-    fn test_parse_porcelain_z_modified_both() {
-        // "MM file.txt\0" - both staged and unstaged
-        let output = "MM file.txt\0";
-        assert_eq!(parse_porcelain_z(output), vec!["file.txt"]);
-    }
-
-    #[test]
-    fn test_parse_porcelain_z_untracked() {
-        // "?? new.txt\0" - untracked file
-        let output = "?? new.txt\0";
-        assert_eq!(parse_porcelain_z(output), vec!["new.txt"]);
-    }
-
-    #[test]
-    fn test_parse_porcelain_z_rename() {
-        // "R  new.txt\0old.txt\0" - rename includes both paths
-        let output = "R  new.txt\0old.txt\0";
-        let result = parse_porcelain_z(output);
-        assert_eq!(result, vec!["new.txt", "old.txt"]);
-    }
-
-    #[test]
-    fn test_parse_porcelain_z_copy() {
-        // "C  copy.txt\0original.txt\0" - copy includes both paths
-        let output = "C  copy.txt\0original.txt\0";
-        let result = parse_porcelain_z(output);
-        assert_eq!(result, vec!["copy.txt", "original.txt"]);
-    }
-
-    #[test]
-    fn test_parse_porcelain_z_multiple_files() {
-        // Multiple files with different statuses
-        let output = " M file1.txt\0M  file2.txt\0?? untracked.txt\0R  new.txt\0old.txt\0";
-        let result = parse_porcelain_z(output);
-        assert_eq!(
-            result,
-            vec![
-                "file1.txt",
-                "file2.txt",
-                "untracked.txt",
-                "new.txt",
-                "old.txt"
-            ]
-        );
-    }
-
-    #[test]
-    fn test_parse_porcelain_z_filename_with_spaces() {
-        // "M  file with spaces.txt\0"
-        let output = "M  file with spaces.txt\0";
-        assert_eq!(parse_porcelain_z(output), vec!["file with spaces.txt"]);
-    }
-
-    #[test]
-    fn test_parse_porcelain_z_empty() {
-        assert_eq!(parse_porcelain_z(""), Vec::<String>::new());
-    }
-
-    #[test]
-    fn test_parse_porcelain_z_short_entry_skipped() {
-        // Entry too short to have path (malformed, shouldn't happen in practice)
-        let output = "M\0";
-        assert_eq!(parse_porcelain_z(output), Vec::<String>::new());
-    }
-
-    #[test]
-    fn test_parse_porcelain_z_rename_missing_old_path() {
-        // Rename without old path (malformed, but should handle gracefully)
-        let output = "R  new.txt\0";
-        let result = parse_porcelain_z(output);
-        // Should include new.txt, old path is simply not added
-        assert_eq!(result, vec!["new.txt"]);
     }
 
     #[test]

@@ -447,7 +447,7 @@ const TEST_IDENTITY_EMAIL: &str = "test@example.com";
 /// settings. The hermetic latch (`shell_exec::enable_hermetic_test_env`)
 /// puts both on every `Cmd` child, so an in-process git resolves those
 /// rather than the developer's — see the Git Config Isolation section of
-/// `tests/CLAUDE.md`.
+/// `tests/AGENTS.md`.
 ///
 /// `protocol.allow = never` with a `file` exception is the config spelling of
 /// `GIT_ALLOW_PROTOCOL=file` (see [`GIT_ALLOWED_PROTOCOLS`] for why the suite
@@ -869,7 +869,7 @@ pub fn test_tempdir() -> TempDir {
 /// Hundreds of thousands of stale entries cost nothing to ignore but are
 /// expensive to enumerate, and `git::recover::recover_from_path` reads every
 /// ancestor directory of a deleted CWD — the measured cost is in
-/// `tests/CLAUDE.md` → Profiling the Suite. One fixed directory never grows.
+/// `tests/AGENTS.md` → Profiling the Suite. One fixed directory never grows.
 fn isolated_test_cwd() -> &'static Path {
     static ISOLATED_CWD: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| {
         let dir = test_temp_root().join("isolated-cwd");
@@ -1414,8 +1414,10 @@ impl TestRepo {
     }
 
     /// Shared initializer for `new()`, `bare()`, and `empty()`: makes a tempdir
-    /// and runs `git init` with the given arguments inside it.
-    fn init_repo(git_args: &[&str]) -> Self {
+    /// and runs `git init` with the given arguments inside it. Public for a
+    /// test that needs an `init` option no named constructor covers, such as
+    /// `--object-format=sha256`.
+    pub fn init_repo(git_args: &[&str]) -> Self {
         shell_exec::enable_hermetic_test_env();
         let temp_dir = test_tempdir();
         let root = temp_dir.path().join("repo");
@@ -2356,14 +2358,14 @@ impl TestRepo {
             .write(mock_bin);
     }
 
-    /// Make `claude`, `codex`, `opencode`, `omp`, and `gemini` resolvable on `PATH`.
+    /// Make `claude`, `codex`, `opencode`, `omp`, `pi`, and `gemini` resolvable on `PATH`.
     ///
     /// The `setup_mock_*_installed` helpers force detection through the
     /// `WORKTRUNK_TEST_*_INSTALLED` env overrides, so the `which::which`
     /// lookup inside each `is_*_available()` never runs under test. This
     /// helper instead drops those overrides and prepends real mock
     /// executables, exercising the production PATH-detection path for all
-    /// five AI CLIs at once. Call `setup_mock_ci_tools_unauthenticated()`
+    /// six AI CLIs at once. Call `setup_mock_ci_tools_unauthenticated()`
     /// first to create the mock bin directory.
     pub fn setup_mock_clis_on_path(&mut self) {
         let mock_bin = self
@@ -2373,7 +2375,7 @@ impl TestRepo {
         // The mocks answer nothing, so each `--json` listing `wt config show`
         // asks for fails and the section renders its "not installed" hint.
         // What this test covers is the `which::which` detection above it.
-        for cli in ["claude", "codex", "opencode", "omp", "gemini"] {
+        for cli in ["claude", "codex", "opencode", "omp", "pi", "gemini"] {
             MockConfig::new(cli).write(mock_bin);
         }
         self.detect_clis_via_path = true;
@@ -3035,6 +3037,7 @@ impl TestRepo {
                 "WORKTRUNK_TEST_CODEX_INSTALLED",
                 "WORKTRUNK_TEST_OPENCODE_INSTALLED",
                 "WORKTRUNK_TEST_PI_INSTALLED",
+                "WORKTRUNK_TEST_OMP_INSTALLED",
                 "WORKTRUNK_TEST_GEMINI_INSTALLED",
             ] {
                 cmd.env_remove(var);

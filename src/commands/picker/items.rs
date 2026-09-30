@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use ansi_to_tui::IntoText;
 use anstyle::Reset;
-use color_print::cformat;
+use color_print::{cformat, cstr};
 use dashmap::DashMap;
 use ratatui::style::{Color, Modifier};
 use ratatui::text::{Line, Span};
@@ -374,7 +374,7 @@ impl SkimItem for HeaderSkimItem {
 
 /// What the shared porcelain snapshot says about the worktree diff path.
 /// Only an untracked file requires the temporary-index path; tracked-only
-/// changes can use ordinary `git diff` without copying or updating an index.
+/// changes can diff against the real index without copying or updating one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WorktreeDiffState {
     Clean,
@@ -727,11 +727,11 @@ pub(super) fn pr_status_pane_eq(
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) struct LocalContent {
     /// `working_tree`: staged, unstaged, or untracked changes exist. Matches the
-    /// pane's temporary-index `git diff HEAD`. `Some(false)` for a branch-only
-    /// row (no working tree to diff).
+    /// pane's temporary-index `git diff-index HEAD`. `Some(false)` for a
+    /// branch-only row (no working tree to diff).
     working_tree: Option<bool>,
     /// Tracked working-tree changes exist. The Summary pane's existing
-    /// combined-diff source uses ordinary `git diff HEAD`, which intentionally
+    /// combined-diff source uses `git diff-index HEAD` on the real index, which intentionally
     /// excludes untracked files, so its availability must not reuse the
     /// untracked-inclusive `working_tree` signal above.
     summary_working_tree: Option<bool>,
@@ -742,7 +742,7 @@ pub(super) struct LocalContent {
     /// (`TaskContext::comparison_base` — the upstream ref when the local default
     /// lags it), so a stale fork default doesn't inflate it. The branch-diff and
     /// summary panes diff against the **same** base
-    /// (`Repository::branch_diff_spec`), so the dimmed number and the pane agree
+    /// (`Repository::branch_diff_spec`), so the dimmed tab and the pane agree
     /// even on a fork whose local default lags upstream.
     branch_diff: Option<bool>,
     /// `upstream`: the branch is ahead of or behind its tracking ref. Combined
@@ -790,10 +790,10 @@ impl LocalContent {
 
 /// Which preview tabs have renderable content for the selected row.
 ///
-/// Empty tabs are de-emphasized in the bar (number dimmed). Skim computes a
-/// preview once per selection and cannot re-query it mid-selection (see
-/// `loading_placeholder`). Two genuine axes drive availability, and `--prs`
-/// touches neither — it only decides whether a PR row is *listed* at all:
+/// Empty tabs are dimmed in the bar. Skim computes a preview once per selection
+/// and cannot re-query it mid-selection (see `loading_placeholder`). Two genuine
+/// axes drive availability, and `--prs` touches neither — it only decides
+/// whether a PR row is *listed* at all:
 ///
 /// - The local-checkout tabs: the three subsidiary diff tabs (`working_tree` /
 ///   `branch_diff` / `upstream`) follow the row's live [`LocalContent`]
@@ -908,15 +908,39 @@ struct Tab {
     has_content: bool,
 }
 
+impl Tab {
+    /// Style the text that speaks for this tab — its label, or in the compact
+    /// bar the bare digit that replaces one — with the bar's two signals (see
+    /// [`render_preview_tabs`]): brightness carries availability (normal = has
+    /// content, dim = empty for this row) and underline carries the active tab.
+    /// Bold reinforces an active tab that has content. An active-but-empty tab
+    /// takes the underline alone, because `[2m[1m` leaves the terminal to pick
+    /// one intensity and the dim is the signal worth keeping.
+    fn styled(&self, text: &str) -> String {
+        match (self.has_content, self.is_active) {
+            (true, true) => cformat!("<bold,underline>{}</>", text),
+            (true, false) => text.to_string(),
+            (false, true) => cformat!("<dim,underline>{}</>", text),
+            (false, false) => cformat!("<dim>{}</>", text),
+        }
+    }
+}
+
 /// Longest preview body handed to skim, in lines.
 ///
-/// skim keeps the pane's line count in a `u16` and `unwrap()`s the conversion
-/// (`total_lines` in skim 5.6.5's `src/tui/preview.rs`), so a body over 65,535
-/// lines aborts the whole process instead of rendering — the picker paints,
-/// then dies once the preview lands (#3958). A `git diff <default>...<branch>`
-/// on a long-lived branch clears that on its own. The cap sits under the
-/// ceiling rather than at it because the body isn't the whole pane: the tab bar
-/// and this notice ride above it and count toward the same total.
+/// skim scrolls the pane through ratatui's `Paragraph::scroll`, whose offset is
+/// a `u16` (`render_text` in skim 5.7.0's `src/tui/preview.rs` clamps with
+/// `u16::try_from(self.scroll_y).unwrap_or(u16::MAX)`), so a body over 65,535
+/// lines renders a tail the user can never scroll to and is given no sign of.
+/// A branch diff against the default branch on a long-lived branch clears that on its
+/// own. The cap sits under the ceiling rather than at it because the body isn't
+/// the whole pane: the tab bar and this notice ride above it and count toward
+/// the same total.
+///
+/// Through skim 5.6.6 the same ceiling was a `u16` line *count* that skim
+/// `unwrap()`ed, so an oversized body aborted the process instead — the picker
+/// painted, then died once the preview landed (#3958). 5.7.0 widened
+/// `total_lines` to `usize`, leaving the scroll offset as the live limit.
 const MAX_PREVIEW_LINES: usize = 60_000;
 
 /// Cap a preview body at [`MAX_PREVIEW_LINES`], returning the body to render
@@ -946,25 +970,37 @@ fn cap_preview_lines(mut body: String) -> (String, Option<String>) {
 /// Render the preview tab bar, shared by worktree rows and `--prs` rows.
 ///
 /// Every full-form tab keeps its `N: label` text — only the formatting varies,
-/// so the accelerators stay discoverable. Two **orthogonal** signals carry
-/// through the styling: the **number's** brightness says whether the tab is
-/// selectable (normal = has content, dim = empty for this row — see
-/// `TabAvailability`), and the **label's** weight says whether it's the active
-/// mode (bold = active, dim = inactive). The two compose independently: an empty
-/// tab dims its number whether or not it's selected, but the active tab's label
-/// still bolds — so an active-but-empty tab (dim number, bold label) stays
-/// distinct from an inactive-empty one (dim number, dim label), and the selected
-/// tab is always identifiable even when it has nothing to show (its pane, e.g.
-/// "… has no PR", says the rest).
+/// so the accelerators stay discoverable. The **label** carries two
+/// **orthogonal** signals: **brightness** says whether the tab is selectable
+/// (normal = has content, dim = empty for this row — see `TabAvailability`),
+/// and **underline** marks the active mode. The two compose independently, so
+/// an active-but-empty label (dim, underlined) stays distinct both from an
+/// inactive-empty one (dim) and from an active label that has content (bold,
+/// underlined) — the selected tab is always identifiable even when it has
+/// nothing to show (its pane, e.g. "… has no PR", says the rest).
+///
+/// The accelerator digit and the [`TAB_DIVIDER`]s stay out of it: `alt-N` opens
+/// any tab whatever the row holds, so a digit that dimmed would describe the
+/// label beside it rather than the key, and dividers that didn't dim would be
+/// the brightest thing left on a row whose labels are mostly empty.
+///
+/// Underline is the one attribute this pane spends twice —
+/// [`pr_pane::url_line`] underlines a URL a few rows below the bar — and that's
+/// a decision rather than an oversight: nothing in a preview is clickable, so
+/// neither underline is marking a link, and the alternatives cost more. Reverse
+/// video cancels the dim it would have to compose with, and a leading glyph
+/// shifts every later tab's column as the active one moves.
 ///
 /// **Width adaptation.** skim renders previews with wrapping off (its default),
 /// so a tab bar wider than `width` would truncate on the right — and the `pr` /
 /// `comments` tabs, exactly the ones with content on a `--prs` row, sit at that
 /// end. When the eight full-form tabs don't fit, the bar falls back to a compact
 /// form (`1 2: log 3 …`): every accelerator digit stays visible, but only the
-/// active tab keeps its label. The two style signals survive — empty digits dim,
-/// the active digit+label bolds — so navigation works at any width. `width` is
-/// the preview pane width skim reports.
+/// active tab keeps its label. An inactive tab is then a bare digit with no
+/// label to carry the signals, so there the digit takes the label's styling —
+/// empty digits dim, and the active tab's label still bolds and underlines — so
+/// navigation works at any width. `width` is the preview pane width skim
+/// reports.
 pub(super) fn render_preview_tabs(
     mode: PreviewMode,
     avail: TabAvailability,
@@ -998,7 +1034,7 @@ pub(super) fn render_preview_tabs(
         render_tab_row_compact(&tabs, reset)
     };
 
-    // Controls use dim cyan to distinguish from the dimmed (white) tabs above.
+    // Controls use dim cyan to distinguish from the white tabs above.
     // The tab numbers above are the alt-N accelerators (bare digits type
     // into the query); Tab/shift-tab cycle the same tabs.
     //
@@ -1021,51 +1057,36 @@ pub(super) fn render_preview_tabs(
     format!("{bar}\n{controls}{reset}\n\n")
 }
 
-/// Full tab bar: `N: label` per tab, ` | `-separated. The number dims when the
-/// tab is empty (not selectable), and the label bolds on the active tab — two
-/// orthogonal signals that compose (see [`render_preview_tabs`]).
+/// The separator between full-form tabs, dim so the labels are what the bar
+/// reads as. A constant because the bar's reset invariant is stated against it
+/// (`test_render_preview_tabs_ansi_codes` splits on it).
+///
+/// It closes its dim with the SGR 22 that `</>` emits rather than with a full
+/// reset — unlike the pane's other styled runs (see `pr_pane::branch_line`),
+/// it sits between two tabs that each end at one, so its own span is all it has
+/// to clear.
+const TAB_DIVIDER: &str = cstr!("<dim> | </>");
+
+/// Full tab bar: `N: ` then the label styled by [`Tab::styled`], tabs joined by
+/// [`TAB_DIVIDER`].
 fn render_tab_row_full(tabs: &[Tab], reset: Reset) -> String {
     tabs.iter()
-        .map(|t| {
-            let number = if t.has_content {
-                format!("{}:", t.number)
-            } else {
-                cformat!("<dim>{}:</>", t.number)
-            };
-            let label = if t.is_active {
-                cformat!("<bold>{}</>", t.label)
-            } else {
-                cformat!("<dim>{}</>", t.label)
-            };
-            format!("{number} {label}{reset}")
-        })
+        .map(|t| format!("{}: {}{reset}", t.number, t.styled(t.label)))
         .collect::<Vec<_>>()
-        .join(" | ")
+        .join(TAB_DIVIDER)
 }
 
 /// Compact tab bar for narrow panes: just the digits, space-separated, with the
-/// active tab keeping its label (`1 2: log 3 …`). The number still dims when
-/// empty and the active digit+label bolds, so both style signals survive and
-/// every accelerator stays visible — only the inactive labels drop.
+/// active tab keeping its label (`1 2: log 3 …`). Styling is [`Tab::styled`]'s,
+/// so both signals survive and every accelerator stays visible — only the
+/// inactive labels drop.
 fn render_tab_row_compact(tabs: &[Tab], reset: Reset) -> String {
     tabs.iter()
         .map(|t| {
             if t.is_active {
-                // Active: `N: label`, with the number bold (and dim too when empty).
-                let number = if t.has_content {
-                    cformat!("<bold>{}:</>", t.number)
-                } else {
-                    cformat!("<dim,bold>{}:</>", t.number)
-                };
-                format!("{number} {}{reset}", cformat!("<bold>{}</>", t.label))
+                format!("{}: {}{reset}", t.number, t.styled(t.label))
             } else {
-                // Inactive: just the digit, dim when empty.
-                let number = if t.has_content {
-                    t.number.to_string()
-                } else {
-                    cformat!("<dim>{}</>", t.number)
-                };
-                format!("{number}{reset}")
+                format!("{}{reset}", t.styled(&t.number.to_string()))
             }
         })
         .collect::<Vec<_>>()
@@ -1382,8 +1403,8 @@ impl PickerRow {
     }
 
     /// Compute a live worktree diff. Porcelain selects the cheapest path, but
-    /// never supplies the diff itself: tracked-only changes use ordinary
-    /// `git diff`, while untracked or unknown state uses a temporary index so
+    /// never supplies the diff itself: tracked-only changes diff against the
+    /// real index, while untracked or unknown state uses a temporary index so
     /// untracked files are included without touching the real index.
     fn compute_live_worktree_diff(
         repo: &Repository,
@@ -1393,14 +1414,16 @@ impl PickerRow {
         state: WorktreeDiffState,
     ) -> anyhow::Result<Option<String>> {
         let worktree = repo.worktree_at(path);
-        let diff = match state {
-            WorktreeDiffState::Clean => return Ok(None),
-            WorktreeDiffState::TrackedOnly => worktree.prepare_diff([base]),
-            WorktreeDiffState::HasUntracked | WorktreeDiffState::Unknown => {
-                worktree.prepare_diff_with_untracked([base])?
+        match state {
+            WorktreeDiffState::Clean => Ok(None),
+            WorktreeDiffState::TrackedOnly => {
+                worktree.prepare_diff(base).capture_stat_and_patch(width)
             }
-        };
-        diff.capture_stat_and_patch(width)
+            WorktreeDiffState::HasUntracked | WorktreeDiffState::Unknown => worktree
+                .temp_index_with_untracked()?
+                .prepare_diff(base)
+                .capture_stat_and_patch(width),
+        }
     }
 
     fn unavailable_diff(branch: &str, label: &str) -> String {
@@ -1433,7 +1456,7 @@ impl PickerRow {
                 "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no comparison base for a complete diff\n"
             );
         };
-        let Some(base) = spec.working_base.as_deref() else {
+        let Some(base) = spec.diff_base.as_deref() else {
             return Self::unavailable_diff(branch, "complete diff");
         };
 
@@ -1522,8 +1545,11 @@ impl PickerRow {
             return render(&cached);
         }
 
+        let Some(base) = spec.diff_base.as_deref() else {
+            return Self::unavailable_diff(branch, "committed diff");
+        };
         let body = match repo
-            .prepare_diff(spec.revs.iter().cloned())
+            .prepare_diff(base, item.head())
             .capture_stat_and_patch(width)
         {
             Ok(body) => body,
@@ -1625,12 +1651,19 @@ impl PickerRow {
             // Ahead or diverged shows this branch's unique changes
             // (upstream…head); behind-only shows what upstream has
             // (head…upstream).
-            let range = if ahead > 0 {
-                format!("{upstream_sha}...{}", item.head())
+            let (base, head) = if ahead > 0 {
+                (upstream_sha, item.head())
             } else {
-                format!("{}...{upstream_sha}", item.head())
+                (item.head(), upstream_sha)
             };
-            match repo.prepare_diff([range]).capture_stat_and_patch(width) {
+            let body = repo.merge_base(base, head).and_then(|merge_base| {
+                let Some(merge_base) = merge_base else {
+                    anyhow::bail!("{base} and {head} have no merge base");
+                };
+                repo.prepare_diff(merge_base, head)
+                    .capture_stat_and_patch(width)
+            });
+            match body {
                 Ok(body) => body,
                 Err(error) => {
                     log::debug!("Could not compute upstream diff for {branch}: {error:#}");
@@ -2027,10 +2060,10 @@ mod tests {
         // Each mode active, on a worktree row whose diffs all have content
         // (uncommitted changes, commits ahead, diverged from upstream) with
         // summaries enabled but no PR (tabs 1-6 available; tabs 7 pr and 8
-        // comments dim). The active mode's label is bold, inactive available
-        // labels dim, and on the `pr` iteration tab 7 is active-but-empty —
-        // exercising the rule that emptiness dims even the active tab. Verifies
-        // labels and structure.
+        // comments dim). The active tab is bold + underlined, inactive available
+        // tabs plain, and on the `pr` iteration tab 7 is active-but-empty —
+        // exercising the rule that emptiness dims even the active tab, which
+        // then carries the underline alone. Verifies labels and structure.
         let wt = TabAvailability::worktree(CONTENT_FULL, true, true, false);
         for (name, mode) in [
             ("unified_diff", PreviewMode::UnifiedDiff),
@@ -2051,7 +2084,7 @@ mod tests {
         // - `empty_all_local_diffs`: every diff *known* empty (clean working tree,
         //   no commits ahead, up to date with a present upstream) — dims tabs 1,
         //   2, 3, 5, plus 6/7/8, leaving only `log`. This is the behavior the diff
-        //   tabs gained: a dimmed number once the diff is known empty.
+        //   tabs gained: a dimmed tab once the diff is known empty.
         // - `pr_row`: a listed-PR row dims the complete/working/committed/
         //   upstream/summary tabs but keeps log/pr/comments.
         assert_snapshot!(
@@ -2839,8 +2872,8 @@ mod tests {
         // pane — the dispatch arm `SkimItem::preview` reaches once the picker-state
         // state selects mode 7. The pane shows the title and the markdown body.
         let pr_pane = row.render_preview(PreviewMode::Pr, WIDE, 24);
-        // Strip ANSI before checking the tab labels: the active `pr` tab is bold,
-        // so `7: pr` is split by an SGR escape in the raw string (the bar's own
+        // Strip ANSI before checking the tab labels: the active `pr` tab is
+        // styled, so `7: pr` carries SGR escapes in the raw string (the bar's own
         // test, `test_render_preview_tabs`, snapshots the styled form).
         let bar = pr_pane.ansi_strip().to_string();
         assert!(bar.contains("7: pr"), "pr tab: {bar:?}");
@@ -2885,11 +2918,12 @@ mod tests {
     }
 
     #[test]
-    fn preview_caps_a_pane_longer_than_skim_can_count() {
-        // skim keeps the pane's line count in a `u16` and unwraps the
-        // conversion, so handing it a longer pane aborts the picker rather than
-        // rendering (#3958). A `git diff <default>...<branch>` on a long-lived
-        // branch clears 65,535 lines on its own.
+    fn preview_caps_a_pane_longer_than_skim_can_scroll() {
+        // skim's scroll offset is a `u16`, so the tail of a longer pane is
+        // unreachable and unannounced (#3958, where the same ceiling was a line
+        // count skim unwrapped and the picker aborted outright). A `git diff
+        // <default>...<branch>` on a long-lived branch clears 65,535 lines on
+        // its own.
         let cache: PreviewCache = Arc::new(DashMap::new());
         let row = worktree_test_row("feature", Arc::clone(&cache), None);
         cache.insert(
@@ -2905,7 +2939,7 @@ mod tests {
         let head = pane.lines().take(6).collect::<Vec<_>>().join("\n");
         assert!(
             lines < u16::MAX as usize,
-            "pane must stay countable by skim's u16: {lines} lines"
+            "pane must stay inside skim's u16 scroll range: {lines} lines"
         );
         assert!(
             head.contains("Preview truncated"),
@@ -3055,6 +3089,44 @@ mod tests {
         assert!(
             output.contains("feat.txt"),
             "expected diff to mention feat.txt, got: {output:?}"
+        );
+    }
+
+    #[test]
+    fn branch_diff_with_several_merge_bases() {
+        // Criss-cross merges give `main` and `feature` two merge bases.
+        // `git diff-tree --merge-base` refuses that; the preview diffs from
+        // one resolved merge base, as `git diff main...feature` does.
+        let (t, repo) = repo_with_main();
+        let commit = |file: &str| {
+            std::fs::write(t.path().join(file), file).unwrap();
+            repo.run_command(&["add", file]).unwrap();
+            repo.run_command(&["commit", "--message", file]).unwrap();
+            repo.run_command(&["rev-parse", "HEAD"])
+                .unwrap()
+                .trim()
+                .to_string()
+        };
+        repo.run_command(&["branch", "feature"]).unwrap();
+        let main_side = commit("main-side.txt");
+        repo.run_command(&["checkout", "feature"]).unwrap();
+        let feature_side = commit("feature-side.txt");
+        repo.run_command(&["merge", "--no-edit", &main_side])
+            .unwrap();
+        commit("feature-only.txt");
+        repo.run_command(&["checkout", "main"]).unwrap();
+        repo.run_command(&["merge", "--no-edit", &feature_side])
+            .unwrap();
+        let bases = repo
+            .run_command(&["merge-base", "--all", "main", "feature"])
+            .unwrap();
+        assert_eq!(bases.lines().count(), 2, "fixture needs two merge bases");
+
+        let item = item_at(&repo, "feature");
+        let output = PickerRow::compute_branch_diff_preview(&repo, &item, 80);
+        assert!(
+            output.contains("feature-only.txt"),
+            "expected the branch diff, got: {output:?}"
         );
     }
 
@@ -3239,7 +3311,7 @@ mod tests {
     #[test]
     fn diff_preview_fences_flag_like_refs() {
         // A ref whose name starts with `-` must reach git as a positional, not
-        // an option. Without the `--end-of-options` fence, `git diff <sha>
+        // an option. Without the `--end-of-options` fence, `git diff-tree <sha>
         // -weird` misparses `-weird` as a flag and errors out; the fence lets
         // it resolve as a ref. `git branch` rejects leading-dash names, so the
         // ref is created via `update-ref`.
@@ -3254,7 +3326,7 @@ mod tests {
             .unwrap();
 
         let out = repo
-            .prepare_diff([root.trim(), "-weird"])
+            .prepare_diff(root.trim(), "-weird")
             .capture_stat_and_patch(80)
             .expect("diff commands succeed")
             .expect("non-empty diff between the two refs");
@@ -3637,9 +3709,9 @@ mod tests {
         // Test that ANSI escape sequences properly reset to prevent style bleeding.
         // The per-tab `{reset}` is appended in the full bar regardless of a
         // tab's internal styling, so the reset/divider counts hold whether a tab
-        // is active (bold label), inactive-available (dim label), or empty (dim
-        // number + label — here tabs 7 pr and 8 comments). WIDE forces the full
-        // (not compact) bar.
+        // is active (bold + underlined label), inactive-available (unstyled, the
+        // one case with no SGR of its own), or empty (dim label — here tabs 7 pr
+        // and 8 comments). WIDE forces the full (not compact) bar.
         let output = render_preview_tabs(
             PreviewMode::WorkingTree,
             TabAvailability::worktree(CONTENT_FULL, true, true, false),
@@ -3650,15 +3722,17 @@ mod tests {
         let second_line = output.lines().nth(1).unwrap();
 
         // Each styled tab should end with a full reset (\x1b[0m) before the divider
-        // This prevents bold/dim from bleeding into the " | " dividers
+        // This prevents bold/dim from bleeding into the dividers, which carry
+        // their own dim and close it themselves.
         let full_reset = "\x1b[0m";
 
         // Count resets - should have one after each of the 8 tabs
         assert_eq!(first_line.matches(full_reset).count(), 8);
 
-        // The sequence should be: style + text + [22m + [0m + divider
-        // Check that dividers come after full resets
-        let parts: Vec<&str> = first_line.split(" | ").collect();
+        // Each segment is the number, then the label with whatever style it
+        // carries, then a full reset — so a divider always follows one, whether
+        // or not the label opened a style of its own.
+        let parts: Vec<&str> = first_line.split(TAB_DIVIDER).collect();
         assert_eq!(parts.len(), 8);
         assert!(parts.iter().all(|part| part.ends_with(full_reset)));
 

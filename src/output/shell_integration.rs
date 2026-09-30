@@ -28,13 +28,20 @@
 //!
 //! ## After Merge/Remove (switching to main worktree)
 //!
+//! The warning names the destination, as the switch-to-existing case does.
+//! Both the `--create` success line and the switch-to-existing warning already
+//! print a path; a removal prints one only where a post-merge / post-remove
+//! hook announcement names its working directory, and it has just deleted the
+//! directory the caller is standing in — so without the path a caller without
+//! shell integration has nowhere to `cd`.
+//!
 //! | Condition | Warning | Hint |
 //! |-----------|---------|------|
 //! | Shell active | (info) `Switched to worktree for main @ path` | (none) |
-//! | Outdated wrapper | `Cannot change directory — shell wrapper is out of date` | `To update the shell wrapper, run wt config shell install` |
-//! | Git subcommand | `Cannot change directory — ran git wt; running through git prevents cd` | `For automatic cd, invoke directly (with the -): git-wt` |
-//! | Explicit path | `Cannot change directory — ran ./wt; shell integration wraps wt` | `To change directory, run wt switch main` |
-//! | Other | `Cannot change directory — {reason}` | `To enable automatic cd, run wt config shell install` |
+//! | Outdated wrapper | `Worktree for main @ path, but cannot change directory — shell wrapper is out of date` | `To update the shell wrapper, run wt config shell install` |
+//! | Git subcommand | `Worktree for main @ path, but cannot change directory — ran git wt; running through git prevents cd` | `For automatic cd, invoke directly (with the -): git-wt` |
+//! | Explicit path | `Worktree for main @ path, but cannot change directory — ran ./wt; shell integration wraps wt` | `To change directory, run wt switch main` |
+//! | Other | `Worktree for main @ path, but cannot change directory — {reason}` | `To enable automatic cd, run wt config shell install` |
 //!
 //! ## Prompt Decision Flow
 //!

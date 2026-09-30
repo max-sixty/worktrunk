@@ -2,7 +2,7 @@
 //!
 //! # The invariant
 //!
-//! `CLAUDE.md` → "Project Commands Run Only After Approval". Project-defined
+//! `AGENTS.md` → "Project Commands Run Only After Approval". Project-defined
 //! hook commands are arbitrary code shipped in a repo the user may have just
 //! cloned; they run only after the approval gate clears them.
 //!
@@ -232,7 +232,7 @@ impl HookPlan {
 
     /// Build an approved plan without prompting: project pipelines whose
     /// commands are already approved survive, the rest are dropped (user
-    /// pipelines always survive). Strictly the CLAUDE.md "consult the
+    /// pipelines always survive). Strictly the AGENTS.md "consult the
     /// approval state read-only and run only the already-approved commands,
     /// skipping the rest" rule. An absent `project_id` (unresolvable
     /// identifier) drops every project pipeline — fail-closed, never run

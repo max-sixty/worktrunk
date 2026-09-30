@@ -60,7 +60,7 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mSquashing 1 commit & working tree changes into a single commit [90m(1 file, [32m+1[39m[39m[90m)[39m...[39m
-[2m↳[22m [2mBackup created @ ba39431[22m
+[2m↳[22m [2mBackup created @ 6cb8292[22m
 [36m◎[39m [36mGenerating squash commit message...[39m
 [2m↳[22m [2mUsing fallback commit message. For LLM setup guide, run [4mwt config --help[24m[22m
 [107m [0m [1mSquash commits from feature[22m
@@ -74,5 +74,5 @@ exit_code: 0
 [107m [0m  1 file changed, 1 insertion(+)
 [32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
 [36m◎[39m [36mRemoving [1mfeature[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
-[33m▲[39m [33mCannot change directory — shell integration not installed[39m
+[33m▲[39m [33mWorktree for [1mmain[22m @ [1m_REPO_[22m, but cannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m

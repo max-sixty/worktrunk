@@ -45,9 +45,11 @@ Env HOME "{{DEMO_HOME}}"
         theme: tmp_path / theme / "recording.gif" for theme in ("light", "dark")
     }
     environments: list[Path] = []
+    environment_themes: list[str] = []
 
     def setup_environment(environment) -> None:
         environments.append(environment.home.resolve())
+        environment_themes.append(environment.theme)
 
     build["record_demo"].__globals__["TAPES_DIR"] = tmp_path
     build["record_demo"](
@@ -58,9 +60,11 @@ Env HOME "{{DEMO_HOME}}"
         list(output_gifs),
         DemoSize(width=1600, height=900, fontsize=24),
         vhs_binary=str(fake_vhs),
+        target="docs",
     )
 
     assert len(environments) == 2
+    assert environment_themes == ["light", "dark"]
     light_tape = Path(f"{output_gifs['light']}.tape").read_text()
     dark_tape = Path(f"{output_gifs['dark']}.tape").read_text()
     assert str(environments[0]) in light_tape

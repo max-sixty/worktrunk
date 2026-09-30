@@ -24,7 +24,7 @@ fn group_alive(pgid: i32) -> bool {
     !matches!(kill(Pid::from_raw(-pgid), None), Err(Errno::ESRCH))
 }
 
-/// Poll `cond` with a generous cap and fast interval (per tests/CLAUDE.md:
+/// Poll `cond` with a generous cap and fast interval (per tests/AGENTS.md:
 /// long timeout for slow CI, fast polling so it returns immediately when the
 /// event has happened).
 fn wait_until(mut cond: impl FnMut() -> bool) -> bool {

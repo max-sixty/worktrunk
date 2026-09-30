@@ -61,8 +61,7 @@ pub const DETACHED: Style = Style::new()
 /// - No background: loses the visual separation we want
 pub const GUTTER: Style = Style::new().bg_color(Some(Color::Ansi(AnsiColor::BrightWhite)));
 
-/// Default width for help text rendering when terminal width is unknown.
-/// Used in both the CLI binary and tests for consistent output in docs.
+/// Default width for CLI help text when terminal width is unknown.
 pub const DEFAULT_HELP_WIDTH: usize = 98;
 
 // ============================================================================

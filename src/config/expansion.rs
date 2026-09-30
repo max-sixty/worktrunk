@@ -85,20 +85,6 @@ pub fn base_vars() -> Vec<&'static str> {
 /// indexing, iteration, and `length` behave like a sequence.
 pub const ALIAS_ARGS_KEY: &str = "args";
 
-/// Deprecated template variable aliases (still valid for backward compatibility).
-///
-/// These map to current variables and are available in every scope:
-/// - `main_worktree` → `repo`
-/// - `repo_root` → `repo_path`
-/// - `worktree` → `worktree_path`
-/// - `main_worktree_path` → `primary_worktree_path`
-pub const DEPRECATED_TEMPLATE_VARS: &[&str] = &[
-    "main_worktree",
-    "repo_root",
-    "worktree",
-    "main_worktree_path",
-];
-
 /// Variables available in `wt list` custom-column templates (plus `vars.*`).
 ///
 /// Deliberately narrower than [`base_vars`]: column values are computed per
@@ -275,9 +261,13 @@ const HOOK_INFRASTRUCTURE_VARS: &[&str] = &["hook_type", "hook_name"];
 
 /// All template variables available in a given scope.
 ///
-/// The returned list is [`base_vars`] + scope-specific extras + deprecated
-/// aliases. Used by [`validate_template`] to build the placeholder context
-/// and by error messages to list what the user could have typed.
+/// The returned list is [`base_vars`] + scope-specific extras. Used by
+/// [`validate_template`] to build the placeholder context and by error
+/// messages to list what the user could have typed. Retired names
+/// (`repo_root`, `worktree`, …) are absent: the deprecation layer renames them
+/// before serde parses the config, so a template reaching here carries only
+/// current names, and one typed on the command line gets the undefined-variable
+/// error with this list attached.
 pub fn vars_available_in(scope: ValidationScope) -> Vec<&'static str> {
     let mut vars: Vec<&'static str> = base_vars();
     match scope {
@@ -293,7 +283,6 @@ pub fn vars_available_in(scope: ValidationScope) -> Vec<&'static str> {
             vars.push(ALIAS_ARGS_KEY);
         }
     }
-    vars.extend(DEPRECATED_TEMPLATE_VARS);
     vars
 }
 
@@ -2976,8 +2965,10 @@ mod tests {
             .is_ok()
         );
 
-        // Deprecated vars still valid in every scope
-        assert!(validate_template("{{ main_worktree }}", hook, &test.repo, "test").is_ok());
+        // Retired names resolve nowhere: the deprecation layer renames them
+        // before serde parses, so one reaching validation was typed on the
+        // command line and gets the undefined-variable error.
+        assert!(validate_template("{{ main_worktree }}", hook, &test.repo, "test").is_err());
 
         // `args` validates in both Hook and Alias scopes.
         assert!(validate_template("echo {{ args }}", hook, &test.repo, "test").is_ok());

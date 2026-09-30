@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "featureId": "feat_custom_approval_gate",
   "title": "Project-command approval gate and command execution",
-  "summary": "Worktrunk runs arbitrary project-defined hook commands, alias steps, and --execute bodies. These must only run after the approval gate (`Approvals` + `approve_command_batch` / `approve_or_skip`) clears them. Bypassing the gate = remote code execution on `wt switch`. Also handles signal-derived child exits (Ctrl-C must abort, not get swallowed by `FailureStrategy::Warn`). See CLAUDE.md > Project Commands Run Only After Approval and Signal Handling.",
+  "summary": "Worktrunk runs arbitrary project-defined hook commands, alias steps, and --execute bodies. These must only run after the approval gate (`Approvals` + `approve_command_batch` / `approve_or_skip`) clears them. Bypassing the gate = remote code execution on `wt switch`. Also handles signal-derived child exits (Ctrl-C must abort, not get swallowed by `FailureStrategy::Warn`). See AGENTS.md > Project Commands Run Only After Approval and Signal Handling.",
   "kind": "library",
   "source": "manual",
   "confidence": "high",
@@ -54,7 +54,7 @@
       "reason": "child process spawning"
     },
     {
-      "path": "CLAUDE.md",
+      "path": "AGENTS.md",
       "reason": "approval gate and signal handling invariants"
     }
   ],

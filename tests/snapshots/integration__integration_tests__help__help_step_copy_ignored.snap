@@ -127,6 +127,7 @@ To limit what gets copied further, create [2m.worktreeinclude[0m with gitignor
 
 After [2m.worktreeinclude[0m selects entries, you can add more gitignore-style excludes in user config, per-project user overrides, or project config:
 
+[107m [0m [2m# ~/.config/worktrunk/config.toml[0m
 [107m [0m [2m[36m[step.copy-ignored][0m
 [107m [0m [2mexclude = [[0m[2m[32m".cache/"[0m[2m, [0m[2m[32m".turbo/"[0m[2m][0m
 
@@ -154,17 +155,11 @@ Files are reflinked where the filesystem supports it: APFS (macOS), btrfs and XF
  [2mcp -R[0m (full copy)             2m   14GB 
  [2mcp -Rc[0m / [2mwt step copy-ignored[0m 20s  ~0   
 
-On ext4 and NTFS, which have no reflink, every file is copied in full. The same byte count therefore costs nothing on one filesystem and 14GB on the other, so the summary says which happened: [2mCopied 4,812 files · 14.0 GB (reflinked, no extra disk)[0m, against [2m(full copy)[0m where those bytes were written out.
+On ext4 and NTFS, which have no reflink, every file is copied in full; the summary says [2m(reflinked, no extra disk)[0m or [2m(full copy)[0m.
 
 Reflinks are per file (like [2mcp -Rc[0m), so copy time scales with file count.
 
 Use the [2mpost-start[0m hook so the copy runs in the background. Use [2mpre-start[0m instead if subsequent hooks or [2m--execute[0m command need the copied files immediately.
-
-[1m[32mBackground-hook priority (experimental)[0m
-
-When invoked from a background hook pipeline ([2mpost-*[0m hooks), [2mwt step copy-ignored[0m self-lowers its CPU and I/O priority — [2mtaskpolicy -b[0m on macOS, [2mnice -n 19[0m plus [2mionice -c 3[0m on Linux — so it yields to interactive work. Foreground callers ([2mpre-*[0m hooks, direct interactive use) run at normal priority so the user isn't waiting on a throttled copy.
-
-wt signals background-hook context by exporting [2mWORKTRUNK_FOREGROUND=-1[0m into every detached hook pipeline; [2mcopy-ignored[0m inspects that variable on entry. The variable name is experimental and may change.
 
 [1m[32mLanguage-specific notes[0m
 
@@ -176,6 +171,7 @@ The [2mtarget/[0m directory is huge (often 1-10GB). Copying with reflink cuts 
 
 [2mnode_modules/[0m is large but mostly static. If the project has no native dependencies, symlinks are even faster:
 
+[107m [0m [2m# .config/wt.toml[0m
 [107m [0m [2m[36m[pre-start][0m
 [107m [0m [2mdeps = [0m[2m[32m"ln -sf {{ primary_worktree_path }}/node_modules ."[0m
 

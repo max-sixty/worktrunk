@@ -1286,7 +1286,7 @@ broken = "echo {{ does_not_exist }} > should_not_exist.txt"
     assert_snapshot!(log_content, @"
     [31m✗[39m [31mFailed to expand user:broken: undefined value @ line 1[39m
     [107m [0m echo {{ does_not_exist }} > should_not_exist.txt
-    [2m↳[22m [2mAvailable variables: [4margs[24m, [4mbase[24m, [4mbase_worktree_path[24m, [4mbranch[24m, [4mcommit[24m, [4mcwd[24m, [4mdefault_branch[24m, [4mhook_name[24m, [4mhook_type[24m, [4mmain_worktree[24m, [4mmain_worktree_path[24m, [4mprimary_worktree_path[24m, [4mremote[24m, [4mremote_url[24m, [4mrepo[24m, [4mrepo_path[24m, [4mrepo_root[24m, [4mshort_commit[24m, [4mtarget[24m, [4mtarget_worktree_path[24m, [4mupstream[24m, [4mworktree[24m, [4mworktree_name[24m, [4mworktree_path[24m[22m
+    [2m↳[22m [2mAvailable variables: [4margs[24m, [4mbase[24m, [4mbase_worktree_path[24m, [4mbranch[24m, [4mcommit[24m, [4mcwd[24m, [4mdefault_branch[24m, [4mhook_name[24m, [4mhook_type[24m, [4mprimary_worktree_path[24m, [4mremote[24m, [4mremote_url[24m, [4mrepo[24m, [4mrepo_path[24m, [4mshort_commit[24m, [4mtarget[24m, [4mtarget_worktree_path[24m, [4mupstream[24m, [4mworktree_name[24m, [4mworktree_path[24m[22m
     ");
 
     // The step never ran.
@@ -1467,10 +1467,51 @@ notify = "echo switched"
     });
 }
 
-// Note: The `return Ok(())` path in spawn_hooks_after_remove when UserConfig::load()
-// fails is defensive code for an extremely rare race condition where config becomes
-// invalid between command startup and hook execution. This is not easily testable
-// without complex timing manipulation.
+/// The approval gate freezes both removal hooks before either runs. If
+/// `pre-remove` makes the user config unreadable, `post-remove` must still run
+/// from that frozen plan rather than silently disappearing on a second load.
+#[rstest]
+fn test_post_remove_uses_config_snapshot_after_pre_remove_mutates_file(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    let config_path = repo.test_config_path().to_slash_lossy();
+    let marker = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("post-remove-after-config-change.txt");
+    let marker_path = marker.to_slash_lossy();
+
+    repo.write_test_config(&format!(
+        r#"[pre-remove]
+break-config = "printf 'invalid = [' > '{config_path}'"
+
+[post-remove]
+marker = "printf POST_REMOVE_RAN > '{marker_path}'"
+"#
+    ));
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--foreground", "--force-delete", "feature"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "removal should succeed after the planned pre-remove hook mutates config: {stderr}"
+    );
+    assert!(
+        !feature_wt.exists(),
+        "feature worktree should have been removed"
+    );
+    assert!(
+        stderr.contains("Running post-remove"),
+        "the frozen post-remove hook should still be registered: {stderr}"
+    );
+    wait_for_file_content(&marker);
+    assert_eq!(fs::read_to_string(marker).unwrap(), "POST_REMOVE_RAN");
+}
 
 #[rstest]
 fn test_standalone_hook_post_remove_invalid_template(repo: TestRepo) {
@@ -3120,37 +3161,6 @@ fn test_var_shorthand_does_not_leak_into_hook_show() {
     assert!(
         stderr.contains("unexpected argument") || stderr.contains("--branch"),
         "Expected clap to reject --branch on `hook show`, got: {stderr}"
-    );
-}
-
-#[rstest]
-fn test_var_flag_deprecated_alias_works(repo: TestRepo) {
-    // Test that deprecated variable aliases (main_worktree, repo_root, worktree) can be overridden
-    repo.write_test_config(
-        r#"[pre-start]
-test = "echo '{{ main_worktree }}' > alias_output.txt"
-"#,
-    );
-
-    let output = repo
-        .wt_command()
-        .args([
-            "hook",
-            "pre-start",
-            "--yes",
-            "--var",
-            "main_worktree=/custom/path",
-        ])
-        .output()
-        .expect("Failed to run wt hook");
-
-    assert!(output.status.success());
-
-    let output_file = repo.root_path().join("alias_output.txt");
-    let contents = std::fs::read_to_string(&output_file).expect("Should have created output file");
-    assert!(
-        contents.contains("/custom/path"),
-        "Deprecated alias should be overridden, got: {contents}"
     );
 }
 
