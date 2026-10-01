@@ -229,7 +229,7 @@ fn force_duplicate_worktree(repo: &TestRepo, branch: &str) -> std::path::PathBuf
     dup_path
 }
 
-/// A branch checked out in two worktrees flags both rows with `⚑`, the same
+/// A branch checked out in two worktrees flags both rows with `⚐`, the same
 /// irregular-mapping flag an off-template path earns, and the Path column
 /// earns its place: the branch name no longer identifies the row. Before
 /// this, only the off-template duplicate was flagged, and the worktree `wt`

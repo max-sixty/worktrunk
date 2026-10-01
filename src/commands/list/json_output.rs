@@ -535,7 +535,7 @@ pub(crate) fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> Strin
     }
 
     // Worktree state (gate 2) — operations (✘↻) take priority over
-    // location (/⚑⊟⊞). Gate 2 is "operation_state is Some"; the metadata
+    // location (/⚐⊟⊞). Gate 2 is "operation_state is Some"; the metadata
     // worktree_state is filled synchronously and always Some by the time
     // the operation family is known.
     if let Some(op) = symbols.operation_state {
