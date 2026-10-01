@@ -72,7 +72,6 @@ impl UserConfig {
             return Ok(());
         };
         let edited = file.edited(&edit, &changed)?;
-        crate::config::ensure_config_parses(edited.content())?;
         crate::utils::write_atomically(config_path, edited.content()).map_err(|e| {
             ConfigError(format!(
                 "Failed to write config file {}: {}",

@@ -548,7 +548,11 @@ Skips gracefully if the statusline is already configured."#
     )]
     InstallStatusline,
 
-    /// Internal: the plugin's PermissionRequest hook, reading its payload from stdin
+    /// Internal: the plugin's hook command, reading Claude Code's hook payload from stdin
+    #[command(hide = true)]
+    Hook,
+
+    /// Internal: the PermissionRequest hook of plugin copies that predate `hook`
     #[command(hide = true, name = "approve-enter-worktree")]
     ApproveEnterWorktree,
 }
@@ -1092,7 +1096,7 @@ All logs are stored in `.git/wt/logs/` (in the main worktree's git directory). A
 
 ## Structured output
 
-`wt config state logs --format=json` emits three arrays — `command_log`, `hook_output`, `diagnostic`. Each entry carries a `file` (relative), `path` (absolute), `size`, and `modified_at` (unix seconds). Hook-output entries additionally expose `branch`, `source` (`user` / `project` / `internal`), `hook_type` (the `post-*` kind, or `null` for internal ops), and `name`. Filter with `jq` to pick out a specific entry.
+`wt config state logs --format=json` emits three arrays — `command_log`, `hook_output`, `diagnostic`. Each entry carries a `file` (relative), `path` (absolute), `size`, and `modified_at` (unix seconds). Hook-output entries additionally expose `branch`, `source` (`user` / `project` / `internal`), `hook_type` (the `post-*` kind, or `null` for internal ops), and `name`. `branch` is the branch name, or `null` when no local branch writes to that log directory (e.g. the branch was deleted). `name` is the hook name as it appears in the log path, which differs from the configured name only when that contains characters unsafe in a filename. Filter with `jq` to pick out a specific entry.
 
 ## Examples
 
@@ -1108,12 +1112,12 @@ $ tail -5 .git/wt/logs/commands.jsonl | jq .
 
 Path to one hook log (e.g. the `post-start` `server` hook for the current branch):
 ```console
-$ wt config state logs --format=json | jq -r '.hook_output[] | select(.source == "user" and .hook_type == "post-start" and (.name | startswith("server"))) | .path'
+$ wt config state logs --format=json | jq -r --arg branch "$(git branch --show-current)" '.hook_output[] | select([.branch, .source, .hook_type, .name] == [$branch, "user", "post-start", "server"]) | .path'
 ```
 
 Logs for a specific branch:
 ```console
-$ wt config state logs --format=json | jq '.hook_output[] | select(.branch | startswith("feature"))'
+$ wt config state logs --format=json | jq '.hook_output[] | select(.branch == "feature/auth")'
 ```
 
 Clear all logs:
@@ -1489,14 +1493,14 @@ List all log files:
 $ wt config state logs
 ```
 
-Get the absolute path of one post-start hook log for the current branch (use `jq` to filter):
+Get the absolute path of the current branch's `server` post-start hook log:
 ```console
-$ wt config state logs --format=json | jq -r '.hook_output[] | select(.source == "user" and .hook_type == "post-start" and (.name | startswith("server"))) | .path'
+$ wt config state logs --format=json | jq -r --arg branch "$(git branch --show-current)" '.hook_output[] | select([.branch, .source, .hook_type, .name] == [$branch, "user", "post-start", "server"]) | .path'
 ```
 
 Stream that log with `tail -f`:
 ```console
-$ tail -f "$(wt config state logs --format=json | jq -r '.hook_output[] | select(.source == "user" and .hook_type == "post-start" and (.name | startswith("server"))) | .path' | head -1)"
+$ tail -f "$(wt config state logs --format=json | jq -r --arg branch "$(git branch --show-current)" '.hook_output[] | select([.branch, .source, .hook_type, .name] == [$branch, "user", "post-start", "server"]) | .path')"
 ```
 
 Logs for a background worktree removal (internal op):
@@ -1506,7 +1510,7 @@ $ wt config state logs --format=json | jq '.hook_output[] | select(.source == "i
 
 Logs for a specific branch:
 ```console
-$ wt config state logs --format=json | jq '.hook_output[] | select(.branch | startswith("feature"))'
+$ wt config state logs --format=json | jq '.hook_output[] | select(.branch == "feature/auth")'
 ```"#
     )]
     Get,

@@ -600,6 +600,63 @@ fn test_merge_auto_commit_deterministic(mut repo_with_main_worktree: TestRepo) {
     ));
 }
 
+/// `--stage=none` and `--stage=tracked` exclude untracked files from the
+/// auto-commit. An untracked-only worktree therefore has nothing to commit,
+/// but the existing feature commits should still merge while the file stays
+/// in the preserved source worktree.
+#[rstest]
+fn test_merge_ignores_untracked_only_changes_outside_stage_scope(
+    mut repo_with_main_worktree: TestRepo,
+    #[values("none", "tracked")] stage: &str,
+) {
+    let repo = &mut repo_with_main_worktree;
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature", "Add feature");
+    fs::create_dir_all(feature_wt.join(".config")).unwrap();
+    repo.commit_in_worktree(
+        &feature_wt,
+        ".config/wt.toml",
+        r#"pre-commit = "touch pre-commit-ran""#,
+        "Add pre-commit hook",
+    );
+    let feature_tip = repo.git_output(&["rev-parse", "feature"]);
+    fs::write(feature_wt.join("untracked.txt"), "scratch").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args([
+            "merge",
+            "main",
+            &format!("--stage={stage}"),
+            "--no-squash",
+            "--no-remove",
+            "--yes",
+        ])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "merge with --stage={stage} should skip the empty auto-commit: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(repo.git_output(&["rev-parse", "main"]), feature_tip);
+    assert_eq!(
+        repo.git_output(&["rev-parse", "feature"]),
+        feature_tip,
+        "skipping the auto-commit must not add a commit to the feature branch"
+    );
+    assert!(
+        feature_wt.join("untracked.txt").exists(),
+        "the untracked file must remain in the preserved source worktree"
+    );
+    assert!(
+        !feature_wt.join("pre-commit-ran").exists(),
+        "pre-commit must not run when the stage mode leaves nothing to commit"
+    );
+}
+
 #[rstest]
 fn test_merge_auto_commit_with_llm(mut repo_with_main_worktree: TestRepo) {
     let repo = &mut repo_with_main_worktree;
@@ -1230,6 +1287,50 @@ fn test_merge_pre_commit_collected_for_squash_clean_worktree(
         &["main", "--yes"],
         Some(&feature_wt)
     ));
+}
+
+/// A pre-commit hook's edits land in the squash commit, as they do in the
+/// commit `wt step commit` makes: the hook runs before staging, not after.
+#[rstest]
+fn test_step_squash_includes_pre_commit_hook_edits(repo_with_multi_commit_feature: TestRepo) {
+    let repo = &repo_with_multi_commit_feature;
+    let feature_wt = repo.worktrees["feature"].clone();
+
+    let config_dir = feature_wt.join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        "pre-commit = \"echo formatted > fmt.txt\"",
+    )
+    .unwrap();
+    repo.run_git_in(&feature_wt, &["add", ".config/wt.toml"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Add config"]);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "squash", "--yes"])
+        .current_dir(&feature_wt)
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: combined'",
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "step squash failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(
+        repo.git_output(&["rev-parse", "feature^"]),
+        repo.git_output(&["rev-parse", "main"])
+    );
+    assert_eq!(repo.git_output(&["show", "feature:fmt.txt"]), "formatted");
+    assert_eq!(
+        repo.git_output(&["-C", feature_wt.to_str().unwrap(), "status", "--porcelain"]),
+        ""
+    );
 }
 
 // README EXAMPLE GENERATION TESTS
@@ -2582,6 +2683,95 @@ fn test_merge_squash_with_working_tree_creates_backup(mut repo_with_main_worktre
     );
 }
 
+/// A staged submodule bump that `submodule.<name>.ignore = all` hides from
+/// porcelain is still squashed in and backed up, whatever the branch's commits
+/// add up to: the backup snapshots the index with plumbing, which that config
+/// cannot hide. `None` restores the file's content from main, so the last case's
+/// commits cancel out and the bump is all that remains.
+#[rstest]
+#[case::two_commits(&[("a.txt", Some("a")), ("b.txt", Some("b"))], "a.txt\nb.txt\nsub")]
+#[case::one_commit(&[("a.txt", Some("a"))], "a.txt\nsub")]
+#[case::commits_cancel_out(&[("file.txt", Some("changed")), ("file.txt", None)], "sub")]
+fn test_step_squash_backs_up_submodule_bump_hidden_by_ignore(
+    mut repo: TestRepo,
+    #[case] commits: &[(&str, Option<&str>)],
+    #[case] squashed_paths: &str,
+) {
+    use worktrunk::git::PlumbingDiff;
+
+    // A gitlink `sub` on main; uninitialized, so no clone is needed.
+    fs::write(
+        repo.root_path().join(".gitmodules"),
+        "[submodule \"sub\"]\n\tpath = sub\n\turl = ./sub\n",
+    )
+    .unwrap();
+    let old_pointer = repo.git_output(&["rev-parse", "HEAD"]);
+    repo.run_git(&["add", ".gitmodules"]);
+    repo.run_git(&[
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        &format!("160000,{old_pointer},sub"),
+    ]);
+    repo.run_git(&["commit", "-m", "add submodule"]);
+    repo.run_git(&["config", "submodule.sub.ignore", "all"]);
+
+    let feature_wt = repo.add_worktree("feature");
+    for (i, (file, content)) in commits.iter().enumerate() {
+        match content {
+            Some(content) => fs::write(feature_wt.join(file), content).unwrap(),
+            None => repo.run_git_in(&feature_wt, &["checkout", "main", "--", file]),
+        }
+        repo.run_git_in(&feature_wt, &["add", file]);
+        repo.run_git_in(&feature_wt, &["commit", "-m", &format!("commit {i}")]);
+    }
+    let pre_squash_tip = repo.git_output(&["rev-parse", "feature"]);
+    let new_pointer = repo.git_output(&["rev-parse", "main"]);
+    repo.run_git_in(
+        &feature_wt,
+        &[
+            "update-index",
+            "--cacheinfo",
+            &format!("160000,{new_pointer},sub"),
+        ],
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["step", "squash", "--no-hooks"])
+        .current_dir(&feature_wt)
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: combined'",
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "step squash failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(
+        repo.git_output(&["rev-parse", "feature^"]),
+        repo.git_output(&["rev-parse", "main"])
+    );
+    assert_eq!(repo.git_output(&["rev-parse", "feature:sub"]), new_pointer);
+    assert_eq!(
+        repo.git_output(&PlumbingDiff::Tree.args(&["--name-only", "-r", "main", "feature"])),
+        squashed_paths
+    );
+    // The backup holds the squashed tree on top of the pre-squash tip.
+    assert_eq!(
+        repo.git_output(&["rev-parse", "refs/wt-backup/feature^{tree}"]),
+        repo.git_output(&["rev-parse", "feature^{tree}"])
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "refs/wt-backup/feature^"]),
+        pre_squash_tip
+    );
+}
+
 #[rstest]
 fn test_merge_when_default_branch_missing_worktree(repo: TestRepo) {
     // Move primary off default branch so no worktree holds it
@@ -3120,10 +3310,18 @@ fn test_step_commit_first_commit_in_sha256_repo() {
     );
 }
 
-/// The commit and squash prompts split git's diff into per-file sections, so
-/// the user's diff display settings must not change what the LLM receives.
+/// The squash commits the index, so its prompt must describe the working-tree
+/// changes folded in alongside the commits, and each preview must span what its
+/// own run would commit.
+///
+/// The prompt used to diff `merge_base..HEAD`, which named only the commits —
+/// so `wt merge` on a dirty worktree generated a message about the branch's
+/// older commits and said nothing about the work it had just staged into the
+/// same commit. `--dry-run` inherits that duty: it stages into a temp index the
+/// way a real run stages the real one, where `--show-prompt` deliberately shows
+/// only what is already staged.
 #[rstest]
-fn test_show_prompt_ignores_diff_display_config(repo_with_multi_commit_feature: TestRepo) {
+fn test_squash_prompt_covers_what_its_run_would_commit(repo_with_multi_commit_feature: TestRepo) {
     let repo = repo_with_multi_commit_feature;
     let feature_wt = repo.worktree_path("feature");
     fs::write(feature_wt.join("staged.txt"), "staged content\n").unwrap();
@@ -3132,18 +3330,100 @@ fn test_show_prompt_ignores_diff_display_config(repo_with_multi_commit_feature: 
         .current_dir(feature_wt)
         .run()
         .unwrap();
-    let prompts = || {
-        ["commit", "squash"].map(|step| {
-            let output =
-                make_snapshot_cmd(&repo, "step", &[step, "--show-prompt"], Some(feature_wt))
-                    .output()
-                    .unwrap();
-            assert!(output.status.success(), "{output:?}");
-            String::from_utf8(output.stdout).unwrap()
-        })
+    fs::write(feature_wt.join("unstaged.txt"), "unstaged content\n").unwrap();
+
+    let prompt_of = |args: &[&str]| {
+        let output = make_snapshot_cmd(&repo, "step", args, Some(feature_wt))
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stdout).unwrap()
     };
 
-    let default_prompts = prompts();
+    let shown = prompt_of(&["squash", "--show-prompt"]);
+    assert!(
+        shown.contains("staged.txt"),
+        "--show-prompt covers the staged change: {shown}"
+    );
+    for committed in ["file1.txt", "file2.txt"] {
+        assert!(
+            shown.contains(committed),
+            "--show-prompt still covers {committed}: {shown}"
+        );
+    }
+    assert!(
+        !shown.contains("unstaged.txt"),
+        "--show-prompt shows what is already staged, and nothing else: {shown}"
+    );
+
+    let dry = prompt_of(&["squash", "--dry-run"]);
+    assert!(
+        dry.contains("unstaged.txt") && dry.contains("staged.txt"),
+        "--dry-run covers everything a real squash would stage: {dry}"
+    );
+}
+
+/// The commit and squash prompts split git's diff into per-file sections, so
+/// the user's diff display settings must not change what the LLM receives.
+///
+/// The prompt is captured from the generation command's stdin rather than from
+/// `--show-prompt`'s stdout, which is where the `color.ui` case has to be read:
+/// `.output()` pipes stdout, anstream strips ANSI on a pipe, and the two runs
+/// then agree byte for byte whether or not the diff is colored. Reading the
+/// bytes `wt` actually hands the command is the only place the difference
+/// survives. `--dry-run` stages into a temp index, so neither run mutates the
+/// repository the other reads.
+#[rstest]
+fn test_generation_prompt_ignores_diff_display_config(repo_with_multi_commit_feature: TestRepo) {
+    let repo = repo_with_multi_commit_feature;
+    let feature_wt = repo.worktree_path("feature").to_path_buf();
+    fs::write(feature_wt.join("staged.txt"), "staged content\n").unwrap();
+    repo.git_command()
+        .args(["add", "staged.txt"])
+        .current_dir(&feature_wt)
+        .run()
+        .unwrap();
+
+    // Captures live under `.git/`, which no diff `wt` builds ever reads.
+    let capture_dir = repo.root_path().join(".git");
+    let capture_for = |label: &str, step: &str| capture_dir.join(format!("prompt-{label}-{step}"));
+
+    // One config write per step, each pointing `commit.generation.command` at
+    // that step's own capture path, so the two prompts can't overwrite each
+    // other.
+    let prompts = |label: &str| {
+        for step in ["commit", "squash"] {
+            let target = capture_for(label, step);
+            let target = target.to_slash_lossy().replace('\\', r"\\");
+            assert!(
+                !target.contains('\''),
+                "capture path must not contain single quotes: {target}"
+            );
+            repo.write_test_config(&format!(
+                "\n[commit.generation]\ncommand = \"cat > '{target}'; echo summary\"\n"
+            ));
+            let output = make_snapshot_cmd(
+                &repo,
+                "step",
+                &[step, "--dry-run", "--yes"],
+                Some(&feature_wt),
+            )
+            .output()
+            .unwrap();
+            assert!(
+                output.status.success(),
+                "{step} --dry-run failed: {output:?}"
+            );
+        }
+        ["commit", "squash"].map(|step| fs::read(capture_for(label, step)).unwrap())
+    };
+
+    let default_prompts = prompts("default");
+    assert!(
+        !default_prompts[0].is_empty() && !default_prompts[1].is_empty(),
+        "the generation command must have received a prompt to compare"
+    );
+
     for (key, value) in [
         ("color.ui", "always"),
         ("diff.external", "echo"),
@@ -3152,7 +3432,14 @@ fn test_show_prompt_ignores_diff_display_config(repo_with_multi_commit_feature: 
         repo.run_git(&["config", key, value]);
     }
 
-    assert_eq!(prompts(), default_prompts);
+    let configured_prompts = prompts("configured");
+    for (step, prompt) in ["commit", "squash"].iter().zip(&configured_prompts) {
+        assert!(
+            !prompt.contains(&0x1b),
+            "under `color.ui = always` the {step} prompt must carry no escape bytes"
+        );
+    }
+    assert_eq!(configured_prompts, default_prompts);
 }
 
 #[rstest]
@@ -3595,7 +3882,7 @@ command = "cat >/dev/null && echo 'feat: missing-index'"
 }
 
 /// `wt step squash --show-prompt` propagates template errors from
-/// `build_squash_prompt`. A malformed jinja template must surface the failure
+/// `SquashInputs::prompt`. A malformed jinja template must surface the failure
 /// rather than producing an empty prompt.
 #[rstest]
 fn test_step_squash_show_prompt_malformed_template(repo_with_multi_commit_feature: TestRepo) {
@@ -3625,7 +3912,7 @@ squash-template = "{% if commits"
 }
 
 /// `wt step squash --dry-run` propagates LLM-command failures from
-/// `generate_squash_message`. The prompt renders fine, but a non-zero exit
+/// `SquashInputs::generate_message`. The prompt renders fine, but a non-zero exit
 /// from the configured command must be surfaced rather than swallowed.
 #[rstest]
 fn test_step_squash_dry_run_llm_failure(repo_with_multi_commit_feature: TestRepo) {
@@ -3633,7 +3920,7 @@ fn test_step_squash_dry_run_llm_failure(repo_with_multi_commit_feature: TestRepo
     let feature_wt = repo.worktree_path("feature");
 
     // `cat >/dev/null` consumes stdin first to avoid a broken-pipe race; the
-    // command then exits non-zero so generate_squash_message bubbles the failure up.
+    // command then exits non-zero so `generate_message` bubbles the failure up.
     let worktrunk_config = r#"
 [commit.generation]
 command = "cat >/dev/null; echo 'simulated LLM failure' >&2 && exit 1"
@@ -4380,6 +4667,196 @@ fn test_step_squash_no_net_changes_json(mut repo: TestRepo) {
     );
     let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_eq!(parsed["outcome"], "no_net_changes");
+    assert_eq!(
+        repo.git_output(&["rev-parse", "feature"]),
+        repo.git_output(&["rev-parse", "main"]),
+        "commits that cancel out squash to nothing, leaving the branch at the merge base"
+    );
+}
+
+/// The squash commit is made on a detached HEAD, so the branch keeps its
+/// commits until that commit exists: git's own `pre-commit` hook still gates
+/// the squash, and rejecting it leaves the branch, HEAD and the history
+/// exactly as they were. Without the hook the same squash lands on the branch.
+#[rstest]
+fn test_step_squash_failed_commit_leaves_branch_intact(repo_with_multi_commit_feature: TestRepo) {
+    let repo = &repo_with_multi_commit_feature;
+    let feature_wt = &repo.worktrees["feature"];
+    let feature_dir = feature_wt.to_str().unwrap();
+
+    let hook = repo.root_path().join(".git/hooks/pre-commit");
+    fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    fs::write(&hook, "#!/bin/sh\necho REJECTED-BY-GIT-HOOK >&2\nexit 1\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let squash = || {
+        repo.wt_command()
+            .args(["step", "squash", "--no-hooks"])
+            .current_dir(feature_wt)
+            .env(
+                "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+                "cat >/dev/null && echo 'squash: combined'",
+            )
+            .output()
+            .unwrap()
+    };
+    let original_tip = repo.git_output(&["rev-parse", "feature"]);
+
+    let output = squash();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success() && stderr.contains("REJECTED-BY-GIT-HOOK"),
+        "git's pre-commit hook must gate the squash commit: {stderr}"
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "feature"]),
+        original_tip,
+        "a rejected squash commit must leave the branch at its original tip"
+    );
+    assert_eq!(
+        repo.git_output(&["-C", feature_dir, "symbolic-ref", "HEAD"]),
+        "refs/heads/feature",
+        "HEAD must be back on the branch"
+    );
+
+    fs::remove_file(&hook).unwrap();
+    let output = squash();
+    assert!(
+        output.status.success(),
+        "squash failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "feature^"]),
+        repo.git_output(&["rev-parse", "main"]),
+        "the squash commit sits directly on the merge base"
+    );
+    assert_eq!(
+        repo.git_output(&["log", "-1", "--format=%s", "feature"]),
+        "squash: combined"
+    );
+    assert_eq!(
+        repo.git_output(&["-C", feature_dir, "symbolic-ref", "HEAD"]),
+        "refs/heads/feature"
+    );
+    assert_eq!(
+        repo.git_output(&["-C", feature_dir, "rev-parse", "ORIG_HEAD"]),
+        original_tip
+    );
+}
+
+/// A writer that moves the branch while the squash commit is being built loses
+/// nothing: the compare-and-swap that moves the branch refuses rather than
+/// clobbering the other write, and HEAD goes back on the branch.
+#[rstest]
+fn test_step_squash_refuses_when_the_branch_moves_mid_squash(
+    repo_with_multi_commit_feature: TestRepo,
+) {
+    let repo = &repo_with_multi_commit_feature;
+    let feature_wt = &repo.worktrees["feature"];
+    let feature_dir = feature_wt.to_str().unwrap();
+
+    // `pre-commit` runs inside the squash's `git commit`, which is exactly the
+    // window a concurrent writer would move the branch in.
+    let hook = repo.root_path().join(".git/hooks/pre-commit");
+    fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    fs::write(
+        &hook,
+        "#!/bin/sh\ngit update-ref refs/heads/feature \"$(git rev-parse main)\"\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let output = repo
+        .wt_command()
+        .args(["step", "squash", "--no-hooks"])
+        .current_dir(feature_wt)
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'squash: combined'",
+        )
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success() && stderr.contains("Failed to update"),
+        "a branch that moved mid-squash must refuse the update: {stderr}"
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "feature"]),
+        repo.git_output(&["rev-parse", "main"]),
+        "the other writer's value stands"
+    );
+    assert_eq!(
+        repo.git_output(&["-C", feature_dir, "symbolic-ref", "HEAD"]),
+        "refs/heads/feature",
+        "HEAD must be back on the branch"
+    );
+}
+
+/// When HEAD can't be put back on the branch after a failed squash commit, the
+/// error says how to do it by hand — the worktree is left detached otherwise.
+#[cfg(unix)]
+#[rstest]
+fn test_step_squash_reports_how_to_reattach_head(repo_with_multi_commit_feature: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo = &repo_with_multi_commit_feature;
+    let feature_wt = &repo.worktrees["feature"];
+    let feature_dir = feature_wt.to_str().unwrap();
+
+    // The hook seals the worktree's git directory before rejecting the commit,
+    // so the reattach that follows can't write HEAD either.
+    let hook = repo.root_path().join(".git/hooks/pre-commit");
+    fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    fs::write(
+        &hook,
+        "#!/bin/sh\nchmod a-w \"$(git rev-parse --absolute-git-dir)\"\nexit 1\n",
+    )
+    .unwrap();
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "squash", "--no-hooks"])
+        .current_dir(feature_wt)
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'squash: combined'",
+        )
+        .output()
+        .unwrap();
+
+    let git_dir =
+        PathBuf::from(repo.git_output(&["-C", feature_dir, "rev-parse", "--absolute-git-dir"]));
+    let sealed = fs::write(git_dir.join("write-probe"), "x").is_err();
+    fs::set_permissions(&git_dir, fs::Permissions::from_mode(0o755)).unwrap();
+    repo.run_git(&[
+        "-C",
+        feature_dir,
+        "symbolic-ref",
+        "HEAD",
+        "refs/heads/feature",
+    ]);
+    if !sealed {
+        // Running with privileges that ignore the read-only directory, so the
+        // reattach succeeded and there is no message to assert.
+        return;
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success() && stderr.contains("git symbolic-ref HEAD refs/heads/feature"),
+        "a failed reattach must say how to put HEAD back: {stderr}"
+    );
 }
 
 /// `step rebase --format=json` reports `rebased` (not `fast_forwarded`) when
@@ -5325,6 +5802,35 @@ fn test_step_squash_measures_against_upstream_when_local_main_stale(
         stale_main,
         "step squash must never move the target ref",
     );
+}
+
+/// #3519 (standalone step): `wt step diff` shows what `wt merge` would squash,
+/// so with a stale local main it diffs from the upstream fork point — the
+/// branch's own files, not the upstream commits it was built on.
+#[rstest]
+fn test_step_diff_measures_against_upstream_when_local_main_stale(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    setup_stale_local_main(&repo);
+    let feature_wt =
+        add_feature_worktree(&repo, "origin/main", &[("feature.txt", "feature commit")]);
+    fs::write(feature_wt.join("untracked.txt"), "untracked").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "diff", "--", "--name-only"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "step diff failed\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"
+    feature.txt
+    untracked.txt
+    ");
 }
 
 /// #3519 (standalone step): `wt step rebase` with a stale local target rebases

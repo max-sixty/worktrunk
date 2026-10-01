@@ -58,6 +58,35 @@ fn detect_pr_mr(
     }
 }
 
+/// Whether a PR/MR could have this branch as its head.
+///
+/// Every forge opens a PR/MR from a branch it hosts, so a local branch that was
+/// never pushed can't head one, and the forge call is skipped. Each skip saves
+/// a ~450ms round trip and ~65ms of CPU, which adds up in a repo that keeps
+/// many local-only branches. A remote row is on its remote by definition.
+///
+/// A local branch counts as never pushed when no remote has it under its name
+/// and its push remote would have recorded it there: git updates
+/// `refs/remotes/` on push only where the remote's fetch refspecs map the
+/// branch. A `--single-branch` or `--depth` clone maps only the branch it
+/// cloned, and a URL push remote (a fork's PR checked out with
+/// `gh pr checkout`) maps nothing, so for those only the forge can answer.
+///
+/// A PR opened from a branch pushed by another clone shows once this clone
+/// fetches it.
+fn may_head_pr(repo: &Repository, branch: &CiBranchName) -> bool {
+    if branch.is_remote() {
+        return true;
+    }
+    let handle = repo.branch(&branch.name);
+    if handle.remotes().map_or(true, |r| !r.is_empty()) {
+        return true;
+    }
+    // Where `git push` sends it, as `branch_remote_url` resolves it.
+    let push_remote = handle.push_remote().or_else(|| repo.primary_remote().ok());
+    !push_remote.is_some_and(|remote| repo.fetch_tracks_branch(&remote, &branch.name))
+}
+
 /// Detect CI status from a branch workflow/pipeline (fallback when no PR/MR).
 fn detect_branch(
     platform: ForgeKind,
@@ -76,7 +105,8 @@ fn detect_branch(
     }
 }
 
-/// Detect CI status: PR/MR first, then branch workflow/pipeline if `has_upstream`.
+/// Detect CI status: PR/MR first when the branch [may head one](may_head_pr),
+/// then branch workflow/pipeline if `has_upstream`.
 ///
 /// Returns `None` if the CLI tool isn't installed or no CI status is found.
 pub(super) fn detect_ci(
@@ -89,7 +119,9 @@ pub(super) fn detect_ci(
     if !is_tool_available(platform) {
         return None;
     }
-    if let Some(status) = detect_pr_mr(platform, repo, branch, local_head) {
+    if may_head_pr(repo, branch)
+        && let Some(status) = detect_pr_mr(platform, repo, branch, local_head)
+    {
         return Some(status);
     }
     if has_upstream {

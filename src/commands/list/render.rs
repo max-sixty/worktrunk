@@ -1444,8 +1444,8 @@ mod tests {
     /// A row's link markup is a property of the render, not of the cell that
     /// happens to emit it: the CI reference and the dev-server port either both
     /// carry an underlined OSC 8 link or neither does. The picker renders
-    /// `Unlinked` because skim mangles the escape, and an underline there would
-    /// mark text with nothing behind it.
+    /// `Unlinked` (`layout::LinkStyle::Unlinked` has the reason), and an
+    /// underline there would mark text with nothing behind it.
     #[test]
     fn test_link_markup_is_uniform_across_a_row() {
         use super::super::ci_status::{CiSource, CiStatus, PrRef, PrStatus};

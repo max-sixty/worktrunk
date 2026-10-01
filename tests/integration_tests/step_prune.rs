@@ -690,6 +690,140 @@ fn test_prune_stale_detached_worktree(repo: TestRepo) {
     );
 }
 
+/// Prune unregisters a stale entry whose directory remains, as `git worktree
+/// prune` does, and leaves the directory and its files in place. Git calls an
+/// entry prunable once the `.git` file inside it goes, which a temp-dir sweep
+/// that deletes idle files and keeps directories does. `git worktree remove`
+/// refuses such an entry, so handing it to git would fail the whole prune with
+/// git's `validation failed` error.
+#[rstest]
+fn test_prune_unregisters_stale_entries_whose_directory_remains(mut repo: TestRepo) {
+    repo.commit("initial");
+    let branch_path = repo.add_worktree("dotgit-gone");
+    let detached_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("repo.detached-dotgit-gone");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "--detach",
+        detached_path.to_str().unwrap(),
+        "HEAD",
+    ]);
+    for path in [&branch_path, &detached_path] {
+        std::fs::remove_file(path.join(".git")).unwrap();
+        std::fs::write(path.join("leftover.txt"), "kept").unwrap();
+    }
+    let list_before = repo.git_output(&["worktree", "list", "--porcelain"]);
+    assert_eq!(
+        list_before.matches("prunable").count(),
+        2,
+        "git should report both entries prunable; worktrees:\n{list_before}"
+    );
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "prune",
+            "--yes",
+            "--min-age=0s",
+            "--format=json",
+            "--foreground",
+        ])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(output.status.success(), "prune failed\nstderr:\n{stderr}");
+
+    let items: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let mut pruned: Vec<_> = items
+        .iter()
+        .map(|item| (item["kind"].as_str(), item["branch"].as_str()))
+        .collect();
+    pruned.sort();
+    assert_eq!(
+        pruned,
+        [
+            (Some("branch_only"), Some("dotgit-gone")),
+            (Some("stale_worktree"), None)
+        ],
+        "stderr:\n{stderr}"
+    );
+
+    let list_after = repo.git_output(&["worktree", "list", "--porcelain"]);
+    assert!(
+        !list_after.contains("prunable"),
+        "both entries should be unregistered; worktrees:\n{list_after}"
+    );
+    for path in [&branch_path, &detached_path] {
+        assert!(
+            path.join("leftover.txt").is_file(),
+            "{} should keep its files",
+            path.display()
+        );
+    }
+}
+
+/// Prune keeps a stale entry whose registration holds what unregistering it
+/// would destroy — staged changes, or a git operation partway through — and
+/// removes a clean one beside them. `git worktree repair` can bring either
+/// back only while the registration survives.
+#[rstest]
+fn test_prune_keeps_stale_entries_holding_work(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.add_worktree("merged");
+    std::fs::remove_dir_all(repo.worktree_path("merged")).unwrap();
+
+    // Staged work, and only the `.git` file gone: the shape repair restores.
+    let staged = repo.add_worktree("staged");
+    std::fs::write(staged.join("new.txt"), "work").unwrap();
+    repo.run_git_in(&staged, &["add", "new.txt"]);
+    std::fs::remove_file(staged.join(".git")).unwrap();
+
+    let bisecting = repo.root_path().parent().unwrap().join("repo.bisecting");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "--detach",
+        bisecting.to_str().unwrap(),
+        "HEAD",
+    ]);
+    repo.run_git_in(&bisecting, &["bisect", "start"]);
+    std::fs::remove_dir_all(&bisecting).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "prune",
+            "--yes",
+            "--min-age=0s",
+            "--format=json",
+            "--foreground",
+        ])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(output.status.success(), "prune failed\nstderr:\n{stderr}");
+
+    let items: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let branches: Vec<_> = items.iter().map(|item| item["branch"].as_str()).collect();
+    assert_eq!(branches, [Some("merged")], "stderr:\n{stderr}");
+    let list = repo.git_output(&["worktree", "list", "--porcelain"]);
+    assert_eq!(
+        list.matches("prunable").count(),
+        2,
+        "the entries holding work should stay registered; worktrees:\n{list}"
+    );
+}
+
 /// Min-age check passes when worktrees are old enough.
 ///
 /// Uses a far-future epoch (2030) so real worktrees (created Feb 2026) appear
@@ -1700,32 +1834,47 @@ fn test_prune_fallback_config_race_canary(mut repo: TestRepo) {
 /// A stale worktree entry whose metadata prune fails at execution surfaces
 /// the failure rather than pretending the candidate was removed: the scan
 /// records the prune in the plan (`prune_entry`), execution runs it before
-/// the branch deletion, and its error fails the run — the branch and the
-/// entry both survive intact. A `git` shim failing `worktree remove` is the
-/// deterministic trigger. Unix-only for the same `CreateProcess` reason as
-/// the canary shim above.
+/// the branch deletion, and its error fails the run — the branch survives and
+/// the entry stays registered. A read-only registration directory is the
+/// deterministic trigger: its files can't be unlinked. Unix-only, since the
+/// trigger is a permission bit.
 #[cfg(unix)]
 #[rstest]
 fn test_prune_surfaces_failing_metadata_prune(mut repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
     repo.commit("initial");
 
     // Integrated branch whose worktree directory is deleted out-of-band → a
     // stale (prunable) worktree entry, prune's `Prunable` check source.
-    repo.add_worktree("stale-merged");
-    std::fs::remove_dir_all(repo.worktree_path("stale-merged")).unwrap();
+    let wt_path = repo.add_worktree("stale-merged");
+    std::fs::remove_dir_all(&wt_path).unwrap();
+    // Git names a registration after its worktree directory.
+    let registration = repo
+        .root_path()
+        .join(".git/worktrees")
+        .join(wt_path.file_name().unwrap());
+    assert!(registration.is_dir(), "{} missing", registration.display());
+    let set_mode = |mode| {
+        std::fs::set_permissions(&registration, std::fs::Permissions::from_mode(mode)).unwrap()
+    };
+    set_mode(0o555);
+    // Skip if running as root: euid 0 ignores DAC mode bits, so the deletion
+    // would succeed. Probe with a write the mode should refuse.
+    let probe = registration.join("probe");
+    if std::fs::write(&probe, "").is_ok() {
+        let _ = std::fs::remove_file(&probe);
+        set_mode(0o755);
+        eprintln!("Skipping - running with elevated privileges");
+        return;
+    }
 
-    let mut cmd = repo.wt_command();
-    let git_wrapper_dir = repo.home_path().join("git-wrapper");
-    std::fs::create_dir_all(&git_wrapper_dir).unwrap();
-    write_failing_worktree_remove_wrapper(&git_wrapper_dir, &which::which("git").unwrap());
-    prepend_path(&mut cmd, &git_wrapper_dir);
-    let prune_failed_marker = repo.home_path().join("worktree-remove-failed");
-    cmd.env("WT_TEST_WORKTREE_REMOVE_FAILED", &prune_failed_marker);
-
-    let output = cmd
+    let output = repo
+        .wt_command()
         .args(["step", "prune", "--yes", "--min-age=0s"])
         .output()
         .unwrap();
+    set_mode(0o755);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
@@ -1736,11 +1885,6 @@ fn test_prune_surfaces_failing_metadata_prune(mut repo: TestRepo) {
         stderr.contains("stale-merged"),
         "the error must name the failed candidate.\nstderr:\n{stderr}"
     );
-    assert!(
-        prune_failed_marker.exists(),
-        "the shim never fired — the metadata prune was not exercised"
-    );
-    // Nothing half-done: the entry is still registered and the branch intact.
     let list = repo.git_output(&["worktree", "list", "--porcelain"]);
     assert!(
         list.contains("prunable"),
@@ -1750,6 +1894,51 @@ fn test_prune_surfaces_failing_metadata_prune(mut repo: TestRepo) {
     assert!(
         branches.lines().any(|branch| branch == "stale-merged"),
         "the failed candidate's branch must survive; branches:\n{branches}"
+    );
+}
+
+/// A stale entry is unregistered before its branch is deleted, so it goes
+/// even when the branch deletion loses its compare-and-swap: prune reports the
+/// pruned entry, then the kept branch. The shim fails the CAS delete and leaves
+/// the ref, which is how a branch that moved during deletion reads.
+#[cfg(unix)]
+#[rstest]
+fn test_prune_unregisters_stale_entry_when_branch_delete_races(mut repo: TestRepo) {
+    repo.commit("initial");
+    let wt_path = repo.add_worktree("stale-raced");
+    std::fs::remove_dir_all(&wt_path).unwrap();
+
+    let mut cmd = repo.wt_command();
+    let git_wrapper_dir = repo.home_path().join("git-wrapper");
+    std::fs::create_dir_all(&git_wrapper_dir).unwrap();
+    write_failing_branch_delete_wrapper(&git_wrapper_dir, &which::which("git").unwrap());
+    prepend_path(&mut cmd, &git_wrapper_dir);
+    cmd.env("WT_TEST_FAIL_DELETE_BRANCH", "stale-raced");
+    cmd.env("WT_TEST_FAIL_DELETE_KEEPS_REF", "1");
+
+    let output = cmd
+        .args(["step", "prune", "--yes", "--min-age=0s"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+
+    assert!(output.status.success(), "prune failed\nstderr:\n{stderr}");
+    assert!(
+        stderr.contains("Pruned stale worktree for stale-raced")
+            && stderr.contains("moved during deletion"),
+        "prune should report the pruned entry and the kept branch\nstderr:\n{stderr}"
+    );
+    let list = repo.git_output(&["worktree", "list", "--porcelain"]);
+    assert!(
+        !list.contains("prunable"),
+        "the entry should be unregistered; worktrees:\n{list}"
+    );
+    let branches = repo.git_output(&["branch", "--format=%(refname:short)"]);
+    assert!(
+        branches.lines().any(|branch| branch == "stale-raced"),
+        "the raced branch should be kept; branches:\n{branches}"
     );
 }
 
@@ -1848,113 +2037,6 @@ fn test_prune_removals_run_concurrently(repo: TestRepo) {
     );
     let branches = repo.git_output(&["branch", "--format=%(refname:short)"]);
     for name in ["para-a", "para-b"] {
-        assert!(
-            !branches.lines().any(|branch| branch == name),
-            "{name} should have been deleted; branches:\n{branches}"
-        );
-    }
-}
-
-/// The removals that unregister stale worktree metadata serialize through the
-/// repository registry lock — one `git worktree remove` teardown at a time.
-///
-/// Four stale entries: two carrying a branch (`BranchOnly` plans whose
-/// `prune_entry` executes the prune) and two detached (`StaleDetached`, which
-/// prune in place of a removal). Each unregisters its own metadata with
-/// `git worktree remove <path>`, which enumerates every sibling's `commondir`
-/// as it resolves its target — so two overlapping teardowns can read an entry
-/// another worker is mid-deleting and fail (issue #3661). The shim probes for
-/// that overlap with an atomic `mkdir` lock held across a fixed window around
-/// each teardown; serialized, no two ever hold it at once, so the test asserts
-/// no `overlap-` sentinel appears (and every entry still pruned). If the lock
-/// regressed, all four teardowns would fire at once and three would collide in
-/// the window. Unix-only for the same `CreateProcess` shim reason as the canary
-/// above.
-///
-/// `--foreground` runs both ways. It reserves `check_lock`'s write side for the
-/// TTY trash-cleanup spinner, which only a worktree removal paints; every
-/// candidate here plans a branch deletion or a bare prune, so the flag changes
-/// nothing — the registry teardowns serialize inside `Repository` regardless.
-#[cfg(unix)]
-#[rstest]
-fn test_prune_metadata_removals_serialize(
-    mut repo: TestRepo,
-    #[values(false, true)] foreground: bool,
-) {
-    repo.commit("initial");
-
-    // At main HEAD, so every entry is same-commit integrated.
-    let mut stale = vec![repo.add_worktree("stale-a"), repo.add_worktree("stale-b")];
-    for name in ["det-a", "det-b"] {
-        let path = repo
-            .root_path()
-            .parent()
-            .unwrap()
-            .join(format!("repo.{name}"));
-        repo.run_git(&[
-            "worktree",
-            "add",
-            "--detach",
-            path.to_str().unwrap(),
-            "HEAD",
-        ]);
-        stale.push(path);
-    }
-    for path in &stale {
-        std::fs::remove_dir_all(path).unwrap();
-    }
-
-    let mut cmd = repo.wt_command();
-    // The removal pool is sized from the rayon thread count; pin it to four so
-    // all four teardowns would run at once if the registry lock regressed (the
-    // workers block in subprocess waits, so four threads don't need four CPUs).
-    cmd.env("RAYON_NUM_THREADS", "4");
-    let git_wrapper_dir = repo.home_path().join("git-wrapper");
-    std::fs::create_dir_all(&git_wrapper_dir).unwrap();
-    write_overlap_probe_worktree_remove_wrapper(&git_wrapper_dir, &which::which("git").unwrap());
-    prepend_path(&mut cmd, &git_wrapper_dir);
-    let barrier_dir = repo.home_path().join("barrier");
-    std::fs::create_dir_all(&barrier_dir).unwrap();
-    cmd.env("WT_TEST_BARRIER_DIR", &barrier_dir);
-
-    cmd.args(["step", "prune", "--yes", "--min-age=0s"]);
-    if foreground {
-        cmd.arg("--foreground");
-    }
-    let output = cmd.output().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    assert!(output.status.success(), "prune should succeed:\n{stderr}");
-    let sentinels: Vec<String> = std::fs::read_dir(&barrier_dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .collect();
-    let started: Vec<&String> = sentinels
-        .iter()
-        .filter(|n| n.starts_with("started-"))
-        .collect();
-    assert_eq!(
-        started.len(),
-        stale.len(),
-        "every stale entry should have pruned its own metadata: {started:?}"
-    );
-    let overlaps: Vec<&String> = sentinels
-        .iter()
-        .filter(|n| n.starts_with("overlap-"))
-        .collect();
-    assert!(
-        overlaps.is_empty(),
-        "two `git worktree remove` teardowns overlapped — the repository registry \
-         lock did not serialize them (issue #3661): {overlaps:?}"
-    );
-    let list = repo.git_output(&["worktree", "list", "--porcelain"]);
-    assert!(
-        !list.contains("prunable"),
-        "every stale entry should be unregistered; worktrees:\n{list}"
-    );
-    let branches = repo.git_output(&["branch", "--format=%(refname:short)"]);
-    for name in ["stale-a", "stale-b"] {
         assert!(
             !branches.lines().any(|branch| branch == name),
             "{name} should have been deleted; branches:\n{branches}"
@@ -2069,10 +2151,11 @@ fn test_prune_concurrent_removal_failures_report_first(repo: TestRepo) {
     );
 }
 
-/// A `git` shim that deletes `refs/heads/$WT_TEST_FAIL_DELETE_BRANCH` for
-/// real and then reports failure when prune's CAS delete targets it —
-/// making `cas_delete_branch_outcome` propagate an error (ref gone on
-/// re-check) instead of `RetainedRaced` (ref still present).
+/// A `git` shim that fails prune's CAS delete of
+/// `refs/heads/$WT_TEST_FAIL_DELETE_BRANCH`. By default it deletes the ref for
+/// real first, making `cas_delete_branch_outcome` propagate an error (ref gone
+/// on re-check); with `WT_TEST_FAIL_DELETE_KEEPS_REF` set it leaves the ref,
+/// which reads as `RetainedRaced` (a branch that moved during deletion).
 #[cfg(unix)]
 fn write_failing_branch_delete_wrapper(dir: &std::path::Path, real_git: &std::path::Path) {
     use std::os::unix::fs::PermissionsExt;
@@ -2081,7 +2164,7 @@ fn write_failing_branch_delete_wrapper(dir: &std::path::Path, real_git: &std::pa
     let script = format!(
         r#"#!/bin/sh
 if [ "$1" = "update-ref" ] && [ "$2" = "-d" ] && [ "$3" = "refs/heads/$WT_TEST_FAIL_DELETE_BRANCH" ]; then
-  {real_git} update-ref -d "$3" || true
+  [ -n "$WT_TEST_FAIL_DELETE_KEEPS_REF" ] || {real_git} update-ref -d "$3" || true
   exit 1
 fi
 exec {real_git} "$@"
@@ -2120,42 +2203,6 @@ while [ ! -e "$WT_TEST_BARRIER_DIR/started-$other" ]; do
 done
 {real_git} update-ref -d "$3" || true
 exit 1
-"#
-    );
-    let path = dir.join("git");
-    std::fs::write(&path, script).unwrap();
-    let mut permissions = std::fs::metadata(&path).unwrap().permissions();
-    permissions.set_mode(0o755);
-    std::fs::set_permissions(&path, permissions).unwrap();
-}
-
-/// A `git` shim whose `worktree remove` arms a probe for overlap (see
-/// `test_prune_metadata_removals_serialize`): each records that it started,
-/// then takes an atomic `mkdir` lock for a fixed window. Under the registry
-/// serialization this is testing, no two teardowns ever hold it at once, so a
-/// failed `mkdir` — a concurrent teardown mid-window — drops an `overlap-`
-/// sentinel the test asserts absent. Everything else passes through to the real
-/// git.
-#[cfg(unix)]
-fn write_overlap_probe_worktree_remove_wrapper(dir: &std::path::Path, real_git: &std::path::Path) {
-    use std::os::unix::fs::PermissionsExt;
-
-    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
-    let script = format!(
-        r#"#!/bin/sh
-case "$1 $2" in
-  "worktree remove") ;;
-  *) exec {real_git} "$@" ;;
-esac
-own=$(basename "$3")
-: > "$WT_TEST_BARRIER_DIR/started-$own"
-if mkdir "$WT_TEST_BARRIER_DIR/active" 2>/dev/null; then
-  sleep 0.2
-  rmdir "$WT_TEST_BARRIER_DIR/active"
-else
-  : > "$WT_TEST_BARRIER_DIR/overlap-$own"
-fi
-exec {real_git} "$@"
 "#
     );
     let path = dir.join("git");
@@ -2232,30 +2279,6 @@ while [ ! -e "$WT_TEST_BARRIER_DIR/started-$other" ]; do
   fi
   sleep 0.05
 done
-exec {real_git} "$@"
-"#
-    );
-    let path = dir.join("git");
-    std::fs::write(&path, script).unwrap();
-    let mut permissions = std::fs::metadata(&path).unwrap().permissions();
-    permissions.set_mode(0o755);
-    std::fs::set_permissions(&path, permissions).unwrap();
-}
-
-/// A `git` shim that fails every `git worktree remove` and passes everything
-/// else through to the real git.
-#[cfg(unix)]
-fn write_failing_worktree_remove_wrapper(dir: &std::path::Path, real_git: &std::path::Path) {
-    use std::os::unix::fs::PermissionsExt;
-
-    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
-    let script = format!(
-        r#"#!/bin/sh
-if [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
-  : > "$WT_TEST_WORKTREE_REMOVE_FAILED"
-  echo "shim: worktree remove disabled" >&2
-  exit 1
-fi
 exec {real_git} "$@"
 "#
     );

@@ -31,6 +31,16 @@ pub(super) struct ConfigEdit<'a> {
 }
 
 impl ConfigEdit<'_> {
+    /// The dotted key this edit writes, for naming it in an error.
+    fn key_path(&self) -> String {
+        self.tables
+            .iter()
+            .chain(std::iter::once(&self.key))
+            .copied()
+            .collect::<Vec<_>>()
+            .join(".")
+    }
+
     /// Set the value in `doc`, leaving everything else as it is.
     ///
     /// An existing value is replaced in place and keeps its decor — the spacing
@@ -118,14 +128,17 @@ impl ConfigFile {
     /// The edit goes into the file as written when that loads as `expected`.
     /// Otherwise a load-time migration touches the edit's path — a deprecated
     /// `[commit-generation]` migrates to `[commit.generation]` only while that
-    /// table is absent — and the edit goes into the migrated file, which loads
-    /// as `expected` by construction: the migrations are idempotent and the
-    /// edit lands after them. That file carries *every* load-path migration,
-    /// not just the one on the edit's path, so it can also move an unrelated
-    /// deprecated section and drop the keys its destination has no field for.
-    /// A mutation is otherwise not what materializes migrations —
-    /// `wt config update` is — so [`Edited::Migrated`] says so, and its caller
-    /// tells the user.
+    /// table is absent — and the edit goes into the migrated file, which carries
+    /// *every* load-path migration, not just the one on the edit's path, so it
+    /// can also move an unrelated deprecated section and drop the keys its
+    /// destination has no field for. A mutation is otherwise not what
+    /// materializes migrations — `wt config update` is — so [`Edited::Migrated`]
+    /// says so, and its caller tells the user.
+    ///
+    /// Both candidates face the same test, [`loads_as`], and no content leaves
+    /// here untested: the migrated file is expected to pass by construction (the
+    /// migrations are idempotent and the edit lands after them), and an error
+    /// rather than a silent write is what says so.
     pub(super) fn edited(
         &self,
         edit: &ConfigEdit,
@@ -133,18 +146,30 @@ impl ConfigFile {
     ) -> Result<Edited, ConfigError> {
         let mut doc = self.doc.clone();
         edit.apply(&mut doc)?;
-        if load(&doc).is_ok_and(|config| &config == expected) {
+        if loads_as(&doc, expected) {
             return Ok(Edited::AsWritten(doc.to_string()));
         }
 
         let mut doc = self.doc.clone();
         let changes = migrate_doc(&mut doc);
         edit.apply(&mut doc)?;
+        if !loads_as(&doc, expected) {
+            return Err(ConfigError(format!(
+                "Refusing to write a config file wt could not read back: {} would not load as written",
+                edit.key_path()
+            )));
+        }
         Ok(Edited::Migrated {
             content: doc.to_string(),
             changes,
         })
     }
+}
+
+/// Whether `doc` loads as `expected` — the one test a mutation's content has to
+/// pass before it is written.
+fn loads_as(doc: &DocumentMut, expected: &UserConfig) -> bool {
+    load(doc).is_ok_and(|config| &config == expected)
 }
 
 /// A config file with an edit applied, and whether writing it took the load-path

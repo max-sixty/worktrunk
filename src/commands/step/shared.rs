@@ -225,18 +225,34 @@ fn list_ignored_entries(
         return Err(worktrunk::git::CommandError::from_failed_output("git", &args, &output).into());
     }
 
-    // Parse output: NUL-separated entries; directories end with /
-    let entries = String::from_utf8_lossy(&output.stdout)
-        .split('\0')
+    // Git's -z output contains path bytes, which need not be UTF-8 on Unix.
+    let entries = output
+        .stdout
+        .split(|&byte| byte == 0)
         .filter(|entry| !entry.is_empty())
         .map(|entry| {
-            let is_dir = entry.ends_with('/');
-            let path = worktree_path.join(entry.trim_end_matches('/'));
-            (path, is_dir)
+            let (relative, is_dir) = match entry.strip_suffix(b"/") {
+                Some(relative) => (relative, true),
+                None => (entry, false),
+            };
+            (worktree_path.join(path_from_git_bytes(relative)), is_dir)
         })
         .collect();
 
     Ok(entries)
+}
+
+#[cfg(unix)]
+fn path_from_git_bytes(bytes: &[u8]) -> PathBuf {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    OsString::from_vec(bytes.to_vec()).into()
+}
+
+#[cfg(not(unix))]
+fn path_from_git_bytes(bytes: &[u8]) -> PathBuf {
+    String::from_utf8_lossy(bytes).into_owned().into()
 }
 
 #[cfg(test)]

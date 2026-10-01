@@ -50,7 +50,8 @@
   --sl-color-hairline-light: var(--wt-line);
   --sl-color-hairline: var(--wt-line);
   --sl-color-hairline-shade: var(--wt-line);
-  --sl-content-width: 62rem;
+  /* The 99-column documentation terminal plus its inline gutters. */
+  --sl-content-width: 53.75rem;
   --sl-sidebar-width: 14rem;
 }
 
@@ -716,7 +717,7 @@ figure.demo img {
 }
 
 /* Keep the compact table of contents until both sidebars leave room for examples. */
-@media (min-width: 72rem) and (max-width: 85.99rem) {
+@media (min-width: 72rem) and (max-width: 87.5rem) {
   :root {
     --sl-mobile-toc-height: 3rem;
   }

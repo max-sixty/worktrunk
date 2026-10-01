@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use tempfile::TempDir;
 use worktrunk::git::{
-    Diagnostic, FailedCommand, GitError, HookErrorWithHint, HookType, RefType, WorktrunkError,
-    add_hook_skip_hint,
+    Diagnostic, FailedCommand, GitError, HookErrorWithHint, HookType, InProgressOperation, RefType,
+    StaleWorktreeWork, WorktrunkError, add_hook_skip_hint,
 };
 
 use crate::common::{mock_commands::MockConfig, test_tempdir, wt_command};
@@ -113,8 +113,47 @@ fn worktree_errors_render() {
             "worktree missing",
             GitError::WorktreeMissing {
                 branch: "stale-branch".into(),
+                repairable_at: None,
             }
             .render(),
+        ),
+        (
+            "worktree missing its .git, directory remaining at a path needing quotes",
+            GitError::WorktreeMissing {
+                branch: "stale-branch".into(),
+                repairable_at: Some(PathBuf::from("/tmp/my repo.stale-branch")),
+            }
+            .render(),
+        ),
+        (
+            "stale worktree holding staged changes",
+            GitError::StaleWorktreeHoldsWork {
+                branch: "stale-branch".into(),
+                path: PathBuf::from("/tmp/repo.stale-branch"),
+                directory_remains: true,
+                work: StaleWorktreeWork::StagedChanges,
+            }
+            .render(),
+        ),
+        (
+            "stale worktree mid-operation, directory gone, at a path needing quotes",
+            [
+                InProgressOperation::Merge,
+                InProgressOperation::Rebase,
+                InProgressOperation::CherryPick,
+                InProgressOperation::Revert,
+                InProgressOperation::Bisect,
+            ]
+            .map(|operation| {
+                GitError::StaleWorktreeHoldsWork {
+                    branch: "stale-branch".into(),
+                    path: PathBuf::from("/tmp/my repo.stale-branch"),
+                    directory_remains: false,
+                    work: StaleWorktreeWork::Operation(operation),
+                }
+                .render()
+            })
+            .join("\n"),
         ),
         (
             "no worktree at a leftover directory",

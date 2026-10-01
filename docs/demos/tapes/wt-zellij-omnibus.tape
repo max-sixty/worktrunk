@@ -13,14 +13,15 @@ Output "{{OUTPUT_GIF}}"
 # 4. Each Zellij tab shows a distinct workflow
 #
 # Tab structure:
-#   TAB 1: wt switch (picker → api) → claude (simple task)
+#   TAB 1: wt switch (picker: CI streaming in, alt-p reveal, diff paging → api)
+#          → claude (simple task)
 #   TAB 2: [NEW TAB] wsl abbreviation (wt switch -x claude --create) → claude
 #   TAB 3: [NEW TAB] wt switch --create → wt step commit → git push → wt remove → wt list --full
 #   Then back to TAB 1: [NEW PANE] git diff → wt merge (on Claude's completed work)
 #
 # Features demonstrated:
 # - wt list / wt list --full (URLs, CI status, diff stats)
-# - wt switch (interactive picker)
+# - wt switch (interactive picker: streaming CI, alt-p column reveal, diff paging)
 # - wsl abbreviation (wt switch --execute=claude --create)
 # - wt switch --create (with post-start hooks)
 # - wt step commit (LLM commit message, standalone)
@@ -51,16 +52,33 @@ Enter
 Sleep 500ms
 
 # ==== TAB 1: Interactive picker and Claude agent ====
-# wt switch (no args) - opens interactive picker
+# wt switch (no args) - opens interactive picker. The rows paint from local git
+# immediately; each row's CI status is still in flight behind them.
 Type "wt switch"
 Show
 Sleep 300ms
 Enter
-Sleep 1.5s
+Sleep 500ms
 
-# Filter to api branch
+# alt-p hides the preview, widening the same rows to full width so the CI
+# column is visible while it is still filling in. The picker demo
+# (wt-switch-picker) is the full tour; this is the glance at it.
+Alt+p
+Sleep 2.5s
+Alt+p
+Sleep 800ms
+
+# Filter to api. Typed before any cursor movement: narrowing the list keeps the
+# cursor's row *index*, so the exact branch-name match has to be the top row for
+# this to land on api — which it is from the cursor's opening position.
 Type "api"
-Sleep 1s
+Sleep 1.2s
+
+# Page through api's diff without leaving the list.
+Ctrl+d
+Sleep 700ms
+Ctrl+d
+Sleep 1.8s
 
 # Select it
 Enter

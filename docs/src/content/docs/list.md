@@ -32,9 +32,9 @@ List all worktrees:
 $ wt list
   Branch       Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message
 @ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      6814f02   30m  Add API tests
-^ main             ^⇅                                    ⇡1  ⇣1  41ee083    4d  Merge fix-auth: h…
-+ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68    5h  Add secure token…
-+ fix-typos        _|                                      |     41ee083    4d  Merge fix-auth: h…
+^ main             ^⇅                                    ⇡1  ⇣1  41ee083    4d  Merge fix-auth: ha…
++ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68    5h  Add secure token s…
++ fix-typos        _|                                      |     41ee083    4d  Merge fix-auth: ha…
 
 ○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path
 ```
@@ -43,11 +43,11 @@ Include CI status and LLM summaries:
 
 ```console
 $ wt list --full
-  Branch       Status      HEAD±     main↕    main…±    Summary                      Remote⇅  CI
-@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archi…   ⇡3      #412
-^ main             ^⇅                                                                 ⇡1  ⇣1  #
-+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-…     |     #408
-+ fix-typos        _|                                                                   |     #410
+  Branch       Status      HEAD±     main↕    main…±    Summary                       Remote⇅  CI
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archit…   ⇡3      #412
+^ main             ^⇅                                                                  ⇡1  ⇣1  #
++ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-t…     |     #408
++ fix-typos        _|                                                                    |     #410
 
 ○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path, Commit, Age, Message
 ```
@@ -56,11 +56,11 @@ Include branches that don't have worktrees:
 
 ```console
 $ wt list --branches --full
-  Branch       Status      HEAD±     main↕    main…±    Summary                      Remote⇅  CI
-@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archi…   ⇡3      #412
-^ main             ^⇅                                                                 ⇡1  ⇣1  #
-+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-…     |     #408
-+ fix-typos        _|                                                                   |     #410
+  Branch       Status      HEAD±     main↕    main…±    Summary                       Remote⇅  CI
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archit…   ⇡3      #412
+^ main             ^⇅                                                                  ⇡1  ⇣1  #
++ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-t…     |     #408
++ fix-typos        _|                                                                    |     #410
 / exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and…
 / wip             /↕                 ↑1  ↓1   +33       Start API documentation
 
@@ -122,7 +122,7 @@ The CI column shows the branch's open PR/MR — `#3035` on GitHub, Gitea, and Az
 | <span style='color:#a60'>⚠</span> yellow | `"error"` | CI status could not be fetched (rate limit, network, etc.) |
 | <span style='color:#a0a'>#</span> magenta | `"changes_requested"` | A reviewer requested changes |
 | <span style='color:#0aa'>#</span> cyan | `"pending"` | A review is required (e.g. branch protection) but not yet given |
-| (blank) | `pr` and `checks` absent | No upstream, or no PR/MR and no branch workflow |
+| (blank) | `pr` and `checks` absent | Branch never pushed, or no PR/MR and no branch workflow |
 
 The two remaining review states have no indicator of their own: `"draft"` only dims the cell and `"approved"` leaves the color unchanged.
 
@@ -172,7 +172,7 @@ An in-progress git operation, a worktree-location attribute, or a branch with no
 |--------|------|---------|
 | `✘` | `worktree.changes.conflicted` | Merge conflicts |
 | `↻` | `worktree.operation` `"rebase"`, `"merge"`, `"cherry_pick"`, `"revert"`, `"bisect"` | A git operation is in progress; `git status` names it |
-| `⊟` | `worktree.prunable` | Prunable (worktree directory missing) |
+| `⊟` | `worktree.prunable` | Prunable (worktree directory or its `.git` gone) |
 | `⊞` | `worktree.locked` | Locked worktree |
 | `⊘` | `worktree.detached` | Detached HEAD |
 | `⚑` | `worktree.duplicate_branch` | Branch checked out in more than one worktree |

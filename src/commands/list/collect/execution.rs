@@ -245,7 +245,7 @@ pub(super) fn seed_unborn_main_state(item: &mut ListItem) {
 /// Pre-seed every gate on a prunable worktree so the only visible symbol
 /// is `⊟` (from the metadata `worktree_state`).
 ///
-/// Prunable worktrees have their directory missing from disk, so no task
+/// Prunable worktrees have lost their directory or its `.git`, so no task
 /// can run for them. Without this seeding, every gate would stay `None`
 /// forever and the cell would render as seven `·` placeholders. This
 /// helper replaces the runtime fallback in `refresh_status_symbols`
@@ -302,7 +302,8 @@ pub fn work_items_for_worktree(
     tx: &chan::Sender<Result<TaskResult, TaskError>>,
     item: &mut ListItem,
 ) -> Vec<WorkItem> {
-    // Prunable worktrees have their directory missing — no task can run.
+    // Prunable worktrees have lost their directory or its `.git` — no task
+    // can run.
     // Seed every gate directly so the cell shows just the `⊟` metadata
     // symbol rather than seven `·` placeholders.
     if item.worktree_data().is_some_and(|data| data.is_prunable()) {

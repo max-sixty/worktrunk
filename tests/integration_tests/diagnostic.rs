@@ -1,20 +1,16 @@
-//! Tests for diagnostic report generation.
+//! Tests for what `-v` and `-vv` produce.
 //!
-//! These tests verify the markdown structure and content of diagnostic reports
-//! to ensure they're suitable for GitHub issue filing.
+//! The diagnostic bundle is what a reporter pastes into a gist, so its tests
+//! pin the markdown structure, the sections it must carry, the pointer and
+//! gist hints `-vv` prints, and that the captured context is ANSI-free and
+//! free of raw control bytes. The rest cover the surrounding verbosity
+//! machinery: which files each level writes under `.git/wt/logs/`, how
+//! `trace.log`, `trace.jsonl` and `subprocess.log` divide the bounded preview
+//! from the full body and join back to each other, and how `RUST_LOG` and
+//! `WORKTRUNK_VERBOSE` combine with the flag.
 //!
-//! # Test Coverage
-//!
-//! - `test_diagnostic_report_file_format`: Snapshot of full diagnostic structure
-//! - `test_diagnostic_not_created_without_vv`: No file without -vv
-//! - `test_diagnostic_hint_without_vv`: Hint tells user to use -vv
-//! - `test_diagnostic_contains_required_sections`: All sections present
-//! - `test_diagnostic_context_has_no_ansi_codes`: ANSI stripped for GitHub
-//! - `test_diagnostic_trace_log_contains_git_commands`: Log has useful data
-//! - `test_diagnostic_saved_message_with_vv`: -vv announces the saved report
-//! - `test_diagnostic_leads_with_profile`: Profile is the bundle's first section
-//! - `test_diagnostic_written_to_correct_location`: File in .git/wt/logs/
-//! - `test_diagnostic_gh_hint_with_vv`: Hint shows gist and issue URL when gh installed
+//! Each test carries its own docstring; an inventory of them here goes stale
+//! as tests are added, so there isn't one.
 
 use std::fs;
 use std::path::PathBuf;

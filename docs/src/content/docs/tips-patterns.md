@@ -63,7 +63,12 @@ Cloning a bare repo into `<project>/.git` puts all worktrees under one directory
 ```bash
 git clone --bare <url> myproject/.git
 cd myproject
+git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+git fetch origin
+git remote set-head origin --auto
 ```
+
+`git clone --bare` records the `origin` URL but no fetch refspec, so without the `git config` line `git fetch` never creates remote-tracking branches like `origin/main`, and tools that read them (lazygit, editor integrations) see no remote branches. `git remote set-head` then points `origin/HEAD` at the remote's default branch.
 
 With `worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"`, worktrees become subdirectories of `myproject/`:
 
@@ -237,10 +242,9 @@ Each worktree can have its own isolated database. A pipeline sets up names and p
 # .config/wt.toml
 [[post-start]]
 set-vars = """
-wt config state vars set \
-  container='{{ repo }}-{{ branch | sanitize }}-postgres' \
-  port='{{ ('db-' ~ branch) | hash_port }}' \
-  db_url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'
+wt config state vars set container='{{ repo }}-{{ branch | sanitize }}-postgres' &&
+wt config state vars set port='{{ ('db-' ~ branch) | hash_port }}' &&
+wt config state vars set db-url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'
 """
 
 [[post-start]]
@@ -264,7 +268,7 @@ The `('db-' ~ branch)` concatenation hashes differently than plain `branch`, so 
 The connection string is accessible anywhere — not just in hooks:
 
 ```bash
-DATABASE_URL=$(wt config state vars get db_url) npm start
+DATABASE_URL=$(wt config state vars get db-url) npm start
 ```
 
 ### Per-worktree env vars
@@ -275,7 +279,7 @@ To scope environment variables to a worktree — a tool's package path, a profil
 
 ```sh
 # .envrc
-export MY_PACKAGES_PATH="$PWD/.packages"
+export MY_PACKAGES_PATH="$(expand_path .packages)"
 ```
 
 Run `direnv allow` once per worktree to trust the file ([getting started](https://direnv.net/#getting-started)). After that, switching into a worktree loads the env; switching out unloads it.
@@ -468,7 +472,7 @@ This lets one agent session hand off work to another that runs in the background
 
 The [worktrunk skill](/claude-code/) includes guidance for Claude Code (and other agent CLIs that load it) to execute this pattern. To enable it, request it explicitly ("spawn a parallel worktree for...") or add to your project instructions (`CLAUDE.md` or `AGENTS.md`):
 
-```markdown title="CLAUDE.md"
+```markdown title="AGENTS.md"
 When I ask you to spawn parallel worktrees, use the agent handoff pattern
 from the worktrunk skill.
 ```
@@ -530,13 +534,15 @@ Then `wt mc` opens an editor for the commit message while plain `wt merge` conti
 Follow background hook output:
 
 ```bash
-tail -f "$(wt config state logs get --hook=user:post-start:server)"
+tail -f "$(wt config state logs --format=json | jq -r --arg branch "$(git branch --show-current)" '.hook_output[] | select([.branch, .source, .hook_type, .name] == [$branch, "user", "post-start", "server"]) | .path')"
 ```
 
-The `--hook` format is `source:hook-type:name` — e.g., `project:post-start:build` for project-defined hooks. Use `wt config state logs get` to list all available logs.
+Each `hook_output` entry carries `branch`, `source` (`user`, `project`, or `internal`), `hook_type`, `name`, and `path` — adjust the `select` to pick a different hook or branch. Run `wt config state logs` to list all available logs.
 
-Create an alias for frequent use:
+Create a shell function for frequent use (`wtlog server`):
 
 ```bash
-alias wtlog='f() { tail -f "$(wt config state logs get --hook="$1")"; }; f'
+wtlog() {
+  tail -f "$(wt config state logs --format=json | jq -r --arg branch "$(git branch --show-current)" --arg name "$1" '.hook_output[] | select([.branch, .source, .hook_type, .name] == [$branch, "user", "post-start", $name]) | .path')"
+}
 ```

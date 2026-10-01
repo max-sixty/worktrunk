@@ -70,8 +70,6 @@ enum DirectiveMode {
 struct OutputState {
     /// How directory changes are communicated.
     mode: DirectiveMode,
-    /// Target directory for a subsequent `execute()` call.
-    target_dir: Option<PathBuf>,
     /// Mapping from canonical path prefix to logical (symlink) prefix.
     /// Computed once at init from `$PWD` vs `std::env::current_dir()`.
     symlink_mapping: Option<SymlinkMapping>,
@@ -197,7 +195,6 @@ fn state() -> &'static Mutex<OutputState> {
 
         Mutex::new(OutputState {
             mode,
-            target_dir: None,
             symlink_mapping,
             cwd_removed: false,
         })
@@ -287,17 +284,18 @@ fn write_cd_path_io(file: &Path, path: &Path) -> io::Result<()> {
 
 /// Request directory change (for shell integration).
 ///
-/// Stores the target for a later `execute()` call and, when shell integration
-/// is active, also writes it to the CD directive file.
+/// Moves the user's shell, and nothing else: where a relocated child program
+/// runs is its caller's own argument (see [`execute`]). When shell integration
+/// is inactive there is no shell to move and the call is a no-op.
 ///
 /// A write failure names the file it couldn't write.
 pub fn change_directory(path: impl AsRef<Path>) -> anyhow::Result<()> {
     let path = path.as_ref();
-    let mode = {
-        let mut guard = state().lock().expect("OUTPUT_STATE lock poisoned");
-        guard.target_dir = Some(path.to_path_buf());
-        guard.mode.clone()
-    };
+    let mode = state()
+        .lock()
+        .expect("OUTPUT_STATE lock poisoned")
+        .mode
+        .clone();
 
     match mode {
         DirectiveMode::Interactive | DirectiveMode::Retired => Ok(()),
@@ -335,37 +333,28 @@ pub(crate) fn format_exec_argv(argv: &[String]) -> String {
         .join(" ")
 }
 
-/// Run an external program in the directory selected by the preceding switch.
-pub fn execute(argv: Vec<String>) -> anyhow::Result<()> {
+/// Run an external program in `dir`, with the terminal attached.
+///
+/// The caller names the directory rather than reading one the shell directive
+/// left behind: the program goes where the switch pointed, whether or not the
+/// user's shell follows it there.
+pub fn execute(argv: Vec<String>, dir: &Path) -> anyhow::Result<()> {
     if argv.first().is_none_or(String::is_empty) {
         anyhow::bail!("--execute requires a non-empty program");
     }
-    let target_dir = state()
-        .lock()
-        .expect("OUTPUT_STATE lock poisoned")
-        .target_dir
-        .clone();
-    execute_command(argv, target_dir.as_deref())
-}
-
-/// Execute an argv in the given directory, with the terminal attached.
-fn execute_command(argv: Vec<String>, target_dir: Option<&Path>) -> anyhow::Result<()> {
     let mut argv = argv.into_iter();
     let program = argv.next().context("--execute requires a program")?;
-    let mut cmd = Cmd::new(program)
+    // wt relocated the payload into a worktree it selected; its `git` calls
+    // must discover that worktree from the cwd, not an inherited `GIT_DIR`
+    // (issue #3373; see `scrub_git_discovery_env_vars`).
+    let cmd = Cmd::new(program)
         .args(argv)
         .inherit_stdin()
-        .forward_signals();
+        .forward_signals()
+        .current_dir(dir)
+        .scrub_git_discovery_env();
     #[cfg(unix)]
-    {
-        cmd = cmd.propagate_sigpipe();
-    }
-    if let Some(dir) = target_dir {
-        // wt relocated the payload into a worktree it selected; its `git`
-        // calls must discover that worktree from the cwd, not an inherited
-        // `GIT_DIR` (issue #3373; see `scrub_git_discovery_env_vars`).
-        cmd = cmd.current_dir(dir).scrub_git_discovery_env();
-    }
+    let cmd = cmd.propagate_sigpipe();
 
     suppress_child_exit_message(cmd.stream())
 }

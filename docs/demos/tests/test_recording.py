@@ -60,6 +60,7 @@ Env HOME "{{DEMO_HOME}}"
         list(output_gifs),
         DemoSize(width=1600, height=900, fontsize=24),
         vhs_binary=str(fake_vhs),
+        target="docs",
     )
 
     assert len(environments) == 2

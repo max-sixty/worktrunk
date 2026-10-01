@@ -14,6 +14,13 @@
 //! file holds the summary for that exact diff. No TTL, no separate staleness
 //! check — see [`worktrunk::cache`] for the shared torn-write semantics.
 //!
+//! The hash covers the diff, not the prompt built from it: [`SUMMARY_TEMPLATE`]
+//! and [`prepare_diff`]'s filtering both sit downstream of it. Rewording the
+//! prompt therefore leaves every finished branch holding the summary the old
+//! one produced. Closing that means hashing the rendered prompt rather than the
+//! diff; it stays open because the value is display-only and rebuilding it
+//! costs a model call per branch.
+//!
 //! # Prune on write
 //!
 //! After a successful write, the branch directory is trimmed to one entry

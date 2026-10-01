@@ -105,31 +105,31 @@ List all worktrees:
 [107m [0m [2m[0m[2m[34mwt[0m[2m list[0m
 [107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message[0m
 [107m [0m [2m[0m[2m[34m@[0m[2m feature-api  +   ↕⇡     +54   [0m[2m[36m-5[0m[2m   ↑4  ↓1  +234  [0m[2m[36m-24[0m[2m   ⇡3      6814f02   30m  Add API tests[0m
-[107m [0m [2m[0m[2m[34m^[0m[2m main             ^⇅                                    ⇡1  ⇣1  41ee083    4d  Merge fix-auth: h…[0m
-[107m [0m [2m[0m[2m[34m+[0m[2m fix-auth         ↕[0m[2m[36m|[0m[2m                [0m[2m[34m↑2[0m[2m  ↓1   +25  [0m[2m[36m-11[0m[2m     [0m[2m[36m|[0m[2m     [0m[2m[34mb772e68[0m[2m    5h  Add secure token…[0m
-[107m [0m [2m+ fix-typos        _[0m[2m[36m|[0m[2m                                      [0m[2m[36m|[0m[2m     [0m[2m[34m41ee083[0m[2m    4d  Merge fix-auth: h…[0m
+[107m [0m [2m[0m[2m[34m^[0m[2m main             ^⇅                                    ⇡1  ⇣1  41ee083    4d  Merge fix-auth: ha…[0m
+[107m [0m [2m[0m[2m[34m+[0m[2m fix-auth         ↕[0m[2m[36m|[0m[2m                [0m[2m[34m↑2[0m[2m  ↓1   +25  [0m[2m[36m-11[0m[2m     [0m[2m[36m|[0m[2m     [0m[2m[34mb772e68[0m[2m    5h  Add secure token s…[0m
+[107m [0m [2m+ fix-typos        _[0m[2m[36m|[0m[2m                                      [0m[2m[36m|[0m[2m     [0m[2m[34m41ee083[0m[2m    4d  Merge fix-auth: ha…[0m
 [107m [0m [0m
 [107m [0m [2m○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path[0m
 
 Include CI status and LLM summaries:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--full[0m
-[107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status      HEAD±     main↕    main…±    Summary                      Remote⇅  CI[0m
-[107m [0m [2m[0m[2m[34m@[0m[2m feature-api  +   ↕⇡     +54   [0m[2m[36m-5[0m[2m   ↑4  ↓1  +234  [0m[2m[36m-24[0m[2m  Refactor API to REST archi…   ⇡3      #412[0m
-[107m [0m [2m[0m[2m[34m^[0m[2m main             ^⇅                                                                 ⇡1  ⇣1  #[0m
-[107m [0m [2m[0m[2m[34m+[0m[2m fix-auth         ↕[0m[2m[36m|[0m[2m                [0m[2m[34m↑2[0m[2m  ↓1   +25  [0m[2m[36m-11[0m[2m  Harden auth with constant-…     [0m[2m[36m|[0m[2m     #408[0m
-[107m [0m [2m[0m[2m[34m+[0m[2m fix-typos        _[0m[2m[36m|[0m[2m                                                                   [0m[2m[36m|[0m[2m     #410[0m
+[107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status      HEAD±     main↕    main…±    Summary                       Remote⇅  CI[0m
+[107m [0m [2m[0m[2m[34m@[0m[2m feature-api  +   ↕⇡     +54   [0m[2m[36m-5[0m[2m   ↑4  ↓1  +234  [0m[2m[36m-24[0m[2m  Refactor API to REST archit…   ⇡3      #412[0m
+[107m [0m [2m[0m[2m[34m^[0m[2m main             ^⇅                                                                  ⇡1  ⇣1  #[0m
+[107m [0m [2m[0m[2m[34m+[0m[2m fix-auth         ↕[0m[2m[36m|[0m[2m                [0m[2m[34m↑2[0m[2m  ↓1   +25  [0m[2m[36m-11[0m[2m  Harden auth with constant-t…     [0m[2m[36m|[0m[2m     #408[0m
+[107m [0m [2m[0m[2m[34m+[0m[2m fix-typos        _[0m[2m[36m|[0m[2m                                                                    [0m[2m[36m|[0m[2m     #410[0m
 [107m [0m [0m
 [107m [0m [2m[0m[2m[34m○[0m[2m Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path, Commit, Age, Message[0m
 
 Include branches that don't have worktrees:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--branches[0m[2m [0m[2m[36m--full[0m
-[107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status      HEAD±     main↕    main…±    Summary                      Remote⇅  CI[0m
-[107m [0m [2m[0m[2m[34m@[0m[2m feature-api  +   ↕⇡     +54   [0m[2m[36m-5[0m[2m   ↑4  ↓1  +234  [0m[2m[36m-24[0m[2m  Refactor API to REST archi…   ⇡3      #412[0m
-[107m [0m [2m[0m[2m[34m^[0m[2m main             ^⇅                                                                 ⇡1  ⇣1  #[0m
-[107m [0m [2m[0m[2m[34m+[0m[2m fix-auth         ↕[0m[2m[36m|[0m[2m                [0m[2m[34m↑2[0m[2m  ↓1   +25  [0m[2m[36m-11[0m[2m  Harden auth with constant-…     [0m[2m[36m|[0m[2m     #408[0m
-[107m [0m [2m[0m[2m[34m+[0m[2m fix-typos        _[0m[2m[36m|[0m[2m                                                                   [0m[2m[36m|[0m[2m     #410[0m
+[107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status      HEAD±     main↕    main…±    Summary                       Remote⇅  CI[0m
+[107m [0m [2m[0m[2m[34m@[0m[2m feature-api  +   ↕⇡     +54   [0m[2m[36m-5[0m[2m   ↑4  ↓1  +234  [0m[2m[36m-24[0m[2m  Refactor API to REST archit…   ⇡3      #412[0m
+[107m [0m [2m[0m[2m[34m^[0m[2m main             ^⇅                                                                  ⇡1  ⇣1  #[0m
+[107m [0m [2m[0m[2m[34m+[0m[2m fix-auth         ↕[0m[2m[36m|[0m[2m                [0m[2m[34m↑2[0m[2m  ↓1   +25  [0m[2m[36m-11[0m[2m  Harden auth with constant-t…     [0m[2m[36m|[0m[2m     #408[0m
+[107m [0m [2m[0m[2m[34m+[0m[2m fix-typos        _[0m[2m[36m|[0m[2m                                                                    [0m[2m[36m|[0m[2m     #410[0m
 [107m [0m [2m[0m[2m[34m/[0m[2m exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and…[0m
 [107m [0m [2m[0m[2m[34m/[0m[2m wip             /↕                 ↑1  ↓1   +33       Start API documentation[0m
 [107m [0m [0m
@@ -188,7 +188,7 @@ The CI column shows the branch's open PR/MR — [2m#3035[0m on GitHub, Gitea, 
  [33m⚠[0m yellow  [2m"error"[0m              CI status could not be fetched (rate limit, network, etc.)      
  [35m#[0m magenta [2m"changes_requested"[0m  A reviewer requested changes                                    
  [36m#[0m cyan    [2m"pending"[0m            A review is required (e.g. branch protection) but not yet given 
- (blank)   [2mpr[0m and [2mchecks[0m absent No upstream, or no PR/MR and no branch workflow                 
+ (blank)   [2mpr[0m and [2mchecks[0m absent Branch never pushed, or no PR/MR and no branch workflow         
 
 The two remaining review states have no indicator of their own: [2m"draft"[0m only dims the cell and [2m"approved"[0m leaves the color unchanged.
 
@@ -234,7 +234,7 @@ An in-progress git operation, a worktree-location attribute, or a branch with no
  ────── ─────────────────────────────────────────────────────────────────────── ─────────────────────────────────────────────────── 
  [31m✘[0m      [2mworktree.changes.conflicted[0m                                             Merge conflicts                                     
  [33m↻[0m      [2mworktree.operation[0m [2m"rebase"[0m, [2m"merge"[0m, [2m"cherry_pick"[0m, [2m"revert"[0m, [2m"bisect"[0m A git operation is in progress; [2mgit status[0m names it 
- [33m⊟[0m      [2mworktree.prunable[0m                                                       Prunable (worktree directory missing)               
+ [33m⊟[0m      [2mworktree.prunable[0m                                                       Prunable (worktree directory or its [2m.git[0m gone)      
  [33m⊞[0m      [2mworktree.locked[0m                                                         Locked worktree                                     
  [2m⊘[0m      [2mworktree.detached[0m                                                       Detached HEAD                                       
  [2m[33m⚑[0m      [2mworktree.duplicate_branch[0m                                               Branch checked out in more than one worktree        

@@ -33,7 +33,10 @@ from shared import (  # noqa: E402
     DemoEnv,
     DemoSize,
     git,
+    commit_dated,
     prepare_demo_repo,
+    write_gh_mock_data,
+    DEMO_PROJECT_ID,
     claude_auth_available,
     setup_claude_code_config,
     setup_zellij_config,
@@ -46,6 +49,7 @@ from shared import (  # noqa: E402
     recorder_env,
     SIZE_DOCS,
     SIZE_DOCS_MOBILE,
+    SIZE_DOCS_PICKER,
     SIZE_SOCIAL,
     record_text,
     record_snapshot,
@@ -113,7 +117,6 @@ def _write_user_config(
 ):
     """Write worktrunk user config and approvals."""
     config_dir = env.home / ".config" / "worktrunk"
-    project_id = str(env.bare_remote).removesuffix(".git")
 
     # User config (portable settings only)
     config_content = ""
@@ -129,7 +132,7 @@ summary = true
     (config_dir / "config.toml").write_text(config_content)
 
     # Approvals (machine-local trust state, separate from config)
-    approvals_content = f'[projects."{project_id}"]\n'
+    approvals_content = f'[projects."{DEMO_PROJECT_ID}"]\n'
     approvals_content += f"approved-commands = {approved_commands!r}\n"
     (config_dir / "approvals.toml").write_text(approvals_content)
 
@@ -142,6 +145,65 @@ summary = true
 def prepare_basic(env: DemoEnv):
     """Basic repo setup - no hooks, no extras."""
     prepare_demo_repo(env, REPO_ROOT)
+
+
+# Worktrees the picker demo adds on top of the shared set, so its list reads
+# like a repo someone actually works in rather than a fixture — sixteen rows,
+# which is also what fills the taller terminal `SIZE_DOCS_PICKER` records in.
+#
+# Each carries a commit of its own: a branch sitting on main's tip renders as an
+# empty row and, because branch CI is keyed by commit, borrows main's checks —
+# seven of those in a row look like a fixture. `dirty` leaves an uncommitted
+# edit behind so the Status and HEAD± columns have something to say. api, auth
+# and billing are the branches DEMO_PRS gives PRs to.
+PICKER_EXTRA_BRANCHES = [
+    ("api", "src/api.rs", "feat: add the /health endpoint", False),
+    ("auth", "src/auth.rs", "feat: rotate tokens on role change", False),
+    ("billing", "src/billing.rs", "refactor: format currency by locale", False),
+    ("cache", "src/cache.rs", "perf: memoize the config parse", True),
+    ("deps", "Cargo.toml", "chore: bump tokio to 1.41", False),
+    ("docs/site", "docs/config.md", "docs: document every config key", False),
+    ("metrics", "src/metrics.rs", "feat: emit per-request timings", False),
+    ("perf/collect", "src/collect.rs", "perf: batch the rev-parse calls", True),
+    ("release", "CHANGELOG.md", "chore: start the 0.2.0 notes", False),
+    ("retry", "tests/retry.rs", "test: retry the network test", False),
+    ("search", "src/search.rs", "feat: rank results by recency", True),
+    ("ui/theme", "src/theme.rs", "style: soften the dark palette", False),
+]
+
+
+def prepare_picker(env: DemoEnv):
+    """Setup for wt-switch-picker — the shared repo plus a fuller worktree list.
+
+    The picker is the one demo whose subject is the list itself, so it wants
+    more rows than `wt list` output can show legibly. Keeping them here rather
+    than in `prepare_demo_repo` leaves every other demo's table unchanged.
+    """
+    prepare_demo_repo(env, REPO_ROOT)
+
+    # The Summary column renders only where an LLM command is configured, and
+    # `fixtures/llm-mock.sh` is what answers it. No project commands to approve:
+    # nothing in this tape runs a hook.
+    _write_user_config(env, [])
+
+    for branch, rel_path, message, dirty in PICKER_EXTRA_BRANCHES:
+        path = env.work_base / f"acme.{branch.replace('/', '-')}"
+        git(["-C", str(env.repo), "branch", branch, "main"])
+        git(["-C", str(env.repo), "worktree", "add", "-q", str(path), branch])
+
+        target = path / rel_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(f"// {message}\n")
+        git(["-C", str(path), "add", rel_path])
+        commit_dated(path, message, "1d")
+        git(["-C", str(path), "push", "-q", "-u", "origin", branch])
+
+        if dirty:
+            target.write_text(target.read_text() + "// still working on this\n")
+
+    # api, auth and billing have PRs in DEMO_PRS; rewrite the mock now that
+    # their upstreams exist, so each PR's headRefOid is its pushed tip.
+    write_gh_mock_data(env)
 
 
 def prepare_with_hooks(env: DemoEnv, include_deps: bool = False):
@@ -232,6 +294,59 @@ fi
     npm_mock.chmod(0o755)
 
 
+# The api branch's commit in the omnibus demo. Long enough that the picker's
+# preview pane pages rather than showing the whole diff at once, and matches the
+# PR title DEMO_PRS gives api.
+API_HEALTH_RS = '''//! The /health endpoint.
+
+use std::time::{Duration, Instant};
+
+/// What `/health` reports to a caller.
+pub struct Health {
+    /// The build this process was compiled from.
+    pub revision: &'static str,
+    /// How long the database took to answer a trivial query.
+    pub database_rtt: Duration,
+}
+
+impl Health {
+    /// Collect the report, timing the database round trip.
+    pub fn collect(revision: &'static str) -> Self {
+        let started = Instant::now();
+        probe_database();
+        Self {
+            revision,
+            database_rtt: started.elapsed(),
+        }
+    }
+
+    /// Whether the process should be taken out of the load balancer.
+    ///
+    /// A slow database is reported but not fatal: the endpoint exists to
+    /// distinguish "degraded" from "gone", and a restart fixes neither.
+    pub fn is_serving(&self) -> bool {
+        self.database_rtt < Duration::from_secs(2)
+    }
+}
+
+/// Issue the trivial query the round-trip time is measured against.
+fn probe_database() {
+    // The real implementation runs `SELECT 1`.
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_fast_database_is_serving() {
+        let health = Health::collect("abc1234");
+        assert!(health.is_serving());
+    }
+}
+'''
+
+
 def prepare_zellij_omnibus(env: DemoEnv):
     """Setup for wt-zellij-omnibus demo - comprehensive showcase."""
     hooks_config = """[post-create]
@@ -244,14 +359,6 @@ test = "cargo nextest run"
 url = "http://localhost:{{ branch | hash_port }}"
 """
     prepare_demo_repo(env, REPO_ROOT, hooks_config=hooks_config)
-
-    # Clean up branches that might exist from previous runs (billing, feature created during demo)
-    origin = env.home / "origin.git"
-    for branch in ["billing", "feature"]:
-        # Delete from origin if exists (ignore errors if not)
-        subprocess.run(
-            ["git", "-C", str(origin), "branch", "-D", branch], capture_output=True
-        )
 
     # Enable git colors for non-TTY environments (VHS)
     git(["-C", str(env.repo), "config", "color.ui", "always"])
@@ -297,10 +404,21 @@ url = "http://localhost:{{ branch | hash_port }}"
             raise RuntimeError(f"wt {' '.join(args)} failed: {result.stderr}")
 
     run_wt(["switch", "--create", "api"], env.repo)
-    git(["-C", str(env.work_base / "acme.api"), "push", "-u", "origin", "api", "-q"])
+    # Give api a commit of its own so the picker's diff pane has something to
+    # page through when TAB 1 filters to it. A freshly created branch sits on
+    # main's tip, and ctrl-d on an empty pane looks like a dropped keystroke.
+    api_path = env.work_base / "acme.api"
+    (api_path / "src" / "health.rs").write_text(API_HEALTH_RS)
+    git(["-C", str(api_path), "add", "src/health.rs"])
+    commit_dated(api_path, "feat: add the /health endpoint", "1d")
+    git(["-C", str(api_path), "push", "-u", "origin", "api", "-q"])
 
     run_wt(["switch", "--create", "auth"], env.repo)
     git(["-C", str(env.work_base / "acme.auth"), "push", "-u", "origin", "auth", "-q"])
+
+    # api and auth have PRs in DEMO_PRS; rewrite the mock now that their
+    # upstreams exist, so each PR's headRefOid is its pushed tip.
+    write_gh_mock_data(env)
 
     # Return to main worktree for the demo to start
     run_wt(["switch", "main"], env.work_base / "acme.api")
@@ -322,7 +440,7 @@ DOCS_DEMOS = [
     ("wt-commit.tape", "wt-commit", prepare_merge_demo),
     ("wt-statusline.tape", "wt-statusline", prepare_switch),
     ("wt-merge.tape", "wt-merge", prepare_merge_demo),
-    ("wt-switch-picker.tape", "wt-switch-picker", prepare_basic),
+    ("wt-switch-picker.tape", "wt-switch-picker", prepare_picker),
     ("wt-zellij-omnibus.tape", "wt-zellij-omnibus", prepare_zellij_omnibus),
 ]
 
@@ -339,7 +457,7 @@ SOCIAL_DEMOS = [
         "wt-merge",
         partial(prepare_merge_demo, commit_generation=False, staged_changes=False),
     ),
-    ("wt-switch-picker.tape", "wt-switch-picker", prepare_basic),
+    ("wt-switch-picker.tape", "wt-switch-picker", prepare_picker),
     ("wt-core.tape", "wt-core", prepare_with_hooks),
     ("wt-zellij-omnibus.tape", "wt-zellij-omnibus", prepare_zellij_omnibus),
 ]
@@ -348,7 +466,10 @@ TARGETS = {
     "docs": {
         "demos": DOCS_DEMOS,
         "size": SIZE_DOCS,
-        "sizes": {"wt-core-mobile": SIZE_DOCS_MOBILE},
+        "sizes": {
+            "wt-core-mobile": SIZE_DOCS_MOBILE,
+            "wt-switch-picker": SIZE_DOCS_PICKER,
+        },
         "themes": ["light", "dark"],
     },
     "social": {
@@ -372,10 +493,16 @@ def record_demo(
     themes: list[str],
     demo_size: DemoSize,
     vhs_binary: str,
+    target: str,
     text_mode: bool = False,
     snapshot_mode: bool = False,
 ) -> float:
-    """Record a single demo. Returns elapsed seconds."""
+    """Record a single demo. Returns elapsed seconds.
+
+    `target` selects which checkpoints validate the result: a window calibrated
+    against one target's terminal size doesn't hold in the other (see
+    `Checkpoint.targets`).
+    """
     t0 = time.monotonic()
     tape_path = TAPES_DIR / tape_file
     if not tape_path.exists():
@@ -424,7 +551,9 @@ def record_demo(
     if output_name in TUI_CHECKPOINTS:
         validation_failures = {}
         for theme, gif_path in output_gifs.items():
-            success, output = validate_tui_demo_verbose(output_name, gif_path)
+            success, output = validate_tui_demo_verbose(
+                output_name, gif_path, target
+            )
             if not success:
                 validation_failures[theme] = output
 
@@ -665,6 +794,7 @@ def build_target(target: str, args, vhs_binary: str) -> list[str]:
                 themes,
                 demo_sizes.get(output_name, demo_size),
                 vhs_binary,
+                target,
                 args.text,
                 args.snapshot,
             )

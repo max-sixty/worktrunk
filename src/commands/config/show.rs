@@ -125,7 +125,7 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
     // Run full diagnostic checks if requested (includes slow network calls)
     if full {
         show_output.push('\n');
-        render_diagnostics(&mut show_output)?;
+        render_diagnostics(&mut show_output, repo.as_ref())?;
     }
 
     // Render runtime info at the bottom (version, binary name, shell integration status)
@@ -298,17 +298,6 @@ pub(super) fn is_codex_available() -> bool {
     which::which("codex").is_ok()
 }
 
-/// Get the home directory for Claude Code config detection
-pub(super) fn home_dir() -> Option<PathBuf> {
-    // Try HOME/USERPROFILE env vars first (for tests and explicit overrides),
-    // then fall back to the OS lookup
-    std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .ok()
-        .map(PathBuf::from)
-        .or_else(worktrunk::path::home_dir)
-}
-
 /// Get the Claude Code config directory.
 ///
 /// This locates `settings.json`, the one Claude Code file wt reads. It reads
@@ -318,7 +307,7 @@ pub(super) fn home_dir() -> Option<PathBuf> {
 /// harness (see [`super::harness_listing`]).
 ///
 /// Honors `CLAUDE_CONFIG_DIR`, which Claude Code uses to relocate its config
-/// away from the default `~/.claude`. A leading `~/` in the value is expanded
+/// away from the default `~/.claude`. A leading `~` in the value is expanded
 /// against the home directory; the shell normally expands it before the
 /// variable is set, so a literal `~` only reaches us when the variable is set
 /// in a non-shell context.
@@ -326,12 +315,16 @@ pub(super) fn claude_config_dir() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("CLAUDE_CONFIG_DIR")
         && !dir.is_empty()
     {
-        if let Some(rest) = dir.strip_prefix("~/") {
-            return home_dir().map(|home| home.join(rest));
+        if dir == "~" {
+            return worktrunk::path::home_dir();
+        }
+        if let Ok(rest) = Path::new(&dir).strip_prefix("~") {
+            return worktrunk::path::home_dir().map(|home| home.join(rest));
         }
         return Some(PathBuf::from(dir));
     }
-    home_dir().map(|home| home.join(".claude"))
+    // Claude Code defaults to os.homedir(): USERPROFILE on Windows, not HOME.
+    worktrunk::path::home_dir().map(|home| home.join(".claude"))
 }
 
 /// Whether Claude Code's statusline runs worktrunk's.
@@ -555,14 +548,14 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
 }
 
 /// Run full diagnostic checks (CI tools, commit generation) and render to buffer
-fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
+fn render_diagnostics(out: &mut String, repo: Option<&Repository>) -> anyhow::Result<()> {
     writeln!(out, "{}", format_heading("DIAGNOSTICS", None))?;
 
     // Check the CI tool for this repo's platform (configured forge platform,
-    // else remote URL).
-    let repo = Repository::current()?;
-    match repo.ci_platform(None) {
-        Some(ForgeKind::GitHub) => {
+    // else remote URL). Outside a repository there is no platform, so this
+    // falls through to the hint and the remaining checks still run.
+    match repo.and_then(|repo| Some((repo, repo.ci_platform(None)?))) {
+        Some((_, ForgeKind::GitHub)) => {
             let ci_tools = CiToolsStatus::detect(None);
             render_ci_tool_status(
                 out,
@@ -572,7 +565,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
                 ci_tools.gh_authenticated,
             )?;
         }
-        Some(ForgeKind::GitLab) => {
+        Some((_, ForgeKind::GitLab)) => {
             let ci_tools = CiToolsStatus::detect(None);
             render_ci_tool_status(
                 out,
@@ -582,7 +575,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
                 ci_tools.glab_authenticated,
             )?;
         }
-        Some(ForgeKind::Gitea) => {
+        Some((_, ForgeKind::Gitea)) => {
             let ci_tools = CiToolsStatus::detect(None);
             render_ci_tool_status(
                 out,
@@ -592,7 +585,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
                 ci_tools.tea_authenticated,
             )?;
         }
-        Some(ForgeKind::AzureDevOps) => {
+        Some((repo, ForgeKind::AzureDevOps)) => {
             let ci_tools = CiToolsStatus::detect(None);
             render_ci_tool_status(
                 out,
@@ -628,7 +621,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
 
     // Test commit generation - use effective config for current project
     let config = UserConfig::load().context("Failed to load config")?;
-    let project_id = repo.project_identifier().ok();
+    let project_id = repo.and_then(|repo| repo.project_identifier().ok());
     let commit_config = config.commit_generation(project_id.as_deref());
 
     if !commit_config.is_configured() {

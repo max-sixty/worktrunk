@@ -25,12 +25,25 @@
 //! through to `fs::copy`. The signal is exact per file but says only that a
 //! clone did not happen, never why — an unsupported filesystem and a
 //! cross-device copy are indistinguishable here.
+//!
+//! A caller can pass a `stamp` to give every copied regular file the same
+//! modification time. Without one, a file keeps whatever time its copy left it:
+//! APFS clones and Windows' `CopyFileEx` carry the source's, while Linux's
+//! `FICLONE` and `fs::copy` fallback write the time of the copy — and since
+//! leaves copy in parallel, that time orders files by thread scheduling.
+//! Build tools read that order: cargo marks a crate dirty when a dependency's
+//! output is newer than its own, so a `target/` copied that way recompiles a
+//! scattering of crates (#4248). Stamping with a time taken before the copy
+//! makes files within the tree compare equal and keeps them no older than a
+//! checkout that preceded it; preserving source times instead would make
+//! outputs older than freshly checked-out sources.
 
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::SystemTime;
 
 use anyhow::Context;
 use rayon::prelude::*;
@@ -107,11 +120,16 @@ static COPY_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
 /// outside `root`. The check guards the parent chain, not the final leaf, so
 /// leaf-symlink behavior is preserved (without `force` the symlink is skipped;
 /// with `force` the symlink itself is replaced).
+///
+/// When `stamp` is `Some`, a copied regular file gets it as its modification
+/// time (see the module docs). Symlinks keep theirs: `std` can't set a link's
+/// own times without following it.
 pub fn copy_leaf(
     src: &Path,
     dest: &Path,
     root: Option<&Path>,
     force: bool,
+    stamp: Option<SystemTime>,
 ) -> anyhow::Result<Option<(u64, DataCopy)>> {
     if let Some(root) = root {
         ensure_path_within_root(dest.parent().unwrap_or(dest), root)?;
@@ -187,6 +205,9 @@ pub fn copy_leaf(
                     fs::set_permissions(dest, src_meta.permissions())
                         .context("setting destination file permissions")?;
                 }
+                if let Some(stamp) = stamp {
+                    set_modified(dest, stamp);
+                }
                 FORCED_DATA_COPY.unwrap_or(classify_copy(fallback))
             }
             Err(e) if e.kind() == ErrorKind::AlreadyExists => {
@@ -208,6 +229,29 @@ pub fn copy_leaf(
         }
     };
     Ok(Some((bytes, data)))
+}
+
+/// Set a copied file's modification time, best-effort: the contents are already
+/// in place, so a file we can't reopen keeps its copy-time mtime rather than
+/// failing a batch that otherwise succeeded. Logged at debug, so `wt -vv` shows
+/// it.
+fn set_modified(path: &Path, stamp: SystemTime) {
+    // Windows needs a handle with FILE_WRITE_ATTRIBUTES, which a read-only
+    // open doesn't grant; Unix sets times on any descriptor the owner holds.
+    #[cfg(windows)]
+    let file = {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_WRITE_ATTRIBUTES: u32 = 0x0100;
+        fs::OpenOptions::new()
+            .access_mode(FILE_WRITE_ATTRIBUTES)
+            .open(path)
+    };
+    #[cfg(not(windows))]
+    let file = fs::File::open(path);
+
+    if let Err(e) = file.and_then(|file| file.set_modified(stamp)) {
+        tracing::debug!(path = %path.display(), "leaving copy-time mtime on {}: {e}", path.display());
+    }
 }
 
 fn ensure_path_within_root(path: &Path, root: &Path) -> anyhow::Result<()> {
@@ -266,12 +310,15 @@ struct CopyLeaf {
 /// When `root` is `Some`, refuses destination directory ancestry that resolves
 /// outside `root`. Leaves inherit the guarantee because `entry.file_name()` is
 /// a single basename and cannot escape the validated parent directory.
+///
+/// `stamp` is passed to each [`copy_leaf`].
 #[must_use = "a caller that deletes the source must refuse on a non-zero skip count"]
 pub fn copy_dir_recursive(
     src: &Path,
     dest: &Path,
     root: Option<&Path>,
     force: bool,
+    stamp: Option<SystemTime>,
     progress: &Progress,
 ) -> anyhow::Result<usize> {
     // Phase 1: Walk directories iteratively, creating dest dirs and collecting leaves.
@@ -346,7 +393,7 @@ pub fn copy_dir_recursive(
         leaves
             .par_iter()
             .try_for_each(|leaf| -> anyhow::Result<()> {
-                match copy_leaf(&leaf.src, &leaf.dest, None, force)? {
+                match copy_leaf(&leaf.src, &leaf.dest, None, force, stamp)? {
                     Some((bytes, data)) => progress.record(bytes, data),
                     None => {
                         skipped_leaves.fetch_add(1, Ordering::Relaxed);
@@ -457,7 +504,7 @@ mod tests {
         let src = dest_dir.path().join("does-not-exist");
         let dest = dest_dir.path().join("dest");
 
-        let result = copy_leaf(&src, &dest, None, false).unwrap();
+        let result = copy_leaf(&src, &dest, None, false, None).unwrap();
 
         assert_eq!(result, None);
         assert!(!dest.exists());
@@ -473,7 +520,7 @@ mod tests {
         let dest = dir.path().join("dest");
         fs::write(&dest, b"pre-existing content").unwrap();
 
-        let result = copy_leaf(&src, &dest, None, true).unwrap();
+        let result = copy_leaf(&src, &dest, None, true, None).unwrap();
 
         assert_eq!(result, None);
         assert_eq!(fs::read(&dest).unwrap(), b"pre-existing content");
@@ -489,7 +536,7 @@ mod tests {
         fs::write(&src, b"source content").unwrap();
         fs::write(&dest, b"pre-existing content").unwrap();
 
-        let result = copy_leaf(&src, &dest, None, false).unwrap();
+        let result = copy_leaf(&src, &dest, None, false, None).unwrap();
 
         assert_eq!(result, None);
         assert_eq!(fs::read(&dest).unwrap(), b"pre-existing content");
@@ -514,7 +561,7 @@ mod tests {
         fs::write(&src, b"source content").unwrap();
         fs::write(&dest, b"pre-existing content").unwrap();
 
-        let result = copy_leaf(&src, &dest, None, true).unwrap();
+        let result = copy_leaf(&src, &dest, None, true, None).unwrap();
 
         // Only the byte half is asserted: whether the copy reflinked depends on
         // the filesystem under the temp dir, which varies across CI runners.
@@ -539,7 +586,8 @@ mod tests {
         fs::write(src.join("b"), b"b").unwrap();
         fs::write(dest.join("a"), b"pre-existing").unwrap();
 
-        let skipped = copy_dir_recursive(&src, &dest, None, false, &Progress::disabled()).unwrap();
+        let skipped =
+            copy_dir_recursive(&src, &dest, None, false, None, &Progress::disabled()).unwrap();
 
         assert_eq!(skipped, 1);
         assert_eq!(fs::read(dest.join("a")).unwrap(), b"pre-existing");
@@ -563,7 +611,8 @@ mod tests {
         // classify. Asserted, so a zero count can't come from an empty fixture.
         assert!(src.join("sock").exists());
 
-        let skipped = copy_dir_recursive(&src, &dest, None, true, &Progress::disabled()).unwrap();
+        let skipped =
+            copy_dir_recursive(&src, &dest, None, true, None, &Progress::disabled()).unwrap();
 
         assert_eq!(skipped, 0);
         assert_eq!(fs::read(dest.join("regular")).unwrap(), b"content");
@@ -581,7 +630,8 @@ mod tests {
         fs::write(src.join("a"), b"a").unwrap();
         fs::write(src.join("nested").join("b"), b"b").unwrap();
 
-        let skipped = copy_dir_recursive(&src, &dest, None, true, &Progress::disabled()).unwrap();
+        let skipped =
+            copy_dir_recursive(&src, &dest, None, true, None, &Progress::disabled()).unwrap();
 
         assert_eq!(skipped, 0);
         assert_eq!(fs::read(dest.join("nested").join("b")).unwrap(), b"b");
@@ -614,6 +664,7 @@ mod tests {
             &dest_root.join("node_modules"),
             Some(&dest_root),
             false,
+            None,
             &Progress::disabled(),
         )
         .expect("a tree inside the destination root should copy");
@@ -626,6 +677,60 @@ mod tests {
     }
 
     #[test]
+    fn test_copy_dir_recursive_stamps_every_file_with_one_mtime() {
+        // A copy that leaves each file its own write time orders files by
+        // thread scheduling, which cargo reads as a dependency newer than its
+        // dependent (#4248). With a stamp, every copied file carries it —
+        // whatever the source's mtimes were.
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        let dest = dir.path().join("dest");
+        fs::create_dir_all(src.join("nested")).unwrap();
+        let old = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_500_000_000);
+        for (name, offset) in [("a", 0), ("nested/b", 7), ("nested/c", 3)] {
+            let path = src.join(name);
+            fs::write(&path, name).unwrap();
+            fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(old + std::time::Duration::from_secs(offset))
+                .unwrap();
+        }
+        let stamp = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+
+        let skipped =
+            copy_dir_recursive(&src, &dest, None, false, Some(stamp), &Progress::disabled())
+                .unwrap();
+
+        assert_eq!(skipped, 0);
+        for name in ["a", "nested/b", "nested/c"] {
+            let mtime = fs::metadata(dest.join(name)).unwrap().modified().unwrap();
+            assert_eq!(mtime, stamp, "{name} should carry the stamp");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_copy_leaf_stamps_a_read_only_file() {
+        // A read-only source copies to a read-only destination; setting its
+        // time must not need write access to it.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        let dest = dir.path().join("dest");
+        fs::write(&src, b"content").unwrap();
+        fs::set_permissions(&src, fs::Permissions::from_mode(0o444)).unwrap();
+        let stamp = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+
+        copy_leaf(&src, &dest, None, false, Some(stamp)).unwrap();
+
+        let meta = fs::metadata(&dest).unwrap();
+        assert_eq!(meta.modified().unwrap(), stamp);
+        assert_eq!(meta.permissions().mode() & 0o777, 0o444);
+    }
+
+    #[test]
     fn test_copy_dir_recursive_missing_source_root_errors() {
         // A subdirectory that vanishes mid-walk is skipped, but the root the
         // caller named is not — its absence is a real error, and nothing is
@@ -634,7 +739,8 @@ mod tests {
         let src = dir.path().join("does-not-exist");
         let dest = dir.path().join("dest");
 
-        let err = copy_dir_recursive(&src, &dest, None, false, &Progress::disabled()).unwrap_err();
+        let err =
+            copy_dir_recursive(&src, &dest, None, false, None, &Progress::disabled()).unwrap_err();
 
         assert!(
             err.to_string().contains("reading directory"),

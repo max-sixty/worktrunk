@@ -1490,7 +1490,7 @@ mod tests {
         // and would pass unchanged if `tests` or `benches` stopped yielding
         // `.rs` files — the absence claim silently narrowing to one third of
         // what it names. See "Guards that scan source text" in
-        // `tests/CLAUDE.md`.
+        // `tests/AGENTS.md`.
         for dir in ["src", "tests", "benches"] {
             let seen = scan_for_needle(&root.join(dir), &needle, root, &mut offenders);
             assert!(

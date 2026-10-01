@@ -314,14 +314,14 @@ impl Repository {
     }
 
     /// Get files changed between base and head, as repository-root-relative
-    /// paths.
+    /// raw path bytes.
     ///
     /// `diff-tree` detects no renames, so a moved file lists both its old and
     /// new path — what overlap detection needs (e.g., detecting conflicts when
     /// a file is renamed in one branch but has uncommitted changes under the
     /// old name).
-    pub fn changed_files(&self, base: &str, head: &str) -> anyhow::Result<Vec<String>> {
-        let stdout = self.run_command(&PlumbingDiff::Tree.args(&[
+    pub fn changed_files(&self, base: &str, head: &str) -> anyhow::Result<Vec<Vec<u8>>> {
+        let args = PlumbingDiff::Tree.args(&[
             "-r",
             "--name-only",
             "-z",
@@ -329,11 +329,12 @@ impl Repository {
             base,
             head,
             "--",
-        ]))?;
-        Ok(stdout
-            .split('\0')
+        ]);
+        Ok(self
+            .run_command_bytes(&args)?
+            .split(|byte| *byte == 0)
             .filter(|path| !path.is_empty())
-            .map(str::to_string)
+            .map(<[u8]>::to_vec)
             .collect())
     }
 

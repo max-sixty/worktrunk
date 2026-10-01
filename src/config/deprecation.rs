@@ -1515,14 +1515,11 @@ fn rename_hook_key(table: &mut toml_edit::Table, old_key: &str, new_key: &str) -
 /// `[projects."<id>"]`-scoped section that the removal empties.
 ///
 /// A default section serializes away, so an empty one is absent from the
-/// round-trip `unknown_tree` compares against. `seed_schema_skeleton` puts
-/// every valid *top-level* key back, which is why an emptied top-level
-/// `[list]` reads as known and an emptied `[projects."<id>".list]` reads as
-/// `unknown field projects.<id>.list`. So only the project scope needs the
-/// section removed; a top-level one keeps its position and the comments above
-/// its header. (An empty nested section the user wrote by hand warns the same
-/// way — that false positive belongs to `unknown_tree`, and this rule only
-/// avoids adding to it.)
+/// round-trip `unknown_tree` compares against; `seed_schema_skeleton` puts the
+/// valid keys back at both levels, so an emptied section reads as known in
+/// either scope. The project scope still drops the section it empties, leaving
+/// nothing behind at a path the user's remaining config never mentions, while a
+/// top-level one keeps its position and the comments above its header.
 ///
 /// A section can be written as a section table (`[list]`) or inline
 /// (`list = { … }`); `toml_edit` surfaces these as different node types, so

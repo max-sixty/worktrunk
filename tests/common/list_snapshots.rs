@@ -4,7 +4,8 @@
 use super::{TestRepo, wt_command};
 use std::path::Path;
 use std::process::Command;
-use worktrunk::styling::DEFAULT_HELP_WIDTH;
+
+const DOCUMENTATION_TERMINAL_WIDTH: usize = 99;
 
 pub fn command(repo: &TestRepo, cwd: &Path) -> Command {
     let mut cmd = wt_command();
@@ -15,7 +16,7 @@ pub fn command(repo: &TestRepo, cwd: &Path) -> Command {
 
 pub fn command_readme(repo: &TestRepo, cwd: &Path) -> Command {
     let mut cmd = command(repo, cwd);
-    cmd.env("COLUMNS", DEFAULT_HELP_WIDTH.to_string());
+    cmd.env("COLUMNS", DOCUMENTATION_TERMINAL_WIDTH.to_string());
     cmd
 }
 

@@ -1242,7 +1242,7 @@ fn test_submodule_bump_survives_submodule_ignore() {
     );
     assert_eq!(
         repository.changed_files(&main_sha, &feature_sha).unwrap(),
-        ["sub"]
+        [b"sub".to_vec()]
     );
     let stats = repository.branch_diff_stats("main", "feature").unwrap();
     assert_eq!((stats.added, stats.deleted), (1, 1));

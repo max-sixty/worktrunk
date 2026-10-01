@@ -126,7 +126,8 @@ All logs are stored in [2m.git/wt/logs/[0m (in the main worktree's git directo
 
 [1m[32mStructured output[0m
 
-[2mwt config state logs --format=json[0m emits three arrays — [2mcommand_log[0m, [2mhook_output[0m, [2mdiagnostic[0m. Each entry carries a [2mfile[0m (relative), [2mpath[0m (absolute), [2msize[0m, and [2mmodified_at[0m (unix seconds). Hook-output entries additionally expose [2mbranch[0m, [2msource[0m ([2muser[0m / [2mproject[0m / [2minternal[0m), [2mhook_type[0m (the [2mpost-*[0m kind, or [2mnull[0m for internal ops), and [2mname[0m. Filter with [2mjq[0m to pick out a specific entry.
+[2mwt config state logs --format=json[0m emits three arrays — [2mcommand_log[0m, [2mhook_output[0m, [2mdiagnostic[0m. Each entry carries a [2mfile[0m (relative), [2mpath[0m (absolute), [2msize[0m, and [2mmodified_at[0m (unix seconds). Hook-output entries additionally expose [2mbranch[0m, [2msource[0m ([2muser[0m / [2mproject[0m / [2minternal[0m), [2mhook_type[0m (the [2mpost-*[0m kind, or [2mnull[0m for internal ops), and [2mname[0m. [2mbranch[0m is the branch name, or [2mnull[0m when no local branch writes to that log directory (e.g. the branch was deleted). [2mname[0m is the hook name as it appears in the log 
+path, which differs from the configured name only when that contains characters unsafe in a filename. Filter with [2mjq[0m to pick out a specific entry.
 
 [1m[32mExamples[0m
 
@@ -137,10 +138,10 @@ Query the command log:
 [107m [0m [2m[0m[2m[34mtail[0m[2m [0m[2m[36m-5[0m[2m .git/wt/logs/commands.jsonl [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m .[0m
 
 Path to one hook log (e.g. the [2mpost-start[0m [2mserver[0m hook for the current branch):
-[107m [0m [2m[0m[2m[34mwt[0m[2m config state logs [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[36m-r[0m[2m [0m[2m[32m'.hook_output[] | select(.source == "user" and .hook_type == "post-start" and (.name | startswith("server"))) | .path'[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config state logs [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[36m-r[0m[2m [0m[2m[36m--arg[0m[2m branch [0m[2m[32m"$([0m[2m[34mgit[0m[2m branch [0m[2m[36m--show-current[0m[2m)"[0m[2m [0m[2m[32m'.hook_output[] | select([.branch, .source, .hook_type, .name] == [$branch, "user", "post-start", "server"]) | .path'[0m
 
 Logs for a specific branch:
-[107m [0m [2m[0m[2m[34mwt[0m[2m config state logs [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.hook_output[] | select(.branch | startswith("feature"))'[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config state logs [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.hook_output[] | select(.branch == "feature/auth")'[0m
 
 Clear all logs:
 [107m [0m [2m[0m[2m[34mwt[0m[2m config state logs clear[0m

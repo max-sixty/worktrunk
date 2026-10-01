@@ -98,7 +98,7 @@ pub enum WorktreeState {
     DuplicateBranch,
     /// Detached HEAD: the worktree is on a commit, not a branch
     Detached,
-    /// Prunable (worktree directory missing)
+    /// Prunable (worktree directory or its `.git` gone)
     Prunable,
     /// Locked (protected from removal)
     Locked,

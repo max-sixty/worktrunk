@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "featureId": "feat_custom_hook_logs",
   "title": "Hook output logs: filename sanitization and log-path layout",
-  "summary": "Hook stdout/stderr is persisted under `.git/wt/logs/` with per-branch and repo-wide paths. Branch names and hook names flow into filesystem paths through `sanitize_for_filename`; a sanitization gap (path separators, `..`, absolute prefixes, reserved Windows device names) means a crafted branch name could write or truncate files outside the logs tree. The top-level file-vs-directory split must stay consistent or `wt config state` mis-walks it. See CLAUDE.md > Hook Output Logs.",
+  "summary": "Hook stdout/stderr is persisted under `.git/wt/logs/` with per-branch and repo-wide paths. Branch names and hook names flow into filesystem paths through `sanitize_for_filename`; a sanitization gap (path separators, `..`, absolute prefixes, reserved Windows device names) means a crafted branch name could write or truncate files outside the logs tree. The top-level file-vs-directory split must stay consistent or `wt config state` mis-walks it. See the HookLog spec in src/commands/process.rs.",
   "kind": "library",
   "source": "manual",
   "confidence": "high",
@@ -29,10 +29,6 @@
     }
   ],
   "contextFiles": [
-    {
-      "path": "CLAUDE.md",
-      "reason": "Hook Output Logs section: log layout and sanitize_for_filename rule"
-    },
     {
       "path": "src/commands/hook_commands.rs",
       "reason": "hook command resolution that produces the names written to log paths"

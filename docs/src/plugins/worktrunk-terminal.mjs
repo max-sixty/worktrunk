@@ -387,6 +387,8 @@ export function pluginWorktrunkTerminal() {
       }
       .expressive-code .frame .ec-line.wt-output .code {
         color: var(--wt-terminal-ink);
+        /* Only command rows need the full inline clearance for their copy control. */
+        padding-inline-end: 0.5rem;
       }
       .expressive-code .frame .ec-line.wt-copyable .code {
         color: var(--wt-terminal-dim);

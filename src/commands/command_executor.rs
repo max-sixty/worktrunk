@@ -667,7 +667,7 @@ pub fn alias_error_wrapper(alias_name: String) -> ErrorWrapper {
 /// Signal-derived child exits bypass the wrapper and `failure_strategy`:
 /// the error is returned as `Interrupted` (exiting `128 + signal`) so the
 /// enclosing loop aborts. This enforces the project-wide Ctrl-C cancellation
-/// policy — see the "Signal Handling" section of the root `CLAUDE.md` for
+/// policy — see the "Signal Handling" section of the root `AGENTS.md` for
 /// the rationale.
 fn handle_command_error(
     err: anyhow::Error,

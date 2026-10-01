@@ -151,7 +151,7 @@ When the user requests spawning a worktree with an agent in a background session
 To spawn multiple sub-Agents that each work in their own worktree from one Claude Code session — no terminal multiplexer, no human in the other pane — pre-start each worktree from the parent and pass the path into the sub-Agent prompt:
 
 ```bash
-wt switch --create <branch> --no-cd --no-hooks
+wt switch --create <branch> --no-cd
 ```
 
 Then call the `Agent` tool **without** `isolation: "worktree"`, naming the path in the prompt:
@@ -161,6 +161,6 @@ You are working in `/abs/path/to/myproject.<branch>` on branch `<branch>`.
 All edits must stay in that worktree.
 ```
 
-`--no-cd` skips the shell-integration cd script the parent can't consume; `--no-hooks` is appropriate when each sub-Agent will run its own build/test step (e.g. `cargo run -- hook pre-merge --yes`) and you don't need post-start setup repeated per worktree.
+`--no-cd` skips the shell-integration cd script the parent can't consume. Add `--no-hooks` only when no user or project hooks provision the worktree and each sub-Agent does its own build/test step (e.g. `cargo run -- hook pre-merge --yes`) — a `pre-start` hook that installs dependencies or links a gitignored build environment hands the sub-Agent a worktree it can't build in when it's skipped. Leaving hooks on needs the project's hook commands already approved: the parent session can't prompt, so an unapproved command in `.config/wt.toml` aborts the create — see **Hook approvals in non-interactive sessions** above.
 
 **Do not** use `Agent { isolation: "worktree" }` for this. Claude Code passes its internal agent ID as `name` to the `WorktreeCreate` hook, so `wt` creates the worktree as `myproject.agent-<id>` on a throwaway branch. If the sub-Agent then creates a feature branch on top, you end up with non-canonical paths, orphan branches, and post-start hooks fired against the wrong branch. Pre-creating with `wt switch --create` keeps path, branch, and hook target aligned.

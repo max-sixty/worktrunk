@@ -939,14 +939,14 @@ fn test_switch_execute_does_not_inherit_git_discovery_vars(mut repo: TestRepo) {
     );
 }
 
-/// `--no-cd` starts the `--execute` program in the invoking directory, so the
-/// "Executing (--execute) @ …" header must not name the new worktree. The path
-/// it renders is the one the background hooks run in; the program never enters
-/// it, and naming it there sent a reporter looking for a broken template
-/// variable instead of the directory the flag moved (issue #4042).
+/// `--no-cd` governs where the user's shell lands, not where the `--execute`
+/// program runs: the program starts in the worktree the switch selected either
+/// way, so `wt switch feature --no-cd -x code -- .` opens the worktree while
+/// the terminal stays put (issue #4042). The header names that worktree,
+/// because the shell won't be there.
 #[rstest]
-fn test_switch_no_cd_execute_header_omits_worktree_path(mut repo: TestRepo) {
-    repo.add_worktree("feature");
+fn test_switch_no_cd_execute_runs_in_worktree(mut repo: TestRepo) {
+    let worktree = repo.add_worktree("feature");
 
     let output = repo
         .wt_command()
@@ -961,14 +961,21 @@ fn test_switch_no_cd_execute_header_omits_worktree_path(mut repo: TestRepo) {
         String::from_utf8_lossy(&output.stderr)
     );
 
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        dunce::canonicalize(stdout.trim()).unwrap(),
+        dunce::canonicalize(&worktree).unwrap(),
+        "--no-cd ran the program outside the worktree: {stdout}"
+    );
+
     let stderr = String::from_utf8_lossy(&output.stderr);
     let header = stderr
         .lines()
         .find(|line| line.contains("Executing (--execute)"))
         .unwrap_or_else(|| panic!("no --execute header in stderr:\n{stderr}"));
     assert!(
-        !header.contains('@'),
-        "--no-cd runs the program in the invoking directory, but the header named a path: {header}"
+        header.contains('@'),
+        "--no-cd leaves the shell behind, so the header must name the program's directory: {header}"
     );
 }
 
@@ -1485,7 +1492,7 @@ approved-commands = ["{}"]
 
     // post-start runs in the background; with --no-hooks it is never spawned,
     // but sleep briefly so a regression that incorrectly spawns it has time to
-    // create the marker (per tests/CLAUDE.md "Testing absence").
+    // create the marker (per tests/AGENTS.md "Testing absence").
     std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
     let worktree = repo
@@ -1543,7 +1550,7 @@ fn test_switch_no_config_commands_with_yes(repo: TestRepo) {
 
     // post-start runs in the background; with --no-hooks it is never spawned,
     // but sleep briefly so a regression that incorrectly spawns it has time to
-    // create the marker (per tests/CLAUDE.md "Testing absence").
+    // create the marker (per tests/AGENTS.md "Testing absence").
     std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
     let worktree = repo
@@ -2558,10 +2565,27 @@ fn test_switch_create_no_hint_with_custom_worktree_path(repo: TestRepo) {
         .unwrap();
     assert!(output.status.success());
 
+    const HINT: &str = "customize worktree locations";
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !stderr.contains("Customize worktree locations"),
-        "Hint should be suppressed when user has custom worktree-path config"
+        !stderr.contains(HINT),
+        "Hint should be suppressed when user has custom worktree-path config. stderr: {stderr}"
+    );
+
+    // Control: without the custom config the same needle matches the hint, so
+    // the negative assertion above can fail. Suppression doesn't mark the hint
+    // shown, so it still appears once here.
+    repo.write_test_config("");
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "test-hint"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(HINT),
+        "Hint should appear without custom worktree-path config. stderr: {stderr}"
     );
 }
 
@@ -8445,4 +8469,108 @@ fn test_switch_create_names_branch_left_by_failed_worktree_add(repo: TestRepo) {
         stderr.contains("wt switch stranded"),
         "expected a recovery suggestion for the leftover branch, got: {stderr}"
     );
+}
+
+// `--path` tests
+
+#[rstest]
+fn test_switch_create_with_path(repo: TestRepo) {
+    let custom = repo.root_path().parent().unwrap().join("dark-mode");
+
+    // Relative to the current directory (the repo root here), like `git worktree add`
+    snapshot_switch(
+        "switch_create_with_path",
+        &repo,
+        &["--create", "feature/dark-mode", "--path", "../dark-mode"],
+    );
+
+    assert!(custom.join(".git").exists());
+
+    // Once created, the worktree is found by branch or by path; `--path`
+    // naming the same directory is accepted too.
+    for args in [
+        &["feature/dark-mode"][..],
+        &["../dark-mode"],
+        &["feature/dark-mode", "--path", "../dark-mode"],
+    ] {
+        let output = repo.wt_command().arg("switch").args(args).output().unwrap();
+        assert!(output.status.success(), "{args:?}: {output:?}");
+    }
+}
+
+#[rstest]
+fn test_switch_path_existing_branch_without_worktree(repo: TestRepo) {
+    repo.run_git(&["branch", "existing"]);
+    let custom = repo.root_path().parent().unwrap().join("custom-dir");
+
+    // No `--create`: the branch exists and only its worktree is new
+    snapshot_switch(
+        "switch_path_existing_branch",
+        &repo,
+        &["existing", "--path", "../custom-dir"],
+    );
+
+    assert!(custom.join(".git").exists());
+}
+
+#[rstest]
+fn test_switch_path_rejects_existing_worktree_elsewhere(mut repo: TestRepo) {
+    repo.add_worktree("feature-z");
+
+    snapshot_switch(
+        "switch_path_existing_worktree_elsewhere",
+        &repo,
+        &["feature-z", "--path", "../somewhere-else"],
+    );
+
+    assert!(
+        !repo
+            .root_path()
+            .parent()
+            .unwrap()
+            .join("somewhere-else")
+            .exists()
+    );
+}
+
+#[rstest]
+fn test_switch_path_occupied_suggests_path_in_clobber_hint(repo: TestRepo) {
+    let custom = repo.root_path().parent().unwrap().join("occupied");
+    std::fs::create_dir_all(&custom).unwrap();
+
+    // The `--clobber` suggestion must keep `--path`, or following it would
+    // back up the template's path instead of this one.
+    snapshot_switch(
+        "switch_path_occupied",
+        &repo,
+        &["--create", "feature-y", "--path", "../occupied"],
+    );
+}
+
+#[rstest]
+fn test_switch_path_rejects_directory_overlapping_repo(repo: TestRepo) {
+    std::fs::create_dir_all(repo.root_path().join("src")).unwrap();
+
+    // `--path ..` holds the repository and `--path src` sits inside it; with
+    // `--clobber` either would be moved aside, so both are refused outright.
+    for (path, relation) in [("..", "contains"), ("src", "is inside")] {
+        let output = repo
+            .wt_command()
+            .args([
+                "switch",
+                "--create",
+                "feature-o",
+                "--clobber",
+                "--path",
+                path,
+            ])
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{path}: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(relation), "{path}: {stderr}");
+    }
+
+    assert!(repo.root_path().join("src").is_dir());
+    assert!(repo.root_path().join(".git").exists());
 }

@@ -6,7 +6,6 @@
 //! migration to disk.
 
 use std::fmt::Write as _;
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
@@ -22,7 +21,7 @@ use worktrunk::styling::{
     eprint, eprintln, format_bash_with_gutter, hint_message, info_message, print, success_message,
     suggest_command_in_dir, warning_message,
 };
-use worktrunk::utils::{write_atomically, write_new_atomically};
+use worktrunk::utils::write_atomically;
 
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 
@@ -70,7 +69,7 @@ pub fn handle_config_update(yes: bool, output: Option<PathBuf>) -> anyhow::Resul
     }
 
     if let Some(output) = output {
-        write_migrated_output(&output, &candidates, yes)?;
+        write_migrated_output(&output, &candidates)?;
         return Ok(());
     }
 
@@ -120,27 +119,7 @@ pub fn handle_config_update(yes: bool, output: Option<PathBuf>) -> anyhow::Resul
     }
 
     for candidate in &candidates {
-        // Preserve approved-commands before rewriting config (migrated content
-        // drops them; approvals.toml becomes the authoritative source). Abort
-        // the whole update if the copy fails — rewriting config.toml first
-        // would silently lose the legacy approvals.
-        if candidate
-            .info
-            .deprecations
-            .iter()
-            .any(|k| matches!(k, DeprecationKind::ApprovedCommands))
-            && let Some(approvals_path) =
-                copy_approved_commands_to_approvals_file(&candidate.config_path)?
-        {
-            let filename = approvals_path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            eprintln!(
-                "{}",
-                info_message(cformat!("Copied approved commands to <bold>{filename}</>"))
-            );
-        }
+        move_approvals_out_of(candidate)?;
 
         write_atomically(&candidate.config_path, &candidate.migrated)
             .with_context(|| format!("Failed to update {}", candidate.info.label()))?;
@@ -157,23 +136,16 @@ pub fn handle_config_update(yes: bool, output: Option<PathBuf>) -> anyhow::Resul
 ///
 /// The two destinations differ in what they can carry, so they run as separate
 /// paths rather than one path testing `-` at each step. Stdout labels and
-/// concatenates every candidate and needs no confirmation — the artifact is
-/// right there. A file takes exactly one migration, so the checks below and
-/// the success line can name the config it came from.
+/// concatenates every candidate. A file takes exactly one migration, so the
+/// check below and the success line can name the config it came from.
 ///
-/// A file destination replaces nothing without consent. The config being
-/// migrated is refused outright: rewriting it is the in-place update's job,
-/// which previews the diff, re-reads the file after the prompt, and moves
-/// `approved-commands` to approvals.toml. Any other existing file is replaced
-/// only after a prompt, which `--yes` answers in advance; with no terminal to
-/// prompt on, the command fails instead. A destination that was absent is
-/// created without clobbering, so a file that appears before the write lands
-/// survives it.
-fn write_migrated_output(
-    output: &Path,
-    candidates: &[UpdateCandidate],
-    yes: bool,
-) -> anyhow::Result<()> {
+/// The named path is written, replacing whatever is there, the way `cp` and a
+/// shell redirect do. Pointed at the config being migrated, that write drops
+/// the config's `approved-commands`, so they move to approvals.toml first,
+/// exactly as the in-place update moves them — otherwise the warning's
+/// "run `wt config update`" would name a command with nothing left to migrate.
+/// Any other destination leaves the config alone, so the warning stands.
+fn write_migrated_output(output: &Path, candidates: &[UpdateCandidate]) -> anyhow::Result<()> {
     if output == Path::new("-") {
         for candidate in candidates {
             eprint!("{}", format_dropped_approvals_warning(candidate));
@@ -195,47 +167,45 @@ fn write_migrated_output(
 
     let output = resolve_input_path(output);
     let label = candidate.info.label().to_lowercase();
-    if paths_match(&output, &candidate.config_path) {
-        bail!(cformat!(
-            "Cannot overwrite <bold>{label}</> with <bold>--output</>; to apply the migration in place, run <bold>wt config update</>"
-        ));
-    }
     let display_path = format_path_for_display(&output);
 
-    let approvals_warning = format_dropped_approvals_warning(candidate);
-    eprint!("{approvals_warning}");
-
-    let replace = output.exists();
-    if replace && !yes {
-        if !std::io::stdin().is_terminal() {
-            bail!(cformat!(
-                "{display_path} already exists; to overwrite it with the {label} migration, add <bold>--yes</>"
-            ));
-        }
-        if !approvals_warning.is_empty() {
-            eprintln!();
-        }
-        let prompt = format!("Overwrite {display_path} with the {label} migration?");
-        match prompt_yes_no_preview(&prompt, || {})? {
-            PromptResponse::Accepted => {}
-            PromptResponse::Declined => {
-                eprintln!("{}", info_message("Update cancelled"));
-                return Ok(());
-            }
-        }
+    if paths_match(&output, &candidate.config_path) {
+        move_approvals_out_of(candidate)?;
+    } else {
+        eprint!("{}", format_dropped_approvals_warning(candidate));
     }
 
-    let artifact = format_migrated_output(candidates);
-    let written = if replace {
-        write_atomically(&output, &artifact)
-    } else {
-        write_new_atomically(&output, &artifact)
-    };
-    written.with_context(|| format!("Failed to write output @ {display_path}"))?;
+    write_atomically(&output, &format_migrated_output(candidates))
+        .with_context(|| format!("Failed to write output @ {display_path}"))?;
     eprintln!(
         "{}",
         success_message(format!("Wrote {label} migration @ {display_path}"))
     );
+    Ok(())
+}
+
+/// Move a config's deprecated `approved-commands` into approvals.toml, before a
+/// migration that drops them is written over that config.
+///
+/// approvals.toml becomes the authoritative source, so this runs first and a
+/// failure aborts the write: rewriting the config first would lose them with
+/// nothing left to read them from. Both writes that land a migration on top of
+/// the config it came from reach this — the in-place update, and `--output`
+/// naming that same path.
+fn move_approvals_out_of(candidate: &UpdateCandidate) -> anyhow::Result<()> {
+    if drops_approved_commands(candidate)
+        && let Some(approvals_path) =
+            copy_approved_commands_to_approvals_file(&candidate.config_path)?
+    {
+        let filename = approvals_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        eprintln!(
+            "{}",
+            info_message(cformat!("Copied approved commands to <bold>{filename}</>"))
+        );
+    }
     Ok(())
 }
 

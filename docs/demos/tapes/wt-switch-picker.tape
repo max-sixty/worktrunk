@@ -2,6 +2,30 @@ Source docs/demos/tapes/shared-setup.tape
 
 Output "{{OUTPUT_GIF}}"
 
+# PICKER DEMO: the interactive picker as its own subject
+#
+# The picker's two selling points are hard to show in a still: rows that paint
+# from local git before any network call, with per-row CI arriving behind them,
+# and a preview pane that pages through a diff or a PR thread without leaving
+# the list. The order below takes them in turn.
+#
+# 1. wt switch          — rows land immediately, CI and summaries still in flight
+# 2. alt-p              — preview off: the same rows reveal their right-hand
+#                         columns (summary, CI, commit) while both are arriving
+# 3. alt-p, ↓↓          — preview back on, following the cursor
+# 4. "alpha"            — filter to the branch with the large diff
+# 5. ctrl-d ×3          — page through a 397-line diff
+# 6. alt-8, ctrl-d      — the PR's comment thread, paged
+# 7. alt-7              — the PR itself: title, author, URL, description
+# 8. Enter              — switch to it
+#
+# The environment is `prepare_picker` in docs/demos/build: sixteen worktrees,
+# varied CI (PR numbers, bare branch CI, none), a mocked LLM behind the Summary
+# column, and a mocked forge whose per-branch response delays are what make the
+# CI column stream. It records at `SIZE_DOCS_PICKER` — the same canvas as every
+# other demo, in smaller text, because at the usual size the CI status and the
+# summary fall off the right edge.
+
 Source docs/demos/tapes/shared-commands.tape
 
 Type "clear"
@@ -9,34 +33,61 @@ Enter
 Sleep 1s
 Set KeyStrokes Show
 
-# Launch interactive picker (wt switch without args)
+# Open the picker. Rows paint from local git right away. `Show` comes after the
+# command is typed, as in every docs demo — the first frame carries the whole
+# command rather than a character of it. Keystroke times are positions in the
+# recorded video and a hidden stretch records no frames, so those characters
+# all land on that first frame together, which is what it already shows.
 Type "wt switch"
 Show
 Sleep 300ms
 Enter
+Sleep 500ms
+
+# alt-p hides the preview, and the same rows widen to full width to reveal the
+# columns the preview was covering. No reload, so no column moves — and the CI
+# cells are still landing one at a time behind the frame.
+Alt+p
+Sleep 3s
+
+# Preview back on. It follows the cursor.
+Alt+p
+Sleep 1.2s
+Down
+Sleep 1.2s
+Down
+Sleep 1.2s
+
+# Filter to alpha, which carries the large diff. Spelled out rather than
+# "alp": narrowing the list keeps the cursor's row *index*, so a query that
+# still matches several rows would leave it on whichever one now sits at that
+# index (after the two Downs above, "alp" selects beta).
+Type "alpha"
 Sleep 1.5s
 
-# Quick browse - second down comes fast
-Down
-Sleep 0.1s
-Down
-Sleep 0.8s
+# Page through it.
+Ctrl+d
+Sleep 700ms
+Ctrl+d
+Sleep 700ms
+Ctrl+d
+Sleep 2.5s
 
-# Scroll the diff panel with Ctrl+D
-Ctrl+d
-Sleep 0.5s
-Ctrl+d
-Sleep 0.5s
+# alt-8 is the PR's comment thread, which pages the same way. VHS needs the
+# digit quoted — `Alt+` takes a string, Enter or Tab, and a bare 8 lexes as a
+# number.
+Alt+"8"
+Sleep 3s
 Ctrl+d
 Sleep 3s
 
-# Filter to find alpha branch
-Type "alp"
-Sleep 1s
+# alt-7 is the PR itself.
+Alt+"7"
+Sleep 3s
 
-# Select it
+# Enter switches to the selected worktree.
 Enter
-Sleep 1.5s
+Sleep 2.5s
 
 Hide
 Type "exit"

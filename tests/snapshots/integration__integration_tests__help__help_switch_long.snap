@@ -66,12 +66,19 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
           
           Defaults to default branch. Supports the same shortcuts as the branch argument: [1m^[0m, [1m@[0m, [1m-[0m, [1mpr:{N}[0m, [1mmr:{N}[0m.[0m
 
+      [1m[36m--path[0m[36m [0m[36m<PATH>[0m
+          Worktree directory for a new worktree [experimental][0m
+          
+          Overrides the [1mworktree-path[0m template for this worktree. Relative paths resolve from the current directory, as with [1mgit worktree add[0m. The branch keeps its own name; afterwards, switch by branch or by path.[0m
+
   [1m[36m-x[0m, [1m[36m--execute[0m[36m [0m[36m<EXECUTE>[0m
           Program to run after switch[0m
           
           Runs one external program after switching, with full terminal control. Arguments after [1m--[0m go directly to that program without Worktrunk shell parsing. Program lookup and argument decoding follow the operating system. Shell syntax requires an explicit shell, for example [1m-x sh -- -c 'npm install && npm test'[0m. On Windows, shell shims need their extension ([1m-x code.cmd[0m) or an explicit shell such as [1m-x cmd.exe -- /C code[0m.[0m
           
-          Without a branch argument, the interactive picker opens and the command runs against the selected worktree — so [1mwt switch -x claude[0m picks a worktree, then launches Claude Code there. With [1m--no-cd[0m, the program starts in the invoking directory instead.[0m
+          Without a branch argument, the interactive picker opens and the command runs against the selected worktree — so [1mwt switch -x claude[0m picks a worktree, then launches Claude Code there.[0m
+          
+          The program starts in the worktree the switch selected, whether or not your shell follows it there: [1m--no-cd[0m governs only the shell.[0m
           
           Supports ]8;;https://worktrunk.dev/hook/#template-variables\[4mhook template variables]8;;\[0m ([1m{{ branch }}[0m, [1m{{ worktree_path }}[0m, etc.) and filters. [1m{{ base }}[0m and [1m{{ base_worktree_path }}[0m describe the source: the selected base with [1m--create[0m, or the invoking worktree when switching to an existing worktree.[0m
           
@@ -94,7 +101,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
       [1m[36m--no-cd[0m
           Skip directory change after switching[0m
           
-          Hooks still run normally. Useful when hooks handle navigation (e.g., tmux workflows) or for CI/automation. [1m--execute[0m also starts in the invoking directory. Use --cd to override.[0m
+          Hooks still run normally, and an [1m--execute[0m program still starts in the worktree — only your shell stays put, so [1mwt switch feature --no-cd -x code -- .[0m opens the worktree in an editor and leaves your terminal where it was. Useful when hooks handle navigation (e.g., tmux workflows) or for CI/automation. Use --cd to override.[0m
 
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
@@ -159,7 +166,7 @@ A new branch tracks the remote branch it starts from only when the two share a n
 If the branch already has a worktree, [2mwt switch[0m changes directories to it. Otherwise, it creates one:
 
 1. Runs pre-switch hooks, blocking until complete
-2. Creates worktree at configured path
+2. Creates worktree at configured path (or at [2m--path[0m)
 3. Switches to new directory
 4. Runs pre-start hooks, blocking until complete
 5. Spawns post-start and post-switch hooks in the background
@@ -168,6 +175,16 @@ If the branch already has a worktree, [2mwt switch[0m changes directories to i
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m feature               # New branch and worktree[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m fix [0m[2m[36m--base[0m[2m release    # New branch from release[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m temp [0m[2m[36m--no-hooks[0m[2m       # Skip hooks[0m
+
+[32mCustom path [experimental][0m
+
+[2m--path[0m places one worktree outside the [2mworktree-path[0m template, keeping the branch name intact:
+
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m feature/JIRA-1234 [0m[2m[36m--path[0m[2m ../dark-mode[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch ../dark-mode                   # Switch by path...[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch feature/JIRA-1234              # ...or by branch[0m
+
+Worktrunk finds the worktree from git's own records, so commands reach it by branch or path as usual. [2mwt list[0m marks it [2m[33m⚑[0m, since it isn't at the path its branch implies, and [2mwt step relocate[0m offers to move it back to the template path.
 
 [1m[32mNaming a worktree[0m
 
@@ -229,7 +246,7 @@ The filter matches each row's branch, path, and — when it has a PR/MR — the 
 7. [1mpr[0m — The selected row's PR/MR, for any row whose branch has one
 8. [1mcomments[0m — The PR/MR's comment thread, fetched from the forge for any row whose branch has one
 
-The comparison base is the merge-base with the default branch, or with its upstream when the local default branch lags. The picker opens on [1mdiff[0m for local rows and [1mpr[0m for a PR/MR listed by [2m--prs[0m but not available locally. [2mTab[0m and [2mShift-Tab[0m skip tabs without content; [2mAlt-1[0m through [2mAlt-8[0m open any tab directly. After you choose a tab, that choice stays active while you navigate.
+The comparison base is the merge-base with the default branch, or with its upstream when the local default branch lags. The picker opens on [1mdiff[0m for local rows and [1mpr[0m for a PR/MR listed by [2m--prs[0m but not available locally. A tab with no content for the selected row has a dimmed label, and the active tab's label is underlined. [2mTab[0m and [2mShift-Tab[0m skip the dimmed tabs; [2mAlt-1[0m through [2mAlt-8[0m open any tab directly. After you choose a tab, that choice stays active while you navigate.
 
 [1mPager configuration:[0m The preview panel pipes diff output through git's pager. Override in user config:
 

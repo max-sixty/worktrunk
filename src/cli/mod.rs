@@ -372,6 +372,15 @@ pub(crate) struct SwitchArgs {
     #[arg(short = 'b', long, requires = "branch", add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
     pub(crate) base: Option<String>,
 
+    /// Worktree directory for a new worktree \[experimental\]
+    ///
+    /// Overrides the `worktree-path` template for this worktree. Relative
+    /// paths resolve from the current directory, as with `git worktree add`.
+    /// The branch keeps its own name; afterwards, switch by branch or by
+    /// path.
+    #[arg(long, requires = "branch", value_hint = clap::ValueHint::DirPath, conflicts_with_all = ["branches", "remotes", "prs"])]
+    pub(crate) path: Option<std::path::PathBuf>,
+
     /// Program to run after switch
     ///
     /// Runs one external program after switching, with full terminal control.
@@ -384,8 +393,10 @@ pub(crate) struct SwitchArgs {
     ///
     /// Without a branch argument, the interactive picker opens and the
     /// command runs against the selected worktree — so `wt switch -x claude`
-    /// picks a worktree, then launches Claude Code there. With `--no-cd`, the
-    /// program starts in the invoking directory instead.
+    /// picks a worktree, then launches Claude Code there.
+    ///
+    /// The program starts in the worktree the switch selected, whether or not
+    /// your shell follows it there: `--no-cd` governs only the shell.
     ///
     /// Supports [hook template variables](https://worktrunk.dev/hook/#template-variables)
     /// (`{{ branch }}`, `{{ worktree_path }}`, etc.) and filters.
@@ -432,9 +443,12 @@ pub(crate) struct SwitchArgs {
 
     /// Skip directory change after switching
     ///
-    /// Hooks still run normally. Useful when hooks handle navigation
-    /// (e.g., tmux workflows) or for CI/automation. `--execute` also starts in
-    /// the invoking directory. Use --cd to override.
+    /// Hooks still run normally, and an `--execute` program still starts in
+    /// the worktree — only your shell stays put, so
+    /// `wt switch feature --no-cd -x code -- .` opens the worktree in an
+    /// editor and leaves your terminal where it was. Useful when hooks handle
+    /// navigation (e.g., tmux workflows) or for CI/automation. Use --cd to
+    /// override.
     #[arg(long, overrides_with = "cd")]
     pub(crate) no_cd: bool,
 
@@ -648,7 +662,7 @@ A new branch tracks the remote branch it starts from only when the two share a n
 If the branch already has a worktree, `wt switch` changes directories to it. Otherwise, it creates one:
 
 1. Runs [pre-switch hooks](/hook/#hook-types), blocking until complete
-2. Creates worktree at configured path
+2. Creates worktree at configured path (or at `--path`)
 3. Switches to new directory
 4. Runs [pre-start hooks](/hook/#hook-types), blocking until complete
 5. Spawns [post-start](/hook/#hook-types) and [post-switch hooks](/hook/#hook-types) in the background
@@ -659,6 +673,18 @@ $ wt switch --create feature               # New branch and worktree
 $ wt switch --create fix --base release    # New branch from release
 $ wt switch --create temp --no-hooks       # Skip hooks
 ```
+
+### Custom path [experimental]
+
+`--path` places one worktree outside the `worktree-path` template, keeping the branch name intact:
+
+```console
+$ wt switch --create feature/JIRA-1234 --path ../dark-mode
+$ wt switch ../dark-mode                   # Switch by path...
+$ wt switch feature/JIRA-1234              # ...or by branch
+```
+
+Worktrunk finds the worktree from git's own records, so commands reach it by branch or path as usual. [`wt list`](/list/#worktree) marks it `⚑`, since it isn't at the path its branch implies, and [`wt step relocate`](/step/#wt-step-relocate) offers to move it back to the template path.
 
 ## Naming a worktree
 
@@ -691,7 +717,7 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 
 The CI column shows each row's PR/MR CI and review status, the same as [`wt list --full`](/list/).
 
-<!-- demo: wt-switch-picker.gif 1600x800 | Browsing the picker, scrolling a preview, filtering, and selecting -->
+<!-- demo: wt-switch-picker.gif 1600x900 | Alt-p to reveal the CI and summary columns as they fill in, then paging a diff, a PR's comment thread, and the PR itself -->
 **Keybindings:**
 
 | Key | Action |
@@ -723,7 +749,7 @@ The filter matches each row's branch, path, and — when it has a PR/MR — the 
 7. **pr** — The selected row's PR/MR, for any row whose branch has one
 8. **comments** — The PR/MR's comment thread, fetched from the forge for any row whose branch has one
 
-The comparison base is the merge-base with the default branch, or with its upstream when the local default branch lags. The picker opens on **diff** for local rows and **pr** for a PR/MR listed by `--prs` but not available locally. `Tab` and `Shift-Tab` skip tabs without content; `Alt-1` through `Alt-8` open any tab directly. After you choose a tab, that choice stays active while you navigate.
+The comparison base is the merge-base with the default branch, or with its upstream when the local default branch lags. The picker opens on **diff** for local rows and **pr** for a PR/MR listed by `--prs` but not available locally. A tab with no content for the selected row has a dimmed label, and the active tab's label is underlined. `Tab` and `Shift-Tab` skip the dimmed tabs; `Alt-1` through `Alt-8` open any tab directly. After you choose a tab, that choice stays active while you navigate.
 
 **Pager configuration:** The preview panel pipes diff output through git's pager. Override in user config:
 
@@ -790,9 +816,9 @@ List all worktrees:
 $ wt list
   Branch       Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message
 @ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      6814f02   30m  Add API tests
-^ main             ^⇅                                    ⇡1  ⇣1  41ee083    4d  Merge fix-auth: h…
-+ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68    5h  Add secure token…
-+ fix-typos        _|                                      |     41ee083    4d  Merge fix-auth: h…
+^ main             ^⇅                                    ⇡1  ⇣1  41ee083    4d  Merge fix-auth: ha…
++ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68    5h  Add secure token s…
++ fix-typos        _|                                      |     41ee083    4d  Merge fix-auth: ha…
 
 ○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path
 ```
@@ -802,11 +828,11 @@ Include CI status and LLM summaries:
 <!-- wt list --full -->
 ```console
 $ wt list --full
-  Branch       Status      HEAD±     main↕    main…±    Summary                      Remote⇅  CI
-@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archi…   ⇡3      #412
-^ main             ^⇅                                                                 ⇡1  ⇣1  #
-+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-…     |     #408
-+ fix-typos        _|                                                                   |     #410
+  Branch       Status      HEAD±     main↕    main…±    Summary                       Remote⇅  CI
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archit…   ⇡3      #412
+^ main             ^⇅                                                                  ⇡1  ⇣1  #
++ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-t…     |     #408
++ fix-typos        _|                                                                    |     #410
 
 ○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path, Commit, Age, Message
 ```
@@ -816,11 +842,11 @@ Include branches that don't have worktrees:
 <!-- wt list --branches --full -->
 ```console
 $ wt list --branches --full
-  Branch       Status      HEAD±     main↕    main…±    Summary                      Remote⇅  CI
-@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archi…   ⇡3      #412
-^ main             ^⇅                                                                 ⇡1  ⇣1  #
-+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-…     |     #408
-+ fix-typos        _|                                                                   |     #410
+  Branch       Status      HEAD±     main↕    main…±    Summary                       Remote⇅  CI
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archit…   ⇡3      #412
+^ main             ^⇅                                                                  ⇡1  ⇣1  #
++ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-t…     |     #408
++ fix-typos        _|                                                                    |     #410
 / exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and…
 / wip             /↕                 ↑1  ↓1   +33       Start API documentation
 
@@ -882,7 +908,7 @@ The CI column shows the branch's open PR/MR — `#3035` on GitHub, Gitea, and Az
 | `⚠` yellow | `"error"` | CI status could not be fetched (rate limit, network, etc.) |
 | `#` magenta | `"changes_requested"` | A reviewer requested changes |
 | `#` cyan | `"pending"` | A review is required (e.g. branch protection) but not yet given |
-| (blank) | `pr` and `checks` absent | No upstream, or no PR/MR and no branch workflow |
+| (blank) | `pr` and `checks` absent | Branch never pushed, or no PR/MR and no branch workflow |
 
 The two remaining review states have no indicator of their own: `"draft"` only dims the cell and `"approved"` leaves the color unchanged.
 
@@ -930,7 +956,7 @@ An in-progress git operation, a worktree-location attribute, or a branch with no
 |--------|------|---------|
 | `✘` | `worktree.changes.conflicted` | Merge conflicts |
 | `↻` | `worktree.operation` `"rebase"`, `"merge"`, `"cherry_pick"`, `"revert"`, `"bisect"` | A git operation is in progress; `git status` names it |
-| `⊟` | `worktree.prunable` | Prunable (worktree directory missing) |
+| `⊟` | `worktree.prunable` | Prunable (worktree directory or its `.git` gone) |
 | `⊞` | `worktree.locked` | Locked worktree |
 | `⊘` | `worktree.detached` | Detached HEAD |
 | `⚑` | `worktree.duplicate_branch` | Branch checked out in more than one worktree |
@@ -1331,6 +1357,8 @@ The 'same commit' check uses the local default branch; for other checks, 'target
 
 Branches matching these conditions and with empty working trees are dimmed in `wt list` as safe to delete.
 
+If a detached worktree remains at the branch's configured path, removing the branch reports that directory and the command to remove it by path.
+
 ## Force flags
 
 Worktrunk has two force flags for different situations:
@@ -1374,7 +1402,7 @@ Unix only; on Windows `--reap` is rejected.
 
 ## JSON output
 
-`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal.
+`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal, plus `detached_worktree` — the directory left at that branch's path with a detached HEAD, which the branch no longer names and this removal therefore leaves alone.
 
 `branch_outcome` names what happened to the branch, so a caller can tell a deletion the removal declined from one it was never asked to make:
 
@@ -2097,9 +2125,11 @@ command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haik
 
 ### Codex
 
+Create `~/.codex/worktrunk-commit-instructions.txt` containing just `.` (no newline). Accepting Worktrunk's first-run Codex setup creates the file for you.
+
 ```toml
 [commit.generation]
-command = "codex exec -m gpt-5.6-luna -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
+command = "codex exec -m gpt-6-luna -c model_reasoning_effort='none' -c project_doc_max_bytes=0 -c skills.max_context_tokens=1 -c agents.enabled=false -c features.goals=false -c web_search=disabled -c 'model_instructions_file=\"~/.codex/worktrunk-commit-instructions.txt\"' -c features.shell_tool=false -c features.unified_exec=false -c features.apps=false -c features.plugins=false --ephemeral --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 ```
 
 ### OpenCode
@@ -2118,9 +2148,11 @@ command = "llm -m claude-haiku-4.5"
 
 ### aichat
 
+`--code` drops the `<think>` block aichat prints before the message when the model reasons.
+
 ```toml
 [commit.generation]
-command = "aichat -m claude:claude-haiku-4.5"
+command = "aichat -m claude:claude-haiku-4.5 --code"
 ```
 
 See [LLM commits docs](/llm-commits/) for setup and [Custom prompt templates](#custom-prompt-templates) for template customization.
@@ -2427,7 +2459,7 @@ Default template:
 ```toml
 [commit.generation]
 squash-template = """
-<task>Write a commit message for the combined effect of these commits.</task>
+<task>Write a commit message for the change in <diff>, which is everything the squash will record. <commits> lists what it folds in.</task>
 
 <format>
 - Subject line under 50 chars

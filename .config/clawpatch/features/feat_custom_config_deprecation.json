@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "featureId": "feat_custom_config_deprecation",
   "title": "Config loading, deprecation, and migration",
-  "summary": "Pre-deserialization TOML migration rewrites deprecated patterns into canonical form. A silent migration bug here changes user-facing behavior without warning. Must: emit warnings exactly once per process, never drop unknown keys silently, and produce a stable .new file. Config format is an external interface (CLAUDE.md > Project Status). See CLAUDE.md > Config Deprecation.",
+  "summary": "Pre-deserialization TOML migration rewrites deprecated patterns into canonical form. A silent migration bug here changes user-facing behavior without warning. Must: emit warnings exactly once per process, never drop unknown keys silently, and produce a stable .new file. Config format is an external interface (AGENTS.md > Project Status). See AGENTS.md > Config Deprecation.",
   "kind": "library",
   "source": "manual",
   "confidence": "high",
@@ -50,7 +50,7 @@
       "reason": "approvals config schema"
     },
     {
-      "path": "CLAUDE.md",
+      "path": "AGENTS.md",
       "reason": "config compatibility policy and deprecation recipe"
     }
   ],

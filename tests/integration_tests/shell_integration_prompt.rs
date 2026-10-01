@@ -694,17 +694,37 @@ mod commit_generation_prompt_tests {
     use std::path::{Path, PathBuf};
     use tempfile::TempDir;
 
-    fn setup_fake_claude(temp_home: &Path) -> PathBuf {
-        // Create a fake claude executable that does nothing
+    fn setup_fake_tool(temp_home: &Path, tool: &str) -> PathBuf {
+        // Create a fake LLM executable that does nothing
         let bin_dir = temp_home.join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
-        let claude_path = bin_dir.join("claude");
-        fs::write(&claude_path, "#!/bin/sh\nexit 0\n").unwrap();
+        let tool_path = bin_dir.join(tool);
+        fs::write(&tool_path, "#!/bin/sh\nexit 0\n").unwrap();
         // Make executable
-        let mut perms = fs::metadata(&claude_path).unwrap().permissions();
+        let mut perms = fs::metadata(&tool_path).unwrap().permissions();
         perms.set_mode(0o755);
-        fs::set_permissions(&claude_path, perms).unwrap();
+        fs::set_permissions(&tool_path, perms).unwrap();
         bin_dir
+    }
+
+    fn run_codex_prompt(repo: &TestRepo, temp_home: &Path, answers: &[&str]) -> String {
+        let bin_dir = setup_fake_tool(temp_home, "codex");
+        let test_file = repo.root_path().join("test.txt");
+        fs::write(&test_file, "test content\n").unwrap();
+        repo.run_git(&["add", "test.txt"]);
+
+        let mut env_vars = repo.test_env_vars();
+        let path = crate::common::setup_minimal_path_with_git(&bin_dir);
+        env_vars.push(("PATH".to_string(), path));
+
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["step", "commit"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home),
+        );
+        exec_cmd_in_pty_prompted(cmd, answers, "[y/N").0
     }
 
     /// Test: No LLM tool available, prompt is skipped and skip flag is set
@@ -747,7 +767,7 @@ mod commit_generation_prompt_tests {
     #[rstest]
     fn test_user_declines_llm_prompt(repo: TestRepo) {
         let temp_home = TempDir::new().unwrap();
-        let bin_dir = setup_fake_claude(temp_home.path());
+        let bin_dir = setup_fake_tool(temp_home.path(), "claude");
 
         // Stage a change
         let test_file = repo.root_path().join("test.txt");
@@ -788,7 +808,7 @@ mod commit_generation_prompt_tests {
     #[rstest]
     fn test_user_accepts_llm_prompt(repo: TestRepo) {
         let temp_home = TempDir::new().unwrap();
-        let bin_dir = setup_fake_claude(temp_home.path());
+        let bin_dir = setup_fake_tool(temp_home.path(), "claude");
 
         // Stage a change
         let test_file = repo.root_path().join("test.txt");
@@ -825,11 +845,94 @@ mod commit_generation_prompt_tests {
         );
     }
 
+    #[rstest]
+    fn test_user_accepts_codex_prompt(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        let output = run_codex_prompt(&repo, temp_home.path(), &["y\n"]);
+
+        assert!(output.contains("Added to user config"), "{output}");
+        assert!(output.contains("Created Codex instructions"), "{output}");
+        assert!(
+            output.contains("the saved Codex command requires it"),
+            "{output}"
+        );
+        let config_content = fs::read_to_string(repo.test_config_path()).unwrap();
+        assert!(config_content.contains("model_instructions_file"));
+        assert_eq!(
+            fs::read(
+                temp_home
+                    .path()
+                    .join(".codex/worktrunk-commit-instructions.txt")
+            )
+            .unwrap(),
+            b"."
+        );
+    }
+
+    #[rstest]
+    fn test_codex_preview_then_decline_does_not_create_instructions(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        let output = run_codex_prompt(&repo, temp_home.path(), &["?\n", "n\n"]);
+
+        assert!(
+            output.contains("creates a one-character file there if absent"),
+            "{output}"
+        );
+        assert!(
+            !temp_home
+                .path()
+                .join(".codex/worktrunk-commit-instructions.txt")
+                .exists()
+        );
+        let config_content = fs::read_to_string(repo.test_config_path()).unwrap_or_default();
+        assert!(!config_content.contains("model_instructions_file"));
+    }
+
+    #[rstest]
+    fn test_codex_prompt_reuses_existing_instructions(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        let instructions = temp_home
+            .path()
+            .join(".codex/worktrunk-commit-instructions.txt");
+        fs::create_dir_all(instructions.parent().unwrap()).unwrap();
+        fs::write(&instructions, "Existing instructions").unwrap();
+
+        let output = run_codex_prompt(&repo, temp_home.path(), &["y\n"]);
+
+        assert!(!output.contains("Created Codex instructions"), "{output}");
+        assert!(
+            output.contains("the saved Codex command requires it"),
+            "{output}"
+        );
+        assert_eq!(
+            fs::read_to_string(&instructions).unwrap(),
+            "Existing instructions"
+        );
+        let config_content = fs::read_to_string(repo.test_config_path()).unwrap();
+        assert!(config_content.contains("model_instructions_file"));
+    }
+
+    #[rstest]
+    fn test_codex_prompt_file_creation_failure_does_not_save_command(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        fs::write(temp_home.path().join(".codex"), "not a directory").unwrap();
+
+        let output = run_codex_prompt(&repo, temp_home.path(), &["y\n"]);
+
+        assert!(
+            output.contains("Codex setup failed: Failed to create"),
+            "{output}"
+        );
+        assert!(output.contains(".codex"), "{output}");
+        let config_content = fs::read_to_string(repo.test_config_path()).unwrap_or_default();
+        assert!(!config_content.contains("model_instructions_file"));
+    }
+
     /// Test: User requests preview (?)
     #[rstest]
     fn test_user_requests_preview(repo: TestRepo) {
         let temp_home = TempDir::new().unwrap();
-        let bin_dir = setup_fake_claude(temp_home.path());
+        let bin_dir = setup_fake_tool(temp_home.path(), "claude");
 
         // Stage a change
         let test_file = repo.root_path().join("test.txt");
@@ -867,7 +970,7 @@ mod commit_generation_prompt_tests {
     #[rstest]
     fn test_user_accepts_but_save_fails_shows_manual_hint(repo: TestRepo) {
         let temp_home = TempDir::new().unwrap();
-        let bin_dir = setup_fake_claude(temp_home.path());
+        let bin_dir = setup_fake_tool(temp_home.path(), "claude");
 
         // Stage a change
         let test_file = repo.root_path().join("test.txt");

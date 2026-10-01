@@ -2687,7 +2687,7 @@ fn test_readme_example_list(mut repo: TestRepo) {
 /// Generate README example: `wt list --full` output
 ///
 /// Shows additional columns: main…± (line diffs), CI status, and LLM summaries.
-/// Uses the documentation width (98 cols) so the sample fits the site content column.
+/// Uses the documentation width (99 cols) so the sample fits the site content column.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_full.snap
 #[rstest]
 fn test_readme_example_list_full(mut repo: TestRepo) {
@@ -2702,7 +2702,7 @@ fn test_readme_example_list_full(mut repo: TestRepo) {
 /// Generate README example: `wt list --branches --full` output
 ///
 /// Shows branches without worktrees (⎇ symbol) alongside worktrees, plus CI status.
-/// Uses the documentation width (98 cols) so the sample fits the site content column.
+/// Uses the documentation width (99 cols) so the sample fits the site content column.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_branches.snap
 #[rstest]
 fn test_readme_example_list_branches(mut repo: TestRepo) {

@@ -134,7 +134,8 @@ fn is_foreground_thread() -> bool {
 /// foreground thread is the one that cancels, and is never itself inside a
 /// tracked command while doing so, so the work the user is actually waiting
 /// on is never a target; an [`uninterruptible`] thread finishes what it
-/// started.
+/// started. A command marked [`Cmd::finish_once_started`] doesn't register
+/// either, so it runs to completion once spawned.
 static BACKGROUND_PIDS: Mutex<BTreeSet<u32>> = Mutex::new(BTreeSet::new());
 
 /// Deregisters a background command's PID however the command finishes.
@@ -210,6 +211,12 @@ fn track_if_cancellable(pid: u32) -> Option<BackgroundPid> {
     })
 }
 
+/// Whether a cancellation would signal `pid` right now.
+#[cfg(all(test, unix))]
+pub(crate) fn is_cancellable_pid(pid: u32) -> bool {
+    BACKGROUND_PIDS.lock().unwrap().contains(&pid)
+}
+
 /// Set once the foreground thread has cancelled background work, so commands
 /// that haven't spawned yet never do.
 ///
@@ -230,7 +237,8 @@ fn cancelled_error() -> std::io::Error {
 }
 
 /// Abandon background work: nothing further spawns, and whatever is already
-/// running is signalled rather than left to finish as an orphan.
+/// running is signalled rather than left to finish as an orphan — except
+/// commands marked [`Cmd::finish_once_started`], which run to completion.
 ///
 /// Callers see either as an ordinary command failure, which every background
 /// caller already treats as "no result".
@@ -689,7 +697,7 @@ pub fn scrub_git_discovery_env_vars(cmd: &mut std::process::Command) {
 /// missing config file as empty), and `GIT_CONFIG_COUNT` with its numbered
 /// keys and values — git's environment spelling of `-c` — supplies the two
 /// settings the suite needs in the denied config's place. What each entry is
-/// for, and why `-c` precedence keeps this list short: `tests/CLAUDE.md` →
+/// for, and why `-c` precedence keeps this list short: `tests/AGENTS.md` →
 /// Git Config Isolation.
 pub const HERMETIC_TEST_GIT_ENV: [(&str, &str); 7] = [
     ("GIT_CONFIG_GLOBAL", "/nonexistent/wt/gitconfig"),
@@ -943,6 +951,7 @@ fn format_stream_bounded(bytes: &[u8], prefix: &str) -> Vec<String> {
 fn run_with_timeout_impl(
     cmd: &mut Command,
     timeout: std::time::Duration,
+    cancellable: bool,
 ) -> std::io::Result<std::process::Output> {
     #[cfg(unix)]
     {
@@ -955,7 +964,9 @@ fn run_with_timeout_impl(
             .stdout(Stdio::piped())
             .stderr(Stdio::piped()),
     )?;
-    let _tracked = track_if_cancellable(child.id());
+    let _tracked = cancellable
+        .then(|| track_if_cancellable(child.id()))
+        .flatten();
 
     let mut child_stdout = child.take_stdout();
     let mut child_stderr = child.take_stderr();
@@ -1120,6 +1131,9 @@ pub struct Cmd {
     /// shell bodies may emit cd directives (the file holds a raw path, no shell
     /// injection surface).
     directive_cd_file: Option<std::path::PathBuf>,
+    /// If true, cancellation stops this command from spawning but never
+    /// signals it once running. Set via [`Cmd::finish_once_started`].
+    finish_once_started: bool,
 }
 
 struct ExternalCommandLog {
@@ -1166,6 +1180,27 @@ fn record_captured(
     // stdin is logged either way; stdout/stderr only when the command produced
     // output — a command that failed to spawn still leaves its input behind.
     log_output(trace, stdin, result.as_ref().ok());
+}
+
+/// A child from [`Cmd::spawn_captured`], traced from spawn until
+/// [`Self::wait`] reaps it.
+struct CapturedChild {
+    child: std::process::Child,
+    trace: CommandTrace,
+    _tracked: Option<BackgroundPid>,
+}
+
+impl CapturedChild {
+    fn wait(self) -> std::io::Result<std::process::Output> {
+        let CapturedChild {
+            child,
+            mut trace,
+            _tracked,
+        } = self;
+        let result = child.wait_with_output();
+        record_captured(&mut trace, None, &result);
+        result
+    }
 }
 
 /// Structured error from [`Cmd::delayed_stream`].
@@ -1285,6 +1320,7 @@ impl Cmd {
             ignore_sigpipe: true,
             external_label: None,
             directive_cd_file: None,
+            finish_once_started: false,
         }
     }
 
@@ -1318,6 +1354,17 @@ impl Cmd {
         let mut cmd = Command::new(&self.program);
         cmd.args(&self.args);
         cmd
+    }
+
+    /// [`Self::check_spawn_preconditions`], after checking that this thread's
+    /// commands haven't been cancelled. Background callers check after taking
+    /// their semaphore permit: a command can be cancelled while parked on the
+    /// semaphore, and that is the common case in a large fan-out.
+    fn check_before_spawn(&self) -> std::io::Result<()> {
+        if background_cancelled() {
+            return Err(cancelled_error());
+        }
+        self.check_spawn_preconditions()
     }
 
     fn check_spawn_preconditions(&self) -> std::io::Result<()> {
@@ -1438,6 +1485,28 @@ impl Cmd {
     pub fn timeout(mut self, duration: std::time::Duration) -> Self {
         self.timeout = Some(duration);
         self
+    }
+
+    /// Let this command run to completion once spawned, even if background
+    /// work is cancelled meanwhile ([`cancel_background_commands`]). A
+    /// cancelled command that hasn't spawned yet still never does.
+    ///
+    /// For commands whose interruption leaves debris SIGTERM doesn't clean:
+    /// `git merge-tree` writes its external merge driver's inputs as
+    /// `.merge_file_XXXXXX` files in its cwd and removes them only on a normal
+    /// return, so a signal mid-driver strands them in the user's worktree.
+    ///
+    /// Only affects `.run()`.
+    pub fn finish_once_started(mut self) -> Self {
+        self.finish_once_started = true;
+        self
+    }
+
+    /// [`track_if_cancellable`], unless [`Cmd::finish_once_started`] opted out.
+    fn track_if_cancellable(&self, pid: u32) -> Option<BackgroundPid> {
+        (!self.finish_once_started)
+            .then(|| track_if_cancellable(pid))
+            .flatten()
     }
 
     /// Set an environment variable.
@@ -1611,17 +1680,7 @@ impl Cmd {
         let mut trace = CommandTrace::new(self.context.as_deref(), &cmd_str)
             .reads_stdin(self.stdin_data.is_some());
 
-        // Checked after the permit, not before: a command can be cancelled
-        // while parked on the semaphore, and that is the common case in a
-        // large fan-out.
-        if background_cancelled() {
-            let e = cancelled_error();
-            trace.fail(&e);
-            external_log.record(None);
-            return Err(e);
-        }
-
-        if let Err(e) = self.check_spawn_preconditions() {
+        if let Err(e) = self.check_before_spawn() {
             trace.fail(&e);
             external_log.record(None);
             return Err(e);
@@ -1643,7 +1702,7 @@ impl Cmd {
 
             match cmd.spawn() {
                 Ok(mut child) => {
-                    let _tracked = track_if_cancellable(child.id());
+                    let _tracked = self.track_if_cancellable(child.id());
                     // Write stdin data in an inner scope so the handle DROPS
                     // (closing the pipe) before `wait_with_output` — otherwise a
                     // child that reads stdin to EOF (e.g. `git … --stdin`) blocks
@@ -1661,7 +1720,7 @@ impl Cmd {
             }
         } else if let Some(timeout_duration) = self.timeout {
             // Timeout handling uses the existing impl
-            run_with_timeout_impl(&mut cmd, timeout_duration)
+            run_with_timeout_impl(&mut cmd, timeout_duration, !self.finish_once_started)
         } else {
             // Simple case: run and capture output. Spawned explicitly rather
             // than via `cmd.output()` — which matches these stdio defaults —
@@ -1673,7 +1732,7 @@ impl Cmd {
                 .stderr(Stdio::piped());
             match cmd.spawn() {
                 Ok(child) => {
-                    let _tracked = track_if_cancellable(child.id());
+                    let _tracked = self.track_if_cancellable(child.id());
                     child.wait_with_output()
                 }
                 Err(e) => Err(e),
@@ -1686,6 +1745,82 @@ impl Cmd {
         external_log.record(exit_code);
 
         result
+    }
+
+    /// Run `cmds` as concurrent child processes and return each one's output,
+    /// in input order.
+    ///
+    /// Every child is spawned before any is waited on, so a batch of short
+    /// commands costs about one command's latency without a thread per
+    /// command. Outputs are read one child at a time, in order, so a child
+    /// that writes more than a pipe buffer blocks until its turn: use this
+    /// for commands with small output.
+    ///
+    /// The caller waits only on its own children, which makes this safe where
+    /// a thread pool is not: inside a cache initializer that pool jobs also
+    /// read. A rayon thread that waits runs other pool jobs, and a job that
+    /// reads the cache being initialized then deadlocks.
+    ///
+    /// On a background thread the batch takes one semaphore permit, as
+    /// [`Self::pipe_into`] does: one permit per child could deadlock two
+    /// batches that each hold part of the pool. A batch runs at most
+    /// `max_concurrent_commands()` children at once; other threads' commands
+    /// are not counted against it. Stdin, timeouts,
+    /// `external()` logging and shell commands are not supported.
+    pub fn run_concurrently(cmds: &[Cmd]) -> Vec<std::io::Result<std::process::Output>> {
+        assert!(
+            cmds.iter().all(|cmd| !cmd.shell_wrap
+                && cmd.stdin_data.is_none()
+                && cmd.timeout.is_none()
+                && cmd.external_label.is_none()),
+            "run_concurrently supports captured commands without stdin, timeout, external() or shell"
+        );
+
+        let _guard = (!is_foreground_thread()).then(|| semaphore().acquire());
+
+        let mut results = Vec::with_capacity(cmds.len());
+        for chunk in cmds.chunks(max_concurrent_commands()) {
+            let children: Vec<_> = chunk.iter().map(Cmd::spawn_captured).collect();
+            results.extend(
+                children
+                    .into_iter()
+                    .map(|child| child.and_then(CapturedChild::wait)),
+            );
+        }
+        results
+    }
+
+    /// Spawn `self` with piped stdout/stderr and null stdin, without waiting.
+    /// A failure to spawn resolves the trace before returning.
+    fn spawn_captured(&self) -> std::io::Result<CapturedChild> {
+        let cmd_str = self.command_string();
+        self.log_run_start(&cmd_str);
+        let mut trace = CommandTrace::new(self.context.as_deref(), &cmd_str);
+
+        if let Err(e) = self.check_before_spawn() {
+            trace.fail(&e);
+            return Err(e);
+        }
+
+        let mut cmd = self.direct_command();
+        self.apply_common_settings(&mut cmd);
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        match cmd.spawn() {
+            Ok(child) => {
+                let tracked = self.track_if_cancellable(child.id());
+                Ok(CapturedChild {
+                    child,
+                    trace,
+                    _tracked: tracked,
+                })
+            }
+            Err(e) => {
+                trace.fail(&e);
+                Err(e)
+            }
+        }
     }
 
     /// Run `self` with its stdout piped directly into `next`'s stdin, and
@@ -1745,23 +1880,11 @@ impl Cmd {
 
         let _guard = (!is_foreground_thread()).then(|| semaphore().acquire());
 
-        // Cancelled, possibly while parked on the semaphore above (see
-        // `background_cancelled`). Nothing has spawned, so neither half runs.
-        if background_cancelled() {
-            let e = cancelled_error();
-            CommandTrace::record_failed(
-                self.context.as_deref(),
-                &first_cmd_str,
-                self.stdin_data.is_some(),
-                &e,
-            );
-            return Err(e);
-        }
-
         // Validate both commands before spawning either. Nothing has spawned
-        // yet, so a precondition failure emits a one-shot failed record rather
-        // than holding a guard across an execution that never happens.
-        if let Err(e) = self.check_spawn_preconditions() {
+        // yet, so a cancellation or precondition failure emits a one-shot
+        // failed record rather than holding a guard across an execution that
+        // never happens.
+        if let Err(e) = self.check_before_spawn() {
             // stdin_data is still owned here (taken below), so it reflects
             // whether the source would have read a buffer; the sink always reads
             // the upstream pipe.
@@ -3083,6 +3206,34 @@ mod tests {
         // via `fail` rather than dropping it unresolved.
         let err = Cmd::new(MISSING_CMD).delayed_stream(-1, None).unwrap_err();
         assert!(err.to_string().contains("Failed to spawn"), "{err}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_run_concurrently_overlaps_children_and_keeps_order() {
+        // The first child waits for a file that only the last child creates, so
+        // it succeeds only if both run at once. A spawn failure in between
+        // stays in its own slot rather than shifting the results after it.
+        let dir = tempfile::tempdir().unwrap();
+        let flag = dir.path().join("flag");
+        let wait_for_flag = format!(
+            "for _ in $(seq 500); do [ -e '{}' ] && exit 0; sleep 0.01; done; exit 1",
+            flag.display()
+        );
+        let results = Cmd::run_concurrently(&[
+            Cmd::new("sh").args(["-c", wait_for_flag.as_str()]),
+            Cmd::new(MISSING_CMD),
+            Cmd::new("sh").args(["-c", "exit 3"]),
+            Cmd::new("touch").arg(flag.to_str().unwrap()),
+        ]);
+        let [waiter, missing, exit3, toucher]: [_; 4] = results.try_into().unwrap();
+        assert!(
+            waiter.unwrap().status.success(),
+            "children ran one at a time"
+        );
+        assert_eq!(missing.unwrap_err().kind(), ErrorKind::NotFound);
+        assert_eq!(exit3.unwrap().status.code(), Some(3));
+        assert!(toucher.unwrap().status.success());
     }
 
     #[test]

@@ -87,7 +87,7 @@ struct BackgroundRemoval<'a> {
     force_worktree: bool,
     changed_directory: bool,
     /// `true` when the planner already decided the branch would be retained
-    /// (unmerged, or `--no-delete-branch`) — `print_hints` has explained why,
+    /// (unmerged, or a `Keep` plan) — `print_hints` has explained why,
     /// so [`warn_if_branch_retained`] stays silent on the expected
     /// `NotDeleted` outcome and only fires when the deletion command errors.
     /// `false` means the planner predicted deletion; a `NotDeleted` here is a
@@ -1024,20 +1024,23 @@ pub(crate) fn resolve_subdir_in_target(
     target_root.to_path_buf()
 }
 
-/// The "@ path" annotations a switch's follow-on output should carry.
+/// Where a switch's follow-on work runs, and which of those directories its
+/// output should annotate with "@ path".
 ///
-/// Both are `Some` only when the user's shell won't be where the annotated work
-/// runs; the two paths differ because the work doesn't share one directory.
-/// Background hooks always run at the worktree root, while the `--execute`
-/// program runs wherever the switch cd'd — the root, or the subdirectory
-/// position [`resolve_subdir_in_target`] preserved — and nowhere at all under
-/// `--no-cd`, which leaves it in the invoking directory (#4042).
+/// The `--execute` program always starts in the switch target — the worktree
+/// root, or the subdirectory position [`resolve_subdir_in_target`] preserved —
+/// so `execute_dir` is unconditional. The two `Option`s are the annotations,
+/// `Some` only when the user's shell won't be where that work runs: background
+/// hooks always run at the worktree root, and `--no-cd` leaves the shell behind
+/// while the program still goes to the worktree (#4042).
 pub struct SwitchDisplayPaths {
     /// Where the background `post-switch` / `post-start` hooks run, when that
     /// isn't where the user's shell is (or will be).
     pub hooks: Option<PathBuf>,
-    /// Where the `--execute` program starts, when that isn't where the user's
-    /// shell is (or will be).
+    /// Where the `--execute` program starts.
+    pub execute_dir: PathBuf,
+    /// [`Self::execute_dir`], when that isn't where the user's shell is (or
+    /// will be).
     pub execute: Option<PathBuf>,
 }
 
@@ -1080,16 +1083,15 @@ pub fn handle_switch_output(
     source_worktree_root: Option<&Path>,
     cwd: &Path,
 ) -> anyhow::Result<SwitchDisplayPaths> {
-    // Set target directory for command execution, preserving subdirectory position.
-    // If the user is in apps/gateway/ in the source worktree and that directory exists
-    // in the target, cd to apps/gateway/ in the target instead of the root.
-    let cd_target = if change_dir {
-        let cd_target = resolve_subdir_in_target(result.path(), source_worktree_root, cwd);
-        super::change_directory(&cd_target)?;
-        Some(cd_target)
-    } else {
-        None
-    };
+    // Where the switch points, preserving subdirectory position: if the user is
+    // in apps/gateway/ in the source worktree and that directory exists in the
+    // target, that's apps/gateway/ in the target rather than its root. The
+    // `--execute` program starts there either way; `--no-cd` only declines to
+    // take the user's shell along.
+    let destination = resolve_subdir_in_target(result.path(), source_worktree_root, cwd);
+    if change_dir {
+        super::change_directory(&destination)?;
+    }
 
     // Translate to the user's logical (symlink-preserved) path for display messages.
     // The cd directive (above) handles its own translation internally.
@@ -1111,32 +1113,36 @@ pub fn handle_switch_output(
         ),
     };
 
-    // The `--execute` program runs in `cd_target`, which is the worktree root
-    // only when the user was at the source worktree's root: otherwise
+    // The program runs in `destination`, which is the worktree root only when
+    // the user was at the source worktree's root: otherwise
     // `resolve_subdir_in_target` kept their subdirectory position, and the
     // hooks' path names a directory one level out from the program's. Annotate
-    // it only when the user's shell won't be there — `--no-cd` leaves the
-    // program where the shell already stands, and shell integration takes the
-    // shell to `cd_target` too (#4042).
-    let display_path_for_execute = cd_target.filter(|target| {
-        !super::is_shell_integration_active()
-            && super::global::compute_hooks_display_path(target, cwd).is_some()
-    });
+    // it only when the user's shell won't be there — it follows the program
+    // only when the switch cd'd and shell integration carried it (#4042).
+    let shell_follows = change_dir && super::is_shell_integration_active();
+    let display_path_for_execute = (!shell_follows)
+        .then(|| destination.clone())
+        .filter(|dir| super::global::compute_hooks_display_path(dir, cwd).is_some());
 
     stderr().flush()?;
     Ok(SwitchDisplayPaths {
         hooks: display_path_for_hooks,
-        execute: display_path_for_execute.map(|target| super::to_logical_path(&target)),
+        execute_dir: destination,
+        execute: display_path_for_execute.map(|dir| super::to_logical_path(&dir)),
     })
 }
 
 /// Execute the --execute command after hooks have run.
 ///
-/// `display_path` names the directory the program starts in
-/// ([`SwitchDisplayPaths::execute`]), and is `Some` only when the user's shell
-/// won't be there — otherwise the header has nothing to annotate.
-///
-pub fn execute_user_command(argv: &[String], display_path: Option<&Path>) -> anyhow::Result<()> {
+/// The program runs in `dir` ([`SwitchDisplayPaths::execute_dir`]).
+/// `display_path` is that same directory ([`SwitchDisplayPaths::execute`]), and
+/// is `Some` only when the user's shell won't be there — otherwise the header
+/// has nothing to annotate.
+pub fn execute_user_command(
+    argv: &[String],
+    display_path: Option<&Path>,
+    dir: &Path,
+) -> anyhow::Result<()> {
     super::global::print_outdated_execute_wrapper_warning();
     let command = super::global::format_exec_argv(argv);
 
@@ -1152,7 +1158,7 @@ pub fn execute_user_command(argv: &[String], display_path: Option<&Path>) -> any
     eprintln!("{}", progress_message(header));
     eprintln!("{}", format_bash_with_gutter(&command));
 
-    super::execute(argv.to_vec())?;
+    super::execute(argv.to_vec(), dir)?;
 
     Ok(())
 }
@@ -1233,6 +1239,7 @@ pub fn handle_remove_output(
             target_branch,
             integration_reason,
             branch_checked_out_at,
+            detached_worktree,
         } => handle_branch_only_output(
             branch_name,
             *deletion_mode,
@@ -1240,6 +1247,7 @@ pub fn handle_remove_output(
             *integration_reason,
             target_branch.as_deref(),
             branch_checked_out_at.as_ref(),
+            detached_worktree.as_deref(),
             quiet,
         ),
     }
@@ -1253,6 +1261,17 @@ pub fn handle_remove_output(
 ///
 /// When `quiet` is true, suppresses the "No worktree found for branch X"
 /// info line for non-pruned cases (noise in prune/batch context).
+///
+/// `detached_worktree` is a directory still sitting where this branch's
+/// worktree would go, detached and so nameless in the branch namespace. The
+/// removal is correct without it — the branch really has no worktree — but the
+/// info line above reads as "nothing there", so it is named alongside, with the
+/// path spelling that removes it. Only ever set for a branch the user typed.
+///
+/// The parameters are one `RemovalPlan::BranchOnly`'s fields, destructured by
+/// the sole caller, plus `quiet` — so the count tracks the variant rather than
+/// a signature anyone chose.
+#[allow(clippy::too_many_arguments)]
 fn handle_branch_only_output(
     branch_name: &str,
     deletion_mode: BranchDeletionMode,
@@ -1260,6 +1279,7 @@ fn handle_branch_only_output(
     integration_reason: Option<IntegrationReason>,
     target_branch: Option<&str>,
     branch_checked_out_at: Option<&SharedBranchCheckout>,
+    detached_worktree: Option<&Path>,
     quiet: bool,
 ) -> anyhow::Result<BranchFate> {
     let pruned = if let Some(path) = prune_entry {
@@ -1268,15 +1288,39 @@ fn handle_branch_only_output(
     } else {
         false
     };
+    // A stale registered entry and a detached worktree at the templated path
+    // can coexist. Name the detached directory even when pruning the entry.
     let branch_info = if pruned {
-        cformat!("Worktree directory missing for <bold>{branch_name}</>; pruned")
+        success_message(cformat!("Pruned stale worktree for <bold>{branch_name}</>"))
+    } else if let Some(path) = detached_worktree {
+        let path = format_path_for_display(path);
+        info_message(cformat!(
+            "No worktree found for branch <bold>{branch_name}</>; a detached worktree is @ <bold>{path}</>"
+        ))
     } else {
-        cformat!("No worktree found for branch <bold>{branch_name}</>")
+        info_message(cformat!(
+            "No worktree found for branch <bold>{branch_name}</>"
+        ))
+    };
+    let announce_detached_worktree = || {
+        if let Some(path) = detached_worktree {
+            let path = format_path_for_display(path);
+            eprintln!(
+                "{}",
+                hint_message(cformat!(
+                    "To remove the detached worktree, run <underline>wt remove {path}</>"
+                ))
+            );
+        }
+    };
+    let announce_branch_info = || {
+        eprintln!("{branch_info}");
+        announce_detached_worktree();
     };
 
     // If we won't delete the branch, show info and return early
     if deletion_mode.should_keep() {
-        eprintln!("{}", info_message(&branch_info));
+        announce_branch_info();
         // A sibling `--force` checkout kept the branch alive; name it so the
         // user knows why the pruned branch survived rather than being deleted.
         if let Some(shared) = branch_checked_out_at {
@@ -1331,7 +1375,7 @@ fn handle_branch_only_output(
 
     let retained = match &deletion.result.outcome {
         BranchDeletionOutcome::RetainedCheckedOut { path } => {
-            eprintln!("{}", info_message(&branch_info));
+            announce_branch_info();
             eprintln!(
                 "{}",
                 retained_checked_out_branch_message(branch_name, path, false)
@@ -1339,12 +1383,12 @@ fn handle_branch_only_output(
             true
         }
         BranchDeletionOutcome::RetainedRaced => {
-            eprintln!("{}", info_message(&branch_info));
+            announce_branch_info();
             eprintln!("{}", retained_raced_branch_message(branch_name, false));
             true
         }
         BranchDeletionOutcome::NotDeleted => {
-            eprintln!("{}", info_message(&branch_info));
+            announce_branch_info();
             if deletion.show_unmerged_hint {
                 print_retained_unmerged_branch(branch_name);
             }
@@ -1370,9 +1414,10 @@ fn handle_branch_only_output(
                     "<green>✓ Pruned stale worktree & removed branch <bold>{branch_name}</>{flag_text}</>{flag_after}"
                 ))
             );
+            announce_detached_worktree();
         } else {
             if !quiet {
-                eprintln!("{}", info_message(&branch_info));
+                announce_branch_info();
             }
             eprintln!(
                 "{}",
@@ -1409,13 +1454,12 @@ fn spawn_hooks_after_remove(
 ) -> anyhow::Result<()> {
     // The worktree is gone (or, on the fallback path, being deleted by the
     // detached `git worktree remove` this call follows), so a pipeline anchored
-    // on it must not be spawned into it. Recorded before the config load, which
-    // returns early on an unreadable user config.
+    // on it must not be spawned into it.
     announcer.mark_worktree_removed(ctx.worktree_path);
 
-    let Ok(config) = UserConfig::load() else {
-        return Ok(());
-    };
+    // The startup snapshot, not a reload: `pre-remove` and the removal itself
+    // may have rewritten the user config since the approval gate read it.
+    let config = repo.user_config();
 
     // When removing the current worktree, user cd's to main_path → use post_hook logic
     // (suppresses path if shell integration will cd there).
@@ -1434,7 +1478,7 @@ fn spawn_hooks_after_remove(
 
     // All hooks use remove_ctx for spawning: log files are named after the removed
     // branch since both post-remove and post-switch are consequences of that removal.
-    let remove_ctx = CommandContext::new(repo, &config, removed_branch, ctx.main_path, false);
+    let remove_ctx = CommandContext::new(repo, config, removed_branch, ctx.main_path, false);
 
     // `post-remove` is *about* the removed worktree (gone by now); it was
     // selected and frozen into `hook_plan` at the gate, anchored at the removed
@@ -1454,7 +1498,7 @@ fn spawn_hooks_after_remove(
     if ctx.changed_directory {
         let dest_branch = repo.worktree_at(ctx.main_path).branch()?;
         let switch_ctx =
-            CommandContext::new(repo, &config, dest_branch.as_deref(), ctx.main_path, false);
+            CommandContext::new(repo, config, dest_branch.as_deref(), ctx.main_path, false);
         register_planned(
             announcer,
             ctx.hook_plan,
@@ -1742,10 +1786,6 @@ fn execute_pre_remove_hooks_if_needed(
     repo: &Repository,
     ctx: &WorktreeRemovalContext<'_>,
 ) -> anyhow::Result<()> {
-    let Ok(config) = UserConfig::load() else {
-        return Ok(());
-    };
-
     // `pre-remove` runs in the worktree being removed (still on disk here).
     // `pre_remove_repo` roots the *render* context there for template vars;
     // the command set is the frozen `hook_plan` selected at the gate, so no
@@ -1753,7 +1793,7 @@ fn execute_pre_remove_hooks_if_needed(
     let pre_remove_repo = Repository::at(ctx.worktree_path)?;
     let command_ctx = CommandContext::new(
         &pre_remove_repo,
-        &config,
+        pre_remove_repo.user_config(),
         ctx.branch_name,
         ctx.worktree_path,
         false, // yes=false for CommandContext (not approval-related)

@@ -43,7 +43,7 @@ pub fn handle_codex_install(yes: bool) -> Result<()> {
     eprintln!("{}", success_message("Codex plugin installed"));
     // The Codex plugin ships activity-marker hooks inline in its manifest
     // (`hooks` key in .codex-plugin/plugin.json), using `Stop` to return
-    // 🤖 → 💬 and `SessionEnd` to clear the marker. See CLAUDE.md → "Plugin
+    // 🤖 → 💬 and `SessionEnd` to clear the marker. See AGENTS.md → "Plugin
     // Layout".
     eprintln!(
         "{}",
