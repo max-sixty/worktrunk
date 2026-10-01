@@ -8470,3 +8470,107 @@ fn test_switch_create_names_branch_left_by_failed_worktree_add(repo: TestRepo) {
         "expected a recovery suggestion for the leftover branch, got: {stderr}"
     );
 }
+
+// `--path` tests
+
+#[rstest]
+fn test_switch_create_with_path(repo: TestRepo) {
+    let custom = repo.root_path().parent().unwrap().join("dark-mode");
+
+    // Relative to the current directory (the repo root here), like `git worktree add`
+    snapshot_switch(
+        "switch_create_with_path",
+        &repo,
+        &["--create", "feature/dark-mode", "--path", "../dark-mode"],
+    );
+
+    assert!(custom.join(".git").exists());
+
+    // Once created, the worktree is found by branch or by path; `--path`
+    // naming the same directory is accepted too.
+    for args in [
+        &["feature/dark-mode"][..],
+        &["../dark-mode"],
+        &["feature/dark-mode", "--path", "../dark-mode"],
+    ] {
+        let output = repo.wt_command().arg("switch").args(args).output().unwrap();
+        assert!(output.status.success(), "{args:?}: {output:?}");
+    }
+}
+
+#[rstest]
+fn test_switch_path_existing_branch_without_worktree(repo: TestRepo) {
+    repo.run_git(&["branch", "existing"]);
+    let custom = repo.root_path().parent().unwrap().join("custom-dir");
+
+    // No `--create`: the branch exists and only its worktree is new
+    snapshot_switch(
+        "switch_path_existing_branch",
+        &repo,
+        &["existing", "--path", "../custom-dir"],
+    );
+
+    assert!(custom.join(".git").exists());
+}
+
+#[rstest]
+fn test_switch_path_rejects_existing_worktree_elsewhere(mut repo: TestRepo) {
+    repo.add_worktree("feature-z");
+
+    snapshot_switch(
+        "switch_path_existing_worktree_elsewhere",
+        &repo,
+        &["feature-z", "--path", "../somewhere-else"],
+    );
+
+    assert!(
+        !repo
+            .root_path()
+            .parent()
+            .unwrap()
+            .join("somewhere-else")
+            .exists()
+    );
+}
+
+#[rstest]
+fn test_switch_path_occupied_suggests_path_in_clobber_hint(repo: TestRepo) {
+    let custom = repo.root_path().parent().unwrap().join("occupied");
+    std::fs::create_dir_all(&custom).unwrap();
+
+    // The `--clobber` suggestion must keep `--path`, or following it would
+    // back up the template's path instead of this one.
+    snapshot_switch(
+        "switch_path_occupied",
+        &repo,
+        &["--create", "feature-y", "--path", "../occupied"],
+    );
+}
+
+#[rstest]
+fn test_switch_path_rejects_directory_overlapping_repo(repo: TestRepo) {
+    std::fs::create_dir_all(repo.root_path().join("src")).unwrap();
+
+    // `--path ..` holds the repository and `--path src` sits inside it; with
+    // `--clobber` either would be moved aside, so both are refused outright.
+    for (path, relation) in [("..", "contains"), ("src", "is inside")] {
+        let output = repo
+            .wt_command()
+            .args([
+                "switch",
+                "--create",
+                "feature-o",
+                "--clobber",
+                "--path",
+                path,
+            ])
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{path}: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(relation), "{path}: {stderr}");
+    }
+
+    assert!(repo.root_path().join("src").is_dir());
+    assert!(repo.root_path().join(".git").exists());
+}

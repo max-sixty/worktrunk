@@ -573,10 +573,9 @@ pub(crate) fn inject_hook_subcommands(cmd: Command) -> Command {
     })
 }
 
-/// Build a completion stub `clap::Command` for a hook type. Same shape as
-/// `build_alias_completion_command` — declares the known flags (so they show
-/// up in `wt hook pre-merge --<Tab>` completions) and wires the name completer
-/// for the first positional (hook command name filter).
+/// Build a completion stub `clap::Command` for a hook type. Declares the known
+/// flags (so they show up in `wt hook pre-merge --<Tab>` completions) and wires
+/// the name completer for the first positional (hook command name filter).
 fn build_hook_completion_command(name: &'static str) -> Command {
     let about: &'static str = Box::leak(format!("Run {name} hooks").into_boxed_str());
     Command::new(name)
@@ -756,6 +755,11 @@ fn mirror_alias_command(leaf: Command, alias_name: &str, rep: &CommandConfig) ->
 
 /// Build a completion stub `clap::Command` for an alias. Leaks strings since
 /// completion is a short-lived subprocess that exits after printing candidates.
+///
+/// The stub declares no flags of its own. An alias's flags are its template
+/// variables (`--KEY=VALUE`), which vary per alias: `AliasOptions::parse`
+/// rejects `--dry-run` unless the template references `dry_run`, and forwards
+/// `--var` to the alias as a plain argument.
 fn build_alias_completion_command(name: &str, cmd_config: &CommandConfig) -> Command {
     // Use the first command's template for the help text
     let first_template = cmd_config
@@ -766,16 +770,7 @@ fn build_alias_completion_command(name: &str, cmd_config: &CommandConfig) -> Com
     let help = truncate_template(first_template);
     let name: &'static str = Box::leak(name.to_string().into_boxed_str());
     let about: &'static str = Box::leak(format!("alias: {help}").into_boxed_str());
-    Command::new(name)
-        .about(about)
-        .arg(clap::Arg::new("dry-run").long("dry-run"))
-        .arg(clap::Arg::new("yes").short('y').long("yes"))
-        .arg(
-            clap::Arg::new("var")
-                .long("var")
-                .num_args(1)
-                .action(clap::ArgAction::Append),
-        )
+    Command::new(name).about(about)
 }
 
 /// Load aliases from user and project config for completion. Outside a git

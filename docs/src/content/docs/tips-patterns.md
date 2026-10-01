@@ -63,7 +63,12 @@ Cloning a bare repo into `<project>/.git` puts all worktrees under one directory
 ```bash
 git clone --bare <url> myproject/.git
 cd myproject
+git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+git fetch origin
+git remote set-head origin --auto
 ```
+
+`git clone --bare` records the `origin` URL but no fetch refspec, so without the `git config` line `git fetch` never creates remote-tracking branches like `origin/main`, and tools that read them (lazygit, editor integrations) see no remote branches. `git remote set-head` then points `origin/HEAD` at the remote's default branch.
 
 With `worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"`, worktrees become subdirectories of `myproject/`:
 
@@ -274,7 +279,7 @@ To scope environment variables to a worktree — a tool's package path, a profil
 
 ```sh
 # .envrc
-export MY_PACKAGES_PATH="$PWD/.packages"
+export MY_PACKAGES_PATH="$(expand_path .packages)"
 ```
 
 Run `direnv allow` once per worktree to trust the file ([getting started](https://direnv.net/#getting-started)). After that, switching into a worktree loads the env; switching out unloads it.

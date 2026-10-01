@@ -152,10 +152,12 @@ awk '/^## /{if (f) exit; f=1} f' CHANGELOG.md \
 **Good:** "Removed `.pi/` from the default excludes list; users who need it can add it via `[step.copy-ignored]`."
 **Bad:** "Removed `.pi/` — a sledgehammer fix from an unrelated debugging session that has no place as a project-agnostic default."
 
-**Name the conditions a bug needed, so the entry carries its magnitude.** A correctness or data-loss entry reads as though it fired for everyone unless it says what it took. These are usually narrow — a non-default git config, a command run from a particular place, a change of a particular shape — and naming each condition lets a reader decide in one pass whether it reached them. Join the conditions with "and": "X set *and* run from Y" is a corner case, while "X or Y" reads as two common triggers. Establish each one by reproducing against the previous release's binary rather than reading it off the diff — a condition assumed is a condition the entry overstates, and overstating a data-loss bug is its own kind of inaccuracy.
+**Match a fix's prominence to its reach.** Readers skim the bold headlines, so the headline, and whether the fix has a bullet of its own, tell them how big it was before they read any body text. A correctness or data-loss fix usually needed narrow conditions — a non-default git config, a command run from a particular place, a change of a particular shape. Put them in the headline and the consequence in the body: a headline that states the consequence tells every reader it could have been them, and conditions arriving after it don't undo that. Join the conditions with "and": "X set *and* run from Y" is a corner case, while "X or Y" reads as two common triggers. Establish each one by reproducing against the previous release's binary rather than reading it off the diff — a condition assumed is a condition the entry overstates, and overstating a data-loss bug is its own kind of inaccuracy.
 
-**Good:** "`diff.relative` set *and* the command run from a subdirectory the branch's changes sat entirely outside"
-**Bad:** "`diff.relative` could hide a branch's changes from the integration check"
+**Good:** "**Submodules with an `ignore` setting**: when `submodule.<name>.ignore` hid uncommitted changes inside a submodule, `wt remove` read the worktree as clean and removed it with them."
+**Bad:** "**`wt remove` no longer deletes submodule changes hidden by config**: with `submodule.<name>.ignore` set *and* uncommitted changes inside a submodule, …" — every condition is there, but the headline has already announced a data-loss bug to every reader.
+
+A fix of near-zero reader interest (see the ordering rule above) — a name starting with `-`, a non-UTF-8 path, one platform with an unusual environment — gets no bullet of its own. Fold these into a closing bullet such as "Fixes for unusual setups" that names each case in a clause. A section of separate bold fixes reads as that many ways the tool broke, whatever their bodies say.
 
 ### Credit External Contributors
 
@@ -277,6 +279,10 @@ Also check:
 - Are there user-facing changes NOT covered by these entries?
 - Verify each "thanks @..." attribution (right person, right role — author vs reporter)
 - Within each section, is any entry ranked above one that more readers will notice?
+- Read each headline alone, as a skimming reader does. Flag one that states the
+  consequence (what was lost or broken) rather than the situation it needed, and a
+  fix almost no reader will notice that has its own bullet rather than a clause in
+  a closing roll-up.
 
 Report format:
 - Entry: [entry text]
@@ -288,7 +294,7 @@ Report format:
 
 **The pass ends on a clean run, not on the first run's findings.** A rewrite the verifier suggests has no more evidence behind it than one you wrote yourself, and an entry you edit while the pass runs is in the same state — both leave that entry unverified. Re-run over the section as it now stands, and finalize only once a run comes back clean.
 
-`evals/README.md` beside this skill holds four entries from a shipped release, three of them wrong, for scoring a change to this template against what the last wording missed.
+`evals/README.md` beside this skill holds four entries from a shipped release, three of them wrong, for scoring a change to this template against what the last wording missed, and a drafting case for the prominence rule.
 
 **If verification finds problems:** Escalate to the user. Show them the subagent's findings and ask how to proceed. Don't attempt to resolve ambiguous changelog entries autonomously — the user knows the intent behind their changes better than you do.
 

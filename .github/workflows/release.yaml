@@ -313,6 +313,11 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     runs-on: "ubuntu-24.04"
+    # id-token and attestations are for the packslip step below.
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     outputs:
       val: ${{ steps.host.outputs.manifest }}
     steps:
@@ -357,6 +362,36 @@ jobs:
         run: |
           # Remove the granular manifests
           rm -f artifacts/*-dist-manifest.json
+      # A manifest of the archives (digests, wt/git-wt paths, completions, and
+      # skills/ at this commit), signed with this workflow's OIDC identity so
+      # installers such as mise can verify a download against this repo.
+      # Releases are immutable, so the bundle goes into artifacts/ and ships
+      # with `gh release create` below instead of being uploaded after it.
+      # See https://packslip.dev.
+      - name: Create packslip
+        id: packslip
+        # Optional channel: a packslip or Sigstore failure must not block the
+        # release and every publish job that needs `host`.
+        continue-on-error: true
+        # continue-on-error only covers a step that exits; bound a stalled
+        # Sigstore call so it cannot hold the release until the job timeout.
+        timeout-minutes: 10
+        uses: jdx/packslip@87479dfc6443253dff69601cace5fc6ea07e6df5 # v1.4.0
+        with:
+          artifacts: artifacts/worktrunk-*.tar.xz artifacts/worktrunk-*.zip
+          bin: wt git-wt
+          resources: |
+            completion/bash,zsh,fish,powershell/wt=exec:wt config shell completions {shell}
+            completion/bash,zsh,fish,powershell/git-wt=exec:git-wt config shell completions {shell}
+            skill/worktrunk=repo:skills/worktrunk
+            skill/wt-switch-create=repo:skills/wt-switch-create
+          out: packslip
+          upload: false
+      - name: Stage packslip
+        if: steps.packslip.outcome == 'success'
+        env:
+          BUNDLE: ${{ steps.packslip.outputs.bundle }}
+        run: cp "$BUNDLE" artifacts/
       - name: Create GitHub Release
         env:
           PRERELEASE_FLAG: "${{ fromJson(steps.host.outputs.manifest).announcement_is_prerelease && '--prerelease' || '' }}"

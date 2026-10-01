@@ -690,7 +690,9 @@ impl PrStatus {
     /// Platform is determined from project config (`forge.platform`), falling
     /// back to the remote URL host. Returns `None` if the platform cannot be
     /// determined (user should set `forge.platform` for non-standard hostnames).
-    /// PR/MR detection always runs. Workflow/pipeline fallback only runs if `has_upstream`.
+    /// PR/MR detection runs when the branch may head one (`may_head_pr`: skipped
+    /// for a branch that was never pushed). Workflow/pipeline fallback only runs
+    /// if `has_upstream`.
     fn detect_uncached(
         repo: &Repository,
         branch: &CiBranchName,

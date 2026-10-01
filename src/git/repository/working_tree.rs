@@ -1144,13 +1144,21 @@ impl<'a> WorkingTree<'a> {
         Ok(has_initialized_submodules_from_status(&output))
     }
 
-    /// Create a safety backup of current working tree state without affecting the working tree.
+    /// Back up the index, as a squash is about to commit it, to `refs/wt-backup/<branch>`.
     ///
-    /// This creates a backup commit containing all changes (staged, unstaged, and untracked files)
-    /// and stores it in a custom ref (`refs/wt-backup/<branch>`). This creates a reflog entry
-    /// for recovery without polluting the stash list. The working tree remains unchanged.
+    /// Writes the index as a commit whose parent is `HEAD`, so one commit holds
+    /// both the branch tip being rewritten and the changes the squash sweeps in,
+    /// and records it in the ref's reflog. Unstaged and untracked files are not
+    /// captured; the squash leaves them in place. The index, the working tree and
+    /// the stash list are untouched.
     ///
-    /// Users can find safety backups with: `git reflog show refs/wt-backup/<branch>`
+    /// Plumbing throughout, so no config hides part of the index: `git stash
+    /// create` honors `submodule.<name>.ignore=all` and sees nothing in a staged
+    /// gitlink bump. The backup commit is never signed.
+    ///
+    /// To recover, `git reflog show refs/wt-backup/<branch>` lists the backups;
+    /// `git read-tree <sha>` restores that index, `git checkout <sha> -- .` also
+    /// restores the files, and `<sha>^` is the branch tip before the squash.
     ///
     /// Returns the short SHA of the backup commit.
     ///
@@ -1165,19 +1173,20 @@ impl<'a> WorkingTree<'a> {
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn create_safety_backup(&self, message: &str) -> anyhow::Result<String> {
-        // Create a backup commit using git stash create (without storing it in the stash list)
+        let tree = self.run_command(&["write-tree"])?;
         let backup_sha = self
-            .run_command(&["stash", "create", "--include-untracked"])?
+            .run_command(&[
+                "commit-tree",
+                "--no-gpg-sign",
+                tree.trim(),
+                "-p",
+                "HEAD",
+                "-m",
+                message,
+            ])
+            .context("Failed to create backup commit")?
             .trim()
             .to_string();
-
-        // Validate that we got a SHA back
-        if backup_sha.is_empty() {
-            return Err(GitError::Other {
-                message: "git stash create returned empty SHA - no changes to backup".into(),
-            }
-            .into());
-        }
 
         // Get current branch name to use in the ref name
         let stdout = self.run_command(&["rev-parse", "--symbolic-full-name", "HEAD"])?;
@@ -1313,17 +1322,28 @@ impl TempIndex {
     }
 
     /// Register an exact NUL-separated set of untracked paths as intent-to-add.
+    ///
+    /// The paths are file names from `ls-files`, not pathspecs, so
+    /// `GIT_LITERAL_PATHSPECS` keeps a name like `:x` from parsing as magic and
+    /// `b[1].txt` from matching as a glob. Git refuses the literal setting
+    /// alongside the glob and icase ones, so a user's exported
+    /// `GIT_GLOB_PATHSPECS` or `GIT_ICASE_PATHSPECS` is dropped for this call.
     fn register_untracked_paths(&self, paths: Vec<u8>) -> anyhow::Result<()> {
-        self.run_command_output_with_input(
-            [
-                "add",
-                "--intent-to-add",
-                "--sparse",
-                "--pathspec-from-file=-",
-                "--pathspec-file-nul",
-            ],
-            paths,
-        )?;
+        let args = [
+            "add",
+            "--intent-to-add",
+            "--sparse",
+            "--pathspec-from-file=-",
+            "--pathspec-file-nul",
+        ]
+        .map(String::from);
+        let command = self
+            .command(args.iter().cloned())
+            .env_remove("GIT_GLOB_PATHSPECS")
+            .env_remove("GIT_ICASE_PATHSPECS")
+            .env("GIT_LITERAL_PATHSPECS", "1")
+            .stdin_bytes(paths);
+        run_checked(command, &args)?;
         Ok(())
     }
 
@@ -1357,26 +1377,8 @@ impl TempIndex {
         &self,
         args: impl IntoIterator<Item = impl Into<String>>,
     ) -> anyhow::Result<std::process::Output> {
-        self.run_command_output_with_input(args, Vec::new())
-    }
-
-    fn run_command_output_with_input(
-        &self,
-        args: impl IntoIterator<Item = impl Into<String>>,
-        stdin: Vec<u8>,
-    ) -> anyhow::Result<std::process::Output> {
         let args: Vec<String> = args.into_iter().map(Into::into).collect();
-        let mut command = self.command(args.iter().cloned());
-        if !stdin.is_empty() {
-            command = command.stdin_bytes(stdin);
-        }
-        let output = command
-            .run()
-            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
-        if !output.status.success() {
-            return Err(CommandError::from_failed_output("git", &args, &output).into());
-        }
-        Ok(output)
+        run_checked(self.command(args.iter().cloned()), &args)
     }
 
     /// Build a `git` command pointed at this temp index.
@@ -1408,6 +1410,17 @@ impl TempIndex {
             None => command,
         }
     }
+}
+
+/// Run a `git` command built from `args`, turning a non-zero exit into an error.
+fn run_checked(command: Cmd, args: &[String]) -> anyhow::Result<std::process::Output> {
+    let output = command
+        .run()
+        .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
+    if !output.status.success() {
+        return Err(CommandError::from_failed_output("git", args, &output).into());
+    }
+    Ok(output)
 }
 
 #[cfg(test)]
@@ -1728,11 +1741,8 @@ mod tests {
 
         for branch in ["a/b", "a-b"] {
             test.run_git(&["switch", "-c", branch]);
-            // Modify the tracked file so `git stash create` picks up changes.
-            std::fs::write(test.root_path().join("file.txt"), branch).unwrap();
             wt.create_safety_backup(&format!("{branch} (squash)"))
                 .unwrap();
-            test.run_git(&["checkout", "--", "file.txt"]);
             test.run_git(&["switch", "main"]);
         }
 
@@ -1933,6 +1943,28 @@ mod tests {
                 .working_tree_diff_stats_with_untracked()
                 .unwrap(),
             LineDiff::default()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn working_tree_diff_stats_with_untracked_counts_pathspec_magic_names() {
+        // `ls-files` reports names verbatim; registering them must not read
+        // `:x` as pathspec magic or `[1]` as a glob.
+        let test = TestRepo::with_initial_commit();
+        for name in [":x", "b[1].txt", "*"] {
+            std::fs::write(test.root_path().join(name), "one\ntwo\n").unwrap();
+        }
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        assert_eq!(
+            repo.current_worktree()
+                .working_tree_diff_stats_with_untracked()
+                .unwrap(),
+            LineDiff {
+                added: 6,
+                deleted: 0
+            }
         );
     }
 

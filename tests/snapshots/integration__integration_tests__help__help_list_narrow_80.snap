@@ -214,7 +214,8 @@ checks object and review states give the JSON form of each value:
  [35m#[0m magenta [2m"changes_requested"[0m  A reviewer requested changes                    
  [36m#[0m cyan    [2m"pending"[0m            A review is required (e.g. branch protection)   
                                 but not yet given                               
- (blank)   [2mpr[0m and [2mchecks[0m absent No upstream, or no PR/MR and no branch workflow 
+ (blank)   [2mpr[0m and [2mchecks[0m absent Branch never pushed, or no PR/MR and no branch  
+                                workflow                                        
 
 The two remaining review states have no indicator of their own: [2m"draft"[0m only 
 dims the cell and [2m"approved"[0m leaves the color unchanged.

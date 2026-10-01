@@ -161,6 +161,54 @@ fn test_finalize_worktree_linked_mid_rebase() {
 }
 
 #[test]
+fn test_finalize_worktree_stale_reads_its_own_rebase() {
+    // A stale entry's rebase state is in its registration. A lookup from its
+    // path would walk up past the missing `.git`: `nested` sits inside the main
+    // worktree, which is itself rebasing `main-work`, so that lookup would
+    // name `nested` after a rebase that is not its own — and `wt step prune`
+    // would then judge the entry by `main-work`, not by its own detached HEAD.
+    let test = TestRepo::with_initial_commit();
+    let root = test.root_path().to_path_buf();
+    let rebase_stopped = |dir: &std::path::Path, branch: &str| {
+        test.run_git_in(dir, &["switch", "-c", branch]);
+        std::fs::write(dir.join(format!("{branch}.txt")), "work\n").unwrap();
+        test.run_git_in(dir, &["add", "."]);
+        test.run_git_in(dir, &["commit", "-m", branch]);
+        // `--exec` stops the rebase after replaying the commit, leaving it open.
+        let _ = test
+            .git_command()
+            .current_dir(dir)
+            .args(["rebase", "--exec", "false", "HEAD~1"])
+            .run();
+    };
+
+    let nested = root.join(".worktrees").join("nested");
+    test.run_git(&["worktree", "add", "--detach", nested.to_str().unwrap()]);
+    let rebasing = root.parent().unwrap().join("stale-rebase");
+    test.run_git(&["worktree", "add", "--detach", rebasing.to_str().unwrap()]);
+    rebase_stopped(&rebasing, "feature");
+    rebase_stopped(&root, "main-work");
+    std::fs::remove_file(nested.join(".git")).unwrap();
+    std::fs::remove_file(rebasing.join(".git")).unwrap();
+
+    let repo = Repository::at(&root).unwrap();
+    let worktrees = repo.list_worktrees().unwrap();
+    let find = |path: &std::path::Path| {
+        let path = dunce::canonicalize(path).unwrap();
+        worktrees
+            .iter()
+            .find(|wt| dunce::canonicalize(&wt.path).unwrap() == path)
+            .unwrap()
+    };
+    let (main, nested, rebasing) = (find(&root), find(&nested), find(&rebasing));
+    assert_eq!(main.branch.as_deref(), Some("main-work"));
+    assert!(nested.is_prunable() && rebasing.is_prunable());
+    assert!(nested.detached && rebasing.detached);
+    assert_eq!(nested.branch, None);
+    assert_eq!(rebasing.branch.as_deref(), Some("feature"));
+}
+
+#[test]
 fn test_parse_locked_worktree() {
     let output = "worktree /path/to/locked
 HEAD abcd1234
@@ -784,6 +832,14 @@ fn start_fsmonitor_daemon_skips_fork_when_daemon_answers() {
             self.0.lock().unwrap().extend(cmd.0);
         }
     }
+    // While exactly one dispatcher is registered, tracing-core resolves a
+    // callsite first hit on *another* thread against that thread's default
+    // (no subscriber here) and caches `Interest::never` process-wide. A
+    // parallel test's git command reaching the shared `cmd_completed`
+    // callsite first would then silence the fork event below. A second live
+    // dispatcher makes tracing-core resolve against every registered
+    // dispatcher instead.
+    let _pin = tracing::Dispatch::new(Registry::default());
     let traced_starts = |start: &dyn Fn()| {
         let commands = Arc::new(Mutex::new(Vec::new()));
         let subscriber = Registry::default().with(Commands(commands.clone()));

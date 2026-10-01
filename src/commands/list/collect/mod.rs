@@ -24,8 +24,8 @@
 //! | 1 | `git rev-parse --git-common-dir --is-inside-work-tree --show-toplevel --git-dir --symbolic-full-name HEAD` | [`Repository::prewarm`] (`prewarm_rev_parse`) | Five facts in one fork: shared `.git`, in-worktree gate, worktree root, per-worktree `.git/worktrees/<name>`, current branch. Populates process-global caches. Parallel with #2 at process startup. |
 //! | 2 | `git config --list -z` (cwd = discovery path) | [`Repository::prewarm`] (`prewarm_git_config`) | Whole merged config (system + global + local) in one shot, NUL-delimited so values containing `\n` or `=` parse unambiguously. Stashed in `GIT_CONFIG_PRELOAD` keyed by discovery path; every later `config_last("…")` reads from memory. Parallel with #1. |
 //! | 3 | `git config --list -z` (cwd = `git_common_dir`) | [`Repository::prewarm`] post-pass (`prewarm_git_config_from_common_dir`) | **Conditional.** [`Repository::at`] consumes #2's preload into `cache.all_config`, so `all_config()` is a memory hit on a normal repo. In `extensions.worktreeConfig=true` repos, #2's read is declined — `--list` from a linked worktree misses the main-worktree `config.worktree` overrides (most importantly `core.bare = true` for the `myproject/.git + sibling worktrees` layout) — and prewarm re-forks from the common dir after its threads join, preloading the full merged set. [`Repository::all_config`] forks the same command on demand only when prewarm never ran for the path (a non-base `Repository::at`, tests). See `prewarm_git_config` for the full reasoning. |
-//! | 4 | `git worktree list --porcelain` | [`Repository::list_worktrees`] | Path, HEAD SHA, branch, and flags per worktree — the row source for the skeleton. The picker prelude triggers this once for `num_items_estimate`; collect's rayon scope then hits the cache. **Plus one `git rev-parse --git-dir` per detached worktree**, run inside the same cache initializer (`finalize_worktrees`): git lists a mid-rebase worktree only as detached, so each detached worktree's git dir is resolved and its `rebase-{merge,apply}/head-name` read to recover the branch. These are the one O(N) fork group before the skeleton — O(detached worktrees), forked together through `Cmd::run_concurrently`. |
-//! | 5 | `git for-each-ref --format=… refs/heads/` | [`Repository::local_branches`] inside collect's `rayon::scope` | Local branch tips (name, SHA, committer date, upstream) for branch-only rows (`branches=true`) and for the stale-default-branch check. `remotes=true` adds a sibling `refs/remotes/` fork. Runs beside #4, which is the longer of the two on a repo with many worktrees. The post-skeleton ref snapshot scans `refs/heads/` again rather than reusing this inventory (see "Pipeline"). |
+//! | 4 | `git worktree list --porcelain` | [`Repository::list_worktrees`] | Path, HEAD SHA, branch, and flags per worktree — the row source for the skeleton. The picker prelude triggers this once for `num_items_estimate`; collect's rayon scope then hits the cache. **Plus one `git rev-parse --git-dir` per live detached worktree**, run inside the same cache initializer (`finalize_worktrees`): git lists a mid-rebase worktree only as detached, so each detached worktree's git dir is resolved (a stale one's is its registration, read without a fork) and its `rebase-{merge,apply}/head-name` read to recover the branch. These are the one O(N) fork group before the skeleton — O(detached worktrees), forked together through `Cmd::run_concurrently`. |
+//! | 5 | `git for-each-ref --format=… refs/heads/` | [`Repository::local_branches`] inside collect's `rayon::scope` | Local branch tips (name, SHA, committer date, upstream) for branch-only rows (`branches=true`), the stale-default-branch check, and the post-skeleton ref snapshot. `remotes=true` adds a sibling `refs/remotes/` fork; otherwise the snapshot runs that scan after the skeleton. Runs beside #4, which is the longer of the two on a repo with many worktrees. |
 //! | 6 | `git log --no-walk --no-show-signature --format=… SHA₁ … SHA_N` | collect, after the scope | Batched commit metadata for every worktree HEAD + branch tip. See breakdown below. |
 //!
 //! Things that *look* like forks but aren't, on the steady-state path:
@@ -49,9 +49,8 @@
 //!
 //! **Stale default branch warning:** before the skeleton, `warn_stale_default`
 //! compares the persisted `default_branch()` against #5's local branch
-//! inventory. `wt list` always runs #5, so the check adds no fork there; the
-//! picker skips #5 when branches are hidden, so it forks one `for-each-ref`
-//! only when the persisted default isn't a worktree branch.
+//! inventory. #5 always runs, in `wt list` and the picker alike, so the check
+//! never adds a fork.
 //!
 //! ### #6 — the batched commit-details fork
 //!
@@ -156,18 +155,19 @@
 //! layout; render skeleton ─────────────────── FIRST PAINT (wt list)
 //! [picker] on_skeleton: rows → skim ───────── FIRST PAINT (picker)
 //!          then spawn preview precompute onto COLLECT_POOL (first row: every mode;
-//!          branch-only rows: default mode), then maybe_spawn_comments, whose
-//!          ci_platform() may fork `git remote get-url` (serial, before J2)
-//! prime_worktree_path_caches               canonicalize + read .git × worktrees (serial fs)
+//!          branch-only rows: default mode), then maybe_spawn_comments (its job
+//!          resolves the forge, which may fork `git remote get-url`)
 //! J2 rayon::scope ───────────────────────┬─ switch_previous
-//!    (global pool)                       ├─ capture_refs[_with_ahead_behind]
-//!                                        │     for-each-ref refs/heads/ (again), then refs/remotes/
+//!    (global pool)                       ├─ inventory_snapshot    J1's branch inventories
+//!                                        │     for-each-ref refs/remotes/ unless J1 ran it
 //!                                        │     + ahead-behind/ cache reads; cold: %(ahead-behind) walk
-//!                                        │     └─ spawn prime_upstream_ahead_behind_cache
-//!                                        │           cold: one %(ahead-behind) walk per upstream
-//!                                        └─ start_fsmonitor_daemon_at × worktrees
-//!                                              socket connect; fork `start` on a miss
-//!    join ◄──────────────────────────────┘ (waits for the slowest: usually the snapshot)
+//!                                        ├─ prime_upstream_ahead_behind_cache
+//!                                        │     cold: one %(ahead-behind) walk per upstream
+//!                                        └─ prime_worktree_path_caches
+//!                                              canonicalize + read .git × worktrees
+//!                                              └─ spawn start_fsmonitor_daemon_at × worktrees
+//!                                                    socket connect; fork `start` on a miss
+//!    join ◄──────────────────────────────┘ (waits for the slowest)
 //! integration_targets, prime_comparison_base, is_previous, commit fields    CPU
 //! generate + sort work items               CPU
 //! std::thread ─► J3 COLLECT_POOL.install(par_bridge) ── work items in queue order,
@@ -179,9 +179,10 @@
 //! Nothing between J1's join and the skeleton overlaps with anything else:
 //! the commit-details fork, row building, and (picker) the CI-cache reads run
 //! one after another on the collect thread. Nothing between the skeleton and
-//! J3 overlaps with the task pool either: the pool opens only after J2 joins,
-//! and J2 joins on the ref snapshot, whose two `for-each-ref` scans run one
-//! after the other and repeat J1's `refs/heads/` scan.
+//! J3 overlaps with the task pool either: the pool opens only after J2 joins.
+//! The snapshot reuses J1's inventories, so on a warm ahead-behind cache it
+//! forks at most the `refs/remotes/` scan J1 skipped (none in the picker,
+//! whose prelude already ran it); cold, it adds an `%(ahead-behind)` walk.
 //!
 //! ### Picker prelude
 //!
@@ -193,7 +194,7 @@
 //! remotes shown, `local_branches` / `remote_branches`. The estimate only
 //! counts rows, so it does not need the backfill, but it pays for it on the
 //! main thread before skim starts. The speculative preview resolves its
-//! comparison base through `capture_refs`, which fills the same
+//! comparison base through `inventory_snapshot`, which reads the same
 //! `local_branches` / `remote_branches` cells, so the estimate may block on a
 //! cell that preview job is initializing. `collect()`'s J1 then finds every
 //! inventory cached.
@@ -240,7 +241,7 @@
 //!
 //! Four steps read state from the git directory instead of asking git:
 //! the rebase backfill's `head-name` read (inside `list_worktrees`), the `.git` reads in
-//! `prime_worktree_path_caches` (before J2), the fsmonitor socket connect
+//! `prime_worktree_path_caches` (in J2), the fsmonitor socket connect
 //! (in J2), and the `GitOperation` task's `operation_in_progress_at` (in J3).
 //!
 //! ### Why the Age/Message paint
@@ -914,26 +915,10 @@ pub fn collect(
     let render_table = matches!(render_target, RenderTarget::Table { .. });
     worktrunk::trace::instant("List collect started");
 
-    // Determine what to fetch speculatively in the parallel phase.
-    //
-    // For Resolved: respect the caller's flags (fetch only what's requested).
-    // For DeferredToParallel: always fetch local branches speculatively (~7ms,
-    // hidden by parallelism) since config resolution happens after. Remote
-    // branches are only fetched if the CLI flag is set (can be expensive).
-    let (fetch_branches, fetch_remotes) = match &show_config {
-        ShowConfig::Resolved {
-            show_branches,
-            show_remotes,
-            ..
-        } => (*show_branches, *show_remotes),
-        ShowConfig::DeferredToParallel { cli_remotes, .. } => {
-            // Always fetch local branches: ~7ms hidden by parallelism, needed if
-            // config says branches=true (which we won't know until after this phase).
-            // Only fetch remotes when CLI-requested (can be expensive, rarely config-only).
-            let fetch_branches = true;
-            let fetch_remotes = *cli_remotes;
-            (fetch_branches, fetch_remotes)
-        }
+    // Remote rows requested up front; config can still add them after phase 1.
+    let fetch_remotes = match &show_config {
+        ShowConfig::Resolved { show_remotes, .. } => *show_remotes,
+        ShowConfig::DeferredToParallel { cli_remotes, .. } => *cli_remotes,
     };
 
     // Phase 1: Parallel fetch of ALL independent git data
@@ -947,10 +932,14 @@ pub fn collect(
     // - url_template: independent (loads project config via show-toplevel)
     // - project_identifier: independent (git config for remote URL; warms cache
     //   for is_worktree_at_expected_path and config resolution)
-    // - local_branches: independent (one `for-each-ref refs/heads/`; cached on
-    //   `RepoCache` so later consumers read it without re-scanning)
-    // - remote_branches: independent (one `for-each-ref refs/remotes/`; cached
-    //   on `RepoCache`)
+    // - local_branches: independent (one `for-each-ref refs/heads/`, cached on
+    //   `RepoCache`). Fetched whatever the row flags say: config may turn on
+    //   branch rows, and the post-skeleton ref snapshot is built from it.
+    // - remote_branches: independent (one `for-each-ref refs/remotes/`, cached
+    //   on `RepoCache`). Fetched here only when remote rows are requested, so
+    //   the skeleton never waits on a scan it doesn't render: a repo with many
+    //   remote branches and few worktrees would otherwise paint later. The
+    //   snapshot scans it after the skeleton when this didn't.
     //
     // After this scope completes, we have all raw data and can do CPU-only work.
     let default_branch_cell: OnceCell<Option<String>> = OnceCell::new();
@@ -979,15 +968,12 @@ pub fn collect(
             let _ = repo.config();
         });
         s.spawn(|_| {
-            if fetch_branches {
-                // Prime the local-branch inventory on `RepoCache`; consumers
-                // below read it through `repo.local_branches()`.
-                let _ = repo.local_branches();
-            }
+            // Prime the branch inventories on `RepoCache`; consumers below
+            // read them through `repo.local_branches()` / `remote_branches()`.
+            let _ = repo.local_branches();
         });
         s.spawn(|_| {
             if fetch_remotes {
-                // Prime the remote-branch inventory on `RepoCache`.
                 let _ = repo.remote_branches();
             }
         });
@@ -1068,11 +1054,11 @@ pub fn collect(
     // the persisted value, now trusted without validation on the hot path.
     // Cross-check against the enumerated branch set and surface a warning
     // if it's been deleted externally. When `show_branches` is off but a
-    // persisted default is set and isn't a worktree branch, scan the local
-    // branch inventory anyway (one `for-each-ref` fork, cached afterwards)
-    // so the warning fires on plain `wt list` too — otherwise downstream
-    // tasks resolve against the stale ref and emit a cascade of "ambiguous
-    // argument" noise instead of one clean warning.
+    // persisted default is set and isn't a worktree branch, check the local
+    // branch inventory anyway (scanned above) so the warning fires on plain
+    // `wt list` too — otherwise downstream tasks resolve against the stale
+    // ref and emit a cascade of "ambiguous argument" noise instead of one
+    // clean warning.
     let worktree_branches = worktree_branch_set(worktrees);
     let needs_stale_check = default_branch
         .as_deref()
@@ -1639,15 +1625,6 @@ pub fn collect(
     // These operations run in parallel using rayon::scope with single-level parallelism.
     // See module docs for the timing diagram.
 
-    // Seed root/git-dir for every worktree from the list we already fetched, so
-    // the per-worktree tasks below don't each fork `git rev-parse
-    // --show-toplevel` / `--git-dir`. Deferred to post-skeleton: only the
-    // worker-pool tasks consume these (the pre-skeleton current-worktree probe
-    // uses the prewarmed discovery-worktree root), so seeding here keeps the
-    // local fs reads off the skeleton critical path — and skips them entirely
-    // on the `WORKTRUNK_SKELETON_ONLY` exit above, which runs no tasks.
-    repo.prime_worktree_path_caches(worktrees);
-
     // Collect worktree paths for fsmonitor starts (macOS only, fast, no git commands).
     // Git's builtin fsmonitor has race conditions under parallel load - pre-starting
     // daemons before parallel operations avoids hangs.
@@ -1677,89 +1654,81 @@ pub fn collect(
             let _ = previous_branch_cell.set(repo.switch_previous());
         });
 
-        // Capture ref state: `for-each-ref refs/heads/ refs/remotes/`,
-        // plus — when default_branch is known and the per-base
-        // ahead-behind cache doesn't already cover the branches — one
-        // `for-each-ref %(ahead-behind:BASE)` walk (scoped to the cold
-        // subset; warm runs do neither). Tasks consume the snapshot by
-        // SHA, dodging ref→SHA cache staleness.
-        //
-        // After the snapshot is built, an inner spawn primes the
-        // `Remote⇅` cache off its already-scanned inventories — see the
-        // nested `s.spawn` below for the rationale.
+        // Build the ref snapshot from the branch inventories (J1 scanned the
+        // locals, and the remotes when rows show them), so tasks resolve
+        // refs to the same SHAs the rows were built from. When
+        // default_branch is known and the per-base ahead-behind cache
+        // doesn't already cover the branches, add one `for-each-ref
+        // %(ahead-behind:BASE)` walk (scoped to the cold subset; warm runs
+        // do neither).
         //
         // TODO(ahead-behind-pool): the `%(ahead-behind)` walk that runs
         // here on a cold cache is serial — it blocks this scope, and the
         // big task pool can't open until it returns. Nothing downstream of
         // work-item generation actually needs the ahead/behind *counts*
         // (only the per-row ahead/behind task reads them, and it has a
-        // per-SHA fallback) — only the cheap `for-each-ref refs/heads/
-        // refs/remotes/` ref scan gates work-item generation. So the walk
-        // could become a single work item in the pool, overlapping the
-        // other ~N workers, instead of a serial prelude. That needs an
-        // inter-task dependency (the per-row tasks would wait on it, or it
-        // would emit their results directly) — the work-item model has
-        // none today.
-        s.spawn(|s| {
-            let snap = match default_branch.as_deref() {
-                Some(db) => repo.capture_refs_with_ahead_behind(db).ok(),
-                None => repo.capture_refs().ok(),
-            }
-            .map(std::sync::Arc::new);
-
-            // Prime the `ahead-behind/` SHA-cache for the `Remote⇅`
-            // column, pairing each local branch with its configured
-            // upstream. Mirrors the `main↕` priming inside
-            // `capture_refs_with_ahead_behind`, but per-upstream-group
-            // instead of single-base: one serial `for-each-ref
-            // %(ahead-behind:UPSTREAM_SHA)` walk per unique upstream
-            // that's both cold and above the same threshold.
-            //
-            // Nested inside this spawn (rather than a sibling) so it can
-            // read the snapshot's already-scanned local/remote
-            // inventories — a sibling spawn would race the snapshot's
-            // own scans and (when `--remotes` is off) fire a redundant
-            // `for-each-ref refs/remotes/`. The primer still runs in
-            // parallel with downstream scope work (fsmonitor, etc.); it
-            // just gates on its data dependency.
-            //
-            // Scope to branches that will actually render an
-            // Upstream-task row: with `--branches` that's every local;
-            // without it that's just the worktree-attached subset.
-            // Otherwise plain `wt list` on a repo with many stale
-            // tracking branches would block the worker pool on a serial
-            // batch for rows nobody sees.
-            if let Some(snap_arc) = snap.as_ref() {
-                let snap_for_primer = std::sync::Arc::clone(snap_arc);
-                s.spawn(move |_| {
-                    let all_locals = snap_for_primer.local_branches();
-                    let filtered_locals: Vec<LocalBranch>;
-                    let candidates: &[LocalBranch] = if show_branches {
-                        all_locals
-                    } else {
-                        filtered_locals = all_locals
-                            .iter()
-                            .filter(|b| worktree_branches.contains(b.name.as_str()))
-                            .cloned()
-                            .collect();
-                        &filtered_locals
-                    };
-                    repo.prime_upstream_ahead_behind_cache(
-                        candidates,
-                        snap_for_primer.remote_branches(),
-                    );
-                });
-            }
-
+        // per-SHA fallback) — work-item generation needs only the ref
+        // SHAs from the inventories. So the walk could become a single
+        // work item in the pool, overlapping the other ~N workers, instead
+        // of a serial prelude. That needs an inter-task dependency (the
+        // per-row tasks would wait on it, or it would emit their results
+        // directly) — the work-item model has none today.
+        s.spawn(|_| {
+            let snap = repo
+                .inventory_snapshot(default_branch.as_deref())
+                .ok()
+                .map(std::sync::Arc::new);
             let _ = snapshot_cell.set(snap);
         });
 
-        // Fsmonitor daemon starts (one spawn per worktree)
-        for wt in &fsmonitor_worktrees {
-            s.spawn(|_| {
-                repo.start_fsmonitor_daemon_at(&wt.path);
-            });
-        }
+        // Prime the `ahead-behind/` SHA-cache for the `Remote⇅` column,
+        // pairing each local branch with its configured upstream. Mirrors
+        // the `main↕` priming inside `inventory_snapshot`, but
+        // per-upstream-group instead of single-base: one serial
+        // `for-each-ref %(ahead-behind:UPSTREAM_SHA)` walk per unique
+        // upstream that's both cold and above the same threshold. It reads
+        // the same inventories as the snapshot, so it runs beside it.
+        //
+        // Scope to branches that will actually render an Upstream-task
+        // row: with `--branches` that's every local; without it that's
+        // just the worktree-attached subset. Otherwise plain `wt list` on a
+        // repo with many stale tracking branches would block the worker
+        // pool on a serial batch for rows nobody sees.
+        s.spawn(|_| {
+            if let (Ok(all_locals), Ok(remotes)) = (repo.local_branches(), repo.remote_branches()) {
+                let filtered_locals: Vec<LocalBranch>;
+                let candidates: &[LocalBranch] = if show_branches {
+                    all_locals
+                } else {
+                    filtered_locals = all_locals
+                        .iter()
+                        .filter(|b| worktree_branches.contains(b.name.as_str()))
+                        .cloned()
+                        .collect();
+                    &filtered_locals
+                };
+                repo.prime_upstream_ahead_behind_cache(candidates, remotes);
+            }
+        });
+
+        // Seed root/git-dir for every worktree from the list we already
+        // fetched, so the per-worktree tasks don't each fork `git rev-parse
+        // --show-toplevel` / `--git-dir`. Post-skeleton, because only the
+        // fsmonitor probes and the worker-pool tasks consume these (the
+        // pre-skeleton current-worktree probe uses the prewarmed
+        // discovery-worktree root); in this scope, because the fs reads then
+        // overlap the ref snapshot instead of delaying it.
+        //
+        // The fsmonitor starts (one spawn per worktree) nest under the seed:
+        // each probe reads its worktree's git dir, which the seed supplies.
+        s.spawn(|s| {
+            repo.prime_worktree_path_caches(worktrees);
+            for wt in &fsmonitor_worktrees {
+                s.spawn(|_| {
+                    repo.start_fsmonitor_daemon_at(&wt.path);
+                });
+            }
+        });
     });
 
     // Extract results from cells

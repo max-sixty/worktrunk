@@ -18,9 +18,7 @@ use super::{
 use crate::git::{CommandError, PlumbingDiff, WorktreeId, finalize_worktrees, is_bare_repo_dir};
 use crate::path::{format_path_for_display, paths_match};
 use crate::shell_exec::Cmd;
-use crate::styling::{
-    eprintln, format_with_gutter, hint_message, suggest_command, warning_message,
-};
+use crate::styling::{eprintln, format_with_gutter, hint_message, warning_message};
 
 impl Repository {
     /// List all worktrees for this repository.
@@ -335,7 +333,7 @@ impl Repository {
     ///
     /// Unreadable siblings (an entry another process is deleting) are not
     /// this one, so they are passed over rather than failing the lookup.
-    fn registration_at(&self, path: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
+    pub(crate) fn registration_at(&self, path: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
         let registrations = self.git_common_dir().join("worktrees");
         std::fs::read_dir(&registrations)
             .with_context(|| format!("Failed to read {}", format_path_for_display(&registrations)))?
@@ -878,7 +876,8 @@ fn warn_duplicate_checkout(branch: &str, paths: &[PathBuf]) {
         // removes exactly the worktree named and retains the branch the others
         // still hold, so it's safe to suggest for a duplicate.
         for extra in &paths[1..] {
-            let cmd = suggest_command("remove", &[&format_path_for_display(extra)], &[]);
+            // Already shell-ready; `suggest_command` would escape it again.
+            let cmd = format!("wt remove {}", format_path_for_display(extra));
             eprintln!(
                 "{}",
                 hint_message(cformat!("To drop a duplicate, run <underline>{cmd}</>"))

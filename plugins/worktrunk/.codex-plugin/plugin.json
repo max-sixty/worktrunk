@@ -61,6 +61,8 @@
   },
   "interface": {
     "displayName": "Worktrunk",
+    "logo": "./.claude-plugin/icon.png",
+    "composerIcon": "./.claude-plugin/icon.png",
     "shortDescription": "Git worktree workflows for parallel Codex sessions.",
     "longDescription": "Use Worktrunk from Codex to manage linked worktrees, set up LLM commit workflows, and configure project hooks.",
     "developerName": "Worktrunk",

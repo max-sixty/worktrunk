@@ -379,6 +379,10 @@ pub struct LocalBranch {
     /// `None` when no upstream is set, or when the configured upstream is gone
     /// (git reports `[gone]` via `%(upstream:track)`).
     pub upstream_short: Option<String>,
+    /// Where this branch pushes, from `%(push:remotename)`: a remote name, or a
+    /// URL when `branch.<name>.pushRemote` is one (`gh pr checkout` sets that
+    /// for a fork's PR). `None` when no push remote is configured.
+    pub push_remote: Option<String>,
 }
 
 /// A single remote-tracking branch entry from the branch inventory.
@@ -889,11 +893,22 @@ fn rebase_branch(git_dir: &Path) -> Option<String> {
 /// processes rather than on a thread pool: this runs inside the
 /// `list_worktrees` cache initializer, and a pool thread waiting there would
 /// run other pool jobs, one of which could wait on the same cache.
+///
+/// A stale (prunable) entry's rebase state is read from its registration
+/// instead. With its `.git` gone, a `rev-parse` from its path finds nothing
+/// there and walks up to whatever repository encloses the directory — for a
+/// worktree nested in the main one, the main worktree's git dir — and would
+/// name the entry after a rebase that is not its own.
 pub(crate) fn finalize_worktrees(repo: &Repository, worktrees: &mut [WorktreeInfo]) {
-    let mut detached: Vec<&mut WorktreeInfo> = worktrees
+    let (stale, mut detached): (Vec<&mut WorktreeInfo>, Vec<&mut WorktreeInfo>) = worktrees
         .iter_mut()
         .filter(|wt| wt.detached && wt.branch.is_none())
-        .collect();
+        .partition(|wt| wt.is_prunable());
+    for wt in stale {
+        if let Ok((registration, _)) = repo.registration_at(&wt.path) {
+            wt.branch = rebase_branch(&registration);
+        }
+    }
     if detached.is_empty() {
         return;
     }

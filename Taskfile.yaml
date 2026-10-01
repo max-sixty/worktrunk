@@ -94,7 +94,7 @@ tasks:
         # Nushell isn't in every web image, and the shell-integration suite
         # drives it directly.
         if ! command -v nu &> /dev/null; then
-            NU_VERSION="0.115.1"
+            NU_VERSION="0.116.0"
             DIR="nu-${NU_VERSION}-x86_64-unknown-linux-gnu"
             TEMP=$(mktemp -d)
             curl -fsSL "https://github.com/nushell/nushell/releases/download/${NU_VERSION}/${DIR}.tar.gz" \
@@ -364,7 +364,7 @@ tasks:
         declare -A COMMANDS
         COMMANDS["claude"]='MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='"'"''"'"' --safe-mode --setting-sources='"'"'user'"'"' --system-prompt='"'"''"'"''
         COMMANDS["llm"]='llm -m claude-haiku-4.5'
-        COMMANDS["aichat"]='aichat -m claude:claude-haiku-4.5'
+        COMMANDS["aichat"]='aichat -m claude:claude-haiku-4.5 --code'
         COMMANDS["codex"]='codex exec -m gpt-6-luna -c model_reasoning_effort='"'"'none'"'"' -c project_doc_max_bytes=0 -c skills.max_context_tokens=1 -c agents.enabled=false -c features.goals=false -c web_search=disabled -c '"'"'model_instructions_file="~/.codex/worktrunk-commit-instructions.txt"'"'"' -c features.shell_tool=false -c features.unified_exec=false -c features.apps=false -c features.plugins=false --ephemeral --sandbox=read-only --json - | jq -sr '"'"'[.[] | select(.item.type? == "agent_message")] | last.item.text'"'"''
         COMMANDS["opencode"]='opencode run -m anthropic/claude-haiku-4.5 --variant fast'
 

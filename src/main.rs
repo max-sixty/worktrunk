@@ -44,12 +44,12 @@ use commands::worktree::{PushKind, PushOutcome, PushResult, handle_no_ff_merge, 
 use commands::{
     HookCliArgs, MergeFlagOverrides, MergeOptions, RebaseResult, SquashResult, add_approvals,
     clear_approvals, flag_pair, handle_alias_dry_run, handle_alias_show, handle_cache_clear,
-    handle_cache_get, handle_claude_approve_enter_worktree, handle_claude_install,
-    handle_claude_install_statusline, handle_claude_uninstall, handle_codex_install,
-    handle_codex_uninstall, handle_completions, handle_config_create, handle_config_show,
-    handle_config_update, handle_configure_shell, handle_custom_command, handle_hints_clear,
-    handle_hints_get, handle_hook_show, handle_init, handle_list, handle_logs_list,
-    handle_logs_profile, handle_merge, handle_omp_install, handle_omp_uninstall,
+    handle_cache_get, handle_claude_approve_enter_worktree, handle_claude_hook,
+    handle_claude_install, handle_claude_install_statusline, handle_claude_uninstall,
+    handle_codex_install, handle_codex_uninstall, handle_completions, handle_config_create,
+    handle_config_show, handle_config_update, handle_configure_shell, handle_custom_command,
+    handle_hints_clear, handle_hints_get, handle_hook_show, handle_init, handle_list,
+    handle_logs_list, handle_logs_profile, handle_merge, handle_omp_install, handle_omp_uninstall,
     handle_opencode_install, handle_opencode_uninstall, handle_pi_install, handle_pi_uninstall,
     handle_promote, handle_rebase, handle_remove_command, handle_show_theme, handle_squash,
     handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
@@ -661,6 +661,7 @@ fn handle_plugins_command(action: ConfigPluginsCommand, yes: bool) -> anyhow::Re
             ConfigPluginsClaudeCommand::Install => handle_claude_install(yes),
             ConfigPluginsClaudeCommand::Uninstall => handle_claude_uninstall(yes),
             ConfigPluginsClaudeCommand::InstallStatusline => handle_claude_install_statusline(yes),
+            ConfigPluginsClaudeCommand::Hook => handle_claude_hook(),
             ConfigPluginsClaudeCommand::ApproveEnterWorktree => {
                 handle_claude_approve_enter_worktree()
             }

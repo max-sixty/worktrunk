@@ -1467,10 +1467,51 @@ notify = "echo switched"
     });
 }
 
-// Note: The `return Ok(())` path in spawn_hooks_after_remove when UserConfig::load()
-// fails is defensive code for an extremely rare race condition where config becomes
-// invalid between command startup and hook execution. This is not easily testable
-// without complex timing manipulation.
+/// The approval gate freezes both removal hooks before either runs. If
+/// `pre-remove` makes the user config unreadable, `post-remove` must still run
+/// from that frozen plan rather than silently disappearing on a second load.
+#[rstest]
+fn test_post_remove_uses_config_snapshot_after_pre_remove_mutates_file(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    let config_path = repo.test_config_path().to_slash_lossy();
+    let marker = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("post-remove-after-config-change.txt");
+    let marker_path = marker.to_slash_lossy();
+
+    repo.write_test_config(&format!(
+        r#"[pre-remove]
+break-config = "printf 'invalid = [' > '{config_path}'"
+
+[post-remove]
+marker = "printf POST_REMOVE_RAN > '{marker_path}'"
+"#
+    ));
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--foreground", "--force-delete", "feature"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "removal should succeed after the planned pre-remove hook mutates config: {stderr}"
+    );
+    assert!(
+        !feature_wt.exists(),
+        "feature worktree should have been removed"
+    );
+    assert!(
+        stderr.contains("Running post-remove"),
+        "the frozen post-remove hook should still be registered: {stderr}"
+    );
+    wait_for_file_content(&marker);
+    assert_eq!(fs::read_to_string(marker).unwrap(), "POST_REMOVE_RAN");
+}
 
 #[rstest]
 fn test_standalone_hook_post_remove_invalid_template(repo: TestRepo) {
