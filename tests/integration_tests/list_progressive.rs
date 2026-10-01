@@ -19,14 +19,7 @@ fn test_list_progressive_loading_footer() {
     repo.add_worktree("feature-a");
     repo.add_worktree("feature-b");
     for branch in ["branch-a", "branch-b"] {
-        assert!(
-            repo.git_command()
-                .args(["branch", branch])
-                .run()
-                .unwrap()
-                .status
-                .success()
-        );
+        repo.run_git(&["branch", branch]);
     }
 
     for (height, expected) in [
