@@ -184,7 +184,7 @@ If the branch already has a worktree, [2mwt switch[0m changes directories to i
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch ../dark-mode                   # Switch by path...[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch feature/JIRA-1234              # ...or by branch[0m
 
-Worktrunk finds the worktree from git's own records, so only [2mwt step relocate[0m treats it differently: it offers to move the worktree back to the template path.
+Worktrunk finds the worktree from git's own records, so commands reach it by branch or path as usual. [2mwt list[0m marks it [2m[33m⚑[0m, since it isn't at the path its branch implies, and [2mwt step relocate[0m offers to move it back to the template path.
 
 [1m[32mNaming a worktree[0m
 
