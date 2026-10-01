@@ -682,7 +682,7 @@ approved-commands = ["{command}"]
         .unwrap()
         .join("repo.feature-script");
     let output_file = worktree_path.join("hook_output.txt");
-    wait_for_file_content(&output_file);
+    wait_for_file_lines(&output_file, 4);
 
     let contents = fs::read_to_string(&output_file).unwrap();
     assert!(
