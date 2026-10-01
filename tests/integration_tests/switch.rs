@@ -234,6 +234,43 @@ fn test_switch_dwim_from_remote(#[from(repo_with_remote)] repo: TestRepo) {
     snapshot_switch("switch_dwim_from_remote", &repo, &["dwim-feature"]);
 }
 
+#[rstest]
+fn test_switch_dwim_from_remote_with_slash(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&["branch", "slash-remote-feature"]);
+    repo.run_git(&["push", "origin", "slash-remote-feature"]);
+    repo.run_git(&["branch", "-D", "slash-remote-feature"]);
+    repo.run_git(&["remote", "rename", "origin", "team/fork"]);
+
+    assert_eq!(repo.git_output(&["remote"]), "team/fork");
+    assert_eq!(
+        repo.git_output(&[
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/remotes/team/fork/slash-remote-feature",
+        ]),
+        "team/fork/slash-remote-feature",
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "slash-remote-feature"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch should find the branch on team/fork; stderr: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert_eq!(
+        repo.git_output(&[
+            "rev-parse",
+            "--abbrev-ref",
+            "slash-remote-feature@{upstream}",
+        ]),
+        "team/fork/slash-remote-feature",
+    );
+}
+
 /// When the branch argument includes the remote prefix (e.g., "origin/feature"),
 /// strip the prefix and switch to the local branch via DWIM.
 /// This happens when the interactive picker returns a remote branch name.

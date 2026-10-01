@@ -407,7 +407,11 @@ mod tests {
         let items = vec![
             ListItem::new_branch("aaaaaaa".to_string(), "feature/login".to_string()),
             ListItem::new_branch("bbbbbbb".to_string(), "main".to_string()),
-            ListItem::new_remote_branch("ccccccc".to_string(), "origin/feature".to_string()),
+            ListItem::new_remote_branch(
+                "ccccccc".to_string(),
+                "origin".to_string(),
+                "feature".to_string(),
+            ),
         ];
         let metrics = SummaryMetrics::from_items(&items);
         assert_eq!(

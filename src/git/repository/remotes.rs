@@ -447,19 +447,30 @@ impl Repository {
             .and_then(|config| config.list.url)
     }
 
+    /// Split a remote-tracking branch at its exact configured remote boundary.
+    pub(crate) fn split_remote_branch_name(&self, ref_name: &str) -> Option<(String, String)> {
+        self.all_remote_urls()
+            .into_iter()
+            .filter_map(|(remote, _)| {
+                let branch = ref_name.strip_prefix(&remote)?.strip_prefix('/')?;
+                Some((remote, branch.to_string()))
+            })
+            .max_by_key(|(remote, _)| remote.len())
+            // Keep stale refs usable after their remote configuration is removed.
+            .or_else(|| {
+                ref_name
+                    .split_once('/')
+                    .map(|(remote, branch)| (remote.to_string(), branch.to_string()))
+            })
+    }
+
     /// Strip the remote prefix from a remote-tracking branch name.
-    ///
-    /// Given a name like `origin/username/feature-1`, returns `Some("username/feature-1")`
-    /// if it's a valid remote-tracking ref. Returns `None` if the name isn't a remote ref
-    /// or the remote can't be identified.
-    ///
-    /// Resolved from the remote-branch inventory — no subprocess calls once it's populated.
     pub fn strip_remote_prefix(&self, ref_name: &str) -> Option<String> {
         self.remote_branches()
             .ok()?
             .iter()
-            .find(|r| r.short_name == ref_name)
-            .map(|r| r.local_name.clone())
+            .find(|branch| branch.short_name == ref_name)
+            .map(|branch| branch.local_name.clone())
     }
 }
 

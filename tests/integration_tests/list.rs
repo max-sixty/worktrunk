@@ -782,6 +782,36 @@ fn test_list_with_remotes_and_full(#[from(repo_with_remote)] repo: TestRepo) {
 }
 
 #[rstest]
+fn test_list_json_preserves_slash_named_remote(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.create_branch("remote-only");
+    repo.push_branch("remote-only");
+    repo.run_git(&["branch", "-D", "remote-only"]);
+    repo.run_git(&["remote", "rename", "origin", "team/fork"]);
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--remotes", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let items = json["items"].as_array().expect("schema 2 items");
+    let remote = items
+        .iter()
+        .find(|item| item.get("remote").is_some())
+        .expect("remote-only row");
+    assert_eq!(remote["branch"], "remote-only");
+    assert_eq!(remote["remote"], "team/fork");
+
+    let main = items
+        .iter()
+        .find(|item| item["branch"] == "main")
+        .expect("main row");
+    assert_eq!(main["upstream"]["remote"], "team/fork");
+}
+
+#[rstest]
 fn test_list_with_orphaned_remote_ref(#[from(repo_with_remote)] repo: TestRepo) {
     // Create a remote-tracking ref for a non-existent remote.
     // This simulates a ref that remains after a remote is deleted.
