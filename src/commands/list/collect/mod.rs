@@ -1247,7 +1247,7 @@ pub fn collect(
             // Check if worktree is at its expected path based on config
             // template. A detached worktree has no branch to imply a path, so
             // it isn't off-template — it has its own `⊘`, and flagging it here
-            // too would spend the `⚑` on a state the row already reports.
+            // too would spend the `⚐` on a state the row already reports.
             let branch_worktree_mismatch =
                 wt.branch.is_some() && !is_worktree_at_expected_path(wt, repo, repo.user_config());
 
