@@ -1178,14 +1178,8 @@ fn test_list_json_with_user_marker(mut repo: TestRepo) {
     });
 }
 
-/// The Status cell of the row for `branch`, with its padding removed: the
-/// column's populated slots, left to right.
-///
-/// Columns are separated by runs of two or more spaces, so splitting on
-/// `"  "` isolates the cell. Within the Status column an unpopulated slot
-/// between two populated ones is a single space, so the cell survives the
-/// split intact and the whitespace filter drops the gap. The gutter joins the
-/// Branch cell with one space, which makes Status the second field.
+/// Extract the populated Status cell from the all-gates fixture below.
+/// Its ASCII marker leaves the column padding as runs of two or more spaces.
 fn status_cell(table: &str, branch: &str) -> String {
     let fields = table
         .lines()
@@ -1200,16 +1194,9 @@ fn status_cell(table: &str, branch: &str) -> String {
     fields[1].chars().filter(|c| !c.is_whitespace()).collect()
 }
 
-/// The JSON `symbols` string is the Status cell without its colors, so its
-/// gates must appear in the column's left-to-right order — working tree,
-/// worktree, default branch, remote, marker. The builder used to append the
-/// worktree gate after the remote one, so a row rendering `⚑↑` serialized as
-/// `↑⚑`. Both schemas read the same builder, and both are checked here.
-///
-/// The row populates every gate at once: an off-template worktree path (`⚑`),
-/// commits the default branch lacks (`↑`), a commit the upstream lacks (`⇡`),
-/// an uncommitted edit (`!`), and a marker (`*`, kept ASCII so the cell's
-/// display width matches its character count).
+/// Both JSON schemas follow the rendered Status column's gate order.
+/// The fixture populates every gate: an off-template worktree path, commits
+/// missing from main and upstream, an uncommitted edit, and an ASCII marker.
 #[rstest]
 fn test_list_json_symbols_follow_status_column(#[from(repo_with_remote)] mut repo: TestRepo) {
     use ansi_str::AnsiStr;
@@ -1242,7 +1229,7 @@ fn test_list_json_symbols_follow_status_column(#[from(repo_with_remote)] mut rep
         .ansi_strip()
         .into_owned();
     let rendered = status_cell(&table, "feature");
-    assert_eq!(rendered, "!⚑↑⇡*", "every gate populated:\n{table}");
+    assert_eq!(rendered, "!⚐↑⇡*", "every gate populated:\n{table}");
 
     let envelope: serde_json::Value =
         serde_json::from_slice(&run(&["list", "--format=json"])).unwrap();

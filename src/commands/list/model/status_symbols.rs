@@ -342,7 +342,7 @@ impl WorkingTreeStatus {
 
     /// Format as display string for JSON serialization and raw output (e.g., "+!?").
     ///
-    /// For styled terminal rendering, use `StatusSymbols::styled_symbols()` instead.
+    /// For styled terminal rendering, use `StatusSymbols::render_with_mask()` instead.
     pub fn to_symbols(self) -> String {
         let mut s = String::with_capacity(5);
         if self.staged {
@@ -459,7 +459,7 @@ impl StatusSymbols {
 
         let mut result = String::with_capacity(64);
 
-        for (pos, slot) in self.styled_symbols() {
+        for (pos, slot) in self.symbols(SymbolFormat::Styled) {
             let allocated_width = mask.width(pos);
 
             match slot {
@@ -495,7 +495,7 @@ impl StatusSymbols {
     ///
     /// Uses the same styled symbols as `render_with_mask()`, just without padding.
     pub fn format_compact(&self) -> String {
-        self.styled_symbols()
+        self.symbols(SymbolFormat::Styled)
             .into_iter()
             .filter_map(|(_, slot)| match slot {
                 SlotState::Visible(s) => Some(s),
@@ -507,7 +507,21 @@ impl StatusSymbols {
             .collect()
     }
 
-    /// Build styled symbols array with position indices.
+    /// Raw JSON symbols in the same gate order as terminal output.
+    ///
+    /// Unresolved gates are omitted. Working-tree rename/delete glyphs and
+    /// user marker text retain their raw JSON representation.
+    pub(crate) fn format_raw(&self) -> String {
+        self.symbols(SymbolFormat::Raw)
+            .into_iter()
+            .filter_map(|(_, slot)| match slot {
+                SlotState::Visible(s) => Some(s),
+                SlotState::Loading | SlotState::Empty => None,
+            })
+            .collect()
+    }
+
+    /// Build symbols in Status-column order with shared gate selection.
     ///
     /// Returns one [`SlotState`] per position. The renderer uses this to
     /// emit three kinds of cell content: `Loading` slots are rendered as the
@@ -522,14 +536,20 @@ impl StatusSymbols {
     /// - Red: Conflicts (blocking problems)
     /// - Yellow: Git operations, would_conflict, locked/prunable (states needing attention)
     /// - Dimmed: Main state symbols, divergence arrows, branch indicator (informational)
-    pub(crate) fn styled_symbols(&self) -> [(usize, SlotState); 7] {
+    fn symbols(&self, format: SymbolFormat) -> [(usize, SlotState); 7] {
         use color_print::cformat;
 
         // Gate 1 — working tree flags (positions 0-2). One logical decision,
         // so while loading we emit a single `·` at the lead position and
         // blank-pad the other two — keeps the gate's visual weight equal to
-        // the single-position gates 2-5.
+        // the single-position gates 2-5. Raw output has no alignment, so
+        // the lead slot contains all working-tree glyphs, including »✘.
         let (staged, modified, untracked) = match self.working_tree {
+            Some(wt) if matches!(format, SymbolFormat::Raw) => (
+                SlotState::from_content(wt.to_symbols()),
+                SlotState::Empty,
+                SlotState::Empty,
+            ),
             Some(wt) => {
                 let flag = |has: bool, sym: char| -> SlotState {
                     if has {
@@ -549,19 +569,19 @@ impl StatusSymbols {
 
         // Gate 3 — main state (position 4).
         let main_state_slot = match self.main_state {
-            Some(ms) => match ms.styled() {
-                Some(s) => SlotState::Visible(s),
-                None => SlotState::Empty,
-            },
+            Some(ms) => SlotState::from_content(match format {
+                SymbolFormat::Raw => ms.to_string(),
+                SymbolFormat::Styled => ms.styled().unwrap_or_default(),
+            }),
             None => SlotState::Loading,
         };
 
         // Gate 4 — upstream divergence (position 5).
         let upstream_slot = match self.upstream_divergence {
-            Some(d) => match d.styled() {
-                Some(s) => SlotState::Visible(s),
-                None => SlotState::Empty,
-            },
+            Some(d) => SlotState::from_content(match format {
+                SymbolFormat::Raw => d.symbol().to_string(),
+                SymbolFormat::Styled => d.styled().unwrap_or_default(),
+            }),
             None => SlotState::Loading,
         };
 
@@ -575,17 +595,21 @@ impl StatusSymbols {
         // it's always `Some` by the time `operation_state` resolves).
         let worktree_slot = match self.operation_state {
             None => SlotState::Loading,
-            Some(op) if op != OperationState::None => {
-                SlotState::Visible(op.styled().unwrap_or_default())
-            }
+            Some(op) if op != OperationState::None => SlotState::Visible(match format {
+                SymbolFormat::Raw => op.to_string(),
+                SymbolFormat::Styled => op.styled().unwrap_or_default(),
+            }),
             Some(_) => match self.worktree_state {
                 None | Some(WorktreeState::None) => SlotState::Empty,
-                Some(
-                    state @ (WorktreeState::Branch
-                    | WorktreeState::BranchWorktreeMismatch
-                    | WorktreeState::DuplicateBranch),
-                ) => SlotState::Visible(cformat!("<dim>{state}</>")),
-                Some(other) => SlotState::Visible(cformat!("<yellow>{}</>", other)),
+                Some(state) => SlotState::Visible(match format {
+                    SymbolFormat::Raw => state.to_string(),
+                    SymbolFormat::Styled => match state {
+                        WorktreeState::Branch
+                        | WorktreeState::BranchWorktreeMismatch
+                        | WorktreeState::DuplicateBranch => cformat!("<dim>{state}</>"),
+                        _ => cformat!("<yellow>{state}</>"),
+                    },
+                }),
             },
         };
 
@@ -610,13 +634,20 @@ impl StatusSymbols {
     }
 }
 
+/// Raw JSON uses compact glyphs; terminal output uses styled, aligned slots.
+#[derive(Clone, Copy)]
+enum SymbolFormat {
+    Raw,
+    Styled,
+}
+
 /// State of a single Status-column slot when rendering.
 ///
-/// Returned by [`StatusSymbols::styled_symbols`] so the renderer can decide,
+/// Returned by [`StatusSymbols::symbols`] so the renderer can decide,
 /// per position, whether to emit a position-level placeholder (`Loading`),
 /// blank whitespace (`Empty`), or the styled content (`Visible`).
 #[derive(Debug, Clone)]
-pub(crate) enum SlotState {
+enum SlotState {
     /// Gate has not resolved — emit the placeholder glyph padded to the
     /// slot's allocated width.
     Loading,
@@ -628,12 +659,144 @@ pub(crate) enum SlotState {
     Visible(String),
 }
 
+impl SlotState {
+    fn from_content(content: String) -> Self {
+        if content.is_empty() {
+            Self::Empty
+        } else {
+            Self::Visible(content)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use insta::assert_snapshot;
     use worktrunk::git::InProgressOperation;
 
     use super::*;
+
+    // ============================================================================
+    // format_raw_symbols Tests
+    // ============================================================================
+
+    #[test]
+    fn test_format_raw_symbols_empty() {
+        let symbols = StatusSymbols::default();
+        assert!(symbols.format_raw().is_empty());
+    }
+
+    #[test]
+    fn test_format_raw_symbols_each_category() {
+        let working_tree = (StatusSymbols {
+            working_tree: Some(WorkingTreeStatus::new(true, true, true, false, false)),
+            ..Default::default()
+        })
+        .format_raw();
+        assert_snapshot!(working_tree, @"+!?");
+
+        let main_state = (StatusSymbols {
+            main_state: Some(MainState::Ahead),
+            ..Default::default()
+        })
+        .format_raw();
+        assert_snapshot!(main_state, @"↑");
+
+        let upstream = (StatusSymbols {
+            upstream_divergence: Some(Divergence::Behind),
+            ..Default::default()
+        })
+        .format_raw();
+        assert_snapshot!(upstream, @"⇣");
+
+        // Operation state takes priority over worktree state
+        let operation = (StatusSymbols {
+            operation_state: Some(OperationState::InProgress(InProgressOperation::Rebase)),
+            ..Default::default()
+        })
+        .format_raw();
+        assert_snapshot!(operation, @"↻");
+
+        // Worktree metadata renders only once the operation-family gate
+        // has resolved to "no operation" — otherwise we can't rule out
+        // ✘↻ taking priority. Callers that want just the metadata
+        // symbol must set both `operation_state` and `worktree_state`.
+        let worktree = (StatusSymbols {
+            operation_state: Some(OperationState::None),
+            worktree_state: Some(WorktreeState::Locked),
+            ..Default::default()
+        })
+        .format_raw();
+        assert_snapshot!(worktree, @"⊞");
+
+        let marker = (StatusSymbols {
+            user_marker: Some(Some("\u{1f525}".to_string())),
+            ..Default::default()
+        })
+        .format_raw();
+        assert_snapshot!(marker, @"🔥");
+    }
+
+    #[test]
+    fn test_format_raw_symbols_combined() {
+        let result = (StatusSymbols {
+            working_tree: Some(WorkingTreeStatus::new(true, false, false, false, false)),
+            main_state: Some(MainState::Behind),
+            upstream_divergence: Some(Divergence::Ahead),
+            ..Default::default()
+        })
+        .format_raw();
+        assert_snapshot!(result, @"+↓⇡");
+    }
+
+    /// Pin all gates together against the rendered cell's order.
+    #[test]
+    fn test_format_raw_symbols_follow_rendered_order() {
+        let symbols = StatusSymbols {
+            working_tree: Some(WorkingTreeStatus::new(false, true, false, false, false)),
+            operation_state: Some(OperationState::None),
+            worktree_state: Some(WorktreeState::BranchWorktreeMismatch),
+            main_state: Some(MainState::Ahead),
+            upstream_divergence: Some(Divergence::Diverged),
+            user_marker: Some(Some("\u{1f525}".to_string())),
+        };
+        let raw = symbols.format_raw();
+        assert_snapshot!(raw, @"!⚐↑⇅🔥");
+        assert_eq!(
+            raw,
+            anstream::adapter::strip_str(&symbols.format_compact()).to_string(),
+            "raw symbols must match the rendered cell with its ANSI stripped"
+        );
+    }
+
+    #[test]
+    fn test_format_raw_preserves_working_tree_glyphs() {
+        let symbols = StatusSymbols {
+            working_tree: Some(WorkingTreeStatus::new(true, true, true, true, true)),
+            main_state: Some(MainState::Ahead),
+            ..Default::default()
+        };
+        assert_eq!(symbols.format_raw(), "+!?»✘↑");
+        assert_eq!(
+            anstream::adapter::strip_str(&symbols.format_compact()).to_string(),
+            "+!?↑"
+        );
+    }
+
+    #[test]
+    fn test_format_raw_worktree_gate_priority() {
+        let mut symbols = StatusSymbols {
+            worktree_state: Some(WorktreeState::Locked),
+            main_state: Some(MainState::Ahead),
+            ..Default::default()
+        };
+        // Metadata stays hidden until the operation gate resolves.
+        assert_eq!(symbols.format_raw(), "↑");
+        symbols.operation_state = Some(OperationState::InProgress(InProgressOperation::Rebase));
+        assert_eq!(symbols.format_raw(), "↻↑");
+        symbols.operation_state = Some(OperationState::None);
+        assert_eq!(symbols.format_raw(), "⊞↑");
+    }
 
     /// True iff every gate is either unresolved (`None`) or resolved to a
     /// "nothing to display" variant. Sanity check for `Default` /
