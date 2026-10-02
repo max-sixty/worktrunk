@@ -161,7 +161,7 @@ Worktrunk has two force flags for different situations:
 [107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m-D[0m[2m            # Delete unmerged branch[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m--force[0m[2m [0m[2m[36m-D[0m[2m    # Both[0m
 
-[2m--no-delete-branch[0m keeps the branch, including the default branch, while removing its linked worktree. It conflicts with [2m--force-delete[0m ([2m-D[0m).
+Use [2m--no-delete-branch[0m to keep the branch regardless of merge status.
 
 [1m[32mBackground removal[0m
 

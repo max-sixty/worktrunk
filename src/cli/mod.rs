@@ -1378,7 +1378,7 @@ $ wt remove feature -D            # Delete unmerged branch
 $ wt remove feature --force -D    # Both
 ```
 
-`--no-delete-branch` keeps the branch, including the default branch, while removing its linked worktree. It conflicts with `--force-delete` (`-D`).
+Use `--no-delete-branch` to keep the branch regardless of merge status.
 
 ## Background removal
 
