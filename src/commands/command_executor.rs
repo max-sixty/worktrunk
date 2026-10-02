@@ -878,17 +878,18 @@ mod tests {
                 .to_string()
                 .contains(&worktrunk::path::format_path_for_display(&missing))
         );
-        assert!(error.chain().any(|error| {
-            error
-                .downcast_ref::<std::io::Error>()
-                .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound)
-        }));
-        assert_eq!(error.to_string().matches("os error 2").count(), 1);
+        let io_error = error
+            .root_cause()
+            .downcast_ref::<std::io::Error>()
+            .unwrap();
+        assert_eq!(io_error.kind(), std::io::ErrorKind::NotFound);
+        let io_detail = io_error.to_string();
+        assert_eq!(error.to_string().matches(&io_detail).count(), 1);
         assert_eq!(
             error
                 .render_diagnostic()
                 .unwrap()
-                .matches("os error 2")
+                .matches(&io_detail)
                 .count(),
             1
         );
