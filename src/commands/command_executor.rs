@@ -878,10 +878,7 @@ mod tests {
                 .to_string()
                 .contains(&worktrunk::path::format_path_for_display(&missing))
         );
-        let io_error = error
-            .root_cause()
-            .downcast_ref::<std::io::Error>()
-            .unwrap();
+        let io_error = error.root_cause().downcast_ref::<std::io::Error>().unwrap();
         assert_eq!(io_error.kind(), std::io::ErrorKind::NotFound);
         let io_detail = io_error.to_string();
         assert_eq!(error.to_string().matches(&io_detail).count(), 1);
