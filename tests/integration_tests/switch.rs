@@ -8574,3 +8574,67 @@ fn test_switch_path_rejects_directory_overlapping_repo(repo: TestRepo) {
     assert!(repo.root_path().join("src").is_dir());
     assert!(repo.root_path().join(".git").exists());
 }
+
+/// Invalid ref syntax is rejected before worktree creation.
+#[rstest]
+#[case::space("bad name")]
+#[case::ref_syntax("bad..name")]
+fn switch_creation_rejects_invalid_branch(repo: TestRepo, #[case] name: &str) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", name], None);
+        assert_cmd_snapshot!(
+            format!(
+                "switch_invalid_branch_{}",
+                name.replace([' ', '.', '-'], "_")
+            ),
+            cmd
+        );
+    });
+    assert!(
+        !repo
+            .root_path()
+            .parent()
+            .unwrap()
+            .join(format!("repo.{name}"))
+            .exists()
+    );
+}
+
+#[rstest]
+fn switch_missing_path_selector(repo: TestRepo) {
+    snapshot_switch("switch_missing_path_selector", &repo, &["./ghost"]);
+}
+
+/// Explicit and configured suppression both leave the directive untouched and
+/// report the available checkout without claiming the shell switched there.
+#[rstest]
+#[case::flag(false)]
+#[case::config(true)]
+fn switch_existing_without_cd(mut repo: TestRepo, #[case] configured: bool) {
+    let feature = repo.add_worktree("feature");
+    if configured {
+        repo.write_test_config("[switch]\ncd = false\n");
+    }
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let (cd_path, _guard) = directive_file();
+        let args = if configured {
+            vec!["feature"]
+        } else {
+            vec!["feature", "--no-cd"]
+        };
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &args, None);
+        configure_directive_file(&mut cmd, &cd_path);
+        assert_cmd_snapshot!(
+            if configured {
+                "switch_existing_cd_disabled_config"
+            } else {
+                "switch_existing_cd_disabled_flag"
+            },
+            cmd
+        );
+        assert!(fs::read_to_string(&cd_path).unwrap().is_empty());
+    });
+    assert!(feature.is_dir());
+}
