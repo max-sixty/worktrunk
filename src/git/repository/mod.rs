@@ -120,9 +120,10 @@
 //!   `LLM_SEMAPHORE` (summary), `COPY_POOL` (copy)
 //! - Global state: `OUTPUT_STATE` (output), `TRACE` and `SUBPROCESS` (log_files), `COMMAND_LOG`
 //! - Config: `CONFIG_PATH` (config/user/path), `SHELL_CONFIG`, `GIT_ENV_OVERRIDES` (shell_exec)
-//! - Serialization: `WORKTREE_REGISTRY_LOCKS` (this module) — one `RwLock` per
-//!   canonical git common dir, handed to each `Repository` at construction so
-//!   `list_worktrees` reads and `git worktree remove` teardowns can't overlap.
+//! - Serialization: `REPOSITORY_LOCKS` (this module) — one lock set per canonical
+//!   git common dir, handed to each `Repository` at construction. Its registry
+//!   lock prevents `list_worktrees` reads and `git worktree remove` teardowns
+//!   from overlapping; its branch lock serializes safe ref deletions.
 //!   Keyed like a cache but holding no git data, so nothing in it goes stale;
 //!   see the static's own doc comment for the ordering rules.
 //!
@@ -132,7 +133,7 @@
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Arc, LazyLock, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::shell_exec::Cmd;
 
@@ -505,22 +506,30 @@ static DEFAULT_BASE_PATH: LazyLock<PathBuf> = LazyLock::new(|| PathBuf::from("."
 /// equality on the raw path is sufficient.
 static GIT_COMMON_DIR_CACHE: LazyLock<DashMap<PathBuf, PathBuf>> = LazyLock::new(DashMap::new);
 
-/// Process-local coordination for Git's worktree registry, keyed by the
-/// canonical Git common directory. Every [`Repository`] for the same common
-/// directory shares one read/write lock. The dedicated
-/// [`Repository::list_worktrees`] accessor takes the read side, while
+/// Process-local coordination for repository mutations, keyed by the canonical
+/// Git common directory. Every [`Repository`] for the same common directory
+/// shares these locks. The registry lock's dedicated
+/// [`Repository::list_worktrees`] accessor takes its read side, while
 /// [`Repository::prune_worktree_entry`] and [`Repository::remove_worktree`]
-/// take the write side.
+/// take its write side. The branch deletion mutex serializes safe ref mutations,
+/// which contend on Git's packed-refs lock even for different branches.
 ///
-/// Guards are non-reentrant: a guarded operation must not call another of
-/// these accessors. In `wt step prune`, the lock order is the command's
-/// `check_lock` followed by this registry lock; code holding a registry guard
-/// must never acquire `check_lock`.
+/// Registry guards are non-reentrant: a guarded operation must not call another
+/// registry accessor. In `wt step prune`, the command's `check_lock` precedes
+/// either repository lock; code holding a repository guard must never acquire
+/// `check_lock`. Safe branch deletion releases the registry read guard before
+/// acquiring its mutation mutex; these repository guards never overlap.
 ///
 /// External Git processes and raw worktree commands issued through
-/// [`Repository::run_command`] do not honor this lock.
-static WORKTREE_REGISTRY_LOCKS: LazyLock<DashMap<PathBuf, Arc<RwLock<()>>>> =
+/// [`Repository::run_command`] do not honor these locks.
+static REPOSITORY_LOCKS: LazyLock<DashMap<PathBuf, Arc<RepositoryLocks>>> =
     LazyLock::new(DashMap::new);
+
+#[derive(Debug, Default)]
+struct RepositoryLocks {
+    worktree_registry: RwLock<()>,
+    branch_deletion: Mutex<()>,
+}
 
 /// Process-wide map of `worktree_path -> canonicalized worktree root`,
 /// keyed by the canonicalized path used as the cache key (same convention as
@@ -771,7 +780,7 @@ pub struct Repository {
     /// Cached data for this repository. Shared across clones via Arc.
     pub(super) cache: Arc<RepoCache>,
     /// Shared by every `Repository` that resolves to `git_common_dir`.
-    worktree_registry_lock: Arc<RwLock<()>>,
+    locks: Arc<RepositoryLocks>,
     /// When set, object-writing git plumbing is redirected into a temporary
     /// object database. `None` for the normal persistent path. See
     /// [`Repository::redirect_objects_for_observation`].
@@ -829,9 +838,9 @@ impl Repository {
     pub fn at(path: impl Into<PathBuf>) -> anyhow::Result<Self> {
         let discovery_path = path.into();
         let git_common_dir = Self::resolve_git_common_dir(&discovery_path)?;
-        let worktree_registry_lock = WORKTREE_REGISTRY_LOCKS
+        let locks = REPOSITORY_LOCKS
             .entry(git_common_dir.clone())
-            .or_insert_with(|| Arc::new(RwLock::new(())))
+            .or_insert_with(|| Arc::new(RepositoryLocks::default()))
             .clone();
 
         let cache = RepoCache::default();
@@ -860,23 +869,30 @@ impl Repository {
             discovery_path,
             git_common_dir,
             cache: Arc::new(cache),
-            worktree_registry_lock,
+            locks,
             temporary_object_store: None,
         })
     }
 
     /// Share registry coordination across fresh repository caches.
     pub(super) fn worktree_registry_read(&self) -> RwLockReadGuard<'_, ()> {
-        self.worktree_registry_lock
+        self.locks
+            .worktree_registry
             .read()
             .unwrap_or_else(|error| error.into_inner())
     }
 
     /// Exclude registry readers and other teardowns for this repository.
     pub(super) fn worktree_registry_write(&self) -> RwLockWriteGuard<'_, ()> {
-        self.worktree_registry_lock
+        self.locks
+            .worktree_registry
             .write()
             .unwrap_or_else(|error| error.into_inner())
+    }
+
+    /// Serialize safe ref mutations without blocking registry readers.
+    pub(super) fn branch_deletion_lock(&self) -> &Mutex<()> {
+        &self.locks.branch_deletion
     }
 
     /// Return a clone whose object-writing git plumbing is redirected into a

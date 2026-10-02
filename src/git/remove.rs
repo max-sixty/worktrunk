@@ -100,7 +100,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::git::repository::WorkingTree;
-use crate::git::{GitError, IntegrationReason, Repository, WorktreeInfo, path_dir_name};
+use crate::git::{ErrorExt, GitError, IntegrationReason, Repository, WorktreeInfo, path_dir_name};
 use crate::shell_exec::Cmd;
 use crate::utils::epoch_now;
 
@@ -261,7 +261,7 @@ pub enum BranchDeletionOutcome {
     /// Branch was not deleted — it was not integrated, and deletion was not forced.
     NotDeleted,
     /// Branch was integrated, but a fresh topology read found it checked out in
-    /// a worktree immediately before deletion. The ref is retained so that
+    /// a worktree before the deletion attempt. The ref is retained so that
     /// worktree's HEAD remains resolvable.
     RetainedCheckedOut { path: PathBuf },
     /// Branch was integrated but the atomic compare-and-swap deletion was
@@ -530,8 +530,9 @@ fn rename_into_trash(repo: &Repository, worktree_path: &Path) -> Option<PathBuf>
 /// [`remove_worktree_with_cleanup`], and the detached fallback can't call
 /// Rust, so it gets the guarantee from a fresh porcelain topology read followed
 /// by an `update-ref -d <ref> <sha>` shell tail instead. A hook or concurrent
-/// process that checked out or advanced the branch since planning retains it,
-/// rather than orphaning a worktree or losing a commit.
+/// process that advanced the branch after the integration check cannot lose
+/// that commit: the CAS rejects the deletion. Checkout protection is best
+/// effort, retaining any checkout observed by the fresh topology read.
 pub fn execute_branch_deletion(
     repo: &Repository,
     branch_name: &str,
@@ -574,24 +575,6 @@ pub fn delete_branch_if_safe(
 
     let outcome = match reason {
         Some(r) => {
-            // `update-ref` deliberately bypasses `git branch`'s checked-out
-            // branch protection, so sample topology from a brand-new
-            // Repository immediately before the ref mutation. Never consult
-            // `repo.list_worktrees()` here: callers often used that planning
-            // cache before a pre-remove hook or another process had a chance to
-            // add a checkout.
-            //
-            // Git exposes no transaction spanning worktree registration and ref
-            // updates. Keeping this fresh read directly adjacent to the CAS
-            // minimizes that unavoidable TOCTOU window; either command failing
-            // leaves the branch intact.
-            if let Some(path) = fresh_branch_checkout(repo, branch_name)? {
-                return Ok(BranchDeletionResult {
-                    outcome: BranchDeletionOutcome::RetainedCheckedOut { path },
-                    integration_target: effective_target,
-                });
-            }
-
             // Atomic compare-and-swap against the snapshotted SHA. If the ref
             // moved between `integration_reason` and the delete (e.g. a hook
             // advanced the branch), `git update-ref -d <ref> <expected>` fails
@@ -601,19 +584,12 @@ pub fn delete_branch_if_safe(
             // Read the SHA from the snapshot inventory (`local_branch`) rather
             // than `resolve()`, so it reflects the same `refs/heads/` walk
             // `integration_reason` consulted.
-            match snapshot.local_branch(branch_name) {
-                Some(b) => cas_delete_branch_outcome(repo, branch_name, &b.commit_sha, r)?,
-                // Snapshot doesn't carry the branch SHA — extremely unusual
-                // (the caller just captured refs, the branch is present in the
-                // integration check). Fall through to a non-CAS delete rather
-                // than failing the whole operation: this preserves the
-                // pre-CAS behavior in a corner case rather than introducing a
-                // new error class.
-                None => {
-                    repo.run_command(&["branch", "-D", "--", branch_name])?;
-                    BranchDeletionOutcome::Integrated(r)
-                }
-            }
+            let Some(branch) = snapshot.local_branch(branch_name) else {
+                anyhow::bail!(
+                    "Cannot safely delete branch {branch_name}: absent from ref snapshot"
+                );
+            };
+            cas_delete_branch_outcome(repo, branch_name, &branch.commit_sha, r)?
         }
         None => BranchDeletionOutcome::NotDeleted,
     };
@@ -663,18 +639,15 @@ fn branch_checkout_requires_retention(worktree: &WorktreeInfo, branch_name: &str
 /// exits non-zero with a `cannot lock ref` message and the ref is left alone —
 /// fail-closed semantics that protect unmerged commits.
 ///
-/// When `update-ref` fails, distinguishes "ref moved" (the ref still exists
-/// → `RetainedRaced`) from "real error" (the ref is gone or git itself
-/// failed → propagate the original error) by re-checking with `rev-parse
-/// --verify --quiet`, which has a structured exit code (0 = present, 1 =
-/// absent) rather than relying on locale-sensitive error-message text.
+/// A fresh topology read provides best-effort checkout protection before
+/// waiting for the repository's deletion lock. Only the ref mutation is
+/// serialized: topology reads can run concurrently. Git has no transaction
+/// spanning worktree registration and ref updates, so a new checkout can race
+/// this check; the atomic SHA comparison still protects concurrent commits.
 ///
-/// A `packed-refs.lock` that stays contended past git's ~1 s retry budget
-/// (concurrent deletes of packed branches — `wt step prune`'s parallel
-/// removals — on slow ref-store I/O) also fails the CAS with the ref
-/// present, and reads as `RetainedRaced` even though the tip never moved.
-/// Accepted: it is fail-closed, empirically unobserved at 24-way concurrency
-/// on local disks, and the next prune collects the branch.
+/// On failure, a fresh `rev-parse` distinguishes actual SHA movement from a
+/// lock or I/O error without parsing Git's localized diagnostics. An unchanged
+/// or unreadable ref propagates the original deletion error.
 fn cas_delete_branch_outcome(
     repo: &Repository,
     branch_name: &str,
@@ -682,22 +655,27 @@ fn cas_delete_branch_outcome(
     reason: IntegrationReason,
 ) -> anyhow::Result<BranchDeletionOutcome> {
     let ref_name = format!("refs/heads/{branch_name}");
-    let update_err = match repo.run_command(&["update-ref", "-d", &ref_name, expected_sha]) {
+    // update-ref bypasses Git's checked-out-branch protection. Sample topology
+    // from a fresh Repository cache, independent of the planning-time cache.
+    if let Some(path) = fresh_branch_checkout(repo, branch_name)? {
+        return Ok(BranchDeletionOutcome::RetainedCheckedOut { path });
+    }
+    let deletion_lock = repo.branch_deletion_lock();
+    let update_result = {
+        let _guard = deletion_lock
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        repo.run_command(&["update-ref", "-d", &ref_name, expected_sha])
+    };
+    let update_err = match update_result {
         Ok(_) => return Ok(BranchDeletionOutcome::Integrated(reason)),
+        Err(error) if error.interrupt_signal().is_some() => return Err(error),
         Err(e) => e,
     };
 
-    // CAS failed. Re-check the ref to distinguish a race rejection (ref
-    // moved → still present) from a true error (refs DB I/O, permissions,
-    // git missing → propagate). `rev-parse --verify --quiet` returns exit
-    // 0 when the ref exists, exit 1 when it does not — no message parsing.
-    if repo
-        .run_command(&["rev-parse", "--verify", "--quiet", &ref_name])
-        .is_ok()
-    {
-        Ok(BranchDeletionOutcome::RetainedRaced)
-    } else {
-        Err(update_err)
+    match repo.run_command(&["rev-parse", "--verify", "--quiet", &ref_name]) {
+        Ok(live_sha) if live_sha.trim() != expected_sha => Ok(BranchDeletionOutcome::RetainedRaced),
+        _ => Err(update_err),
     }
 }
 
@@ -869,6 +847,29 @@ mod tests {
         assert!(!exit.success(), "branch should have been deleted");
     }
 
+    /// A packed-ref lock failure must preserve the branch and the original
+    /// Git error; an unchanged ref is not evidence of branch movement.
+    #[test]
+    fn cas_propagates_error_when_packed_refs_locked() {
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&["branch", "feature"]);
+        test.run_git(&["pack-refs", "--all"]);
+        test.run_git(&["config", "core.packedRefsTimeout", "0"]);
+        let repo = Repository::at(test.root_path()).unwrap();
+        let snapshot = repo.capture_refs().unwrap();
+        let expected_sha = &snapshot.local_branch("feature").unwrap().commit_sha;
+        std::fs::write(repo.git_common_dir().join("packed-refs.lock"), "").unwrap();
+
+        let result = delete_branch_if_safe(&repo, &snapshot, "feature", "main", false);
+        let error = result.err().expect("lock failure must propagate");
+        assert!(
+            error.display_message().contains("packed-refs.lock"),
+            "{}",
+            error.display_message()
+        );
+        assert_eq!(test.git_output(&["rev-parse", "feature"]), *expected_sha);
+    }
+
     /// A branch whose name starts with `-` must still force-delete: the
     /// `git branch -D -- <name>` separator stops git from parsing `-x` as an
     /// option. Created via `update-ref` since `git branch` rejects leading-dash
@@ -961,18 +962,16 @@ mod tests {
         );
     }
 
-    /// When the branch is integrated but absent from the captured snapshot
-    /// (created after capture), `integration_reason` still resolves it via the
-    /// live `rev-parse` fallback, yet the snapshot carries no SHA to CAS
-    /// against. The delete falls back to a plain `branch -D` and reports
-    /// `Integrated` — the non-CAS arm that exists for exactly this skew.
+    /// A branch created after the snapshot has no checked SHA. Even if a live
+    /// resolution finds it integrated, safe deletion must not force-delete it
+    /// without a compare-and-swap protecting a subsequent commit.
     #[test]
-    fn deletes_via_fallback_when_branch_absent_from_snapshot() {
+    fn retains_branch_when_snapshot_lacks_expected_sha() {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
         // Capture refs BEFORE `feature` exists, so the snapshot carries no SHA
-        // for it (forcing the snapshot-miss, non-CAS arm).
+        // for it.
         let snapshot = repo.capture_refs().unwrap();
         assert!(
             snapshot.local_branch("feature").is_none(),
@@ -983,21 +982,20 @@ mod tests {
         // commit), resolvable live but missing from the stale snapshot.
         test.run_git(&["branch", "feature"]);
 
-        let result = delete_branch_if_safe(&repo, &snapshot, "feature", "main", false).unwrap();
-        assert!(
-            matches!(result.outcome, BranchDeletionOutcome::Integrated(_)),
-            "expected Integrated via the non-CAS fallback"
-        );
-
-        // Branch was deleted.
-        let mut rev_parse = std::process::Command::new("git");
-        crate::testing::configure_git_cmd(&mut rev_parse);
-        let exit = rev_parse
-            .args(["rev-parse", "--verify", "--quiet", "refs/heads/feature"])
-            .current_dir(test.root_path())
-            .status()
+        let (_, reason) = repo
+            .integration_reason(&snapshot, "feature", "main")
             .unwrap();
-        assert!(!exit.success(), "branch should have been deleted");
+        assert!(reason.is_some(), "the live branch must appear integrated");
+        let result = delete_branch_if_safe(&repo, &snapshot, "feature", "main", false);
+        let error = result.err().expect("missing checked SHA must fail closed");
+        assert!(
+            error.to_string().contains("absent from ref snapshot"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(
+            test.git_output(&["rev-parse", "feature"]),
+            test.git_output(&["rev-parse", "main"])
+        );
     }
 
     #[test]

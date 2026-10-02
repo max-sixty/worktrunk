@@ -1731,7 +1731,7 @@ fn test_prune_summary_counts_declined_deletion_as_worktree_only(mut repo: TestRe
 /// returns) holds on every platform.
 ///
 /// On Unix a `git` shim on `PATH` additionally stalls the fallback's `git
-/// branch -d` for two seconds and records that it ran: proof prune *waits*
+/// update-ref -d` for two seconds and records that it ran: proof prune *waits*
 /// for it rather than racing ahead. The shim is Unix-only because Rust's
 /// `Command` resolves a bare program name through `CreateProcess`, which
 /// appends only `.exe` and never finds a `git.cmd`/`git.bat` — the same
@@ -1899,8 +1899,8 @@ fn test_prune_surfaces_failing_metadata_prune(mut repo: TestRepo) {
 
 /// A stale entry is unregistered before its branch is deleted, so it goes
 /// even when the branch deletion loses its compare-and-swap: prune reports the
-/// pruned entry, then the kept branch. The shim fails the CAS delete and leaves
-/// the ref, which is how a branch that moved during deletion reads.
+/// pruned entry, then the kept branch. The shim advances the ref before
+/// rejecting the CAS delete, reproducing an actual branch-tip race.
 #[cfg(unix)]
 #[rstest]
 fn test_prune_unregisters_stale_entry_when_branch_delete_races(mut repo: TestRepo) {
@@ -1914,7 +1914,11 @@ fn test_prune_unregisters_stale_entry_when_branch_delete_races(mut repo: TestRep
     write_failing_branch_delete_wrapper(&git_wrapper_dir, &which::which("git").unwrap());
     prepend_path(&mut cmd, &git_wrapper_dir);
     cmd.env("WT_TEST_FAIL_DELETE_BRANCH", "stale-raced");
-    cmd.env("WT_TEST_FAIL_DELETE_KEEPS_REF", "1");
+    let raced_sha = repo.git_output(&["commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "raced"]);
+    cmd.env(
+        "WORKTRUNK_TEST_FAIL_DELETE_REPLACEMENT_SHA",
+        raced_sha.trim(),
+    );
 
     let output = cmd
         .args(["step", "prune", "--yes", "--min-age=0s"])
@@ -1977,27 +1981,86 @@ fn test_prune_dry_run_leaves_stale_entry_registered(mut repo: TestRepo) {
     );
 }
 
-/// Hook-free removals execute concurrently (the read side of `check_lock`),
-/// not one at a time.
+/// A lock held by another Git process is a deletion error, not evidence that
+/// the branch moved. Both branch-only and staged-worktree deletion must report
+/// the underlying failure while preserving the original branch tip.
+#[rstest]
+#[case::branch_only(false)]
+#[case::worktree(true)]
+fn test_prune_reports_external_packed_ref_lock(mut repo: TestRepo, #[case] worktree: bool) {
+    repo.commit("initial");
+    if worktree {
+        repo.add_worktree("locked-delete");
+    } else {
+        repo.create_branch("locked-delete");
+    }
+    let expected_sha = repo.git_output(&["rev-parse", "locked-delete"]);
+    repo.run_git(&["pack-refs", "--all", "--prune"]);
+    repo.run_git(&["config", "core.packedRefsTimeout", "0"]);
+    let common_dir = crate::common::resolve_git_common_dir(repo.root_path());
+    assert!(
+        std::fs::read_to_string(common_dir.join("packed-refs"))
+            .unwrap()
+            .contains("refs/heads/locked-delete")
+    );
+    assert!(!common_dir.join("refs/heads/locked-delete").exists());
+    std::fs::write(common_dir.join("packed-refs.lock"), "external Git writer\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "prune", "--yes", "--min-age=0s"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(
+        !output.status.success(),
+        "a real branch-deletion error must fail prune:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("packed-refs.lock") && !stderr.contains("moved during deletion"),
+        "prune must report the Git error without inventing ref movement:\n{stderr}"
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "locked-delete"]),
+        expected_sha
+    );
+    assert!(common_dir.join("packed-refs.lock").exists());
+    if worktree {
+        assert!(!repo.worktree_path("locked-delete").exists());
+        let trash_dir = common_dir.join("wt/trash");
+        assert!(trash_dir.is_dir(), "the worktree must use trash staging");
+        crate::common::wait_for(
+            "staged worktree cleaned after branch deletion fails",
+            || std::fs::read_dir(&trash_dir).unwrap().next().is_none(),
+        );
+    }
+}
+
+/// Worktree staging stays concurrent, but packed branch mutations do not
+/// contend on Git's shared packed-refs lock.
 ///
-/// Two integrated orphan branches are removed through a `git` shim whose
-/// `update-ref -d` arms barrier on each other: each records that it started,
-/// then waits for the *other* branch's deletion to start before proceeding.
-/// The barrier only resolves if both removals are in flight at once — under
-/// serialized removals the first deletion would wait out the shim's 15 s
-/// timeout and drop a sentinel file, which the test asserts absent. Causally
-/// driven, so it runs at barrier speed when concurrency works; the timeout is
-/// only the safety net. Unix-only for the same `CreateProcess` shim reason as
-/// the canary above.
+/// The shim rendezvouses at the fsmonitor stop, before either worktree is
+/// staged. At deletion it holds the real packed-refs lock through an absence
+/// window: a concurrent deletion reaches real Git and fails its lock attempt.
+/// A serialized whole removal cannot pass the staging barrier; parallel ref
+/// mutation cannot pass the final ref and contention assertions.
 #[cfg(unix)]
 #[rstest]
-fn test_prune_removals_run_concurrently(repo: TestRepo) {
+fn test_prune_stages_concurrently_without_packed_ref_contention(mut repo: TestRepo) {
     repo.commit("initial");
 
-    // Orphan branches at main HEAD: same-commit integrated, no worktree, so
-    // each becomes a hook-free BranchOnly candidate on the parallel path.
-    repo.create_branch("para-a");
-    repo.create_branch("para-b");
+    repo.add_worktree("para-a");
+    repo.add_worktree("para-b");
+    repo.run_git(&["pack-refs", "--all", "--prune"]);
+    repo.run_git(&["config", "core.packedRefsTimeout", "0"]);
+    let common_dir = crate::common::resolve_git_common_dir(repo.root_path());
+    let packed_refs = std::fs::read_to_string(common_dir.join("packed-refs")).unwrap();
+    for name in ["para-a", "para-b"] {
+        assert!(packed_refs.contains(&format!("refs/heads/{name}")));
+        assert!(!common_dir.join("refs/heads").join(name).exists());
+    }
 
     let mut cmd = repo.wt_command();
     // The removal pool is sized from the rayon thread count; pin it to two so
@@ -2011,6 +2074,16 @@ fn test_prune_removals_run_concurrently(repo: TestRepo) {
     let barrier_dir = repo.home_path().join("barrier");
     std::fs::create_dir_all(&barrier_dir).unwrap();
     cmd.env("WT_TEST_BARRIER_DIR", &barrier_dir);
+    cmd.env(
+        "WORKTRUNK_TEST_PACKED_REFS_LOCK",
+        common_dir.join("packed-refs.lock"),
+    );
+    cmd.env(
+        "WORKTRUNK_TEST_REF_LOCK_WINDOW",
+        worktrunk::testing::SLEEP_FOR_ABSENCE_CHECK
+            .as_secs_f64()
+            .to_string(),
+    );
 
     let output = cmd
         .args(["step", "prune", "--yes", "--min-age=0s"])
@@ -2034,6 +2107,10 @@ fn test_prune_removals_run_concurrently(repo: TestRepo) {
     assert!(
         timeouts.is_empty(),
         "a deletion waited out the barrier — removals ran serially: {timeouts:?}"
+    );
+    assert!(
+        !barrier_dir.join("contended").exists(),
+        "prune's branch deletions contended on packed-refs.lock:\n{stderr}"
     );
     let branches = repo.git_output(&["branch", "--format=%(refname:short)"]);
     for name in ["para-a", "para-b"] {
@@ -2105,10 +2182,9 @@ fn test_prune_removal_failure_aborts_remaining_queue(repo: TestRepo) {
 
 /// Concurrent failures: the first error is reported, the rest stay quiet.
 ///
-/// Two failing removals rendezvous inside the shim (the barrier from
-/// `test_prune_removals_run_concurrently`) so both are in flight before
-/// either error lands — exercising the drain's duplicate-failure arm, which
-/// logs at debug rather than printing a second error.
+/// Two failing removals rendezvous on their post-mutation ref reads so both
+/// are in flight before either error lands, exercising the drain's duplicate-
+/// failure arm, which logs at debug rather than printing a second error.
 #[cfg(unix)]
 #[rstest]
 fn test_prune_concurrent_removal_failures_report_first(repo: TestRepo) {
@@ -2154,8 +2230,8 @@ fn test_prune_concurrent_removal_failures_report_first(repo: TestRepo) {
 /// A `git` shim that fails prune's CAS delete of
 /// `refs/heads/$WT_TEST_FAIL_DELETE_BRANCH`. By default it deletes the ref for
 /// real first, making `cas_delete_branch_outcome` propagate an error (ref gone
-/// on re-check); with `WT_TEST_FAIL_DELETE_KEEPS_REF` set it leaves the ref,
-/// which reads as `RetainedRaced` (a branch that moved during deletion).
+/// on re-check); with a replacement SHA it advances the ref, which is an
+/// actual `RetainedRaced` outcome.
 #[cfg(unix)]
 fn write_failing_branch_delete_wrapper(dir: &std::path::Path, real_git: &std::path::Path) {
     use std::os::unix::fs::PermissionsExt;
@@ -2164,7 +2240,11 @@ fn write_failing_branch_delete_wrapper(dir: &std::path::Path, real_git: &std::pa
     let script = format!(
         r#"#!/bin/sh
 if [ "$1" = "update-ref" ] && [ "$2" = "-d" ] && [ "$3" = "refs/heads/$WT_TEST_FAIL_DELETE_BRANCH" ]; then
-  [ -n "$WT_TEST_FAIL_DELETE_KEEPS_REF" ] || {real_git} update-ref -d "$3" || true
+  if [ -n "$WORKTRUNK_TEST_FAIL_DELETE_REPLACEMENT_SHA" ]; then
+    {real_git} update-ref "$3" "$WORKTRUNK_TEST_FAIL_DELETE_REPLACEMENT_SHA" || exit 2
+  else
+    {real_git} update-ref -d "$3" || true
+  fi
   exit 1
 fi
 exec {real_git} "$@"
@@ -2177,9 +2257,9 @@ exec {real_git} "$@"
     std::fs::set_permissions(&path, permissions).unwrap();
 }
 
-/// The barrier shim (see `write_barrier_git_wrapper`) with a failing tail:
-/// both `dupe-{a,b}` deletions rendezvous, delete their ref for real, then
-/// report failure — two concurrent removal errors.
+/// Fail both mutations after deleting their refs, then rendezvous on the
+/// classification reads. The reads stay outside the mutation lock, so both
+/// failures are in flight before either reaches prune's error drain.
 #[cfg(unix)]
 fn write_barrier_failing_delete_wrapper(dir: &std::path::Path, real_git: &std::path::Path) {
     use std::os::unix::fs::PermissionsExt;
@@ -2188,8 +2268,14 @@ fn write_barrier_failing_delete_wrapper(dir: &std::path::Path, real_git: &std::p
     let script = format!(
         r#"#!/bin/sh
 case "$1 $2 $3" in
-  "update-ref -d refs/heads/dupe-a") own=dupe-a; other=dupe-b ;;
-  "update-ref -d refs/heads/dupe-b") own=dupe-b; other=dupe-a ;;
+  "update-ref -d refs/heads/dupe-a"|"update-ref -d refs/heads/dupe-b")
+    {real_git} update-ref -d "$3" || exit 2
+    exit 1
+    ;;
+esac
+case "$1 $2 $3 $4" in
+  "rev-parse --verify --quiet refs/heads/dupe-a") own=dupe-a; other=dupe-b ;;
+  "rev-parse --verify --quiet refs/heads/dupe-b") own=dupe-b; other=dupe-a ;;
   *) exec {real_git} "$@" ;;
 esac
 : > "$WT_TEST_BARRIER_DIR/started-$own"
@@ -2201,8 +2287,7 @@ while [ ! -e "$WT_TEST_BARRIER_DIR/started-$other" ]; do
   fi
   sleep 0.05
 done
-{real_git} update-ref -d "$3" || true
-exit 1
+exec {real_git} "$@"
 "#
     );
     let path = dir.join("git");
@@ -2254,9 +2339,8 @@ exec {real_git} "$@"
     std::fs::set_permissions(&path, permissions).unwrap();
 }
 
-/// A `git` shim whose `update-ref -d refs/heads/para-{a,b}` arms rendezvous
-/// with each other (see `test_prune_removals_run_concurrently`); everything
-/// else passes through to the real git.
+/// Rendezvous before staging either worktree, then expose any overlap of
+/// packed-ref deletions through a real Git lock failure.
 #[cfg(unix)]
 fn write_barrier_git_wrapper(dir: &std::path::Path, real_git: &std::path::Path) {
     use std::os::unix::fs::PermissionsExt;
@@ -2264,9 +2348,25 @@ fn write_barrier_git_wrapper(dir: &std::path::Path, real_git: &std::path::Path) 
     let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
     let script = format!(
         r#"#!/bin/sh
-case "$1 $2 $3" in
-  "update-ref -d refs/heads/para-a") own=para-a; other=para-b ;;
-  "update-ref -d refs/heads/para-b") own=para-b; other=para-a ;;
+if [ "$1 $2" = "update-ref -d" ]; then
+  case "$3" in
+    refs/heads/para-a|refs/heads/para-b)
+      if (set -C; : > "$WORKTRUNK_TEST_PACKED_REFS_LOCK") 2>/dev/null; then
+        sleep "$WORKTRUNK_TEST_REF_LOCK_WINDOW"
+        rm "$WORKTRUNK_TEST_PACKED_REFS_LOCK"
+      else
+        : > "$WT_TEST_BARRIER_DIR/contended"
+      fi
+      exec {real_git} "$@"
+      ;;
+  esac
+fi
+if [ "$1 $2" != "fsmonitor--daemon stop" ]; then
+  exec {real_git} "$@"
+fi
+case "$PWD" in
+  *.para-a) own=para-a; other=para-b ;;
+  *.para-b) own=para-b; other=para-a ;;
   *) exec {real_git} "$@" ;;
 esac
 : > "$WT_TEST_BARRIER_DIR/started-$own"
@@ -2312,8 +2412,7 @@ fn write_delaying_git_wrapper(dir: &std::path::Path, real_git: &std::path::Path)
     let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
     // Match every deletion shape this prune might take. `delete_branch_if_safe`
     // emits one of:
-    //   - `branch -D <branch>` (the force path, and the fallback when there's
-    //     no snapshot SHA to compare-and-swap against)
+    //   - `branch -D -- <branch>` (the explicit force path)
     //   - `update-ref -d refs/heads/<branch> <expected-sha>` (the CAS path it
     //     takes when the branch is integrated)
     // The `-d` arm below is also matched defensively for the plain-delete form;

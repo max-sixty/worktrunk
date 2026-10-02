@@ -249,9 +249,7 @@ struct RemovalContext<'a> {
     /// concurrently. Verified empirically: with `.git/config` made immutable,
     /// only `git branch -D` reports `could not write config file`.
     /// (`git branch -D` remains reachable only via `delete_branch_if_safe`'s
-    /// force arm, which prune never uses, and its snapshot-miss arm,
-    /// unreachable here because the chain captures the snapshot immediately
-    /// before consulting it.)
+    /// force arm, which prune never uses.)
     check_lock: &'a RwLock<()>,
 }
 
@@ -279,6 +277,9 @@ struct RemovalContext<'a> {
 /// Everything else fans out on the read side. The Git worktree-registry calls
 /// inside those removals take their own repository-scoped lock; see
 /// [`prune_worktree_entry`](Repository::prune_worktree_entry).
+/// Safe branch deletions serialize only their ref mutation per repository,
+/// avoiding contention on Git's shared packed-ref lock. Topology reads remain
+/// concurrent and provide best-effort checkout protection.
 fn removal_needs_write(kind: CandidateKind, plan: &RemovalPlan, ctx: &RemovalContext<'_>) -> bool {
     if matches!(kind, CandidateKind::Current) {
         return true;

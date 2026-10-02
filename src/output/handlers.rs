@@ -133,6 +133,12 @@ enum BackgroundRemovalPlan {
     CompletedSynchronously,
 }
 
+/// Cleanup still runs when branch deletion fails after staging the worktree.
+struct BackgroundRemovalOutcome {
+    plan: BackgroundRemovalPlan,
+    branch_fate: anyhow::Result<BranchFate>,
+}
+
 /// Print `live` when a complete porcelain record names the requested branch
 /// and is either non-prunable or locked.
 ///
@@ -171,9 +177,9 @@ fn spawn_background_removal(
     log_label: &str,
     fallback_mode: BackgroundFallbackMode,
 ) -> anyhow::Result<BranchFate> {
-    let (remove_plan, fate) = execute_instant_removal_or_fallback(repo, removal, fallback_mode)?;
+    let outcome = execute_instant_removal_or_fallback(repo, removal, fallback_mode)?;
 
-    if let BackgroundRemovalPlan::Detached(remove_command) = remove_plan {
+    if let BackgroundRemovalPlan::Detached(remove_command) = outcome.plan {
         spawn_detached(
             repo,
             main_path,
@@ -183,7 +189,7 @@ fn spawn_background_removal(
             None,
         )?;
     }
-    Ok(fate)
+    outcome.branch_fate
 }
 
 /// Execute instant worktree removal via rename-then-prune.
@@ -201,7 +207,7 @@ fn execute_instant_removal_or_fallback(
     repo: &Repository,
     removal: &BackgroundRemoval<'_>,
     fallback_mode: BackgroundFallbackMode,
-) -> anyhow::Result<(BackgroundRemovalPlan, BranchFate)> {
+) -> anyhow::Result<BackgroundRemovalOutcome> {
     let BackgroundRemoval {
         worktree_path,
         branch_name,
@@ -232,9 +238,9 @@ fn execute_instant_removal_or_fallback(
                 deletion_mode.is_force(),
             );
             warn_if_branch_retained(branch, &result, planner_expected_retention);
-            BranchFate::from_result(Some(&result))
+            result.map(|result| BranchFate::from_outcome(&result.outcome))
         } else {
-            BranchFate::NotAttempted
+            Ok(BranchFate::NotAttempted)
         };
         if changed_directory {
             // Create an empty placeholder at the original path so the shell's working
@@ -245,14 +251,14 @@ fn execute_instant_removal_or_fallback(
             // is that Nushell may still emit PWD errors — not a correctness issue.
             let _ = std::fs::create_dir(worktree_path);
         }
-        Ok((
-            BackgroundRemovalPlan::Detached(build_remove_command_staged(
+        Ok(BackgroundRemovalOutcome {
+            plan: BackgroundRemovalPlan::Detached(build_remove_command_staged(
                 &staged_path,
                 worktree_path,
                 changed_directory,
             )),
-            fate,
-        ))
+            branch_fate: fate,
+        })
     } else {
         if matches!(
             fallback_mode,
@@ -271,9 +277,12 @@ fn execute_instant_removal_or_fallback(
                     planner_expected_retention,
                 )
             } else {
-                BranchFate::NotAttempted
+                Ok(BranchFate::NotAttempted)
             };
-            return Ok((BackgroundRemovalPlan::CompletedSynchronously, fate));
+            return Ok(BackgroundRemovalOutcome {
+                plan: BackgroundRemovalPlan::CompletedSynchronously,
+                branch_fate: fate,
+            });
         }
 
         // Fallback: cross-filesystem, permissions, Windows file locking, etc.
@@ -339,7 +348,10 @@ fn execute_instant_removal_or_fallback(
                 BranchFate::NotAttempted,
             ),
         };
-        Ok((BackgroundRemovalPlan::Detached(command), fate))
+        Ok(BackgroundRemovalOutcome {
+            plan: BackgroundRemovalPlan::Detached(command),
+            branch_fate: Ok(fate),
+        })
     }
 }
 
@@ -357,7 +369,7 @@ fn delete_branch_in_synchronous_fallback(
     target_branch: Option<&str>,
     deletion_mode: BranchDeletionMode,
     planner_expected_retention: bool,
-) -> BranchFate {
+) -> anyhow::Result<BranchFate> {
     let result = execute_branch_deletion(
         repo,
         branch,
@@ -365,7 +377,7 @@ fn delete_branch_in_synchronous_fallback(
         deletion_mode.is_force(),
     );
     warn_if_branch_retained(branch, &result, planner_expected_retention);
-    BranchFate::from_result(Some(&result))
+    result.map(|result| BranchFate::from_outcome(&result.outcome))
 }
 
 /// Surface the residual branch when `delete_branch_if_safe` returned an
@@ -389,46 +401,43 @@ fn delete_branch_in_synchronous_fallback(
 ///   similar race) — otherwise `print_hints` has explained the case and a
 ///   second message would duplicate.
 /// - `Ok(ForceDeleted)` / `Ok(Integrated(_))`: succeeded; no message.
-/// - `Err`: `tracing::warn!` for developer diagnostics; the failure modes
-///   here (`git update-ref` exec error, refs DB I/O failure) are not
-///   user-actionable beyond re-running the command.
+/// - `Err`: no warning; the caller propagates the Git error after arranging
+///   trash cleanup, so a failed deletion never becomes a successful prune.
 fn warn_if_branch_retained(
     branch: &str,
     result: &anyhow::Result<BranchDeletionResult>,
     planner_expected_retention: bool,
 ) {
-    match result {
-        Ok(result) => match &result.outcome {
-            BranchDeletionOutcome::RetainedCheckedOut { path } => {
-                eprintln!(
-                    "{}",
-                    retained_checked_out_branch_message(branch, path, true)
-                );
-            }
-            BranchDeletionOutcome::RetainedRaced => {
-                // The branch tip moved between the integration check and the
-                // atomic delete (a hook commit, a concurrent push). The
-                // compare-and-swap refused — fail-closed — so the unmerged
-                // commits are preserved. Always surface, regardless of planner
-                // prediction.
-                eprintln!("{}", retained_raced_branch_message(branch, true));
-            }
-            BranchDeletionOutcome::NotDeleted if !planner_expected_retention => {
-                let cmd = suggest_command("remove", &[branch], &["-D"]);
-                eprintln!(
-                    "{}",
-                    warning_message(cformat!(
-                        "Removed worktree but kept branch <bold>{branch}</> (not integrated); to delete, run <bold>{cmd}</>"
-                    ))
-                );
-            }
-            BranchDeletionOutcome::NotDeleted
-            | BranchDeletionOutcome::ForceDeleted
-            | BranchDeletionOutcome::Integrated(_) => {}
-        },
-        Err(e) => {
-            tracing::warn!(branch = %branch, error = %e, "Failed to delete branch {branch} after removing worktree: {e}");
+    let Ok(result) = result else {
+        return;
+    };
+    match &result.outcome {
+        BranchDeletionOutcome::RetainedCheckedOut { path } => {
+            eprintln!(
+                "{}",
+                retained_checked_out_branch_message(branch, path, true)
+            );
         }
+        BranchDeletionOutcome::RetainedRaced => {
+            // The branch tip moved between the integration check and the
+            // atomic delete (a hook commit, a concurrent push). The
+            // compare-and-swap refused — fail-closed — so the unmerged
+            // commits are preserved. Always surface, regardless of planner
+            // prediction.
+            eprintln!("{}", retained_raced_branch_message(branch, true));
+        }
+        BranchDeletionOutcome::NotDeleted if !planner_expected_retention => {
+            let cmd = suggest_command("remove", &[branch], &["-D"]);
+            eprintln!(
+                "{}",
+                warning_message(cformat!(
+                    "Removed worktree but kept branch <bold>{branch}</> (not integrated); to delete, run <bold>{cmd}</>"
+                ))
+            );
+        }
+        BranchDeletionOutcome::NotDeleted
+        | BranchDeletionOutcome::ForceDeleted
+        | BranchDeletionOutcome::Integrated(_) => {}
     }
 }
 
@@ -1168,11 +1177,10 @@ pub fn execute_user_command(
 ///
 /// Returns the branch's [`BranchFate`] so callers report what happened rather
 /// than what the plan intended — the prune summary and `--format=json` both
-/// read it. Worktree-removal failures propagate as `Err`, and for a
-/// `Worktree` plan a surviving branch is a fate, not an error — the removal
-/// was the primary operation. For a `BranchOnly` plan the deletion *is* the
-/// operation, so a hard command failure (not a declined or raced deletion)
-/// still propagates as `Err`.
+/// read it. Worktree-removal failures and hard branch-deletion failures
+/// propagate as `Err`; an intentionally retained, unmerged, or moved branch
+/// is a fate. Silent worktree removal keeps its best-effort deletion contract,
+/// reporting a hard branch failure as a retained fate to the picker.
 ///
 /// Approval is handled at the gate (command entry point), not here. The
 /// `announcer`'s `show_branch` setting (set by the caller) controls whether
@@ -2307,7 +2315,7 @@ mod tests {
             false,
         );
 
-        // Err arm → tracing::warn! only, no stderr message
+        // Err arm → caller propagates it after arranging trash cleanup.
         warn_if_branch_retained(
             "feature",
             &Err(anyhow::anyhow!("simulated git failure")),
