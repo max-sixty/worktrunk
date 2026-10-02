@@ -8317,10 +8317,11 @@ fn test_switch_format_json_failures_emit_one_error(repo: TestRepo) {
         .unwrap();
     assert!(!early.status.success());
     let json: serde_json::Value = serde_json::from_slice(&early.stdout).unwrap();
-    assert_eq!(
-        json,
-        serde_json::json!({ "error": "No branch named missing-json" })
-    );
+    assert_eq!(json.as_object().unwrap().len(), 1);
+    insta::assert_snapshot!(json["error"].as_str().expect("error is a plain string"), @"
+    ✗ No branch named missing-json
+    ↳ To create a new branch, run wt switch --create missing-json; to list branches, run wt list --branches --remotes
+    ");
     assert!(!early.stderr.is_empty());
 
     // Git can reject a planned creation after planning has succeeded.
@@ -8338,10 +8339,12 @@ fn test_switch_format_json_failures_emit_one_error(repo: TestRepo) {
         .unwrap();
     assert!(!rejected.status.success());
     let json: serde_json::Value = serde_json::from_slice(&rejected.stdout).unwrap();
-    assert_eq!(
-        json,
-        serde_json::json!({ "error": "Failed to create worktree for bad..name from base main" })
+    let error = json["error"].as_str().expect("error is a plain string");
+    assert!(
+        error.contains("not a valid branch name"),
+        "JSON must retain Git's rejection reason: {error}"
     );
+    assert_eq!(error, error.ansi_strip());
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("not a valid branch name"));
 
     // The worktree is created before --execute fails. The result must describe
@@ -8710,7 +8713,9 @@ fn switch_base_accepts_worktree_path(mut repo: TestRepo) {
 }
 
 #[rstest]
-fn test_switch_create_names_branch_left_by_failed_worktree_add(repo: TestRepo) {
+#[case(false)]
+#[case(true)]
+fn test_switch_create_names_branch_left_by_failed_worktree_add(repo: TestRepo, #[case] json: bool) {
     // `git worktree add -b` writes the branch ref before it populates the
     // worktree, so a failure in between leaves the branch with nothing checked
     // out on it (issue #4108). A regular file where the worktree's leading
@@ -8718,11 +8723,12 @@ fn test_switch_create_names_branch_left_by_failed_worktree_add(repo: TestRepo) {
     repo.write_test_config(r#"worktree-path = "blocked/{{ branch | sanitize }}""#);
     fs::write(repo.root_path().join("blocked"), "not a directory").unwrap();
 
-    let output = repo
-        .wt_command()
-        .args(["switch", "--create", "stranded"])
-        .output()
-        .unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "--create", "stranded"]);
+    if json {
+        cmd.args(["--format=json", "--no-cd"]);
+    }
+    let output = cmd.output().unwrap();
     assert!(
         !output.status.success(),
         "switch --create should fail when git cannot create the worktree"
@@ -8755,6 +8761,21 @@ fn test_switch_create_names_branch_left_by_failed_worktree_add(repo: TestRepo) {
         stderr.contains("wt switch stranded"),
         "expected a recovery suggestion for the leftover branch, got: {stderr}"
     );
+    if json {
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let error = result["error"].as_str().expect("error is a plain string");
+        assert!(
+            error.contains("fatal: could not create leading directories"),
+            "JSON must retain Git's directory-creation error: {error}"
+        );
+        assert!(
+            error.contains("Branch stranded was created before the failure, with no worktree")
+                && error.contains("git branch -d -- stranded")
+                && error.contains("wt switch stranded"),
+            "JSON must name the leftover branch and both recovery choices: {error}"
+        );
+        assert_eq!(error, error.ansi_strip());
+    }
 }
 
 // `--path` tests

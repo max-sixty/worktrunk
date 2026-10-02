@@ -1125,6 +1125,10 @@ fn handle_command_failure(
             error.root_cause().to_string()
         } else if worktrunk::git::CommandError::find_in(&error).is_some() {
             message
+        } else if let Some(diagnostic) = error.render_diagnostic() {
+            // Typed errors keep their captured detail and recovery hints in
+            // Diagnostic, while Display intentionally returns only the title.
+            diagnostic
         } else {
             // Keep context and source detail for discovery/configuration
             // failures; the outer caption alone hides the actual cause.
