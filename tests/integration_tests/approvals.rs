@@ -6,6 +6,7 @@ use crate::common::{
     setup_temp_snapshot_settings, temp_home, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
+use path_slash::PathExt as _;
 use rstest::rstest;
 use std::fs;
 use tempfile::TempDir;
@@ -57,35 +58,57 @@ fn snapshot_list_approvals(test_name: &str, repo: &TestRepo) {
 #[case::approvals(false)]
 #[case::legacy_config(true)]
 fn test_approvals_unreadable_source_is_not_empty(repo: TestRepo, #[case] legacy: bool) {
+    let source_dir = repo.home_path().join("source with spaces");
+    fs::create_dir(&source_dir).unwrap();
+    let source_dir = dunce::canonicalize(source_dir).unwrap();
+    let approvals_path = source_dir.join("test-approvals.toml");
     let source = if legacy {
-        repo.test_approvals_path().with_file_name("config.toml")
+        approvals_path.with_file_name("config.toml")
     } else {
-        repo.test_approvals_path().to_path_buf()
+        approvals_path.clone()
     };
     fs::write(&source, [0xff]).unwrap();
 
-    let mut cmd = repo.wt_command();
-    cmd.args(["config", "approvals", "list"]);
-    let output = cmd.output().unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
-    assert_eq!(fs::read(&source).unwrap(), [0xff]);
-
     let mut settings = insta::Settings::new();
     settings.set_snapshot_path("../snapshots");
-    crate::common::add_path_placeholder_filter(
-        &mut settings,
-        &regex::escape(&worktrunk::path::to_posix_path(&source.to_string_lossy())),
-        "[APPROVALS_SOURCE]",
+    let absolute = shell_escape::escape(source.to_slash_lossy());
+    let path_pattern = format!(
+        r"(?:{}|{}{}'?)",
+        regex::escape(&absolute),
+        crate::common::TEST_PATH_PREFIX,
+        regex::escape(source.file_name().unwrap().to_str().unwrap()),
     );
-    settings.bind(|| {
-        let name = if legacy {
-            "approvals_unreadable_legacy_source"
+    crate::common::add_path_placeholder_filter(&mut settings, &path_pattern, "[APPROVALS_SOURCE]");
+    // Exercise the real formatter's home-relative and quoted absolute output,
+    // regardless of host HOME canonicalization or platform path layout.
+    for home in [&source_dir, repo.root_path()] {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "approvals", "list"])
+            .env("WORKTRUNK_APPROVALS_PATH", &approvals_path)
+            .env("HOME", home)
+            .env("USERPROFILE", home);
+        let output = cmd.output().unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert_eq!(fs::read(&source).unwrap(), [0xff]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if home == source_dir.as_path() {
+            assert!(stderr.contains(&format!(
+                "~/{}:",
+                source.file_name().unwrap().to_str().unwrap()
+            )));
         } else {
-            "approvals_unreadable_source"
-        };
-        insta::assert_snapshot!(name, String::from_utf8_lossy(&output.stderr));
-    });
+            assert!(stderr.contains(&format!("{absolute}:")));
+        }
+        settings.bind(|| {
+            let name = if legacy {
+                "approvals_unreadable_legacy_source"
+            } else {
+                "approvals_unreadable_source"
+            };
+            insta::assert_snapshot!(name, String::from_utf8_lossy(&output.stderr));
+        });
+    }
 }
 
 #[rstest]
