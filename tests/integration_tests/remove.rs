@@ -5652,13 +5652,16 @@ fn test_force_remove_with_corrupt_index_reports_unreadable_status(mut repo: Test
 /// for deletion, and before the next worktree in a removal batch is touched.
 #[cfg(unix)]
 #[rstest]
-#[case::foreground_sigint(true, 2)]
-#[case::background_sigint(false, 2)]
-#[case::foreground_sigterm(true, 15)]
-#[case::background_sigterm(false, 15)]
+#[case::foreground_sigint(true, false, 2)]
+#[case::background_sigint(false, false, 2)]
+#[case::foreground_sigterm(true, false, 15)]
+#[case::background_sigterm(false, false, 15)]
+#[case::detached_foreground_sigint(true, true, 2)]
+#[case::detached_foreground_sigterm(true, true, 15)]
 fn test_force_remove_interrupted_status_preserves_worktrees(
     mut repo: TestRepo,
     #[case] foreground: bool,
+    #[case] detached: bool,
     #[case] signal: i32,
 ) {
     use std::os::unix::fs::PermissionsExt;
@@ -5667,7 +5670,42 @@ fn test_force_remove_interrupted_status_preserves_worktrees(
     let worktree = repo.add_worktree("interrupted-status");
     let later_worktree = repo.add_worktree("later-worktree");
     fs::write(worktree.join("untracked.txt"), "preserve this data\n").unwrap();
+    fs::write(
+        later_worktree.join("untracked.txt"),
+        "preserve later data\n",
+    )
+    .unwrap();
     let branch_head = repo.git_output(&["rev-parse", "refs/heads/interrupted-status"]);
+    if detached {
+        repo.detach_head_in_worktree("interrupted-status");
+        repo.run_git(&["branch", "-d", "interrupted-status"]);
+        let symbolic_head = repo
+            .git_command()
+            .args(["symbolic-ref", "--quiet", "HEAD"])
+            .current_dir(&worktree)
+            .run()
+            .unwrap();
+        assert_eq!(symbolic_head.status.code(), Some(1));
+        assert_eq!(
+            repo.git_command()
+                .args([
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    "refs/heads/interrupted-status"
+                ])
+                .run()
+                .unwrap()
+                .status
+                .code(),
+            Some(1)
+        );
+    }
+    let worktrees_before = repo.git_output(&["worktree", "list", "--porcelain"]);
+    let staged_path = crate::common::resolve_git_common_dir(repo.root_path())
+        .join("wt/trash")
+        .join(format!("interrupted-status-{}", crate::common::TEST_EPOCH));
+    assert!(!staged_path.exists());
     let monitor = repo.root_path().join(".git/interrupt-status");
     fs::write(
         &monitor,
@@ -5688,9 +5726,14 @@ fn test_force_remove_interrupted_status_preserves_worktrees(
     assert_eq!(status.status.signal(), Some(signal));
 
     let mut command = repo.wt_command();
+    let target = if detached {
+        worktree.to_str().unwrap()
+    } else {
+        "interrupted-status"
+    };
     command.args([
         "remove",
-        "interrupted-status",
+        target,
         "later-worktree",
         "--no-delete-branch",
         "--force",
@@ -5711,9 +5754,18 @@ fn test_force_remove_interrupted_status_preserves_worktrees(
     );
     assert!(worktree.join(".git").is_file());
     assert!(later_worktree.join(".git").is_file());
+    assert!(!staged_path.exists());
     assert_eq!(
-        repo.git_output(&["rev-parse", "refs/heads/interrupted-status"]),
+        fs::read_to_string(later_worktree.join("untracked.txt")).unwrap(),
+        "preserve later data\n"
+    );
+    assert_eq!(
+        repo.git_output(&["-C", worktree.to_str().unwrap(), "rev-parse", "HEAD"]),
         branch_head
+    );
+    assert_eq!(
+        repo.git_output(&["worktree", "list", "--porcelain"]),
+        worktrees_before
     );
     let stderr = String::from_utf8_lossy(&removal.stderr);
     assert!(!stderr.contains("Discarding"));
