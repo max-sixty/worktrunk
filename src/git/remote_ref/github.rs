@@ -133,7 +133,8 @@ pub(super) fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result
         if serde_json::from_slice::<GhApiErrorResponse>(&output.stdout)
             .is_ok_and(|error| error.status == "404")
         {
-            let hint = cformat!("Choose the repository with <underline>gh repo set-default</>");
+            let hint =
+                cformat!("To query a different repository, run <underline>gh repo set-default</>");
             return Err(cli_api_error(
                 ForgeKind::GitHub.ref_type(),
                 format!("PR #{pr_number} not found on {owner}/{repo_name} ({source})"),

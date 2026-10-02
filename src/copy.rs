@@ -762,4 +762,63 @@ mod tests {
         );
         assert!(!dest.exists());
     }
+
+    /// Failed filesystem operations retain their cause and quote paths that
+    /// contain spaces, including failures before any data can be copied.
+    #[cfg(unix)]
+    #[test]
+    fn test_copy_errors_quote_paths_and_retain_io_causes() {
+        let dir = crate::testing::test_tempdir();
+        let blocker = dir.path().join("file as parent");
+        fs::write(&blocker, b"existing data").unwrap();
+        let invalid_source = blocker.join("child");
+        let dest = dir.path().join("destination");
+        let metadata_error = copy_leaf(&invalid_source, &dest, None, false, None).unwrap_err();
+        assert!(metadata_error.downcast_ref::<std::io::Error>().is_some());
+        assert_eq!(
+            metadata_error.to_string(),
+            format!("reading metadata for '{}'", invalid_source.display())
+        );
+        assert!(!dest.exists());
+
+        let src = dir.path().join("source");
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("data"), b"data").unwrap();
+        let invalid_dest = blocker.join("destination");
+        let directory_error = copy_dir_recursive(
+            &src,
+            &invalid_dest,
+            None,
+            false,
+            None,
+            &Progress::disabled(),
+        )
+        .unwrap_err();
+        assert!(directory_error.downcast_ref::<std::io::Error>().is_some());
+        assert_eq!(
+            directory_error.to_string(),
+            format!("creating directory '{}'", invalid_dest.display())
+        );
+
+        let source_file = src.join("source file");
+        fs::write(&source_file, b"source data").unwrap();
+        let copy_error = copy_leaf(&source_file, &invalid_dest, None, false, None).unwrap_err();
+        assert!(copy_error.downcast_ref::<std::io::Error>().is_some());
+        assert_eq!(
+            copy_error.to_string(),
+            format!("copying '{}'", source_file.display())
+        );
+        assert_eq!(fs::read(&source_file).unwrap(), b"source data");
+
+        let source_link = src.join("source link");
+        std::os::unix::fs::symlink(&source_file, &source_link).unwrap();
+        let link_error = copy_leaf(&source_link, &invalid_dest, None, false, None).unwrap_err();
+        assert!(link_error.downcast_ref::<std::io::Error>().is_some());
+        assert_eq!(
+            link_error.to_string(),
+            format!("creating symlink '{}'", invalid_dest.display())
+        );
+        assert_eq!(fs::read_link(&source_link).unwrap(), source_file);
+        assert_eq!(fs::read(&blocker).unwrap(), b"existing data");
+    }
 }
