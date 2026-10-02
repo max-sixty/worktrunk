@@ -8323,6 +8323,27 @@ fn test_switch_format_json_failures_emit_one_error(repo: TestRepo) {
     );
     assert!(!early.stderr.is_empty());
 
+    // Git can reject a planned creation after planning has succeeded.
+    let rejected = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "bad..name",
+            "--format=json",
+            "--no-cd",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&rejected.stdout).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({ "error": "Failed to create worktree for bad..name from base main" })
+    );
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("not a valid branch name"));
+
     // The worktree is created before --execute fails. The result must describe
     // the whole synchronous command, rather than reporting success too early.
     let late = repo
@@ -8352,6 +8373,35 @@ fn test_switch_format_json_failures_emit_one_error(repo: TestRepo) {
             .join("repo.failed-json")
             .is_dir()
     );
+}
+
+#[rstest]
+fn test_switch_format_json_fetch_failure(#[from(repo_with_remote)] repo: TestRepo) {
+    let github_url = "https://github.com/owner/test-repo.git";
+    repo.run_git(&["remote", "set-url", "origin", github_url]);
+    // Redirect the URL to an absent local repository: exercise real Git
+    // failure without a network request or an external authentication state.
+    let missing = repo.root_path().join("missing-remote");
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", missing.display()),
+        github_url,
+    ]);
+    let response = r#"{"title":"Missing branch","user":{"login":"owner"},"state":"open","draft":false,"head":{"ref":"missing-head","repo":{"name":"test-repo","owner":{"login":"owner"}}},"base":{"ref":"main","repo":{"name":"test-repo","owner":{"login":"owner"}}},"html_url":"https://github.com/owner/test-repo/pull/101"}"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, response);
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "pr:101", "--format=json", "--no-cd", "--yes"]);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(!output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let message = json["error"].as_str().unwrap();
+    assert!(
+        message.contains("does not appear to be a git repository"),
+        "{json}"
+    );
+    assert!(message.contains(missing.to_str().unwrap()), "{json}");
+    assert!(json.get("action").is_none());
 }
 
 #[rstest]
