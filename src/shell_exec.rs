@@ -1170,7 +1170,7 @@ fn record_captured(
 ) {
     match result {
         Ok(output) => trace.complete(output.status.success()),
-        Err(e) => trace.fail(e),
+        Err(e) => trace.fail(crate::git::error_chain_message(e)),
     }
     // stdin is logged either way; stdout/stderr only when the command produced
     // output — a command that failed to spawn still leaves its input behind.
@@ -1217,9 +1217,8 @@ impl std::fmt::Display for SpawnError {
             .unwrap_or_else(|| "inherited working directory".to_string());
         write!(
             f,
-            "Failed to execute {} @ {cwd}: {}",
-            self.program.to_string_lossy(),
-            self.source
+            "Failed to execute {} @ {cwd}",
+            self.program.to_string_lossy()
         )
     }
 }
@@ -3096,23 +3095,42 @@ mod tests {
             ("/bin/sh".to_string(), missing_cwd.as_path()),
             (script.to_string_lossy().into_owned(), dir.path()),
         ] {
-            let error = Cmd::new(&program).current_dir(cwd).run().unwrap_err();
-            assert_eq!(error.kind(), ErrorKind::NotFound);
-            assert!(error.to_string().contains(&program), "{error}");
-            assert!(
-                error
-                    .to_string()
-                    .contains(&cwd.to_string_lossy().to_string()),
-                "{error}"
-            );
-            let source = std::error::Error::source(error.get_ref().unwrap()).unwrap();
-            assert_eq!(
-                source
-                    .downcast_ref::<std::io::Error>()
-                    .unwrap()
-                    .raw_os_error(),
-                Some(2)
-            );
+            for command in [
+                Cmd::new(&program).current_dir(cwd),
+                Cmd::new(&program).current_dir(cwd).stdin_bytes("{}"),
+                Cmd::new(&program)
+                    .current_dir(cwd)
+                    .timeout(Duration::from_secs(1)),
+            ] {
+                let error = command.run().unwrap_err();
+                assert_eq!(error.kind(), ErrorKind::NotFound);
+                assert!(error.to_string().contains(&program), "{error}");
+                assert!(
+                    error
+                        .to_string()
+                        .contains(&cwd.to_string_lossy().to_string()),
+                    "{error}"
+                );
+                let source = std::error::Error::source(error.get_ref().unwrap()).unwrap();
+                assert_eq!(
+                    source
+                        .downcast_ref::<std::io::Error>()
+                        .unwrap()
+                        .raw_os_error(),
+                    Some(2)
+                );
+                let cause = source.to_string();
+                // The borrowed detail used by captured-command traces and the
+                // embedded Git-failure detail both retain the OS cause once.
+                let trace_detail = crate::git::error_chain_message(&error);
+                let error: anyhow::Error = error.into();
+                let detail = error.display_message();
+                assert_eq!(detail, trace_detail);
+                assert_eq!(detail.matches(&cause).count(), 1, "{detail}");
+                let (extracted, command) = crate::git::Repository::extract_failed_command(&error);
+                assert_eq!(extracted, detail);
+                assert!(command.is_none());
+            }
             let error = Cmd::new(&program).current_dir(cwd).stream().unwrap_err();
             assert!(error.to_string().contains(&program), "{error}");
             assert!(
@@ -3134,6 +3152,42 @@ mod tests {
     fn test_cmd_run_spawn_failure_is_errored() {
         let err = Cmd::new("/no/such/binary-7f3a9b2c").run().unwrap_err();
         assert_eq!(err.kind(), ErrorKind::NotFound);
+    }
+
+    /// A scoped subscriber records real capture failures without changing the
+    /// process logger. Both stdin and timeout runners retain the OS cause.
+    #[test]
+    #[cfg(all(feature = "cli", unix))]
+    fn test_captured_spawn_trace_retains_io_cause_once() {
+        let log = tempfile::NamedTempFile::new().unwrap();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(std::sync::Arc::new(log.reopen().unwrap()))
+            .finish();
+        let causes = tracing::subscriber::with_default(subscriber, || {
+            [
+                Cmd::new("worktrunk-no-such-program-trace").stdin_bytes("{}"),
+                Cmd::new("worktrunk-no-such-program-trace").timeout(Duration::from_secs(1)),
+            ]
+            .into_iter()
+            .map(|command| {
+                let error = command.run().unwrap_err();
+                std::error::Error::source(&error).unwrap().to_string()
+            })
+            .collect::<Vec<_>>()
+        });
+        let output = std::fs::read_to_string(log.path()).unwrap();
+        let events: Vec<_> = output
+            .lines()
+            .filter(|line| line.contains("cmd_errored"))
+            .collect();
+        assert_eq!(events.len(), causes.len(), "{output}");
+        for (event, cause) in events.into_iter().zip(causes) {
+            assert!(event.contains("Failed to execute worktrunk-no-such-program-trace"));
+            assert_eq!(event.matches(&cause).count(), 1, "{event}");
+        }
     }
 
     #[test]

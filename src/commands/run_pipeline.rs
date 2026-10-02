@@ -354,6 +354,23 @@ mod tests {
     }
 
     #[test]
+    fn pipeline_spawn_failure_retains_working_directory_and_io_cause() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing-worktree");
+        let log = fs::File::create(dir.path().join("command.log")).unwrap();
+        let error = spawn_shell_command("true", &missing, "{}", log)
+            .err()
+            .unwrap();
+        let cause = error.root_cause().downcast_ref::<std::io::Error>().unwrap();
+        assert_eq!(cause.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(cause.raw_os_error(), Some(2));
+        assert_eq!(error.exit_code(), None);
+        let detail = error.display_message();
+        assert!(detail.contains(&worktrunk::path::format_path_for_display(&missing)));
+        assert_eq!(detail.matches(&cause.to_string()).count(), 1, "{detail}");
+    }
+
+    #[test]
     fn signal_exit_reports_named_signal_and_shell_exit_code() {
         let cases = [
             (

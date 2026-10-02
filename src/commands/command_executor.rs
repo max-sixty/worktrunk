@@ -686,21 +686,10 @@ fn handle_command_error(
     match failure_strategy {
         FailureStrategy::FailFast => Err(error_wrapper(cmd, err)),
         FailureStrategy::Warn => {
-            let message = match &cmd.name {
-                Some(name) => cformat!("Command <bold>{name}</> failed ({err})"),
-                None => format!("Command failed ({err})"),
-            };
             let error = error_wrapper(cmd, err);
-            let rendered = if matches!(
-                error.downcast_ref::<WorktrunkError>(),
-                Some(WorktrunkError::AlreadyDisplayed { .. })
-            ) {
-                error_message(message).to_string()
-            } else {
-                error
-                    .render_diagnostic()
-                    .unwrap_or_else(|| error_message(error.to_string()).to_string())
-            };
+            let rendered = error
+                .render_diagnostic()
+                .unwrap_or_else(|| error_message(error.to_string()).to_string());
             eprintln!("{rendered}");
             Ok(())
         }
@@ -894,6 +883,15 @@ mod tests {
                 .downcast_ref::<std::io::Error>()
                 .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound)
         }));
+        assert_eq!(error.to_string().matches("os error 2").count(), 1);
+        assert_eq!(
+            error
+                .render_diagnostic()
+                .unwrap()
+                .matches("os error 2")
+                .count(),
+            1
+        );
     }
 
     #[test]

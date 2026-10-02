@@ -4520,3 +4520,42 @@ fn test_hook_failure_status_and_source(
         assert_snapshot!(format!("hook_failure_status_{source}"), stderr);
     });
 }
+
+/// A post-hook moves its worktree, so the next spawn fails. Warn mode must
+/// show the complete OS cause once while retaining its continue policy.
+#[rstest]
+#[cfg(unix)]
+fn test_foreground_hook_spawn_failure_has_one_io_detail(mut repo: TestRepo) {
+    let worktree = repo.add_worktree("move-away");
+    repo.write_test_config(
+        r#"post-start = [
+    { move = "mv {{ worktree_path }} {{ worktree_path }}.moved" },
+    { check = "true" },
+]
+"#,
+    );
+    let output = repo
+        .wt_command()
+        .args(["hook", "post-start", "--foreground"])
+        .current_dir(&worktree)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !worktree.exists(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(worktree.with_file_name("repo.move-away.moved").exists());
+    assert!(repo.root_path().exists());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr.matches("Failed to execute").count(), 1, "{stderr}");
+    assert_eq!(stderr.matches("os error 2").count(), 1, "{stderr}");
+    setup_snapshot_settings(&repo).bind(|| {
+        assert_snapshot!("foreground_hook_spawn_failure_has_one_io_detail", stderr);
+    });
+}

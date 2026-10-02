@@ -147,7 +147,8 @@ use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
 
 // Import types from parent module
 use super::{
-    CommandError, DefaultBranchName, ForgeKind, GitError, GitItemId, LineDiff, WorktreeInfo,
+    CommandError, DefaultBranchName, ErrorExt, ForgeKind, GitError, GitItemId, LineDiff,
+    WorktreeInfo,
 };
 
 // Re-export types needed by submodules
@@ -2162,7 +2163,7 @@ impl Repository {
                 }),
             );
         }
-        (err.to_string(), None)
+        (err.display_message(), None)
     }
 }
 

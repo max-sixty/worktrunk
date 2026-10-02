@@ -122,12 +122,13 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                             err.to_string(),
                         )
                     } else {
-                        let styled = err.render_diagnostic().unwrap_or_else(|| err.to_string());
+                        let detail = err.display_message();
+                        let styled = err.render_diagnostic().unwrap_or_else(|| detail.clone());
                         (
                             " (spawn failed)".to_string(),
                             serde_json::json!(null),
                             Some(styled),
-                            err.to_string(),
+                            detail,
                         )
                     };
                 eprintln!(

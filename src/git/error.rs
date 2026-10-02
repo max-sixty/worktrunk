@@ -118,9 +118,9 @@ pub trait ErrorExt {
     ///
     /// When a [`CommandError`] is anywhere in the chain, returns its captured
     /// stderr/stdout via [`CommandError::combined_output`] — that's git's actual
-    /// error message, often multi-line. Otherwise falls back to the top-level
-    /// `Display`, which under the [`Diagnostic`] split is the typed error's
-    /// short single-line label.
+    /// error message, often multi-line. Typed diagnostics keep their top-level
+    /// `Display` label; ordinary errors include their source chain so an I/O
+    /// failure's cause survives when embedded in another error.
     ///
     /// Use this when embedding a sub-error's text inside another typed error's
     /// message field (e.g., `GitError::WorktreeRemovalFailed::error`,
@@ -271,6 +271,14 @@ pub fn process_exit_description(code: Option<i32>, signal: Option<i32>) -> Strin
         (Some(code), None) => format!("exit code {code}"),
         (None, None) => "unknown exit status".to_string(),
     }
+}
+
+/// Plain detail for errors whose Display describes only their own layer.
+pub(crate) fn error_chain_message(error: &(dyn std::error::Error + 'static)) -> String {
+    anyhow::Chain::new(error)
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(": ")
 }
 
 impl std::fmt::Display for CommandError {
@@ -1803,8 +1811,8 @@ impl std::fmt::Display for WorktrunkError {
                 error,
                 ..
             } => match command_name {
-                Some(name) => write!(f, "{hook_type} command {name} failed ({error})"),
-                None => write!(f, "{hook_type} command failed ({error})"),
+                Some(name) => write!(f, "{hook_type} command {name} failed ({error:#})"),
+                None => write!(f, "{hook_type} command failed ({error:#})"),
             },
             // on_skip callback handles the printing for CommandNotApproved;
             // AlreadyDisplayed has already shown its error via output functions.
@@ -1845,11 +1853,11 @@ impl Diagnostic for WorktrunkError {
             } => {
                 if let Some(name) = command_name {
                     error_message(cformat!(
-                        "{hook_type} command <bold>{name}</> failed ({error})"
+                        "{hook_type} command <bold>{name}</> failed ({error:#})"
                     ))
                     .to_string()
                 } else {
-                    error_message(format!("{hook_type} command failed ({error})")).to_string()
+                    error_message(format!("{hook_type} command failed ({error:#})")).to_string()
                 }
             }
             // Silent — caller already handled display; render is empty.
@@ -1907,7 +1915,11 @@ impl ErrorExt for anyhow::Error {
                 body
             };
         }
-        self.to_string()
+        if self.render_diagnostic().is_some() {
+            self.to_string()
+        } else {
+            error_chain_message(self.as_ref())
+        }
     }
 
     fn exit_code(&self) -> Option<i32> {

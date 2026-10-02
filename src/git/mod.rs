@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 mod ci_platform;
 mod diff;
 mod error;
+pub(crate) use error::error_chain_message;
 pub mod fsmonitor;
 mod parse;
 #[cfg(unix)]
