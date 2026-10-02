@@ -51,6 +51,43 @@ fn snapshot_list_approvals(test_name: &str, repo: &TestRepo) {
 // list tests
 // ============================================================================
 
+/// An unreadable approvals source is a failure, including the legacy fallback;
+/// it must not be mistaken for an empty set of approved commands.
+#[rstest]
+#[case::approvals(false)]
+#[case::legacy_config(true)]
+fn test_approvals_unreadable_source_is_not_empty(repo: TestRepo, #[case] legacy: bool) {
+    let source = if legacy {
+        repo.test_approvals_path().with_file_name("config.toml")
+    } else {
+        repo.test_approvals_path().to_path_buf()
+    };
+    fs::write(&source, [0xff]).unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["config", "approvals", "list"]);
+    let output = cmd.output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(fs::read(&source).unwrap(), [0xff]);
+
+    let mut settings = insta::Settings::new();
+    settings.set_snapshot_path("../snapshots");
+    crate::common::add_path_placeholder_filter(
+        &mut settings,
+        &regex::escape(&worktrunk::path::to_posix_path(&source.to_string_lossy())),
+        "[APPROVALS_SOURCE]",
+    );
+    settings.bind(|| {
+        let name = if legacy {
+            "approvals_unreadable_legacy_source"
+        } else {
+            "approvals_unreadable_source"
+        };
+        insta::assert_snapshot!(name, String::from_utf8_lossy(&output.stderr));
+    });
+}
+
 #[rstest]
 fn test_list_approvals_no_config(repo: TestRepo) {
     snapshot_list_approvals("list_approvals_no_config", &repo);

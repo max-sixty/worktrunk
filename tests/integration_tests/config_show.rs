@@ -1549,6 +1549,34 @@ fn test_config_show_full_not_configured(mut repo: TestRepo, temp_home: TempDir) 
     });
 }
 
+/// A successful connectivity probe is existing state, and includes the actual
+/// response from the configured command in the diagnostic report.
+#[rstest]
+fn test_config_show_full_working_commit_generation(repo: TestRepo) {
+    repo.write_test_config(
+        "[commit.generation]\ncommand = \"cat >/dev/null && echo diagnostic-probe\"\n",
+    );
+    let output = repo
+        .wt_command()
+        .env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
+        .args(["config", "show", "--full"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = stdout.ansi_strip();
+    let lines: Vec<_> = stdout.lines().collect();
+    let index = lines
+        .iter()
+        .position(|line| line.contains("Commit generation working"))
+        .unwrap();
+    insta::assert_snapshot!(lines[index..index + 2].join("\n"), @"
+    ○ Commit generation working (cat >/dev/null && echo diagnostic-probe)
+      diagnostic-probe
+    ");
+}
+
 #[rstest]
 fn test_config_show_full_command_not_found(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output

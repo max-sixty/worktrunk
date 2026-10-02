@@ -2205,7 +2205,12 @@ fn test_load_error_display_file() {
     let msg = err.to_string();
     assert!(msg.contains("User config @"), "{msg}");
     assert!(msg.contains("failed to parse"), "{msg}");
-    let error = anyhow::Error::new(err);
+    let error = anyhow::Error::new(ConfigError::Load(err));
+    assert!(matches!(
+        error.downcast_ref::<ConfigError>(),
+        Some(ConfigError::Load(LoadError::File(_)))
+    ));
+    assert!(error.root_cause().is::<toml::de::Error>());
     let rendered = crate::git::ErrorExt::render_diagnostic(&error).unwrap();
     assert!(rendered.contains("line 2"), "{rendered}");
 }

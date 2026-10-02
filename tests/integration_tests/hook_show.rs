@@ -342,7 +342,7 @@ url = "http://localhost:8080"
 }
 
 /// A hook type declared with an empty command list contributes no commands, so
-/// both sections read as `(none configured)` rather than a bare heading.
+/// both sections read as `No hooks configured` rather than a bare heading.
 #[rstest]
 fn test_hook_show_empty_command_lists(repo: TestRepo, temp_home: TempDir) {
     repo.write_test_config(

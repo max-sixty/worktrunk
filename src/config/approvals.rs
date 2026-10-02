@@ -789,6 +789,26 @@ approved-commands = ["npm test"]
         assert!(loaded.is_command_approved("github.com/user/repo", "npm test"));
     }
 
+    /// Failure to create the approvals directory must leave the blocking file
+    /// untouched and must not report that any approvals were saved.
+    #[test]
+    fn test_save_to_blocked_parent_preserves_file() {
+        let dir = TempDir::new().unwrap();
+        let parent = dir.path().join("blocked");
+        std::fs::write(&parent, "keep this file").unwrap();
+        let path = parent.join("approvals.toml");
+
+        let err = Approvals::default().save_to(&path).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("Failed to create approvals directory"),
+            "{err}"
+        );
+        assert_eq!(std::fs::read_to_string(parent).unwrap(), "keep this file");
+        assert!(!path.exists());
+    }
+
     #[cfg(unix)]
     #[test]
     fn test_save_failure_preserves_existing_file() {

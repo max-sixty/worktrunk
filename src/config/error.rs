@@ -35,7 +35,9 @@ impl Error for ConfigError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Message(_) => None,
-            Self::Load(error) => Some(error),
+            // Display already delegates to this transparent wrapper. Expose
+            // its cause without repeating the same diagnosis in the chain.
+            Self::Load(error) => error.source(),
             Self::Parse(error) => Some(error),
         }
     }
