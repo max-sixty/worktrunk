@@ -284,7 +284,10 @@ fn test_merge_preserves_linked_default_branch(mut repo: TestRepo) {
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success(), "{stderr}");
-    assert!(stderr.contains("Cannot delete the default branch"), "{stderr}");
+    assert!(
+        stderr.contains("Cannot delete the default branch"),
+        "{stderr}"
+    );
     assert!(stderr.contains("--no-delete-branch"), "{stderr}");
     assert!(main_wt.is_dir());
     assert_eq!(repo.git_output(&["rev-parse", "refs/heads/main"]), original);
