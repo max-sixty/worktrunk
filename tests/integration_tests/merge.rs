@@ -268,6 +268,28 @@ fn test_merge_from_primary_worktree_to_other_branch(mut repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "merge", &["feature"], None));
 }
 
+/// Merging a linked default branch into another target cannot delete its ref.
+#[rstest]
+fn test_merge_preserves_linked_default_branch(mut repo: TestRepo) {
+    repo.switch_primary_to("develop");
+    let main_wt = repo.add_main_worktree();
+    repo.add_worktree("feature");
+    let original = repo.git_output(&["rev-parse", "refs/heads/main"]);
+
+    let output = repo
+        .wt_command()
+        .current_dir(&main_wt)
+        .args(["merge", "feature", "--yes", "--no-hooks"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(stderr.contains("Cannot delete the default branch"), "{stderr}");
+    assert!(stderr.contains("--no-delete-branch"), "{stderr}");
+    assert!(main_wt.is_dir());
+    assert_eq!(repo.git_output(&["rev-parse", "refs/heads/main"]), original);
+}
+
 #[rstest]
 fn test_merge_dirty_working_tree(mut repo: TestRepo) {
     // Create a feature worktree with uncommitted changes
