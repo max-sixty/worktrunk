@@ -153,12 +153,6 @@ struct EnvOverrideUnit {
     overlay: toml::Table,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum EnvOverrideKey {
-    Path(Vec<String>),
-    MultiPathVar(String),
-}
-
 /// Read `WORKTRUNK_*` env vars and parse each into an [`EnvVar`].
 ///
 /// Env-var convention (matches the config crate's prior behavior):
@@ -239,38 +233,33 @@ fn migrate_env_overlay(overlay: toml::Table) -> toml::Table {
         .expect("migrate_content returns valid TOML")
 }
 
-/// Return scalar paths in an overlay after deprecation migration.
-fn env_overlay_paths(table: &toml::Table) -> Vec<Vec<String>> {
-    fn collect(table: &toml::Table, prefix: &mut Vec<String>, paths: &mut Vec<Vec<String>>) {
-        for (key, value) in table {
-            prefix.push(key.clone());
-            match value {
-                toml::Value::Table(nested) if !nested.is_empty() => {
-                    collect(nested, prefix, paths);
-                }
-                _ => paths.push(prefix.clone()),
-            }
-            prefix.pop();
+/// Return the path of a single-variable overlay after deprecation migration.
+/// Migration moves, renames, or removes a scalar; it never expands it into
+/// several settings. Removing an obsolete setting can leave an empty overlay.
+fn env_overlay_path(mut table: &toml::Table) -> Option<Vec<String>> {
+    let mut path = Vec::new();
+    loop {
+        let (key, value) = table.iter().next()?;
+        path.push(key.clone());
+        match value {
+            toml::Value::Table(nested) if !nested.is_empty() => table = nested,
+            _ => return Some(path),
         }
     }
-
-    let mut paths = Vec::new();
-    collect(table, &mut Vec::new(), &mut paths);
-    paths
 }
 
 /// Group the fields that make up one setting, keeping atomic section entries
 /// together. This reuses the same atomic-section contract as project precedence.
-fn env_override_key(path: &[String]) -> EnvOverrideKey {
+fn env_override_key(path: &[String]) -> Vec<String> {
     for section_len in 0..path.len() {
         let section: Vec<_> = path[..section_len].iter().map(String::as_str).collect();
         let project_section =
             section.len() == 4 && section[0] == "projects" && is_atomic_section(&section[2..]);
         if is_atomic_section(&section) || project_section {
-            return EnvOverrideKey::Path(path[..section_len + 1].to_vec());
+            return path[..section_len + 1].to_vec();
         }
     }
-    EnvOverrideKey::Path(path.to_vec())
+    path.to_vec()
 }
 
 /// Build and migrate an overlay from a chosen representation for every var.
@@ -332,25 +321,16 @@ fn env_override_units(file_table: &toml::Table, vars: &[EnvVar]) -> Vec<EnvOverr
     let mut ordered_vars: Vec<_> = vars.iter().collect();
     ordered_vars.sort_by(|left, right| left.name.cmp(&right.name));
 
-    let mut grouped_vars = std::collections::BTreeMap::<EnvOverrideKey, Vec<EnvVar>>::new();
+    let mut grouped_vars = std::collections::BTreeMap::<Vec<String>, Vec<EnvVar>>::new();
     for var in ordered_vars {
         let overlay = env_overlay_from_values(
             std::slice::from_ref(var),
             std::slice::from_ref(&var.typed_value),
         );
-        let paths = env_overlay_paths(&overlay);
-        if paths.is_empty() {
+        let Some(path) = env_overlay_path(&overlay) else {
             continue;
-        }
-
-        let keys: std::collections::BTreeSet<_> =
-            paths.iter().map(|path| env_override_key(path)).collect();
-        let key = match keys.into_iter().collect::<Vec<_>>().as_slice() {
-            [key] => (*key).clone(),
-            // A migration that expands one variable into multiple settings
-            // remains one validation unit; it cannot be partially retained.
-            _ => EnvOverrideKey::MultiPathVar(var.name.clone()),
         };
+        let key = env_override_key(&path);
         grouped_vars.entry(key).or_default().push(var.clone());
     }
 
@@ -482,12 +462,11 @@ fn deserialize_and_validate(table: &toml::Table) -> Result<(), String> {
 
 fn deserialize_validation_issues(
     table: &toml::Table,
-) -> Result<(UserConfig, Vec<persistence::UserConfigValidationIssue>), String> {
+) -> Result<Vec<persistence::UserConfigValidationIssue>, String> {
     let config = toml::Value::Table(table.clone())
         .try_into::<UserConfig>()
         .map_err(|err| err.to_string())?;
-    let issues = config.validation_issues();
-    Ok((config, issues))
+    Ok(config.validation_issues())
 }
 
 /// Remove from `entry` every leaf `overlay` sets. `section` tracks the path
@@ -813,7 +792,10 @@ impl UserConfig {
 
         // 3. Env-var overrides (override config files)
         let env_vars = parse_worktrunk_env_vars();
-        Self::apply_env_vars(&env_vars, &mut merged_table, &mut warnings);
+        if let Err(err) = Self::apply_env_vars(&env_vars, &mut merged_table, &mut warnings) {
+            warnings.push(LoadError::Validation(err));
+            return (Self::default(), warnings);
+        }
 
         // 4. CLI `--config-set` overrides (override env vars and config files)
         Self::apply_cli_overrides(cli_config_overrides(), &mut merged_table, &mut warnings);
@@ -826,19 +808,16 @@ impl UserConfig {
         env_vars: &[EnvVar],
         merged_table: &mut toml::Table,
         warnings: &mut Vec<LoadError>,
-    ) {
+    ) -> Result<(), String> {
         if env_vars.is_empty() {
-            return;
+            return Ok(());
         }
 
         let file_table = merged_table.clone();
 
-        // Every file layer is deserialized before it is merged. If this
-        // invariant is ever broken, leave the lower table untouched so
-        // `finalize` can report its actual deserialize error.
-        let Ok((_, lower_validation_issues)) = deserialize_validation_issues(&file_table) else {
-            return;
-        };
+        // File layers deserialize before merging. A malformed merged table
+        // is a loader error, rather than an error attributed to an env var.
+        let lower_validation_issues = deserialize_validation_issues(&file_table)?;
 
         // Validate each setting against the same lower layer. Sequentially
         // accepting values here would make compound settings such as custom
@@ -848,11 +827,14 @@ impl UserConfig {
             let mut candidate = file_table.clone();
             merge_layer(&mut candidate, unit.overlay.clone());
             match deserialize_validation_issues(&candidate) {
-                Ok((_, issues)) => {
-                    if let Some(issue) = issues
-                        .iter()
-                        .find(|issue| !lower_validation_issues.contains(issue))
-                    {
+                Ok(issues) => {
+                    // An unrelated unit may leave an existing file error for
+                    // another override to repair. A unit setting that invalid
+                    // value itself must be rejected, even if its issue matches
+                    // the lower layer: retaining it could undo a valid repair.
+                    if let Some(issue) = issues.iter().find(|issue| {
+                        !lower_validation_issues.contains(issue) || issue.is_set_in(&unit.overlay)
+                    }) {
                         warnings.push(LoadError::Env {
                             err: issue.to_string(),
                             vars: unit
@@ -877,12 +859,13 @@ impl UserConfig {
         }
 
         if accepted_overlay.is_empty() {
-            return;
+            return Ok(());
         }
 
         let mut candidate = file_table.clone();
         merge_layer(&mut candidate, accepted_overlay);
         *merged_table = candidate;
+        Ok(())
     }
 
     /// Apply CLI `--config-set <toml>` overrides as the highest-priority layer.

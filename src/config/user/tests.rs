@@ -2419,7 +2419,7 @@ fn test_env_layer_outranks_project_worktree_path() {
     };
     let mut table = base_with_project("worktree-path = \"/from-project\"\n");
     let mut warnings = Vec::new();
-    UserConfig::apply_env_vars(&[var], &mut table, &mut warnings);
+    UserConfig::apply_env_vars(&[var], &mut table, &mut warnings).unwrap();
 
     assert!(warnings.is_empty());
     assert_eq!(
@@ -2662,7 +2662,7 @@ fn test_env_overlay_migrates_deprecated_key() {
     };
     let mut table = toml::Table::new();
     let mut warnings = Vec::new();
-    UserConfig::apply_env_vars(&[var], &mut table, &mut warnings);
+    UserConfig::apply_env_vars(&[var], &mut table, &mut warnings).unwrap();
     assert!(warnings.is_empty());
     let config = loaded(table);
     assert_eq!(config.merge.ff, Some(false));
@@ -3282,12 +3282,20 @@ fn test_env_failure_keeps_other_overrides() {
         env_var("WORKTRUNK__LIST__COLUMNS", &["list", "columns"], "oops"),
         env_var("WORKTRUNK__LIST__FULL", &["list", "full"], "true"),
         env_var("WORKTRUNK_WORKTREE_PATH", &["worktree-path"], "/tmp/zzz"),
+        // The old select section drops unsupported fields completely. An
+        // empty migrated overlay must not become a spurious validation unit.
+        env_var(
+            "WORKTRUNK__SELECT__OBSOLETE",
+            &["select", "obsolete"],
+            "old",
+        ),
     ];
     let mut table = "[list]\nbranches=true\ncolumns=[\"path\"]\n"
         .parse()
         .unwrap();
     let mut warnings = Vec::new();
-    UserConfig::apply_env_vars(&vars, &mut table, &mut warnings);
+    UserConfig::apply_env_vars(&vars, &mut table, &mut warnings).unwrap();
+    assert!(!table.contains_key("select"));
     let config = loaded(table);
     assert_eq!(config.list.full, Some(true));
     assert_eq!(config.worktree_path.as_deref(), Some("/tmp/zzz"));
@@ -3316,7 +3324,7 @@ fn test_env_override_can_repair_invalid_lower_layer() {
     let mut table = "worktree-path = \"\"\n".parse().unwrap();
     let mut warnings = Vec::new();
 
-    UserConfig::apply_env_vars(&[var], &mut table, &mut warnings);
+    UserConfig::apply_env_vars(&[var], &mut table, &mut warnings).unwrap();
 
     let config = loaded(table);
     assert_eq!(
@@ -3324,5 +3332,61 @@ fn test_env_override_can_repair_invalid_lower_layer() {
         Some("/tmp/worktrees/{{ branch }}")
     );
     assert!(config.validate().is_ok());
+    assert!(warnings.is_empty());
+}
+
+#[test]
+fn test_invalid_project_env_override_keeps_global_repair() {
+    let global = super::EnvVar {
+        name: "WORKTRUNK_WORKTREE_PATH".into(),
+        segments: vec!["worktree-path".into()],
+        typed_value: toml::Value::String("/valid".into()),
+        raw_value: "/valid".into(),
+    };
+    let project = super::EnvVar {
+        name: "WORKTRUNK__PROJECTS__GITHUB.COM/OWNER/REPO__WORKTREE_PATH".into(),
+        segments: vec![
+            "projects".into(),
+            "github.com/owner/repo".into(),
+            "worktree-path".into(),
+        ],
+        typed_value: toml::Value::String(String::new()),
+        raw_value: String::new(),
+    };
+    let mut table =
+        "[list]\nbranches = true\n[projects.\"github.com/owner/repo\"]\nworktree-path = \"\"\n"
+            .parse()
+            .unwrap();
+    let mut warnings = Vec::new();
+
+    UserConfig::apply_env_vars(&[global, project], &mut table, &mut warnings).unwrap();
+
+    let config = loaded(table);
+    assert_eq!(config.worktree_path.as_deref(), Some("/valid"));
+    assert_eq!(config.list.branches, Some(true));
+    assert!(config.validate().is_ok());
+    assert!(matches!(warnings.as_slice(), [LoadError::Env { vars, .. }]
+        if vars == &[("WORKTRUNK__PROJECTS__GITHUB.COM/OWNER/REPO__WORKTREE_PATH".into(), String::new())]));
+}
+
+/// A broken internal lower-layer contract must surface a schema error without
+/// blaming an unrelated environment setting or replacing the lower table.
+#[test]
+fn test_env_layer_reports_malformed_lower_table() {
+    let var = super::EnvVar {
+        name: "WORKTRUNK__LIST__FULL".into(),
+        segments: vec!["list".into(), "full".into()],
+        typed_value: toml::Value::Boolean(true),
+        raw_value: "true".into(),
+    };
+    let mut table: toml::Table = "[list]\nbranches = \"invalid\"\n".parse().unwrap();
+    let original = table.clone();
+    let mut warnings = Vec::new();
+
+    let err = UserConfig::apply_env_vars(&[var], &mut table, &mut warnings).unwrap_err();
+
+    assert!(err.contains("branches"), "{err}");
+    assert!(err.contains("boolean"), "{err}");
+    assert_eq!(table, original);
     assert!(warnings.is_empty());
 }

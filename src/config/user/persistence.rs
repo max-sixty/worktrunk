@@ -209,14 +209,31 @@ pub(super) enum UserConfigValidationIssue {
     EmptyProjectWorktreePath(String),
 }
 
-impl std::fmt::Display for UserConfigValidationIssue {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl UserConfigValidationIssue {
+    fn path(&self) -> Vec<&str> {
         match self {
-            Self::EmptyWorktreePath => write!(f, "worktree-path cannot be empty"),
+            Self::EmptyWorktreePath => vec!["worktree-path"],
             Self::EmptyProjectWorktreePath(project) => {
-                write!(f, "projects.{project}.worktree-path cannot be empty")
+                vec!["projects", project, "worktree-path"]
             }
         }
+    }
+
+    /// Whether an overlay explicitly sets the value this issue describes.
+    pub(super) fn is_set_in(&self, table: &toml::Table) -> bool {
+        let path = self.path();
+        path[1..]
+            .iter()
+            .fold(table.get(path[0]), |value, key| {
+                value.and_then(|value| value.get(*key))
+            })
+            .is_some()
+    }
+}
+
+impl std::fmt::Display for UserConfigValidationIssue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} cannot be empty", self.path().join("."))
     }
 }
 
