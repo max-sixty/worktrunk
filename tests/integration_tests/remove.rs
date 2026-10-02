@@ -5548,3 +5548,175 @@ fn test_remove_stale_entry_spares_absent_sibling(mut repo: TestRepo) {
         "the stale entry should have been pruned\n{listed}"
     );
 }
+
+/// An unreadable index prevents normal removal, but disclosure must not veto
+/// explicitly forced removal that Git itself permits. Neighboring data and
+/// the retained branch remain intact.
+#[rstest]
+fn test_force_remove_with_corrupt_index_reports_unreadable_status(mut repo: TestRepo) {
+    let mut target = None;
+    let mut target_index = None;
+    for branch in ["corrupt-index", "git-force-control"] {
+        let worktree = repo.add_worktree(branch);
+        fs::write(worktree.join("untracked.txt"), "keep until forced\n").unwrap();
+        let output = repo
+            .git_command()
+            .args(["rev-parse", "--absolute-git-dir"])
+            .current_dir(&worktree)
+            .run()
+            .unwrap();
+        assert!(output.status.success());
+        let index = PathBuf::from(String::from_utf8(output.stdout).unwrap().trim()).join("index");
+        fs::write(&index, "bad").unwrap();
+        let status = repo
+            .git_command()
+            .args(["status", "--porcelain"])
+            .current_dir(&worktree)
+            .run()
+            .unwrap();
+        assert_eq!(status.status.code(), Some(128));
+        if branch == "git-force-control" {
+            let removal = repo
+                .git_command()
+                .args(["worktree", "remove", "--force"])
+                .arg(worktree.to_string_lossy())
+                .run()
+                .unwrap();
+            assert!(
+                removal.status.success(),
+                "{}",
+                String::from_utf8_lossy(&removal.stderr)
+            );
+            assert!(!worktree.exists());
+        } else {
+            target = Some(worktree);
+            target_index = Some(index);
+        }
+    }
+    let worktree = target.unwrap();
+    let index = target_index.unwrap();
+    let branch_head = repo.git_output(&["rev-parse", "refs/heads/corrupt-index"]);
+    let sentinel = repo.root_path().join("main-only.txt");
+    fs::write(&sentinel, "main worktree data\n").unwrap();
+    let refusal = repo
+        .wt_command()
+        .args([
+            "remove",
+            "corrupt-index",
+            "--foreground",
+            "--no-delete-branch",
+        ])
+        .output()
+        .unwrap();
+    assert!(!refusal.status.success());
+    assert_eq!(fs::read(&index).unwrap(), b"bad");
+    assert_eq!(
+        fs::read_to_string(worktree.join("untracked.txt")).unwrap(),
+        "keep until forced\n"
+    );
+    let removal = repo
+        .wt_command()
+        .args([
+            "remove",
+            "corrupt-index",
+            "--foreground",
+            "--no-delete-branch",
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        removal.status.success(),
+        "{}",
+        String::from_utf8_lossy(&removal.stderr)
+    );
+    assert!(!worktree.exists());
+    assert!(!index.exists());
+    assert_eq!(
+        repo.git_output(&["rev-parse", "refs/heads/corrupt-index"]),
+        branch_head
+    );
+    assert_eq!(
+        fs::read_to_string(&sentinel).unwrap(),
+        "main worktree data\n"
+    );
+    setup_snapshot_settings(&repo).bind(|| {
+        assert_snapshot!(
+            "force_remove_corrupt_index",
+            String::from_utf8_lossy(&removal.stderr)
+        );
+    });
+}
+
+/// An interrupted status probe must cancel force removal before data is staged
+/// for deletion, and before the next worktree in a removal batch is touched.
+#[cfg(unix)]
+#[rstest]
+#[case::foreground_sigint(true, 2)]
+#[case::background_sigint(false, 2)]
+#[case::foreground_sigterm(true, 15)]
+#[case::background_sigterm(false, 15)]
+fn test_force_remove_interrupted_status_preserves_worktrees(
+    mut repo: TestRepo,
+    #[case] foreground: bool,
+    #[case] signal: i32,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::ExitStatusExt;
+
+    let worktree = repo.add_worktree("interrupted-status");
+    let later_worktree = repo.add_worktree("later-worktree");
+    fs::write(worktree.join("untracked.txt"), "preserve this data\n").unwrap();
+    let branch_head = repo.git_output(&["rev-parse", "refs/heads/interrupted-status"]);
+    let monitor = repo.root_path().join(".git/interrupt-status");
+    fs::write(
+        &monitor,
+        format!("#!/bin/sh\nkill -{signal} \"$PPID\"\nexit 0\n"),
+    )
+    .unwrap();
+    fs::set_permissions(&monitor, fs::Permissions::from_mode(0o755)).unwrap();
+    repo.run_git(&["config", "core.fsmonitor", monitor.to_str().unwrap()]);
+
+    // Git invokes a real fsmonitor hook during status; the hook interrupts
+    // only its own parent Git process, never the test or Worktrunk process.
+    let status = repo
+        .git_command()
+        .args(["status", "--porcelain"])
+        .current_dir(&worktree)
+        .run()
+        .unwrap();
+    assert_eq!(status.status.signal(), Some(signal));
+
+    let mut command = repo.wt_command();
+    command.args([
+        "remove",
+        "interrupted-status",
+        "later-worktree",
+        "--no-delete-branch",
+        "--force",
+    ]);
+    if foreground {
+        command.arg("--foreground");
+    }
+    let removal = command.output().unwrap();
+    assert_eq!(
+        removal.status.code(),
+        Some(128 + signal),
+        "{}",
+        String::from_utf8_lossy(&removal.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("untracked.txt")).unwrap(),
+        "preserve this data\n"
+    );
+    assert!(worktree.join(".git").is_file());
+    assert!(later_worktree.join(".git").is_file());
+    assert_eq!(
+        repo.git_output(&["rev-parse", "refs/heads/interrupted-status"]),
+        branch_head
+    );
+    let stderr = String::from_utf8_lossy(&removal.stderr);
+    assert!(!stderr.contains("Discarding"));
+    assert!(!stderr.contains("discarding"));
+    assert!(!stderr.contains("Removing later-worktree"));
+}
