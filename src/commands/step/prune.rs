@@ -3,10 +3,12 @@
 //! Live-path concurrency: candidate checks fan out on the rayon pool and
 //! stream results to the main thread, which queues per-candidate jobs
 //! (removals and skip lines) in scan-completion order onto a worker pool
-//! sized like rayon's ([`RemovalJob`]). Checks and hook-free removals hold
-//! the read side of [`RemovalContext::check_lock`] and run concurrently; the
-//! exceptional removals serialize on the write side
-//! ([`removal_needs_write`]). Repository operations coordinate the narrower
+//! sized like rayon's ([`RemovalJob`]). Checks and background removals hold
+//! the read side of [`RemovalContext::check_lock`] and run concurrently.
+//! Selected pre-remove hooks release that read guard and run on the write
+//! side, then reacquire read before fresh removal checks. Foreground/current
+//! removals retain whole-operation exclusion ([`removal_needs_write`]).
+//! Repository operations coordinate the narrower
 //! Git worktree-registry reads and teardowns themselves, so status checks,
 //! fsmonitor shutdown, and trash renames still overlap. One FIFO queue carrying
 //! both removals and skip lines means a single worker (`RAYON_NUM_THREADS=1`)
@@ -44,7 +46,9 @@ use super::super::hook_plan::{ApprovedHookPlan, HookPlan, HookPlanBuilder};
 use super::super::hooks::HookAnnouncer;
 use super::super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::super::worktree::{BranchFate, RemovalPlan};
-use crate::output::{BackgroundFallbackMode, RemovalExecution, handle_remove_output};
+use crate::output::{
+    BackgroundFallbackMode, RemovalCoordination, RemovalExecution, handle_remove_output,
+};
 
 /// A candidate worktree or branch selected for removal.
 #[derive(Clone)]
@@ -234,8 +238,8 @@ struct RemovalContext<'a> {
     foreground: bool,
     hook_plan: &'a ApprovedHookPlan,
     /// Coordinates the parallel workers (scan checks and removals, both on
-    /// the read side) against the few removals that need exclusivity (write
-    /// side — see [`removal_needs_write`]).
+    /// the read side) against pre-remove hooks and the few removals that need
+    /// whole-operation exclusivity (write side — see [`removal_needs_write`]).
     ///
     /// The lock exists for the Windows `.git/config` race: git rewrites
     /// config via lockfile + atomic rename, and a concurrent reader's plain
@@ -243,10 +247,11 @@ struct RemovalContext<'a> {
     /// the write side because branch deletion was `git branch -D`, which
     /// rewrites `.git/config` (it drops the `[branch "<name>"]` section —
     /// even when none exists). The removal chain has since moved to the CAS
-    /// `git update-ref -d`, and neither it nor `git worktree remove` (both the
+    /// `git update-ref --stdin`, and neither it nor `git worktree remove` (both the
     /// scoped metadata prune and the rename-failure fallback) touches
-    /// `.git/config`, so hook-free removals never rewrite it and can run
-    /// concurrently. Verified empirically: with `.git/config` made immutable,
+    /// `.git/config`, so removal cores can run concurrently; arbitrary
+    /// pre-remove hooks retain write-side exclusion. Verified empirically:
+    /// with `.git/config` made immutable,
     /// only `git branch -D` reports `could not write config file`.
     /// (`git branch -D` remains reachable only via `delete_branch_if_safe`'s
     /// force arm, which prune never uses.)
@@ -256,13 +261,6 @@ struct RemovalContext<'a> {
 /// Which removals must hold the write side of [`RemovalContext::check_lock`]
 /// instead of joining the parallel (read-side) fan-out:
 ///
-/// - **Hook-bearing worktree removals** — the `pre-remove` body runs
-///   foreground here, and hook bodies are arbitrary commands (`git branch
-///   -D`, `git config`, anything), so it keeps the exclusion every removal
-///   had before removals parallelized; the write side also keeps the hook
-///   stream and announce lines from interleaving with other candidates'
-///   output. (`post-remove`/`post-switch` pipelines spawn detached and
-///   always ran outside the lock.)
 /// - **`--foreground` worktree removals** — the foreground path runs a TTY
 ///   trash-cleanup spinner, and concurrent spinners would fight over the
 ///   cursor.
@@ -274,7 +272,11 @@ struct RemovalContext<'a> {
 /// a hook body nor a spinner, whatever selected it. `StaleDetached` never
 /// reaches here — [`try_remove`] prunes its entry and returns.
 ///
-/// Everything else fans out on the read side. The Git worktree-registry calls
+/// Everything else fans out on the read side. The canonical removal handler
+/// temporarily takes the write side only for selected pre-remove hooks:
+/// arbitrary hook commands must not overlap scans or other removal output.
+/// Post-remove pipelines are detached and need no exclusive removal phase.
+/// The Git worktree-registry calls
 /// inside those removals take their own repository-scoped lock; see
 /// [`prune_worktree_entry`](Repository::prune_worktree_entry).
 /// Safe branch deletions serialize only their ref mutation per repository,
@@ -285,14 +287,8 @@ fn removal_needs_write(kind: CandidateKind, plan: &RemovalPlan, ctx: &RemovalCon
         return true;
     }
     match plan {
-        // The worktree whose `pre-remove` body and trash-cleanup spinner this
-        // removal runs.
-        RemovalPlan::Worktree { worktree_path, .. } => {
-            ctx.foreground
-                || ctx
-                    .hook_plan
-                    .has_hooks_for(worktree_path, &[HookType::PreRemove, HookType::PostRemove])
-        }
+        // The foreground worktree cleanup owns the terminal spinner.
+        RemovalPlan::Worktree { .. } => ctx.foreground,
         RemovalPlan::BranchOnly { .. } => false,
     }
 }
@@ -341,16 +337,13 @@ fn try_remove(
     // Recover the guard rather than `.expect()`-ing: a panic elsewhere should
     // surface as itself, not as a cascade of secondary poison panics on every
     // later removal/reader.
-    let (_read, _write) = if removal_needs_write(candidate.kind, &plan, ctx) {
+    let (mut coordination, _write) = if removal_needs_write(candidate.kind, &plan, ctx) {
         (
             None,
             Some(ctx.check_lock.write().unwrap_or_else(|e| e.into_inner())),
         )
     } else {
-        (
-            Some(ctx.check_lock.read().unwrap_or_else(|e| e.into_inner())),
-            None,
-        )
+        (Some(RemovalCoordination::new(ctx.check_lock)), None)
     };
     let mut announcer = HookAnnouncer::new(ctx.repo, true);
     // `SynchronousForNonCurrent`: a rename-failure fallback completes inline,
@@ -361,7 +354,14 @@ fn try_remove(
     } else {
         RemovalExecution::Background(BackgroundFallbackMode::SynchronousForNonCurrent)
     };
-    let fate = handle_remove_output(&plan, execution, ctx.hook_plan, true, &mut announcer)?;
+    let fate = handle_remove_output(
+        &plan,
+        execution,
+        ctx.hook_plan,
+        true,
+        &mut announcer,
+        coordination.as_mut(),
+    )?;
     announcer.flush()?;
     let branch_deleted = fate.deleted();
     // A branch-only candidate that kept its branch removed nothing at all —

@@ -3,6 +3,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::{RwLock, RwLockReadGuard};
 
 use anstyle::AnsiColor;
 use color_print::cformat;
@@ -14,7 +15,8 @@ use crate::commands::command_executor::FailureStrategy;
 use crate::commands::hook_plan::{ApprovedHookPlan, execute_planned_hook, register_planned};
 use crate::commands::hooks::HookAnnouncer;
 use crate::commands::process::{
-    HookLog, InternalOp, build_remove_command, build_remove_command_staged, spawn_detached,
+    HookLog, InternalOp, build_remove_command, build_remove_command_staged,
+    build_remove_placeholder_command, spawn_detached,
 };
 use crate::commands::template_vars::TemplateVars;
 use crate::commands::worktree::hooks::PostRemoveContext;
@@ -128,9 +130,42 @@ pub enum RemovalExecution {
     Silent,
 }
 
+/// Prune's shared removal phase, held through the caller's hook flush.
+///
+/// Pre-remove hooks temporarily release the read guard and run exclusively.
+/// The read guard is reacquired before removal checks or mutations resume;
+/// there is never a read-to-write upgrade with a guard still held. Callers
+/// already holding the write side (foreground/current removals) omit this.
+pub struct RemovalCoordination<'a> {
+    lock: &'a RwLock<()>,
+    read: Option<RwLockReadGuard<'a, ()>>,
+}
+
+impl<'a> RemovalCoordination<'a> {
+    pub fn new(lock: &'a RwLock<()>) -> Self {
+        Self {
+            lock,
+            read: Some(lock.read().unwrap_or_else(|e| e.into_inner())),
+        }
+    }
+
+    fn pre_remove(&mut self, run: impl FnOnce() -> anyhow::Result<()>) -> anyhow::Result<()> {
+        drop(self.read.take());
+        let result = {
+            let _write = self.lock.write().unwrap_or_else(|e| e.into_inner());
+            run()
+        };
+        // A failed hook ends the removal. In particular, cancellation must
+        // not wait behind another worker's arbitrary pre-remove hook.
+        result?;
+        self.read = Some(self.lock.read().unwrap_or_else(|e| e.into_inner()));
+        Ok(())
+    }
+}
+
 enum BackgroundRemovalPlan {
-    /// The worktree has been removed; only trash cleanup remains.
-    Staged(String),
+    /// The worktree has been removed and trash cleanup scheduling was attempted.
+    Staged(anyhow::Result<()>),
     /// The detached command still has to remove the worktree.
     Deferred(String),
     CompletedSynchronously,
@@ -182,28 +217,26 @@ fn spawn_background_removal(
     log_label: &str,
     fallback_mode: BackgroundFallbackMode,
 ) -> anyhow::Result<anyhow::Result<BranchFate>> {
-    let outcome = execute_instant_removal_or_fallback(repo, removal, fallback_mode)?;
-
-    let spawn = |remove_command: &str| {
+    let spawn = |remove_command: &str, operation: InternalOp| {
         spawn_detached(
             repo,
             main_path,
             remove_command,
             log_label,
-            &HookLog::Internal(InternalOp::Remove),
+            &HookLog::Internal(operation),
             None,
         )
         .map(|_| ())
     };
+    let outcome = execute_instant_removal_or_fallback(repo, removal, fallback_mode, spawn)?;
     match outcome.plan {
-        BackgroundRemovalPlan::Staged(command) => {
-            // Attempt cleanup even on branch failure, but preserve the original
-            // deletion error (including its interrupt signal) if both fail.
-            let cleanup = spawn(&command);
+        BackgroundRemovalPlan::Staged(cleanup) => {
+            // Cleanup was scheduled before branch deletion could wait. Preserve
+            // the deletion error (including its interrupt signal) if both fail.
             Ok(outcome.branch_fate.and_then(|fate| cleanup.map(|_| fate)))
         }
         BackgroundRemovalPlan::Deferred(command) => {
-            spawn(&command)?;
+            spawn(&command, InternalOp::Remove)?;
             Ok(outcome.branch_fate)
         }
         BackgroundRemovalPlan::CompletedSynchronously => Ok(outcome.branch_fate),
@@ -220,11 +253,13 @@ fn spawn_background_removal(
 /// runs that fallback synchronously for non-current worktrees when the caller needs the
 /// removal complete before it reports success (`wt step prune`).
 ///
-/// The caller is responsible for spawning detached plans in the background.
+/// Stage cleanup is scheduled before synchronous branch deletion can wait;
+/// the caller spawns only deferred removal plans after command preparation.
 fn execute_instant_removal_or_fallback(
     repo: &Repository,
     removal: &BackgroundRemoval<'_>,
     fallback_mode: BackgroundFallbackMode,
+    spawn_cleanup: impl Fn(&str, InternalOp) -> anyhow::Result<()>,
 ) -> anyhow::Result<BackgroundRemovalOutcome> {
     let BackgroundRemoval {
         worktree_path,
@@ -243,6 +278,16 @@ fn execute_instant_removal_or_fallback(
     if let Some(staged_path) =
         stage_worktree_removal(repo, worktree_path, branch_name, force_worktree)?
     {
+        if changed_directory {
+            // Keep the shell's PWD valid until its cd directive is consumed.
+            let _ = std::fs::create_dir(worktree_path);
+        }
+        // Trash cleanup is independent of branch deletion. Start it before a
+        // deletion queue wait, and still attempt deletion if scheduling fails.
+        let cleanup = spawn_cleanup(
+            &build_remove_command_staged(&staged_path),
+            InternalOp::Remove,
+        );
         // Delete branch synchronously now that prune has removed the worktree metadata.
         // Fresh refs, not the pre-hook planning decision: hooks or concurrent
         // processes may have advanced the branch (`execute_branch_deletion`).
@@ -260,21 +305,18 @@ fn execute_instant_removal_or_fallback(
         } else {
             Ok(BranchFate::NotAttempted)
         };
-        if changed_directory {
-            // Create an empty placeholder at the original path so the shell's working
-            // directory ($env.PWD) remains valid until the wrapper has cd'd away.
-            // Without this, shells that validate PWD (notably Nushell) emit errors
-            // between binary exit and the cd directive executing.
-            // Best-effort: if create_dir fails (permissions, race), the only effect
-            // is that Nushell may still emit PWD errors — not a correctness issue.
-            let _ = std::fs::create_dir(worktree_path);
-        }
+        // The placeholder protects the shell's PWD until exit. Its delay must
+        // start after any synchronous branch wait, unlike independent trash.
+        let placeholder_cleanup = if changed_directory {
+            spawn_cleanup(
+                &build_remove_placeholder_command(worktree_path),
+                InternalOp::RemovePlaceholder,
+            )
+        } else {
+            Ok(())
+        };
         Ok(BackgroundRemovalOutcome {
-            plan: BackgroundRemovalPlan::Staged(build_remove_command_staged(
-                &staged_path,
-                worktree_path,
-                changed_directory,
-            )),
+            plan: BackgroundRemovalPlan::Staged(cleanup.and(placeholder_cleanup)),
             branch_fate: fate,
         })
     } else {
@@ -1210,6 +1252,8 @@ pub fn execute_user_command(
 /// declined, or no project config) runs no project hooks. `pre-remove` /
 /// `post-remove` / `post-switch` execute only from it — the selection was
 /// frozen at the gate, never re-read.
+/// `coordination` supplies prune's shared phase guard; the caller retains it
+/// through hook flushing, and selected pre-remove hooks run exclusively.
 ///
 /// [`RemovalExecution::Silent`] (the TUI picker — this runs while skim owns
 /// the terminal) removes a `Worktree` plan inline with no progress/success
@@ -1229,6 +1273,7 @@ pub fn handle_remove_output(
     hook_plan: &ApprovedHookPlan,
     quiet: bool,
     announcer: &mut HookAnnouncer<'_>,
+    coordination: Option<&mut RemovalCoordination<'_>>,
 ) -> anyhow::Result<BranchFate> {
     match plan {
         RemovalPlan::Worktree {
@@ -1258,6 +1303,7 @@ pub fn handle_remove_output(
                 execution,
             },
             announcer,
+            coordination,
         ),
         RemovalPlan::BranchOnly {
             branch_name,
@@ -2074,12 +2120,23 @@ fn handle_named_removed_worktree_background(
 fn handle_removed_worktree_output(
     ctx: WorktreeRemovalContext<'_>,
     announcer: &mut HookAnnouncer<'_>,
+    coordination: Option<&mut RemovalCoordination<'_>>,
 ) -> anyhow::Result<BranchFate> {
     // Use main_path for discovery - the worktree being removed might be cwd,
     // and git operations after removal need a valid working directory.
     let repo = worktrunk::git::Repository::at(ctx.main_path)?;
 
-    execute_pre_remove_hooks_if_needed(&repo, &ctx)?;
+    if ctx
+        .hook_plan
+        .has_hooks_for(ctx.worktree_path, &[worktrunk::HookType::PreRemove])
+    {
+        let run = || execute_pre_remove_hooks_if_needed(&repo, &ctx);
+        if let Some(coordination) = coordination {
+            coordination.pre_remove(run)?;
+        } else {
+            run()?;
+        }
+    }
 
     // No re-validation after `pre-remove` hooks: the pre-rename `ensure_clean`
     // in the removal core catches a hook-dirtied worktree, and the branch

@@ -200,6 +200,7 @@ pub fn finish_after_merge(
             plan,
             false,
             announcer,
+            None,
         )?;
         true
     };

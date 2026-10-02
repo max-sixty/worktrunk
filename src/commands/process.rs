@@ -20,6 +20,8 @@ use crate::commands::hook_filter::HookSource;
 pub enum InternalOp {
     /// Background worktree removal (`wt remove` in background mode)
     Remove,
+    /// Delayed cleanup of the removed current worktree's empty PWD placeholder.
+    RemovePlaceholder,
     /// Background cleanup of stale entries in `.git/wt/trash/`
     TrashSweep,
 }
@@ -590,139 +592,28 @@ fn parse_trash_entry_timestamp(name: &str) -> Option<u64> {
     suffix.parse::<u64>().ok()
 }
 
-/// Build shell command for background removal of a staged (renamed) worktree.
+/// Remove an already-staged worktree's trash independently of branch deletion.
 ///
-/// This is used after the worktree has been renamed to a staging path,
-/// git metadata has been pruned, and the branch has been deleted synchronously.
-///
-/// When `changed_directory` is true — the shell is cd-ing away from the removed
-/// worktree — a placeholder directory is created at `original_path` so the shell's
-/// working directory remains valid until the wrapper has processed the `cd`
-/// directive. Without this, shells that validate `$env.PWD` (notably Nushell)
-/// emit errors between binary exit and the `cd`. The background command then
-/// waits for the shell wrapper before cleaning up the placeholder.
-///
-/// When `changed_directory` is false, no placeholder exists, so the background
-/// command just removes the staged directory directly.
-///
-/// # Design alternatives evaluated (2026-04)
-///
-/// Two weaknesses in the current design prompted an investigation:
-///
-/// 1. **Silent `rmdir` failure.** If anything lands in the placeholder
-///    during the 1-second sleep (e.g., macOS `.DS_Store`, a filesystem
-///    race, an editor saving against the old path), `rmdir` fails silently
-///    because of `2>/dev/null`, and the empty directory at `original_path`
-///    lingers forever. This was the root cause of an intermittent
-///    `test_bare_repo_merge_workflow` flake.
-/// 2. **"Create then delete" placeholder lifecycle.** wt creates an empty
-///    directory that the background shell removes one second later; its
-///    only purpose is keeping `$PWD` valid for shells (notably Nushell)
-///    that stat it between wt's exit and the wrapper's `cd`.
-///
-/// Two alternatives were prototyped and reviewed; neither was adopted.
-///
-/// ## Option A — Fully deferred cleanup with a pending-removal marker
-///
-/// Sync phase shrinks to: write a `PendingRemoval` marker under
-/// `<git-common-dir>/wt/pending/`, spawn detached `wt internal
-/// finish-removal <marker>`, exit. The detached process sleeps 1 second,
-/// then does rename + prune + `branch -D` + `rm -rf` + marker delete —
-/// the work that today happens synchronously. Concurrent operations
-/// (e.g., `wt switch --create <same-branch>` within the 1-second window)
-/// check for matching markers and force-finish the cleanup inline via a
-/// `finish_blocking_for` helper. Crashed cleanup processes are reclaimed
-/// by extending the existing `sweep_stale_trash` path with a
-/// `sweep_stale_pending` variant.
-///
-/// Benefits: eliminates the placeholder lifecycle entirely (the original
-/// path never disappears during wt's execution, so `$PWD` stays valid
-/// "for free"); no `rmdir` silent-failure mode; marker-based
-/// coordination on the recreate race.
-///
-/// Drawbacks surfaced by Codex review:
-///
-/// - **Data safety (P1).** The clean-check runs sync but the rename
-///   runs ~1 second later. Writes to existing files during that window
-///   (editor save, background build) are silently renamed into trash
-///   and `rm -rf`'d. Today's sync rename keeps that window
-///   microsecond-wide. Mitigation: revalidate cleanliness in the
-///   finisher and bail on dirty — but that turns "remove" into a silent
-///   no-op visible only in log files.
-/// - **Hook timing (P2).** `spawn_hooks_after_remove` runs right after
-///   the sync phase returns. In the deferred design, `post-remove`
-///   hooks fire while `git worktree list` still reports the worktree
-///   and the branch still exists, contrary to the hook's documented
-///   contract. Fix: move hook invocation into the finisher.
-/// - **Retained-branch coordination (P1).** The marker's `branch` field
-///   must be recorded independently of the `delete_branch` flag, or
-///   `finish_blocking_for(Some("feature"), ..)` misses markers whose
-///   branch was retained (`--no-delete-branch`, unmerged safe-delete).
-/// - **Complexity cost.** New module (`src/commands/pending.rs`), new
-///   hidden CLI subcommand (`wt internal finish-removal`), sweep
-///   recovery, coordination calls in `plan_switch`,
-///   `validate_worktree_creation`, and `handle_remove_command`. ~450
-///   lines of new code plus tests.
-///
-/// ## Option B — Sync rename + `rm -rf` instead of `rmdir`
-///
-/// Keep the current sync phase (rename + prune + `branch -D` + create
-/// placeholder), add the pending-removal marker + coordination hooks,
-/// and in this function substitute `rm -rf <placeholder>` for
-/// `rmdir <placeholder> 2>/dev/null`.
-///
-/// Benefits: fixes the flake's root cause (silent-failure mode gone);
-/// inherits marker-based coordination; keeps the data-safety window at
-/// microseconds; keeps hook timing correct.
-///
-/// Drawbacks:
-///
-/// - Doesn't eliminate the "create then delete" placeholder pattern —
-///   just makes its cleanup robust.
-/// - Introduces a narrow new window: if something writes to the
-///   placeholder during the 1-second sleep, `rm -rf` deletes it.
-///   Today's silent `rmdir` accidentally preserves such writes as
-///   orphaned leftovers (ugly but data-preserving). Mitigation:
-///   revalidate emptiness in the finisher and skip `rm -rf` on
-///   non-empty placeholders — turns that accidental preservation into a
-///   deliberate invariant.
-///
-/// ## Decision
-///
-/// Neither was adopted. The flaky test was fixed at the test layer by
-/// teaching `wait_for_worktree_removed` to accept "gone or empty
-/// placeholder" as the success condition — matching what
-/// `assert_worktree_removed` already documents. If flakiness resurfaces
-/// or the visible-placeholder aesthetic becomes a real friction point,
-/// Option B is the low-risk path forward: strictly dominates main
-/// except for the narrow write-into-placeholder edge case, and reuses
-/// most of the pending-module work from Option A.
-pub fn build_remove_command_staged(
-    staged_path: &std::path::Path,
-    original_path: &std::path::Path,
-    changed_directory: bool,
-) -> String {
+/// The worktree has been renamed and its registry entry pruned. This command
+/// can start immediately; it never touches the original worktree path.
+pub fn build_remove_command_staged(staged_path: &std::path::Path) -> String {
     use shell_escape::unix::escape;
 
     let staged_path_str = staged_path.to_string_lossy();
     let staged_escaped = escape(staged_path_str.as_ref().into());
+    format!("rm -rf -- {}", staged_escaped)
+}
 
-    if changed_directory {
-        let original_path_str = original_path.to_string_lossy();
-        let original_escaped = escape(original_path_str.as_ref().into());
+/// Remove the empty shell-PWD placeholder after synchronous removal finishes.
+///
+/// The one-second delay gives the shell wrapper time to consume its cd
+/// directive. `rmdir` preserves any files written into the original path.
+pub fn build_remove_placeholder_command(original_path: &std::path::Path) -> String {
+    use shell_escape::unix::escape;
 
-        // sleep 1: give the shell wrapper time to cd away before removing the placeholder.
-        // rmdir: remove the empty placeholder (safe — only removes empty directories).
-        // rm -rf: remove the staged worktree contents.
-        // Use -- to prevent option parsing for paths starting with -
-        format!(
-            "sleep 1 && rmdir -- {} 2>/dev/null; rm -rf -- {}",
-            original_escaped, staged_escaped
-        )
-    } else {
-        // No placeholder to clean up — just remove the staged directory.
-        format!("rm -rf -- {}", staged_escaped)
-    }
+    let original_path_str = original_path.to_string_lossy();
+    let original_escaped = escape(original_path_str.as_ref().into());
+    format!("sleep 1 && rmdir -- {} 2>/dev/null", original_escaped)
 }
 
 /// Build shell command for background worktree removal (legacy path).
@@ -897,17 +788,13 @@ mod tests {
     fn test_build_remove_command_staged() {
         let staged_path = PathBuf::from("/tmp/repo/.git/wt/trash/my-project.feature-1234567890");
         let original_path = PathBuf::from("/tmp/my-project.feature");
+        assert_snapshot!(build_remove_command_staged(&staged_path), @"rm -rf -- /tmp/repo/.git/wt/trash/my-project.feature-1234567890");
+        assert_snapshot!(build_remove_placeholder_command(&original_path), @"sleep 1 && rmdir -- /tmp/my-project.feature 2>/dev/null");
 
-        // changed_directory=true: placeholder cleanup before rm -rf
-        assert_snapshot!(build_remove_command_staged(&staged_path, &original_path, true), @"sleep 1 && rmdir -- /tmp/my-project.feature 2>/dev/null; rm -rf -- /tmp/repo/.git/wt/trash/my-project.feature-1234567890");
-
-        // changed_directory=false: just rm -rf, no placeholder
-        assert_snapshot!(build_remove_command_staged(&staged_path, &original_path, false), @"rm -rf -- /tmp/repo/.git/wt/trash/my-project.feature-1234567890");
-
-        // Shell escaping for special characters (space in path)
         let special_path = PathBuf::from("/tmp/repo/.git/wt/trash/test worktree-123");
         let special_original = PathBuf::from("/tmp/test worktree");
-        assert_snapshot!(build_remove_command_staged(&special_path, &special_original, true), @"sleep 1 && rmdir -- '/tmp/test worktree' 2>/dev/null; rm -rf -- '/tmp/repo/.git/wt/trash/test worktree-123'");
+        assert_snapshot!(build_remove_command_staged(&special_path), @"rm -rf -- '/tmp/repo/.git/wt/trash/test worktree-123'");
+        assert_snapshot!(build_remove_placeholder_command(&special_original), @"sleep 1 && rmdir -- '/tmp/test worktree' 2>/dev/null");
     }
 
     #[test]

@@ -1581,6 +1581,12 @@ fn repository_instances_share_mutation_coordination() {
     let linked = test.add_worktree("registry-lock-linked");
     let first = Repository::at(test.root_path()).unwrap();
     let second = Repository::at(linked).unwrap();
+    test.run_git(&["branch", "queued-deletion"]);
+    let expected = test.git_output(&["rev-parse", "queued-deletion"]);
+    assert!(std::ptr::eq(
+        first.branch_deletions(),
+        second.branch_deletions()
+    ));
 
     {
         let _write = first.worktree_registry_write();
@@ -1589,18 +1595,16 @@ fn repository_instances_share_mutation_coordination() {
             "fresh repository handles for one common directory must share the registry lock"
         );
         assert!(
-            second.branch_deletion_lock().try_lock().is_ok(),
-            "registry coordination must not block acquiring the branch deletion mutex"
+            second
+                .branch_deletions()
+                .delete(&second, "refs/heads/queued-deletion".to_owned(), &expected)
+                .unwrap(),
+            "registry coordination must not block ref mutation"
         );
     }
-    let _deletion = first.branch_deletion_lock().lock().unwrap();
-    assert!(
-        second.branch_deletion_lock().try_lock().is_err(),
-        "fresh repository handles for one common directory must share the branch deletion lock"
-    );
     assert!(
         second.locks.worktree_registry.try_read().is_ok(),
-        "branch deletion coordination must not block registry readers"
+        "registry remains readable after branch deletion"
     );
 }
 

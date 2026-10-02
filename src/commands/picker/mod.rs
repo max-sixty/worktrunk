@@ -390,6 +390,7 @@ impl AltXRemover {
                     &plan,
                     /* quiet */ true,
                     &mut announcer,
+                    None,
                 )?;
                 announcer.flush()?;
             }

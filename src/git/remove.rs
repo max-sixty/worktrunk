@@ -100,9 +100,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::git::repository::WorkingTree;
-use crate::git::{
-    ErrorExt, GitError, IntegrationReason, Repository, WorktreeInfo, WorktrunkError, path_dir_name,
-};
+use crate::git::{GitError, IntegrationReason, Repository, WorktreeInfo, path_dir_name};
 use crate::shell_exec::Cmd;
 use crate::utils::epoch_now;
 
@@ -579,7 +577,7 @@ pub fn delete_branch_if_safe(
         Some(r) => {
             // Atomic compare-and-swap against the snapshotted SHA. If the ref
             // moved between `integration_reason` and the delete (e.g. a hook
-            // advanced the branch), `git update-ref -d <ref> <expected>` fails
+            // advanced the branch), the queued `git update-ref` transaction fails
             // closed: the branch is retained and we surface a `RetainedRaced`
             // outcome rather than dropping the unmerged commits silently.
             //
@@ -635,20 +633,19 @@ fn branch_checkout_requires_retention(worktree: &WorktreeInfo, branch_name: &str
 /// Atomically delete `refs/heads/<branch>` iff it currently points at
 /// `expected_sha`, and translate the result into a [`BranchDeletionOutcome`].
 ///
-/// `git update-ref -d <ref> <oid>` is git's compare-and-swap delete primitive:
-/// the ref is removed only if its current value matches `<oid>`. If it has
-/// moved (a hook or concurrent process advanced the branch), the command
-/// exits non-zero with a `cannot lock ref` message and the ref is left alone —
-/// fail-closed semantics that protect unmerged commits.
+/// `git update-ref --stdin` carries the original expected OID for each delete:
+/// the ref is removed only if its current value still matches. The repository
+/// deletion queue combines ready requests into atomic transactions, retaining
+/// moved branches and retrying unchanged peers with the same original OIDs.
 ///
 /// A fresh topology read provides best-effort checkout protection before
-/// waiting for the repository's deletion lock. Only the ref mutation is
+/// submitting to the repository's deletion queue. Only the ref mutation is
 /// serialized: topology reads can run concurrently. Git has no transaction
 /// spanning worktree registration and ref updates, so a new checkout can race
-/// this check, including during a contended mutex's queue wait; the atomic SHA
+/// this check, including during the queue wait; the atomic SHA
 /// comparison still protects concurrent commits.
 ///
-/// On failure, a fresh `rev-parse` distinguishes actual SHA movement from a
+/// On failure, a fresh ref walk distinguishes actual SHA movement from a
 /// lock or I/O error without parsing Git's localized diagnostics. An unchanged
 /// or unreadable ref propagates the original deletion error.
 fn cas_delete_branch_outcome(
@@ -663,26 +660,13 @@ fn cas_delete_branch_outcome(
     if let Some(path) = fresh_branch_checkout(repo, branch_name)? {
         return Ok(BranchDeletionOutcome::RetainedCheckedOut { path });
     }
-    let deletion_lock = repo.branch_deletion_lock();
-    let update_result = {
-        let _guard = deletion_lock
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        repo.run_command(&["update-ref", "-d", &ref_name, expected_sha])
-    };
-    let update_err = match update_result {
-        Ok(_) => return Ok(BranchDeletionOutcome::Integrated(reason)),
-        Err(error) => {
-            if let Some(signal) = error.interrupt_signal() {
-                return Err(WorktrunkError::Interrupted { signal, hint: None }.into());
-            }
-            error
-        }
-    };
-
-    match repo.run_command(&["rev-parse", "--verify", "--quiet", &ref_name]) {
-        Ok(live_sha) if live_sha.trim() != expected_sha => Ok(BranchDeletionOutcome::RetainedRaced),
-        _ => Err(update_err),
+    if repo
+        .branch_deletions()
+        .delete(repo, ref_name, expected_sha)?
+    {
+        Ok(BranchDeletionOutcome::Integrated(reason))
+    } else {
+        Ok(BranchDeletionOutcome::RetainedRaced)
     }
 }
 
@@ -707,6 +691,7 @@ pub(crate) fn generate_removing_path(trash_dir: &Path, worktree_path: &Path) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git::ErrorExt;
     use crate::testing::TestRepo;
 
     /// A `git worktree lock` must stop the rename even when the caller skipped
@@ -944,7 +929,7 @@ mod tests {
     }
 
     /// When the branch ref vanishes between snapshot capture and the CAS
-    /// delete, `git update-ref -d` fails *and* the ref is already absent, so
+    /// delete, `git update-ref` fails *and* the ref is already absent, so
     /// the outcome is a real error (propagated) — distinct from the
     /// `RetainedRaced` case where the ref moved but still exists.
     #[test]

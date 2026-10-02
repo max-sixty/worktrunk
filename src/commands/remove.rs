@@ -482,6 +482,7 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                     &plan,
                     false,
                     &mut announcer,
+                    None,
                 )?;
                 announcer.flush()?;
                 if json_mode {
@@ -544,6 +545,7 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                         &plan,
                         false,
                         &mut announcer,
+                        None,
                     )?;
                     announcer.flush()?;
                     Ok(fate)
