@@ -11,8 +11,8 @@ use anyhow::Context;
 use color_print::cformat;
 use serde::{Serialize, de::DeserializeOwned};
 use worktrunk::config::{
-    LoadError, ProjectConfig, UserConfig, default_system_config_path, require_config_path,
-    system_config_path,
+    ConfigError, ConfigFileKind, ConfigParseError, LoadError, ProjectConfig, UserConfig,
+    default_system_config_path, require_config_path, system_config_path,
 };
 use worktrunk::git::remote_ref::azure::azure_devops_extension_installed;
 use worktrunk::git::{ErrorExt, ForgeKind, Repository, WorktrunkError};
@@ -23,7 +23,7 @@ use worktrunk::shell::{
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{
     FormattedMessage, error_message, format_bash_with_gutter, format_heading, format_toml,
-    format_with_gutter, hint_message, info_message, success_message, warning_message,
+    format_with_gutter, hint_message, info_message, warning_message,
 };
 
 use crate::cli::{SwitchFormat, version_str};
@@ -200,7 +200,7 @@ fn handle_config_show_json() -> anyhow::Result<()> {
     let system_exists = system_path.as_ref().is_some_and(|p| p.exists());
     let system_invalid = if let Some(path) = system_path.as_deref().filter(|_| system_exists) {
         match std::fs::read_to_string(path) {
-            Ok(contents) => parse_user_config(&contents).is_err(),
+            Ok(contents) => parse_user_config(&contents, path, ConfigFileKind::System).is_err(),
             Err(_) => true,
         }
     } else {
@@ -257,13 +257,18 @@ where
 
 fn read_user_config(path: &Path) -> Option<UserConfig> {
     let contents = std::fs::read_to_string(path).ok()?;
-    parse_user_config(&contents).ok()
+    parse_user_config(&contents, path, ConfigFileKind::User).ok()
 }
 
-fn parse_user_config(contents: &str) -> Result<UserConfig, String> {
+fn parse_user_config(
+    contents: &str,
+    path: &Path,
+    kind: ConfigFileKind,
+) -> Result<UserConfig, ConfigError> {
     let migrated = worktrunk::config::migrate_content(contents);
-    let config = toml::from_str::<UserConfig>(&migrated).map_err(|err| err.to_string())?;
-    config.validate().map_err(|err| err.to_string())?;
+    let config = toml::from_str::<UserConfig>(&migrated)
+        .map_err(|err| ConfigError::Parse(ConfigParseError::new(kind, path, err)))?;
+    config.validate()?;
     Ok(config)
 }
 
@@ -360,6 +365,16 @@ pub(super) fn is_statusline_configured() -> bool {
 
 // ==================== Render Functions ====================
 
+/// Existing state is neutral; an action the reader can take belongs on its own row.
+fn state_with_advice(state: &str, advice: Option<String>) -> String {
+    let mut rendered = info_message(state).to_string();
+    if let Some(advice) = advice {
+        rendered.push('\n');
+        rendered.push_str(&hint_message(advice).to_string());
+    }
+    rendered
+}
+
 /// Render CLAUDE CODE section (plugin and statusline status).
 /// Caller must check `is_claude_available()` first.
 fn render_claude_code_status(out: &mut String) -> anyhow::Result<()> {
@@ -369,28 +384,34 @@ fn render_claude_code_status(out: &mut String) -> anyhow::Result<()> {
     // plain absence: the install it points at is idempotent, so following it
     // is safe either way, and Claude Code's own output then says what is true.
     if super::plugins::is_plugin_installed() == Some(true) {
-        writeln!(out, "{}", success_message("Plugin installed"))?;
+        writeln!(out, "{}", info_message("Plugin installed"))?;
     } else {
         writeln!(
             out,
             "{}",
-            hint_message(cformat!(
-                "Plugin not installed. To install, run <underline>wt config plugins claude install</>"
-            ))
+            state_with_advice(
+                "Plugin not installed",
+                Some(cformat!(
+                    "To install, run <underline>wt config plugins claude install</>"
+                ))
+            )
         )?;
     }
 
     // Statusline status
     let statusline_configured = is_statusline_configured();
     if statusline_configured {
-        writeln!(out, "{}", success_message("Statusline configured"))?;
+        writeln!(out, "{}", info_message("Statusline configured"))?;
     } else {
         writeln!(
             out,
             "{}",
-            hint_message(cformat!(
-                "Statusline not configured. To configure, run <underline>wt config plugins claude install-statusline</>"
-            ))
+            state_with_advice(
+                "Statusline not configured",
+                Some(cformat!(
+                    "To configure, run <underline>wt config plugins claude install-statusline</>"
+                ))
+            )
         )?;
     }
 
@@ -401,7 +422,7 @@ fn render_claude_code_status(out: &mut String) -> anyhow::Result<()> {
 /// Caller must check `is_codex_available()` first.
 fn render_codex_status(out: &mut String) -> anyhow::Result<()> {
     writeln!(out, "{}", format_heading("CODEX", None))?;
-    writeln!(out, "{}", success_message("Codex CLI available"))?;
+    writeln!(out, "{}", info_message("Codex CLI available"))?;
     writeln!(
         out,
         "{}",
@@ -439,7 +460,8 @@ pub(super) fn is_omp_available() -> bool {
 }
 
 /// The section for a plugin the installer writes as a plain file: a heading,
-/// then one line of status, with the trailing newline the caller would add.
+/// then neutral state and, when needed, separate installation/update advice.
+/// Includes the trailing newline the caller would add.
 ///
 /// OpenCode, Pi, and oh-my-pi each install one file and each report the same
 /// three states, differing only in the heading and the command that writes the
@@ -453,15 +475,17 @@ fn file_plugin_status(
     file_exists: bool,
 ) -> String {
     let status = if installed {
-        success_message("Plugin installed")
+        state_with_advice("Plugin installed", None)
     } else if file_exists {
-        hint_message(cformat!(
-            "Plugin outdated. To update, run <underline>{install_command}</>"
-        ))
+        state_with_advice(
+            "Plugin outdated",
+            Some(cformat!("To update, run <underline>{install_command}</>")),
+        )
     } else {
-        hint_message(cformat!(
-            "Plugin not installed. To install, run <underline>{install_command}</>"
-        ))
+        state_with_advice(
+            "Plugin not installed",
+            Some(cformat!("To install, run <underline>{install_command}</>")),
+        )
     };
     format!("{}\n{status}\n", format_heading(heading, None))
 }
@@ -495,14 +519,17 @@ fn render_gemini_status(out: &mut String) -> anyhow::Result<()> {
     writeln!(out, "{}", format_heading("GEMINI CLI", None))?;
 
     if is_gemini_extension_installed() == Some(true) {
-        writeln!(out, "{}", success_message("Extension installed"))?;
+        writeln!(out, "{}", info_message("Extension installed"))?;
     } else {
         writeln!(
             out,
             "{}",
-            hint_message(cformat!(
-                "Extension not installed. To install, run <underline>gemini extensions install https://github.com/max-sixty/worktrunk</>"
-            ))
+            state_with_advice(
+                "Extension not installed",
+                Some(cformat!(
+                    "To install, run <underline>gemini extensions install https://github.com/max-sixty/worktrunk</>"
+                ))
+            )
         )?;
     }
 
@@ -625,7 +652,7 @@ fn render_diagnostics(out: &mut String, repo: Option<&Repository>) -> anyhow::Re
     let commit_config = config.commit_generation(project_id.as_deref());
 
     if !commit_config.is_configured() {
-        writeln!(out, "{}", hint_message("Commit generation not configured"))?;
+        writeln!(out, "{}", info_message("Commit generation not configured"))?;
     } else {
         // `is_configured()` guarantees `command` is `Some` and non-empty here;
         // `unwrap_or_default()` avoids a panic-prone `unwrap()` in this
@@ -637,7 +664,7 @@ fn render_diagnostics(out: &mut String, repo: Option<&Repository>) -> anyhow::Re
                 writeln!(
                     out,
                     "{}",
-                    success_message(cformat!(
+                    info_message(cformat!(
                         "Commit generation working (<bold>{command_display}</>)"
                     ))
                 )?;
@@ -684,11 +711,12 @@ fn render_system_config(out: &mut String) -> Option<bool> {
     };
 
     if contents.trim().is_empty() {
-        let _ = writeln!(out, "{}", hint_message("Empty file (no system defaults)"));
+        let _ = writeln!(out, "{}", info_message("Empty file (no system defaults)"));
         return Some(false);
     }
 
-    let invalid = render_user_config_diagnostics(out, &contents);
+    let invalid =
+        render_user_config_diagnostics(out, &contents, &system_path, ConfigFileKind::System);
 
     // Display TOML with syntax highlighting
     let _ = writeln!(out, "{}", format_toml(&contents));
@@ -718,9 +746,12 @@ fn render_user_config(
         writeln!(
             out,
             "{}",
-            hint_message(cformat!(
-                "Not found; to create one, run <underline>wt config create</>"
-            ))
+            state_with_advice(
+                "Not found",
+                Some(cformat!(
+                    "To create one, run <underline>wt config create</>"
+                ))
+            )
         )?;
         // A `[list] columns` selection can still arrive from the system layer,
         // the environment, or `--config-set`, so the check runs either way.
@@ -767,11 +798,11 @@ fn render_user_config(
     };
 
     if contents.trim().is_empty() {
-        writeln!(out, "{}", hint_message("Empty file (using defaults)"))?;
+        writeln!(out, "{}", info_message("Empty file (using defaults)"))?;
         return Ok(invalid | render_column_selection(out, repo)?);
     }
 
-    invalid |= render_user_config_diagnostics(out, &contents);
+    invalid |= render_user_config_diagnostics(out, &contents, &config_path, ConfigFileKind::User);
 
     // Display TOML with syntax highlighting (gutter at column 0).
     // Skip when deprecations were shown — the proposed diff already covers it.
@@ -791,7 +822,7 @@ fn render_system_config_hint(out: &mut String) -> anyhow::Result<()> {
         writeln!(
             out,
             "{}",
-            hint_message(cformat!(
+            info_message(cformat!(
                 "Optional system config not found @ <dim>{}</>",
                 format_path_for_display(&path)
             ))
@@ -805,16 +836,30 @@ fn render_config_read_error(out: &mut String, err: &std::io::Error) {
     let _ = writeln!(out, "{}", format_with_gutter(&err.to_string(), None));
 }
 
+/// Render a typed parse diagnosis or a non-parser config failure.
+fn render_config_error(out: &mut String, error: ConfigError, fallback: &str) {
+    let error = anyhow::Error::new(error);
+    if let Some(diagnostic) = error.render_diagnostic() {
+        let _ = writeln!(out, "{diagnostic}");
+    } else {
+        let _ = writeln!(out, "{}", error_message(fallback));
+        let _ = writeln!(out, "{}", format_with_gutter(&error.to_string(), None));
+    }
+}
+
 /// Render parse, validation, and unknown-key diagnostics for a user-config source.
-fn render_user_config_diagnostics(out: &mut String, contents: &str) -> bool {
-    let Err(error) = parse_user_config(contents) else {
+fn render_user_config_diagnostics(
+    out: &mut String,
+    contents: &str,
+    path: &Path,
+    kind: ConfigFileKind,
+) -> bool {
+    let Err(error) = parse_user_config(contents, path, kind) else {
         out.push_str(&warn_unknown_keys::<UserConfig>(contents));
         return false;
     };
 
-    let _ = writeln!(out, "{}", error_message("Invalid config"));
-    // Use a gutter to avoid interpreting user-controlled parser output as markup.
-    let _ = writeln!(out, "{}", format_with_gutter(&error, None));
+    render_config_error(out, error, "Invalid config");
     true
 }
 
@@ -950,14 +995,14 @@ fn render_project_config(out: &mut String, repo: Option<&Repository>) -> anyhow:
                 };
                 let source = format!("@ {}", format_path_for_display(&path));
                 write_heading_and_identifier(out, repo, &source)?;
-                writeln!(out, "{}", hint_message("Not found"))?;
+                writeln!(out, "{}", info_message("Not found"))?;
                 return Ok(false);
             }
         },
     };
 
     if contents.trim().is_empty() {
-        writeln!(out, "{}", hint_message("Empty file"))?;
+        writeln!(out, "{}", info_message("Empty file"))?;
         return Ok(false);
     }
 
@@ -997,8 +1042,15 @@ fn render_project_config(out: &mut String, repo: Option<&Repository>) -> anyhow:
     if let Err(e) = toml::from_str::<ProjectConfig>(&contents) {
         // Use gutter for error details to avoid markup interpretation of user content
         invalid = true;
-        writeln!(out, "{}", error_message("Invalid config"))?;
-        writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
+        writeln!(
+            out,
+            "{}",
+            worktrunk::git::Diagnostic::render(&ConfigParseError::new(
+                ConfigFileKind::Project,
+                &config_path,
+                e
+            ))
+        )?;
     } else {
         out.push_str(&warn_unknown_keys::<ProjectConfig>(&contents));
     }
@@ -1018,8 +1070,7 @@ fn render_approvals(out: &mut String, repo: Option<&Repository>) -> bool {
         ApprovalsDiagnostic::Valid => false,
         ApprovalsDiagnostic::Invalid(err) => {
             render_approvals_heading(out);
-            let _ = writeln!(out, "{}", error_message("Invalid approvals"));
-            let _ = writeln!(out, "{}", format_with_gutter(&err, None));
+            render_config_error(out, err, "Invalid approvals");
             true
         }
         ApprovalsDiagnostic::Pending(pending) => {
@@ -1044,7 +1095,7 @@ fn render_approvals_heading(out: &mut String) {
 
 enum ApprovalsDiagnostic {
     Valid,
-    Invalid(String),
+    Invalid(ConfigError),
     Pending(usize),
 }
 
@@ -1055,7 +1106,7 @@ fn approvals_diagnostic(repo: Option<&Repository>) -> ApprovalsDiagnostic {
     let approvals = match worktrunk::config::Approvals::load() {
         Ok(approvals) => approvals,
         Err(err) if approvals_file_exists => {
-            return ApprovalsDiagnostic::Invalid(err.to_string());
+            return ApprovalsDiagnostic::Invalid(err);
         }
         // With no approvals file, `Approvals::load` falls back to the user
         // config. Its error belongs to that section, which already reports the
@@ -1628,7 +1679,7 @@ pub(super) fn render_ci_tool_status(
             writeln!(
                 out,
                 "{}",
-                success_message(cformat!("<bold>{tool}</> installed & authenticated"))
+                info_message(cformat!("<bold>{tool}</> installed & authenticated"))
             )?;
         } else {
             // The auth-setup command differs by CLI: `gh`/`glab` use
@@ -1641,8 +1692,13 @@ pub(super) fn render_ci_tool_status(
             writeln!(
                 out,
                 "{}",
-                warning_message(cformat!(
-                    "<bold>{tool}</> installed but not authenticated; run <bold>{auth_command}</>"
+                warning_message(cformat!("<bold>{tool}</> installed but not authenticated"))
+            )?;
+            writeln!(
+                out,
+                "{}",
+                hint_message(cformat!(
+                    "To authenticate, run <underline>{auth_command}</>"
                 ))
             )?;
         }
@@ -1650,7 +1706,7 @@ pub(super) fn render_ci_tool_status(
         writeln!(
             out,
             "{}",
-            hint_message(cformat!(
+            info_message(cformat!(
                 "<bold>{tool}</> not found ({platform} CI status unavailable)"
             ))
         )?;

@@ -5982,7 +5982,7 @@ fn test_switch_pr_malformed_project_config_bails_before_forge_selection(
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Failed to load project config"),
+        stderr.contains("Project config @"),
         "expected project-config load error, got:\n{stderr}"
     );
     assert!(

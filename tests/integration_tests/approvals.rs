@@ -735,3 +735,25 @@ fn test_config_create_project_bare_repo_uses_primary_worktree() {
         bare_root_config
     );
 }
+
+/// The approvals source remains authoritative when malformed, including mutation
+/// commands: none may silently fall back or overwrite the unreadable file.
+#[rstest]
+#[case::list(&["list"])]
+#[case::add(&["add", "--yes"])]
+#[case::clear(&["clear", "--global"])]
+fn test_approvals_malformed_file(repo: TestRepo, #[case] args: &[&str]) {
+    let contents = "[projects\n";
+    fs::write(repo.test_approvals_path(), contents).unwrap();
+    repo.write_project_config(r#"pre-start = "echo hello""#);
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut command = repo.wt_command();
+        command.args(["config", "approvals"]).args(args);
+        assert_cmd_snapshot!(format!("malformed_approvals_{}", args[0]), command);
+    });
+    assert_eq!(
+        fs::read_to_string(repo.test_approvals_path()).unwrap(),
+        contents
+    );
+}

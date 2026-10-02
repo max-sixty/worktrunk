@@ -136,7 +136,6 @@ use std::sync::{Arc, LazyLock, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGua
 
 use crate::shell_exec::Cmd;
 
-use color_print::cformat;
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
 
@@ -2271,19 +2270,8 @@ fn emit_user_config_warnings(warnings: &[LoadError]) {
 /// counterpart are one line of code rather than two that can drift.
 fn emit_config_load_warning(warning: &LoadError) {
     match warning {
-        LoadError::File { path, kind, err } => {
-            let label = kind.label();
-            let path_display = crate::path::format_path_for_display(path);
-            crate::styling::eprintln!(
-                "{}",
-                crate::styling::warning_message(cformat!(
-                    "{label} @ <bold>{path_display}</> failed to parse, skipping"
-                ))
-            );
-            crate::styling::eprintln!(
-                "{}",
-                crate::styling::format_with_gutter(&err.to_string(), None)
-            );
+        LoadError::File(error) => {
+            crate::styling::eprintln!("{}", error.render_warning());
         }
         LoadError::Env { err, vars } => {
             let var_list: Vec<_> = vars

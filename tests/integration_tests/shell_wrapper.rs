@@ -444,8 +444,13 @@ fn exec_in_pty_shell(
             cmd.arg("-c");
             cmd.arg(script);
         }
+        "fish" => {
+            // Startup config can prepend real cargo ahead of the test's stub.
+            cmd.arg("--no-config");
+            cmd.arg("-c");
+            cmd.arg(script);
+        }
         _ => {
-            // fish and other shells
             cmd.arg("-c");
             cmd.arg(script);
         }
@@ -1770,9 +1775,10 @@ approved-commands = ["echo 'fish background task'"]
         let stub_dir = repo.root_path().join("stub-bin");
         fs::create_dir_all(&stub_dir).unwrap();
         let stub_cargo = stub_dir.join("cargo");
+        let stub_marker = repo.root_path().join("cargo-stub-ran");
         fs::write(
             &stub_cargo,
-            "#!/bin/sh\nshift 5\nexec \"$WORKTRUNK_BIN\" \"$@\"\n",
+            "#!/bin/sh\nprintf invoked > \"$WORKTRUNK_TEST_CARGO_STUB_MARKER\"\nshift 5\nexec \"$WORKTRUNK_BIN\" \"$@\"\n",
         )
         .unwrap();
         fs::set_permissions(&stub_cargo, fs::Permissions::from_mode(0o755)).unwrap();
@@ -1803,8 +1809,10 @@ approved-commands = ["echo 'fish background task'"]
 
         let config_path = repo.test_config_path().to_string_lossy().to_string();
         let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
+        let stub_marker_path = stub_marker.to_string_lossy().to_string();
         let env_vars: Vec<(&str, &str)> = vec![
             ("PATH", &stub_path),
+            ("WORKTRUNK_TEST_CARGO_STUB_MARKER", &stub_marker_path),
             ("CLICOLOR_FORCE", "1"),
             ("WORKTRUNK_CONFIG_PATH", &config_path),
             ("WORKTRUNK_APPROVALS_PATH", &approvals_path),
@@ -1835,6 +1843,11 @@ approved-commands = ["echo 'fish background task'"]
             combined,
             exit_code,
         };
+
+        assert!(
+            stub_marker.exists(),
+            "{shell}: --source must execute the cargo stub, not compile live source"
+        );
 
         // Shell-agnostic assertions
         assert_ne!(output.exit_code, 0, "{}: Command should fail", shell);
