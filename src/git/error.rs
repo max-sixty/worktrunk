@@ -702,6 +702,8 @@ pub enum GitError {
         message: String,
         /// Full stderr output for debugging
         stderr: String,
+        /// Worktrunk-owned recovery advice, separate from the CLI verdict
+        hint: Option<String>,
     },
     Other {
         message: String,
@@ -1712,9 +1714,16 @@ impl GitError {
             }
 
             GitError::CliApiError {
-                message, stderr, ..
+                message,
+                stderr,
+                hint,
+                ..
             } => {
-                write!(f, "{}", format_error_block(error_message(message), stderr))
+                write!(f, "{}", format_error_block(error_message(message), stderr))?;
+                if let Some(hint) = hint {
+                    write!(f, "\n{}", hint_message(hint))?;
+                }
+                Ok(())
             }
 
             GitError::Other { message } => {
@@ -2769,6 +2778,7 @@ mod tests {
             ref_type: RefType::Pr,
             message: "gh api failed for PR #42".into(),
             stderr: "error: unexpected response\ncode: 500".into(),
+            hint: None,
         };
         assert_snapshot!(err.render(), @"
         [31m✗[39m [31mgh api failed for PR #42[39m

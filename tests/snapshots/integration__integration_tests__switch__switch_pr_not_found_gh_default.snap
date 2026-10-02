@@ -60,5 +60,6 @@ exit_code: 1
 
 ----- stderr -----
 [36m◎[39m [36mFetching PR #9999...[39m
-[31m✗[39m [31mPR #9999 not found on owner/other-repo (gh default). Check that `gh repo set-default` points to the correct repository.[39m
+[31m✗[39m [31mPR #9999 not found on owner/other-repo (gh default)[39m
 [107m [0m gh: Not Found (HTTP 404)
+[2m↳[22m [2mChoose the repository with [4mgh repo set-default[24m[22m

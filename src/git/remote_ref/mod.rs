@@ -177,12 +177,18 @@ pub(super) fn cli_api_error_details(output: &Output) -> String {
 /// gutter carries the CLI's verdict on it. A backend with something of its own
 /// to say — the cases in the module docs — passes it as `message` rather than
 /// bailing, so its words are added to the CLI's rather than substituted for
-/// them.
-pub(super) fn cli_api_error(ref_type: RefType, message: String, output: &Output) -> anyhow::Error {
+/// them. Recovery commands belong in `hint`, rendered separately from diagnosis.
+pub(super) fn cli_api_error(
+    ref_type: RefType,
+    message: String,
+    output: &Output,
+    hint: Option<String>,
+) -> anyhow::Error {
     GitError::CliApiError {
         ref_type,
         message,
         stderr: cli_api_error_details(output),
+        hint,
     }
     .into()
 }

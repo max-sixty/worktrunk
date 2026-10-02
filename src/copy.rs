@@ -152,9 +152,10 @@ pub fn copy_leaf(
             return Ok(None);
         }
         Err(e) => {
-            return Err(
-                anyhow::Error::from(e).context(format!("reading metadata for {}", src.display()))
-            );
+            return Err(anyhow::Error::from(e).context(format!(
+                "reading metadata for {}",
+                format_path_for_display(src)
+            )));
         }
     };
 
@@ -177,9 +178,8 @@ pub fn copy_leaf(
                 return Ok(None);
             }
             Err(e) => {
-                return Err(
-                    anyhow::Error::from(e).context(format!("reading symlink {}", src.display()))
-                );
+                return Err(anyhow::Error::from(e)
+                    .context(format!("reading symlink {}", format_path_for_display(src))));
             }
         };
         create_symlink(&target, src, dest)?;
@@ -224,7 +224,8 @@ pub fn copy_leaf(
                 return Ok(None);
             }
             Err(e) => {
-                return Err(anyhow::Error::from(e).context(format!("copying {}", src.display())));
+                return Err(anyhow::Error::from(e)
+                    .context(format!("copying {}", format_path_for_display(src))));
             }
         }
     };
@@ -347,13 +348,16 @@ pub fn copy_dir_recursive(
                 continue;
             }
             Err(e) => {
-                return Err(anyhow::Error::from(e)
-                    .context(format!("reading directory {}", src_dir.display())));
+                return Err(anyhow::Error::from(e).context(format!(
+                    "reading directory {}",
+                    format_path_for_display(&src_dir)
+                )));
             }
         };
 
-        fs::create_dir_all(&dest_dir)
-            .with_context(|| format!("creating directory {}", dest_dir.display()))?;
+        fs::create_dir_all(&dest_dir).with_context(|| {
+            format!("creating directory {}", format_path_for_display(&dest_dir))
+        })?;
         #[cfg(unix)]
         dirs_for_perms.push((src_dir.clone(), dest_dir.clone()));
 
@@ -367,8 +371,10 @@ pub fn copy_dir_recursive(
                     continue;
                 }
                 Err(e) => {
-                    return Err(anyhow::Error::from(e)
-                        .context(format!("reading metadata for {}", entry.path().display())));
+                    return Err(anyhow::Error::from(e).context(format!(
+                        "reading metadata for {}",
+                        format_path_for_display(&entry.path())
+                    )));
                 }
             };
             let src_path = entry.path();
@@ -420,12 +426,18 @@ pub fn copy_dir_recursive(
                 continue;
             }
             Err(e) => {
-                return Err(anyhow::Error::from(e)
-                    .context(format!("reading permissions for {}", src_dir.display())));
+                return Err(anyhow::Error::from(e).context(format!(
+                    "reading permissions for {}",
+                    format_path_for_display(src_dir)
+                )));
             }
         };
-        fs::set_permissions(dest_dir, src_perms)
-            .with_context(|| format!("setting permissions on {}", dest_dir.display()))?;
+        fs::set_permissions(dest_dir, src_perms).with_context(|| {
+            format!(
+                "setting permissions on {}",
+                format_path_for_display(dest_dir)
+            )
+        })?;
     }
 
     Ok(skipped)
@@ -447,17 +459,19 @@ fn create_symlink(target: &Path, src_path: &Path, dest_path: &Path) -> anyhow::R
     {
         let _ = src_path; // Used on Windows to determine symlink type
         std::os::unix::fs::symlink(target, dest_path)
-            .with_context(|| format!("creating symlink {}", dest_path.display()))?;
+            .with_context(|| format!("creating symlink {}", format_path_for_display(dest_path)))?;
     }
     #[cfg(windows)]
     {
         let is_dir = src_path.metadata().map(|m| m.is_dir()).unwrap_or(false);
         if is_dir {
-            std::os::windows::fs::symlink_dir(target, dest_path)
-                .with_context(|| format!("creating symlink {}", dest_path.display()))?;
+            std::os::windows::fs::symlink_dir(target, dest_path).with_context(|| {
+                format!("creating symlink {}", format_path_for_display(dest_path))
+            })?;
         } else {
-            std::os::windows::fs::symlink_file(target, dest_path)
-                .with_context(|| format!("creating symlink {}", dest_path.display()))?;
+            std::os::windows::fs::symlink_file(target, dest_path).with_context(|| {
+                format!("creating symlink {}", format_path_for_display(dest_path))
+            })?;
         }
     }
     #[cfg(not(any(unix, windows)))]
