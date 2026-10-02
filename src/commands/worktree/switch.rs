@@ -654,6 +654,7 @@ fn resolve_switch_target(
             if !repo.ref_exists(&resolved)? {
                 return Err(GitError::ReferenceNotFound {
                     reference: resolved,
+                    flag: Some("--base"),
                 }
                 .into());
             }
@@ -666,6 +667,7 @@ fn resolve_switch_target(
     // Validate --create constraints
     if create {
         let branch_handle = repo.branch(&resolved_branch);
+        branch_handle.require_valid_name()?;
         if branch_handle.exists_locally()? {
             return Err(GitError::BranchAlreadyExists {
                 branch: resolved_branch,
@@ -750,12 +752,15 @@ fn validate_worktree_creation(
     } = method
         && !repo.branch(branch).exists()?
     {
+        if !worktrunk::git::is_valid_branch_name(branch) {
+            return Err(GitError::WorktreeSelectorNotFound {
+                selector: branch.to_string(),
+            }
+            .into());
+        }
         return Err(GitError::BranchNotFound {
             branch: branch.to_string(),
-            // Offering `--create` for a name git rejects sends the user to a
-            // command that fails; the argument was a path spelling, whether or
-            // not a directory happens to sit at it.
-            show_create_hint: worktrunk::git::is_valid_branch_name(branch),
+            show_create_hint: true,
             last_fetch_ago: format_last_fetch_ago(repo),
             pr_mr_platform: repo.detect_ref_type(),
         }

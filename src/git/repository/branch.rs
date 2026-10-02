@@ -63,6 +63,20 @@ impl<'a> Branch<'a> {
         &self.name
     }
 
+    /// Reject a name Git cannot create as a branch, retaining operational failures.
+    pub fn require_valid_name(&self) -> anyhow::Result<()> {
+        let args = ["check-ref-format", "--branch", self.name.as_str()];
+        let output = self.repo.run_command_output(&args)?;
+        match output.status.code() {
+            Some(0) => Ok(()),
+            Some(128) => Err(super::super::GitError::InvalidBranchName {
+                name: self.name.clone(),
+            }
+            .into()),
+            _ => Err(super::super::CommandError::from_failed_output("git", &args, &output).into()),
+        }
+    }
+
     /// Check if this branch exists locally.
     pub fn exists_locally(&self) -> anyhow::Result<bool> {
         Ok(self

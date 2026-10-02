@@ -633,6 +633,15 @@ fn handle_switch_existing_output(ctx: &SwitchOutputContext) -> Option<PathBuf> {
             ))
         );
         print_switch_directory_hint(&ctx.branch, ctx.is_git_subcommand);
+    } else if ctx.user_wont_be_in_worktree {
+        eprintln!(
+            "{}",
+            info_message(cformat!(
+                "Worktree for <bold>{}</> @ <bold>{}</> (directory change disabled)",
+                ctx.branch,
+                ctx.path_display
+            ))
+        );
     } else {
         eprintln!(
             "{}",
