@@ -124,8 +124,7 @@ fn validate_remove_targets(
     repo: &Repository,
     config: &UserConfig,
     branches: Vec<String>,
-    keep_branch: bool,
-    force_delete: bool,
+    deletion_mode: BranchDeletionMode,
     force: bool,
 ) -> RemovePlans {
     let mut plans = RemovePlans {
@@ -152,7 +151,6 @@ fn validate_remove_targets(
             .collect()
     };
 
-    let deletion_mode = BranchDeletionMode::from_flags(keep_branch, force_delete);
     let worktrees = repo.list_worktrees().ok();
 
     // Capture once for the validation loop. Validation only reads — actual
@@ -382,13 +380,18 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
             let delete_branch =
                 cli_override.unwrap_or_else(|| config.remove(project.as_deref()).delete_branch());
 
-            // Validate conflicting flags
+            // Clap rejects contradictory CLI flags; config can still keep the
+            // branch when force deletion was requested. Resolve one policy for
+            // both current-worktree and named-target removal.
             if !delete_branch && args.force_delete {
                 return Err(worktrunk::git::GitError::Other {
-                    message: "Cannot use --force-delete with delete-branch=false (set via --no-delete-branch or [remove] delete-branch = false)".into(),
+                    message: color_print::cformat!(
+                        "Cannot use <bold>--force-delete</> with <bold>[remove] delete-branch = false</>; to override the config, add <bold>--delete-branch</>"
+                    ),
                 }
                 .into());
             }
+            let deletion_mode = BranchDeletionMode::from_flags(!delete_branch, args.force_delete);
 
             // `--reap` relies on per-process cwd discovery (`lsof`/`ps`), which
             // has no cheap Windows equivalent — reject it there rather than
@@ -453,7 +456,7 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                 let result = repo
                     .prepare_worktree_removal(
                         RemoveTarget::WorktreePath(current_path.clone()),
-                        BranchDeletionMode::from_flags(!delete_branch, args.force_delete),
+                        deletion_mode,
                         args.force,
                         &current_path,
                         None,
@@ -499,8 +502,7 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                     &repo,
                     &config,
                     branches,
-                    !delete_branch,
-                    args.force_delete,
+                    deletion_mode,
                     args.force,
                 );
 
@@ -604,8 +606,7 @@ mod tests {
                 "feature".to_string(),
                 worktree.to_string_lossy().into_owned(),
             ],
-            true,
-            false,
+            BranchDeletionMode::Keep,
             false,
         );
 
@@ -631,8 +632,7 @@ mod tests {
             &repo,
             &UserConfig::default(),
             vec!["missing-worktree".to_string(), "branch-only".to_string()],
-            false,
-            false,
+            BranchDeletionMode::SafeDelete,
             false,
         );
 

@@ -280,7 +280,7 @@ impl RepositoryCliExt for Repository {
             Resolved::BranchOnly { branch, .. } => Some(branch.as_str()),
         };
         if let Some(branch) = branch_name {
-            check_not_default_branch(self, branch, &deletion_mode)?;
+            require_branch_deletion_allowed(self, branch, &deletion_mode)?;
         }
         // An orphan worktree's branch is unborn until its first commit: it has
         // no ref, so there is nothing for the removal to delete.
@@ -598,18 +598,21 @@ pub(crate) fn live_sibling_checkout<'a>(
     })
 }
 
-/// Reject removing the default branch unless force-delete is set.
+/// Default-branch deletion requires explicit force; keeping its ref permits
+/// removal of a linked checkout or stale registration.
 ///
 /// The default branch is the integration target — checking it against itself is
 /// tautological (same logic as `wt list`'s `is_main` guard in
 /// `check_integration_state`).
-pub(crate) fn check_not_default_branch(
+pub(crate) fn require_branch_deletion_allowed(
     repo: &Repository,
     branch: &str,
     deletion_mode: &BranchDeletionMode,
 ) -> anyhow::Result<()> {
-    if !deletion_mode.is_force() && repo.default_branch().as_deref() == Some(branch) {
-        return Err(GitError::CannotRemoveDefaultBranch {
+    if *deletion_mode == BranchDeletionMode::SafeDelete
+        && repo.default_branch().as_deref() == Some(branch)
+    {
+        return Err(GitError::CannotDeleteDefaultBranch {
             branch: branch.to_string(),
         }
         .into());

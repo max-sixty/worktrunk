@@ -541,7 +541,7 @@ pub enum GitError {
         remaining_entries: Option<Vec<String>>,
     },
     CannotRemoveMainWorktree,
-    CannotRemoveDefaultBranch {
+    CannotDeleteDefaultBranch {
         branch: String,
     },
     WorktreeLocked {
@@ -888,8 +888,8 @@ impl GitError {
 
             GitError::CannotRemoveMainWorktree => "The main worktree cannot be removed".to_string(),
 
-            GitError::CannotRemoveDefaultBranch { branch } => {
-                cformat!("Cannot remove the default branch <bold>{branch}</>")
+            GitError::CannotDeleteDefaultBranch { branch } => {
+                cformat!("Cannot delete the default branch <bold>{branch}</>")
             }
 
             GitError::WorktreeLocked { branch, reason, .. } => {
@@ -1374,14 +1374,14 @@ impl GitError {
                 write!(f, "{}", error_message(&title))
             }
 
-            GitError::CannotRemoveDefaultBranch { branch } => {
+            GitError::CannotDeleteDefaultBranch { branch } => {
                 let title = self.title();
-                let cmd = suggest_command("remove", &[branch], &["-D"]);
+                let cmd = suggest_command("remove", &[branch], &["--no-delete-branch"]);
                 write!(
                     f,
                     "{}\n{}",
                     error_message(&title),
-                    hint_message(cformat!("To force-delete, run <underline>{cmd}</>"))
+                    hint_message(cformat!("To keep the branch, run <underline>{cmd}</>"))
                 )
             }
 

@@ -57,8 +57,12 @@ info:
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: false
-exit_code: 1
+exit_code: 2
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mCannot use --force-delete with delete-branch=false (set via --no-delete-branch or [remove] delete-branch = false)[39m
+[1m[31merror:[0m the argument '[1m[33m--force-delete[0m' cannot be used with '[1m[33m--no-delete-branch[0m'
+
+[1m[32mUsage:[0m [1m[36mwt remove[0m [1m[36m--force-delete[0m [36m<BRANCHES>...[0m
+
+For more information, try '[1m[36m--help[0m'.

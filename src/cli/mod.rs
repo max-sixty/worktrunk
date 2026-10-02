@@ -520,7 +520,11 @@ pub(crate) struct RemoveArgs {
     pub(crate) delete_branch: bool,
 
     /// Delete unmerged branches
-    #[arg(short = 'D', long = "force-delete")]
+    #[arg(
+        short = 'D',
+        long = "force-delete",
+        conflicts_with = "no_delete_branch"
+    )]
     pub(crate) force_delete: bool,
 
     /// Run removal in foreground (block until complete)
@@ -1374,7 +1378,7 @@ $ wt remove feature -D            # Delete unmerged branch
 $ wt remove feature --force -D    # Both
 ```
 
-Use `--no-delete-branch` to keep the branch regardless of merge status.
+`--no-delete-branch` keeps the branch, including the default branch, while removing its linked worktree. It conflicts with `--force-delete` (`-D`).
 
 ## Background removal
 

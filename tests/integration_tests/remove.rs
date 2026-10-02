@@ -451,7 +451,7 @@ fn test_remove_default_branch_with_detached_main_worktree(repo: TestRepo) {
 }
 
 /// `-D` is what reaches the annotation for the default branch: without it
-/// `check_not_default_branch` errors first, so the case above never exercises
+/// `require_branch_deletion_allowed` errors first, so the case above never exercises
 /// the exclusion it appears to be about. `compute_worktree_path` returns the
 /// repo root for the default branch of a non-bare repo, and a detached main
 /// worktree passes every other predicate in the `find` — `is_linked()` is the
@@ -1454,15 +1454,60 @@ fn test_remove_foreground(mut repo: TestRepo) {
 
 /// Tests that --force-delete and --no-delete-branch are mutually exclusive
 #[rstest]
-fn test_remove_conflicting_branch_flags(repo: TestRepo) {
+#[case::force_first("remove_conflicting_branch_flags", &["-D", "--no-delete-branch", "nonexistent"])]
+#[case::keep_first("remove_conflicting_branch_flags_keep_first", &["--no-delete-branch", "-D", "nonexistent"])]
+fn test_remove_conflicting_branch_flags(repo: TestRepo, #[case] name: &str, #[case] args: &[&str]) {
     // Try to use both --force-delete (-D) and --no-delete-branch together
     // This should fail with an error
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "remove",
-        &["-D", "--no-delete-branch", "nonexistent"],
-        None
-    ));
+    assert_cmd_snapshot!(name, make_snapshot_cmd(&repo, "remove", args, None));
+}
+
+/// Forced deletion needs an explicit override when config keeps branches.
+#[rstest]
+fn test_remove_force_delete_with_keep_config(mut repo: TestRepo) {
+    repo.write_test_config("[remove]\ndelete-branch = false\n");
+    let worktree = repo.add_worktree("feature-config-force");
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        assert_cmd_snapshot!(make_snapshot_cmd(
+            &repo,
+            "remove",
+            &["--foreground", "-D", "feature-config-force"],
+            None,
+        ));
+    });
+    assert!(worktree.exists());
+    assert!(
+        worktrunk::git::Repository::at(repo.root_path())
+            .unwrap()
+            .branch("feature-config-force")
+            .exists_locally()
+            .unwrap()
+    );
+    settings.bind(|| {
+        assert_cmd_snapshot!(
+            "remove_force_delete_overrides_keep_config",
+            make_snapshot_cmd(
+                &repo,
+                "remove",
+                &[
+                    "--foreground",
+                    "--delete-branch",
+                    "-D",
+                    "feature-config-force"
+                ],
+                None,
+            )
+        );
+    });
+    assert!(!worktree.exists());
+    assert!(
+        !worktrunk::git::Repository::at(repo.root_path())
+            .unwrap()
+            .branch("feature-config-force")
+            .exists_locally()
+            .unwrap()
+    );
 }
 
 #[rstest]
@@ -1988,8 +2033,8 @@ fn test_remove_main_worktree_vs_linked_worktree(mut repo: TestRepo) {
     );
 }
 
-/// Removing the default branch worktree should be refused — the default branch
-/// is the integration target, not something to remove.
+/// Deleting the default branch requires explicit force because it is the
+/// integration target.
 ///
 /// This requires a bare repo setup since you can't have a linked worktree for the default
 /// branch in a normal repo (the main worktree already has it checked out).
@@ -2021,6 +2066,71 @@ fn test_remove_default_branch_refused() {
 
         assert_cmd_snapshot!("remove_default_branch_force_delete", cmd);
     });
+}
+
+/// Keeping the default branch permits checkout cleanup, including a stale
+/// registration. CLI and config choose the same policy for named/current removal.
+#[rstest]
+#[case::named_flag(false, false, false)]
+#[case::named_config(false, true, false)]
+#[case::current_flag(false, false, true)]
+#[case::stale_flag(true, false, false)]
+#[case::stale_config(true, true, false)]
+fn test_remove_default_branch_keep(
+    #[case] missing: bool,
+    #[case] configured: bool,
+    #[case] current: bool,
+) {
+    let test = BareRepoTest::new();
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit on main");
+    let feature_worktree = test.create_worktree("feature", "feature");
+    let original = test
+        .git_command(&feature_worktree)
+        .args(["rev-parse", "refs/heads/main"])
+        .run()
+        .unwrap()
+        .stdout;
+
+    if configured {
+        fs::write(test.config_path(), "[remove]\ndelete-branch = false\n").unwrap();
+    }
+    if missing {
+        fs::remove_dir_all(&main_worktree).unwrap();
+    }
+
+    let mut cmd = test.wt_command();
+    cmd.args(["remove", "--foreground"]);
+    if !configured {
+        cmd.arg("--no-delete-branch");
+    }
+    if current {
+        cmd.current_dir(&main_worktree);
+    } else {
+        cmd.arg("main").current_dir(&feature_worktree);
+    }
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!main_worktree.exists());
+    let repo = worktrunk::git::Repository::at(&feature_worktree).unwrap();
+    assert_eq!(
+        repo.worktree_for_branch("main").unwrap(),
+        None,
+        "default-branch checkout must be unregistered"
+    );
+    assert_eq!(
+        test.git_command(&feature_worktree)
+            .args(["rev-parse", "refs/heads/main"])
+            .run()
+            .unwrap()
+            .stdout,
+        original,
+        "default-branch ref must be retained unchanged"
+    );
 }
 
 /// BranchOnly path: when the default branch has no worktree (directory deleted),
