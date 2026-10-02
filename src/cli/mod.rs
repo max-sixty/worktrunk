@@ -461,7 +461,8 @@ pub(crate) struct SwitchArgs {
 
     /// Output format
     ///
-    /// JSON prints one structured result to stdout after the switch completes.
+    /// JSON prints one structured result to stdout once the switch, including
+    /// any --execute command, completes.
     /// Once arguments are accepted, failures print an object with an `error`
     /// string. Argument errors use stderr only. Diagnostics and
     /// --execute output go to stderr. A worktree created before a later failure
