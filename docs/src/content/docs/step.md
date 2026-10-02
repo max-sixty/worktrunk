@@ -203,6 +203,12 @@ See [LLM-generated commit messages](/llm-commits/) for configuration and prompt 
 
 The squash commit is made on a detached HEAD, as `git rebase` does, so git's own commit hooks run and see no current branch. The branch moves to the squash commit once it exists — a commit that fails leaves the branch and its history untouched.
 
+### Recovering staged changes
+
+Before absorbing staged changes, Worktrunk backs up the index to `refs/wt-backup/<branch>`. The backup commit's parent preserves the branch tip before squashing. Unstaged and untracked files outside the selected staging mode stay in the original worktree and are not captured by the backup.
+
+The output prints the backup ref and a command to open its saved commit on a recovery branch in a new worktree. That command uses the backup's immutable SHA and skips project hooks. It preserves current branches, files, and staging, and also works after `wt merge` removes the source worktree.
+
 ### Options
 
 #### Staging

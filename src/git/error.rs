@@ -1071,15 +1071,18 @@ impl GitError {
                 ..
             } => {
                 let title = self.title();
+                let keep = if dirty_files.iter().any(|line| line.starts_with("?? ")) {
+                    cformat!("Commit or run <underline>git stash -u</> in the dirty worktree first")
+                } else {
+                    "Commit or stash changes first".to_string()
+                };
                 let hint = if *force_hint {
                     // Construct full command: "wt remove [branch] --force"
                     let args: Vec<&str> = branch.as_deref().into_iter().collect();
                     let cmd = suggest_command("remove", &args, &["--force"]);
-                    cformat!(
-                        "Commit or stash changes first, or to lose uncommitted changes, run <underline>{cmd}</>"
-                    )
+                    cformat!("{keep}, or to lose uncommitted changes, run <underline>{cmd}</>")
                 } else {
-                    "Commit or stash changes first".to_string()
+                    keep
                 };
                 write!(f, "{}", error_message(&title))?;
                 if !dirty_files.is_empty() {
@@ -2708,7 +2711,7 @@ mod tests {
         [31m✗[39m [31mCannot remove worktree after merge: [1mfeature-auth[22m has uncommitted changes[39m
         [107m [0m  M auth.rs
         [107m [0m ?? .DS_Store
-        [2m↳[22m [2mCommit or stash changes first[22m
+        [2m↳[22m [2mCommit or run [4mgit stash -u[24m in the dirty worktree first[22m
         ");
     }
 

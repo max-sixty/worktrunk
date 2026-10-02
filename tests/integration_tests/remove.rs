@@ -1202,6 +1202,90 @@ fn test_remove_refuses_dirty_target_when_git_dir_names_invoking_worktree(mut rep
     );
 }
 
+/// Stash advice includes untracked files, including alongside tracked edits.
+#[rstest]
+#[case::untracked_only(false)]
+#[case::mixed(true)]
+fn test_remove_stash_advice_preserves_untracked(mut repo: TestRepo, #[case] mixed: bool) {
+    let worktree = repo.add_worktree("stash-advice");
+    fs::write(worktree.join("draft.txt"), "untracked draft\n").unwrap();
+    if mixed {
+        fs::write(worktree.join("tracked.txt"), "original\n").unwrap();
+        repo.run_git_in(&worktree, &["add", "tracked.txt"]);
+        repo.run_git_in(&worktree, &["commit", "-m", "tracked file"]);
+        fs::write(worktree.join("tracked.txt"), "modified\n").unwrap();
+    }
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "stash-advice"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(!output.status.success());
+    assert!(stderr.contains("git stash -u"), "{stderr}");
+    repo.run_git_in(&worktree, &["stash", "-u"]);
+    assert!(!worktree.join("draft.txt").exists());
+    assert_eq!(
+        repo.git_output(&["show", "stash^3:draft.txt"]),
+        "untracked draft"
+    );
+    repo.run_git_in(&worktree, &["stash", "pop"]);
+    assert_eq!(
+        fs::read_to_string(worktree.join("draft.txt")).unwrap(),
+        "untracked draft\n"
+    );
+    if mixed {
+        assert_eq!(
+            fs::read_to_string(worktree.join("tracked.txt")).unwrap(),
+            "modified\n"
+        );
+    }
+}
+
+/// Force-discard disclosure observes changes made by an approved pre-remove
+/// hook, and runs only after that hook succeeds.
+#[rstest]
+#[case::remove("printf data > hook-only.txt", true)]
+#[case::abort("printf data > hook-only.txt; exit 1", false)]
+fn test_force_discard_warning_after_pre_remove(
+    mut repo: TestRepo,
+    #[case] hook: &str,
+    #[case] succeeds: bool,
+) {
+    repo.write_project_config(&format!("pre-remove = '{hook}'"));
+    repo.commit("hook");
+    let worktree = repo.add_worktree("force-hook");
+    let output = repo
+        .wt_command()
+        .args(["remove", "force-hook", "--force", "--foreground", "--yes"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert_eq!(output.status.success(), succeeds, "{stderr}");
+    if succeeds {
+        assert!(
+            stderr.contains("Discarding uncommitted changes (--force)"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("?? hook-only.txt"), "{stderr}");
+        assert!(!worktree.exists());
+    } else {
+        assert!(
+            !stderr.contains("Discarding uncommitted changes"),
+            "{stderr}"
+        );
+        assert_eq!(
+            fs::read_to_string(worktree.join("hook-only.txt")).unwrap(),
+            "data"
+        );
+    }
+}
+
 /// --force allows removal of dirty worktrees (issue #658)
 /// This test: untracked files, branch at same commit as main
 #[rstest]
