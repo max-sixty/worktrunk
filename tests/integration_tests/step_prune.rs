@@ -2348,22 +2348,43 @@ fi
     );
 }
 
+#[cfg(unix)]
+#[derive(Clone, Copy, PartialEq)]
+enum BatchInventoryFailure {
+    None,
+    Error,
+    Interrupt,
+    FallbackInterrupt,
+}
+
 /// Block the first mutation until all peer requests are ready. The next real
 /// Git invocation must aggregate those requests, while trash cleanup proceeds
 /// before the blocked CAS result. A moved member retries unchanged peers with
 /// their original SHA; an external packed-ref lock leaves them all untouched.
-/// A failed leader passes its error to queued peers without further mutations.
+/// A per-ref lock fails only its own request, including when the leader fails.
+/// A shared packed-ref lock fails every affected request with bounded attempts.
+/// An unreadable classification inventory must not hide the original mutation
+/// error or strand unaffected refs; classification and fallback interrupts must
+/// stop all later mutations while releasing every already-staged caller.
 #[cfg(unix)]
 #[rstest]
-#[case::deleted(false, false, false)]
-#[case::moved_member(true, false, false)]
-#[case::external_lock(false, true, false)]
-#[case::leader_external_lock(false, true, true)]
+#[case::deleted(false, false, false, false, BatchInventoryFailure::None)]
+#[case::moved_member(true, false, false, false, BatchInventoryFailure::None)]
+#[case::external_lock(false, true, false, false, BatchInventoryFailure::None)]
+#[case::leader_external_lock(false, true, true, false, BatchInventoryFailure::None)]
+#[case::member_ref_lock(false, false, false, true, BatchInventoryFailure::None)]
+#[case::leader_ref_lock(false, false, true, true, BatchInventoryFailure::None)]
+#[case::member_inventory_error(false, false, false, true, BatchInventoryFailure::Error)]
+#[case::leader_inventory_error(false, false, true, true, BatchInventoryFailure::Error)]
+#[case::inventory_interrupt(false, false, true, true, BatchInventoryFailure::Interrupt)]
+#[case::fallback_interrupt(false, false, false, true, BatchInventoryFailure::FallbackInterrupt)]
 fn test_prune_batches_ready_deletions(
     mut repo: TestRepo,
     #[case] moved: bool,
     #[case] external_lock: bool,
     #[case] fail_leader: bool,
+    #[case] ref_lock: bool,
+    #[case] inventory_failure: BatchInventoryFailure,
 ) {
     use path_slash::PathExt as _;
     use std::io::{BufRead as _, BufReader};
@@ -2400,6 +2421,28 @@ fn test_prune_batches_ready_deletions(
         &real_git,
         &format!(
             r#"
+lock_ref() {{
+  ref=$(tr '\000' '\n' < "$input" | head -n 1)
+  ref=${{ref#delete }}
+  printf '%s\n' "$ref" > "$WORKTRUNK_TEST_BATCH_BARRIERS/locked-ref"
+  lock="$WORKTRUNK_TEST_BATCH_COMMON/$ref.lock"
+  mkdir -p "${{lock%/*}}"
+  printf 'external writer\n' > "$lock"
+}}
+if [ "$1" = for-each-ref ] && [ "$2" = '--format=%(refname)%00%(objectname)' ] &&
+   [ -f "$WORKTRUNK_TEST_BATCH_BARRIERS/locked-ref" ]; then
+  case "$WORKTRUNK_TEST_BATCH_INVENTORY" in
+    error)
+      touch "$WORKTRUNK_TEST_BATCH_BARRIERS/inventory-error"
+      printf 'classification inventory unavailable\n' >&2
+      exit 128
+      ;;
+    interrupt)
+      touch "$WORKTRUNK_TEST_BATCH_BARRIERS/inventory-interrupt"
+      kill -INT $$
+      ;;
+  esac
+fi
 if [ -n "$input" ]; then
   if mkdir "$WORKTRUNK_TEST_BATCH_BARRIERS/first" 2>/dev/null; then
     cp "$input" "$WORKTRUNK_TEST_BATCH_BARRIERS/first-input"
@@ -2413,7 +2456,11 @@ if [ -n "$input" ]; then
       sleep 0.05
     done
     if [ -n "$WORKTRUNK_TEST_BATCH_FAIL_LEADER" ]; then
-      printf 'external writer\n' > "$WORKTRUNK_TEST_BATCH_LOCK"
+      if [ -n "$WORKTRUNK_TEST_BATCH_REF_LOCK" ]; then
+        lock_ref
+      else
+        printf 'external writer\n' > "$WORKTRUNK_TEST_BATCH_LOCK"
+      fi
     fi
   elif mkdir "$WORKTRUNK_TEST_BATCH_BARRIERS/second" 2>/dev/null; then
     cp "$input" "$WORKTRUNK_TEST_BATCH_BARRIERS/second-input"
@@ -2426,6 +2473,12 @@ if [ -n "$input" ]; then
     if [ -n "$WORKTRUNK_TEST_BATCH_LOCK" ]; then
       printf 'external writer\n' > "$WORKTRUNK_TEST_BATCH_LOCK"
     fi
+    if [ -n "$WORKTRUNK_TEST_BATCH_REF_LOCK" ] && [ -z "$WORKTRUNK_TEST_BATCH_FAIL_LEADER" ]; then
+      lock_ref
+    fi
+  elif [ "$WORKTRUNK_TEST_BATCH_INVENTORY" = fallback-interrupt ]; then
+    touch "$WORKTRUNK_TEST_BATCH_BARRIERS/fallback-interrupt"
+    kill -INT $$
   fi
 fi
 "#
@@ -2434,7 +2487,7 @@ fi
     let mut cmd = repo.wt_command();
     prepend_path(&mut cmd, &wrapper);
     cmd.env("RAYON_NUM_THREADS", "8")
-        .env("RUST_LOG", "worktrunk=debug")
+        .env("RUST_LOG", "worktrunk::git::ref_deletion=debug")
         .env("WORKTRUNK_TEST_BATCH_BARRIERS", &barriers)
         .args(["step", "prune", "--yes", "--min-age=0s"])
         .stdout(Stdio::piped())
@@ -2448,6 +2501,21 @@ fi
     if fail_leader {
         cmd.env("WORKTRUNK_TEST_BATCH_FAIL_LEADER", "1");
     }
+    if ref_lock {
+        cmd.env("WORKTRUNK_TEST_BATCH_REF_LOCK", "1")
+            .env("WORKTRUNK_TEST_BATCH_COMMON", &common);
+    }
+    let inventory_mode = match inventory_failure {
+        BatchInventoryFailure::None => "",
+        BatchInventoryFailure::Error => "error",
+        BatchInventoryFailure::Interrupt => "interrupt",
+        BatchInventoryFailure::FallbackInterrupt => "fallback-interrupt",
+    };
+    cmd.env("WORKTRUNK_TEST_BATCH_INVENTORY", inventory_mode);
+    let interrupted = matches!(
+        inventory_failure,
+        BatchInventoryFailure::Interrupt | BatchInventoryFailure::FallbackInterrupt
+    );
     let mut child = cmd.spawn().unwrap();
     let child_stderr = child.stderr.take().unwrap();
     let release = barriers.join("release");
@@ -2479,12 +2547,31 @@ fi
     let stderr = String::from_utf8_lossy(&stderr_bytes)
         .ansi_strip()
         .into_owned();
-    assert_eq!(output.status.success(), !external_lock, "{stderr}");
+    assert_eq!(
+        output.status.success(),
+        !(external_lock || ref_lock),
+        "{stderr}"
+    );
     assert!(
         !barriers.join("timeout").exists(),
         "queue did not gather peers:\n{stderr}"
     );
     assert!(barriers.join("cleanup-before-cas").exists());
+    if interrupted {
+        assert_eq!(output.status.code(), Some(130), "{stderr}");
+        let marker = if inventory_failure == BatchInventoryFailure::Interrupt {
+            "inventory-interrupt"
+        } else {
+            "fallback-interrupt"
+        };
+        assert!(barriers.join(marker).exists());
+    } else if inventory_failure == BatchInventoryFailure::Error {
+        assert!(barriers.join("inventory-error").exists());
+        assert!(
+            !stderr.contains("classification inventory unavailable"),
+            "the caller must receive the original mutation error:\n{stderr}"
+        );
+    }
     let batch_refs = |path: &std::path::Path| -> Vec<String> {
         std::fs::read(path)
             .unwrap()
@@ -2498,17 +2585,17 @@ fi
             .collect()
     };
     let first = batch_refs(&barriers.join("first-input"));
-    let second = if fail_leader {
+    let second = if interrupted && fail_leader {
         assert!(
             !barriers.join("second-input").exists(),
-            "pending requests must receive the leader error without another Git mutation"
+            "queued peers must receive the interrupt without another Git mutation"
         );
         Vec::new()
     } else {
         batch_refs(&barriers.join("second-input"))
     };
     assert_eq!(first.len(), 1);
-    assert_eq!(second.len(), if fail_leader { 0 } else { 7 });
+    assert_eq!(second.len(), if interrupted && fail_leader { 0 } else { 7 });
     let inputs: Vec<_> = std::fs::read_dir(&wrapper)
         .unwrap()
         .map(|entry| entry.unwrap().path())
@@ -2519,17 +2606,27 @@ fi
                 .starts_with("input-")
         })
         .collect();
-    assert_eq!(
-        inputs.len(),
-        if fail_leader {
-            1
-        } else if moved {
-            3
-        } else {
-            2
-        },
-        "one transaction per ready batch, plus one reduced retry"
-    );
+    if !(external_lock || ref_lock) {
+        assert_eq!(
+            inputs.len(),
+            if moved { 3 } else { 2 },
+            "one transaction per ready batch, plus one reduced retry"
+        );
+    }
+    if interrupted {
+        assert_eq!(
+            inputs.len(),
+            if fail_leader {
+                1
+            } else if inventory_failure == BatchInventoryFailure::FallbackInterrupt {
+                3
+            } else {
+                2
+            },
+            "no further mutation after an interrupt"
+        );
+    }
+    let mut attempts = std::collections::HashMap::<String, usize>::new();
     for input in inputs {
         let bytes = std::fs::read(input).unwrap();
         let fields: Vec<_> = bytes
@@ -2537,6 +2634,9 @@ fi
             .filter(|field| !field.is_empty())
             .collect();
         for pair in fields.as_chunks::<2>().0 {
+            *attempts
+                .entry(std::str::from_utf8(pair[0]).unwrap().to_owned())
+                .or_default() += 1;
             assert_eq!(
                 std::str::from_utf8(pair[1]).unwrap(),
                 original_sha.trim(),
@@ -2544,6 +2644,32 @@ fi
             );
         }
     }
+    for name in &names {
+        let attempts = attempts
+            .get(&format!("delete refs/heads/{name}"))
+            .copied()
+            .unwrap_or(0);
+        if interrupted && fail_leader && !first.contains(name) {
+            assert_eq!(attempts, 0, "{name} must not be attempted after interrupt");
+        } else {
+            assert!(
+                (1..=2).contains(&attempts),
+                "{name} must be attempted, without blindly retrying an unchanged singleton: {attempts}"
+            );
+        }
+    }
+    if fail_leader {
+        assert_eq!(
+            attempts[&format!("delete refs/heads/{}", first[0])],
+            1,
+            "an unchanged failed singleton must not be blindly retried"
+        );
+    }
+    let locked_ref = if ref_lock {
+        Some(std::fs::read_to_string(barriers.join("locked-ref")).unwrap())
+    } else {
+        None
+    };
     let advanced_ref = if moved {
         Some(std::fs::read_to_string(barriers.join("advanced-ref")).unwrap())
     } else {
@@ -2564,7 +2690,12 @@ fi
                 String::from_utf8_lossy(&result.stdout).trim(),
                 advanced_sha.trim()
             );
-        } else if external_lock && (fail_leader || second.contains(name)) {
+        } else if (interrupted && (fail_leader || second.contains(name)))
+            || (external_lock && (fail_leader || second.contains(name)))
+            || locked_ref
+                .as_deref()
+                .is_some_and(|reference| reference.trim() == format!("refs/heads/{name}"))
+        {
             assert!(result.status.success());
             assert_eq!(
                 String::from_utf8_lossy(&result.stdout).trim(),
@@ -2577,11 +2708,24 @@ fi
     if moved {
         assert!(stderr.contains("moved during deletion"), "{stderr}");
     }
+    if ref_lock && !interrupted {
+        assert!(
+            stderr.contains(".lock") && !stderr.contains("moved during deletion"),
+            "{stderr}"
+        );
+        assert!(
+            common
+                .join(format!("{}.lock", locked_ref.as_ref().unwrap().trim()))
+                .is_file()
+        );
+    }
     if external_lock {
         assert!(
             stderr.contains("packed-refs.lock") && !stderr.contains("moved during deletion"),
             "{stderr}"
         );
+    }
+    if (external_lock || ref_lock) && !interrupted {
         assert_eq!(
             stderr.matches("removing worktree for batch-").count(),
             1,

@@ -9,10 +9,13 @@
 //! A rejected transaction changes no refs. Fresh ref reads isolate moved or
 //! missing members, then retry the remaining members with their ORIGINAL
 //! expected SHAs. A missing member receives its original error without
-//! blocking unchanged peers. A retry must shrink the transaction; unchanged
-//! failures surface with their original typed error. Interrupts stop the queue's
-//! current drain and reach every waiter. The leader guard also releases
-//! waiters if a submitting thread unwinds.
+//! blocking unchanged peers. A retry must shrink the transaction. When a
+//! failed batch cannot isolate members (unchanged refs or an unreadable
+//! inventory), it falls back to individual transactions with the same original
+//! SHAs. A singleton failure reaches only its own caller, so one ref's lock
+//! cannot strand unrelated branches, including requests still queued.
+//! Interrupts alone stop the current drain and reach every waiter. The leader
+//! guard also releases waiters if a submitting thread unwinds.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, mpsc};
@@ -73,7 +76,7 @@ impl RefDeletionQueue {
                 queue: self,
                 armed: true,
             };
-            let mut failure = None;
+            let mut interrupt = None;
             loop {
                 let requests = {
                     let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -92,10 +95,10 @@ impl RefDeletionQueue {
                     state.pending = deferred;
                     ready
                 };
-                if let Some(error) = &failure {
+                if let Some(error) = &interrupt {
                     reply_error(requests, error);
                 } else {
-                    failure = delete_batch(repo, requests);
+                    interrupt = delete_batch(repo, requests);
                 }
             }
         }
@@ -147,7 +150,7 @@ fn reply_error(requests: Vec<Request>, error: &Arc<anyhow::Error>) {
     }
 }
 
-/// Return a terminal failure so already queued requests stop without more Git calls.
+/// Return only an interrupt, so ordinary failures never poison queued peers.
 fn delete_batch(repo: &Repository, mut requests: Vec<Request>) -> Option<Arc<anyhow::Error>> {
     loop {
         let mut input = Vec::new();
@@ -182,13 +185,16 @@ fn delete_batch(repo: &Repository, mut requests: Vec<Request>) -> Option<Arc<any
         let live_refs = match fresh_ref_values(repo, &requests) {
             Ok(refs) => refs,
             Err(read_error) => {
-                let failure = if read_error.interrupt_signal().is_some() {
-                    Arc::new(read_error)
-                } else {
-                    error
-                };
-                reply_error(requests, &failure);
-                return Some(failure);
+                if read_error.interrupt_signal().is_some() {
+                    let interrupt = Arc::new(read_error);
+                    reply_error(requests, &interrupt);
+                    return Some(interrupt);
+                }
+                if requests.len() > 1 {
+                    return delete_individually(repo, requests);
+                }
+                reply_error(requests, &error);
+                return None;
             }
         };
         let original_len = requests.len();
@@ -206,11 +212,27 @@ fn delete_batch(repo: &Repository, mut requests: Vec<Request>) -> Option<Arc<any
             return None;
         }
         if unchanged.len() == original_len {
+            if unchanged.len() > 1 {
+                return delete_individually(repo, unchanged);
+            }
             reply_error(unchanged, &error);
-            return Some(error);
+            return None;
         }
         requests = unchanged;
     }
+}
+
+/// Isolate a failed multi-ref transaction once. Singleton failures cannot
+/// recurse here; every attempt carries its request's original expected SHA.
+fn delete_individually(repo: &Repository, requests: Vec<Request>) -> Option<Arc<anyhow::Error>> {
+    let mut remaining = requests.into_iter();
+    while let Some(request) = remaining.next() {
+        if let Some(interrupt) = delete_batch(repo, vec![request]) {
+            reply_error(remaining.collect(), &interrupt);
+            return Some(interrupt);
+        }
+    }
+    None
 }
 
 fn fresh_ref_values(
@@ -295,6 +317,40 @@ mod tests {
     }
 
     #[test]
+    fn one_ref_lock_does_not_fail_unrelated_batch_members() {
+        let test = TestRepo::with_initial_commit();
+        for branch in ["first", "locked", "last"] {
+            test.run_git(&["branch", branch]);
+        }
+        test.run_git(&["config", "core.filesRefLockTimeout", "0"]);
+        let sha = test.git_output(&["rev-parse", "main"]);
+        let repo = Repository::at(test.root_path()).unwrap();
+        std::fs::write(repo.git_common_dir().join("refs/heads/locked.lock"), "").unwrap();
+        let (requests, responses): (Vec<_>, Vec<_>) = ["first", "locked", "last"]
+            .map(|name| request(name, &sha))
+            .into_iter()
+            .unzip();
+        assert!(delete_batch(&repo, requests).is_none());
+        let mut responses = responses.into_iter();
+        assert!(responses.next().unwrap().recv().unwrap().unwrap());
+        let locked_error = responses.next().unwrap().recv().unwrap().unwrap_err();
+        assert!(locked_error.display_message().contains("locked.lock"));
+        assert!(responses.next().unwrap().recv().unwrap().unwrap());
+        assert_eq!(test.git_output(&["rev-parse", "locked"]), sha);
+        for branch in ["first", "last"] {
+            assert!(
+                repo.run_command(&[
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    &format!("refs/heads/{branch}")
+                ])
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
     fn packed_lock_failure_reaches_every_batch_member_with_original_error() {
         let test = TestRepo::with_initial_commit();
         for branch in ["first", "second"] {
@@ -309,7 +365,7 @@ mod tests {
             .map(|name| request(name, &sha))
             .into_iter()
             .unzip();
-        assert!(delete_batch(&repo, requests).is_some());
+        assert!(delete_batch(&repo, requests).is_none());
         for response in responses {
             let error = response.recv().unwrap().unwrap_err();
             assert!(error.display_message().contains("packed-refs.lock"));
