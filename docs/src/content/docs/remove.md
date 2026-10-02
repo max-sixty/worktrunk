@@ -14,7 +14,7 @@ Remove current worktree:
 
 ```console
 $ wt remove
-◎ Running pre-remove project:cleanup
+◎ Running pre-remove: cleanup (project)
   flyctl scale count 0
 Scaling app to 0 machines
 ◎ Removing api worktree & branch in background (same commit as main, _)

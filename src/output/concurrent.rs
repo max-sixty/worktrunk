@@ -212,7 +212,6 @@ fn override_with_originating_signal(outcome: &mut anyhow::Result<()>, originatin
     }
     *outcome = Err(WorktrunkError::ChildProcessExited {
         code: 128 + originating,
-        message: format!("terminated by signal {originating}"),
         signal: Some(originating),
     }
     .into());
@@ -330,8 +329,7 @@ fn spawn_child(
         Ok(child) => child,
         Err(e) => {
             trace.fail(&e);
-            return Err(e)
-                .with_context(|| format!("failed to spawn concurrent command '{}'", cmd.label));
+            return Err(worktrunk::shell_exec::spawn_error(&command, e).into());
         }
     };
 
@@ -434,18 +432,12 @@ fn collect_outcome(spawned: SpawnedChild, cmd: &ConcurrentCommand<'_>) -> anyhow
     } else if let Some(sig) = signal {
         Err(WorktrunkError::ChildProcessExited {
             code: 128 + sig,
-            message: format!("terminated by signal {sig}"),
             signal: Some(sig),
         }
         .into())
     } else {
         let code = exit_code.unwrap_or(1);
-        Err(WorktrunkError::ChildProcessExited {
-            code,
-            message: format!("exit status: {code}"),
-            signal: None,
-        }
-        .into())
+        Err(WorktrunkError::ChildProcessExited { code, signal: None }.into())
     }
 }
 
@@ -500,6 +492,22 @@ mod tests {
             scrub_git_discovery: false,
         }];
         run_concurrent_commands(&specs).expect("spawn failed")
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_real_concurrent_process_failure_descriptions() {
+        use worktrunk::git::ErrorExt;
+        for (script, description, code) in [
+            ("exit 7", "exit code 7", 7),
+            ("kill -9 $$", "killed by signal 9", 137),
+        ] {
+            let mut outcomes =
+                run_one_with_directives("check", script, None, &DirectivePassthrough::default());
+            let error = outcomes.pop().unwrap().unwrap_err();
+            assert_eq!(error.to_string(), description);
+            assert_eq!(error.exit_code(), Some(code));
+        }
     }
 
     /// A command with a `log_label` exercises the `log_command` branch in
@@ -569,7 +577,6 @@ mod tests {
         // ChildProcessExited with no signal (plain non-zero exit): untouched.
         let mut exit_err: anyhow::Result<()> = Err(WorktrunkError::ChildProcessExited {
             code: 1,
-            message: "exit status: 1".into(),
             signal: None,
         }
         .into());
@@ -588,7 +595,6 @@ mod tests {
         // ChildProcessExited with same signal as originating: untouched.
         let mut same: anyhow::Result<()> = Err(WorktrunkError::ChildProcessExited {
             code: 130,
-            message: "terminated by signal 2".into(),
             signal: Some(2),
         }
         .into());
@@ -608,7 +614,6 @@ mod tests {
         // overridden to the originating signal's code/message/signal.
         let mut escalated: anyhow::Result<()> = Err(WorktrunkError::ChildProcessExited {
             code: 143,
-            message: "terminated by signal 15".into(),
             signal: Some(15),
         }
         .into());
@@ -616,14 +621,10 @@ mod tests {
         let err = escalated.unwrap_err();
         let we = err.downcast_ref::<WorktrunkError>().unwrap();
         match we {
-            WorktrunkError::ChildProcessExited {
-                code,
-                message,
-                signal,
-            } => {
+            WorktrunkError::ChildProcessExited { code, signal } => {
                 assert_eq!(*code, 130);
                 assert_eq!(*signal, Some(2));
-                assert_eq!(message, "terminated by signal 2");
+                assert_eq!(we.to_string(), "killed by signal 2");
             }
             _ => panic!("expected ChildProcessExited, got {we:?}"),
         }

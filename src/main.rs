@@ -1267,7 +1267,7 @@ mod tests {
     fn renders_command_error_without_context() {
         let err: anyhow::Error = permission_denied_command_error().into();
         let out = format_command_error(&err);
-        assert!(out.contains("git worktree list failed (exit 128)"));
+        assert!(out.contains("git worktree list failed (exit code 128)"));
         assert!(out.contains("Permission denied"));
         assert!(out.contains("unknown error occurred while reading"));
     }

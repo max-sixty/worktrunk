@@ -699,7 +699,18 @@ fn extract_failed_command_from_stream_error() {
     let err: anyhow::Error = StreamCommandError {
         output: "fatal: ref exists".into(),
         command: "git worktree add /path".into(),
-        exit_info: "exit code 128".into(),
+        status: {
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::ExitStatusExt;
+                std::process::ExitStatus::from_raw(128 << 8)
+            }
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::ExitStatusExt;
+                std::process::ExitStatus::from_raw(128)
+            }
+        },
     }
     .into();
 

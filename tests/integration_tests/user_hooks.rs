@@ -1293,8 +1293,7 @@ broken = "echo {{ does_not_exist }} > should_not_exist.txt"
     assert!(!repo.root_path().join("should_not_exist.txt").exists());
 }
 
-/// Runner-log failure messages label steps the way the foreground does:
-/// named steps by command name, unnamed steps by the expanded command.
+/// Runner-log failures use the same hook/status grammar as foreground failures.
 #[rstest]
 fn test_background_hook_failure_labels_in_runner_log(repo: TestRepo) {
     repo.write_test_config(
@@ -1327,11 +1326,11 @@ post-switch = "exit 9"
 
     let named = runner_log("post-start");
     wait_for_file_content(&named);
-    assert_snapshot!(fs::read_to_string(&named).unwrap(), @"[31m✗[39m [31mcommand failed with exit code 7: broken[39m");
+    assert_snapshot!(fs::read_to_string(&named).unwrap(), @"[31m✗[39m [31mpost-start command [1mbroken[22m failed (exit code 7)[39m");
 
     let unnamed = runner_log("post-switch");
     wait_for_file_content(&unnamed);
-    assert_snapshot!(fs::read_to_string(&unnamed).unwrap(), @"[31m✗[39m [31mcommand failed with exit code 9: exit 9[39m");
+    assert_snapshot!(fs::read_to_string(&unnamed).unwrap(), @"[31m✗[39m [31mpost-switch command failed (exit code 9)[39m");
 }
 
 /// A semantic template error in a foreground pipeline step surfaces when that
@@ -4489,4 +4488,35 @@ fn test_concurrent_hook_does_not_inherit_git_discovery_vars(repo: TestRepo) {
     let marker = repo.root_path().join("env_seen.txt");
     assert!(marker.exists(), "concurrent hook did not run");
     assert_git_env_scrubbed(&marker);
+}
+
+/// A serial project hook and a concurrent user hook share status and source grammar.
+#[rstest]
+#[case(false, "project")]
+#[case(true, "user")]
+fn test_hook_failure_status_and_source(
+    repo: TestRepo,
+    #[case] concurrent: bool,
+    #[case] source: &str,
+) {
+    let config = if concurrent {
+        r#"pre-merge = [{ check = "exit 7", sibling = "true" }]"#
+    } else {
+        r#"pre-merge = [{ check = "exit 7" }]"#
+    };
+    if source == "project" {
+        repo.write_project_config(config);
+    } else {
+        repo.write_test_config(config);
+    }
+    let output = repo
+        .wt_command()
+        .args(["hook", "pre-merge", "--yes"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(7), "{stderr}");
+    setup_snapshot_settings(&repo).bind(|| {
+        assert_snapshot!(format!("hook_failure_status_{source}"), stderr);
+    });
 }

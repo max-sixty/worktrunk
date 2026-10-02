@@ -2147,15 +2147,13 @@ impl Repository {
                 e.output.clone(),
                 Some(super::error::FailedCommand {
                     command: e.command.clone(),
-                    exit_info: e.exit_info.clone(),
+                    exit_info: e.exit_info(),
                 }),
             );
         }
         if let Some(cmd_err) = CommandError::find_in(err) {
-            let exit_info = match cmd_err.exit_code {
-                Some(code) => format!("exit code {code}"),
-                None => "killed by signal".to_string(),
-            };
+            let exit_info =
+                super::error::process_exit_description(cmd_err.exit_code, cmd_err.signal);
             return (
                 cmd_err.combined_output(),
                 Some(super::error::FailedCommand {

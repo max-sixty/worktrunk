@@ -109,14 +109,17 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                 // hints from typed diagnostics) and a plain string for
                 // JSON (consumers shouldn't see ANSI codes or symbols).
                 let (exit_info, exit_code, stderr_detail, json_detail) =
-                    if let Some(WorktrunkError::ChildProcessExited { code, message, .. }) =
+                    if let Some(WorktrunkError::ChildProcessExited { code, signal }) =
                         err.downcast_ref::<WorktrunkError>()
                     {
                         (
-                            format!(" (exit code {code})"),
+                            format!(
+                                " ({})",
+                                worktrunk::git::process_exit_description(Some(*code), *signal)
+                            ),
                             serde_json::json!(code),
                             None,
-                            message.clone(),
+                            err.to_string(),
                         )
                     } else {
                         let styled = err.render_diagnostic().unwrap_or_else(|| err.to_string());

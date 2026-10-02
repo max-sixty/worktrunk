@@ -410,21 +410,30 @@ fn command_errors_render() {
     let hook_with_name = WorktrunkError::HookCommandFailed {
         hook_type: HookType::PreMerge,
         command_name: Some("test".into()),
-        error: "exit code 1".into(),
-        exit_code: Some(1),
+        error: WorktrunkError::ChildProcessExited {
+            code: 1,
+            signal: None,
+        }
+        .into(),
     };
     let hook_without_name = WorktrunkError::HookCommandFailed {
         hook_type: HookType::PreCreate,
         command_name: None,
-        error: "command not found".into(),
-        exit_code: Some(127),
+        error: WorktrunkError::ChildProcessExited {
+            code: 127,
+            signal: None,
+        }
+        .into(),
     };
     let hook_with_hint = add_hook_skip_hint(
         WorktrunkError::HookCommandFailed {
             hook_type: HookType::PreMerge,
             command_name: Some("test".into()),
-            error: "exit code 1".into(),
-            exit_code: Some(1),
+            error: WorktrunkError::ChildProcessExited {
+                code: 1,
+                signal: None,
+            }
+            .into(),
         }
         .into(),
     );

@@ -326,9 +326,6 @@ fn unknown_step_command_error(name: &str, alias_names: &[String]) -> anyhow::Err
 /// the name the user just typed. Callers that still want a confirmation line
 /// (e.g. under `-v`) emit a bare `Running alias <name>` themselves.
 ///
-/// Sibling of `format_command_label` in `commands/mod.rs`, which builds the
-/// non-pipeline `Running {type} {name}` form for hooks. Both apply bold
-/// styling to the alias/command name — keep them in sync if styling evolves.
 fn format_alias_announcement(name: &str, entry: &AliasEntry) -> Option<String> {
     let step_names: Vec<Vec<Option<&str>>> = entry
         .iter()

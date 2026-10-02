@@ -45,7 +45,7 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning pre-merge [1muser:first[22m[39m
+[36m◎[39m [36mRunning pre-merge: [1mfirst[22m (user)[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m FIRST_RAN [0m[2m[36m>[0m[2m first_marker.txt[0m
 [0m[31m✗[39m [31mFailed to expand user:broken: undefined value @ line 1[39m
 [107m [0m echo {{ does_not_exist }}

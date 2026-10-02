@@ -61,9 +61,9 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning pre-start [1mproject:install[22m @ [1m_REPO_.feature[22m[39m
+[36m◎[39m [36mRunning pre-start: [1minstall[22m (project) @ [1m_REPO_.feature[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Installing deps'[0m
-[36m◎[39m [36mRunning pre-start [1mproject:setup[22m @ [1m_REPO_.feature[22m[39m
+[36m◎[39m [36mRunning pre-start: [1msetup[22m (project) @ [1m_REPO_.feature[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Running setup'[0m
 [1m[36minstall[0m │ Installing deps
 [1m[35msetup  [0m │ Running setup

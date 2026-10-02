@@ -2609,3 +2609,23 @@ probe = "echo hello"
         "detached `branch` should read `(unset)`, not `(unused)`, got: {branch_row}"
     );
 }
+
+/// The first alias step moves its worktree, so the next child's cwd is absent.
+#[rstest]
+#[cfg(unix)]
+fn test_alias_spawn_failure_has_one_source_detail(repo: TestRepo) {
+    repo.write_test_config(
+        r#"[aliases]
+move-away = ["mv {{ worktree_path }} {{ worktree_path }}.moved", "true"]
+"#,
+    );
+    let output = repo.wt_command().arg("move-away").output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(!repo.root_path().exists());
+    assert!(repo.root_path().with_file_name("repo.moved").exists());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr.matches("Failed to execute").count(), 1, "{stderr}");
+    setup_snapshot_settings(&repo).bind(|| {
+        insta::assert_snapshot!("alias_spawn_failure_has_one_source_detail", stderr);
+    });
+}

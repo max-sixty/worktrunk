@@ -671,6 +671,7 @@ pub(crate) fn sourced_steps_to_foreground(
             ForegroundStep {
                 step: sourced.step,
                 announce: kind.clone(),
+                source: sourced.source,
                 pipe_stdin,
                 redirect_stdout_to_stderr,
                 error_wrapper,

@@ -62,9 +62,9 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning pre-merge [1mproject:first[22m[39m
+[36m◎[39m [36mRunning pre-merge: [1mfirst[22m (project)[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m FIRST[0m
 [0mFIRST
-[36m◎[39m [36mRunning pre-merge [1mproject:second[22m[39m
+[36m◎[39m [36mRunning pre-merge: [1msecond[22m (project)[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m SECOND[0m
 [0mSECOND
