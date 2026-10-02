@@ -7,6 +7,10 @@
 //! - `Literal` — values substituted verbatim, for filesystem paths.
 //!
 //! All templates support Jinja2 syntax including filters, conditionals, and loops.
+//! Undefined-variable diagnostics use MiniJinja's failing expression span and
+//! AST, so skipped branches and dynamic namespace keys aren't blamed for an
+//! unrelated error. Compound expressions retain a general diagnostic when the
+//! engine doesn't identify one missing variable.
 //!
 //! See `wt hook --help` for available filters and functions.
 
@@ -29,6 +33,7 @@ use crate::styling::{
     eprintln, error_message, format_bash_with_gutter, format_with_gutter, hint_message,
     info_message, verbosity,
 };
+use crate::utils::did_you_mean;
 
 /// Active-context vars: point at the branch the operation acts on.
 ///
@@ -737,10 +742,12 @@ pub fn redact_credentials(s: &str) -> String {
 pub struct TemplateExpandError {
     /// Plain-text error summary for callers that embed errors in styled messages.
     pub message: String,
-    /// The failing template line (if identifiable).
+    /// The failing template line, or the full source for preflight validation.
     pub source_line: Option<String>,
     /// Variable names available in this template context.
     pub available_vars: Vec<String>,
+    /// Closest available variable, when a missing name is identifiable.
+    pub suggestion: Option<String>,
 }
 
 impl std::fmt::Display for TemplateExpandError {
@@ -754,6 +761,11 @@ impl Diagnostic for TemplateExpandError {
         let mut parts = vec![error_message(&self.message).to_string()];
         if let Some(ref line) = self.source_line {
             parts.push(format_with_gutter(line, None));
+        }
+        if let Some(ref suggestion) = self.suggestion {
+            parts.push(
+                hint_message(cformat!("Did you mean <underline>{suggestion}</>?")).to_string(),
+            );
         }
         if !self.available_vars.is_empty() {
             let underlined_vars: Vec<String> = self
@@ -785,7 +797,7 @@ impl std::error::Error for TemplateExpandError {}
 /// │                 │        │       │              │
 /// │                 │        │       │              └─ e.line() from minijinja
 /// │                 │        │       └─ e.detail() from minijinja (None for UndefinedError)
-/// │                 │        └─ e.kind() from minijinja ("undefined value", "syntax error")
+/// │                 │        └─ error kind ("undefined variable", "syntax error")
 /// │                 └─ `name` param passed by caller
 /// └─ hardcoded prefix
 /// ```
@@ -801,12 +813,17 @@ fn build_template_error(
         line_num.and_then(|n| lines.get(n.saturating_sub(1)).copied().map(String::from));
 
     // Build message: "Failed to expand {name}: {kind}[: {detail}] [@ line {n}]"
-    // e.g. "Failed to expand --execute command: undefined value @ line 1"
-    let detail = match e.detail() {
-        Some(detail) => format!("{}: {detail}", e.kind()),
-        None => e.kind().to_string(),
-    };
+    // e.g. "Failed to expand --execute command: undefined variable @ line 1"
     let is_undefined = e.kind() == ErrorKind::UndefinedError;
+    let kind = if is_undefined {
+        "undefined variable".to_string()
+    } else {
+        e.kind().to_string()
+    };
+    let detail = match e.detail() {
+        Some(detail) => format!("{kind}: {detail}"),
+        None => kind,
+    };
 
     // minijinja always provides a line number for syntax and render errors
     let message = match line_num {
@@ -823,6 +840,7 @@ fn build_template_error(
         } else {
             Vec::new()
         },
+        suggestion: None,
     }
 }
 
@@ -837,23 +855,122 @@ fn build_undefined_vars_error(
     name: &str,
     undefined_vars: &[String],
     available_vars: Vec<String>,
+    template: &str,
+    line_num: Option<usize>,
 ) -> TemplateExpandError {
-    let names = undefined_vars
-        .iter()
-        .map(|var| format!("`{var}`"))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let names = undefined_vars.join(", ");
     let noun = if undefined_vars.len() == 1 {
-        "value"
+        "variable"
     } else {
-        "values"
+        "variables"
     };
+    let suggestion = undefined_vars.first().and_then(|var| {
+        did_you_mean(var, available_vars.iter().cloned())
+            .into_iter()
+            .next()
+    });
+    let location = line_num.map(|n| format!(" @ line {n}")).unwrap_or_default();
 
     TemplateExpandError {
-        message: format!("Failed to expand {name}: undefined {noun}: {names}"),
-        source_line: None,
+        message: format!("Failed to expand {name}: undefined {noun} {names}{location}"),
+        source_line: match line_num {
+            Some(n) => template.lines().nth(n.saturating_sub(1)).map(String::from),
+            None => Some(template.to_string()),
+        },
         available_vars,
+        suggestion,
     }
+}
+
+/// Identify a missing top-level variable in the expression that failed.
+///
+/// The engine's span selects the reached output expression; its AST supplies
+/// the name. Only a variable, optionally passed through argument-free filters,
+/// identifies one missing input. Nested keys and compound expressions retain
+/// the general undefined-variable diagnostic. Names with local bindings also
+/// stay general: a template-wide undeclared reference cannot establish the
+/// scope of the reached expression.
+fn failing_variable<'a>(
+    error: &minijinja::Error,
+    template: &'a str,
+    referenced: &std::collections::HashSet<String>,
+) -> Option<&'a str> {
+    use minijinja::machinery::{ast, parse};
+
+    fn variable<'a>(expr: &ast::Expr<'a>) -> Option<&'a str> {
+        match expr {
+            ast::Expr::Var(var) => Some(var.id),
+            ast::Expr::Filter(filter) if filter.args.is_empty() => {
+                filter.expr.as_ref().and_then(variable)
+            }
+            _ => None,
+        }
+    }
+
+    fn find<'a>(node: &ast::Stmt<'a>, range: &std::ops::Range<usize>) -> Option<&'a str> {
+        let in_body = |body: &[ast::Stmt<'a>]| body.iter().find_map(|node| find(node, range));
+        match node {
+            ast::Stmt::EmitExpr(emit)
+                if emit.span().start_offset as usize <= range.start
+                    && emit.span().end_offset as usize >= range.end =>
+            {
+                variable(&emit.expr)
+            }
+            ast::Stmt::Template(root) => in_body(&root.children),
+            ast::Stmt::ForLoop(stmt) => in_body(&stmt.body).or_else(|| in_body(&stmt.else_body)),
+            ast::Stmt::IfCond(stmt) => {
+                in_body(&stmt.true_body).or_else(|| in_body(&stmt.false_body))
+            }
+            ast::Stmt::WithBlock(stmt) => in_body(&stmt.body),
+            ast::Stmt::SetBlock(stmt) => in_body(&stmt.body),
+            ast::Stmt::AutoEscape(stmt) => in_body(&stmt.body),
+            ast::Stmt::FilterBlock(stmt) => in_body(&stmt.body),
+            _ => None,
+        }
+    }
+
+    fn target_binds(expr: &ast::Expr<'_>, name: &str) -> bool {
+        match expr {
+            ast::Expr::Var(var) => var.id == name,
+            ast::Expr::List(list) => list.items.iter().any(|item| target_binds(item, name)),
+            _ => false,
+        }
+    }
+
+    fn binds(node: &ast::Stmt<'_>, name: &str) -> bool {
+        let in_body = |body: &[ast::Stmt<'_>]| body.iter().any(|node| binds(node, name));
+        match node {
+            ast::Stmt::Template(root) => in_body(&root.children),
+            ast::Stmt::Set(stmt) => target_binds(&stmt.target, name),
+            ast::Stmt::SetBlock(stmt) => target_binds(&stmt.target, name) || in_body(&stmt.body),
+            ast::Stmt::ForLoop(stmt) => {
+                name == "loop"
+                    || target_binds(&stmt.target, name)
+                    || in_body(&stmt.body)
+                    || in_body(&stmt.else_body)
+            }
+            ast::Stmt::WithBlock(stmt) => {
+                stmt.assignments
+                    .iter()
+                    .any(|(target, _)| target_binds(target, name))
+                    || in_body(&stmt.body)
+            }
+            ast::Stmt::IfCond(stmt) => in_body(&stmt.true_body) || in_body(&stmt.false_body),
+            ast::Stmt::AutoEscape(stmt) => in_body(&stmt.body),
+            ast::Stmt::FilterBlock(stmt) => in_body(&stmt.body),
+            _ => false,
+        }
+    }
+
+    let range = error.range()?;
+    let ast = parse(
+        template,
+        "diagnostic",
+        Default::default(),
+        Default::default(),
+    )
+    .ok()?;
+    find(&ast, &range).filter(|name| referenced.contains(*name) && !binds(&ast, name))
 }
 
 /// Set up a minijinja environment with worktrunk's custom filters and functions.
@@ -864,6 +981,8 @@ fn build_undefined_vars_error(
 /// undefined-behavior settings.
 pub fn template_environment(repo: &Repository) -> Environment<'static> {
     let mut env = Environment::new();
+    // Error spans identify missing variables in both debug and release builds.
+    env.set_debug(true);
     // SemiStrict: errors on undefined variable use (printing, iteration) but allows
     // truthiness checks ({% if var %}). This catches typos while supporting optional vars.
     env.set_undefined_behavior(UndefinedBehavior::SemiStrict);
@@ -993,11 +1112,8 @@ pub fn validate_template_syntax(template: &str, name: &str) -> Result<(), Templa
 
 /// Validate that a template can be expanded without errors in the given scope.
 ///
-/// Performs a trial expansion with placeholder values for exactly the variables
-/// available in `scope` (see [`vars_available_in`]). Catches syntax errors and
-/// undefined variable references *before* irreversible operations like worktree
-/// creation — including context-mismatch typos like `{{ args }}` in a hook or
-/// `{{ target }}` in a `pre-start` hook.
+/// Checks syntax and top-level variable references against [`vars_available_in`]
+/// and environment globals, then trial-renders with placeholder context values.
 ///
 /// This is deliberately more permissive than real expansion: conditional vars
 /// like `upstream` are provided even when they may be absent at runtime. A
@@ -1044,7 +1160,7 @@ pub fn validate_template(
     let mut undefined: Vec<String> = tmpl
         .undeclared_variables(false)
         .into_iter()
-        .filter(|var| !allowed.contains(var))
+        .filter(|var| !allowed.contains(var) && env.globals().all(|(key, _)| key != var))
         .collect();
     undefined.sort();
     if !undefined.is_empty() {
@@ -1052,6 +1168,8 @@ pub fn validate_template(
             name,
             &undefined,
             sorted_available_vars(&available),
+            template,
+            None,
         ));
     }
 
@@ -1193,7 +1311,8 @@ pub fn expand_template_with(
     // every MiniJinja access form without false positives from literal text).
     // A preview injects `LiteralVars` instead, which needs no branch and no
     // git config read.
-    if tmpl.undeclared_variables(false).contains("vars") {
+    let referenced = tmpl.undeclared_variables(false);
+    if referenced.contains("vars") {
         match vars_mode {
             VarsMode::Literal => {
                 context.insert(
@@ -1218,11 +1337,25 @@ pub fn expand_template_with(
         }
     }
 
+    let context = Arc::new(context);
     let result = tmpl
-        .render(minijinja::Value::from_object(context))
+        .render(Value::from_dyn_object(context.clone()))
         .map_err(|e| {
-            let mut keys: Vec<String> = vars.keys().map(|k| k.to_string()).collect();
+            let mut keys: Vec<String> = context.keys().cloned().collect();
             keys.sort();
+            if e.kind() == ErrorKind::UndefinedError
+                && let Some(var) = failing_variable(&e, template, &referenced)
+                && !context.contains_key(var)
+                && env.globals().all(|(key, _)| key != var)
+            {
+                return build_undefined_vars_error(
+                    name,
+                    &[var.to_string()],
+                    keys,
+                    template,
+                    e.line(),
+                );
+            }
             build_template_error(&e, template, name, keys)
         })?;
 
@@ -1289,10 +1422,11 @@ impl Object for AnyKeyVars {
 /// Validate a `wt list` custom-column template.
 ///
 /// Checks syntax, restricts top-level variables to `LIST_COLUMN_VARS` ∪
-/// `{vars, git}`, and trial-renders with placeholder values so filter errors
-/// (e.g. a misspelled filter name) surface at config resolution rather than as
-/// silently empty cells. `vars.*` and `git.branch.*` access is unconstrained —
-/// any key validates, since which keys exist is per-branch runtime state.
+/// `{vars, git}` plus environment globals, and trial-renders with placeholder
+/// values so filter errors (e.g. a misspelled filter name) surface at config
+/// resolution rather than as silently empty cells. `vars.*` and `git.branch.*`
+/// access is unconstrained — any key validates, since which keys exist is
+/// per-branch runtime state.
 pub fn validate_list_column_template(
     template: &str,
     repo: &Repository,
@@ -1306,7 +1440,12 @@ pub fn validate_list_column_template(
     let mut undefined: Vec<String> = tmpl
         .undeclared_variables(false)
         .into_iter()
-        .filter(|var| var != "vars" && var != "git" && !LIST_COLUMN_VARS.contains(&var.as_str()))
+        .filter(|var| {
+            var != "vars"
+                && var != "git"
+                && !LIST_COLUMN_VARS.contains(&var.as_str())
+                && env.globals().all(|(key, _)| key != var)
+        })
         .collect();
     undefined.sort();
     if !undefined.is_empty() {
@@ -1317,6 +1456,8 @@ pub fn validate_list_column_template(
             name,
             &undefined,
             sorted_available_vars(&available),
+            template,
+            None,
         ));
     }
 
@@ -1568,7 +1709,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            err.message.contains("undefined value"),
+            err.message.contains("undefined variable"),
             "got: {}",
             err.message
         );
@@ -1663,8 +1804,8 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            err.message.contains("undefined value"),
-            "should mention undefined value: {}",
+            err.message.contains("undefined variable"),
+            "should mention undefined variable: {}",
             err.message
         );
         assert!(err.available_vars.contains(&"branch".to_string()));
@@ -1673,10 +1814,88 @@ mod tests {
 
         // Diagnostic::render produces source line and available vars hint
         assert_snapshot!(crate::git::Diagnostic::render(&err), @"
-        [31m✗[39m [31mFailed to expand test: undefined value @ line 1[39m
+        [31m✗[39m [31mFailed to expand test: undefined variable target @ line 1[39m
         [107m [0m echo {{ target }}
         [2m↳[22m [2mAvailable variables: [4mbranch[24m, [4mremote[24m[22m
         ");
+    }
+
+    #[test]
+    fn test_expand_template_names_reached_typo() {
+        let test = test_repo();
+        let vars = HashMap::from([("branch", "main")]);
+        for template in [
+            "{% if branch %}{{ brnch }}{% endif %}",
+            "{% for item in [1] %}{{ brnch }}{% endfor %}",
+            "{% if upstream %}{{ unvisited }}{% endif %}\necho {{ brnch | upper }}",
+        ] {
+            let err = expand_template(
+                template,
+                &vars,
+                ShellEscapeMode::Literal,
+                &test.repo,
+                "test",
+            )
+            .unwrap_err();
+            assert_eq!(
+                err.message,
+                format!(
+                    "Failed to expand test: undefined variable brnch @ line {}",
+                    template.lines().count()
+                )
+            );
+            assert_eq!(err.suggestion.as_deref(), Some("branch"));
+            assert_eq!(err.source_line.as_deref(), template.lines().last());
+        }
+    }
+
+    #[test]
+    fn test_undefined_namespace_values_do_not_name_unreached_typos() {
+        let test = test_repo();
+        let vars = HashMap::from([("branch", "main"), ("args", "[]")]);
+        for template in [
+            "{{ args[0] }}{{ brnch }}",
+            "{{ vars.missing }}{{ brnch }}",
+            "{% if optional %}{{ brnch }}{% endif %}{{ vars.missing }}",
+            "{% set local = brnch %}{{ local }}",
+            "{{ brnch if branch else other_missing }}",
+            "{% if false %}{{ brnch }}{% endif %}{% set brnch = vars.missing %}{{ brnch }}",
+            "{% if false %}{{ brnch }}{% endif %}{% with brnch = vars.missing %}{{ brnch }}{% endwith %}",
+            "{% if false %}{{ brnch }}{% endif %}{% for brnch in [vars.missing] %}{{ brnch }}{% endfor %}",
+        ] {
+            let err = expand_template(
+                template,
+                &vars,
+                ShellEscapeMode::Literal,
+                &test.repo,
+                "test",
+            )
+            .unwrap_err();
+            assert_eq!(
+                err.message,
+                "Failed to expand test: undefined variable @ line 1"
+            );
+            assert_eq!(err.suggestion, None);
+        }
+    }
+
+    #[test]
+    fn test_template_validation_uses_environment_globals() {
+        let test = test_repo();
+        let template = "{% for item in range(2) %}{{ item }}{% endfor %}";
+        validate_template(template, ValidationScope::Alias, &test.repo, "test").unwrap();
+        validate_list_column_template(template, &test.repo, "test").unwrap();
+        assert_eq!(
+            expand_template(
+                template,
+                &HashMap::new(),
+                ShellEscapeMode::Literal,
+                &test.repo,
+                "test",
+            )
+            .unwrap(),
+            "01"
+        );
     }
 
     #[test]
@@ -2999,7 +3218,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            err.message.contains("undefined value"),
+            err.message.contains("undefined variable"),
             "got: {}",
             err.message
         );
@@ -3035,7 +3254,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            err.message.contains("undefined value"),
+            err.message.contains("undefined variable"),
             "got: {}",
             err.message
         );
@@ -3065,7 +3284,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            err.message.contains("undefined value"),
+            err.message.contains("undefined variable"),
             "got: {}",
             err.message
         );
@@ -3090,7 +3309,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            err.message.contains("undefined value"),
+            err.message.contains("undefined variable"),
             "got: {}",
             err.message
         );
@@ -3150,13 +3369,39 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            err.message.contains("undefined value"),
+            err.message.contains("undefined variable"),
             "got: {}",
             err.message
         );
         // Should list available vars in hint
         assert!(!err.available_vars.is_empty(), "should list available vars");
         assert!(err.available_vars.contains(&"branch".to_string()));
+
+        let err = validate_template(
+            "echo {{ brnch }}",
+            ValidationScope::Hook(HookType::PreMerge),
+            &test.repo,
+            "test",
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.message,
+            "Failed to expand test: undefined variable brnch"
+        );
+        assert_eq!(err.source_line.as_deref(), Some("echo {{ brnch }}"));
+        assert_eq!(err.suggestion.as_deref(), Some("branch"));
+
+        let err = validate_template(
+            "{{ first_missing }}{{ second_missing }}",
+            ValidationScope::Alias,
+            &test.repo,
+            "test",
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.message,
+            "Failed to expand test: undefined variables first_missing, second_missing"
+        );
     }
 
     #[test]
