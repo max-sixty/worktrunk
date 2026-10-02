@@ -8303,6 +8303,242 @@ fn test_switch_format_json_already_at(mut repo: TestRepo) {
 }
 
 #[rstest]
+fn test_switch_format_json_failures_emit_one_error(repo: TestRepo) {
+    let early = repo
+        .wt_command()
+        .args([
+            "switch",
+            "missing-json",
+            "--format=json",
+            "--no-cd",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(!early.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&early.stdout).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({ "error": "No branch named missing-json" })
+    );
+    assert!(!early.stderr.is_empty());
+
+    // The worktree is created before --execute fails. The result must describe
+    // the whole synchronous command, rather than reporting success too early.
+    let late = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "failed-json",
+            "--format=json",
+            "--no-cd",
+            "--yes",
+            "--execute=sh",
+            "--",
+            "-c",
+            "echo child-output; exit 7",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(late.status.code(), Some(7));
+    let json: serde_json::Value = serde_json::from_slice(&late.stdout).unwrap();
+    assert_eq!(json, serde_json::json!({ "error": "exit status: 7" }));
+    assert!(String::from_utf8_lossy(&late.stderr).contains("child-output"));
+    assert!(
+        repo.root_path()
+            .parent()
+            .unwrap()
+            .join("repo.failed-json")
+            .is_dir()
+    );
+}
+
+#[rstest]
+fn test_switch_format_json_directive_failure_emits_one_error(repo: TestRepo) {
+    // The directory cannot be opened as a CD directive file. That write runs
+    // after the worktree has already been created.
+    let mut cmd = repo.wt_command();
+    configure_directive_file(&mut cmd, repo.root_path());
+    let output = cmd
+        .args([
+            "switch",
+            "--create",
+            "failed-directive-json",
+            "--format=json",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let message = json["error"].as_str().unwrap();
+    assert!(message.starts_with("Failed to write the cd directive file"));
+    assert!(message.contains(repo.root_path().to_str().unwrap()));
+    assert!(json.get("action").is_none());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Failed to write the cd directive file")
+    );
+    assert!(
+        repo.root_path()
+            .parent()
+            .unwrap()
+            .join("repo.failed-directive-json")
+            .is_dir()
+    );
+}
+
+#[rstest]
+fn test_switch_format_json_early_validation_errors(repo: TestRepo) {
+    for args in [
+        vec!["switch", "main", "--format=json", "--base"],
+        vec!["switch", "main", "--oops", "--format=json"],
+        vec!["switch", "main", "--format=json", "--oops"],
+    ] {
+        let invalid_args = repo.wt_command().args(args).output().unwrap();
+        assert_eq!(invalid_args.status.code(), Some(2));
+        assert!(invalid_args.stdout.is_empty());
+        assert!(!invalid_args.stderr.is_empty());
+    }
+
+    // -C discovery fails before planning, with the requested JSON mode intact.
+    let missing_dir = repo.root_path().join("missing-cwd");
+    let invalid_cwd = repo
+        .wt_command()
+        .arg("-C")
+        .arg(&missing_dir)
+        .args(["switch", "main", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(!invalid_cwd.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&invalid_cwd.stdout).unwrap();
+    assert!(
+        json["error"]
+            .as_str()
+            .unwrap()
+            .contains("git rev-parse --git-common-dir"),
+        "JSON: {json}"
+    );
+
+    // A spawn failure must describe its producer, rather than expose only an
+    // AlreadyDisplayed marker or append an error after a success object.
+    let missing_program = repo
+        .wt_command()
+        .args([
+            "switch",
+            "main",
+            "--format=json",
+            "--no-cd",
+            "--yes",
+            "--execute=wt-json-missing-executable-14",
+        ])
+        .output()
+        .unwrap();
+    assert!(!missing_program.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&missing_program.stdout).unwrap();
+    assert!(
+        json["error"]
+            .as_str()
+            .unwrap()
+            .contains("Failed to execute command")
+    );
+}
+
+#[cfg(unix)]
+#[rstest]
+fn test_switch_format_json_execute_signal(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "main",
+            "--format=json",
+            "--no-cd",
+            "--yes",
+            "--execute=sh",
+            "--",
+            "-c",
+            "kill -TERM $$",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(143));
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({ "error": "Interrupted by signal 15" })
+    );
+
+    // Hook interruption has its own typed signal error whose terminal display
+    // is deliberately silent. JSON must still describe the actual signal.
+    repo.write_test_config("pre-switch = \"kill -INT $$\"\n");
+    let interrupted = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "interrupted-json",
+            "--format=json",
+            "--no-cd",
+            "--yes",
+            "--execute=sh",
+            "--",
+            "-c",
+            "echo should-not-run",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(interrupted.status.code(), Some(130));
+    assert!(
+        !repo
+            .root_path()
+            .parent()
+            .unwrap()
+            .join("repo.interrupted-json")
+            .exists()
+    );
+    assert!(!String::from_utf8_lossy(&interrupted.stderr).contains("should-not-run"));
+    let json: serde_json::Value = serde_json::from_slice(&interrupted.stdout).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({ "error": "Interrupted by signal 2" })
+    );
+}
+
+#[rstest]
+fn test_switch_execute_stdout_follows_format(repo: TestRepo) {
+    for format in ["json", "text"] {
+        let output = repo
+            .wt_command()
+            .args([
+                "switch",
+                "main",
+                "--no-cd",
+                "--yes",
+                "--format",
+                format,
+                "--execute=sh",
+                "--",
+                "-c",
+                "echo child-output",
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        if format == "json" {
+            // Parsing the complete stream rejects a second document or child
+            // output before/after the result.
+            let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(json["action"], "already_at");
+            assert_eq!(json["branch"], "main");
+            assert!(String::from_utf8_lossy(&output.stderr).contains("child-output"));
+        } else {
+            assert_eq!(String::from_utf8(output.stdout).unwrap(), "child-output\n");
+        }
+    }
+}
+
+#[rstest]
 fn test_switch_format_table_rejected_by_clap(repo: TestRepo) {
     let output = repo
         .wt_command()

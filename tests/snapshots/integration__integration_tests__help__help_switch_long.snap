@@ -123,7 +123,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
       [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m
           Output format[0m
           
-          JSON prints structured result to stdout. Designed for tool integration (e.g., Claude Code WorktreeCreate hooks).[0m
+          JSON prints one structured result to stdout after the switch completes. Once arguments are accepted, failures print an object with an [1merror[0m string. Argument errors use stderr only. Diagnostics and --execute output go to stderr. A worktree created before a later failure remains in place. Canceling the interactive picker produces no result. Background hooks run independently of the result. Designed for tool integration (e.g., Claude Code WorktreeCreate hooks).[0m
           
           [default: text]
           [possible values: text, json]
