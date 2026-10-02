@@ -666,8 +666,13 @@ fn resolve_switch_target(
 
     // Validate --create constraints
     if create {
+        if !worktrunk::git::is_valid_branch_name(&resolved_branch) {
+            return Err(GitError::InvalidBranchName {
+                name: resolved_branch,
+            }
+            .into());
+        }
         let branch_handle = repo.branch(&resolved_branch);
-        branch_handle.require_valid_name()?;
         if branch_handle.exists_locally()? {
             return Err(GitError::BranchAlreadyExists {
                 branch: resolved_branch,

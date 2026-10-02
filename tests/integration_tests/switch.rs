@@ -8575,7 +8575,7 @@ fn test_switch_path_rejects_directory_overlapping_repo(repo: TestRepo) {
     assert!(repo.root_path().join(".git").exists());
 }
 
-/// Refused creation names are checked by Git before worktree creation.
+/// Invalid ref syntax is rejected before worktree creation.
 #[rstest]
 #[case::space("bad name")]
 #[case::ref_syntax("bad..name")]
