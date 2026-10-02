@@ -37,8 +37,8 @@ use crate::commands::build_invalid_subcommand_error;
 use crate::commands::command_executor::{
     CommandContext, build_hook_context, render_template_preview,
 };
-use crate::commands::did_you_mean;
 use crate::commands::hooks::HookSource;
+use worktrunk::utils::did_you_mean;
 
 /// Show the configured template(s) for an alias — or, with no name, every
 /// configured alias's template(s).

@@ -57,6 +57,21 @@ fn test_eval_template_error(repo: TestRepo) {
     ));
 }
 
+/// Optional and unreached references must not compete with the typo that
+/// actually fails, even when they share its source line.
+#[rstest]
+fn test_eval_typo_in_reached_expression(repo: TestRepo) {
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &[
+            "eval",
+            "{% if optional %}{{ unvisited }}{% endif %}{{ brnch | upper }}"
+        ],
+        None,
+    ));
+}
+
 #[rstest]
 fn test_eval_verbose(repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(

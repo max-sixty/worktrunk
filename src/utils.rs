@@ -5,6 +5,26 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Return candidates similar to `query`, sorted by descending Jaro–Winkler
+/// similarity, filtered by `score > 0.7`, and deduplicated while preserving
+/// order. The 0.7 threshold matches clap's internal `did_you_mean` so
+/// wt-synthesized "unrecognized subcommand" tips read identically to clap's
+/// native output — keep them aligned if clap ever changes it.
+pub fn did_you_mean(query: &str, candidates: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut scored: Vec<(f64, String)> = candidates
+        .into_iter()
+        .map(|candidate| (strsim::jaro_winkler(query, &candidate), candidate))
+        .filter(|(score, _)| *score > 0.7)
+        .collect();
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    let mut seen = std::collections::HashSet::new();
+    scored
+        .into_iter()
+        .filter(|(_, n)| seen.insert(n.clone()))
+        .map(|(_, n)| n)
+        .collect()
+}
+
 /// Replace C0/C1 control characters — other than tab and newline — with a
 /// visible escape so the text stays valid for plain-text and markdown sinks.
 ///
