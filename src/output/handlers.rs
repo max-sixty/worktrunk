@@ -3,7 +3,6 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{RwLock, RwLockReadGuard};
 
 use anstyle::AnsiColor;
 use color_print::cformat;
@@ -128,39 +127,6 @@ pub enum RemovalExecution {
     /// terminal. Only [`RemovalPlan::Worktree`] arrives here; the picker
     /// deletes branch-only rows directly via `execute_branch_deletion`.
     Silent,
-}
-
-/// Prune's shared removal phase, held through the caller's hook flush.
-///
-/// Pre-remove hooks temporarily release the read guard and run exclusively.
-/// The read guard is reacquired before removal checks or mutations resume;
-/// there is never a read-to-write upgrade with a guard still held. Callers
-/// already holding the write side (foreground/current removals) omit this.
-pub struct RemovalCoordination<'a> {
-    lock: &'a RwLock<()>,
-    read: Option<RwLockReadGuard<'a, ()>>,
-}
-
-impl<'a> RemovalCoordination<'a> {
-    pub fn new(lock: &'a RwLock<()>) -> Self {
-        Self {
-            lock,
-            read: Some(lock.read().unwrap_or_else(|e| e.into_inner())),
-        }
-    }
-
-    fn pre_remove(&mut self, run: impl FnOnce() -> anyhow::Result<()>) -> anyhow::Result<()> {
-        drop(self.read.take());
-        let result = {
-            let _write = self.lock.write().unwrap_or_else(|e| e.into_inner());
-            run()
-        };
-        // A failed hook ends the removal. In particular, cancellation must
-        // not wait behind another worker's arbitrary pre-remove hook.
-        result?;
-        self.read = Some(self.lock.read().unwrap_or_else(|e| e.into_inner()));
-        Ok(())
-    }
 }
 
 enum BackgroundRemovalPlan {
@@ -1252,8 +1218,6 @@ pub fn execute_user_command(
 /// declined, or no project config) runs no project hooks. `pre-remove` /
 /// `post-remove` / `post-switch` execute only from it — the selection was
 /// frozen at the gate, never re-read.
-/// `coordination` supplies prune's shared phase guard; the caller retains it
-/// through hook flushing, and selected pre-remove hooks run exclusively.
 ///
 /// [`RemovalExecution::Silent`] (the TUI picker — this runs while skim owns
 /// the terminal) removes a `Worktree` plan inline with no progress/success
@@ -1273,7 +1237,6 @@ pub fn handle_remove_output(
     hook_plan: &ApprovedHookPlan,
     quiet: bool,
     announcer: &mut HookAnnouncer<'_>,
-    coordination: Option<&mut RemovalCoordination<'_>>,
 ) -> anyhow::Result<BranchFate> {
     match plan {
         RemovalPlan::Worktree {
@@ -1303,7 +1266,6 @@ pub fn handle_remove_output(
                 execution,
             },
             announcer,
-            coordination,
         ),
         RemovalPlan::BranchOnly {
             branch_name,
@@ -2120,7 +2082,6 @@ fn handle_named_removed_worktree_background(
 fn handle_removed_worktree_output(
     ctx: WorktreeRemovalContext<'_>,
     announcer: &mut HookAnnouncer<'_>,
-    coordination: Option<&mut RemovalCoordination<'_>>,
 ) -> anyhow::Result<BranchFate> {
     // Use main_path for discovery - the worktree being removed might be cwd,
     // and git operations after removal need a valid working directory.
@@ -2130,12 +2091,7 @@ fn handle_removed_worktree_output(
         .hook_plan
         .has_hooks_for(ctx.worktree_path, &[worktrunk::HookType::PreRemove])
     {
-        let run = || execute_pre_remove_hooks_if_needed(&repo, &ctx);
-        if let Some(coordination) = coordination {
-            coordination.pre_remove(run)?;
-        } else {
-            run()?;
-        }
+        execute_pre_remove_hooks_if_needed(&repo, &ctx)?;
     }
 
     // No re-validation after `pre-remove` hooks: the pre-rename `ensure_clean`

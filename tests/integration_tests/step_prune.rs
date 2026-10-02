@@ -1711,9 +1711,8 @@ fn test_prune_summary_counts_declined_deletion_as_worktree_only(mut repo: TestRe
 /// and regression test for synchronous fallback completion.
 ///
 /// Prune's hook-free removals — the rename-failure fallback included — run
-/// concurrently with the parallel `integration_reason` readers on the read
-/// side of `check_lock` (`src/commands/step/prune.rs`). That is safe because
-/// the chain's branch deletion is a CAS `git update-ref --stdin`, which never
+/// concurrently with the parallel `integration_reason` readers. That is safe
+/// because the chain's branch deletion is a CAS `git update-ref --stdin`, which never
 /// rewrites `.git/config`; a deletion mechanism that rewrites config via
 /// lockfile+rename (as `git branch -D` does — the original Windows race,
 /// #2801) would collide with those readers again. Each branch here gets a
@@ -2293,59 +2292,52 @@ fn test_prune_stages_concurrently_without_packed_ref_contention(
     }
 }
 
-/// A synchronous pre-remove hook excludes both other hooks and Git readers.
-/// Readers stay excluded through a real absence window after the hook starts.
+/// Each hook waits for its peer to start: serial hook execution cannot finish
+/// the rendezvous. Both worktrees must still complete their own hook before
+/// removal, and branch deletion must retain its usual safe-delete behavior.
 #[cfg(unix)]
 #[rstest]
-fn test_prune_pre_remove_excludes_git_readers(mut repo: TestRepo) {
+fn test_prune_pre_remove_hooks_run_concurrently(mut repo: TestRepo) {
     use path_slash::PathExt as _;
 
     repo.commit("initial");
-    for name in ["exclusive-a", "exclusive-b", "exclusive-c", "exclusive-d"] {
-        repo.add_worktree(name);
-    }
+    let worktrees: Vec<_> = ["parallel-a", "parallel-b"]
+        .into_iter()
+        .map(|name| (name, repo.add_worktree(name)))
+        .collect();
     let barriers = repo.home_path().join("barriers");
     std::fs::create_dir_all(&barriers).unwrap();
-    let window = worktrunk::testing::SLEEP_FOR_ABSENCE_CHECK.as_secs_f64();
     repo.write_test_config(&format!(
-        "pre-remove = 'mkdir {0}/active || touch {0}/overlapping-hooks; echo started >> {0}/hooks; sleep {window}; rmdir {0}/active'",
+        r#"pre-remove = """
+touch {0}/started-{{{{ branch }}}}
+attempts=0
+while [ ! -f {0}/started-parallel-a ] || [ ! -f {0}/started-parallel-b ]; do
+  attempts=$((attempts + 1))
+  if [ "$attempts" -ge 200 ]; then
+    echo 'peer pre-remove hook never started' >&2
+    exit 1
+  fi
+  sleep 0.05
+done
+[ -e .git ] || exit 1
+touch {0}/completed-{{{{ branch }}}}
+""""#,
         barriers.to_slash_lossy()
     ));
-    let wrapper = repo.home_path().join("git-wrapper");
-    std::fs::create_dir_all(&wrapper).unwrap();
-    write_prune_git_wrapper(
-        &wrapper,
-        &which::which("git").unwrap(),
-        r#"
-if [ -d "$WORKTRUNK_TEST_HOOK_BARRIERS/active" ]; then
-  printf '%s\n' "$*" >> "$WORKTRUNK_TEST_HOOK_BARRIERS/git-during-hook"
-fi
-"#,
-    );
-    let output = {
-        let mut cmd = repo.wt_command();
-        prepend_path(&mut cmd, &wrapper);
-        cmd.env("RAYON_NUM_THREADS", "4")
-            .env("WORKTRUNK_TEST_HOOK_BARRIERS", &barriers)
-            .args(["step", "prune", "--yes", "--min-age=0s"])
-            .output()
-            .unwrap()
-    };
+    let output = repo
+        .wt_command()
+        .env("RAYON_NUM_THREADS", "2")
+        .args(["step", "prune", "--yes", "--min-age=0s"])
+        .output()
+        .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stderr}");
-    assert_eq!(
-        std::fs::read_to_string(barriers.join("hooks"))
-            .unwrap()
-            .lines()
-            .count(),
-        4
-    );
-    assert!(!barriers.join("overlapping-hooks").exists());
-    assert!(
-        !barriers.join("git-during-hook").exists(),
-        "Git ran during a pre-remove hook: {:?}",
-        std::fs::read_to_string(barriers.join("git-during-hook"))
-    );
+    let branches = repo.git_output(&["branch", "--format=%(refname:short)"]);
+    for (name, path) in worktrees {
+        assert!(barriers.join(format!("completed-{name}")).exists());
+        assert!(!path.exists());
+        assert!(!branches.lines().any(|branch| branch == name));
+    }
 }
 
 #[cfg(unix)]

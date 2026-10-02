@@ -515,9 +515,9 @@ static GIT_COMMON_DIR_CACHE: LazyLock<DashMap<PathBuf, PathBuf>> = LazyLock::new
 /// which contend on Git's packed-refs lock even for different branches.
 ///
 /// Registry guards are non-reentrant: a guarded operation must not call another
-/// registry accessor. In `wt step prune`, the command's `check_lock` precedes
+/// registry accessor. In `wt step prune`, the command's `output_lock` precedes
 /// either repository lock; code holding a repository guard must never acquire
-/// `check_lock`. Safe branch deletion releases the registry read guard before
+/// `output_lock`. Safe branch deletion releases the registry read guard before
 /// submitting to the deletion queue; registry guards never span queue waits.
 ///
 /// External Git processes and raw worktree commands issued through

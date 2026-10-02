@@ -3,11 +3,10 @@
 //! Live-path concurrency: candidate checks fan out on the rayon pool and
 //! stream results to the main thread, which queues per-candidate jobs
 //! (removals and skip lines) in scan-completion order onto a worker pool
-//! sized like rayon's ([`RemovalJob`]). Checks and background removals hold
-//! the read side of [`RemovalContext::check_lock`] and run concurrently.
-//! Selected pre-remove hooks release that read guard and run on the write
-//! side, then reacquire read before fresh removal checks. Foreground/current
-//! removals retain whole-operation exclusion ([`removal_needs_write`]).
+//! sized like rayon's ([`RemovalJob`]). Checks, background removals, and
+//! their pre-remove hooks run concurrently. The output lock excludes other
+//! removals and skip messages only while foreground/current removals own
+//! terminal output ([`removal_needs_write`]).
 //! Repository operations coordinate the narrower
 //! Git worktree-registry reads and teardowns themselves, so status checks,
 //! fsmonitor shutdown, and trash renames still overlap. One FIFO queue carrying
@@ -46,9 +45,7 @@ use super::super::hook_plan::{ApprovedHookPlan, HookPlan, HookPlanBuilder};
 use super::super::hooks::HookAnnouncer;
 use super::super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::super::worktree::{BranchFate, RemovalPlan};
-use crate::output::{
-    BackgroundFallbackMode, RemovalCoordination, RemovalExecution, handle_remove_output,
-};
+use crate::output::{BackgroundFallbackMode, RemovalExecution, handle_remove_output};
 
 /// A candidate worktree or branch selected for removal.
 #[derive(Clone)]
@@ -237,28 +234,14 @@ struct RemovalContext<'a> {
     repo: &'a Repository,
     foreground: bool,
     hook_plan: &'a ApprovedHookPlan,
-    /// Coordinates the parallel workers (scan checks and removals, both on
-    /// the read side) against pre-remove hooks and the few removals that need
-    /// whole-operation exclusivity (write side — see [`removal_needs_write`]).
-    ///
-    /// The lock exists for the Windows `.git/config` race: git rewrites
-    /// config via lockfile + atomic rename, and a concurrent reader's plain
-    /// `fopen` fails on the rename (#2801). Historically every removal held
-    /// the write side because branch deletion was `git branch -D`, which
-    /// rewrites `.git/config` (it drops the `[branch "<name>"]` section —
-    /// even when none exists). The removal chain has since moved to the CAS
-    /// `git update-ref --stdin`, and neither it nor `git worktree remove` (both the
-    /// scoped metadata prune and the rename-failure fallback) touches
-    /// `.git/config`, so removal cores can run concurrently; arbitrary
-    /// pre-remove hooks retain write-side exclusion. Verified empirically:
-    /// with `.git/config` made immutable,
-    /// only `git branch -D` reports `could not write config file`.
-    /// (`git branch -D` remains reachable only via `delete_branch_if_safe`'s
-    /// force arm, which prune never uses.)
-    check_lock: &'a RwLock<()>,
+    /// Keeps background removal output and skip messages out of a foreground
+    /// spinner's terminal window. Shared guards do not serialize background
+    /// removals or their hooks. Repository mutation coordination belongs to
+    /// the registry accessors and the safe-ref deletion queue.
+    output_lock: &'a RwLock<()>,
 }
 
-/// Which removals must hold the write side of [`RemovalContext::check_lock`]
+/// Which removals must hold the write side of [`RemovalContext::output_lock`]
 /// instead of joining the parallel (read-side) fan-out:
 ///
 /// - **`--foreground` worktree removals** — the foreground path runs a TTY
@@ -272,16 +255,10 @@ struct RemovalContext<'a> {
 /// a hook body nor a spinner, whatever selected it. `StaleDetached` never
 /// reaches here — [`try_remove`] prunes its entry and returns.
 ///
-/// Everything else fans out on the read side. The canonical removal handler
-/// temporarily takes the write side only for selected pre-remove hooks:
-/// arbitrary hook commands must not overlap scans or other removal output.
-/// Post-remove pipelines are detached and need no exclusive removal phase.
-/// The Git worktree-registry calls
-/// inside those removals take their own repository-scoped lock; see
-/// [`prune_worktree_entry`](Repository::prune_worktree_entry).
-/// Safe branch deletions serialize only their ref mutation per repository,
-/// avoiding contention on Git's shared packed-ref lock. Topology reads remain
-/// concurrent and provide best-effort checkout protection.
+/// Everything else fans out on the read side, including pre-remove hooks.
+/// The Git worktree-registry calls inside those removals take their own
+/// repository-scoped lock; see [`prune_worktree_entry`](Repository::prune_worktree_entry).
+/// Safe branch deletions batch ref mutation independently of terminal output.
 fn removal_needs_write(kind: CandidateKind, plan: &RemovalPlan, ctx: &RemovalContext<'_>) -> bool {
     if matches!(kind, CandidateKind::Current) {
         return true;
@@ -314,8 +291,8 @@ fn try_remove(
 
     if matches!(candidate.kind, CandidateKind::StaleDetached) {
         // Output side: no exclusive output here (no spinner, no hook stream),
-        // so join the parallel read side of `check_lock`.
-        let _read = ctx.check_lock.read().unwrap_or_else(|e| e.into_inner());
+        // so join the parallel read side of `output_lock`.
+        let _read = ctx.output_lock.read().unwrap_or_else(|e| e.into_inner());
         // Name the stale entry rather than sweeping the repository, so a
         // sibling whose directory is merely absent right now (unmounted
         // volume, half-finished `mv`) keeps its registration. `gather_check_items`
@@ -337,13 +314,16 @@ fn try_remove(
     // Recover the guard rather than `.expect()`-ing: a panic elsewhere should
     // surface as itself, not as a cascade of secondary poison panics on every
     // later removal/reader.
-    let (mut coordination, _write) = if removal_needs_write(candidate.kind, &plan, ctx) {
+    let (_read, _write) = if removal_needs_write(candidate.kind, &plan, ctx) {
         (
             None,
-            Some(ctx.check_lock.write().unwrap_or_else(|e| e.into_inner())),
+            Some(ctx.output_lock.write().unwrap_or_else(|e| e.into_inner())),
         )
     } else {
-        (Some(RemovalCoordination::new(ctx.check_lock)), None)
+        (
+            Some(ctx.output_lock.read().unwrap_or_else(|e| e.into_inner())),
+            None,
+        )
     };
     let mut announcer = HookAnnouncer::new(ctx.repo, true);
     // `SynchronousForNonCurrent`: a rename-failure fallback completes inline,
@@ -354,14 +334,7 @@ fn try_remove(
     } else {
         RemovalExecution::Background(BackgroundFallbackMode::SynchronousForNonCurrent)
     };
-    let fate = handle_remove_output(
-        &plan,
-        execution,
-        ctx.hook_plan,
-        true,
-        &mut announcer,
-        coordination.as_mut(),
-    )?;
+    let fate = handle_remove_output(&plan, execution, ctx.hook_plan, true, &mut announcer)?;
     announcer.flush()?;
     let branch_deleted = fate.deleted();
     // A branch-only candidate that kept its branch removed nothing at all —
@@ -422,8 +395,6 @@ struct CheckOutcome {
 }
 
 /// One check item's full parallel work: integration + removability + age.
-/// Held under the check-lock read guard at the call site so it never overlaps
-/// a write-side removal (see [`removal_needs_write`]).
 #[allow(clippy::too_many_arguments)]
 fn check_one(
     item: &CheckItem,
@@ -1034,7 +1005,6 @@ pub fn step_prune(
     // Streaming dry-run path: scans run in parallel, results are collected and
     // sorted for deterministic output. No removals, no approval — just print.
     if dry_run {
-        let check_lock = RwLock::new(());
         let scan_span = Span::new("prune-scan");
         let dry_run_info: Vec<(Candidate, DryRunInfo)> = std::thread::scope(|s| {
             let (tx, rx) = chan::unbounded::<(usize, anyhow::Result<CheckOutcome>)>();
@@ -1047,27 +1017,23 @@ pub fn step_prune(
             let check_items_ref = &check_items;
             let integration_target_ref = integration_target.as_str();
             let current_path_ref = current_root.as_path();
-            let check_lock_ref = &check_lock;
             let ref_write_times_ref = &ref_write_times;
             s.spawn(move || {
                 check_items_ref
                     .par_iter()
                     .enumerate()
                     .for_each(|(idx, item)| {
-                        let outcome = {
-                            let _read = check_lock_ref.read().unwrap_or_else(|e| e.into_inner());
-                            check_one(
-                                item,
-                                repo_ref,
-                                snapshot_ref,
-                                integration_target_ref,
-                                worktrees,
-                                current_path_ref,
-                                min_age_duration,
-                                ref_write_times_ref,
-                                now_secs,
-                            )
-                        };
+                        let outcome = check_one(
+                            item,
+                            repo_ref,
+                            snapshot_ref,
+                            integration_target_ref,
+                            worktrees,
+                            current_path_ref,
+                            min_age_duration,
+                            ref_write_times_ref,
+                            now_secs,
+                        );
                         let _ = tx.send((idx, outcome));
                     });
             });
@@ -1194,12 +1160,12 @@ pub fn step_prune(
         .and_then(|p| std::fs::read(p).ok());
     let mut skipped_approval: Vec<SkippedApproval> = Vec::new();
 
-    let check_lock = RwLock::new(());
+    let output_lock = RwLock::new(());
     let removal_ctx = RemovalContext {
         repo: &repo,
         foreground,
         hook_plan: &hook_plan,
-        check_lock: &check_lock,
+        output_lock: &output_lock,
     };
     // Flipped by the first failing removal: the rest of the queue drains
     // without executing (matching the serial loop's abort-on-first-error),
@@ -1209,7 +1175,7 @@ pub fn step_prune(
     // Streaming live path: scans run in parallel and the main thread queues a
     // job for each result as it arrives — a "Skipped ..." line or a removal.
     // Removals execute concurrently on the worker pool (read side of
-    // `check_lock`; the exceptional candidates take the write side — see
+    // `output_lock`; the exceptional candidates take the write side — see
     // `removal_needs_write`). The current worktree is the one exception to
     // the fan-out: its removal cd's to the primary, so defer it until last.
     let scan_span = Span::new("prune-scan");
@@ -1225,27 +1191,23 @@ pub fn step_prune(
             let check_items_ref = &check_items;
             let integration_target_ref = integration_target.as_str();
             let current_path_ref = current_root.as_path();
-            let check_lock_ref = &check_lock;
             let ref_write_times_ref = &ref_write_times;
             s.spawn(move || {
                 check_items_ref
                     .par_iter()
                     .enumerate()
                     .for_each(|(idx, item)| {
-                        let outcome = {
-                            let _read = check_lock_ref.read().unwrap_or_else(|e| e.into_inner());
-                            check_one(
-                                item,
-                                repo_ref,
-                                snapshot_ref,
-                                integration_target_ref,
-                                worktrees,
-                                current_path_ref,
-                                min_age_duration,
-                                ref_write_times_ref,
-                                now_secs,
-                            )
-                        };
+                        let outcome = check_one(
+                            item,
+                            repo_ref,
+                            snapshot_ref,
+                            integration_target_ref,
+                            worktrees,
+                            current_path_ref,
+                            min_age_duration,
+                            ref_write_times_ref,
+                            now_secs,
+                        );
                         let _ = tx.send((idx, outcome));
                     });
             });
@@ -1287,10 +1249,9 @@ pub fn step_prune(
                             RemovalJob::PrintSkip(line) => {
                                 // Hold the read side so a skip line can't
                                 // land inside a write-side removal's
-                                // exclusive output window (spinner, hook
-                                // stream).
+                                // exclusive output window (spinner).
                                 let _read = removal_ctx_ref
-                                    .check_lock
+                                    .output_lock
                                     .read()
                                     .unwrap_or_else(|e| e.into_inner());
                                 eprintln!("{line}");
