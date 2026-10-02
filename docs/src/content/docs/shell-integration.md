@@ -164,9 +164,12 @@ grep -n "wt config shell init" ~/.bashrc
 
 # zsh
 grep -n "wt config shell init" ~/.zshrc
+
+# fish (manual setup)
+grep -n "wt config shell init" ~/.config/fish/config.fish
 ```
 
-These commands show the initialization line and its line number. For fish and Nushell, check the wrapper files listed under [Files created](#files-created).
+These commands show the initialization line and its line number. `wt config shell install` writes fish and Nushell wrapper files instead; check those at the locations listed under [Files created](#files-created).
 
 ### 4. Check whether directive files are set
 
