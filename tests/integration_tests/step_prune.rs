@@ -79,6 +79,83 @@ fn test_prune_removes_merged(mut repo: TestRepo) {
     assert!(!worktree_path.exists(), "Worktree should be fully removed");
 }
 
+/// A registered worktree path occupied by another repository is an unsafe
+/// removal target, not a normal non-removable candidate to skip.
+#[rstest]
+fn test_prune_surfaces_foreign_repository_at_worktree_path(mut repo: TestRepo) {
+    repo.commit("initial");
+    let worktree_path = repo.add_worktree("merged-branch");
+    let parent = worktree_path.parent().unwrap().to_path_buf();
+    let dir_name = worktree_path.file_name().unwrap().to_str().unwrap();
+
+    std::fs::remove_dir_all(&worktree_path).unwrap();
+    repo.run_git_in(&parent, &["init", "-b", "main", dir_name]);
+    std::fs::write(worktree_path.join("precious.txt"), "unpushed work").unwrap();
+
+    for mode in ["--dry-run", "--yes"] {
+        let output = repo
+            .wt_command()
+            .args(["step", "prune", mode, "--min-age=0s"])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            !output.status.success(),
+            "{mode} must surface an unsafe candidate instead of reporting an empty result.\nstderr: {stderr}"
+        );
+        assert!(
+            stderr.contains("does not hold the worktree registered there"),
+            "{mode} must preserve the ownership diagnostic.\nstderr: {stderr}"
+        );
+    }
+    assert!(
+        worktree_path.join("precious.txt").exists(),
+        "the foreign repository's uncommitted file must survive"
+    );
+    assert!(
+        worktree_path.join(".git").is_dir(),
+        "the foreign repository's object store must survive"
+    );
+}
+
+/// An orphan branch can disappear after the candidate scan but before removal
+/// planning. That race means there is nothing left to prune, not that the
+/// unattended cleanup command failed.
+#[cfg(unix)]
+#[rstest]
+fn test_prune_skips_orphan_deleted_after_scan(repo: TestRepo) {
+    repo.commit("initial");
+    repo.create_branch("raced-away");
+
+    let mut cmd = repo.wt_command();
+    let git_wrapper_dir = repo.home_path().join("git-wrapper");
+    std::fs::create_dir_all(&git_wrapper_dir).unwrap();
+    write_delete_branch_on_verify_wrapper(&git_wrapper_dir, &which::which("git").unwrap());
+    prepend_path(&mut cmd, &git_wrapper_dir);
+    cmd.env("WT_TEST_DELETE_ON_VERIFY_BRANCH", "raced-away");
+
+    let output = cmd
+        .args(["step", "prune", "--yes", "--min-age=0s"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "a candidate deleted after scanning should be skipped:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("Pruned "),
+        "the vanished candidate must not be counted as removed:\n{stderr}"
+    );
+    let branches = repo.git_output(&["branch", "--format=%(refname:short)"]);
+    assert!(
+        !branches.lines().any(|branch| branch == "raced-away"),
+        "the shim must delete the branch before planning; branches:\n{branches}"
+    );
+}
+
 /// Prune skips worktrees with unique commits (not merged)
 #[rstest]
 fn test_prune_skips_unmerged(mut repo: TestRepo) {
@@ -2166,6 +2243,26 @@ fn write_failing_branch_delete_wrapper(dir: &std::path::Path, real_git: &std::pa
 if [ "$1" = "update-ref" ] && [ "$2" = "-d" ] && [ "$3" = "refs/heads/$WT_TEST_FAIL_DELETE_BRANCH" ]; then
   [ -n "$WT_TEST_FAIL_DELETE_KEEPS_REF" ] || {real_git} update-ref -d "$3" || true
   exit 1
+fi
+exec {real_git} "$@"
+"#
+    );
+    let path = dir.join("git");
+    std::fs::write(&path, script).unwrap();
+    let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&path, permissions).unwrap();
+}
+
+#[cfg(unix)]
+fn write_delete_branch_on_verify_wrapper(dir: &std::path::Path, real_git: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
+    let script = format!(
+        r#"#!/bin/sh
+if [ "$1" = "rev-parse" ] && [ "$2" = "--verify" ] && [ "$3" = "refs/heads/$WT_TEST_DELETE_ON_VERIFY_BRANCH" ]; then
+  {real_git} update-ref -d "$3"
 fi
 exec {real_git} "$@"
 "#
