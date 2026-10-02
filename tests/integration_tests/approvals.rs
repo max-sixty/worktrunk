@@ -71,7 +71,7 @@ fn test_approvals_unreadable_source_is_not_empty(repo: TestRepo, #[case] legacy:
 
     let mut settings = insta::Settings::new();
     settings.set_snapshot_path("../snapshots");
-    let absolute = shell_escape::escape(source.to_slash_lossy());
+    let absolute = shell_escape::unix::escape(source.to_slash_lossy());
     let path_pattern = format!(
         r"(?:{}|{}{}'?)",
         regex::escape(&absolute),
