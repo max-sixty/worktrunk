@@ -543,6 +543,8 @@ pub enum GitError {
     CannotRemoveMainWorktree,
     CannotDeleteDefaultBranch {
         branch: String,
+        /// A checkout or stale registration can be removed while retaining the ref.
+        has_worktree: bool,
     },
     WorktreeLocked {
         branch: String,
@@ -888,7 +890,7 @@ impl GitError {
 
             GitError::CannotRemoveMainWorktree => "The main worktree cannot be removed".to_string(),
 
-            GitError::CannotDeleteDefaultBranch { branch } => {
+            GitError::CannotDeleteDefaultBranch { branch, .. } => {
                 cformat!("Cannot delete the default branch <bold>{branch}</>")
             }
 
@@ -1374,8 +1376,14 @@ impl GitError {
                 write!(f, "{}", error_message(&title))
             }
 
-            GitError::CannotDeleteDefaultBranch { branch } => {
+            GitError::CannotDeleteDefaultBranch {
+                branch,
+                has_worktree,
+            } => {
                 let title = self.title();
+                if !has_worktree {
+                    return write!(f, "{}", error_message(&title));
+                }
                 let cmd = suggest_command("remove", &[branch], &["--no-delete-branch"]);
                 write!(
                     f,

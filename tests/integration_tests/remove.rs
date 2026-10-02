@@ -2105,7 +2105,11 @@ fn test_remove_default_branch_keep(
         cmd.arg("--no-delete-branch");
     }
     if current {
-        cmd.current_dir(&main_worktree);
+        // Resolve the current worktree through -C while the process stays in
+        // feature: Windows cannot delete a live process's actual cwd.
+        cmd.arg("-C")
+            .arg(&main_worktree)
+            .current_dir(&feature_worktree);
     } else {
         cmd.arg("main").current_dir(&feature_worktree);
     }
@@ -2164,6 +2168,36 @@ fn test_remove_default_branch_branch_only() {
 
         assert_cmd_snapshot!("remove_default_branch_branch_only_force_delete", cmd);
     });
+}
+
+/// Keeping the branch only offers a useful recovery when there is a checkout
+/// or stale registration to remove. A pure branch-only target has neither.
+#[rstest]
+fn test_remove_default_branch_without_worktree(repo: TestRepo) {
+    repo.commit("initial");
+    repo.run_git(&["switch", "-c", "feature"]);
+
+    let output = repo.wt_command().args(["remove", "main"]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(!output.status.success());
+    assert!(
+        stderr.contains("Cannot delete the default branch main"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("--no-delete-branch"),
+        "keep would remove nothing:\n{stderr}"
+    );
+    assert!(
+        repo.git_command()
+            .args(["show-ref", "--verify", "refs/heads/main"])
+            .run()
+            .unwrap()
+            .status
+            .success()
+    );
 }
 
 ///

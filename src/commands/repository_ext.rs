@@ -280,7 +280,14 @@ impl RepositoryCliExt for Repository {
             Resolved::BranchOnly { branch, .. } => Some(branch.as_str()),
         };
         if let Some(branch) = branch_name {
-            require_branch_deletion_allowed(self, branch, &deletion_mode)?;
+            let has_worktree = !matches!(
+                &resolved,
+                Resolved::BranchOnly {
+                    pruned_from: None,
+                    ..
+                }
+            );
+            require_branch_deletion_allowed(self, branch, &deletion_mode, has_worktree)?;
         }
         // An orphan worktree's branch is unborn until its first commit: it has
         // no ref, so there is nothing for the removal to delete.
@@ -600,6 +607,8 @@ pub(crate) fn live_sibling_checkout<'a>(
 
 /// Default-branch deletion requires explicit force; keeping its ref permits
 /// removal of a linked checkout or stale registration.
+/// `has_worktree` records whether keeping the branch leaves something to remove,
+/// so refusal advice does not suggest a no-op for a pure branch-only target.
 ///
 /// The default branch is the integration target — checking it against itself is
 /// tautological (same logic as `wt list`'s `is_main` guard in
@@ -608,12 +617,14 @@ pub(crate) fn require_branch_deletion_allowed(
     repo: &Repository,
     branch: &str,
     deletion_mode: &BranchDeletionMode,
+    has_worktree: bool,
 ) -> anyhow::Result<()> {
     if *deletion_mode == BranchDeletionMode::SafeDelete
         && repo.default_branch().as_deref() == Some(branch)
     {
         return Err(GitError::CannotDeleteDefaultBranch {
             branch: branch.to_string(),
+            has_worktree,
         }
         .into());
     }

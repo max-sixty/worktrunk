@@ -138,7 +138,12 @@ pub fn finish_after_merge(
         false
     } else {
         // Phase 3: reject removing default branch (merge always uses SafeDelete).
-        require_branch_deletion_allowed(repo, current_branch, &BranchDeletionMode::SafeDelete)?;
+        require_branch_deletion_allowed(
+            repo,
+            current_branch,
+            &BranchDeletionMode::SafeDelete,
+            true,
+        )?;
 
         let current_wt = repo.current_worktree();
         current_wt.ensure_clean("remove worktree after merge", Some(current_branch), false)?;

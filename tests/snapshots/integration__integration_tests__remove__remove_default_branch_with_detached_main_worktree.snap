@@ -60,4 +60,3 @@ exit_code: 1
 
 ----- stderr -----
 [31m✗[39m [31mCannot delete the default branch [1mmain[22m[39m
-[2m↳[22m [2mTo keep the branch, run [4mwt remove --no-delete-branch main[24m[22m
