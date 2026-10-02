@@ -981,8 +981,6 @@ fn failing_variable<'a>(
 /// undefined-behavior settings.
 pub fn template_environment(repo: &Repository) -> Environment<'static> {
     let mut env = Environment::new();
-    // Error spans identify missing variables in both debug and release builds.
-    env.set_debug(true);
     // SemiStrict: errors on undefined variable use (printing, iteration) but allows
     // truthiness checks ({% if var %}). This catches typos while supporting optional vars.
     env.set_undefined_behavior(UndefinedBehavior::SemiStrict);
@@ -1828,6 +1826,11 @@ mod tests {
             "{% if branch %}{{ brnch }}{% endif %}",
             "{% for item in [1] %}{{ brnch }}{% endfor %}",
             "{% if upstream %}{{ unvisited }}{% endif %}\necho {{ brnch | upper }}",
+            "{% set captured %}{{ brnch }}{% endset %}",
+            "{% autoescape true %}{{ brnch }}{% endautoescape %}",
+            "{% filter upper %}{{ brnch }}{% endfilter %}",
+            "{% with local = branch %}{{ brnch }}{% endwith %}",
+            "{% set ns = namespace() %}{% set ns.brnch = branch %}{{ brnch }}",
         ] {
             let err = expand_template(
                 template,
@@ -1862,6 +1865,8 @@ mod tests {
             "{% if false %}{{ brnch }}{% endif %}{% set brnch = vars.missing %}{{ brnch }}",
             "{% if false %}{{ brnch }}{% endif %}{% with brnch = vars.missing %}{{ brnch }}{% endwith %}",
             "{% if false %}{{ brnch }}{% endif %}{% for brnch in [vars.missing] %}{{ brnch }}{% endfor %}",
+            "{% if false %}{{ brnch }}{% endif %}{% for brnch, other in [[vars.missing, 1]] %}{{ brnch }}{% endfor %}",
+            "{% if false %}{{ brnch }}{% endif %}{% set captured %}{% set brnch = vars.missing %}{{ brnch }}{% endset %}",
         ] {
             let err = expand_template(
                 template,
