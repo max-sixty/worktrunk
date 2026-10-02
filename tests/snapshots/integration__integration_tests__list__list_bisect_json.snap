@@ -153,7 +153,7 @@ exit_code: 0
       },
       "display": {
         "state": "empty",
-        "symbols": "_↻",
+        "symbols": "↻_",
         "statusline": "bisecting  \u001b[33m↻\u001b[39m\u001b[2m_\u001b[22m"
       }
     },

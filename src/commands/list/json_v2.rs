@@ -38,7 +38,7 @@ use worktrunk::git::{
 
 use super::ci_status::{CiSource, CiStatus, PrStatus, ReviewState};
 use super::custom_columns::ResolvedCustomColumn;
-use super::json_output::{JsonDiff, format_raw_symbols};
+use super::json_output::JsonDiff;
 use super::model::{BranchScope, Collected, ItemKind, ListItem, MainState, WorktreeData};
 
 /// Tri-state field encoding the absence rule (see module docs).
@@ -704,7 +704,7 @@ impl JsonItemV2 {
                 .status_symbols
                 .main_state
                 .and_then(JsonMainState::from_main_state),
-            symbols: Some(format_raw_symbols(&item.status_symbols)).filter(|s| !s.is_empty()),
+            symbols: Some(item.status_symbols.format_raw()).filter(|s| !s.is_empty()),
             statusline: item.statusline.clone(),
             columns,
         };

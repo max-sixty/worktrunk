@@ -150,7 +150,7 @@ Independent flags from `git status`; several can show at once (e.g. `+!?`). Each
 
 ### Worktree
 
-An in-progress git operation, a worktree-location attribute, or a branch with no worktree. One symbol shows, highest priority first (`✘ > ↻ > ⊟ > ⊞ > ⊘ > ⚑ > /`):
+An in-progress git operation, a worktree-location attribute, or a branch with no worktree. One symbol shows, highest priority first (`✘ > ↻ > ⊟ > ⊞ > ⊘ > ⚐ > /`):
 
 | Symbol | JSON | Meaning |
 |--------|------|---------|
@@ -159,8 +159,8 @@ An in-progress git operation, a worktree-location attribute, or a branch with no
 | `⊟` | `worktree.prunable` | Prunable (worktree directory or its `.git` gone) |
 | `⊞` | `worktree.locked` | Locked worktree |
 | `⊘` | `worktree.detached` | Detached HEAD |
-| `⚑` | `worktree.duplicate_branch` | Branch checked out in more than one worktree |
-| `⚑` | `worktree.branch_mismatch` | Worktree isn't at the path its branch implies |
+| `⚐` | `worktree.duplicate_branch` | Branch checked out in more than one worktree |
+| `⚐` | `worktree.branch_mismatch` | Worktree isn't at the path its branch implies |
 | `/` | no `worktree` object | Branch without a worktree |
 
 ### Default branch

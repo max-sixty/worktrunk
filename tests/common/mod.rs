@@ -1084,6 +1084,13 @@ fn setup_snapshot_settings_for_paths_with_home(
         "$1 # $2",
     );
 
+    // Git 2.56 names ambiguous remote-tracking branches; older Git reports
+    // the same failed worktree-add lookup as an invalid reference.
+    settings.add_filter(
+        r"fatal: '([^'\r\n]+)' matched multiple \(\d+\) remote tracking branches",
+        "fatal: invalid reference: $1",
+    );
+
     // Normalize OS-specific error messages in gutter output
     // Ubuntu may produce "Broken pipe (os error 32)" instead of the expected error
     // when capturing stderr from shell commands due to timing/buffering differences

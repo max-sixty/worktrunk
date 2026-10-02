@@ -173,9 +173,11 @@ command = "llm -m claude-haiku-4.5"
 
 ### aichat
 
+`--code` drops the `<think>` block aichat prints before the message when the model reasons.
+
 ```toml
 [commit.generation]
-command = "aichat -m claude:claude-haiku-4.5"
+command = "aichat -m claude:claude-haiku-4.5 --code"
 ```
 
 See [LLM commits docs](/llm-commits/) for setup and [Custom prompt templates](#custom-prompt-templates) for template customization.

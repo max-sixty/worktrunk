@@ -39,8 +39,8 @@ command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"
 # llm
 command = "llm -m claude-haiku-4.5"
 
-# aichat
-command = "aichat -m claude:claude-haiku-4.5"
+# aichat — --code drops the <think> block reasoning models print
+command = "aichat -m claude:claude-haiku-4.5 --code"
 ```
 
 ## Usage
