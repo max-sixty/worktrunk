@@ -4,63 +4,35 @@ description: "How Worktrunk's shell wrapper changes the parent shell's directory
 sidebar:
   order: 25
 ---
-Shell integration is what lets `wt switch` change your shell's directory. This page covers how it works, what it installs, and how to fix it when it doesn't.
+[`wt config shell`](/config/#wt-config-shell) covers setup, activation, and current-shell diagnostics. This guide covers installed files, warning messages, and wrapper behavior.
 
 ## Why shell integration exists
 
-A subprocess cannot change its parent shell's directory. When `wt switch feature` runs, the `wt` binary is a child process and cannot `cd` the terminal.
-
-Worktrunk solves this with a file directive: the shell wrapper creates one temp file, `wt` writes the target directory to it, and the wrapper changes directory after `wt` exits. `--execute` runs directly inside `wt`. See [How the shell wrapper works](#how-the-shell-wrapper-works) for the steps and a simplified implementation.
+The [shell integration overview](/config/#wt-config-shell) explains why directory switching needs a shell function. [How the shell wrapper works](#how-the-shell-wrapper-works) describes the directive mechanism.
 
 ## Installation
 
-```bash
-# Auto-install for all shells (bash, zsh, fish, nushell (experimental), PowerShell)
-wt config shell install
-
-# Or manual installation - add to the shell config:
-# bash (~/.bashrc):
-eval "$(wt config shell init bash)"
-
-# zsh (~/.zshrc):
-eval "$(wt config shell init zsh)"
-
-# fish (~/.config/fish/config.fish):
-wt config shell init fish | source
-
-# nushell (experimental) — save to vendor autoload directory:
-wt config shell init nu | save -f ($nu.vendor-autoload-dirs | last | path join wt.nu)
-
-# PowerShell ($PROFILE):
-Invoke-Expression (& wt config shell init powershell | Out-String)
-```
+See [`wt config shell install`](/config/#wt-config-shell-install) for automatic installation and [`wt config shell init`](/config/#wt-config-shell-init) for manual setup in each supported shell.
 
 ## Files created
 
-`wt config shell install` writes:
+[`wt config shell install`](/config/#wt-config-shell-install) uses these locations:
 
-- **Bash**: adds a line to `~/.bashrc`
-- **Zsh**: adds a line to `~/.zshrc` (or `$ZDOTDIR/.zshrc`)
-- **Fish**: creates `~/.config/fish/functions/wt.fish` and `~/.config/fish/completions/wt.fish` (under `$XDG_CONFIG_HOME/fish` when that is set)
-- **Nushell** <span class="badge-experimental"></span>: creates `wt.nu` in Nushell's user vendor-autoload directory — the last entry of `$nu.vendor-autoload-dirs`, under `$nu.data-dir` (typically `~/.local/share/nushell/vendor/autoload` on Linux, `~/Library/Application Support/nushell/vendor/autoload` on macOS)
-- **PowerShell** (Windows): creates both profile files if they don't exist:
+- **Bash**: `~/.bashrc`
+- **Zsh**: `~/.zshrc` (or `$ZDOTDIR/.zshrc`)
+- **Fish**: `~/.config/fish/functions/wt.fish` and `~/.config/fish/completions/wt.fish` (under `$XDG_CONFIG_HOME/fish` when that is set)
+- **Nushell** <span class="badge-experimental"></span>: `wt.nu` in Nushell's user vendor-autoload directory — the last entry of `$nu.vendor-autoload-dirs`, under `$nu.data-dir` (typically `~/.local/share/nushell/vendor/autoload` on Linux, `~/Library/Application Support/nushell/vendor/autoload` on macOS)
+- **PowerShell** (Windows): both profile files:
   - `Documents/PowerShell/Microsoft.PowerShell_profile.ps1` (PowerShell 7+)
   - `Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1` (Windows PowerShell 5.1)
 
-Fish and Nushell wrappers live at a path named after the command, so install writes that file whole, replacing an existing `functions/wt.fish`, `completions/wt.fish`, or `wt.nu`. Bash, zsh, and PowerShell rc files hold the rest of a shell's setup, so install only appends a line to those.
-
 **PowerShell detection on Windows:** When running from cmd.exe or PowerShell, both PowerShell profile files are created automatically. When running from Git Bash or MSYS2, PowerShell is skipped (use `wt config shell install powershell` to create the profiles explicitly).
 
-**To remove:** `wt config shell uninstall`.
+See [`wt config shell uninstall`](/config/#wt-config-shell-uninstall) for removal.
 
 ## Checking status
 
-```bash
-# Show shell integration status
-wt config show
-```
-
-The RUNTIME section shows whether shell integration is active for the current session.
+The [current-shell checks](/config/#wt-config-shell) explain how to inspect installation and activation with `wt config show` and the shell's command lookup.
 
 ## Warning messages
 
@@ -74,9 +46,9 @@ When shell integration isn't working, `wt switch` shows a warning explaining why
 
 ### "shell integration not installed"
 
-**Meaning**: The current shell's config file doesn't have the `eval "$(wt config shell init ...)"` line. The current shell is detected from the process tree (falling back to `$SHELL`), so this refers to the shell `wt` was actually invoked from, not necessarily the login shell.
+**Meaning**: The current shell has no installed Worktrunk initialization line or wrapper file. The current shell is detected from the process tree (falling back to `$SHELL`), so this refers to the shell `wt` was actually invoked from, not necessarily the login shell.
 
-**Fix**: Run `wt config shell install` or add the line manually.
+**Fix**: Run `wt config shell install` or follow the [manual setup](/config/#wt-config-shell-init).
 
 ### "shell integration installed but not active"
 
@@ -192,12 +164,9 @@ grep -n "wt config shell init" ~/.bashrc
 
 # zsh
 grep -n "wt config shell init" ~/.zshrc
-
-# fish
-grep -n "wt config shell init" ~/.config/fish/config.fish
 ```
 
-This should show the `eval` line with its line number.
+These commands show the initialization line and its line number. For fish and Nushell, check the wrapper files listed under [Files created](#files-created).
 
 ### 4. Check whether directive files are set
 
@@ -255,5 +224,5 @@ If you see path issues, make sure you're on a recent Git for Windows version.
 
 ## See also
 
-- [`wt config`](/config/#shell-integration) — shell integration commands
+- [`wt config shell`](/config/#wt-config-shell) — setup and current-shell diagnostics
 - [FAQ: What files does Worktrunk create?](/faq/#what-files-does-worktrunk-create)

@@ -33,7 +33,7 @@ pub enum ConfigShellCommand {
 
 ## Manual setup
 
-Add one line to the shell config:
+For bash, fish, zsh, and PowerShell, add the matching line to the shell config. For Nushell, run the command to save the wrapper in its autoload directory.
 
 Bash (~/.bashrc):
 ```console
@@ -53,6 +53,11 @@ eval "$(wt config shell init zsh)"
 Nushell [experimental] — save to vendor autoload directory:
 ```console
 $ wt config shell init nu | save -f ($nu.vendor-autoload-dirs | last | path join wt.nu)
+```
+
+PowerShell ($PROFILE):
+```powershell
+Invoke-Expression (& wt config shell init powershell | Out-String)
 ```"#
     )]
     Init {
@@ -71,7 +76,7 @@ $ wt config shell init nu | save -f ($nu.vendor-autoload-dirs | last | path join
 
     /// Write shell integration to config files
     #[command(
-        after_long_help = r#"Detects existing shell config files and adds the integration line.
+        after_long_help = r#"Appends an initialization line to bash, zsh, and PowerShell config files. For fish and Nushell, it replaces the autoloaded wrapper file; fish also gets a separate completion file. See [worktrunk.dev/shell-integration](/shell-integration/#files-created) for their locations.
 
 ## Examples
 
@@ -108,7 +113,7 @@ Use --yes to skip confirmation."#
 
     /// Remove shell integration from config files
     #[command(
-        after_long_help = r#"Removes shell integration lines from config files.
+        after_long_help = r#"Removes Worktrunk initialization lines from bash, zsh, and PowerShell config files, and Worktrunk wrapper and completion files for fish and Nushell.
 
 ## Examples
 
@@ -626,6 +631,36 @@ $ wt config alias dry-run deploy -- --env=staging
 #[derive(Subcommand)]
 pub enum ConfigCommand {
     /// Shell integration setup
+    #[command(
+        after_long_help = r#"A subprocess cannot change its parent shell's directory. Shell integration defines a function that runs the Worktrunk binary, then changes the shell's directory when the command requests it. It also enables tab completion.
+
+## Setup
+
+```console
+$ wt config shell install
+```
+
+Start a new shell after installation to load the wrapper. Invoke `wt` by name. Running a binary path or `git wt` bypasses the wrapper, so the shell's directory stays unchanged.
+
+- `wt config shell install --help` — installation options
+- `wt config shell init --help` — manual setup
+- `wt config shell uninstall` — remove the integration
+
+## Check the current shell
+
+```console
+$ wt config show
+```
+
+The SHELL INTEGRATION section reports whether the wrapper is active in the current session. Installation and activation are separate: a configured shell can still be running without the wrapper until its config is reloaded.
+
+In bash, zsh, or fish, `type wt` checks that `wt` resolves to a function. In PowerShell, `Get-Command wt -All` lists the Function and Application definitions.
+
+See [worktrunk.dev/shell-integration](/shell-integration/) for warning messages, installed files, and wrapper behavior.
+<!-- subdoc: init -->
+<!-- subdoc: install -->
+<!-- subdoc: uninstall -->"#
+    )]
     Shell {
         #[command(subcommand)]
         action: ConfigShellCommand,
