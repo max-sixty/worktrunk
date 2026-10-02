@@ -414,15 +414,10 @@ fn test_list_config_env_override_bad_value_warns_on_stderr(repo: TestRepo) {
     });
 }
 
-/// A *deprecated* env var is canonicalized before it is applied, so a
-/// type-mismatched value the deprecated name hid now surfaces.
-/// `WORKTRUNK__COMMIT_GENERATION__COMMAND=42` migrates to
-/// `commit.generation.command = 42`, which fails to deserialize (the field is a
-/// String), so the whole env layer is dropped with a `LoadError::Env` warning
-/// naming the var — the same contract as a bad value in a canonical env var.
-/// File config survives. (Pre-migration the unknown key was silently ignored.)
+/// A deprecated env var is canonicalized before its type is validated, so a
+/// numeric-looking value for a String field stays a string after migration.
 #[rstest]
-fn test_list_config_env_deprecated_type_mismatch_drops_layer(repo: TestRepo) {
+fn test_list_config_env_deprecated_numeric_string_field(repo: TestRepo) {
     fs::write(repo.test_config_path(), "[list]\nbranches = true\n").unwrap();
 
     let settings = setup_snapshot_settings(&repo);
@@ -430,9 +425,17 @@ fn test_list_config_env_deprecated_type_mismatch_drops_layer(repo: TestRepo) {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
         cmd.env("WORKTRUNK__COMMIT_GENERATION__COMMAND", "42");
-        cmd.arg("list").current_dir(repo.root_path());
+        cmd.args(["config", "show", "--format=json"])
+            .current_dir(repo.root_path());
 
-        assert_cmd_snapshot!(cmd);
+        let output = cmd.output().unwrap();
+        assert!(output.status.success());
+        let config: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            config["user"]["config"]["commit"]["generation"]["command"],
+            "42"
+        );
+        assert!(output.stderr.is_empty());
     });
 }
 
@@ -528,6 +531,106 @@ fn test_list_config_env_override_validation_failure(repo: TestRepo) {
         cmd.arg("list").current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_list_config_bad_env_override_keeps_valid_overrides(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        "[list]\nbranches = true\ncolumns = [\"path\"]\n",
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.env("WORKTRUNK__LIST__COLUMNS", "oops")
+        .env("WORKTRUNK__LIST__FULL", "true")
+        .env("WORKTRUNK_WORKTREE_PATH", "/tmp/zzz")
+        .args(["config", "show", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let config = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    let config = &config["user"]["config"];
+    assert_eq!(config["list"]["branches"], true);
+    assert_eq!(config["list"]["full"], true);
+    assert_eq!(config["list"]["columns"], serde_json::json!(["path"]));
+    assert_eq!(config["worktree-path"], "/tmp/zzz");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("WORKTRUNK__LIST__COLUMNS"), "{stderr}");
+    assert!(!stderr.contains("WORKTRUNK__LIST__FULL"), "{stderr}");
+    assert!(!stderr.contains("WORKTRUNK_WORKTREE_PATH"), "{stderr}");
+}
+
+#[rstest]
+fn test_list_config_bad_env_override_keeps_repair_overrides(repo: TestRepo) {
+    fs::write(repo.test_config_path(), "worktree-path = \"\"\n").unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.env("WORKTRUNK__LIST__COLUMNS", "oops")
+        .env("WORKTRUNK__LIST__FULL", "true")
+        .env("WORKTRUNK_WORKTREE_PATH", "/tmp/zzz")
+        .arg("list")
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("WORKTRUNK__LIST__COLUMNS"), "{stderr}");
+    assert!(!stderr.contains("WORKTRUNK__LIST__FULL"), "{stderr}");
+    assert!(!stderr.contains("WORKTRUNK_WORKTREE_PATH"), "{stderr}");
+}
+
+#[rstest]
+fn test_project_custom_column_env_fields_are_atomic(repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/repo.git",
+    ]);
+    fs::write(repo.test_config_path(), "").unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.env(
+            "WORKTRUNK__PROJECTS__GITHUB.COM/OWNER/REPO__LIST__CUSTOM_COLUMNS__TICKET__WIDTH",
+            "20",
+        )
+        .env(
+            "WORKTRUNK__PROJECTS__GITHUB.COM/OWNER/REPO__LIST__CUSTOM_COLUMNS__TICKET__TEMPLATE",
+            "{{ branch }}",
+        )
+        .args(["config", "show", "--format=json"])
+        .current_dir(repo.root_path());
+
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let config = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+        let column =
+            &config["user"]["config"]["projects"]["github.com/owner/repo"]["list"]
+                ["custom-columns"]["ticket"];
+        assert_eq!(column["template"], "{{ branch }}");
+        assert_eq!(column["width"], 20);
+        assert!(output.stderr.is_empty());
     });
 }
 

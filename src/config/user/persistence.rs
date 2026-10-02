@@ -203,14 +203,39 @@ fn load(doc: &DocumentMut) -> Result<UserConfig, toml::de::Error> {
 // Validation
 // =========================================================================
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum UserConfigValidationIssue {
+    EmptyWorktreePath,
+    EmptyProjectWorktreePath(String),
+}
+
+impl std::fmt::Display for UserConfigValidationIssue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EmptyWorktreePath => write!(f, "worktree-path cannot be empty"),
+            Self::EmptyProjectWorktreePath(project) => {
+                write!(f, "projects.{project}.worktree-path cannot be empty")
+            }
+        }
+    }
+}
+
 impl UserConfig {
     /// Validate configuration values.
     pub fn validate(&self) -> Result<(), ConfigError> {
+        if let Some(issue) = self.validation_issues().into_iter().next() {
+            return Err(ConfigError(issue.to_string()));
+        }
+        Ok(())
+    }
+
+    pub(super) fn validation_issues(&self) -> Vec<UserConfigValidationIssue> {
+        let mut issues = Vec::new();
         // Validate worktree path (only if explicitly set - default is always valid)
         if let Some(ref path) = self.worktree_path
             && path.trim().is_empty()
         {
-            return Err(ConfigError("worktree-path cannot be empty".into()));
+            issues.push(UserConfigValidationIssue::EmptyWorktreePath);
         }
 
         // Validate per-project configs
@@ -219,12 +244,12 @@ impl UserConfig {
             if let Some(ref path) = project_config.worktree_path
                 && path.trim().is_empty()
             {
-                return Err(ConfigError(format!(
-                    "projects.{project}.worktree-path cannot be empty"
-                )));
+                issues.push(UserConfigValidationIssue::EmptyProjectWorktreePath(
+                    project.clone(),
+                ));
             }
         }
 
-        Ok(())
+        issues
     }
 }

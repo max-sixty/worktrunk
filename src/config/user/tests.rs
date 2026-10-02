@@ -2410,9 +2410,7 @@ fn test_cli_layer_outranks_project_worktree_path() {
 
 #[test]
 fn test_env_layer_outranks_project_worktree_path() {
-    // The env half of the same fix, driven through the overlay
-    // `load_with_warnings` builds rather than the process environment.
-    use super::{EnvVar, migrate_env_overlay, resolve_env_overlay, try_parse_value};
+    use super::{EnvVar, try_parse_value};
     let var = EnvVar {
         name: "WORKTRUNK_WORKTREE_PATH".to_string(),
         segments: vec!["worktree-path".to_string()],
@@ -2420,9 +2418,10 @@ fn test_env_layer_outranks_project_worktree_path() {
         raw_value: "/from-env".to_string(),
     };
     let mut table = base_with_project("worktree-path = \"/from-project\"\n");
-    let overlay = migrate_env_overlay(resolve_env_overlay(&table, &[var]));
-    merge_layer(&mut table, overlay);
+    let mut warnings = Vec::new();
+    UserConfig::apply_env_vars(&[var], &mut table, &mut warnings);
 
+    assert!(warnings.is_empty());
     assert_eq!(
         loaded(table).worktree_path_for_project(PROJECT),
         "/from-env"
@@ -2431,18 +2430,9 @@ fn test_env_layer_outranks_project_worktree_path() {
 
 #[test]
 fn test_layer_keeps_an_already_invalid_candidate_untouched() {
-    // The pass discards a candidate that does not deserialize and validate.
-    // Step 3's env probe only deserializes, so an empty `worktree-path` from
-    // the environment reaches here already invalid — and the removals are
-    // dropped rather than handed to `finalize`, which would answer the same
-    // failure by wiping the config to defaults.
-    use super::{EnvVar, migrate_env_overlay, resolve_env_overlay, try_parse_value};
-    let empty_path = |value: &str| EnvVar {
-        name: "WORKTRUNK_WORKTREE_PATH".to_string(),
-        segments: vec!["worktree-path".to_string()],
-        typed_value: try_parse_value(value),
-        raw_value: value.to_string(),
-    };
+    // A layer with an empty global `worktree-path` fails validation. Its
+    // project-precedence removals are dropped as a unit, while the layer still
+    // reaches the caller for validation and attribution.
     let plain_merge = |overlay: &toml::Table| {
         let mut plain = base_with_project("worktree-path = \"/from-project\"\n");
         deep_merge_table(&mut plain, overlay.clone());
@@ -2450,7 +2440,7 @@ fn test_layer_keeps_an_already_invalid_candidate_untouched() {
     };
 
     let mut table = base_with_project("worktree-path = \"/from-project\"\n");
-    let overlay = migrate_env_overlay(resolve_env_overlay(&table, &[empty_path("")]));
+    let overlay: toml::Table = "worktree-path = \"\"\n".parse().unwrap();
     let plain = plain_merge(&overlay);
     merge_layer(&mut table, overlay);
     assert_eq!(
@@ -2462,7 +2452,7 @@ fn test_layer_keeps_an_already_invalid_candidate_untouched() {
     // key, so the assertion above is the discard and not a pass that found
     // nothing to do.
     let mut table = base_with_project("worktree-path = \"/from-project\"\n");
-    let overlay = migrate_env_overlay(resolve_env_overlay(&table, &[empty_path("/from-env")]));
+    let overlay: toml::Table = "worktree-path = \"/from-env\"\n".parse().unwrap();
     let plain = plain_merge(&overlay);
     merge_layer(&mut table, overlay);
     assert_ne!(table, plain);
@@ -2659,7 +2649,7 @@ fn test_dropped_layer_leaves_projects_intact() {
 
 #[test]
 fn test_env_overlay_migrates_deprecated_key() {
-    use super::{EnvVar, migrate_env_overlay, resolve_env_overlay, try_parse_value};
+    use super::{EnvVar, try_parse_value};
     // `WORKTRUNK__MERGE__NO_FF=true` resolves to the deprecated key
     // `merge.no-ff`. The env overlay runs through the same deprecation migration
     // as config files and `--config-set`, so it takes effect as `merge.ff =
@@ -2670,8 +2660,11 @@ fn test_env_overlay_migrates_deprecated_key() {
         typed_value: try_parse_value("true"),
         raw_value: "true".to_string(),
     };
-    let overlay = migrate_env_overlay(resolve_env_overlay(&toml::Table::new(), &[var]));
-    let config: UserConfig = toml::Value::Table(overlay).try_into().unwrap();
+    let mut table = toml::Table::new();
+    let mut warnings = Vec::new();
+    UserConfig::apply_env_vars(&[var], &mut table, &mut warnings);
+    assert!(warnings.is_empty());
+    let config = loaded(table);
     assert_eq!(config.merge.ff, Some(false));
 }
 
@@ -3262,4 +3255,74 @@ hostname = "github.company.example"
         Some("github.company.example")
     );
     assert_eq!(config.forge_hostname(None), None);
+}
+
+/// Invalid scalar overrides must not erase unrelated environment values.
+#[test]
+fn test_env_failure_keeps_other_overrides() {
+    let env_var = |name: &str, path: &[&str], value: &str| super::EnvVar {
+        name: name.into(),
+        segments: path.iter().map(|s| s.to_string()).collect(),
+        typed_value: super::try_parse_value(value),
+        raw_value: value.into(),
+    };
+    let vars = [
+        // Deliberately pass the custom-column width before its required
+        // template. Both fields form one valid setting after migration.
+        env_var(
+            "WORKTRUNK__LIST__CUSTOM_COLUMNS__TICKET__WIDTH",
+            &["list", "custom-columns", "ticket", "width"],
+            "20",
+        ),
+        env_var(
+            "WORKTRUNK__LIST__CUSTOM_COLUMNS__TICKET__TEMPLATE",
+            &["list", "custom-columns", "ticket", "template"],
+            "{{ branch }}",
+        ),
+        env_var("WORKTRUNK__LIST__COLUMNS", &["list", "columns"], "oops"),
+        env_var("WORKTRUNK__LIST__FULL", &["list", "full"], "true"),
+        env_var("WORKTRUNK_WORKTREE_PATH", &["worktree-path"], "/tmp/zzz"),
+    ];
+    let mut table = "[list]\nbranches=true\ncolumns=[\"path\"]\n"
+        .parse()
+        .unwrap();
+    let mut warnings = Vec::new();
+    UserConfig::apply_env_vars(&vars, &mut table, &mut warnings);
+    let config = loaded(table);
+    assert_eq!(config.list.full, Some(true));
+    assert_eq!(config.worktree_path.as_deref(), Some("/tmp/zzz"));
+    assert_eq!(config.list.branches, Some(true));
+    assert_eq!(config.list.columns, ["path"]);
+    assert_eq!(
+        config.list.custom_columns["ticket"].template,
+        "{{ branch }}"
+    );
+    assert_eq!(config.list.custom_columns["ticket"].width, Some(20));
+    assert_eq!(warnings.len(), 1);
+    let LoadError::Env { vars, .. } = &warnings[0] else {
+        panic!("expected env warning")
+    };
+    assert_eq!(vars, &[("WORKTRUNK__LIST__COLUMNS".into(), "oops".into())]);
+}
+
+#[test]
+fn test_env_override_can_repair_invalid_lower_layer() {
+    let var = super::EnvVar {
+        name: "WORKTRUNK_WORKTREE_PATH".into(),
+        segments: vec!["worktree-path".into()],
+        typed_value: super::try_parse_value("/tmp/worktrees/{{ branch }}"),
+        raw_value: "/tmp/worktrees/{{ branch }}".into(),
+    };
+    let mut table = "worktree-path = \"\"\n".parse().unwrap();
+    let mut warnings = Vec::new();
+
+    UserConfig::apply_env_vars(&[var], &mut table, &mut warnings);
+
+    let config = loaded(table);
+    assert_eq!(
+        config.worktree_path.as_deref(),
+        Some("/tmp/worktrees/{{ branch }}")
+    );
+    assert!(config.validate().is_ok());
+    assert!(warnings.is_empty());
 }
