@@ -129,7 +129,10 @@ pub enum RemovalExecution {
 }
 
 enum BackgroundRemovalPlan {
-    Detached(String),
+    /// The worktree has been removed; only trash cleanup remains.
+    Staged(String),
+    /// The detached command still has to remove the worktree.
+    Deferred(String),
     CompletedSynchronously,
 }
 
@@ -168,28 +171,43 @@ const LIVE_BRANCH_WORKTREE_AWK: &str = r#"BEGIN { RS = ""; FS = "\n" }
 ///
 /// Shared sequence for both detached HEAD and branch background removal paths.
 /// The caller is responsible for output messages before this call, and hooks
-/// after. Returns the branch's fate — known synchronously on every path except
-/// the detached fallback, whose CAS tail runs after this process exits.
+/// after. An outer error means removal was neither completed nor scheduled;
+/// the inner result reports branch deletion or cleanup scheduling after removal,
+/// so callers register teardown before propagating it. The fate is known synchronously
+/// except on the detached fallback, whose CAS tail runs after this process exits.
 fn spawn_background_removal(
     repo: &Repository,
     main_path: &Path,
     removal: &BackgroundRemoval<'_>,
     log_label: &str,
     fallback_mode: BackgroundFallbackMode,
-) -> anyhow::Result<BranchFate> {
+) -> anyhow::Result<anyhow::Result<BranchFate>> {
     let outcome = execute_instant_removal_or_fallback(repo, removal, fallback_mode)?;
 
-    if let BackgroundRemovalPlan::Detached(remove_command) = outcome.plan {
+    let spawn = |remove_command: &str| {
         spawn_detached(
             repo,
             main_path,
-            &remove_command,
+            remove_command,
             log_label,
             &HookLog::Internal(InternalOp::Remove),
             None,
-        )?;
+        )
+        .map(|_| ())
+    };
+    match outcome.plan {
+        BackgroundRemovalPlan::Staged(command) => {
+            // Attempt cleanup even on branch failure, but preserve the original
+            // deletion error (including its interrupt signal) if both fail.
+            let cleanup = spawn(&command);
+            Ok(outcome.branch_fate.and_then(|fate| cleanup.map(|_| fate)))
+        }
+        BackgroundRemovalPlan::Deferred(command) => {
+            spawn(&command)?;
+            Ok(outcome.branch_fate)
+        }
+        BackgroundRemovalPlan::CompletedSynchronously => Ok(outcome.branch_fate),
     }
-    outcome.branch_fate
 }
 
 /// Execute instant worktree removal via rename-then-prune.
@@ -252,7 +270,7 @@ fn execute_instant_removal_or_fallback(
             let _ = std::fs::create_dir(worktree_path);
         }
         Ok(BackgroundRemovalOutcome {
-            plan: BackgroundRemovalPlan::Detached(build_remove_command_staged(
+            plan: BackgroundRemovalPlan::Staged(build_remove_command_staged(
                 &staged_path,
                 worktree_path,
                 changed_directory,
@@ -349,7 +367,7 @@ fn execute_instant_removal_or_fallback(
             ),
         };
         Ok(BackgroundRemovalOutcome {
-            plan: BackgroundRemovalPlan::Detached(command),
+            plan: BackgroundRemovalPlan::Deferred(command),
             branch_fate: Ok(fate),
         })
     }
@@ -1866,7 +1884,7 @@ fn handle_detached_removed_worktree_output(
     ctx: &WorktreeRemovalContext<'_>,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<BranchFate> {
-    if matches!(ctx.execution, RemovalExecution::Foreground) {
+    let fate = if matches!(ctx.execution, RemovalExecution::Foreground) {
         eprintln!(
             "{}",
             progress_message(cformat!(
@@ -1906,6 +1924,7 @@ fn handle_detached_removed_worktree_output(
             ))
             .append(&stats_paren)
         );
+        Ok(BranchFate::NotAttempted)
     } else {
         let path_display = format_path_for_display(ctx.worktree_path);
         eprintln!(
@@ -1931,14 +1950,14 @@ fn handle_detached_removed_worktree_output(
             },
             "detached",
             ctx.background_fallback(),
-        )?;
-    }
+        )?
+    };
 
     // A detached worktree was on no branch, so `{{ branch }}` stays unset for
     // the post-remove hooks (issue #4009).
     spawn_hooks_after_remove(repo, ctx, None, announcer)?;
     stderr().flush()?;
-    Ok(BranchFate::NotAttempted)
+    fate
 }
 
 fn handle_named_removed_worktree_foreground(
@@ -1976,6 +1995,10 @@ fn handle_named_removed_worktree_foreground(
         .map(cleanup_staged_with_progress)
         .unwrap_or((0, 0));
 
+    // Worktree removal happened even if the subsequent branch deletion failed.
+    // Register teardown before display_info can propagate that failure.
+    spawn_hooks_after_remove(repo, ctx, Some(branch_name), announcer)?;
+
     // The observed fate, read before the display path consumes (and, on Err,
     // propagates) the deletion result.
     let fate = BranchFate::from_result(output.branch_result.as_ref());
@@ -1995,7 +2018,6 @@ fn handle_named_removed_worktree_foreground(
     }
     print_switch_message_if_changed(ctx.changed_directory, ctx.main_path)?;
 
-    spawn_hooks_after_remove(repo, ctx, Some(branch_name), announcer)?;
     stderr().flush()?;
     Ok(fate)
 }
@@ -2045,7 +2067,7 @@ fn handle_named_removed_worktree_background(
 
     spawn_hooks_after_remove(repo, ctx, Some(branch_name), announcer)?;
     stderr().flush()?;
-    Ok(fate)
+    fate
 }
 
 /// Execute and narrate a [`RemovalPlan::Worktree`] plan.

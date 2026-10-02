@@ -100,7 +100,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::git::repository::WorkingTree;
-use crate::git::{ErrorExt, GitError, IntegrationReason, Repository, WorktreeInfo, path_dir_name};
+use crate::git::{
+    ErrorExt, GitError, IntegrationReason, Repository, WorktreeInfo, WorktrunkError, path_dir_name,
+};
 use crate::shell_exec::Cmd;
 use crate::utils::epoch_now;
 
@@ -643,7 +645,8 @@ fn branch_checkout_requires_retention(worktree: &WorktreeInfo, branch_name: &str
 /// waiting for the repository's deletion lock. Only the ref mutation is
 /// serialized: topology reads can run concurrently. Git has no transaction
 /// spanning worktree registration and ref updates, so a new checkout can race
-/// this check; the atomic SHA comparison still protects concurrent commits.
+/// this check, including during a contended mutex's queue wait; the atomic SHA
+/// comparison still protects concurrent commits.
 ///
 /// On failure, a fresh `rev-parse` distinguishes actual SHA movement from a
 /// lock or I/O error without parsing Git's localized diagnostics. An unchanged
@@ -669,8 +672,12 @@ fn cas_delete_branch_outcome(
     };
     let update_err = match update_result {
         Ok(_) => return Ok(BranchDeletionOutcome::Integrated(reason)),
-        Err(error) if error.interrupt_signal().is_some() => return Err(error),
-        Err(e) => e,
+        Err(error) => {
+            if let Some(signal) = error.interrupt_signal() {
+                return Err(WorktrunkError::Interrupted { signal, hint: None }.into());
+            }
+            error
+        }
     };
 
     match repo.run_command(&["rev-parse", "--verify", "--quiet", &ref_name]) {
@@ -862,11 +869,8 @@ mod tests {
 
         let result = delete_branch_if_safe(&repo, &snapshot, "feature", "main", false);
         let error = result.err().expect("lock failure must propagate");
-        assert!(
-            error.display_message().contains("packed-refs.lock"),
-            "{}",
-            error.display_message()
-        );
+        let message = error.display_message();
+        assert!(message.contains("packed-refs.lock"), "{message}");
         assert_eq!(test.git_output(&["rev-parse", "feature"]), *expected_sha);
     }
 

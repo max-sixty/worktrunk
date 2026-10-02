@@ -1985,9 +1985,16 @@ fn test_prune_dry_run_leaves_stale_entry_registered(mut repo: TestRepo) {
 /// the branch moved. Both branch-only and staged-worktree deletion must report
 /// the underlying failure while preserving the original branch tip.
 #[rstest]
-#[case::branch_only(false)]
-#[case::worktree(true)]
-fn test_prune_reports_external_packed_ref_lock(mut repo: TestRepo, #[case] worktree: bool) {
+#[case::branch_only(false, false)]
+#[case::worktree(true, false)]
+#[case::foreground_worktree(true, true)]
+fn test_prune_reports_external_packed_ref_lock(
+    mut repo: TestRepo,
+    #[case] worktree: bool,
+    #[case] foreground: bool,
+) {
+    use path_slash::PathExt as _;
+
     repo.commit("initial");
     if worktree {
         repo.add_worktree("locked-delete");
@@ -2006,11 +2013,19 @@ fn test_prune_reports_external_packed_ref_lock(mut repo: TestRepo, #[case] workt
     assert!(!common_dir.join("refs/heads/locked-delete").exists());
     std::fs::write(common_dir.join("packed-refs.lock"), "external Git writer\n").unwrap();
 
-    let output = repo
-        .wt_command()
-        .args(["step", "prune", "--yes", "--min-age=0s"])
-        .output()
-        .unwrap();
+    let post_remove_marker = repo.home_path().join("post-remove-ran");
+    if worktree {
+        repo.write_test_config(&format!(
+            "post-remove = 'echo ran > {}'",
+            post_remove_marker.to_slash_lossy()
+        ));
+    }
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "prune", "--yes", "--min-age=0s"]);
+    if foreground {
+        cmd.arg("--foreground");
+    }
+    let output = cmd.output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr)
         .ansi_strip()
         .into_owned();
@@ -2035,7 +2050,125 @@ fn test_prune_reports_external_packed_ref_lock(mut repo: TestRepo, #[case] workt
             "staged worktree cleaned after branch deletion fails",
             || std::fs::read_dir(&trash_dir).unwrap().next().is_none(),
         );
+        crate::common::wait_for("post-remove hook after branch deletion fails", || {
+            post_remove_marker.exists()
+        });
     }
+}
+
+/// Failure to schedule trash cleanup follows an already completed removal;
+/// it must report the error while still launching the worktree's teardown.
+#[rstest]
+#[case::named(false, false)]
+#[case::detached(true, false)]
+#[cfg_attr(unix, case::interrupted_named(false, true))]
+fn test_removal_runs_post_remove_after_cleanup_spawn_failure(
+    mut repo: TestRepo,
+    #[case] detached: bool,
+    #[case] interrupt: bool,
+) {
+    use path_slash::PathExt as _;
+
+    repo.commit("initial");
+    let worktree = repo.add_worktree("cleanup-error");
+    if detached {
+        repo.run_git(&["-C", worktree.to_str().unwrap(), "checkout", "--detach"]);
+    }
+    let common_dir = crate::common::resolve_git_common_dir(repo.root_path());
+    let label = if detached {
+        "detached"
+    } else {
+        "cleanup-error"
+    };
+    let branch_log_dir = common_dir.join("wt/logs").join(label);
+    std::fs::create_dir_all(&branch_log_dir).unwrap();
+    // Block only the internal cleanup log, keeping the user's hook log writable.
+    std::fs::write(branch_log_dir.join("internal"), "blocked").unwrap();
+    let marker = repo.home_path().join("post-remove-ran");
+    repo.write_test_config(&format!(
+        "post-remove = 'echo ran > {}'",
+        marker.to_slash_lossy()
+    ));
+
+    let mut cmd = repo.wt_command();
+    if detached {
+        cmd.arg("remove").arg(&worktree).arg("--yes");
+    } else {
+        cmd.args(["step", "prune", "--yes", "--min-age=0s"]);
+    }
+    #[cfg(unix)]
+    if interrupt {
+        let wrapper = repo.home_path().join("git-wrapper");
+        std::fs::create_dir_all(&wrapper).unwrap();
+        write_failing_branch_delete_wrapper(&wrapper, &which::which("git").unwrap());
+        prepend_path(&mut cmd, &wrapper);
+        cmd.env("WT_TEST_FAIL_DELETE_BRANCH", "cleanup-error");
+        cmd.env("WORKTRUNK_TEST_FAIL_DELETE_INTERRUPT", "1");
+    }
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(!output.status.success(), "{stderr}");
+    if interrupt {
+        assert_eq!(output.status.code(), Some(130), "{stderr}");
+        assert_eq!(
+            repo.git_output(&["rev-parse", "cleanup-error"]),
+            repo.git_output(&["rev-parse", "main"])
+        );
+    } else {
+        assert!(
+            stderr.contains("Failed to create log directory"),
+            "{stderr}"
+        );
+    }
+    assert!(!worktree.exists());
+    assert!(
+        common_dir
+            .join("wt/trash")
+            .read_dir()
+            .unwrap()
+            .next()
+            .is_some()
+    );
+    crate::common::wait_for("post-remove hook after cleanup scheduling fails", || {
+        marker.exists()
+    });
+}
+
+/// A checkout created by a pre-remove hook must keep its branch, even after
+/// the original worktree's registration has been removed.
+#[rstest]
+fn test_prune_retains_branch_checked_out_during_pre_remove(mut repo: TestRepo) {
+    use path_slash::PathExt as _;
+
+    repo.commit("initial");
+    let original = repo.add_worktree("hook-checkout");
+    let shared = repo.home_path().join("shared-checkout");
+    repo.write_test_config(&format!(
+        "pre-remove = 'git worktree add --force {} hook-checkout'",
+        shared.to_slash_lossy()
+    ));
+
+    let output = repo
+        .wt_command()
+        .args(["step", "prune", "--yes", "--min-age=0s"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(output.status.success(), "{stderr}");
+    assert!(!original.exists());
+    assert!(shared.exists());
+    assert!(
+        stderr.contains("retained branch") && stderr.contains("checked out"),
+        "{stderr}"
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "hook-checkout"]),
+        repo.git_output(&["rev-parse", "main"])
+    );
 }
 
 /// Worktree staging stays concurrent, but packed branch mutations do not
@@ -2240,6 +2373,7 @@ fn write_failing_branch_delete_wrapper(dir: &std::path::Path, real_git: &std::pa
     let script = format!(
         r#"#!/bin/sh
 if [ "$1" = "update-ref" ] && [ "$2" = "-d" ] && [ "$3" = "refs/heads/$WT_TEST_FAIL_DELETE_BRANCH" ]; then
+  [ -z "$WORKTRUNK_TEST_FAIL_DELETE_INTERRUPT" ] || kill -INT "$$"
   if [ -n "$WORKTRUNK_TEST_FAIL_DELETE_REPLACEMENT_SHA" ]; then
     {real_git} update-ref "$3" "$WORKTRUNK_TEST_FAIL_DELETE_REPLACEMENT_SHA" || exit 2
   else
