@@ -1326,9 +1326,6 @@ $ wt remove feature-branch
 $ wt remove old-feature another-branch
 ```
 
-Each target is attempted even if another fails. Failures are reported on stderr,
-and the command exits unsuccessfully if any target failed. Ctrl-C stops the batch.
-
 Keep the branch:
 
 ```console
@@ -1405,9 +1402,7 @@ Unix only; on Windows `--reap` is rejected.
 
 ## JSON output
 
-`--format=json` prints one object per removal result to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal, plus `detached_worktree` — the directory left at that branch's path with a detached HEAD, which the branch no longer names and this removal therefore leaves alone.
-
-Failed targets are reported on stderr and omitted from the JSON array.
+`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal, plus `detached_worktree` — the directory left at that branch's path with a detached HEAD, which the branch no longer names and this removal therefore leaves alone.
 
 `branch_outcome` names what happened to the branch, so a caller can tell a deletion the removal declined from one it was never asked to make:
 

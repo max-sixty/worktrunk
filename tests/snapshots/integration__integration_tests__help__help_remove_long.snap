@@ -119,9 +119,6 @@ Remove specific worktrees / branches:
 [107m [0m [2m[0m[2m[34mwt[0m[2m remove feature-branch[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m remove old-feature another-branch[0m
 
-Each target is attempted even if another fails. Failures are reported on stderr,
-and the command exits unsuccessfully if any target failed. Ctrl-C stops the batch.
-
 Keep the branch:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m remove [0m[2m[36m--no-delete-branch[0m[2m feature-branch[0m
@@ -190,9 +187,7 @@ Unix only; on Windows [2m--reap[0m is rejected.
 
 [1m[32mJSON output[0m
 
-[2m--format=json[0m prints one object per removal result to stdout: [2m{kind, branch, path, branch_outcome, branch_checked_out_at}[0m for a worktree, with [2mpruned[0m in place of [2mpath[0m for a branch-only removal, plus [2mdetached_worktree[0m — the directory left at that branch's path with a detached HEAD, which the branch no longer names and this removal therefore leaves alone.
-
-Failed targets are reported on stderr and omitted from the JSON array.
+[2m--format=json[0m prints one object per removal to stdout: [2m{kind, branch, path, branch_outcome, branch_checked_out_at}[0m for a worktree, with [2mpruned[0m in place of [2mpath[0m for a branch-only removal, plus [2mdetached_worktree[0m — the directory left at that branch's path with a detached HEAD, which the branch no longer names and this removal therefore leaves alone.
 
 [2mbranch_outcome[0m names what happened to the branch, so a caller can tell a deletion the removal declined from one it was never asked to make:
 
