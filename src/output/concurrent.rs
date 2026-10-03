@@ -556,10 +556,14 @@ mod tests {
         }
         let error = error.downcast::<ConcurrentCommandError>().unwrap();
         assert_eq!(error.index, 1);
-        assert_eq!(
-            error.error.downcast_ref::<std::io::Error>().unwrap().kind(),
-            std::io::ErrorKind::NotFound
-        );
+        let preserved = error.error.downcast_ref::<std::io::Error>().unwrap();
+        let native = error
+            .error
+            .root_cause()
+            .downcast_ref::<std::io::Error>()
+            .unwrap();
+        assert!(native.raw_os_error().is_some());
+        assert_eq!(preserved.kind(), native.kind());
     }
 
     /// A command with a `log_label` exercises the `log_command` branch in
