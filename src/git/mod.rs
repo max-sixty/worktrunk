@@ -11,6 +11,7 @@ mod parse;
 #[cfg(unix)]
 pub mod reap;
 pub mod recover;
+mod ref_deletion;
 pub mod remote_ref;
 pub mod remove;
 mod repository;

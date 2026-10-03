@@ -81,7 +81,9 @@ pub fn config_path() -> Option<PathBuf> {
 /// absence.
 pub fn require_config_path() -> Result<PathBuf, ConfigError> {
     config_path().ok_or_else(|| {
-        ConfigError("Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME".to_string())
+        ConfigError::Message(
+            "Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME".to_string(),
+        )
     })
 }
 
