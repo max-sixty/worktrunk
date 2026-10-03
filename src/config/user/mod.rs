@@ -123,6 +123,7 @@ impl std::error::Error for LoadError {
 // ---- Env-var overlay ----
 
 /// A single parsed WORKTRUNK_* env var with both typed and string representations.
+#[derive(Clone)]
 struct EnvVar {
     /// Original env var name (e.g., `WORKTRUNK__LIST__TIMEOUT_MS`)
     name: String,
@@ -134,6 +135,17 @@ struct EnvVar {
     /// the target field's type (e.g., `WORKTRUNK_WORKTREE_PATH=42` needs
     /// `String`, not `Integer`).
     raw_value: String,
+}
+
+/// Environment overrides that form one independently validatable setting.
+///
+/// Most settings are one leaf. Entries under an atomic section (currently a
+/// custom list column) stay together so a required field and its companion
+/// fields are validated as the setting the user actually configured.
+#[derive(Default)]
+struct EnvOverrideUnit {
+    vars: Vec<EnvVar>,
+    overlay: toml::Table,
 }
 
 /// Read `WORKTRUNK_*` env vars and parse each into an [`EnvVar`].
@@ -189,36 +201,6 @@ fn parse_worktrunk_env_vars() -> Vec<EnvVar> {
         .collect()
 }
 
-/// For each env var, probe whether its typed or string representation
-/// deserializes correctly against the file config, then build a single
-/// overlay table with the correct representation per var.
-///
-/// Each var is tested independently against the file table (not against other
-/// env vars). This lets serde itself decide the correct type — no schema
-/// walking or guessing needed. O(N) deserializations where N is the number
-/// of env vars (tiny in practice).
-fn resolve_env_overlay(file_table: &toml::Table, vars: &[EnvVar]) -> toml::Table {
-    let mut overlay = toml::Table::new();
-    for var in vars {
-        // Typed probe: merge just this var's typed value into the file table
-        let mut probe = file_table.clone();
-        set_nested_value(&mut probe, &var.segments, var.typed_value.clone());
-        if toml::Value::Table(probe).try_into::<UserConfig>().is_ok() {
-            set_nested_value(&mut overlay, &var.segments, var.typed_value.clone());
-        } else {
-            // Typed form doesn't fit the target field — use raw string.
-            // If this is also wrong (e.g., "not-a-bool" for a bool field),
-            // the final deserialize will catch it and surface LoadError::Env.
-            set_nested_value(
-                &mut overlay,
-                &var.segments,
-                toml::Value::String(var.raw_value.clone()),
-            );
-        }
-    }
-    overlay
-}
-
 /// Canonicalize a built env-var overlay through the same deprecation migration
 /// as config files and `--config-set`, so a deprecated env var such as
 /// `WORKTRUNK__MERGE__NO_FF` (which resolves to the deprecated key
@@ -236,17 +218,124 @@ fn resolve_env_overlay(file_table: &toml::Table, vars: &[EnvVar]) -> toml::Table
 /// `migrate_content` always returns valid TOML — mirroring the same
 /// post-migration reparse `expect` in [`load_config_file`].
 ///
-/// Canonicalization can surface a type mismatch the deprecated name hid: an
-/// unknown key like `commit-generation.command = 42` deserializes (unknown
-/// fields are ignored) but the migrated `commit.generation.command = 42` does
-/// not, so it joins the whole-env-layer `LoadError::Env` drop at the call site
-/// instead of being silently ignored — the same outcome a type-mismatched value
-/// in a *canonical* env var already produces.
+/// Canonicalization happens before choosing typed or string representations,
+/// so deprecated names are checked against the same field types as canonical
+/// names.
 fn migrate_env_overlay(overlay: toml::Table) -> toml::Table {
     let serialized = toml::to_string(&overlay).expect("env overlay serializes to TOML");
     super::deprecation::migrate_content(&serialized)
         .parse::<toml::Table>()
         .expect("migrate_content returns valid TOML")
+}
+
+/// Return the path of a single-variable overlay after deprecation migration.
+/// Migration moves, renames, or removes a scalar; it never expands it into
+/// several settings. Removing an obsolete setting can leave an empty overlay.
+fn env_overlay_path(mut table: &toml::Table) -> Option<Vec<String>> {
+    let mut path = Vec::new();
+    loop {
+        let (key, value) = table.iter().next()?;
+        path.push(key.clone());
+        match value {
+            toml::Value::Table(nested) if !nested.is_empty() => table = nested,
+            _ => return Some(path),
+        }
+    }
+}
+
+/// Group the fields that make up one setting, keeping atomic section entries
+/// together. This reuses the same atomic-section contract as project precedence.
+fn env_override_key(path: &[String]) -> Vec<String> {
+    for section_len in 0..path.len() {
+        let section: Vec<_> = path[..section_len].iter().map(String::as_str).collect();
+        let project_section =
+            section.len() == 4 && section[0] == "projects" && is_atomic_section(&section[2..]);
+        if is_atomic_section(&section) || project_section {
+            return path[..section_len + 1].to_vec();
+        }
+    }
+    path.to_vec()
+}
+
+/// Build and migrate an overlay from a chosen representation for every var.
+fn env_overlay_from_values(vars: &[EnvVar], values: &[toml::Value]) -> toml::Table {
+    let mut overlay = toml::Table::new();
+    for (var, value) in vars.iter().zip(values) {
+        set_nested_value(&mut overlay, &var.segments, value.clone());
+    }
+    migrate_env_overlay(overlay)
+}
+
+/// Choose typed or string values for one setting as a group. Probing the
+/// whole setting keeps required compound fields together: a custom column's
+/// width can be typed as an integer when its required template arrives in the
+/// same environment layer.
+fn resolve_env_override_unit(file_table: &toml::Table, vars: &[EnvVar]) -> toml::Table {
+    let mut values: Vec<_> = vars.iter().map(|var| var.typed_value.clone()).collect();
+
+    loop {
+        let mut changed = false;
+        for (index, var) in vars.iter().enumerate() {
+            let overlay = env_overlay_from_values(vars, &values);
+            let mut candidate = file_table.clone();
+            merge_layer(&mut candidate, overlay);
+            if toml::Value::Table(candidate)
+                .try_into::<UserConfig>()
+                .is_ok()
+            {
+                continue;
+            }
+
+            let typed_value = std::mem::replace(
+                &mut values[index],
+                toml::Value::String(var.raw_value.clone()),
+            );
+            let overlay = env_overlay_from_values(vars, &values);
+            let mut candidate = file_table.clone();
+            merge_layer(&mut candidate, overlay);
+            if toml::Value::Table(candidate)
+                .try_into::<UserConfig>()
+                .is_ok()
+            {
+                changed = true;
+            } else {
+                values[index] = typed_value;
+            }
+        }
+
+        if !changed {
+            return env_overlay_from_values(vars, &values);
+        }
+    }
+}
+
+/// Resolve, migrate, and group each environment variable against the same
+/// lower-layer config. Sorting makes aliases that migrate to one setting
+/// deterministic, independent of the caller's input order.
+fn env_override_units(file_table: &toml::Table, vars: &[EnvVar]) -> Vec<EnvOverrideUnit> {
+    let mut ordered_vars: Vec<_> = vars.iter().collect();
+    ordered_vars.sort_by(|left, right| left.name.cmp(&right.name));
+
+    let mut grouped_vars = std::collections::BTreeMap::<Vec<String>, Vec<EnvVar>>::new();
+    for var in ordered_vars {
+        let overlay = env_overlay_from_values(
+            std::slice::from_ref(var),
+            std::slice::from_ref(&var.typed_value),
+        );
+        let Some(path) = env_overlay_path(&overlay) else {
+            continue;
+        };
+        let key = env_override_key(&path);
+        grouped_vars.entry(key).or_default().push(var.clone());
+    }
+
+    grouped_vars
+        .into_values()
+        .map(|vars| EnvOverrideUnit {
+            overlay: resolve_env_override_unit(file_table, &vars),
+            vars,
+        })
+        .collect()
 }
 
 /// Try to coerce a string into a typed TOML value (bool → i64 → f64 → string).
@@ -364,6 +453,15 @@ fn deserialize_and_validate(table: &toml::Table) -> Result<(), String> {
         Ok(config) => config.validate().map_err(|e| e.to_string()),
         Err(err) => Err(err.to_string()),
     }
+}
+
+fn deserialize_validation_issues(
+    table: &toml::Table,
+) -> Result<Vec<persistence::UserConfigValidationIssue>, String> {
+    let config = toml::Value::Table(table.clone())
+        .try_into::<UserConfig>()
+        .map_err(|err| err.to_string())?;
+    Ok(config.validation_issues())
 }
 
 /// Remove from `entry` every leaf `overlay` sets. `section` tracks the path
@@ -687,35 +785,80 @@ impl UserConfig {
 
         // 3. Env-var overrides (override config files)
         let env_vars = parse_worktrunk_env_vars();
-        if !env_vars.is_empty() {
-            // Resolve each env var's type independently: probe typed form against
-            // the file table, fall back to string if typed doesn't fit the target
-            // field. This handles mixed cases (e.g., WORKTRUNK__LIST__TIMEOUT_MS=100
-            // needs Integer for u64, WORKTRUNK_WORKTREE_PATH=42 needs String).
-            let file_table = merged_table.clone();
-            let env_overlay = migrate_env_overlay(resolve_env_overlay(&file_table, &env_vars));
-            merge_layer(&mut merged_table, env_overlay);
-
-            // A bad env layer must not discard valid file layers. Attribute the
-            // failure to env only when the file-only table itself is valid.
-            if let Err(err) = deserialize_and_validate(&merged_table)
-                && deserialize_and_validate(&file_table).is_ok()
-            {
-                warnings.push(LoadError::Env {
-                    err,
-                    vars: env_vars
-                        .iter()
-                        .map(|v| (v.name.clone(), v.raw_value.clone()))
-                        .collect(),
-                });
-                merged_table = file_table;
-            }
+        if let Err(err) = Self::apply_env_vars(&env_vars, &mut merged_table, &mut warnings) {
+            warnings.push(LoadError::Validation(err));
+            return (Self::default(), warnings);
         }
 
         // 4. CLI `--config-set` overrides (override env vars and config files)
         Self::apply_cli_overrides(cli_config_overrides(), &mut merged_table, &mut warnings);
 
         Self::finalize(merged_table, warnings)
+    }
+
+    /// Apply the environment override layer above the file layers.
+    fn apply_env_vars(
+        env_vars: &[EnvVar],
+        merged_table: &mut toml::Table,
+        warnings: &mut Vec<LoadError>,
+    ) -> Result<(), String> {
+        if env_vars.is_empty() {
+            return Ok(());
+        }
+
+        let file_table = merged_table.clone();
+
+        // File layers deserialize before merging. A malformed merged table
+        // is a loader error, rather than an error attributed to an env var.
+        let lower_validation_issues = deserialize_validation_issues(&file_table)?;
+
+        // Validate each setting against the same lower layer. Sequentially
+        // accepting values here would make compound settings such as custom
+        // columns depend on which field happened to be visited first.
+        let mut accepted_overlay = toml::Table::new();
+        for unit in env_override_units(&file_table, env_vars) {
+            let mut candidate = file_table.clone();
+            merge_layer(&mut candidate, unit.overlay.clone());
+            match deserialize_validation_issues(&candidate) {
+                Ok(issues) => {
+                    // An unrelated unit may leave an existing file error for
+                    // another override to repair. A unit setting that invalid
+                    // value itself must be rejected, even if its issue matches
+                    // the lower layer: retaining it could undo a valid repair.
+                    if let Some(issue) = issues.iter().find(|issue| {
+                        !lower_validation_issues.contains(issue) || issue.is_set_in(&unit.overlay)
+                    }) {
+                        warnings.push(LoadError::Env {
+                            err: issue.to_string(),
+                            vars: unit
+                                .vars
+                                .into_iter()
+                                .map(|var| (var.name, var.raw_value))
+                                .collect(),
+                        });
+                    } else {
+                        deep_merge_table(&mut accepted_overlay, unit.overlay);
+                    }
+                }
+                Err(err) => warnings.push(LoadError::Env {
+                    err,
+                    vars: unit
+                        .vars
+                        .into_iter()
+                        .map(|var| (var.name, var.raw_value))
+                        .collect(),
+                }),
+            }
+        }
+
+        if accepted_overlay.is_empty() {
+            return Ok(());
+        }
+
+        let mut candidate = file_table.clone();
+        merge_layer(&mut candidate, accepted_overlay);
+        *merged_table = candidate;
+        Ok(())
     }
 
     /// Apply CLI `--config-set <toml>` overrides as the highest-priority layer.

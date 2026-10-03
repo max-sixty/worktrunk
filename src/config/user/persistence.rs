@@ -206,14 +206,56 @@ fn load(doc: &DocumentMut) -> Result<UserConfig, toml::de::Error> {
 // Validation
 // =========================================================================
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum UserConfigValidationIssue {
+    EmptyWorktreePath,
+    EmptyProjectWorktreePath(String),
+}
+
+impl UserConfigValidationIssue {
+    fn path(&self) -> Vec<&str> {
+        match self {
+            Self::EmptyWorktreePath => vec!["worktree-path"],
+            Self::EmptyProjectWorktreePath(project) => {
+                vec!["projects", project, "worktree-path"]
+            }
+        }
+    }
+
+    /// Whether an overlay explicitly sets the value this issue describes.
+    pub(super) fn is_set_in(&self, table: &toml::Table) -> bool {
+        let path = self.path();
+        path[1..]
+            .iter()
+            .fold(table.get(path[0]), |value, key| {
+                value.and_then(|value| value.get(*key))
+            })
+            .is_some()
+    }
+}
+
+impl std::fmt::Display for UserConfigValidationIssue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} cannot be empty", self.path().join("."))
+    }
+}
+
 impl UserConfig {
     /// Validate configuration values.
     pub fn validate(&self) -> Result<(), ConfigError> {
+        if let Some(issue) = self.validation_issues().into_iter().next() {
+            return Err(ConfigError::Message(issue.to_string()));
+        }
+        Ok(())
+    }
+
+    pub(super) fn validation_issues(&self) -> Vec<UserConfigValidationIssue> {
+        let mut issues = Vec::new();
         // Validate worktree path (only if explicitly set - default is always valid)
         if let Some(ref path) = self.worktree_path
             && path.trim().is_empty()
         {
-            return Err(ConfigError::Message("worktree-path cannot be empty".into()));
+            issues.push(UserConfigValidationIssue::EmptyWorktreePath);
         }
 
         // Validate per-project configs
@@ -222,12 +264,12 @@ impl UserConfig {
             if let Some(ref path) = project_config.worktree_path
                 && path.trim().is_empty()
             {
-                return Err(ConfigError::Message(format!(
-                    "projects.{project}.worktree-path cannot be empty"
-                )));
+                issues.push(UserConfigValidationIssue::EmptyProjectWorktreePath(
+                    project.clone(),
+                ));
             }
         }
 
-        Ok(())
+        issues
     }
 }

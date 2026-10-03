@@ -638,6 +638,7 @@ On first run without shell integration, Worktrunk offers to install it. On first
 ## Environment variables
 
 All user config options can be overridden with environment variables using the `WORKTRUNK_` prefix.
+Invalid environment overrides are ignored with a warning; other valid overrides still apply.
 
 ### Naming convention
 
