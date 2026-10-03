@@ -208,8 +208,6 @@ Create [2m~/.codex/worktrunk-commit-instructions.txt[0m containing just [2m.
 
 [32maichat[0m
 
-[2m--code[0m drops the [2m<think>[0m block aichat prints before the message when the model reasons.
-
 [107m [0m [2m[36m[commit.generation][0m
 [107m [0m [2mcommand = [0m[2m[32m"aichat -m claude:claude-haiku-4.5 --code"[0m
 
