@@ -2010,10 +2010,31 @@ impl Repository {
         self.run_command_bytes_bounded(args, None)
     }
 
+    /// [`run_command`](Self::run_command) with `stdin` fed to the child — for
+    /// git commands that read their arguments from standard input
+    /// (`rev-list --stdin`), which keeps an arbitrarily long list off the argv.
+    pub(super) fn run_command_with_stdin(
+        &self,
+        args: &[&str],
+        stdin: Vec<u8>,
+    ) -> anyhow::Result<String> {
+        let stdout = self.run_command_bytes_inner(args, None, Some(stdin))?;
+        Ok(String::from_utf8_lossy(&stdout).into_owned())
+    }
+
     fn run_command_bytes_bounded(
         &self,
         args: &[&str],
         timeout: Option<std::time::Duration>,
+    ) -> anyhow::Result<Vec<u8>> {
+        self.run_command_bytes_inner(args, timeout, None)
+    }
+
+    fn run_command_bytes_inner(
+        &self,
+        args: &[&str],
+        timeout: Option<std::time::Duration>,
+        stdin: Option<Vec<u8>>,
     ) -> anyhow::Result<Vec<u8>> {
         let mut cmd = self.with_object_store_env(
             Cmd::new("git")
@@ -2023,6 +2044,9 @@ impl Repository {
         );
         if let Some(timeout) = timeout {
             cmd = cmd.timeout(timeout);
+        }
+        if let Some(data) = stdin {
+            cmd = cmd.stdin_bytes(data);
         }
         let output = cmd
             .run()

@@ -347,14 +347,16 @@
 //! | `diff-stats/` | `git::repository::sha_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
 //! | `ahead-behind/` | `git::repository::sha_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
 //! | `merge-base/` | `git::repository::sha_cache` | `{sha1}-{sha2}.json` (sorted) | Never — content-addressed |
+//! | `patch-id-scan/` | `git::repository::sha_cache` | `{branch_sha}-{merge_base_sha}-{cap}.json` | Progress, overwritten on resume; used only when its target is an ancestor of the current one |
 //! | `ci-status/` | `commands::list::ci_status::cache` | `{branch}.json` | TTL 30–60s + HEAD SHA check |
 //! | `summary/{branch}/` | `summary` | `{diff_hash}.json` | Miss if no file exists for the current hash; siblings pruned on write |
 //!
 //! ### Key schemes
 //!
 //! - **SHA-pair**: pure function of two commit SHAs. Never stale, no TTL, no invalidation.
-//!   Used by all `sha_cache` kinds (merge-tree conflicts, merge-add probes, ancestry
-//!   checks, file-change probes, diff stats, ahead/behind counts, merge-base).
+//!   Used by every `sha_cache` kind except `patch-id-scan` (merge-tree conflicts,
+//!   merge-add probes, ancestry checks, file-change probes, diff stats, ahead/behind
+//!   counts, merge-base).
 //! - **Branch + TTL + HEAD**: external mutable state (CI API, remote refs). TTL bounds
 //!   staleness; the HEAD check invalidates early when the branch moves.
 //! - **Branch + content-addressed hash in filename**: content hash (SHA-256
