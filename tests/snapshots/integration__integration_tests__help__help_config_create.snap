@@ -162,7 +162,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# ### aichat[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [commit.generation][0m
-[107m [0m [2m# command = "aichat -m claude:claude-haiku-4.5"[0m
+[107m [0m [2m# command = "aichat -m claude:claude-haiku-4.5 --code"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# See LLM commits docs (https://worktrunk.dev/llm-commits/) for setup and Custom prompt templates (#custom-prompt-templates) for template customization.[0m
 [107m [0m [2m#[0m

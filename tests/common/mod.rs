@@ -831,7 +831,7 @@ fn add_placeholder_cleanup_filters(settings: &mut insta::Settings) {
 /// — macOS keeps the absolute form (canonicalized HOME `/private/var/...`
 /// doesn't prefix the uncanonicalized config path), Linux strips to a tilde
 /// (HOME == tempdir, prefix matches).
-const TEST_PATH_PREFIX: &str =
+pub(crate) const TEST_PATH_PREFIX: &str =
     r"'?(?:~(?:/\.tmp[^/\\']+)?|(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+)[/\\]";
 
 fn add_temp_path_placeholder_filters(settings: &mut insta::Settings) {
@@ -1082,6 +1082,13 @@ fn setup_snapshot_settings_for_paths_with_home(
     settings.add_filter(
         r"(Could not apply [0-9a-f]{7,40}\.\.\.) ([A-Za-z])",
         "$1 # $2",
+    );
+
+    // Git 2.56 names ambiguous remote-tracking branches; older Git reports
+    // the same failed worktree-add lookup as an invalid reference.
+    settings.add_filter(
+        r"fatal: '([^'\r\n]+)' matched multiple \(\d+\) remote tracking branches",
+        "fatal: invalid reference: $1",
     );
 
     // Normalize OS-specific error messages in gutter output

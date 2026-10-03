@@ -315,6 +315,9 @@ pub fn try_render_diagnostic(err: &(dyn std::error::Error + 'static)) -> Option<
     if let Some(e) = err.downcast_ref::<CommandError>() {
         return Some(e.render());
     }
+    if let Some(e) = err.downcast_ref::<crate::config::ConfigParseError>() {
+        return Some(e.render());
+    }
     None
 }
 

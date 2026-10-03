@@ -111,7 +111,7 @@ pub struct JsonItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub statusline: Option<String>,
 
-    /// Raw status symbols without ANSI colors (e.g., "+! ✖ ↑")
+    /// Raw status symbols without ANSI colors (e.g., `"+!⚐↑"`)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub symbols: Option<String>,
 
@@ -391,7 +391,7 @@ impl JsonItem {
 
         // Statusline and symbols (raw, without ANSI codes)
         let statusline = item.statusline.clone();
-        let symbols = Some(format_raw_symbols(&item.status_symbols)).filter(|s| !s.is_empty());
+        let symbols = Some(item.status_symbols.format_raw()).filter(|s| !s.is_empty());
         let marker = item.user_marker.clone().flatten();
 
         // Per-branch vars data (pre-fetched, moved out to avoid cloning)
@@ -511,62 +511,6 @@ impl JsonCi {
     }
 }
 
-/// Format status symbols as raw characters (no ANSI codes).
-///
-/// Unresolved gates (`None` fields) contribute nothing — their symbols are
-/// simply absent from the output string, not replaced by a placeholder.
-/// This matches the per-symbol atomic model: machine consumers see only the
-/// symbols that have been computed so far.
-///
-/// Shared with `json_v2` (the `display.symbols` field).
-pub(crate) fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> String {
-    let mut result = String::new();
-
-    // Working tree symbols (gate 1)
-    if let Some(wt) = symbols.working_tree {
-        result.push_str(&wt.to_symbols());
-    }
-
-    // Main state (gate 3) — merged column: ^_⊂✗↕↑↓
-    if let Some(ms) = symbols.main_state {
-        let s = ms.to_string();
-        if !s.is_empty() {
-            result.push_str(&s);
-        }
-    }
-
-    // Upstream divergence (gate 4)
-    if let Some(div) = symbols.upstream_divergence {
-        let s = div.symbol();
-        if !s.is_empty() {
-            result.push_str(s);
-        }
-    }
-
-    // Worktree state (gate 2) — operations (✘↻) take priority over
-    // location (/⚑⊟⊞). Gate 2 is "operation_state is Some"; the metadata
-    // worktree_state is filled synchronously and always Some by the time
-    // the operation family is known.
-    if let Some(op) = symbols.operation_state {
-        let s = op.to_string();
-        if !s.is_empty() {
-            result.push_str(&s);
-        } else if let Some(wt_state) = symbols.worktree_state {
-            let s = wt_state.to_string();
-            if !s.is_empty() {
-                result.push_str(&s);
-            }
-        }
-    }
-
-    // User marker (gate 5)
-    if let Some(Some(ref marker)) = symbols.user_marker {
-        result.push_str(marker);
-    }
-
-    result
-}
-
 /// Convert a list of ListItems to JSON output
 ///
 /// Reads all vars from the bulk config snapshot (no subprocess, and —
@@ -601,7 +545,6 @@ pub fn to_json_items(
 mod tests {
     use insta::assert_snapshot;
     use worktrunk::git::GitRepoProvider;
-    use worktrunk::git::InProgressOperation;
 
     use super::*;
     use crate::commands::list::ci_status::{CiStatus, PrRef};
@@ -918,72 +861,6 @@ mod tests {
         let (state, reason) = worktree_state_to_json(&data, &symbols);
         assert_eq!(state, Some("locked"));
         assert_eq!(reason, Some("in use".to_string()));
-    }
-
-    // ============================================================================
-    // format_raw_symbols Tests
-    // ============================================================================
-
-    #[test]
-    fn test_format_raw_symbols_empty() {
-        let symbols = StatusSymbols::default();
-        assert!(format_raw_symbols(&symbols).is_empty());
-    }
-
-    #[test]
-    fn test_format_raw_symbols_each_category() {
-        let working_tree = format_raw_symbols(&StatusSymbols {
-            working_tree: Some(WorkingTreeStatus::new(true, true, true, false, false)),
-            ..Default::default()
-        });
-        assert_snapshot!(working_tree, @"+!?");
-
-        let main_state = format_raw_symbols(&StatusSymbols {
-            main_state: Some(MainState::Ahead),
-            ..Default::default()
-        });
-        assert_snapshot!(main_state, @"↑");
-
-        let upstream = format_raw_symbols(&StatusSymbols {
-            upstream_divergence: Some(Divergence::Behind),
-            ..Default::default()
-        });
-        assert_snapshot!(upstream, @"⇣");
-
-        // Operation state takes priority over worktree state
-        let operation = format_raw_symbols(&StatusSymbols {
-            operation_state: Some(OperationState::InProgress(InProgressOperation::Rebase)),
-            ..Default::default()
-        });
-        assert_snapshot!(operation, @"↻");
-
-        // Worktree metadata renders only once the operation-family gate
-        // has resolved to "no operation" — otherwise we can't rule out
-        // ✘↻ taking priority. Callers that want just the metadata
-        // symbol must set both `operation_state` and `worktree_state`.
-        let worktree = format_raw_symbols(&StatusSymbols {
-            operation_state: Some(OperationState::None),
-            worktree_state: Some(WorktreeState::Locked),
-            ..Default::default()
-        });
-        assert_snapshot!(worktree, @"⊞");
-
-        let marker = format_raw_symbols(&StatusSymbols {
-            user_marker: Some(Some("\u{1f525}".to_string())),
-            ..Default::default()
-        });
-        assert_snapshot!(marker, @"🔥");
-    }
-
-    #[test]
-    fn test_format_raw_symbols_combined() {
-        let result = format_raw_symbols(&StatusSymbols {
-            working_tree: Some(WorkingTreeStatus::new(true, false, false, false, false)),
-            main_state: Some(MainState::Behind),
-            upstream_divergence: Some(Divergence::Ahead),
-            ..Default::default()
-        });
-        assert_snapshot!(result, @"+↓⇡");
     }
 
     // ============================================================================

@@ -444,8 +444,12 @@ fn exec_in_pty_shell(
             cmd.arg("-c");
             cmd.arg(script);
         }
+        "fish" => {
+            cmd.arg("--no-config");
+            cmd.arg("-c");
+            cmd.arg(script);
+        }
         _ => {
-            // fish and other shells
             cmd.arg("-c");
             cmd.arg(script);
         }
@@ -1770,9 +1774,10 @@ approved-commands = ["echo 'fish background task'"]
         let stub_dir = repo.root_path().join("stub-bin");
         fs::create_dir_all(&stub_dir).unwrap();
         let stub_cargo = stub_dir.join("cargo");
+        let stub_marker = repo.root_path().join("cargo-stub-ran");
         fs::write(
             &stub_cargo,
-            "#!/bin/sh\nshift 5\nexec \"$WORKTRUNK_BIN\" \"$@\"\n",
+            "#!/bin/sh\nprintf invoked > \"$WORKTRUNK_TEST_CARGO_STUB_MARKER\"\nshift 5\nexec \"$WORKTRUNK_BIN\" \"$@\"\n",
         )
         .unwrap();
         fs::set_permissions(&stub_cargo, fs::Permissions::from_mode(0o755)).unwrap();
@@ -1781,6 +1786,28 @@ approved-commands = ["echo 'fish background task'"]
             stub_dir.display(),
             env::var("PATH").unwrap_or_default()
         );
+
+        // Fish startup configuration can prepend PATH and displace the cargo
+        // stub. Shell tests must bypass it, just as bash bypasses ~/.bashrc.
+        let startup_bin = repo.home_path().join("startup-bin");
+        fs::create_dir_all(&startup_bin).unwrap();
+        let startup_cargo = startup_bin.join("cargo");
+        fs::write(
+            &startup_cargo,
+            "#!/bin/sh\necho 'unexpected startup cargo' >&2\nexit 23\n",
+        )
+        .unwrap();
+        fs::set_permissions(&startup_cargo, fs::Permissions::from_mode(0o755)).unwrap();
+        let fish_config = repo.home_path().join(".config/fish");
+        fs::create_dir_all(&fish_config).unwrap();
+        fs::write(
+            fish_config.join("config.fish"),
+            format!(
+                "fish_add_path {}\n",
+                shell_quote(&startup_bin.to_string_lossy())
+            ),
+        )
+        .unwrap();
 
         // Get the worktrunk source directory (where this test is running from)
         // This is the directory that contains Cargo.toml with the workspace
@@ -1803,8 +1830,18 @@ approved-commands = ["echo 'fish background task'"]
 
         let config_path = repo.test_config_path().to_string_lossy().to_string();
         let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
+        let stub_marker_path = stub_marker.to_string_lossy().to_string();
+        let fixture_home = repo.home_path().to_string_lossy().to_string();
+        let xdg_config = repo
+            .home_path()
+            .join(".config")
+            .to_string_lossy()
+            .to_string();
         let env_vars: Vec<(&str, &str)> = vec![
+            ("HOME", &fixture_home),
+            ("XDG_CONFIG_HOME", &xdg_config),
             ("PATH", &stub_path),
+            ("WORKTRUNK_TEST_CARGO_STUB_MARKER", &stub_marker_path),
             ("CLICOLOR_FORCE", "1"),
             ("WORKTRUNK_CONFIG_PATH", &config_path),
             ("WORKTRUNK_APPROVALS_PATH", &approvals_path),
@@ -1835,6 +1872,11 @@ approved-commands = ["echo 'fish background task'"]
             combined,
             exit_code,
         };
+
+        assert!(
+            stub_marker.exists(),
+            "{shell}: --source must execute the cargo stub, not compile live source"
+        );
 
         // Shell-agnostic assertions
         assert_ne!(output.exit_code, 0, "{}: Command should fail", shell);

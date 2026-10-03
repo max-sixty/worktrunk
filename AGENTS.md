@@ -26,9 +26,9 @@ Each worktree maps to one branch. Worktree arguments resolve branch first throug
 
 ## Documentation
 
-Behavior changes require documentation updates. src/cli/mod.rs is primary for command help and generated command pages; docs/AGENTS.md explains sync. Check that --help matches behavior. Run cargo test --test integration test_docs_are_in_sync, then refresh help snapshots when help text changes.
+Public docs are curated product guidance, not an exhaustive specification. Document new capabilities and changed usage; correct existing claims that become false. A correctness fix with no change to usage needs no new prose: an omitted failure case is not an inaccurate claim. Keep regression conditions in tests and commit messages.
 
-Docs describe behavior for a user, not the history of a fix. A fix that makes a feature work the way a reader already assumed needs no new doc sentence; do not add lines announcing that an edge case now works. LLM-generated changes add these often, so cut them in review.
+src/cli/mod.rs is primary for command help and generated command pages; docs/AGENTS.md explains sync. Check that --help matches behavior. Run cargo test --test integration test_docs_are_in_sync, then refresh help snapshots when help text changes.
 
 ## Plugin Layout
 

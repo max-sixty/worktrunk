@@ -209,7 +209,7 @@ Create [2m~/.codex/worktrunk-commit-instructions.txt[0m containing just [2m.
 [32maichat[0m
 
 [107m [0m [2m[36m[commit.generation][0m
-[107m [0m [2mcommand = [0m[2m[32m"aichat -m claude:claude-haiku-4.5"[0m
+[107m [0m [2mcommand = [0m[2m[32m"aichat -m claude:claude-haiku-4.5 --code"[0m
 
 See LLM commits docs for setup and Custom prompt templates for template customization.
 
@@ -615,6 +615,7 @@ On first run without shell integration, Worktrunk offers to install it. On first
 [1m[32mEnvironment variables[0m
 
 All user config options can be overridden with environment variables using the [2mWORKTRUNK_[0m prefix.
+Invalid environment overrides are ignored with a warning; other valid overrides still apply.
 
 [32mNaming convention[0m
 

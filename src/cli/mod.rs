@@ -372,6 +372,15 @@ pub(crate) struct SwitchArgs {
     #[arg(short = 'b', long, requires = "branch", add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
     pub(crate) base: Option<String>,
 
+    /// Worktree directory for a new worktree \[experimental\]
+    ///
+    /// Overrides the `worktree-path` template for this worktree. Relative
+    /// paths resolve from the current directory, as with `git worktree add`.
+    /// The branch keeps its own name; afterwards, switch by branch or by
+    /// path.
+    #[arg(long, requires = "branch", value_hint = clap::ValueHint::DirPath, conflicts_with_all = ["branches", "remotes", "prs"])]
+    pub(crate) path: Option<std::path::PathBuf>,
+
     /// Program to run after switch
     ///
     /// Runs one external program after switching, with full terminal control.
@@ -653,7 +662,7 @@ A new branch tracks the remote branch it starts from only when the two share a n
 If the branch already has a worktree, `wt switch` changes directories to it. Otherwise, it creates one:
 
 1. Runs [pre-switch hooks](/hook/#hook-types), blocking until complete
-2. Creates worktree at configured path
+2. Creates worktree at configured path (or at `--path`)
 3. Switches to new directory
 4. Runs [pre-start hooks](/hook/#hook-types), blocking until complete
 5. Spawns [post-start](/hook/#hook-types) and [post-switch hooks](/hook/#hook-types) in the background
@@ -664,6 +673,18 @@ $ wt switch --create feature               # New branch and worktree
 $ wt switch --create fix --base release    # New branch from release
 $ wt switch --create temp --no-hooks       # Skip hooks
 ```
+
+### Custom path [experimental]
+
+`--path` places one worktree outside the `worktree-path` template, keeping the branch name intact:
+
+```console
+$ wt switch --create feature/JIRA-1234 --path ../dark-mode
+$ wt switch ../dark-mode                   # Switch by path...
+$ wt switch feature/JIRA-1234              # ...or by branch
+```
+
+Worktrunk finds the worktree from git's own records, so commands reach it by branch or path as usual. [`wt list`](/list/#worktree) marks it `⚐`, since it isn't at the path its branch implies, and [`wt step relocate`](/step/#wt-step-relocate) offers to move it back to the template path.
 
 ## Naming a worktree
 
@@ -929,7 +950,7 @@ Independent flags from `git status`; several can show at once (e.g. `+!?`). Each
 
 ### Worktree
 
-An in-progress git operation, a worktree-location attribute, or a branch with no worktree. One symbol shows, highest priority first (`✘ > ↻ > ⊟ > ⊞ > ⊘ > ⚑ > /`):
+An in-progress git operation, a worktree-location attribute, or a branch with no worktree. One symbol shows, highest priority first (`✘ > ↻ > ⊟ > ⊞ > ⊘ > ⚐ > /`):
 
 | Symbol | JSON | Meaning |
 |--------|------|---------|
@@ -938,8 +959,8 @@ An in-progress git operation, a worktree-location attribute, or a branch with no
 | `⊟` | `worktree.prunable` | Prunable (worktree directory or its `.git` gone) |
 | `⊞` | `worktree.locked` | Locked worktree |
 | `⊘` | `worktree.detached` | Detached HEAD |
-| `⚑` | `worktree.duplicate_branch` | Branch checked out in more than one worktree |
-| `⚑` | `worktree.branch_mismatch` | Worktree isn't at the path its branch implies |
+| `⚐` | `worktree.duplicate_branch` | Branch checked out in more than one worktree |
+| `⚐` | `worktree.branch_mismatch` | Worktree isn't at the path its branch implies |
 | `/` | no `worktree` object | Branch without a worktree |
 
 ### Default branch
@@ -984,7 +1005,7 @@ These appear across all columns while the table is loading:
 
 | Symbol | Meaning |
 |--------|---------|
-| `·` | Data is loading, or collection timed out / branch too stale |
+| `·` | Data is loading, or collection timed out |
 
 ---
 
@@ -1032,9 +1053,9 @@ How "no value" reads:
 - **Absent** — nothing to report: not applicable (`worktree` on a branch-only
   row), not requested this run (the envelope's `collected` records what was),
   or determined-empty (no PR, no lock, not integrated).
-- **`null`** — requested but not determined: a task timed out, the branch was
-  too stale for the expensive checks, or a forge fetch failed. This is the
-  JSON form of the table's `·` placeholder.
+- **`null`** — requested but not determined: a task timed out, a check was
+  skipped, or a forge fetch failed. This is the JSON form of the table's `·`
+  placeholder.
 
 jq treats absent and `null` identically in path expressions, so filters need
 no null checks; `has()` distinguishes the two when it matters.
@@ -1117,7 +1138,7 @@ Independent facts; the table's priority-collapsed symbol is `display.state`.
 | `behind` | number/null | Commits behind the default branch (null for orphans) |
 | `diff` | object/null | Lines changed vs the default branch: `{added, deleted}` |
 | `orphan` | boolean/null | No common ancestor with the default branch |
-| `integration` | object/null | `{reason}` — which check found the content [integrated](/remove/#branch-cleanup) (see [integration reasons](#integration-reasons)); absent when determined not-integrated, null when a dirty tree skipped the checks |
+| `integration` | object/null | `{reason}` — which check found the content [integrated](/remove/#branch-cleanup) (see [integration reasons](#integration-reasons)); absent when determined not-integrated, null when undetermined (a check timed out or was skipped) |
 | `merge_conflicts` | boolean/null | Merging into the default branch would conflict, simulated locally with `git merge-tree` |
 
 ### upstream object
@@ -1189,7 +1210,7 @@ The single highest-priority state describing the branch's relation to the defaul
 
 ### integration reasons
 
-`default_branch.integration.reason` records which check matched. Checks run cheapest-first and the first match wins. JSON-only — every reason renders as the same `⊂`:
+`default_branch.integration.reason` records which check matched. Checks run cheapest-first and the first match wins. The reason itself is JSON-only: the table shows `"same_commit"` as `_` (or `–` with uncommitted changes) and every other reason as `⊂` when the working tree is clean:
 
 | Value | Meaning |
 |-------|---------|
@@ -1336,8 +1357,6 @@ The 'same commit' check uses the local default branch; for other checks, 'target
 
 Branches matching these conditions and with empty working trees are dimmed in `wt list` as safe to delete.
 
-If a detached worktree remains at the branch's configured path, removing the branch reports that directory and the command to remove it by path.
-
 ## Force flags
 
 Worktrunk has two force flags for different situations:
@@ -1381,7 +1400,7 @@ Unix only; on Windows `--reap` is rejected.
 
 ## JSON output
 
-`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal, plus `detached_worktree` — the directory left at that branch's path with a detached HEAD, which the branch no longer names and this removal therefore leaves alone.
+`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal, plus `detached_worktree` — a detached worktree left at the branch's configured path.
 
 `branch_outcome` names what happened to the branch, so a caller can tell a deletion the removal declined from one it was never asked to make:
 
@@ -2117,7 +2136,7 @@ command = "llm -m claude-haiku-4.5"
 
 ```toml
 [commit.generation]
-command = "aichat -m claude:claude-haiku-4.5"
+command = "aichat -m claude:claude-haiku-4.5 --code"
 ```
 
 See [LLM commits docs](/llm-commits/) for setup and [Custom prompt templates](#custom-prompt-templates) for template customization.
@@ -2576,6 +2595,7 @@ On first run without shell integration, Worktrunk offers to install it. On first
 ## Environment variables
 
 All user config options can be overridden with environment variables using the `WORKTRUNK_` prefix.
+Invalid environment overrides are ignored with a warning; other valid overrides still apply.
 
 ### Naming convention
 

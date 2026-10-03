@@ -10,6 +10,7 @@ use crate::display::format_relative_time_short;
 use anyhow::{Context, bail};
 use color_print::cformat;
 use dunce::canonicalize;
+use normalize_path::NormalizePath;
 use serde::Serialize;
 use worktrunk::HookType;
 use worktrunk::config::{
@@ -19,8 +20,9 @@ use worktrunk::config::{
 use worktrunk::git::remote_ref::{self, RemoteRefInfo, parse_ref_url};
 use worktrunk::git::{
     ForgeKind, GitError, GitRemoteUrl, RefType, Repository, ResolvedWorktree, Selector,
-    SwitchSuggestionCtx, WorktreeId, branch_tracks_ref, current_or_recover,
+    SwitchSuggestionCtx, WorktreeId, branch_tracks_ref, current_or_recover, resolve_input_path,
 };
+use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::{ShellEscapeMode, shell_cwd};
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, println, progress_message,
@@ -915,12 +917,14 @@ fn setup_fork_branch(
 ///
 /// Warnings (remote branch shadow, --base without --create, invalid default branch)
 /// are printed during planning since they're informational, not blocking.
+#[allow(clippy::too_many_arguments)]
 fn plan_switch(
     repo: &Repository,
     branch: &str,
     ref_target: Option<ResolvedTarget>,
     create: bool,
     base: Option<&str>,
+    path: Option<&Path>,
     clobber: bool,
     config: &UserConfig,
 ) -> anyhow::Result<SwitchPlan> {
@@ -930,6 +934,15 @@ fn plan_switch(
     // Phase 1: Resolve target (validates --create/--base; `pr:`/`mr:` arrived
     // pre-resolved from the caller, ahead of the pre-switch hooks)
     let target = resolve_switch_target(repo, branch, ref_target, create, base)?;
+
+    // Resolve `--path` the way git resolves `git worktree add <path>`: from
+    // the directory wt was pointed at, normalized so the comparisons below and
+    // the path git records agree.
+    let requested_path = path
+        .map(|path| -> anyhow::Result<PathBuf> {
+            Ok(std::path::absolute(resolve_input_path(path))?.normalize())
+        })
+        .transpose()?;
 
     // Phase 2: the shared worktree ladder — the branch, then the argument as a
     // worktree's own path (the way to name a detached one, which has no
@@ -951,6 +964,19 @@ fn plan_switch(
                 )
                 .into());
             }
+            // `--path` only places a new worktree. Naming a different
+            // directory for one that already exists would otherwise be
+            // silently ignored.
+            if let Some(requested) = requested_path.as_deref()
+                && !same_worktree_path(requested, &path)
+            {
+                let token = target.selector.token();
+                let existing = format_path_for_display(&path);
+                let requested = format_path_for_display(requested);
+                bail!(cformat!(
+                    "<bold>{token}</> already has a worktree @ <bold>{existing}</>, not <bold>{requested}</>; to switch to it, run without <bold>--path</>"
+                ));
+            }
             return Ok(SwitchPlan::Existing {
                 path: operational_worktree_path(path),
                 branch,
@@ -968,8 +994,15 @@ fn plan_switch(
         _ => {}
     }
 
-    // Phase 3: Compute expected path (only needed for create)
-    let expected_path = compute_worktree_path(repo, target.selector.token(), config)?;
+    // Phase 3: Compute expected path (only needed for create). `--path`
+    // replaces the template outright.
+    let expected_path = match requested_path {
+        Some(path) => {
+            reject_path_overlapping_worktrees(repo, &path)?;
+            path
+        }
+        None => compute_worktree_path(repo, target.selector.token(), config)?,
+    };
 
     // Phase 4: Validate we can create at this path
     let needs_clobber_backup = validate_worktree_creation(
@@ -989,6 +1022,41 @@ fn plan_switch(
         needs_clobber_backup,
         new_previous,
     })
+}
+
+/// Refuse a `--path` directory that holds a worktree or the repository, or
+/// that sits inside one.
+///
+/// Such a directory always exists, so `validate_worktree_creation` would
+/// otherwise offer `--clobber`, which moves it aside: `--path ..` would move
+/// the repository itself, and `--path src` a tracked directory of the current
+/// worktree. The template never produces these; a typed path easily does. A
+/// directory that does not exist yet is left alone — nesting a new worktree
+/// inside another is git's call, not a clobber.
+fn reject_path_overlapping_worktrees(repo: &Repository, requested: &Path) -> anyhow::Result<()> {
+    let Ok(requested) = canonicalize(requested) else {
+        return Ok(());
+    };
+    let registered = repo.list_worktrees()?.iter().map(|wt| wt.path.as_path());
+    for existing in registered.chain([repo.git_common_dir()]) {
+        let existing = canonicalize(existing).unwrap_or_else(|_| existing.to_path_buf());
+        if existing == requested {
+            continue;
+        }
+        let relation = if existing.starts_with(&requested) {
+            "contains"
+        } else if requested.starts_with(&existing) {
+            "is inside"
+        } else {
+            continue;
+        };
+        let requested = format_path_for_display(&requested);
+        let existing = format_path_for_display(&existing);
+        bail!(cformat!(
+            "<bold>--path {requested}</> {relation} <bold>{existing}</>; choose a directory outside the repository and its worktrees"
+        ));
+    }
+    Ok(())
 }
 
 /// Preserve the filesystem spelling Git and downstream commands can operate
@@ -1496,6 +1564,7 @@ struct SwitchOptions<'a> {
     branch: &'a str,
     create: bool,
     base: Option<&'a str>,
+    path: Option<&'a Path>,
     execute: Option<&'a str>,
     execute_args: &'a [String],
     yes: bool,
@@ -1746,6 +1815,9 @@ pub(crate) struct SwitchPipeline<'a> {
     pub identifier: &'a str,
     pub create: bool,
     pub base: Option<&'a str>,
+    /// `--path`: where to create the worktree instead of the `worktree-path`
+    /// template.
+    pub path: Option<&'a Path>,
     pub clobber: bool,
     pub verify: bool,
     /// `--yes`: skip approval prompts and force past clobber checks.
@@ -1780,6 +1852,7 @@ impl SwitchPipeline<'_> {
             identifier,
             create,
             base,
+            path,
             clobber,
             verify,
             yes,
@@ -1828,18 +1901,20 @@ impl SwitchPipeline<'_> {
         let (source_branch, source_path) = capture_switch_source(repo, is_recovered);
 
         // Validate and resolve the target branch.
-        let plan = plan_switch(repo, identifier, ref_target, create, base, clobber, config)
-            .map_err(|err| match suggestion_ctx {
-                Some(ref ctx) => match err.downcast::<GitError>() {
-                    Ok(git_err) => GitError::WithSwitchSuggestion {
-                        source: Box::new(git_err),
-                        ctx: ctx.clone(),
-                    }
-                    .into(),
-                    Err(err) => err,
-                },
-                None => err,
-            })?;
+        let plan = plan_switch(
+            repo, identifier, ref_target, create, base, path, clobber, config,
+        )
+        .map_err(|err| match suggestion_ctx {
+            Some(ref ctx) => match err.downcast::<GitError>() {
+                Ok(git_err) => GitError::WithSwitchSuggestion {
+                    source: Box::new(git_err),
+                    ctx: ctx.clone(),
+                }
+                .into(),
+                Err(err) => err,
+            },
+            None => err,
+        })?;
 
         // "Approve at the Gate": collect and approve hooks upfront. Approval
         // happens once at the command entry point. If the user declines, skip
@@ -1998,6 +2073,7 @@ fn run_switch(
         branch,
         create,
         base,
+        path,
         execute,
         execute_args,
         yes,
@@ -2016,15 +2092,22 @@ fn run_switch(
         config.resolved(project_id.as_deref()).switch.cd()
     });
 
-    // Build switch suggestion context for enriching error hints with --execute/trailing args.
+    // Build switch suggestion context for enriching error hints with --path/--execute/trailing args.
     // Without this, errors like "branch already exists" would suggest `wt switch <branch>`
-    // instead of the full `wt switch <branch> --execute=<cmd> -- <args>`.
-    let suggestion_ctx = execute.map(|exec| {
+    // instead of the full `wt switch <branch> --path=<dir> --execute=<cmd> -- <args>`.
+    // Dropping `--path` would point `--clobber` at the template's path instead.
+    let mut extra_flags = Vec::new();
+    if let Some(path) = path {
+        let escaped = shell_escape::unix::escape(path.to_string_lossy());
+        extra_flags.push(format!("--path={escaped}"));
+    }
+    if let Some(exec) = execute {
         let escaped = shell_escape::unix::escape(exec.into());
-        SwitchSuggestionCtx {
-            extra_flags: vec![format!("--execute={escaped}")],
-            trailing_args: execute_args.to_vec(),
-        }
+        extra_flags.push(format!("--execute={escaped}"));
+    }
+    let suggestion_ctx = (!extra_flags.is_empty()).then(|| SwitchSuggestionCtx {
+        extra_flags,
+        trailing_args: execute_args.to_vec(),
     });
 
     SwitchPipeline {
@@ -2033,6 +2116,7 @@ fn run_switch(
         identifier: branch,
         create,
         base,
+        path,
         clobber,
         verify,
         yes,
@@ -2083,6 +2167,7 @@ pub fn handle_switch_command(args: SwitchArgs, yes: bool) -> anyhow::Result<()> 
                     branch: &branch,
                     create: args.create,
                     base: args.base.as_deref(),
+                    path: args.path.as_deref(),
                     execute: args.execute.as_deref(),
                     execute_args: &args.execute_args,
                     yes,

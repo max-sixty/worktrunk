@@ -38,7 +38,7 @@ Create `~/.codex/worktrunk-commit-instructions.txt` containing just `.` (no newl
 command = "codex exec -m gpt-6-luna -c model_reasoning_effort='none' -c project_doc_max_bytes=0 -c skills.max_context_tokens=1 -c agents.enabled=false -c features.goals=false -c web_search=disabled -c 'model_instructions_file=\"~/.codex/worktrunk-commit-instructions.txt\"' -c features.shell_tool=false -c features.unified_exec=false -c features.apps=false -c features.plugins=false --ephemeral --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 ```
 
-`model_instructions_file` replaces Codex's built-in instructions with that one character. `project_doc_max_bytes=0` limits project instructions, and `skills.max_context_tokens=1` limits the skills catalog. The command disables web search, shell tools, apps, plugins, subagents, and goals. It keeps user provider settings and authentication and skips session persistence. Codex can still load global `AGENTS.md` and other agent context, so a short commit prompt can use thousands of input tokens. Requires `jq` for JSON parsing. See [Codex CLI docs](https://developers.openai.com/codex/cli/).
+Requires `jq` for JSON parsing. See [Codex CLI docs](https://developers.openai.com/codex/cli/).
 
 ### Other tools
 
@@ -52,7 +52,7 @@ command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"
 command = "llm -m claude-haiku-4.5"
 
 # aichat
-command = "aichat -m claude:claude-haiku-4.5"
+command = "aichat -m claude:claude-haiku-4.5 --code"
 ```
 
 ## Usage
