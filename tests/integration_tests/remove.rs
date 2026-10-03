@@ -1095,7 +1095,9 @@ fn test_remove_continues_after_execution_failures(
     repo.create_branch("branch-only");
 
     let mut cmd = repo.wt_command();
-    cmd.current_dir(&current).args([
+    // Select the logical current worktree without holding its directory open:
+    // Windows cannot remove a live process's physical working directory.
+    cmd.arg("-C").arg(&current).args([
         "remove",
         "current",
         "failed-a",
