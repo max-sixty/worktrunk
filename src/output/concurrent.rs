@@ -94,7 +94,7 @@ impl std::fmt::Display for ConcurrentCommandError {
 
 impl std::error::Error for ConcurrentCommandError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.error.as_ref())
+        self.error.source()
     }
 }
 
@@ -546,10 +546,15 @@ mod tests {
             directives: &directives,
             scrub_git_discovery: false,
         });
-        let error = run_concurrent_commands(&specs)
-            .unwrap_err()
-            .downcast::<ConcurrentCommandError>()
-            .unwrap();
+        let error = run_concurrent_commands(&specs).unwrap_err();
+        #[cfg(unix)]
+        {
+            use worktrunk::git::ErrorExt;
+            let path = worktrunk::path::format_path_for_display(&missing);
+            let detail = error.display_message().replace(&path, "_MISSING_");
+            insta::assert_snapshot!(detail, @"Failed to execute sh @ _MISSING_: No such file or directory (os error 2)");
+        }
+        let error = error.downcast::<ConcurrentCommandError>().unwrap();
         assert_eq!(error.index, 1);
         assert_eq!(
             error.error.downcast_ref::<std::io::Error>().unwrap().kind(),
