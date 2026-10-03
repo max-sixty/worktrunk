@@ -512,6 +512,52 @@ fn test_system_config_found_via_xdg_config_dirs(repo: TestRepo) {
     }
 }
 
+/// A relative `XDG_CONFIG_DIRS` entry must not become a system config path:
+/// it would resolve `worktrunk/config.toml` against the process cwd and load
+/// that repo's file into the *user* config layer, which the approval gate
+/// doesn't cover.
+#[cfg(unix)]
+#[rstest]
+fn test_system_config_ignores_relative_xdg_config_dirs(repo: TestRepo, temp_home: TempDir) {
+    // `config show` reaches the system-config hint only after a user config it
+    // could find, so plant one.
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"\n",
+    )
+    .unwrap();
+
+    // The file `XDG_CONFIG_DIRS=.` would reach.
+    let planted = repo.root_path().join("worktrunk");
+    fs::create_dir_all(&planted).unwrap();
+    fs::write(
+        planted.join("config.toml"),
+        "worktree-path = \"/planted/{{ repo }}/{{ branch | sanitize }}\"\n",
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    cmd.env_remove("WORKTRUNK_SYSTEM_CONFIG_PATH");
+    cmd.env("XDG_CONFIG_DIRS", ".");
+    cmd.arg("config").arg("show").current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // The hint names the platform default, so this pins the fallback too.
+    assert!(
+        !stdout.contains("SYSTEM CONFIG")
+            && !stdout.contains("/planted/")
+            && stdout.contains("Optional system config not found"),
+        "A relative XDG_CONFIG_DIRS entry must not load a system config, got:\n{stdout}"
+    );
+}
+
 #[rstest]
 fn test_system_config_xdg_dirs_set_but_no_config_found(repo: TestRepo) {
     // When XDG_CONFIG_DIRS is set but contains no worktrunk config,
