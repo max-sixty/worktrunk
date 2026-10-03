@@ -569,7 +569,7 @@ pub(crate) fn compute_integration_reason(
 ///
 /// A branch reaches two worktrees only through `git worktree add --force`,
 /// which worktrunk never runs itself. Once it has, the ref is live in both, and
-/// worktrunk deletes branches with `git update-ref -d` — git's compare-and-swap
+/// worktrunk deletes branches with `git update-ref` — git's compare-and-swap
 /// primitive, which unlike `git branch -d` does not refuse a ref that is
 /// checked out somewhere. Deleting it leaves the other checkout at a null OID
 /// with an unresolvable `HEAD`, so every removal that could delete a branch

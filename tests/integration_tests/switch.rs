@@ -331,7 +331,18 @@ fn test_switch_dwim_ambiguous_remotes(#[from(repo_with_remote)] mut repo: TestRe
 
     // Now shared-feature exists on origin and upstream but not locally
     // DWIM can't pick — git worktree add should error
-    snapshot_switch("switch_dwim_ambiguous_remotes", &repo, &["shared-feature"]);
+    let mut settings = setup_snapshot_settings(&repo);
+    // Git 2.50 reports an invalid reference; Git 2.56 names the ambiguity.
+    settings.add_filter(
+        r"'shared-feature' matched multiple \(2\) remote tracking branches",
+        "invalid reference: shared-feature",
+    );
+    settings.bind(|| {
+        assert_cmd_snapshot!(
+            "switch_dwim_ambiguous_remotes",
+            make_snapshot_cmd(&repo, "switch", &["shared-feature"], None)
+        );
+    });
 }
 
 /// `--base <branch>` should accept a branch that exists only as a remote-tracking ref
@@ -5982,7 +5993,7 @@ fn test_switch_pr_malformed_project_config_bails_before_forge_selection(
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Failed to load project config"),
+        stderr.contains("Project config @"),
         "expected project-config load error, got:\n{stderr}"
     );
     assert!(
