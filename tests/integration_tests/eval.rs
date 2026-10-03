@@ -15,22 +15,21 @@ fn test_eval_branch(repo: TestRepo) {
     ));
 }
 
-/// A strict command keeps the invalid override's diagnosis once in its fatal
-/// block, independently of the earlier tolerant-load warning.
+/// A command skips an invalid env override the way `wt list` does: the
+/// startup warning names it once, and the command still runs.
 #[rstest]
-fn test_eval_invalid_env_override_keeps_one_fatal_diagnosis(repo: TestRepo) {
+fn test_eval_skips_invalid_env_override(repo: TestRepo) {
     repo.write_test_config("[list]\nbranches = true\n");
     let mut cmd = repo.wt_command();
     cmd.env("WORKTRUNK__LIST__BRANCHES", "not-a-bool")
         .args(["step", "eval", "{{ branch }}"]);
 
     let output = cmd.output().unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "main");
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stderr = stderr.ansi_strip();
-    let (_, fatal) = stderr.split_once("✗ Failed to load config").unwrap();
-    assert_eq!(fatal.matches("invalid type:").count(), 1, "{stderr}");
+    assert_eq!(stderr.matches("invalid type:").count(), 1, "{stderr}");
 
     let settings = crate::common::setup_snapshot_settings(&repo);
     settings.bind(|| insta::assert_snapshot!(stderr));
