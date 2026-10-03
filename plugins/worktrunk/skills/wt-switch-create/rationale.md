@@ -163,13 +163,13 @@ Verified: from a worktrunk session, `cd` into a prql worktree under `/tmp`, then
 
 ### The confirmation hook
 
-The plugin's `PermissionRequest` command runs the hidden
-`wt config plugins claude approve-enter-worktree`, which reads the hook payload
-and prints an `allow` decision when the call is `EnterWorktree` and its `path`
-is a worktree of the repository the payload's `cwd` is in, at the path the
-`worktree-path` template gives its branch. Anything else leaves stdout empty
-and exits 1, which leaves the dialog (or, where no dialog can show, the denial)
-in place. The tool's own validation still runs after an approval.
+The plugin's hooks run the hidden `wt config plugins claude hook`, which reads
+the hook payload. For `PermissionRequest` it prints an `allow` decision when
+the call is `EnterWorktree` and its `path` is a worktree of the repository the
+payload's `cwd` is in, at the path the `worktree-path` template gives its
+branch. Anything else leaves stdout empty, which leaves the dialog (or, where
+no dialog can show, the denial) in place. The tool's own validation still runs
+after an approval.
 
 The rule extends Claude Code's exemption rather than overriding its check.
 Claude Code enters a worktree under `.claude/worktrees/` without asking because
@@ -189,17 +189,16 @@ another repo before entering. The check lives in `wt` because it is
 `branch_mismatch`; a script over `wt list --format=json` would inherit that
 command's user config, where `list.full` adds CI fetches and LLM summaries
 (33s measured on a 54-worktree repository) and `list.json-schema` and `list.branches` change
-the output's shape. A `wt` too old to have the subcommand fails it, which
-leaves the dialog as it was before the hook existed.
+the output's shape. A `wt` too old to have the subcommand fails it, and the
+hook command's `|| true` leaves the dialog as it was before the hook existed.
 
-The approval shares one `hooks.json` command with the 💬 marker,
-`wt … approve-enter-worktree || wt … marker set 💬`, because Claude Code runs
-all matching hooks in parallel. A separate `EnterWorktree` entry would still
-fire the catch-all marker hook, and the launch worktree would read 💬 while the
-session works on. With one command, an approval skips the marker and every
-other permission request sets it as before. The `permission_prompt`
-notification can't set it either: Claude Code sends it only after a shown
-prompt has waited about six seconds.
+The approval shares one hook with the 💬 marker, setting the marker only when
+it doesn't approve, because Claude Code runs all matching hooks in parallel. A
+separate `EnterWorktree` entry would still fire the catch-all marker hook, and
+the launch worktree would read 💬 while the session works on. With one hook,
+an approval skips the marker and every other permission request sets it as
+before. The `permission_prompt` notification can't set it either: Claude Code
+sends it only after a shown prompt has waited about six seconds.
 
 Verified live in `--permission-mode default` sessions: a same-repo entry, and a
 cross-repo entry after `cd`, both reported "Allowed by PermissionRequest hook"
@@ -291,21 +290,6 @@ attempts entry, and lets a single `cd` reveal reachability — the escalation
 fires only on an actual reset. Cheap to attempt, and the handback is actionable
 and durable (a `~/workspace` entry, set once, covers every future cross-repo
 task).
-
-## The hooks.json pipefail wrapper (agent-isolation path, not this skill)
-
-`WorktreeCreate` pipes `jq | xargs wt | jq`; without `pipefail` the trailing
-`jq` exits 0 on empty input and swallows a `wt` failure, so Claude Code saw a
-"successful" hook with no path. Hook commands are spawned with an empty args
-array and `shell: true` (binary), i.e. `/bin/sh -c` on Unix — bash 3.2 on
-macOS but dash on many Linuxes. dash rejects `set -o pipefail` fatally
-(`set` is a POSIX special builtin; no dash release through 0.5.12 supports
-pipefail — only post-0.5.12 upstream git and distro backports such as
-Debian's 0.5.12-7). And `/bin/sh -c` is evidently not universal: one user's
-hooks ran under fish (worktrunk PR #2962), which has no shell options at
-all. Hence the explicit `bash -c 'set -o pipefail; …'` wrapper. Verified
-end-to-end: success prints the path and exits 0; an existing-branch failure
-exits 1 with empty stdout.
 
 ## Known limits (deliberate)
 
