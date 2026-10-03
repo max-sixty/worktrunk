@@ -617,15 +617,7 @@ Aliases defined here are shared with teammates. For personal aliases, use the [u
 
 # Shell Integration
 
-Worktrunk needs shell integration to change directories when switching worktrees. Install with:
-
-```console
-$ wt config shell install
-```
-
-For manual setup, see `wt config shell init --help`.
-
-Without shell integration, `wt switch` prints the target directory but cannot `cd` into it.
+See [`wt config shell`](#wt-config-shell) for setup, activation, and current-shell diagnostics.
 
 ### First-run prompts
 
@@ -744,6 +736,213 @@ Global Options:
 ```
 
 # Subcommands
+
+## wt config shell
+
+Shell integration setup.
+
+A subprocess cannot change its parent shell's directory. Shell integration defines a function that runs the Worktrunk binary, then changes the shell's directory when the command requests it. It also enables tab completion.
+
+### Setup
+
+```console
+$ wt config shell install
+```
+
+Start a new shell after installation to load the wrapper. Invoke `wt` by name. Running a binary path or `git wt` bypasses the wrapper, so the shell's directory stays unchanged.
+
+- `wt config shell install --help` — installation options
+- `wt config shell init --help` — manual setup
+- `wt config shell uninstall` — remove the integration
+
+### Check the current shell
+
+```console
+$ wt config show
+```
+
+The SHELL INTEGRATION section reports whether the wrapper is active in the current session. Installation and activation are separate: a configured shell can still be running without the wrapper until its config is reloaded.
+
+In bash, zsh, or fish, `type wt` checks that `wt` resolves to a function. In PowerShell, `Get-Command wt -All` lists the Function and Application definitions.
+
+See [worktrunk.dev/shell-integration](/shell-integration/) for warning messages, installed files, and wrapper behavior.
+
+### Command reference
+
+```text wt-command-reference
+wt config shell - Shell integration setup
+
+Usage: wt config shell [OPTIONS] <COMMAND>
+
+Commands:
+  init        Generate shell integration code
+  install     Write shell integration to config files
+  uninstall   Remove shell integration from config files
+  show-theme  Show output theme samples
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## wt config shell init
+
+Generate shell integration code.
+
+Outputs shell code for `eval` or sourcing. Most users should run `wt config shell install` instead, which adds this automatically.
+
+### Manual setup
+
+For bash, fish, zsh, and PowerShell, add the matching line to the shell config. For Nushell, run the command to save the wrapper in its autoload directory.
+
+Bash (~/.bashrc):
+```console
+$ eval "$(wt config shell init bash)"
+```
+
+Fish (~/.config/fish/config.fish):
+```fish
+wt config shell init fish | source
+```
+
+Zsh (~/.zshrc):
+```zsh
+eval "$(wt config shell init zsh)"
+```
+
+Nushell <span class="badge-experimental"></span> — save to vendor autoload directory:
+```console
+$ wt config shell init nu | save -f ($nu.vendor-autoload-dirs | last | path join wt.nu)
+```
+
+PowerShell ($PROFILE):
+```powershell
+Invoke-Expression (& wt config shell init powershell | Out-String)
+```
+
+### Command reference
+
+```text wt-command-reference
+wt config shell init - Generate shell integration code
+
+Usage: wt config shell init [OPTIONS] <bash|fish|nu|zsh|powershell>
+
+Arguments:
+  <bash|fish|nu|zsh|powershell>
+          Shell to generate code for
+
+          [possible values: bash, fish, nu, zsh, powershell]
+
+Options:
+      --cmd <CMD>
+          Command name for shell integration (defaults to binary name)
+
+          Use this to create shell integration for an alternate command name. For example,
+          --cmd=git-wt creates a git-wt shell function instead of wt, useful on Windows where wt
+          conflicts with Windows Terminal.
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## wt config shell install
+
+Write shell integration to config files.
+
+Appends an initialization line to bash, zsh, and PowerShell config files. For fish and Nushell, it replaces the autoloaded wrapper file; fish also gets a separate completion file. See [worktrunk.dev/shell-integration](/shell-integration/#files-created) for their locations.
+
+### Examples
+
+Install for all detected shells:
+```console
+$ wt config shell install
+```
+
+Install for specific shell only:
+```console
+$ wt config shell install zsh
+```
+
+Shows proposed changes and waits for confirmation before modifying any files.
+Use --yes to skip confirmation.
+
+### Command reference
+
+```text wt-command-reference
+wt config shell install - Write shell integration to config files
+
+Usage: wt config shell install [OPTIONS] [bash|fish|nu|zsh|powershell]
+
+Arguments:
+  [bash|fish|nu|zsh|powershell]
+          Shell to install (default: all)
+
+          [possible values: bash, fish, nu, zsh, powershell]
+
+Options:
+      --dry-run
+          Show what would be changed
+
+      --cmd <CMD>
+          Command name for shell integration (defaults to binary name)
+
+          Use this to create shell integration for an alternate command name. For example,
+          --cmd=git-wt creates a git-wt shell function instead of wt, useful on Windows where wt
+          conflicts with Windows Terminal.
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## wt config shell uninstall
+
+Remove shell integration from config files.
+
+Removes Worktrunk initialization lines from bash, zsh, and PowerShell config files, and Worktrunk wrapper and completion files for fish and Nushell.
+
+### Examples
+
+Uninstall from all shells:
+```console
+$ wt config shell uninstall
+```
+
+Uninstall from specific shell only:
+```console
+$ wt config shell uninstall zsh
+```
+
+Skip confirmation prompt:
+```console
+$ wt config shell uninstall --yes
+```
+
+### Version tolerance
+
+Uninstall removes every worktrunk-managed integration it finds, regardless of:
+- Binary name it was installed under (`wt`, `git-wt`, …)
+- Minor syntax variations between versions
+
+### Command reference
+
+```text wt-command-reference
+wt config shell uninstall - Remove shell integration from config files
+
+Usage: wt config shell uninstall [OPTIONS] [bash|fish|nu|zsh|powershell]
+
+Arguments:
+  [bash|fish|nu|zsh|powershell]
+          Shell to uninstall (default: all)
+
+          [possible values: bash, fish, nu, zsh, powershell]
+
+Options:
+      --dry-run
+          Show what would be changed
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
 
 ## wt config show
 
