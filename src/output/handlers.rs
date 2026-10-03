@@ -548,6 +548,20 @@ fn list_remaining_entries(path: &Path) -> Option<Vec<String>> {
     (!entries.is_empty()).then_some(entries)
 }
 
+/// Add removal details without turning a cancellation into an ordinary failure.
+fn worktree_removal_error(error: anyhow::Error, branch: &str, path: &Path) -> anyhow::Error {
+    if error.interrupt_signal().is_some() {
+        return error;
+    }
+    GitError::WorktreeRemovalFailed {
+        branch: branch.into(),
+        path: path.to_path_buf(),
+        remaining_entries: list_remaining_entries(path),
+        error: error.display_message(),
+    }
+    .into()
+}
+
 // ============================================================================
 // Switch Output Handlers
 // ============================================================================
@@ -1912,11 +1926,8 @@ fn handle_detached_removed_worktree_output(
                 force_worktree: ctx.force_worktree,
             },
         )
-        .map_err(|err| GitError::WorktreeRemovalFailed {
-            branch: path_dir_name(ctx.worktree_path).to_string(),
-            path: ctx.worktree_path.to_path_buf(),
-            remaining_entries: list_remaining_entries(ctx.worktree_path),
-            error: err.display_message(),
+        .map_err(|error| {
+            worktree_removal_error(error, path_dir_name(ctx.worktree_path), ctx.worktree_path)
         })?;
         let (files, bytes) = output
             .staged_path
@@ -1991,12 +2002,7 @@ fn handle_named_removed_worktree_foreground(
             force_worktree: ctx.force_worktree,
         },
     )
-    .map_err(|err| GitError::WorktreeRemovalFailed {
-        branch: branch_name.into(),
-        path: ctx.worktree_path.to_path_buf(),
-        remaining_entries: list_remaining_entries(ctx.worktree_path),
-        error: err.display_message(),
-    })?;
+    .map_err(|error| worktree_removal_error(error, branch_name, ctx.worktree_path))?;
     let stats = output
         .staged_path
         .as_deref()

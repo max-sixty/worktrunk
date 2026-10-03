@@ -26,8 +26,9 @@
 //! 1. **Lock and clean checks**. A `git worktree lock` is refused
 //!    unconditionally (matching `git worktree remove`; `--force` does not
 //!    override it). The dirty-worktree gate is skipped with
-//!    [`RemoveOptions::force_worktree`]. Why the dirty gate precedes the
-//!    stop below: [`stage_worktree_removal`], "Why this order".
+//!    [`RemoveOptions::force_worktree`], which reports the current uncommitted
+//!    paths, or why they could not be read, before deletion instead. Why the
+//!    dirty gate precedes the stop below: [`stage_worktree_removal`], "Why this order".
 //! 2. **fsmonitor daemon stopped** (best effort). [`stop_fsmonitor_daemon`]
 //!    runs against the target worktree before its path disappears: it sends
 //!    the graceful `git fsmonitor--daemon stop` IPC request, then verifies the
@@ -100,8 +101,11 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::git::repository::WorkingTree;
-use crate::git::{GitError, IntegrationReason, Repository, WorktreeInfo, path_dir_name};
+use crate::git::{
+    ErrorExt, GitError, IntegrationReason, Repository, WorktreeInfo, WorktrunkError, path_dir_name,
+};
 use crate::shell_exec::Cmd;
+use crate::styling::{eprintln, format_with_gutter, warning_message};
 use crate::utils::epoch_now;
 
 /// Bound on the graceful `git fsmonitor--daemon stop` IPC request.
@@ -481,7 +485,32 @@ pub fn stage_worktree_removal(
         .into());
     }
 
-    if !force_worktree {
+    if force_worktree {
+        // Disclosure does not veto the force removal, but an interrupted
+        // status command still cancels before any directory is removed.
+        match worktree.dirty_files() {
+            Ok(dirty_files) if !dirty_files.is_empty() => {
+                eprintln!(
+                    "{}",
+                    warning_message("Discarding uncommitted changes (--force):")
+                );
+                eprintln!("{}", format_with_gutter(&dirty_files.join("\n"), None));
+            }
+            Ok(_) => {}
+            Err(error) => {
+                if let Some(signal) = error.interrupt_signal() {
+                    return Err(WorktrunkError::Interrupted { signal, hint: None }.into());
+                }
+                eprintln!(
+                    "{}",
+                    warning_message(
+                        "Cannot list uncommitted changes; discarding worktree contents (--force):"
+                    )
+                );
+                eprintln!("{}", format_with_gutter(&error.display_message(), None));
+            }
+        }
+    } else {
         worktree.ensure_clean("remove worktree", branch, true)?;
     }
 
