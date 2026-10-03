@@ -1,5 +1,8 @@
 //! The `wt remove` command: validate removal targets, approve hooks, and
 //! dispatch each removal to the output handler.
+//!
+//! Target failures are reported independently; later targets still run and
+//! the batch exits unsuccessfully. An interrupt cancels the batch immediately.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -548,27 +551,26 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                     announcer.flush()?;
                     Ok(fate)
                 };
-                // Fates in execution order, which is also the JSON order below.
-                let mut fates = Vec::new();
-                for result in &plans.others {
-                    fates.push(run(result)?);
-                }
-                for result in &plans.branch_only {
-                    fates.push(run(result)?);
-                }
-                if let Some(ref result) = plans.current {
-                    fates.push(run(result)?);
+                let mut failed = !plans.errors.is_empty();
+                let mut json_items = Vec::new();
+                for result in all_plans() {
+                    match run(result) {
+                        Ok(fate) => {
+                            if json_mode {
+                                json_items.push(result.to_json(fate));
+                            }
+                        }
+                        Err(e) => {
+                            if e.interrupt_signal().is_some() {
+                                return Err(e);
+                            }
+                            crate::print_command_error(&e);
+                            failed = true;
+                        }
+                    }
                 }
 
                 if json_mode {
-                    let json_items: Vec<serde_json::Value> = plans
-                        .others
-                        .iter()
-                        .chain(&plans.branch_only)
-                        .chain(plans.current.as_ref())
-                        .zip(fates)
-                        .map(|(removal, fate)| removal.to_json(fate))
-                        .collect();
                     print_json(&json_items)?;
                 }
 
@@ -577,7 +579,7 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                 // it never delays the user-visible progress/success messages.
                 super::process::run_internal_sweep(&repo);
 
-                if !plans.errors.is_empty() {
+                if failed {
                     anyhow::bail!("");
                 }
 
