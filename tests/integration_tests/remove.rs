@@ -1173,14 +1173,16 @@ fn test_remove_interrupt_stops_batch(
 /// everything except the selected Git boundary delegates to real Git.
 #[cfg(unix)]
 #[rstest]
-#[case::status_foreground("status", true, "INT", 130)]
-#[case::status_background("status", false, "TERM", 143)]
-#[case::delete_foreground("delete", true, "TERM", 143)]
-#[case::delete_background("delete", false, "INT", 130)]
+#[case::status_foreground("status", true, false, "INT", 130)]
+#[case::status_background("status", false, false, "TERM", 143)]
+#[case::delete_foreground("delete", true, false, "TERM", 143)]
+#[case::delete_background("delete", false, false, "INT", 130)]
+#[case::detached_status_foreground("status", true, true, "TERM", 143)]
 fn test_remove_git_interrupt_stops_batch(
     mut repo: TestRepo,
     #[case] boundary: &str,
     #[case] foreground: bool,
+    #[case] detached: bool,
     #[case] signal: &str,
     #[case] exit_code: i32,
 ) {
@@ -1190,6 +1192,9 @@ fn test_remove_git_interrupt_stops_batch(
     repo.commit("Add hook arming the Git interrupt shim");
     let interrupted = repo.add_worktree("interrupted");
     let later = repo.add_worktree("later");
+    if detached {
+        repo.detach_head_in_worktree("interrupted");
+    }
     let armed = repo.home_path().join("interrupt-armed");
     let triggered = repo.home_path().join("interrupt-triggered");
     assert!(!armed.exists() && !triggered.exists());
@@ -1221,7 +1226,9 @@ exec {real_git} "$@"
     let mut paths: Vec<_> = std::env::split_paths(&std::env::var_os("PATH").unwrap()).collect();
     paths.insert(0, bin_dir);
     cmd.env("PATH", std::env::join_paths(paths).unwrap());
-    cmd.args(["remove", "interrupted", "later", "--yes", "--format=json"])
+    cmd.arg("remove")
+        .arg(&interrupted)
+        .args(["later", "--yes", "--format=json"])
         .env("WORKTRUNK_TEST_INTERRUPT_ARMED", &armed)
         .env("WORKTRUNK_TEST_INTERRUPT_TRIGGERED", &triggered)
         .env("WORKTRUNK_TEST_INTERRUPT_BOUNDARY", boundary)
