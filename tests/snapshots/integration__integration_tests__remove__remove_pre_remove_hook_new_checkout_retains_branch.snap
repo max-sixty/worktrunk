@@ -60,7 +60,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning pre-remove project hook @ [1m_REPO_.feature-hook-checkout[22m[39m
+[36m◎[39m [36mRunning pre-remove: project @ [1m_REPO_.feature-hook-checkout[22m[39m
 [107m [0m [2m[0m[2m[34mgit[0m[2m worktree add [0m[2m[36m--force[0m[2m ../repo.feature-hook-survivor feature-hook-checkout[0m
 [0mPreparing worktree (checking out 'feature-hook-checkout')
 HEAD is now at 2caa7f2 Add config

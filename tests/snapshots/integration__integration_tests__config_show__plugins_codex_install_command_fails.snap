@@ -63,5 +63,5 @@ exit_code: 1
 
 ----- stderr -----
 [36m◎[39m [36mAdding Codex plugin marketplace...[39m
-[31m✗[39m [31mcodex plugin marketplace add max-sixty/worktrunk failed (exit 1)[39m
+[31m✗[39m [31mcodex plugin marketplace add max-sixty/worktrunk failed (exit code 1)[39m
 [107m [0m error: marketplace add failed

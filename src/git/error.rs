@@ -118,9 +118,9 @@ pub trait ErrorExt {
     ///
     /// When a [`CommandError`] is anywhere in the chain, returns its captured
     /// stderr/stdout via [`CommandError::combined_output`] — that's git's actual
-    /// error message, often multi-line. Otherwise falls back to the top-level
-    /// `Display`, which under the [`Diagnostic`] split is the typed error's
-    /// short single-line label.
+    /// error message, often multi-line. Typed diagnostics keep their top-level
+    /// `Display` label; ordinary errors include their source chain so an I/O
+    /// failure's cause survives when embedded in another error.
     ///
     /// Use this when embedding a sub-error's text inside another typed error's
     /// message field (e.g., `GitError::PushFailed::error`) so the user sees git's
@@ -263,13 +263,35 @@ impl CommandError {
     }
 }
 
+/// One description of a child status, shared by captured and streamed runners.
+/// A signal is the cause; its shell-compatible exit code is only an exit policy.
+pub fn process_exit_description(code: Option<i32>, signal: Option<i32>) -> String {
+    match (code, signal) {
+        (_, Some(signal)) => format!("killed by signal {signal}"),
+        (Some(code), None) => format!("exit code {code}"),
+        (None, None) => "unknown exit status".to_string(),
+    }
+}
+
+/// Plain detail for errors whose Display describes only their own layer.
+pub(crate) fn error_chain_message(error: &(dyn std::error::Error + 'static)) -> String {
+    anyhow::Chain::new(error)
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(": ")
+}
+
 impl std::fmt::Display for CommandError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match (self.exit_code, self.signal) {
-            (Some(code), _) => write!(f, "{} failed (exit {})", self.command_string(), code),
-            (None, Some(sig)) => write!(f, "{} failed (signal {})", self.command_string(), sig),
-            (None, None) => write!(f, "{} failed", self.command_string()),
+        if self.exit_code.is_none() && self.signal.is_none() {
+            return write!(f, "{} failed", self.command_string());
         }
+        write!(
+            f,
+            "{} failed ({})",
+            self.command_string(),
+            process_exit_description(self.exit_code, self.signal)
+        )
     }
 }
 
@@ -1766,17 +1788,12 @@ pub enum WorktrunkError {
     /// (on Unix), `None` for a normal non-zero exit. Callers that must treat
     /// interrupts differently from ordinary failures (e.g., aborting a loop
     /// on Ctrl-C) check `signal` rather than inferring from `code`.
-    ChildProcessExited {
-        code: i32,
-        message: String,
-        signal: Option<i32>,
-    },
+    ChildProcessExited { code: i32, signal: Option<i32> },
     /// Hook command failed
     HookCommandFailed {
         hook_type: HookType,
         command_name: Option<String>,
-        error: String,
-        exit_code: Option<i32>,
+        error: anyhow::Error,
     },
     /// Command was not approved by user (silent error)
     CommandNotApproved,
@@ -1796,15 +1813,17 @@ pub enum WorktrunkError {
 impl std::fmt::Display for WorktrunkError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            WorktrunkError::ChildProcessExited { message, .. } => f.write_str(message),
+            WorktrunkError::ChildProcessExited { code, signal } => {
+                f.write_str(&process_exit_description(Some(*code), *signal))
+            }
             WorktrunkError::HookCommandFailed {
                 hook_type,
                 command_name,
                 error,
                 ..
             } => match command_name {
-                Some(name) => write!(f, "{hook_type} command failed: {name}: {error}"),
-                None => write!(f, "{hook_type} command failed: {error}"),
+                Some(name) => write!(f, "{hook_type} command {name} failed ({error:#})"),
+                None => write!(f, "{hook_type} command failed ({error:#})"),
             },
             // on_skip callback handles the printing for CommandNotApproved;
             // AlreadyDisplayed has already shown its error via output functions.
@@ -1823,7 +1842,7 @@ impl WorktrunkError {
     pub fn exit_code(&self) -> Option<i32> {
         match self {
             WorktrunkError::ChildProcessExited { code, .. } => Some(*code),
-            WorktrunkError::HookCommandFailed { exit_code, .. } => *exit_code,
+            WorktrunkError::HookCommandFailed { error, .. } => error.exit_code(),
             WorktrunkError::AlreadyDisplayed { exit_code } => Some(*exit_code),
             WorktrunkError::Interrupted { signal, .. } => Some(128 + signal),
             WorktrunkError::CommandNotApproved => None,
@@ -1834,8 +1853,8 @@ impl WorktrunkError {
 impl Diagnostic for WorktrunkError {
     fn render(&self) -> String {
         match self {
-            WorktrunkError::ChildProcessExited { message, .. } => {
-                error_message(message).to_string()
+            WorktrunkError::ChildProcessExited { .. } => {
+                error_message(self.to_string()).to_string()
             }
             WorktrunkError::HookCommandFailed {
                 hook_type,
@@ -1845,11 +1864,11 @@ impl Diagnostic for WorktrunkError {
             } => {
                 if let Some(name) = command_name {
                     error_message(cformat!(
-                        "{hook_type} command failed: <bold>{name}</>: {error}"
+                        "{hook_type} command <bold>{name}</> failed ({error:#})"
                     ))
                     .to_string()
                 } else {
-                    error_message(format!("{hook_type} command failed: {error}")).to_string()
+                    error_message(format!("{hook_type} command failed ({error:#})")).to_string()
                 }
             }
             // Silent — caller already handled display; render is empty.
@@ -1879,7 +1898,14 @@ impl Diagnostic for WorktrunkError {
     }
 }
 
-impl std::error::Error for WorktrunkError {}
+impl std::error::Error for WorktrunkError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::HookCommandFailed { error, .. } => Some(error.as_ref()),
+            _ => None,
+        }
+    }
+}
 
 impl ErrorExt for anyhow::Error {
     fn render_diagnostic(&self) -> Option<String> {
@@ -1900,7 +1926,11 @@ impl ErrorExt for anyhow::Error {
                 body
             };
         }
-        self.to_string()
+        if self.render_diagnostic().is_some() {
+            self.to_string()
+        } else {
+            error_chain_message(self.as_ref())
+        }
     }
 
     fn exit_code(&self) -> Option<i32> {
@@ -1916,7 +1946,11 @@ impl ErrorExt for anyhow::Error {
         // `ChildProcessExited { signal }`. An error that already classified
         // as `Interrupted` stays one, so loops that re-check errors bubbling
         // through them can't demote it.
-        match self.downcast_ref::<WorktrunkError>() {
+        match self.chain().find_map(|error| {
+            error
+                .downcast_ref::<WorktrunkError>()
+                .filter(|error| !matches!(error, WorktrunkError::HookCommandFailed { .. }))
+        }) {
             Some(WorktrunkError::ChildProcessExited {
                 signal: Some(sig), ..
             }) => return Some(*sig),
@@ -2148,7 +2182,6 @@ mod tests {
         // ChildProcessExited
         let err: anyhow::Error = WorktrunkError::ChildProcessExited {
             code: 42,
-            message: "test".into(),
             signal: None,
         }
         .into();
@@ -2158,8 +2191,11 @@ mod tests {
         let err: anyhow::Error = WorktrunkError::HookCommandFailed {
             hook_type: HookType::PreMerge,
             command_name: Some("test".into()),
-            error: "failed".into(),
-            exit_code: Some(1),
+            error: WorktrunkError::ChildProcessExited {
+                code: 1,
+                signal: None,
+            }
+            .into(),
         }
         .into();
         assert_eq!(err.exit_code(), Some(1));
@@ -2168,8 +2204,7 @@ mod tests {
         let err: anyhow::Error = WorktrunkError::HookCommandFailed {
             hook_type: HookType::PreMerge,
             command_name: None,
-            error: "failed".into(),
-            exit_code: None,
+            error: anyhow::anyhow!("failed"),
         }
         .into();
         assert_eq!(err.exit_code(), None);
@@ -2196,8 +2231,11 @@ mod tests {
         let inner: anyhow::Error = WorktrunkError::HookCommandFailed {
             hook_type: HookType::PreCommit,
             command_name: Some("lint".into()),
-            error: "failed".into(),
-            exit_code: Some(7),
+            error: WorktrunkError::ChildProcessExited {
+                code: 7,
+                signal: None,
+            }
+            .into(),
         }
         .into();
         assert_eq!(add_hook_skip_hint(inner).exit_code(), Some(7));
@@ -2208,7 +2246,6 @@ mod tests {
         // Signal-derived child exit → the signal
         let err: anyhow::Error = WorktrunkError::ChildProcessExited {
             code: 130,
-            message: "terminated by signal 2".into(),
             signal: Some(2),
         }
         .into();
@@ -2216,7 +2253,6 @@ mod tests {
 
         let err: anyhow::Error = WorktrunkError::ChildProcessExited {
             code: 143,
-            message: "terminated by signal 15".into(),
             signal: Some(15),
         }
         .into();
@@ -2234,7 +2270,6 @@ mod tests {
         // Ordinary non-zero exit → not an interrupt
         let err: anyhow::Error = WorktrunkError::ChildProcessExited {
             code: 1,
-            message: "exit status: 1".into(),
             signal: None,
         }
         .into();
@@ -2285,12 +2320,15 @@ mod tests {
         let inner: anyhow::Error = WorktrunkError::HookCommandFailed {
             hook_type: HookType::PreMerge,
             command_name: Some("test".into()),
-            error: "failed".into(),
-            exit_code: Some(1),
+            error: WorktrunkError::ChildProcessExited {
+                code: 1,
+                signal: None,
+            }
+            .into(),
         }
         .into();
         assert_snapshot!(render_anyhow(&add_hook_skip_hint(inner)), @"
-        [31m✗[39m [31mpre-merge command failed: [1mtest[22m: failed[39m
+        [31m✗[39m [31mpre-merge command [1mtest[22m failed (exit code 1)[39m
         [2m↳[22m [2mTo skip pre-merge hooks, re-run with [4m--no-hooks[24m[22m
         ");
 
@@ -2298,19 +2336,21 @@ mod tests {
         let inner: anyhow::Error = WorktrunkError::HookCommandFailed {
             hook_type: HookType::PreCommit,
             command_name: Some("build".into()),
-            error: "Build failed".into(),
-            exit_code: Some(1),
+            error: WorktrunkError::ChildProcessExited {
+                code: 1,
+                signal: None,
+            }
+            .into(),
         }
         .into();
         assert_snapshot!(render_anyhow(&add_hook_skip_hint(inner)), @"
-        [31m✗[39m [31mpre-commit command failed: [1mbuild[22m: Build failed[39m
+        [31m✗[39m [31mpre-commit command [1mbuild[22m failed (exit code 1)[39m
         [2m↳[22m [2mTo skip pre-commit hooks, re-run with [4m--no-hooks[24m[22m
         ");
 
         // Passes through non-hook errors unchanged (no --no-hooks hint)
         let err: anyhow::Error = WorktrunkError::ChildProcessExited {
             code: 1,
-            message: "test".into(),
             signal: None,
         }
         .into();
@@ -2384,18 +2424,16 @@ mod tests {
             WorktrunkError::HookCommandFailed {
                 hook_type: HookType::PreMerge,
                 command_name: Some("lint".into()),
-                error: "lint failed".into(),
-                exit_code: Some(1),
+                error: WorktrunkError::ChildProcessExited { code: 1, signal: None }.into(),
             }.to_string(),
-            @"pre-merge command failed: lint: lint failed"
+            @"pre-merge command lint failed (exit code 1)"
         );
         assert_snapshot!(
             WorktrunkError::ChildProcessExited {
                 code: 1,
-                message: "exit status: 1".into(),
                 signal: None,
             }.to_string(),
-            @"exit status: 1"
+            @"exit code 1"
         );
         // Silent variants
         assert_eq!(WorktrunkError::CommandNotApproved.to_string(), "");
@@ -2422,26 +2460,27 @@ mod tests {
     fn snapshot_worktrunk_error_display() {
         let err = WorktrunkError::ChildProcessExited {
             code: 1,
-            message: "Command failed".into(),
             signal: None,
         };
-        assert_snapshot!(err.render(), @"[31m✗[39m [31mCommand failed[39m");
+        assert_snapshot!(err.render(), @"[31m✗[39m [31mexit code 1[39m");
 
         let err = WorktrunkError::HookCommandFailed {
             hook_type: HookType::PreMerge,
             command_name: Some("lint".into()),
-            error: "lint failed".into(),
-            exit_code: Some(1),
+            error: WorktrunkError::ChildProcessExited {
+                code: 1,
+                signal: None,
+            }
+            .into(),
         };
-        assert_snapshot!(err.render(), @"[31m✗[39m [31mpre-merge command failed: [1mlint[22m: lint failed[39m");
+        assert_snapshot!(err.render(), @"[31m✗[39m [31mpre-merge command [1mlint[22m failed (exit code 1)[39m");
 
         let err = WorktrunkError::HookCommandFailed {
             hook_type: HookType::PreCreate,
             command_name: None,
-            error: "setup failed".into(),
-            exit_code: None,
+            error: anyhow::anyhow!("setup failed"),
         };
-        assert_snapshot!(err.render(), @"[31m✗[39m [31mpre-start command failed: setup failed[39m");
+        assert_snapshot!(err.render(), @"[31m✗[39m [31mpre-start command failed (setup failed)[39m");
 
         // Silent errors produce empty output
         assert_eq!(format!("{}", WorktrunkError::CommandNotApproved), "");
@@ -2918,7 +2957,7 @@ mod tests {
     fn command_error_display_is_single_line() {
         let err = sample_command_error();
         let s = err.to_string();
-        assert_eq!(s, "git worktree list failed (exit 128)");
+        assert_eq!(s, "git worktree list failed (exit code 128)");
         assert!(!s.contains('\n'));
     }
 
@@ -2936,7 +2975,7 @@ mod tests {
             signal: None,
         };
         assert_eq!(err.command_string(), "git");
-        assert_eq!(err.to_string(), "git failed (exit 1)");
+        assert_eq!(err.to_string(), "git failed (exit code 1)");
     }
 
     #[test]
@@ -3012,9 +3051,9 @@ mod tests {
             exit_code: None,
             signal: Some(11),
         };
-        assert_eq!(err.to_string(), "git fetch failed (signal 11)");
+        assert_eq!(err.to_string(), "git fetch failed (killed by signal 11)");
 
-        // No exit code and no signal (e.g. hand-built in tests): bare summary.
+        // No exit code and no signal (e.g. hand-built in tests): no guessed status.
         let err = CommandError {
             signal: None,
             ..err

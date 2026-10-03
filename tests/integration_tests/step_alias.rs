@@ -2609,3 +2609,42 @@ probe = "echo hello"
         "detached `branch` should read `(unset)`, not `(unused)`, got: {branch_row}"
     );
 }
+
+/// The first alias step moves its worktree, so the next child's cwd is absent.
+#[rstest]
+#[cfg(unix)]
+#[case::serial(false)]
+#[case::concurrent(true)]
+fn test_alias_spawn_failure_has_one_source_detail(repo: TestRepo, #[case] concurrent: bool) {
+    repo.write_test_config(
+        if concurrent {
+            r#"[aliases]
+move-away = ["mv {{ worktree_path }} {{ worktree_path }}.moved", { check = "true", sibling = "true" }]
+"#
+        } else {
+            r#"[aliases]
+move-away = ["mv {{ worktree_path }} {{ worktree_path }}.moved", "true"]
+"#
+        }
+    );
+    let output = repo.wt_command().arg("move-away").output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(!repo.root_path().exists());
+    assert!(repo.root_path().with_file_name("repo.moved").exists());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr.matches("Failed to execute").count(), 1, "{stderr}");
+    assert_eq!(stderr.matches("os error 2").count(), 1, "{stderr}");
+    if concurrent {
+        assert!(stderr.contains("command 'check'"), "{stderr}");
+    }
+    setup_snapshot_settings(&repo).bind(|| {
+        insta::assert_snapshot!(
+            if concurrent {
+                "alias_concurrent_spawn_failure_has_one_source_detail"
+            } else {
+                "alias_spawn_failure_has_one_source_detail"
+            },
+            stderr
+        );
+    });
+}

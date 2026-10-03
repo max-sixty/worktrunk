@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 mod ci_platform;
 mod diff;
 mod error;
+pub(crate) use error::error_chain_message;
 pub mod fsmonitor;
 mod parse;
 #[cfg(unix)]
@@ -88,6 +89,7 @@ pub use error::{
     add_hook_skip_hint,
     // Shared phrasing for an unmerged index ("1 path with unresolved conflicts")
     format_unresolved_conflicts,
+    process_exit_description,
     // Render a single error via Diagnostic if it implements one
     try_render_diagnostic,
 };

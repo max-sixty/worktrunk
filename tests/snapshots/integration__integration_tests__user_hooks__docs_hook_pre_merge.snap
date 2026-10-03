@@ -60,7 +60,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning pre-merge [1mproject:test[22m[39m
+[36m◎[39m [36mRunning pre-merge: [1mtest[22m (project)[39m
 [107m [0m [2m[0m[2m[34mcargo[0m[2m test[0m
 [0m    Finished test [unoptimized + debuginfo] target(s) in 0.12s
      Running unittests src/lib.rs (target/debug/deps/worktrunk-abc123)
@@ -72,7 +72,7 @@ test auth::tests::test_token_refresh ... ok
 test auth::tests::test_token_validation ... ok
 
 test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
-[36m◎[39m [36mRunning pre-merge [1mproject:lint[22m[39m
+[36m◎[39m [36mRunning pre-merge: [1mlint[22m (project)[39m
 [107m [0m [2m[0m[2m[34mcargo[0m[2m clippy[0m
 [0m    Checking worktrunk v0.1.0
     Finished dev [unoptimized + debuginfo] target(s) in 1.23s

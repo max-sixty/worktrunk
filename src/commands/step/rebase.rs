@@ -139,12 +139,7 @@ mod tests {
     use worktrunk::git::{CommandError, ErrorExt, GitError, WorktrunkError};
 
     fn child_exit(code: i32, signal: Option<i32>) -> anyhow::Error {
-        WorktrunkError::ChildProcessExited {
-            code,
-            message: "rebase failed".to_string(),
-            signal,
-        }
-        .into()
+        WorktrunkError::ChildProcessExited { code, signal }.into()
     }
 
     /// The error shape `run_command` (capture mode) actually returns on a

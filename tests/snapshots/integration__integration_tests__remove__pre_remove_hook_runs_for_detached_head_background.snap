@@ -58,6 +58,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning pre-remove project hook[39m
+[36m◎[39m [36mRunning pre-remove: project[39m
 [107m [0m [2m[0m[2m[34mtouch[0m[2m _REPO_/detached-bg-hook-marker.txt[0m
 [0m[36m◎[39m [36mRemoving worktree @ [1m_REPO_.feature-detached-bg[22m in background (detached HEAD, no branch to delete)[39m

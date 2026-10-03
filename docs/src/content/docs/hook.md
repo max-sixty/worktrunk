@@ -308,7 +308,7 @@ The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` 
 
 ```console
 $ wt hook pre-merge
-◎ Running pre-merge project:test
+◎ Running pre-merge: test (project)
   cargo test
     Finished test [unoptimized + debuginfo] target(s) in 0.12s
      Running unittests src/lib.rs (target/debug/deps/worktrunk-abc123)
@@ -320,7 +320,7 @@ test auth::tests::test_token_refresh ... ok
 test auth::tests::test_token_validation ... ok
 
 test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
-◎ Running pre-merge project:lint
+◎ Running pre-merge: lint (project)
   cargo clippy
     Checking worktrunk v0.1.0
     Finished dev [unoptimized + debuginfo] target(s) in 1.23s
