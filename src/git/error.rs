@@ -1916,12 +1916,26 @@ impl ErrorExt for anyhow::Error {
         // `ChildProcessExited { signal }`. An error that already classified
         // as `Interrupted` stays one, so loops that re-check errors bubbling
         // through them can't demote it.
-        match self.downcast_ref::<WorktrunkError>() {
-            Some(WorktrunkError::ChildProcessExited {
-                signal: Some(sig), ..
-            }) => return Some(*sig),
-            Some(WorktrunkError::Interrupted { signal, .. }) => return Some(*signal),
-            _ => {}
+        let typed_signal = |error: &WorktrunkError| match error {
+            WorktrunkError::ChildProcessExited {
+                signal: Some(signal),
+                ..
+            }
+            | WorktrunkError::Interrupted { signal, .. } => Some(*signal),
+            _ => None,
+        };
+        // Presentation contexts such as AlreadyDisplayed must not hide the
+        // original child's signal from foreground cancellation consumers.
+        if let Some(signal) = self
+            .downcast_ref::<WorktrunkError>()
+            .and_then(typed_signal)
+            .or_else(|| {
+                self.chain()
+                    .filter_map(|error| error.downcast_ref::<WorktrunkError>())
+                    .find_map(typed_signal)
+            })
+        {
+            return Some(signal);
         }
         // Capture mode (`Cmd::run`) reports it as a `CommandError` carrying the
         // raw `status.signal()`. Walk the chain so `.context(...)` layers (e.g.
@@ -2221,6 +2235,9 @@ mod tests {
         }
         .into();
         assert_eq!(err.interrupt_signal(), Some(15));
+        let err = err.context(WorktrunkError::AlreadyDisplayed { exit_code: 143 });
+        assert_eq!(err.interrupt_signal(), Some(15));
+        assert_eq!(err.exit_code(), Some(143));
 
         // An already-classified interrupt stays one (idempotence for loops
         // that re-check errors bubbling through them).

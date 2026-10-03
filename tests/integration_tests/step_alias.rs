@@ -593,28 +593,16 @@ greet = "echo USER"
 // Approval tests
 // ============================================================================
 
-/// Helper for alias approval snapshot tests
+/// Snapshot noninteractive alias approval refusal.
 fn snapshot_alias_approval(
     test_name: &str,
     repo: &TestRepo,
     alias_args: &[&str],
-    approve: bool,
     cwd: Option<&std::path::Path>,
 ) {
-    let mut cmd = make_snapshot_cmd(repo, "step", alias_args, cwd);
-    cmd.stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let mut child = cmd.spawn().unwrap();
-
-    {
-        let stdin = child.stdin.as_mut().unwrap();
-        let response = if approve { b"y\n" } else { b"n\n" };
-        stdin.write_all(response).unwrap();
-    }
-
-    let output = child.wait_with_output().unwrap();
+    let output = make_snapshot_cmd(repo, "step", alias_args, cwd)
+        .output()
+        .unwrap();
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -2407,7 +2395,7 @@ s = "wt switch {{ args }}"
     ));
 }
 
-/// Declining approval prevents alias execution
+/// Noninteractive approval refusal prevents alias execution
 #[rstest]
 fn test_alias_approval_decline(mut repo: TestRepo) {
     repo.write_project_config(
@@ -2426,7 +2414,6 @@ deploy = "echo deploying"
         "alias_approval_decline",
         &repo,
         &["deploy"],
-        false,
         Some(&feature_path),
     );
 }

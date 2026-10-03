@@ -1178,6 +1178,7 @@ pub fn execute_user_command(
     argv: &[String],
     display_path: Option<&Path>,
     dir: &Path,
+    redirect_stdout_to_stderr: bool,
 ) -> anyhow::Result<()> {
     super::global::print_outdated_execute_wrapper_warning();
     let command = super::global::format_exec_argv(argv);
@@ -1194,7 +1195,7 @@ pub fn execute_user_command(
     eprintln!("{}", progress_message(header));
     eprintln!("{}", format_bash_with_gutter(&command));
 
-    super::execute(argv.to_vec(), dir)?;
+    super::execute(argv.to_vec(), dir, redirect_stdout_to_stderr)?;
 
     Ok(())
 }

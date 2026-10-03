@@ -984,6 +984,15 @@ fn format_command_error(error: &anyhow::Error) -> String {
     use std::fmt::Write;
     let mut out = String::new();
 
+    // An AlreadyDisplayed context retains a child failure as its source for
+    // structured output, but its presentation marker still suppresses stderr.
+    if matches!(
+        error.downcast_ref::<WorktrunkError>(),
+        Some(WorktrunkError::AlreadyDisplayed { .. })
+    ) {
+        return out;
+    }
+
     // Locate the first error in the chain that implements `Diagnostic`.
     // Most typed errors render directly even when wrapped in
     // `.context(...)`: their styled block is self-contained and the
@@ -1100,7 +1109,33 @@ fn finish_command(verbose_level: u8, command_line: &str, error: Option<&anyhow::
     let _ = output::terminate_output();
 }
 
-fn handle_command_failure(error: anyhow::Error, verbose_level: u8, command_line: &str) -> ! {
+fn handle_command_failure(
+    error: anyhow::Error,
+    verbose_level: u8,
+    command_line: &str,
+    switch_json: bool,
+) -> ! {
+    if switch_json {
+        let message = error.display_message();
+        // --execute marks a child failure AlreadyDisplayed to suppress duplicate
+        // stderr, but retains the actual producer as its source for JSON.
+        let message = if let Some(signal) = error.interrupt_signal() {
+            format!("Interrupted by signal {signal}")
+        } else if message.is_empty() {
+            error.root_cause().to_string()
+        } else if worktrunk::git::CommandError::find_in(&error).is_some() {
+            message
+        } else if let Some(diagnostic) = error.render_diagnostic() {
+            // Typed errors keep their captured detail and recovery hints in
+            // Diagnostic, while Display intentionally returns only the title.
+            diagnostic
+        } else {
+            // Keep context and source detail for discovery/configuration
+            // failures; the outer caption alone hides the actual cause.
+            format!("{error:#}")
+        };
+        commands::worktree::print_switch_json_error(&message);
+    }
     print_command_error(&error);
     print_cwd_removed_hint_if_needed();
 
@@ -1163,6 +1198,10 @@ fn main() {
         yes,
         command,
     } = cli;
+    let switch_json = matches!(
+        command.as_ref(),
+        Some(Commands::Switch(args)) if args.format == SwitchFormat::Json
+    );
     // `WORKTRUNK_VERBOSE` provides a baseline verbosity the `-v`/`-vv` flags
     // raise but never lower (`max`). It also drives shell completion, which
     // answers and returns above, before `parse_cli` — see
@@ -1220,7 +1259,7 @@ fn main() {
         })
     });
     if let Some(Err(error)) = git_version_result {
-        handle_command_failure(error, verbose, &command_line);
+        handle_command_failure(error, verbose, &command_line, switch_json);
     }
 
     {
@@ -1237,7 +1276,7 @@ fn main() {
 
     match result {
         Ok(()) => finish_command(verbose, &command_line, None),
-        Err(error) => handle_command_failure(error, verbose, &command_line),
+        Err(error) => handle_command_failure(error, verbose, &command_line, switch_json),
     }
 }
 
