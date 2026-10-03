@@ -1005,7 +1005,7 @@ These appear across all columns while the table is loading:
 
 | Symbol | Meaning |
 |--------|---------|
-| `·` | Data is loading, or collection timed out / branch too stale |
+| `·` | Data is loading, or collection timed out |
 
 ---
 
@@ -1053,9 +1053,9 @@ How "no value" reads:
 - **Absent** — nothing to report: not applicable (`worktree` on a branch-only
   row), not requested this run (the envelope's `collected` records what was),
   or determined-empty (no PR, no lock, not integrated).
-- **`null`** — requested but not determined: a task timed out, the branch was
-  too stale for the expensive checks, or a forge fetch failed. This is the
-  JSON form of the table's `·` placeholder.
+- **`null`** — requested but not determined: a task timed out, a check was
+  skipped, or a forge fetch failed. This is the JSON form of the table's `·`
+  placeholder.
 
 jq treats absent and `null` identically in path expressions, so filters need
 no null checks; `has()` distinguishes the two when it matters.
@@ -1138,7 +1138,7 @@ Independent facts; the table's priority-collapsed symbol is `display.state`.
 | `behind` | number/null | Commits behind the default branch (null for orphans) |
 | `diff` | object/null | Lines changed vs the default branch: `{added, deleted}` |
 | `orphan` | boolean/null | No common ancestor with the default branch |
-| `integration` | object/null | `{reason}` — which check found the content [integrated](/remove/#branch-cleanup) (see [integration reasons](#integration-reasons)); absent when determined not-integrated, null when a dirty tree skipped the checks |
+| `integration` | object/null | `{reason}` — which check found the content [integrated](/remove/#branch-cleanup) (see [integration reasons](#integration-reasons)); absent when determined not-integrated, null when undetermined (a check timed out or was skipped) |
 | `merge_conflicts` | boolean/null | Merging into the default branch would conflict, simulated locally with `git merge-tree` |
 
 ### upstream object
@@ -1210,7 +1210,7 @@ The single highest-priority state describing the branch's relation to the defaul
 
 ### integration reasons
 
-`default_branch.integration.reason` records which check matched. Checks run cheapest-first and the first match wins. JSON-only — every reason renders as the same `⊂`:
+`default_branch.integration.reason` records which check matched. Checks run cheapest-first and the first match wins. The reason itself is JSON-only: the table shows `"same_commit"` as `_` (or `–` with uncommitted changes) and every other reason as `⊂` when the working tree is clean:
 
 | Value | Meaning |
 |-------|---------|
