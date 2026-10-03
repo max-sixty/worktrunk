@@ -20,7 +20,9 @@ use worktrunk::trace::Span;
 
 use super::hook_announcement::format_source_summary;
 use super::hook_filter::HookSource;
-use crate::output::concurrent::{ConcurrentCommand, run_concurrent_commands};
+use crate::output::concurrent::{
+    ConcurrentCommand, ConcurrentCommandError, run_concurrent_commands,
+};
 use crate::output::{DirectivePassthrough, execute_shell_command};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -541,7 +543,18 @@ fn run_concurrent_group(
         })
         .collect();
 
-    let outcomes = run_concurrent_commands(&specs)?;
+    let outcomes = match run_concurrent_commands(&specs) {
+        Ok(outcomes) => outcomes,
+        Err(error) => {
+            let error = error.downcast::<ConcurrentCommandError>()?;
+            return handle_command_error(
+                error.error,
+                &cmds[error.index],
+                &fg_step.error_wrapper,
+                failure_strategy,
+            );
+        }
+    };
 
     let mut first_failure: Option<anyhow::Error> = None;
     for (outcome, cmd) in outcomes.into_iter().zip(cmds) {
@@ -658,11 +671,14 @@ pub fn hook_error_wrapper(hook_type: HookType) -> ErrorWrapper {
 ///
 /// Children that report a child exit code surface as `AlreadyDisplayed` so
 /// `wt` propagates the alias's exit status. Anything else (template errors,
-/// spawn failures) is wrapped with the alias name.
+/// spawn failures) is wrapped with the alias and configured member names.
 pub fn alias_error_wrapper(alias_name: String) -> ErrorWrapper {
-    Box::new(move |_cmd, error| match error.exit_code() {
+    Box::new(move |cmd, error| match error.exit_code() {
         Some(code) => WorktrunkError::AlreadyDisplayed { exit_code: code }.into(),
-        None => error.context(format!("Failed to run alias '{alias_name}'")),
+        None => error.context(match &cmd.name {
+            Some(name) => format!("Failed to run alias '{alias_name}' command '{name}'"),
+            None => format!("Failed to run alias '{alias_name}'"),
+        }),
     })
 }
 

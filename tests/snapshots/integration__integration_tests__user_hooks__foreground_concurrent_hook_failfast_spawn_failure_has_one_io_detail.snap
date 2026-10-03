@@ -1,0 +1,11 @@
+---
+source: tests/integration_tests/user_hooks.rs
+expression: stderr
+---
+[36m◎[39m [36mRunning pre-merge: [1mmove[22m (user)[39m
+[107m [0m [2m[0m[2m[34mmv[0m[2m _REPO_.move-away _REPO_.move-away.moved[0m
+[0m[36m◎[39m [36mRunning pre-merge: [1mcheck[22m (user)[39m
+[107m [0m [2m[0m[2m[34mtrue[0m
+[36m◎[39m [36mRunning pre-merge: [1msibling[22m (user)[39m
+[107m [0m [2m[0m[2m[34mtrue[0m
+[31m✗[39m [31mpre-merge command [1mcheck[22m failed (Failed to execute sh @ _REPO_.move-away: No such file or directory (os error 2))[39m

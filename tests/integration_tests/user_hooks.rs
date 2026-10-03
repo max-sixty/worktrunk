@@ -4521,27 +4521,44 @@ fn test_hook_failure_status_and_source(
     });
 }
 
-/// A post-hook moves its worktree, so the next spawn fails. Warn mode must
-/// show the complete OS cause once while retaining its continue policy.
+/// A hook moves its worktree, so the next spawn fails. Serial and concurrent
+/// paths retain the failing command and OS cause under Warn and FailFast.
 #[rstest]
 #[cfg(unix)]
-fn test_foreground_hook_spawn_failure_has_one_io_detail(mut repo: TestRepo) {
+#[case::warn_serial(true, false)]
+#[case::warn_concurrent(true, true)]
+#[case::failfast_serial(false, false)]
+#[case::failfast_concurrent(false, true)]
+fn test_foreground_hook_spawn_failure_has_one_io_detail(
+    mut repo: TestRepo,
+    #[case] warn: bool,
+    #[case] concurrent: bool,
+) {
     let worktree = repo.add_worktree("move-away");
-    repo.write_test_config(
-        r#"post-start = [
+    let hook = if warn { "post-start" } else { "pre-merge" };
+    let config = if concurrent {
+        r#"[
+    { move = "mv {{ worktree_path }} {{ worktree_path }}.moved" },
+    { check = "true", sibling = "true" },
+]
+"#
+    } else {
+        r#"[
     { move = "mv {{ worktree_path }} {{ worktree_path }}.moved" },
     { check = "true" },
 ]
-"#,
-    );
+"#
+    };
+    repo.write_test_config(&format!("{hook} = {config}"));
     let output = repo
         .wt_command()
-        .args(["hook", "post-start", "--foreground"])
+        .args(["hook", hook, "--foreground", "--yes"])
         .current_dir(&worktree)
         .output()
         .unwrap();
-    assert!(
-        output.status.success(),
+    assert_eq!(
+        output.status.code(),
+        Some(if warn { 0 } else { 1 }),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -4556,6 +4573,15 @@ fn test_foreground_hook_spawn_failure_has_one_io_detail(mut repo: TestRepo) {
     assert_eq!(stderr.matches("Failed to execute").count(), 1, "{stderr}");
     assert_eq!(stderr.matches("os error 2").count(), 1, "{stderr}");
     setup_snapshot_settings(&repo).bind(|| {
-        assert_snapshot!("foreground_hook_spawn_failure_has_one_io_detail", stderr);
+        assert_snapshot!(
+            match (warn, concurrent) {
+                (true, false) => "foreground_hook_spawn_failure_has_one_io_detail",
+                (true, true) => "foreground_concurrent_hook_spawn_failure_has_one_io_detail",
+                (false, false) => "foreground_hook_failfast_spawn_failure_has_one_io_detail",
+                (false, true) =>
+                    "foreground_concurrent_hook_failfast_spawn_failure_has_one_io_detail",
+            },
+            stderr
+        );
     });
 }

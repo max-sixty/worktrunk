@@ -30,9 +30,9 @@
 //! signal escalates every still-live pgroup to SIGKILL. Closing the
 //! signal-hook handle on shutdown unblocks the listener.
 //!
-//! All children always run to completion. Per-child exit status is returned
-//! for the caller to fold into a failure, matching alias `thread::scope` and
-//! pipeline `run_concurrent_group` semantics.
+//! Once every child has spawned, all run to completion and return per-child
+//! outcomes. A spawn failure reaps earlier children and returns the failing
+//! input index; the pipeline owns command identity and failure policy.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
@@ -77,9 +77,31 @@ pub struct ConcurrentCommand<'a> {
     pub scrub_git_discovery: bool,
 }
 
+/// A command that could not be spawned after its preceding children were reaped.
+/// The pipeline uses the input index to apply the same identity and failure
+/// policy as serial commands; setup errors have no command index.
+#[derive(Debug)]
+pub struct ConcurrentCommandError {
+    pub index: usize,
+    pub error: anyhow::Error,
+}
+
+impl std::fmt::Display for ConcurrentCommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.error.fmt(f)
+    }
+}
+
+impl std::error::Error for ConcurrentCommandError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.error.as_ref())
+    }
+}
+
 /// Run every command concurrently and return each per-child result in input
 /// order. `Err(WorktrunkError::ChildProcessExited { .. })` signals a non-zero
-/// exit; other errors come from spawn/IO failures.
+/// exit. Spawn failures return [`ConcurrentCommandError`] after cleaning up
+/// already-spawned children; other outer errors come from executor setup.
 ///
 /// When the `WORKTRUNK_TEST_SERIAL_CONCURRENT` env var is set, commands run
 /// sequentially in input order — same prefix-line output path, just one child
@@ -117,7 +139,7 @@ pub fn run_concurrent_commands(
                     // record it rather than leaving the trace guard unresolved.
                     prior.trace.complete(false);
                 }
-                return Err(e);
+                return Err(ConcurrentCommandError { index: i, error: e }.into());
             }
         }
     }
@@ -508,6 +530,31 @@ mod tests {
             assert_eq!(error.to_string(), description);
             assert_eq!(error.exit_code(), Some(code));
         }
+    }
+
+    #[test]
+    fn test_concurrent_spawn_failure_retains_command_index_and_io_source() {
+        let cwd = tempfile::tempdir().unwrap();
+        let missing = cwd.path().join("missing");
+        let directives = DirectivePassthrough::default();
+        let specs = [cwd.path(), missing.as_path()].map(|working_dir| ConcurrentCommand {
+            label: "check",
+            expanded: "true",
+            working_dir,
+            context_json: "{}",
+            log_label: None,
+            directives: &directives,
+            scrub_git_discovery: false,
+        });
+        let error = run_concurrent_commands(&specs)
+            .unwrap_err()
+            .downcast::<ConcurrentCommandError>()
+            .unwrap();
+        assert_eq!(error.index, 1);
+        assert_eq!(
+            error.error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::NotFound
+        );
     }
 
     /// A command with a `log_label` exercises the `log_command` branch in

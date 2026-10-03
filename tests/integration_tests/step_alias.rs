@@ -2634,6 +2634,9 @@ move-away = ["mv {{ worktree_path }} {{ worktree_path }}.moved", "true"]
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(stderr.matches("Failed to execute").count(), 1, "{stderr}");
     assert_eq!(stderr.matches("os error 2").count(), 1, "{stderr}");
+    if concurrent {
+        assert!(stderr.contains("command 'check'"), "{stderr}");
+    }
     setup_snapshot_settings(&repo).bind(|| {
         insta::assert_snapshot!(
             if concurrent {
