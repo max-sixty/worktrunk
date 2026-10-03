@@ -104,6 +104,39 @@ pub struct MergeProbeResult {
     pub is_patch_id_match: bool,
 }
 
+/// How far the patch-id squash-merge scan for one (branch, merge-base) pair
+/// has got, cached so a target that moves forward is scanned only from where
+/// the last check stopped.
+///
+/// The filter path and the branch's patch-id depend only on the branch and
+/// the merge-base, so when `scanned_target` is an ancestor of `target`, the
+/// candidates in `merge_base..target` are those in `merge_base..scanned_target`
+/// plus those in `scanned_target..target`. A match stays a match as the target
+/// moves forward: the matching commit is still on it. A miss that has used up
+/// the cap stays a miss, and a later check costs no walk at all.
+///
+/// A resumed scan counts the earlier candidates first, where a fresh scan
+/// orders the whole range by commit date. The two can disagree on which
+/// candidates fall inside the cap when the new commits carry older dates than
+/// ones already scanned, as when the target merges in a long-lived side
+/// branch. That only moves how far back the check reaches: a match is always
+/// a target commit with the branch's patch-id. It also means the probe result
+/// cached per (branch, target) can depend on which earlier targets were
+/// checked.
+///
+/// The cache key includes the cap, so an entry recorded under another cap is
+/// never read: a miss that used up a smaller cap left candidates undiffed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct PatchIdScan {
+    /// The target commit the scan reached. Once `candidates` hits the cap,
+    /// later candidates up to it were never diffed.
+    pub scanned_target: String,
+    /// Candidate commits diffed so far, oldest first.
+    pub candidates: usize,
+    /// Whether one of them matched the branch's patch-id.
+    pub matched: bool,
+}
+
 /// How many target commits since the merge-base the patch-id squash-merge
 /// fallback will walk at all. Past it, the check gives up before any other
 /// work.
@@ -148,6 +181,8 @@ const PATCH_ID_SCAN_MAX_RANGE: usize = 10_000;
 /// merge-base up to just before it; what piles up behind it is the target's
 /// later edits to the same files.
 ///
+/// The count carries across checks; see [`PatchIdScan`].
+///
 /// `500` is conservative because count is only a rough proxy for cost — the
 /// per-commit work scales with `changed_files × changed_lines`, so a few
 /// hundred lockfile-bump or large-refactor squashes can be slower than a few
@@ -164,7 +199,7 @@ const PATCH_ID_SCAN_MAX_RANGE: usize = 10_000;
 /// hundreds of times, then squash-merged as is; by then the target has
 /// usually changed the patch's context lines too, so no patch-id would match
 /// anyway. Commits to other files, however many, don't count.
-const PATCH_ID_SCAN_MAX_CANDIDATES: usize = 500;
+pub(super) const PATCH_ID_SCAN_MAX_CANDIDATES: usize = 500;
 
 /// Outcome of `git merge-tree --write-tree`, classified by exit code.
 ///
@@ -435,7 +470,8 @@ impl Repository {
     /// the target is more than [`PATCH_ID_SCAN_MAX_RANGE`] commits past the
     /// merge-base. Otherwise only target commits that touch one path the
     /// branch changed can match, so only those are diffed, oldest first and at
-    /// most [`PATCH_ID_SCAN_MAX_CANDIDATES`] of them.
+    /// most [`PATCH_ID_SCAN_MAX_CANDIDATES`] of them, resuming from a cached
+    /// [`PatchIdScan`].
     ///
     /// Returns `Ok(true)` if a matching squash-merge commit is found on the target,
     /// `Ok(false)` otherwise (including past either cap, or when patch-id
@@ -445,6 +481,21 @@ impl Repository {
             return Ok(false);
         };
 
+        // Resume from an earlier scan whose target is an ancestor of this
+        // one. A settled answer returns before the range pre-flight: a match
+        // found under the range cap is still a match past it. Any other
+        // cached target (a rewritten target, a diverged upstream) means a
+        // fresh scan from the merge-base.
+        let resumed = super::sha_cache::patch_id_scan(self, branch, &merge_base).filter(|scan| {
+            self.is_ancestor_by_sha(&scan.scanned_target, target)
+                .unwrap_or(false)
+        });
+        if let Some(scan) = &resumed
+            && (scan.matched || scan.candidates >= PATCH_ID_SCAN_MAX_CANDIDATES)
+        {
+            return Ok(scan.matched);
+        }
+
         // Bound the target-side history walk. The path-limited `rev-list`
         // below diffs a tree per commit in the range, so an old branch tens of
         // thousands of commits behind a fast-moving tip would turn one
@@ -452,11 +503,13 @@ impl Repository {
         // target moves — visible as `wt step prune` / `wt list` going silent.
         // A `git rev-list --count` pre-flight (graph walk only, no diffs) is
         // cheap; bail above the cap. See [`PATCH_ID_SCAN_MAX_RANGE`].
+        // Output that isn't a count is an error, never zero, which would let
+        // the walk run unbounded.
         let target_commit_count: usize = self
             .run_command(&["rev-list", "--count", &format!("{merge_base}..{target}")])?
             .trim()
             .parse()
-            .unwrap_or(0);
+            .context("Failed to parse git rev-list --count output")?;
         if target_commit_count > PATCH_ID_SCAN_MAX_RANGE {
             tracing::debug!(
                 target_commit_count,
@@ -466,6 +519,10 @@ impl Repository {
             );
             return Ok(false);
         }
+
+        let (scan_from, scanned) = resumed
+            .map(|scan| (scan.scanned_target, scan.candidates))
+            .unwrap_or_else(|| (merge_base.clone(), 0));
 
         // The paths the branch changed, with their status. `diff-tree`
         // without `-M`, like the branch-side patch below, so a rename lists
@@ -495,11 +552,11 @@ impl Repository {
 
         // Filter on one of those paths — see [`PATCH_ID_SCAN_MAX_CANDIDATES`]
         // for why one is sound. Prefer a file the branch added: the target
-        // can't have touched it before the squash, so the squash is its
-        // oldest candidate. A path containing a line break can't be written
-        // on one line of `rev-list --stdin`, so it is never the filter; a
-        // branch whose every path has one falls back to every commit in the
-        // range.
+        // rarely touches it before the squash (only by adding the same path
+        // itself), so the squash is usually its oldest candidate. A path
+        // containing a line break can't be written on one line of `rev-list
+        // --stdin`, so it is never the filter; a branch whose every path has
+        // one falls back to every commit in the range.
         let filter_path = changes
             .iter()
             .filter(|(_, path)| !path.iter().any(|b| matches!(b, b'\n' | b'\r')))
@@ -516,7 +573,7 @@ impl Repository {
         // the merges themselves: `diff-tree` emits no patch for a merge and a
         // squash merge has one parent, so a merge could only take a cap slot.
         // `--reverse` lists them oldest first, for the cap below.
-        let mut rev_list_input = format!("{merge_base}..{target}\n").into_bytes();
+        let mut rev_list_input = format!("{scan_from}..{target}\n").into_bytes();
         if let Some(path) = filter_path {
             rev_list_input.extend_from_slice(b"--\n");
             rev_list_input.extend_from_slice(path);
@@ -540,18 +597,30 @@ impl Repository {
         // seconds of work. The cut happens here, not with `--max-count`,
         // which git applies before `--reverse` and so would keep the newest.
         // Why the oldest: see [`PATCH_ID_SCAN_MAX_CANDIDATES`].
-        let target_commits: String = candidates
-            .split_inclusive('\n')
-            .take(PATCH_ID_SCAN_MAX_CANDIDATES)
-            .collect();
+        let budget = PATCH_ID_SCAN_MAX_CANDIDATES - scanned;
+        let target_commits: String = candidates.split_inclusive('\n').take(budget).collect();
         let candidate_count = candidates.lines().count();
-        if candidate_count > PATCH_ID_SCAN_MAX_CANDIDATES {
+        if candidate_count > budget {
             tracing::debug!(
                 candidate_count,
-                merge_base = %merge_base,
+                scan_from = %scan_from,
                 target = %target,
-                "patch-id squash-merge check: {candidate_count} candidate commits in {merge_base}..{target}; diffing the oldest {PATCH_ID_SCAN_MAX_CANDIDATES}"
+                "patch-id squash-merge check: {candidate_count} candidate commits in {scan_from}..{target}; diffing the oldest {budget}"
             );
+        }
+        let mut scan = PatchIdScan {
+            scanned_target: target.to_string(),
+            candidates: scanned + candidate_count.min(budget),
+            matched: false,
+        };
+
+        // No new target commit touches the filter path, so nothing new can
+        // match: the common case for an unmerged branch that added a file,
+        // and for a resumed scan whose target moved on other files. Skip the
+        // branch-side diff and the patch-id pipeline.
+        if candidate_count == 0 {
+            super::sha_cache::put_patch_id_scan(self, branch, &merge_base, &scan);
+            return Ok(false);
         }
 
         // Compute the squashed patch-id (combined diff of all branch changes).
@@ -578,9 +647,11 @@ impl Repository {
             Some(target_commits.into_bytes()),
         )?;
 
-        Ok(target_pids
+        scan.matched = target_pids
             .lines()
-            .any(|line| line.split_whitespace().next() == Some(branch_pid)))
+            .any(|line| line.split_whitespace().next() == Some(branch_pid));
+        super::sha_cache::put_patch_id_scan(self, branch, &merge_base, &scan);
+        Ok(scan.matched)
     }
 
     /// Pipe the output of `git <args>` directly into `git patch-id --verbatim`
@@ -630,9 +701,9 @@ impl Repository {
     /// used by both `wt list` (parallel tasks) and `wt remove`/`wt merge`
     /// (sequential via [`compute_integration_lazy`]).
     ///
-    /// The probe result depends only on the two committed trees (the patch-id
-    /// fallback reads commits in `merge_base..target`, also a pure function of
-    /// the two SHAs). Asymmetric: branch first, then target — the merge-tree
+    /// The merge-tree result depends only on the two SHAs; the patch-id
+    /// fallback can also depend on earlier checks through its cached
+    /// `PatchIdScan`. Asymmetric: branch first, then target — the merge-tree
     /// result is compared against target's tree.
     pub fn merge_integration_probe_by_sha(
         &self,
@@ -1301,11 +1372,47 @@ mod patch_id_tests {
     }
 
     fn is_squash_merged(test: &TestRepo) -> bool {
+        is_squash_merged_at(test, "refs/heads/target")
+    }
+
+    fn is_squash_merged_at(test: &TestRepo, target: &str) -> bool {
         let repo = Repository::at(test.root_path()).unwrap();
         let feature = rev_parse(&repo, "refs/heads/feature");
-        let target = rev_parse(&repo, "refs/heads/target");
+        let target = rev_parse(&repo, target);
         repo.is_squash_merged_via_patch_id(&feature, &target)
             .unwrap()
+    }
+
+    /// `feature` and `base` resolved to SHAs, the key of their cached scan.
+    fn feature_and_base(test: &TestRepo) -> (Repository, String, String) {
+        let repo = Repository::at(test.root_path()).unwrap();
+        let feature = rev_parse(&repo, "refs/heads/feature");
+        let base = rev_parse(&repo, "refs/heads/base");
+        (repo, feature, base)
+    }
+
+    fn cached_scan(test: &TestRepo) -> Option<PatchIdScan> {
+        let (repo, feature, base) = feature_and_base(test);
+        crate::git::repository::sha_cache::patch_id_scan(&repo, &feature, &base)
+    }
+
+    fn put_scan(test: &TestRepo, scan: &PatchIdScan) {
+        let (repo, feature, base) = feature_and_base(test);
+        crate::git::repository::sha_cache::put_patch_id_scan(&repo, &feature, &base, scan);
+    }
+
+    fn scan(
+        test: &TestRepo,
+        scanned_target: &str,
+        candidates: usize,
+        matched: bool,
+    ) -> PatchIdScan {
+        let repo = Repository::at(test.root_path()).unwrap();
+        PatchIdScan {
+            scanned_target: rev_parse(&repo, scanned_target),
+            candidates,
+            matched,
+        }
     }
 
     #[test]
@@ -1400,7 +1507,7 @@ mod patch_id_tests {
 
         assert!(
             is_squash_merged(&test),
-            "the filter path should be one the branch added, which the target can't touch before the squash"
+            "the filter path should be one the branch added, which the target doesn't touch before the squash"
         );
     }
 
@@ -1438,6 +1545,129 @@ mod patch_id_tests {
         assert!(
             !is_squash_merged(&test),
             "should bail when base..target exceeds {PATCH_ID_SCAN_MAX_RANGE} commits"
+        );
+    }
+
+    #[test]
+    fn no_candidates_records_scan_without_diffing() {
+        let test = TestRepo::new();
+        // The feature changes `file` and adds `new`. Before the squash, the
+        // target only touches `file`, so at target~1 filtering on `new`
+        // leaves no candidate and the check returns before any patch-id work.
+        build_with_added(
+            &test,
+            "file",
+            Some("new"),
+            Pads(1, Padding::SameFile),
+            NO_PADS,
+        );
+
+        assert!(!is_squash_merged_at(&test, "refs/heads/target~1"));
+        assert_eq!(
+            cached_scan(&test),
+            Some(scan(&test, "refs/heads/target~1", 0, false)),
+            "a scan with no candidates should still be recorded"
+        );
+    }
+
+    #[test]
+    fn resumes_scan_as_target_moves_forward() {
+        let test = TestRepo::new();
+        // target~2 restores `A` after two pads to `file`; target~1 is the
+        // squash; target is one empty pad after it.
+        build(
+            &test,
+            "file",
+            Pads(2, Padding::SameFile),
+            Pads(1, Padding::Empty),
+        );
+
+        assert!(!is_squash_merged_at(&test, "refs/heads/target~2"));
+        assert_eq!(
+            cached_scan(&test),
+            Some(scan(&test, "refs/heads/target~2", 3, false))
+        );
+
+        // Resumed from target~2, the squash is the one new candidate, and
+        // it counts after the three already diffed.
+        let matched = Some(scan(&test, "refs/heads/target~1", 4, true));
+        assert!(is_squash_merged_at(&test, "refs/heads/target~1"));
+        assert_eq!(cached_scan(&test), matched);
+
+        // A match stays a match as the target moves on; the cached scan
+        // answers without scanning again.
+        assert!(is_squash_merged(&test));
+        assert_eq!(cached_scan(&test), matched);
+    }
+
+    #[test]
+    fn exhausted_scan_stays_negative_as_target_moves() {
+        let test = TestRepo::new();
+        // PATCH_ID_SCAN_MAX_CANDIDATES pads to `file` plus the one restoring
+        // `A` land before the squash, so a check at target~1 uses up the cap.
+        build(
+            &test,
+            "file",
+            Pads(PATCH_ID_SCAN_MAX_CANDIDATES, Padding::SameFile),
+            NO_PADS,
+        );
+        let exhausted = Some(scan(
+            &test,
+            "refs/heads/target~1",
+            PATCH_ID_SCAN_MAX_CANDIDATES,
+            false,
+        ));
+
+        assert!(!is_squash_merged_at(&test, "refs/heads/target~1"));
+        assert_eq!(cached_scan(&test), exhausted);
+
+        // The squash lands past the cap; the cached scan answers without a
+        // walk, so the entry still names target~1.
+        assert!(!is_squash_merged(&test));
+        assert_eq!(cached_scan(&test), exhausted);
+    }
+
+    #[test]
+    fn rescans_when_cached_target_is_not_an_ancestor() {
+        let test = TestRepo::new();
+        build(&test, "file", NO_PADS, NO_PADS);
+        // An exhausted scan recorded against a commit off the target's
+        // history, as after the target was rewritten. Resuming from it would
+        // answer `false`; a fresh scan finds the squash.
+        put_scan(
+            &test,
+            &scan(
+                &test,
+                "refs/heads/feature",
+                PATCH_ID_SCAN_MAX_CANDIDATES,
+                false,
+            ),
+        );
+
+        assert!(
+            is_squash_merged(&test),
+            "a cached scan of another history must not answer for this target"
+        );
+    }
+
+    #[test]
+    fn cached_match_holds_past_range_cap() {
+        let test = TestRepo::new();
+        // `skips_scan_past_range_cap`'s topology, where a fresh check gives
+        // up on the range. A match recorded at the squash, before the target
+        // moved that far, still answers.
+        build(
+            &test,
+            "file",
+            NO_PADS,
+            Pads(PATCH_ID_SCAN_MAX_RANGE, Padding::Empty),
+        );
+        let squash = format!("refs/heads/target~{PATCH_ID_SCAN_MAX_RANGE}");
+        put_scan(&test, &scan(&test, &squash, 1, true));
+
+        assert!(
+            is_squash_merged(&test),
+            "a cached match must answer before the range pre-flight"
         );
     }
 
