@@ -445,7 +445,6 @@ fn exec_in_pty_shell(
             cmd.arg(script);
         }
         "fish" => {
-            // Startup config can prepend real cargo ahead of the test's stub.
             cmd.arg("--no-config");
             cmd.arg("-c");
             cmd.arg(script);
@@ -1788,6 +1787,28 @@ approved-commands = ["echo 'fish background task'"]
             env::var("PATH").unwrap_or_default()
         );
 
+        // Fish startup configuration can prepend PATH and displace the cargo
+        // stub. Shell tests must bypass it, just as bash bypasses ~/.bashrc.
+        let startup_bin = repo.home_path().join("startup-bin");
+        fs::create_dir_all(&startup_bin).unwrap();
+        let startup_cargo = startup_bin.join("cargo");
+        fs::write(
+            &startup_cargo,
+            "#!/bin/sh\necho 'unexpected startup cargo' >&2\nexit 23\n",
+        )
+        .unwrap();
+        fs::set_permissions(&startup_cargo, fs::Permissions::from_mode(0o755)).unwrap();
+        let fish_config = repo.home_path().join(".config/fish");
+        fs::create_dir_all(&fish_config).unwrap();
+        fs::write(
+            fish_config.join("config.fish"),
+            format!(
+                "fish_add_path {}\n",
+                shell_quote(&startup_bin.to_string_lossy())
+            ),
+        )
+        .unwrap();
+
         // Get the worktrunk source directory (where this test is running from)
         // This is the directory that contains Cargo.toml with the workspace
         let worktrunk_source = canonicalize(&env::current_dir().unwrap()).unwrap();
@@ -1809,8 +1830,20 @@ approved-commands = ["echo 'fish background task'"]
 
         let config_path = repo.test_config_path().to_string_lossy().to_string();
         let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
+<<<<<<< HEAD
         let stub_marker_path = stub_marker.to_string_lossy().to_string();
+||||||| 63b93c659
+=======
+        let fixture_home = repo.home_path().to_string_lossy().to_string();
+        let xdg_config = repo
+            .home_path()
+            .join(".config")
+            .to_string_lossy()
+            .to_string();
+>>>>>>> origin/main
         let env_vars: Vec<(&str, &str)> = vec![
+            ("HOME", &fixture_home),
+            ("XDG_CONFIG_HOME", &xdg_config),
             ("PATH", &stub_path),
             ("WORKTRUNK_TEST_CARGO_STUB_MARKER", &stub_marker_path),
             ("CLICOLOR_FORCE", "1"),
