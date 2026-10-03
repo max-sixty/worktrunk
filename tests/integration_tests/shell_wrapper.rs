@@ -1830,17 +1830,13 @@ approved-commands = ["echo 'fish background task'"]
 
         let config_path = repo.test_config_path().to_string_lossy().to_string();
         let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
-<<<<<<< HEAD
         let stub_marker_path = stub_marker.to_string_lossy().to_string();
-||||||| 63b93c659
-=======
         let fixture_home = repo.home_path().to_string_lossy().to_string();
         let xdg_config = repo
             .home_path()
             .join(".config")
             .to_string_lossy()
             .to_string();
->>>>>>> origin/main
         let env_vars: Vec<(&str, &str)> = vec![
             ("HOME", &fixture_home),
             ("XDG_CONFIG_HOME", &xdg_config),

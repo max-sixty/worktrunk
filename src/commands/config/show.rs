@@ -590,7 +590,7 @@ fn render_diagnostics(out: &mut String, repo: Option<&Repository>) -> anyhow::Re
                 "GitHub",
                 ci_tools.gh_installed,
                 ci_tools.gh_authenticated,
-            )?;
+            );
         }
         Some((_, ForgeKind::GitLab)) => {
             let ci_tools = CiToolsStatus::detect(None);
@@ -600,7 +600,7 @@ fn render_diagnostics(out: &mut String, repo: Option<&Repository>) -> anyhow::Re
                 "GitLab",
                 ci_tools.glab_installed,
                 ci_tools.glab_authenticated,
-            )?;
+            );
         }
         Some((_, ForgeKind::Gitea)) => {
             let ci_tools = CiToolsStatus::detect(None);
@@ -610,7 +610,7 @@ fn render_diagnostics(out: &mut String, repo: Option<&Repository>) -> anyhow::Re
                 "Gitea",
                 ci_tools.tea_installed,
                 ci_tools.tea_authenticated,
-            )?;
+            );
         }
         Some((repo, ForgeKind::AzureDevOps)) => {
             let ci_tools = CiToolsStatus::detect(None);
@@ -620,7 +620,7 @@ fn render_diagnostics(out: &mut String, repo: Option<&Repository>) -> anyhow::Re
                 "Azure DevOps",
                 ci_tools.az_installed,
                 ci_tools.az_authenticated,
-            )?;
+            );
             // The whole `az repos` command group ships in the azure-devops
             // extension, so an `az` without it reports no CI status however
             // well it's authenticated — and only the user can install it.
@@ -1042,15 +1042,12 @@ fn render_project_config(out: &mut String, repo: Option<&Repository>) -> anyhow:
     if let Err(e) = toml::from_str::<ProjectConfig>(&contents) {
         // Use gutter for error details to avoid markup interpretation of user content
         invalid = true;
-        writeln!(
-            out,
-            "{}",
-            worktrunk::git::Diagnostic::render(&ConfigParseError::new(
-                ConfigFileKind::Project,
-                &config_path,
-                e
-            ))
-        )?;
+        out.push_str(&worktrunk::git::Diagnostic::render(&ConfigParseError::new(
+            ConfigFileKind::Project,
+            &config_path,
+            e,
+        )));
+        out.push('\n');
     } else {
         out.push_str(&warn_unknown_keys::<ProjectConfig>(&contents));
     }
@@ -1673,45 +1670,34 @@ pub(super) fn render_ci_tool_status(
     platform: &str,
     installed: bool,
     authenticated: bool,
-) -> anyhow::Result<()> {
-    if installed {
-        if authenticated {
-            writeln!(
-                out,
-                "{}",
-                info_message(cformat!("<bold>{tool}</> installed & authenticated"))
-            )?;
-        } else {
-            // The auth-setup command differs by CLI: `gh`/`glab` use
-            // `<tool> auth login`, `az` uses `az login`, `tea` uses `tea login add`.
-            let auth_command = match tool {
-                "az" => format!("{tool} login"),
-                "tea" => format!("{tool} login add"),
-                _ => format!("{tool} auth login"),
-            };
-            writeln!(
-                out,
-                "{}",
-                warning_message(cformat!("<bold>{tool}</> installed but not authenticated"))
-            )?;
-            writeln!(
-                out,
-                "{}",
-                hint_message(cformat!(
-                    "To authenticate, run <underline>{auth_command}</>"
-                ))
-            )?;
-        }
+) {
+    let status = if !installed {
+        info_message(cformat!(
+            "<bold>{tool}</> not found ({platform} CI status unavailable)"
+        ))
+    } else if authenticated {
+        info_message(cformat!("<bold>{tool}</> installed & authenticated"))
     } else {
-        writeln!(
-            out,
-            "{}",
-            info_message(cformat!(
-                "<bold>{tool}</> not found ({platform} CI status unavailable)"
+        warning_message(cformat!("<bold>{tool}</> installed but not authenticated"))
+    };
+    out.push_str(&status.to_string());
+    out.push('\n');
+
+    if installed && !authenticated {
+        // The auth-setup command differs by CLI.
+        let auth_command = match tool {
+            "az" => format!("{tool} login"),
+            "tea" => format!("{tool} login add"),
+            _ => format!("{tool} auth login"),
+        };
+        out.push_str(
+            &hint_message(cformat!(
+                "To authenticate, run <underline>{auth_command}</>"
             ))
-        )?;
+            .to_string(),
+        );
+        out.push('\n');
     }
-    Ok(())
 }
 
 /// Format the version-check line given the latest release version.
