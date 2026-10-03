@@ -10,7 +10,9 @@ use std::path::Path;
 use anyhow::Context;
 use worktrunk::HookType;
 use worktrunk::config::UserConfig;
-use worktrunk::git::{BranchDeletionMode, ErrorExt, GitError, Repository, ResolvedWorktree};
+use worktrunk::git::{
+    BranchDeletionMode, ErrorExt, GitError, Repository, ResolvedWorktree, WorktrunkError,
+};
 use worktrunk::styling::{eprintln, info_message};
 
 use crate::cli::{RemoveArgs, SwitchFormat};
@@ -561,8 +563,8 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                             }
                         }
                         Err(e) => {
-                            if e.interrupt_signal().is_some() {
-                                return Err(e);
+                            if let Some(signal) = e.interrupt_signal() {
+                                return Err(WorktrunkError::Interrupted { signal, hint: None }.into());
                             }
                             crate::print_command_error(&e);
                             failed = true;

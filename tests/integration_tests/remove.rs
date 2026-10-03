@@ -1168,6 +1168,90 @@ fn test_remove_interrupt_stops_batch(
     );
 }
 
+/// Signals from execution-time Git commands cancel removal just like hook
+/// signals. The hook arms the shim only after validation has succeeded;
+/// everything except the selected Git boundary delegates to real Git.
+#[cfg(unix)]
+#[rstest]
+#[case::status_foreground("status", true, "INT", 130)]
+#[case::status_background("status", false, "TERM", 143)]
+#[case::delete_foreground("delete", true, "TERM", 143)]
+#[case::delete_background("delete", false, "INT", 130)]
+fn test_remove_git_interrupt_stops_batch(
+    mut repo: TestRepo,
+    #[case] boundary: &str,
+    #[case] foreground: bool,
+    #[case] signal: &str,
+    #[case] exit_code: i32,
+) {
+    use std::os::unix::fs::PermissionsExt;
+
+    repo.write_project_config("pre-remove = 'touch \"$WORKTRUNK_TEST_INTERRUPT_ARMED\"'");
+    repo.commit("Add hook arming the Git interrupt shim");
+    let interrupted = repo.add_worktree("interrupted");
+    let later = repo.add_worktree("later");
+    let armed = repo.home_path().join("interrupt-armed");
+    let triggered = repo.home_path().join("interrupt-triggered");
+    assert!(!armed.exists() && !triggered.exists());
+
+    let bin_dir = repo.home_path().join("git-wrapper");
+    fs::create_dir_all(&bin_dir).unwrap();
+    let git = bin_dir.join("git");
+    let real_git = which::which("git").unwrap();
+    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
+    fs::write(
+        &git,
+        format!(
+            r#"#!/bin/sh
+if [ -f "$WORKTRUNK_TEST_INTERRUPT_ARMED" ]; then
+  if {{ [ "$WORKTRUNK_TEST_INTERRUPT_BOUNDARY" = status ] && [ "$1" = status ] && [ "$PWD" = "$WORKTRUNK_TEST_INTERRUPT_WORKTREE" ]; }} ||
+     {{ [ "$WORKTRUNK_TEST_INTERRUPT_BOUNDARY" = delete ] && [ "$1" = update-ref ] && [ "$3" = refs/heads/interrupted ]; }}; then
+    touch "$WORKTRUNK_TEST_INTERRUPT_TRIGGERED"
+    kill "-$WORKTRUNK_TEST_INTERRUPT_SIGNAL" "$$"
+  fi
+fi
+exec {real_git} "$@"
+"#
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&git, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let mut cmd = repo.wt_command();
+    let mut paths: Vec<_> = std::env::split_paths(&std::env::var_os("PATH").unwrap()).collect();
+    paths.insert(0, bin_dir);
+    cmd.env("PATH", std::env::join_paths(paths).unwrap());
+    cmd.args(["remove", "interrupted", "later", "--yes", "--format=json"])
+        .env("WORKTRUNK_TEST_INTERRUPT_ARMED", &armed)
+        .env("WORKTRUNK_TEST_INTERRUPT_TRIGGERED", &triggered)
+        .env("WORKTRUNK_TEST_INTERRUPT_BOUNDARY", boundary)
+        .env("WORKTRUNK_TEST_INTERRUPT_SIGNAL", signal)
+        .env("WORKTRUNK_TEST_INTERRUPT_WORKTREE", &interrupted);
+    if foreground {
+        cmd.arg("--foreground");
+    }
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        armed.exists() && triggered.exists(),
+        "the selected execution-time Git command must receive the signal; stderr:\n{stderr}"
+    );
+    assert!(
+        later.exists(),
+        "cancellation must preserve the later worktree; stderr:\n{stderr}"
+    );
+    assert_branch_exists(&repo, "later", true, &stderr);
+    assert_branch_exists(&repo, "interrupted", true, &stderr);
+    if boundary == "status" {
+        assert!(interrupted.exists(), "the clean check precedes removal");
+    }
+    assert_eq!(output.status.code(), Some(exit_code), "stderr:\n{stderr}");
+    assert!(
+        output.stdout.is_empty(),
+        "a canceled batch must not publish success JSON"
+    );
+}
+
 #[rstest]
 fn test_remove_by_name_dirty_target(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-dirty");

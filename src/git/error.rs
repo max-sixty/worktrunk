@@ -123,8 +123,8 @@ pub trait ErrorExt {
     /// short single-line label.
     ///
     /// Use this when embedding a sub-error's text inside another typed error's
-    /// message field (e.g., `GitError::WorktreeRemovalFailed::error`,
-    /// `GitError::PushFailed::error`) so the user sees git's real reason
+    /// message field (e.g., `GitError::PushFailed::error`) so the user sees git's
+    /// real reason
     /// rather than just the [`CommandError`] single-line summary.
     fn display_message(&self) -> String;
 
@@ -382,7 +382,7 @@ impl SwitchSuggestionCtx {
 ///     println!("branch {branch} already exists");
 /// }
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum GitError {
     // Git state errors
     /// A worktree is not on a branch, so a command needing one refuses.
@@ -539,7 +539,7 @@ pub enum GitError {
     WorktreeRemovalFailed {
         branch: String,
         path: PathBuf,
-        error: String,
+        error: anyhow::Error,
         /// Top-level entries remaining in the directory (for "Directory not empty" diagnostics)
         remaining_entries: Option<Vec<String>>,
     },
@@ -720,7 +720,14 @@ pub enum GitError {
     },
 }
 
-impl std::error::Error for GitError {}
+impl std::error::Error for GitError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::WorktreeRemovalFailed { error, .. } => Some(error.as_ref()),
+            _ => None,
+        }
+    }
+}
 
 /// `"1 path with unresolved conflicts"` — the shared tail of every message
 /// about an unmerged index. [`GitError::UnmergedPaths`] refuses outright;
@@ -1335,8 +1342,9 @@ impl GitError {
                 remaining_entries,
                 ..
             } => {
+                let error = error.display_message();
                 let title = self.title();
-                write!(f, "{}", format_error_block(error_message(&title), error))?;
+                write!(f, "{}", format_error_block(error_message(&title), &error))?;
                 if let Some(entries) = remaining_entries {
                     const MAX_SHOWN: usize = 10;
                     let listing = if entries.len() > MAX_SHOWN {
@@ -2336,7 +2344,7 @@ mod tests {
             GitError::WorktreeRemovalFailed {
                 branch: "feature".into(),
                 path: PathBuf::from("/tmp/repo.feature"),
-                error: "fatal: …".into(),
+                error: anyhow::anyhow!("fatal: …"),
                 remaining_entries: None,
             }.to_string(),
             @"Failed to remove worktree for feature @ /tmp/repo.feature"
@@ -2361,14 +2369,15 @@ mod tests {
         let inner = GitError::BranchAlreadyExists {
             branch: "feature".into(),
         };
+        let expected = inner.to_string();
         let wrapped = GitError::WithSwitchSuggestion {
-            source: Box::new(inner.clone()),
+            source: Box::new(inner),
             ctx: SwitchSuggestionCtx {
                 extra_flags: vec!["--execute=claude".into()],
                 trailing_args: vec![],
             },
         };
-        assert_eq!(inner.to_string(), wrapped.to_string());
+        assert_eq!(expected, wrapped.to_string());
 
         // WorktrunkError variants
         assert_snapshot!(
@@ -2882,15 +2891,16 @@ mod tests {
             action: Some("merge".into()),
             worktree: None,
         };
+        let expected = inner.to_string();
         let wrapped = GitError::WithSwitchSuggestion {
-            source: Box::new(inner.clone()),
+            source: Box::new(inner),
             ctx: SwitchSuggestionCtx {
                 extra_flags: vec!["--execute=claude".into()],
                 trailing_args: vec!["Check my emails".into()],
             },
         };
         // Errors without switch suggestions should render identically
-        assert_eq!(inner.to_string(), wrapped.to_string());
+        assert_eq!(expected, wrapped.to_string());
     }
 
     fn sample_command_error() -> CommandError {

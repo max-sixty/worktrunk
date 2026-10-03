@@ -1916,7 +1916,7 @@ fn handle_detached_removed_worktree_output(
             branch: path_dir_name(ctx.worktree_path).to_string(),
             path: ctx.worktree_path.to_path_buf(),
             remaining_entries: list_remaining_entries(ctx.worktree_path),
-            error: err.display_message(),
+            error: err,
         })?;
         let (files, bytes) = output
             .staged_path
@@ -1995,7 +1995,7 @@ fn handle_named_removed_worktree_foreground(
         branch: branch_name.into(),
         path: ctx.worktree_path.to_path_buf(),
         remaining_entries: list_remaining_entries(ctx.worktree_path),
-        error: err.display_message(),
+        error: err,
     })?;
     let stats = output
         .staged_path

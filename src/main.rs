@@ -1338,8 +1338,8 @@ mod tests {
         assert!(out.contains("git fetch failed"));
     }
 
-    /// Codex P2: typed `GitError` wrappers (e.g., `WorktreeRemovalFailed`,
-    /// `PushFailed`) embed a stringified sub-error into their `error`
+    /// Typed `GitError` wrappers (e.g., `PushFailed`) embed a stringified
+    /// sub-error into their `error`
     /// field. With `display_message`, that field carries git's stderr
     /// rather than our `CommandError` summary.
     #[test]
