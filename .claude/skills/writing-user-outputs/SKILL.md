@@ -5,6 +5,54 @@ metadata:
   internal: true
 ---
 
+## Design Principles
+
+- **`cformat!` for styling** — Never manual escape codes (`\x1b[...`)
+- **`cformat!` variables are safe** — Tags like `<bold>` are processed at compile
+  time only. Runtime variable values are NOT interpreted as markup, so user
+  content (branch names, commit messages, paths, shell commands with `<`/`>`
+  redirects) can be interpolated directly without escaping. Do NOT escape
+  `<`/`>` in variables — it adds extra chars.
+- **YAGNI** — Most output needs no styling
+- **Graceful degradation** — Styling follows the consumer (NO_COLOR, TTY
+  detection). Plain output preserves meaning through wording, spacing and
+  existing semantic symbols. Missing decoration alone does not justify new
+  markers; add text when information would otherwise be lost.
+- **Unicode-aware** — Width calculations respect symbols and CJK (via `StyledLine`)
+
+**StyledLine** for table rendering with proper width calculations:
+
+```rust
+use worktrunk::styling::StyledLine;
+use anstyle::{AnsiColor, Color, Style};
+
+let mut line = StyledLine::new();
+line.push_styled("Branch", Style::new().dimmed());
+line.push_raw("  ");
+line.push_styled("main", Style::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan))));
+println!("{}", line.render());
+```
+
+See `src/commands/list/render.rs` for advanced usage.
+
+## Gutter Formatting
+
+Use gutter for **quoted content** (git output, commit messages, config to copy,
+hook commands being displayed).
+
+The gutter is a background-colored blank column followed by a space. Plain
+output keeps the two-space indent. The examples below show that plain form.
+
+- `format_bash_with_gutter()` — shell commands (dimmed + syntax highlighting)
+- `format_with_gutter()` — other content
+
+**Gutter vs Table:** Tables for structured app data; gutter for quoting external
+content.
+
+**Gutter vs Hints:** Command suggestions in hints use inline `<underline>`,
+not gutter. Gutter is for displaying content (what will execute, config to
+copy); hints suggest what the user should run.
+
 # Output System Architecture
 
 ## Shell Integration
@@ -413,7 +461,7 @@ anyway, that message comes first:
 
 ```
 ▲ Auto-staging 1 untracked path:
-   ┃ notes.md
+  notes.md
 ◎ Generating commit message...
 ```
 
@@ -422,7 +470,7 @@ Not:
 ```
 ◎ Generating commit message...
 ▲ Auto-staging 1 untracked path:
-   ┃ notes.md
+  notes.md
 ```
 
 Warnings that result from the action itself (something failed during execution)
@@ -640,12 +688,12 @@ at the top of `wt step commit`, has nothing to separate from and starts flush.
 ```
 ❯ Configure claude for commit messages? [y/N/?] y
 ✓ Added to user config:
-   ┃ [commit.generation]
-   ┃ command = "..."
+  [commit.generation]
+  command = "..."
 ↳ View config: wt config show
 
 ▲ Auto-staging 1 untracked path:
-   ┃ a
+  a
 ◎ Generating commit message...
 ```
 
@@ -831,33 +879,6 @@ free to mean something else, and the preview pane spends it twice: on a URL,
 marking a reference rather than a link (`pr_pane::url_line`), and on the active
 tab in the tab bar (`items::render_preview_tabs`).
 
-## Design Principles
-
-- **`cformat!` for styling** — Never manual escape codes (`\x1b[...`)
-- **`cformat!` variables are safe** — Tags like `<bold>` are processed at compile
-  time only. Runtime variable values are NOT interpreted as markup, so user
-  content (branch names, commit messages, paths, shell commands with `<`/`>`
-  redirects) can be interpolated directly without escaping. Do NOT escape
-  `<`/`>` in variables — it adds extra chars.
-- **YAGNI** — Most output needs no styling
-- **Graceful degradation** — Colors auto-adjust (NO_COLOR, TTY detection)
-- **Unicode-aware** — Width calculations respect symbols and CJK (via `StyledLine`)
-
-**StyledLine** for table rendering with proper width calculations:
-
-```rust
-use worktrunk::styling::StyledLine;
-use anstyle::{AnsiColor, Color, Style};
-
-let mut line = StyledLine::new();
-line.push_styled("Branch", Style::new().dimmed());
-line.push_raw("  ");
-line.push_styled("main", Style::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan))));
-println!("{}", line.render());
-```
-
-See `src/commands/list/render.rs` for advanced usage.
-
 ## Documentation Examples
 
 Use consistent examples throughout all documentation, help text, and config
@@ -902,21 +923,6 @@ worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
 # Creates: ~/code/myproject/.worktrees/feature-auth
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 ```
-
-## Gutter Formatting
-
-Use gutter for **quoted content** (git output, commit messages, config to copy,
-hook commands being displayed):
-
-- `format_bash_with_gutter()` — shell commands (dimmed + syntax highlighting)
-- `format_with_gutter()` — other content
-
-**Gutter vs Table:** Tables for structured app data; gutter for quoting external
-content.
-
-**Gutter vs Hints:** Command suggestions in hints use inline `<underline>`,
-not gutter. Gutter is for displaying content (what will execute, config to
-copy); hints suggest what the user should run.
 
 ## Newline Convention
 
@@ -1024,7 +1030,7 @@ std::fs::read_to_string(&path).context("Failed to read config")?
 
 ```
 ✗ Commit generation command 'llm --model claude' failed
-   ┃ Error: [Errno 8] nodename nor servname provided
+  Error: [Errno 8] nodename nor servname provided
 
 // NOT: ✗ ... failed: LLM command failed: Error: [Errno 8]...
 ```
@@ -1042,9 +1048,9 @@ labeled blocks. Each block is a bash gutter (dim + syntax highlighting via
 then `source` or `result`):
 ```
 ○ name source
- ┃ template
+  template
 ○ name result
- ┃ result
+  result
 ```
 
 The two headers carry the input/output distinction, so both blocks share the
