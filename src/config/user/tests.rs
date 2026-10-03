@@ -1959,16 +1959,23 @@ fn test_mutation_invalid_toml() {
     let mut config = UserConfig::default();
     let result = config.set_skip_shell_integration_prompt(&config_path);
 
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("Failed to parse config file"),
-        "Expected parse error, got: {err}"
+    let error = anyhow::Error::new(result.unwrap_err());
+    let rendered = crate::git::ErrorExt::render_diagnostic(&error).unwrap();
+    let rendered = ansi_str::AnsiStr::ansi_strip(&rendered).replace(
+        &crate::path::format_path_for_display(&config_path),
+        "[CONFIG]",
     );
-    // Verify path is included in error (format_path_for_display would format it)
-    assert!(
-        err.contains("config.toml"),
-        "Expected path in error, got: {err}"
+    insta::assert_snapshot!(rendered, @"
+    ✗ User config @ [CONFIG] failed to parse
+      TOML parse error at line 1, column 6
+        |
+      1 | this is not valid toml [[[
+        |      ^
+      key with no value, expected `=`
+    ");
+    assert_eq!(
+        std::fs::read_to_string(&config_path).unwrap(),
+        "this is not valid toml [[["
     );
 }
 
@@ -2190,15 +2197,22 @@ fn test_mutation_permission_error() {
 #[test]
 fn test_load_error_display_file() {
     let toml_err = toml::from_str::<UserConfig>("[list]\nbranches = \"bad\"\n").unwrap_err();
-    let err = LoadError::File {
-        path: std::path::PathBuf::from("/tmp/config.toml"),
-        kind: ConfigFileKind::User,
-        err: Box::new(toml_err),
-    };
+    let err = LoadError::File(crate::config::ConfigParseError::new(
+        ConfigFileKind::User,
+        std::path::Path::new("/tmp/config.toml"),
+        toml_err,
+    ));
     let msg = err.to_string();
     assert!(msg.contains("User config @"), "{msg}");
     assert!(msg.contains("failed to parse"), "{msg}");
-    assert!(msg.contains("line 2"), "{msg}");
+    let error = anyhow::Error::new(ConfigError::Load(err));
+    assert!(matches!(
+        error.downcast_ref::<ConfigError>(),
+        Some(ConfigError::Load(LoadError::File(_)))
+    ));
+    assert!(error.root_cause().is::<toml::de::Error>());
+    let rendered = crate::git::ErrorExt::render_diagnostic(&error).unwrap();
+    assert!(rendered.contains("line 2"), "{rendered}");
 }
 
 #[test]
@@ -2876,7 +2890,7 @@ fn test_mutation_fails_on_a_file_that_is_not_a_valid_config_and_leaves_it() {
         .set_commit_generation_command("llm".to_string(), &config_path)
         .unwrap_err();
     assert!(
-        err.to_string().contains("Failed to parse config file"),
+        err.to_string().contains("failed to parse"),
         "expected parse error, got: {err}"
     );
     assert_eq!(std::fs::read_to_string(&config_path).unwrap(), content);

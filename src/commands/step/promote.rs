@@ -244,7 +244,7 @@ fn print_promote_announcement(is_restoring: bool, default_branch: Option<&str>) 
     // Creating mismatch - show warning and how to restore
     eprintln!(
         "{}",
-        warning_message("Promoting creates mismatched worktree state (shown as ⚑ in wt list)",)
+        warning_message("Promoting creates mismatched worktree state (shown as ⚐ in wt list)",)
     );
     // Only show restore hint if we know the default branch
     if let Some(default) = default_branch {

@@ -64,7 +64,7 @@ impl ConfigEdit<'_> {
             });
             inline = item.is_inline_table();
             table = item.as_table_like_mut().ok_or_else(|| {
-                ConfigError(format!(
+                ConfigError::Message(format!(
                     "Failed to write config file: `{name}` is not a table"
                 ))
             })?;
@@ -103,23 +103,26 @@ impl ConfigFile {
         }
 
         let content = std::fs::read_to_string(path).map_err(|e| {
-            ConfigError(format!(
+            ConfigError::Message(format!(
                 "Failed to read config file {}: {}",
                 format_path_for_display(path),
                 e
             ))
         })?;
-        let parse_error = |e: String| {
-            ConfigError(format!(
-                "Failed to parse config file {}: {}",
-                format_path_for_display(path),
-                e
+        let doc: DocumentMut = content.parse().map_err(|e: toml_edit::TomlError| {
+            ConfigError::Parse(crate::config::ConfigParseError::new(
+                crate::config::ConfigFileKind::User,
+                path,
+                e,
             ))
-        };
-        let doc: DocumentMut = content
-            .parse()
-            .map_err(|e: toml_edit::TomlError| parse_error(e.to_string()))?;
-        let config = load(&doc).map_err(|e| parse_error(e.to_string()))?;
+        })?;
+        let config = load(&doc).map_err(|e| {
+            ConfigError::Parse(crate::config::ConfigParseError::new(
+                crate::config::ConfigFileKind::User,
+                path,
+                e,
+            ))
+        })?;
         Ok(Self { doc, config })
     }
 
@@ -154,7 +157,7 @@ impl ConfigFile {
         let changes = migrate_doc(&mut doc);
         edit.apply(&mut doc)?;
         if !loads_as(&doc, expected) {
-            return Err(ConfigError(format!(
+            return Err(ConfigError::Message(format!(
                 "Refusing to write a config file wt could not read back: {} would not load as written",
                 edit.key_path()
             )));
@@ -210,7 +213,7 @@ impl UserConfig {
         if let Some(ref path) = self.worktree_path
             && path.trim().is_empty()
         {
-            return Err(ConfigError("worktree-path cannot be empty".into()));
+            return Err(ConfigError::Message("worktree-path cannot be empty".into()));
         }
 
         // Validate per-project configs
@@ -219,7 +222,7 @@ impl UserConfig {
             if let Some(ref path) = project_config.worktree_path
                 && path.trim().is_empty()
             {
-                return Err(ConfigError(format!(
+                return Err(ConfigError::Message(format!(
                     "projects.{project}.worktree-path cannot be empty"
                 )));
             }

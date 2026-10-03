@@ -77,7 +77,7 @@ impl Divergence {
 /// Priority order for worktrees: Prunable > Locked > Detached >
 /// DuplicateBranch > BranchWorktreeMismatch
 ///
-/// `DuplicateBranch` and `BranchWorktreeMismatch` share the `⚑` glyph: both
+/// `DuplicateBranch` and `BranchWorktreeMismatch` share the `⚐` glyph: both
 /// say this worktree's place in the branch ⇔ worktree map is irregular, and
 /// the table already distinguishes them — a repeated Branch cell is the
 /// duplicate, an off-template Path cell the mismatch. The variants stay
@@ -110,7 +110,7 @@ impl std::fmt::Display for WorktreeState {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::None => Ok(()),
-            Self::BranchWorktreeMismatch | Self::DuplicateBranch => write!(f, "⚑"),
+            Self::BranchWorktreeMismatch | Self::DuplicateBranch => write!(f, "⚐"),
             Self::Detached => write!(f, "⊘"),
             Self::Prunable => write!(f, "⊟"),
             Self::Locked => write!(f, "⊞"),
@@ -534,9 +534,9 @@ mod tests {
     #[test]
     fn test_worktree_state_display() {
         assert_eq!(format!("{}", WorktreeState::None), "");
-        assert_eq!(format!("{}", WorktreeState::BranchWorktreeMismatch), "⚑");
+        assert_eq!(format!("{}", WorktreeState::BranchWorktreeMismatch), "⚐");
         // Shares the mismatch glyph; the JSON state names which cause it was.
-        assert_eq!(format!("{}", WorktreeState::DuplicateBranch), "⚑");
+        assert_eq!(format!("{}", WorktreeState::DuplicateBranch), "⚐");
         // Its own glyph: the Branch cell holds a short hash, which reads as a
         // branch named like one until this column says otherwise.
         assert_eq!(format!("{}", WorktreeState::Detached), "⊘");

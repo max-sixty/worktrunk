@@ -1,6 +1,7 @@
 //! Integration tests for `wt step eval`
 
 use crate::common::{TestRepo, make_snapshot_cmd, make_snapshot_cmd_with_global_flags, repo};
+use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 
@@ -12,6 +13,27 @@ fn test_eval_branch(repo: TestRepo) {
         &["eval", "{{ branch }}"],
         None,
     ));
+}
+
+/// A strict command keeps the invalid override's diagnosis once in its fatal
+/// block, independently of the earlier tolerant-load warning.
+#[rstest]
+fn test_eval_invalid_env_override_keeps_one_fatal_diagnosis(repo: TestRepo) {
+    repo.write_test_config("[list]\nbranches = true\n");
+    let mut cmd = repo.wt_command();
+    cmd.env("WORKTRUNK__LIST__BRANCHES", "not-a-bool")
+        .args(["step", "eval", "{{ branch }}"]);
+
+    let output = cmd.output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr.ansi_strip();
+    let (_, fatal) = stderr.split_once("✗ Failed to load config").unwrap();
+    assert_eq!(fatal.matches("invalid type:").count(), 1, "{stderr}");
+
+    let settings = crate::common::setup_snapshot_settings(&repo);
+    settings.bind(|| insta::assert_snapshot!(stderr));
 }
 
 #[rstest]

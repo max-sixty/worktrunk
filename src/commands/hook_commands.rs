@@ -16,8 +16,8 @@ use worktrunk::config::{
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
-    INFO_SYMBOL, PROMPT_SYMBOL, eprintln, format_bash_with_gutter, format_heading, hint_message,
-    info_message, println, warning_message,
+    INFO_SYMBOL, PROMPT_SYMBOL, eprintln, format_bash_with_gutter, format_heading, info_message,
+    println, warning_message,
 };
 
 use crate::output::print_json;
@@ -364,9 +364,7 @@ pub fn handle_hook_show(
 
     let repo = Repository::current().context("Failed to show hooks")?;
     let config: &UserConfig = repo.user_config();
-    // No `.context()`: `project_config()` already wraps the load failure with
-    // exactly that header, and a second copy renders as a header restating
-    // its own gutter.
+    // Preserve the loader's typed source diagnosis through command context.
     let project_config: Option<&ProjectConfig> = repo.project_config()?;
     let approvals = Approvals::load().context("Failed to load approvals")?;
     let project_id = repo.project_identifier().ok();
@@ -563,7 +561,7 @@ fn render_project_hooks(
     )?;
 
     let Some(config) = project_config else {
-        writeln!(out, "{}", hint_message("(not found)"))?;
+        writeln!(out, "{}", info_message("Not found"))?;
         return Ok(());
     };
 
@@ -584,7 +582,7 @@ fn render_project_hooks(
 }
 
 /// Render a section's body: every hook that survives `filter`, or
-/// `(none configured)` when that leaves the section with nothing.
+/// a neutral "No hooks configured" state when nothing remains.
 ///
 /// The fallback keys off what was printed, not off what the config declared —
 /// a hook type carrying an empty command list (`post-switch = []`) has an entry
@@ -611,7 +609,7 @@ fn render_hook_section(
     }
 
     if !has_any {
-        writeln!(out, "{}", hint_message("(none configured)"))?;
+        writeln!(out, "{}", info_message("No hooks configured"))?;
     }
 
     Ok(())
