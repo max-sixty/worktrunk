@@ -28,6 +28,7 @@ const publicRoutes = [
   '/step/',
   '/switch/',
   '/tips-patterns/',
+  '/try-it/',
 ];
 
 async function htmlFiles(directory = dist) {
@@ -558,7 +559,8 @@ test('hash navigation selects the requested section in every rendered TOC', () =
 });
 
 test('every structural content heading appears in the page outline', async () => {
-  for (const route of publicRoutes.filter((candidate) => candidate !== '/')) {
+  // The homepage and the Try it page drop the outline to give content the width.
+  for (const route of publicRoutes.filter((candidate) => !['/', '/try-it/'].includes(candidate))) {
     const page = await readFile(routeFile(route), 'utf8');
     const headings = [...page.matchAll(/<h[12]\b[^>]*\bid="([^"]+)"/g)]
       .map((match) => match[1])

@@ -1,0 +1,84 @@
+---
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+
+// The demo VM and its guide are defined in docs/demos/demoshell/. `snapshot`
+// is the VM's Demoshell reference; it changes if the VM moves to another
+// Demoshell org or is renamed.
+const server = 'https://build.demoshell.com';
+const snapshot = 'demoshell/tui:worktrunk';
+const launchUrl = `${server}/launch?snapshot=${encodeURIComponent(snapshot)}`;
+---
+
+<StarlightPage
+  frontmatter={{
+    title: 'Try it',
+    description: 'Run Worktrunk in your browser: a Linux VM with wt installed and a guided walk through creating, merging, and removing a worktree.',
+    editUrl: false,
+    tableOfContents: false,
+  }}
+>
+  <p>
+    Run Worktrunk in a Linux VM inside this browser tab — no install, and nothing
+    you type leaves your machine. The guide beside the terminal walks through a
+    worktree's whole life: create one, change a file, and merge it back to
+    <code>main</code>.
+  </p>
+  <p>
+    Nothing downloads until you press run. Chrome and Edge run the VM in the
+    page; other browsers get a link to open it full-page.
+  </p>
+
+  <div class="wt-try-it" data-server={server} data-snapshot={snapshot}>
+    <noscript>
+      <p><a href={launchUrl}>Open the demo</a> — it needs JavaScript.</p>
+    </noscript>
+  </div>
+  <p class="wt-try-it-credit">
+    Powered by <a href="https://demoshell.com">Demoshell</a>.
+  </p>
+
+  <p>
+    Ready for the real thing? <a href="/#install">Install Worktrunk</a>, then run
+    <code>wt config shell install</code> so <code>wt switch</code> can change
+    directory.
+  </p>
+</StarlightPage>
+
+<style>
+  /* The embed fills its container, so the container needs a definite height:
+     room for the terminal with the guide stacked under it. */
+  .wt-try-it {
+    height: 640px;
+  }
+
+  .wt-try-it-credit {
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-3);
+    text-align: right;
+  }
+</style>
+
+<script is:inline type="module">
+  const target = document.querySelector('.wt-try-it');
+  const currentTheme = () => (document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
+
+  try {
+    const { default: Demoshell } = await import(`${target.dataset.server}/embed/demoshell-embed.js`);
+    const demo = await Demoshell.mount(target, {
+      snapshot: target.dataset.snapshot,
+      server: target.dataset.server,
+      theme: currentTheme(),
+    });
+    // Follow the site's theme toggle, as the page around the demo does.
+    new MutationObserver(() => demo.setTheme?.(currentTheme())).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    });
+  } catch (error) {
+    const link = document.createElement('a');
+    link.href = `${target.dataset.server}/launch?snapshot=${encodeURIComponent(target.dataset.snapshot)}`;
+    link.textContent = 'Open the demo on Demoshell';
+    target.replaceChildren(link);
+    console.error('[try-it] demo failed to load', error);
+  }
+</script>
