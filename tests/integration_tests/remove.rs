@@ -1146,7 +1146,7 @@ fn test_remove_interrupt_stops_batch(
     #[case] signal: &str,
     #[case] exit_code: i32,
 ) {
-    let hook = format!("sh -c 'kill -{signal} $$'");
+    let hook = format!("kill -{signal} $$");
     repo.write_project_config(&format!("pre-remove = {hook:?}"));
     repo.commit("Add interrupting pre-remove hook");
     let interrupted = repo.add_worktree("interrupted");
