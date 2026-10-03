@@ -1238,6 +1238,37 @@ pub fn handle_remove_output(
     quiet: bool,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<BranchFate> {
+    handle_remove_output_inner(plan, execution, hook_plan, quiet, false, announcer)
+}
+
+/// Merge may select a source containing another checkout, including the
+/// invoking worktree. Recheck its topology after pre-remove hooks, before the
+/// removal core's final safety gates. This is merge-specific: ordinary remove
+/// and batch prune retain their concurrent staging without a live registry
+/// read before each rename.
+pub fn handle_merge_remove_output(
+    plan: &RemovalPlan,
+    hook_plan: &ApprovedHookPlan,
+    announcer: &mut HookAnnouncer<'_>,
+) -> anyhow::Result<BranchFate> {
+    handle_remove_output_inner(
+        plan,
+        RemovalExecution::Background(BackgroundFallbackMode::Detached),
+        hook_plan,
+        false,
+        true,
+        announcer,
+    )
+}
+
+fn handle_remove_output_inner(
+    plan: &RemovalPlan,
+    execution: RemovalExecution,
+    hook_plan: &ApprovedHookPlan,
+    quiet: bool,
+    protect_nested_worktrees: bool,
+    announcer: &mut HookAnnouncer<'_>,
+) -> anyhow::Result<BranchFate> {
     match plan {
         RemovalPlan::Worktree {
             main_path,
@@ -1264,6 +1295,7 @@ pub fn handle_remove_output(
                 branch_checked_out_at: branch_checked_out_at.as_ref(),
                 hook_plan,
                 execution,
+                protect_nested_worktrees,
             },
             announcer,
         ),
@@ -1800,6 +1832,7 @@ struct WorktreeRemovalContext<'a> {
     /// no `ProjectConfig` snapshot to thread.
     hook_plan: &'a ApprovedHookPlan,
     execution: RemovalExecution,
+    protect_nested_worktrees: bool,
 }
 
 impl WorktreeRemovalContext<'_> {
@@ -2094,11 +2127,23 @@ fn handle_removed_worktree_output(
         execute_pre_remove_hooks_if_needed(&repo, &ctx)?;
     }
 
-    // No re-validation after `pre-remove` hooks: the pre-rename `ensure_clean`
-    // in the removal core catches a hook-dirtied worktree, and the branch
-    // deletion re-decides against fresh refs (`delete_branch_if_safe`'s CAS)
-    // — one mechanism per guarantee. `ctx.integration_reason` /
-    // `ctx.target_branch` carry the planning-time verdict for display.
+    // This read may wait for a registry teardown. Keep it before the final
+    // ownership/lock/dirty gates in the removal core, so edits made during
+    // the wait are checked before staging. Also precede the cd directive:
+    // refusing cleanup must not move the invoking shell.
+    if ctx.protect_nested_worktrees
+        && let Some(nested) = worktrunk::git::remove::nested_worktree(&repo, ctx.worktree_path)?
+    {
+        anyhow::bail!(cformat!(
+            "Cannot remove worktree @ <bold>{}</>; contains worktree @ <bold>{}</>",
+            format_path_for_display(ctx.worktree_path),
+            format_path_for_display(&nested)
+        ));
+    }
+
+    // The pre-rename `ensure_clean` catches a hook-dirtied worktree, and the
+    // branch deletion re-decides against fresh refs (`delete_branch_if_safe`'s
+    // CAS). The planning-time integration verdict is only for display.
 
     // TUI (picker) path: the removal runs in a background thread while skim
     // owns the terminal, so no messages, no spinner, no `cd` directive (the

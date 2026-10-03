@@ -811,7 +811,10 @@ impl Repository {
             return Ok(None);
         };
         let target_sha = self.resolve_to_commit_sha(target_branch)?;
-        match self.merge_base("HEAD", &upstream)? {
+        let head = self
+            .current_worktree()
+            .run_command(&["rev-parse", "HEAD"])?;
+        match self.merge_base(head.trim(), &upstream)? {
             Some(fork_point) if !self.is_ancestor_by_sha(&fork_point, &target_sha)? => {
                 Ok(Some(upstream))
             }

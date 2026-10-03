@@ -57,8 +57,8 @@
 //! set. (Aliases get the property structurally instead: the body is frozen
 //! into `AliasEntry` before the gate, like `ApprovedHookPlan`.)
 //!
-//! `ctx.repo` is the invoking worktree — except `wt step commit --branch <b>`
-//! and `wt -C <path>` re-root the whole command (the commit, its hooks, and
+//! `ctx.repo` is the invoking worktree — except `wt step commit --branch <b>`,
+//! `wt merge --branch <b>`, and `wt -C <path>` re-root the whole command (the commit, its hooks, and
 //! `ctx.repo` are all `<b>`), so "the invoking worktree" follows them.
 //!
 //! A present-but-malformed config aborts the operation rather than silently

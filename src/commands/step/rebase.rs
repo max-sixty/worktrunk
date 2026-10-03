@@ -16,8 +16,8 @@ pub enum RebaseResult {
 }
 
 /// Handle shared rebase workflow (used by `wt step rebase` and `wt merge`)
-pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
-    let repo = Repository::current()?;
+pub fn handle_rebase(repo: &Repository, target: Option<&str>) -> anyhow::Result<RebaseResult> {
+    let wt = repo.current_worktree();
 
     // Refuse before reading ancestry: a worktree stopped mid-rebase has HEAD
     // detached on a linear extension of the target, so the up-to-date check
@@ -40,10 +40,10 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
     }
 
     // Check if this is a fast-forward or true rebase
+    let head_sha = wt.run_command(&["rev-parse", "HEAD"])?.trim().to_string();
     let merge_base = repo
-        .merge_base("HEAD", &integration_target)?
+        .merge_base(&head_sha, &integration_target)?
         .context("Cannot rebase: no common ancestor with target branch")?;
-    let head_sha = repo.run_command(&["rev-parse", "HEAD"])?.trim().to_string();
     let is_fast_forward = merge_base == head_sha;
 
     // Only show progress for true rebases (fast-forwards are instant)
@@ -57,7 +57,7 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
     // `--no-update-refs` overrides `rebase.updateRefs`, which would also move
     // other local branches stacked in the rebased range; a worktree's rebase
     // rewrites only its own branch.
-    let rebase_result = repo.run_command(&[
+    let rebase_result = wt.run_command(&[
         "rebase",
         "--no-update-refs",
         "--end-of-options",
