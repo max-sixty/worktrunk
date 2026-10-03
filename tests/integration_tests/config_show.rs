@@ -91,7 +91,7 @@ fn test_config_show_rejects_invalid_approvals_file(repo: TestRepo) {
     assert_eq!(output.status.code(), Some(1));
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stdout = stdout.ansi_strip();
-    assert!(stdout.contains("Invalid approvals"), "stdout:\n{stdout}");
+    assert!(stdout.contains("Approvals @"), "stdout:\n{stdout}");
     assert!(stdout.contains("approvals.toml"), "stdout:\n{stdout}");
 }
 
@@ -606,23 +606,8 @@ fn test_config_show_reports_unreadable_source_and_continues(repo: TestRepo, #[ca
     assert!(stdout.contains("OTHER"), "report was truncated:\n{stdout}");
 }
 
-/// A user config that doesn't parse must fail these commands *legibly*.
-///
-/// `UserConfig::load()`'s error is `LoadError::File`'s multi-line Display —
-/// the header plus the TOML parser's caret diagram — flattened into a
-/// `ConfigError` string. Propagated bare with `?`, it reaches anyhow with no
-/// context and no cause chain, which is the one shape `main.rs`'s renderer
-/// has no arm for: it trips that function's `debug_assert!`, so a debug build
-/// panics with exit 101 instead of erroring. A release build still prints the
-/// parse detail in the gutter — what it loses is the header, which becomes a
-/// bare `✗ Command failed` naming neither the config nor the file.
-/// `.context("Failed to load config")` — what 7 of the 22 `UserConfig::load()`
-/// call sites already did, and what all 13 propagating ones do after this —
-/// gives the renderer that header back.
-///
-/// One case per fixed call site, because the `debug_assert!` only fires on a
-/// path something exercises: an uncovered site is one where a future bare `?`
-/// regresses silently. The JSON form has a separate in-band error test below.
+/// Commands that require user config retain its typed parser diagnosis through
+/// their operation context and fail cleanly in both debug and release builds.
 #[rstest]
 #[case::step_prune(&["step", "prune", "--dry-run"])]
 #[case::step_relocate(&["step", "relocate", "--dry-run"])]
@@ -663,7 +648,7 @@ fn test_unparsable_user_config_errors_legibly(
     // The header the renderer needs, and the parse detail it would otherwise
     // have replaced with "Command failed".
     assert!(
-        stderr.contains("Failed to load config"),
+        stderr.contains("User config @"),
         "{args:?} should name what failed; stderr:\n{stderr}"
     );
     assert!(
@@ -1562,6 +1547,34 @@ fn test_config_show_full_not_configured(mut repo: TestRepo, temp_home: TempDir) 
 
         assert_cmd_snapshot!(cmd);
     });
+}
+
+/// A successful connectivity probe is existing state, and includes the actual
+/// response from the configured command in the diagnostic report.
+#[rstest]
+fn test_config_show_full_working_commit_generation(repo: TestRepo) {
+    repo.write_test_config(
+        "[commit.generation]\ncommand = \"cat >/dev/null && echo diagnostic-probe\"\n",
+    );
+    let output = repo
+        .wt_command()
+        .env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
+        .args(["config", "show", "--full"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = stdout.ansi_strip();
+    let lines: Vec<_> = stdout.lines().collect();
+    let index = lines
+        .iter()
+        .position(|line| line.contains("Commit generation working"))
+        .unwrap();
+    insta::assert_snapshot!(lines[index..index + 2].join("\n"), @"
+    ○ Commit generation working (cat >/dev/null && echo diagnostic-probe)
+      diagnostic-probe
+    ");
 }
 
 #[rstest]

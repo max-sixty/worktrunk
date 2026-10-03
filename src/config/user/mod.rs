@@ -83,13 +83,8 @@ pub use sections::{
 /// usable config.
 #[derive(Debug)]
 pub enum LoadError {
-    /// A config file failed to parse. The `toml::de::Error` includes
-    /// line/column info and a source-snippet pointer.
-    File {
-        path: PathBuf,
-        kind: ConfigFileKind,
-        err: Box<toml::de::Error>,
-    },
+    /// A file parser failed, retaining its source and raw diagnosis.
+    File(super::ConfigParseError),
     /// Config files parsed cleanly; applying env-var overrides failed.
     /// `vars` lists the exact `WORKTRUNK_*` env vars that were parsed
     /// as `(name, value)` pairs.
@@ -108,14 +103,7 @@ pub enum LoadError {
 impl std::fmt::Display for LoadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LoadError::File { path, kind, err } => {
-                write!(
-                    f,
-                    "{} @ {} failed to parse:\n{err}",
-                    kind.label(),
-                    crate::path::format_path_for_display(path)
-                )
-            }
+            LoadError::File(error) => error.fmt(f),
             LoadError::Env { err, .. } => write!(f, "{err}"),
             LoadError::CliOverride { err, .. } => write!(f, "{err}"),
             LoadError::Validation(err) => write!(f, "{err}"),
@@ -123,7 +111,14 @@ impl std::fmt::Display for LoadError {
     }
 }
 
-impl std::error::Error for LoadError {}
+impl std::error::Error for LoadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::File(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 // ---- Env-var overlay ----
 
@@ -455,7 +450,7 @@ fn merge_layer(merged_table: &mut toml::Table, layer: toml::Table) {
 /// first failure. The probe every layer runs before it commits.
 fn deserialize_and_validate(table: &toml::Table) -> Result<(), String> {
     match toml::Value::Table(table.clone()).try_into::<UserConfig>() {
-        Ok(config) => config.validate().map_err(|e| e.0),
+        Ok(config) => config.validate().map_err(|e| e.to_string()),
         Err(err) => Err(err.to_string()),
     }
 }
@@ -552,11 +547,9 @@ fn load_config_file(
 ) -> Result<toml::Table, LoadError> {
     // Validate by deserializing — gives rich line/col errors.
     if let Err(err) = toml::from_str::<UserConfig>(migrated) {
-        return Err(LoadError::File {
-            path: path.to_path_buf(),
-            kind,
-            err: Box::new(err),
-        });
+        return Err(LoadError::File(super::ConfigParseError::new(
+            kind, path, err,
+        )));
     }
     // Parse as table for merging. Infallible after from_str::<UserConfig>
     // succeeds — valid UserConfig TOML is always valid TOML.
@@ -677,7 +670,7 @@ impl UserConfig {
     /// 3. User config file (personal preferences)
     /// 4. Environment variables (WORKTRUNK_*)
     pub fn load() -> Result<Self, ConfigError> {
-        Self::load_with_cause().map_err(|e| ConfigError(e.to_string()))
+        Self::load_with_cause().map_err(ConfigError::Load)
     }
 
     /// Like [`load()`](Self::load), but returns a [`LoadError`] that
@@ -947,7 +940,7 @@ impl UserConfig {
                     // Validation means the config is semantically wrong (e.g.,
                     // worktree-path=""). Using it causes bad behavior, so fall
                     // back to defaults rather than applying the broken config.
-                    warnings.push(LoadError::Validation(e.0));
+                    warnings.push(LoadError::Validation(e.to_string()));
                     (Self::default(), warnings)
                 }
             },
@@ -962,7 +955,8 @@ impl UserConfig {
     #[cfg(test)]
     pub(crate) fn load_from_str(content: &str) -> Result<Self, ConfigError> {
         let migrated = crate::config::deprecation::migrate_content(content);
-        let config: Self = toml::from_str(&migrated).map_err(|e| ConfigError(e.to_string()))?;
+        let config: Self =
+            toml::from_str(&migrated).map_err(|e| ConfigError::Message(e.to_string()))?;
         config.validate()?;
         Ok(config)
     }

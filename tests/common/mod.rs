@@ -831,7 +831,7 @@ fn add_placeholder_cleanup_filters(settings: &mut insta::Settings) {
 /// — macOS keeps the absolute form (canonicalized HOME `/private/var/...`
 /// doesn't prefix the uncanonicalized config path), Linux strips to a tilde
 /// (HOME == tempdir, prefix matches).
-const TEST_PATH_PREFIX: &str =
+pub(crate) const TEST_PATH_PREFIX: &str =
     r"'?(?:~(?:/\.tmp[^/\\']+)?|(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+)[/\\]";
 
 fn add_temp_path_placeholder_filters(settings: &mut insta::Settings) {
