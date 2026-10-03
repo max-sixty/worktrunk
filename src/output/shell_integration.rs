@@ -41,7 +41,8 @@
 //! | Outdated wrapper | `Worktree for main @ path, but cannot change directory — shell wrapper is out of date` | `To update the shell wrapper, run wt config shell install` |
 //! | Git subcommand | `Worktree for main @ path, but cannot change directory — ran git wt; running through git prevents cd` | `For automatic cd, invoke directly (with the -): git-wt` |
 //! | Explicit path | `Worktree for main @ path, but cannot change directory — ran ./wt; shell integration wraps wt` | `To change directory, run wt switch main` |
-//! | Other | `Worktree for main @ path, but cannot change directory — {reason}` | `To enable automatic cd, run wt config shell install` |
+//! | Installed, not active | `Worktree for main @ path, but cannot change directory — shell integration installed but not active` | `A shell restart usually activates shell integration; if it doesn't, ask an agent to debug with the docs @ https://worktrunk.dev/llms.txt` |
+//! | Not installed | `Worktree for main @ path, but cannot change directory — shell integration not installed` | `To enable automatic cd, run wt config shell install` |
 //!
 //! ## Prompt Decision Flow
 //!
@@ -162,10 +163,25 @@ pub(crate) fn explicit_path_hint(branch: &str) -> String {
 /// Check if we should show the explicit path hint.
 /// True when: explicit path invocation AND current shell has integration configured.
 pub(crate) fn should_show_explicit_path_hint() -> bool {
-    crate::was_invoked_with_explicit_path()
-        && current_shell()
-            .and_then(|shell| shell.is_shell_configured(&crate::binary_name()).ok())
-            .unwrap_or(false)
+    crate::was_invoked_with_explicit_path() && current_shell_is_configured()
+}
+
+/// Whether integration is installed for the shell running this invocation,
+/// using the same detection as the warning and explicit-path advice.
+fn current_shell_is_configured() -> bool {
+    current_shell()
+        .and_then(|shell| shell.is_shell_configured(&crate::binary_name()).ok())
+        .unwrap_or(false)
+}
+
+/// Merge and remove report after changing worktrees, without prompting to
+/// install. Match their advice to the current shell's installation state.
+pub(crate) fn print_shell_activation_hint(repo: &Repository) {
+    if current_shell_is_configured() {
+        eprintln!("{}", hint_message(shell_inactive_hint()));
+    } else {
+        print_shell_integration_hint(repo);
+    }
 }
 
 /// Compute the shell warning reason for display in messages.
@@ -183,9 +199,7 @@ pub(crate) fn compute_shell_warning_reason() -> String {
     }
 
     // Check if the CURRENT shell has integration configured, not just ANY shell
-    let is_configured = current_shell()
-        .and_then(|shell| shell.is_shell_configured(&crate::binary_name()).ok())
-        .unwrap_or(false);
+    let is_configured = current_shell_is_configured();
     let explicit_path = crate::was_invoked_with_explicit_path();
     let invoked = crate::invocation_path();
     let wraps = crate::binary_name();
