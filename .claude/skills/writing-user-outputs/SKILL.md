@@ -912,7 +912,8 @@ Use gutter for **quoted content** (git output, commit messages, config to copy,
 hook commands being displayed).
 
 The gutter is a background-colored blank column followed by a space. Plain
-output keeps the two-space indent. The examples below show that plain form.
+output keeps the two-space indent. Gutter examples in this skill show that plain
+form.
 
 - `format_bash_with_gutter()` — shell commands (dimmed + syntax highlighting)
 - `format_with_gutter()` — other content
