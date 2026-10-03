@@ -123,7 +123,7 @@
 //! - Serialization: `REPOSITORY_LOCKS` (this module) — one lock set per canonical
 //!   git common dir, handed to each `Repository` at construction. Its registry
 //!   lock prevents `list_worktrees` reads and `git worktree remove` teardowns
-//!   from overlapping; its deletion queue batches safe ref mutations.
+//!   from overlapping; its deletion coordinator serializes safe ref mutations.
 //!   Keyed like a cache but holding no git data, so nothing in it goes stale;
 //!   see the static's own doc comment for the ordering rules.
 //!
@@ -511,14 +511,15 @@ static GIT_COMMON_DIR_CACHE: LazyLock<DashMap<PathBuf, PathBuf>> = LazyLock::new
 /// shares these locks. The registry lock's dedicated
 /// [`Repository::list_worktrees`] accessor takes its read side, while
 /// [`Repository::prune_worktree_entry`] and [`Repository::remove_worktree`]
-/// take its write side. The branch deletion queue batches safe ref mutations,
-/// which contend on Git's packed-refs lock even for different branches.
+/// take its write side. The branch deletion coordinator serializes safe ref
+/// mutations, which contend on Git's packed-refs lock even for different branches.
+/// Its interruption state lasts for this process's CLI invocation.
 ///
 /// Registry guards are non-reentrant: a guarded operation must not call another
 /// registry accessor. In `wt step prune`, the command's `output_lock` precedes
 /// either repository lock; code holding a repository guard must never acquire
 /// `output_lock`. Safe branch deletion releases the registry read guard before
-/// submitting to the deletion queue; registry guards never span queue waits.
+/// acquiring the deletion mutex; registry guards never span deletion waits.
 ///
 /// External Git processes and raw worktree commands issued through
 /// [`Repository::run_command`] do not honor these locks.
@@ -528,7 +529,7 @@ static REPOSITORY_LOCKS: LazyLock<DashMap<PathBuf, Arc<RepositoryLocks>>> =
 #[derive(Debug, Default)]
 struct RepositoryLocks {
     worktree_registry: RwLock<()>,
-    branch_deletion: super::ref_deletion::RefDeletionQueue,
+    branch_deletion: super::ref_deletion::RefDeletionCoordinator,
 }
 
 /// Process-wide map of `worktree_path -> canonicalized worktree root`,
@@ -890,8 +891,8 @@ impl Repository {
             .unwrap_or_else(|error| error.into_inner())
     }
 
-    /// Batch safe ref mutations without blocking registry readers.
-    pub(super) fn branch_deletions(&self) -> &super::ref_deletion::RefDeletionQueue {
+    /// Serialize safe ref mutations without blocking registry readers.
+    pub(super) fn branch_deletions(&self) -> &super::ref_deletion::RefDeletionCoordinator {
         &self.locks.branch_deletion
     }
 
@@ -2010,28 +2011,10 @@ impl Repository {
         self.run_command_bytes_bounded(args, None)
     }
 
-    /// Feed machine-readable input to repository-level plumbing.
-    pub(super) fn run_command_with_input(
-        &self,
-        args: &[&str],
-        input: Vec<u8>,
-    ) -> anyhow::Result<Vec<u8>> {
-        self.run_command_bytes_with_input(args, None, Some(input))
-    }
-
     fn run_command_bytes_bounded(
         &self,
         args: &[&str],
         timeout: Option<std::time::Duration>,
-    ) -> anyhow::Result<Vec<u8>> {
-        self.run_command_bytes_with_input(args, timeout, None)
-    }
-
-    fn run_command_bytes_with_input(
-        &self,
-        args: &[&str],
-        timeout: Option<std::time::Duration>,
-        input: Option<Vec<u8>>,
     ) -> anyhow::Result<Vec<u8>> {
         let mut cmd = self.with_object_store_env(
             Cmd::new("git")
@@ -2042,10 +2025,6 @@ impl Repository {
         if let Some(timeout) = timeout {
             cmd = cmd.timeout(timeout);
         }
-        if let Some(input) = input {
-            cmd = cmd.stdin_bytes(input);
-        }
-
         let output = cmd
             .run()
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;

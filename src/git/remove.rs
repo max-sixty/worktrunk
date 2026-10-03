@@ -577,7 +577,7 @@ pub fn delete_branch_if_safe(
         Some(r) => {
             // Atomic compare-and-swap against the snapshotted SHA. If the ref
             // moved between `integration_reason` and the delete (e.g. a hook
-            // advanced the branch), the queued `git update-ref` transaction fails
+            // advanced the branch), the `git update-ref` mutation fails
             // closed: the branch is retained and we surface a `RetainedRaced`
             // outcome rather than dropping the unmerged commits silently.
             //
@@ -633,21 +633,19 @@ fn branch_checkout_requires_retention(worktree: &WorktreeInfo, branch_name: &str
 /// Atomically delete `refs/heads/<branch>` iff it currently points at
 /// `expected_sha`, and translate the result into a [`BranchDeletionOutcome`].
 ///
-/// `git update-ref --stdin` carries the original expected OID for each delete:
-/// the ref is removed only if its current value still matches. The repository
-/// deletion queue combines ready requests into atomic transactions, retaining
-/// moved branches and retrying unchanged peers with the same original OIDs.
+/// `git update-ref -d <ref> <original-sha>` removes the ref only if its current
+/// value still matches. The repository coordinator serializes these mutations
+/// to avoid contention on Git's packed-refs lock.
 ///
 /// A fresh topology read provides best-effort checkout protection before
-/// submitting to the repository's deletion queue. Only the ref mutation is
-/// serialized: topology reads can run concurrently. Git has no transaction
-/// spanning worktree registration and ref updates, so a new checkout can race
-/// this check, including during the queue wait; the atomic SHA
+/// acquiring the deletion mutex. Topology reads can run concurrently. Git has
+/// no transaction spanning checkout state and a ref update: a checkout can
+/// appear after this check, including during the mutex wait. The atomic SHA
 /// comparison still protects concurrent commits.
 ///
-/// On failure, a fresh ref walk distinguishes actual SHA movement from a
-/// lock or I/O error without parsing Git's localized diagnostics. An unchanged
-/// or unreadable ref propagates the original deletion error.
+/// On failure, a fresh exact ref read distinguishes actual SHA movement from
+/// a lock or I/O error without parsing Git's localized diagnostics. A missing,
+/// unchanged or unreadable ref propagates the original deletion error.
 fn cas_delete_branch_outcome(
     repo: &Repository,
     branch_name: &str,
@@ -662,7 +660,7 @@ fn cas_delete_branch_outcome(
     }
     if repo
         .branch_deletions()
-        .delete(repo, ref_name, expected_sha)?
+        .delete(repo, &ref_name, expected_sha)?
     {
         Ok(BranchDeletionOutcome::Integrated(reason))
     } else {

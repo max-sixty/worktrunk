@@ -1581,8 +1581,8 @@ fn repository_instances_share_mutation_coordination() {
     let linked = test.add_worktree("registry-lock-linked");
     let first = Repository::at(test.root_path()).unwrap();
     let second = Repository::at(linked).unwrap();
-    test.run_git(&["branch", "queued-deletion"]);
-    let expected = test.git_output(&["rev-parse", "queued-deletion"]);
+    test.run_git(&["branch", "safe-deletion"]);
+    let expected = test.git_output(&["rev-parse", "safe-deletion"]);
     assert!(std::ptr::eq(
         first.branch_deletions(),
         second.branch_deletions()
@@ -1597,7 +1597,7 @@ fn repository_instances_share_mutation_coordination() {
         assert!(
             second
                 .branch_deletions()
-                .delete(&second, "refs/heads/queued-deletion".to_owned(), &expected)
+                .delete(&second, "refs/heads/safe-deletion", &expected)
                 .unwrap(),
             "registry coordination must not block ref mutation"
         );

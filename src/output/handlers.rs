@@ -249,7 +249,7 @@ fn execute_instant_removal_or_fallback(
             let _ = std::fs::create_dir(worktree_path);
         }
         // Trash cleanup is independent of branch deletion. Start it before a
-        // deletion queue wait, and still attempt deletion if scheduling fails.
+        // deletion lock wait, and still attempt deletion if scheduling fails.
         let cleanup = spawn_cleanup(
             &build_remove_command_staged(&staged_path),
             InternalOp::Remove,

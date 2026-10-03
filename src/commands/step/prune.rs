@@ -237,7 +237,7 @@ struct RemovalContext<'a> {
     /// Keeps background removal output and skip messages out of a foreground
     /// spinner's terminal window. Shared guards do not serialize background
     /// removals or their hooks. Repository mutation coordination belongs to
-    /// the registry accessors and the safe-ref deletion queue.
+    /// the registry accessors and the safe-ref deletion coordinator.
     output_lock: &'a RwLock<()>,
 }
 
@@ -258,7 +258,7 @@ struct RemovalContext<'a> {
 /// Everything else fans out on the read side, including pre-remove hooks.
 /// The Git worktree-registry calls inside those removals take their own
 /// repository-scoped lock; see [`prune_worktree_entry`](Repository::prune_worktree_entry).
-/// Safe branch deletions batch ref mutation independently of terminal output.
+/// Safe branch deletions serialize ref mutation independently of terminal output.
 fn removal_needs_write(kind: CandidateKind, plan: &RemovalPlan, ctx: &RemovalContext<'_>) -> bool {
     if matches!(kind, CandidateKind::Current) {
         return true;

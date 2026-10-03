@@ -1712,7 +1712,7 @@ fn test_prune_summary_counts_declined_deletion_as_worktree_only(mut repo: TestRe
 ///
 /// Prune's hook-free removals — the rename-failure fallback included — run
 /// concurrently with the parallel `integration_reason` readers. That is safe
-/// because the chain's branch deletion is a CAS `git update-ref --stdin`, which never
+/// because the chain's branch deletion is a CAS `git update-ref -d`, which never
 /// rewrites `.git/config`; a deletion mechanism that rewrites config via
 /// lockfile+rename (as `git branch -D` does — the original Windows race,
 /// #2801) would collide with those readers again. Each branch here gets a
@@ -1730,7 +1730,7 @@ fn test_prune_summary_counts_declined_deletion_as_worktree_only(mut repo: TestRe
 /// returns) holds on every platform.
 ///
 /// On Unix a `git` shim on `PATH` additionally stalls the fallback's `git
-/// update-ref --stdin` for two seconds and records that it ran: proof prune *waits*
+/// update-ref -d` for two seconds and records that it ran: proof prune *waits*
 /// for it rather than racing ahead. The shim is Unix-only because Rust's
 /// `Command` resolves a bare program name through `CreateProcess`, which
 /// appends only `.exe` and never finds a `git.cmd`/`git.bat` — the same
@@ -1745,7 +1745,7 @@ fn test_prune_fallback_config_race_canary(mut repo: TestRepo) {
     // fan-out. `add_worktree` puts each branch at `main` HEAD, so all are
     // same-commit integrated and will be pruned. Each branch gets a
     // `[branch "<name>"]` section so a config-rewriting deletion (a
-    // regression from the CAS `update-ref --stdin` back toward `git branch -d`,
+    // regression from the CAS `update-ref -d` back toward `git branch -d`,
     // which removes the section via lockfile+rename) has a racing write to
     // make. (No remote needed: the same-commit local check yields
     // "integrated" before upstream is consulted.)
@@ -2258,22 +2258,12 @@ fn test_prune_stages_concurrently_without_packed_ref_contention(
         !barrier_dir.join("contended").exists(),
         "prune's branch deletions contended on packed-refs.lock:\n{stderr}"
     );
-    let inputs: Vec<_> = std::fs::read_dir(&git_wrapper_dir)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| {
-            path.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("input-")
-        })
-        .map(|path| std::fs::read(path).unwrap())
-        .collect();
+    let calls = prune_delete_calls(&git_wrapper_dir);
     for name in ["para-a", "para-b"] {
         assert!(
-            inputs.iter().any(|input| input
-                .split(|byte| *byte == 0)
-                .any(|field| field == format!("delete refs/heads/{name}").as_bytes())),
+            calls
+                .iter()
+                .any(|call| call.lines().next() == Some(format!("refs/heads/{name}").as_str())),
             "the packed-ref lock shim must intercept the actual deletion of {name}"
         );
     }
@@ -2342,48 +2332,37 @@ touch {0}/completed-{{{{ branch }}}}
 
 #[cfg(unix)]
 #[derive(Clone, Copy, PartialEq)]
-enum BatchInventoryFailure {
+enum SerializedDeleteFailure {
     None,
-    Error,
-    Interrupt,
-    FallbackInterrupt,
+    Moved,
+    Locked,
+    ClassificationError,
+    MutationInterrupt,
+    ClassificationInterrupt,
 }
 
-/// Block the first mutation until all peer requests are ready. The next real
-/// Git invocation must aggregate those requests, while trash cleanup proceeds
-/// before the blocked CAS result. A moved member retries unchanged peers with
-/// their original SHA; an external packed-ref lock leaves them all untouched.
-/// A per-ref lock fails only its own request, including when the leader fails.
-/// A shared packed-ref lock fails every affected request with bounded attempts.
-/// An unreadable classification inventory must not hide the original mutation
-/// error or strand unaffected refs; classification and fallback interrupts must
-/// stop all later mutations while releasing every already-staged caller.
+/// All worktrees stage and clean up while the first CAS is blocked. Waiting
+/// deletions never overlap, and one candidate's ordinary failure does not
+/// strand already-waiting peers. Interrupts stop every later Git mutation,
+/// including when interruption happens while classifying the first failure.
 #[cfg(unix)]
 #[rstest]
-#[case::deleted(false, false, false, false, BatchInventoryFailure::None)]
-#[case::moved_member(true, false, false, false, BatchInventoryFailure::None)]
-#[case::external_lock(false, true, false, false, BatchInventoryFailure::None)]
-#[case::leader_external_lock(false, true, true, false, BatchInventoryFailure::None)]
-#[case::member_ref_lock(false, false, false, true, BatchInventoryFailure::None)]
-#[case::leader_ref_lock(false, false, true, true, BatchInventoryFailure::None)]
-#[case::member_inventory_error(false, false, false, true, BatchInventoryFailure::Error)]
-#[case::leader_inventory_error(false, false, true, true, BatchInventoryFailure::Error)]
-#[case::inventory_interrupt(false, false, true, true, BatchInventoryFailure::Interrupt)]
-#[case::fallback_interrupt(false, false, false, true, BatchInventoryFailure::FallbackInterrupt)]
-fn test_prune_batches_ready_deletions(
+#[case::deleted(SerializedDeleteFailure::None)]
+#[case::moved(SerializedDeleteFailure::Moved)]
+#[case::locked(SerializedDeleteFailure::Locked)]
+#[case::classification_error(SerializedDeleteFailure::ClassificationError)]
+#[case::mutation_interrupt(SerializedDeleteFailure::MutationInterrupt)]
+#[case::classification_interrupt(SerializedDeleteFailure::ClassificationInterrupt)]
+fn test_prune_serializes_safe_deletions(
     mut repo: TestRepo,
-    #[case] moved: bool,
-    #[case] external_lock: bool,
-    #[case] fail_leader: bool,
-    #[case] ref_lock: bool,
-    #[case] inventory_failure: BatchInventoryFailure,
+    #[case] failure: SerializedDeleteFailure,
 ) {
     use path_slash::PathExt as _;
     use std::io::{BufRead as _, BufReader};
     use std::process::Stdio;
 
     repo.commit("initial");
-    let names: Vec<_> = (0..8).map(|i| format!("batch-{i}")).collect();
+    let names: Vec<_> = (0..8).map(|i| format!("serialized-{i}")).collect();
     let worktrees: Vec<_> = names.iter().map(|name| repo.add_worktree(name)).collect();
     let original_sha = repo.git_output(&["rev-parse", "main"]);
     let advanced_sha =
@@ -2392,11 +2371,6 @@ fn test_prune_batches_ready_deletions(
     repo.run_git(&["pack-refs", "--all", "--prune"]);
     repo.run_git(&["config", "core.packedRefsTimeout", "0"]);
     let common = crate::common::resolve_git_common_dir(repo.root_path());
-    let packed_refs = std::fs::read_to_string(common.join("packed-refs")).unwrap();
-    for name in &names {
-        assert!(packed_refs.contains(&format!("refs/heads/{name}")));
-        assert!(!common.join("refs/heads").join(name).exists());
-    }
     let barriers = repo.home_path().join("barriers");
     std::fs::create_dir_all(&barriers).unwrap();
     let hooks = repo.home_path().join("post-hooks");
@@ -2413,121 +2387,109 @@ fn test_prune_batches_ready_deletions(
         &real_git,
         &format!(
             r#"
-lock_ref() {{
-  ref=$(tr '\000' '\n' < "$input" | head -n 1)
-  ref=${{ref#delete }}
-  printf '%s\n' "$ref" > "$WORKTRUNK_TEST_BATCH_BARRIERS/locked-ref"
-  lock="$WORKTRUNK_TEST_BATCH_COMMON/$ref.lock"
-  mkdir -p "${{lock%/*}}"
-  printf 'external writer\n' > "$lock"
-}}
-if [ "$1" = for-each-ref ] && [ "$2" = '--format=%(refname)%00%(objectname)' ] &&
-   [ -f "$WORKTRUNK_TEST_BATCH_BARRIERS/locked-ref" ]; then
-  case "$WORKTRUNK_TEST_BATCH_INVENTORY" in
-    error)
-      touch "$WORKTRUNK_TEST_BATCH_BARRIERS/inventory-error"
-      printf 'classification inventory unavailable\n' >&2
+if [ "$1 $2 $3 $4" = 'show-ref --verify --hash --' ] &&
+   [ -f "$WORKTRUNK_TEST_CAS_BARRIERS/locked-ref" ] &&
+   [ "$5" = "$(cat "$WORKTRUNK_TEST_CAS_BARRIERS/locked-ref")" ]; then
+  case "$WORKTRUNK_TEST_CAS_FAILURE" in
+    classification-error)
+      touch "$WORKTRUNK_TEST_CAS_BARRIERS/classification-error"
+      printf 'classification unavailable\n' >&2
       exit 128
       ;;
-    interrupt)
-      touch "$WORKTRUNK_TEST_BATCH_BARRIERS/inventory-interrupt"
+    classification-interrupt)
+      touch "$WORKTRUNK_TEST_CAS_BARRIERS/classification-interrupt"
       kill -INT $$
       ;;
   esac
 fi
-if [ -n "$input" ]; then
-  if mkdir "$WORKTRUNK_TEST_BATCH_BARRIERS/first" 2>/dev/null; then
-    cp "$input" "$WORKTRUNK_TEST_BATCH_BARRIERS/first-input"
-    i=0
-    while [ ! -f "$WORKTRUNK_TEST_BATCH_BARRIERS/release" ]; do
-      i=$((i+1))
-      if [ "$i" -gt 600 ]; then
-        touch "$WORKTRUNK_TEST_BATCH_BARRIERS/timeout"
-        exit 2
-      fi
-      sleep 0.05
-    done
-    if [ -n "$WORKTRUNK_TEST_BATCH_FAIL_LEADER" ]; then
-      if [ -n "$WORKTRUNK_TEST_BATCH_REF_LOCK" ]; then
-        lock_ref
-      else
-        printf 'external writer\n' > "$WORKTRUNK_TEST_BATCH_LOCK"
-      fi
+if [ "$1 $2" = 'update-ref -d' ] &&
+   mkdir "$WORKTRUNK_TEST_CAS_BARRIERS/first" 2>/dev/null; then
+  printf '%s\n' "$3" > "$WORKTRUNK_TEST_CAS_BARRIERS/first-ref"
+  i=0
+  while [ ! -f "$WORKTRUNK_TEST_CAS_BARRIERS/release" ]; do
+    i=$((i+1))
+    if [ "$i" -gt 600 ]; then
+      touch "$WORKTRUNK_TEST_CAS_BARRIERS/timeout"
+      exit 2
     fi
-  elif mkdir "$WORKTRUNK_TEST_BATCH_BARRIERS/second" 2>/dev/null; then
-    cp "$input" "$WORKTRUNK_TEST_BATCH_BARRIERS/second-input"
-    if [ -n "$WORKTRUNK_TEST_BATCH_ADVANCE" ]; then
-      ref=$(tr '\000' '\n' < "$input" | head -n 1)
-      ref=${{ref#delete }}
-      printf '%s\n' "$ref" > "$WORKTRUNK_TEST_BATCH_BARRIERS/advanced-ref"
-      {real} update-ref "$ref" "$WORKTRUNK_TEST_BATCH_ADVANCE" || exit 2
-    fi
-    if [ -n "$WORKTRUNK_TEST_BATCH_LOCK" ]; then
-      printf 'external writer\n' > "$WORKTRUNK_TEST_BATCH_LOCK"
-    fi
-    if [ -n "$WORKTRUNK_TEST_BATCH_REF_LOCK" ] && [ -z "$WORKTRUNK_TEST_BATCH_FAIL_LEADER" ]; then
-      lock_ref
-    fi
-  elif [ "$WORKTRUNK_TEST_BATCH_INVENTORY" = fallback-interrupt ]; then
-    touch "$WORKTRUNK_TEST_BATCH_BARRIERS/fallback-interrupt"
-    kill -INT $$
-  fi
+    sleep 0.05
+  done
+  case "$WORKTRUNK_TEST_CAS_FAILURE" in
+    moved)
+      {real} update-ref "$3" "$WORKTRUNK_TEST_CAS_ADVANCE" || exit 2
+      ;;
+    locked|classification-error|classification-interrupt)
+      printf '%s\n' "$3" > "$WORKTRUNK_TEST_CAS_BARRIERS/locked-ref"
+      lock="$WORKTRUNK_TEST_CAS_COMMON/$3.lock"
+      mkdir -p "${{lock%/*}}"
+      printf 'external writer\n' > "$lock"
+      ;;
+    mutation-interrupt)
+      touch "$WORKTRUNK_TEST_CAS_BARRIERS/mutation-interrupt"
+      kill -INT $$
+      ;;
+  esac
 fi
 "#
         ),
     );
+    let mode = match failure {
+        SerializedDeleteFailure::None => "",
+        SerializedDeleteFailure::Moved => "moved",
+        SerializedDeleteFailure::Locked => "locked",
+        SerializedDeleteFailure::ClassificationError => "classification-error",
+        SerializedDeleteFailure::MutationInterrupt => "mutation-interrupt",
+        SerializedDeleteFailure::ClassificationInterrupt => "classification-interrupt",
+    };
+    let interrupted = matches!(
+        failure,
+        SerializedDeleteFailure::MutationInterrupt
+            | SerializedDeleteFailure::ClassificationInterrupt
+    );
     let mut cmd = repo.wt_command();
     prepend_path(&mut cmd, &wrapper);
-    cmd.env("RAYON_NUM_THREADS", "8")
+    let mut child = cmd
+        .env("RAYON_NUM_THREADS", "8")
         .env("RUST_LOG", "worktrunk::git::ref_deletion=debug")
-        .env("WORKTRUNK_TEST_BATCH_BARRIERS", &barriers)
+        .env("WORKTRUNK_TEST_CAS_BARRIERS", &barriers)
+        .env("WORKTRUNK_TEST_CAS_COMMON", &common)
+        .env("WORKTRUNK_TEST_CAS_FAILURE", mode)
+        .env("WORKTRUNK_TEST_CAS_ADVANCE", advanced_sha.trim())
         .args(["step", "prune", "--yes", "--min-age=0s"])
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    if moved {
-        cmd.env("WORKTRUNK_TEST_BATCH_ADVANCE", advanced_sha.trim());
-    }
-    if external_lock {
-        cmd.env("WORKTRUNK_TEST_BATCH_LOCK", common.join("packed-refs.lock"));
-    }
-    if fail_leader {
-        cmd.env("WORKTRUNK_TEST_BATCH_FAIL_LEADER", "1");
-    }
-    if ref_lock {
-        cmd.env("WORKTRUNK_TEST_BATCH_REF_LOCK", "1")
-            .env("WORKTRUNK_TEST_BATCH_COMMON", &common);
-    }
-    let inventory_mode = match inventory_failure {
-        BatchInventoryFailure::None => "",
-        BatchInventoryFailure::Error => "error",
-        BatchInventoryFailure::Interrupt => "interrupt",
-        BatchInventoryFailure::FallbackInterrupt => "fallback-interrupt",
-    };
-    cmd.env("WORKTRUNK_TEST_BATCH_INVENTORY", inventory_mode);
-    let interrupted = matches!(
-        inventory_failure,
-        BatchInventoryFailure::Interrupt | BatchInventoryFailure::FallbackInterrupt
-    );
-    let mut child = cmd.spawn().unwrap();
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
     let child_stderr = child.stderr.take().unwrap();
     let release = barriers.join("release");
     let cleanup_marker = barriers.join("cleanup-before-cas");
+    let first_ref_marker = barriers.join("first-ref");
     let trash = common.join("wt/trash");
+    let recorded_calls = wrapper.clone();
     let reader = std::thread::spawn(move || {
+        let mut waiting = 0;
         let mut captured = Vec::new();
         for line in BufReader::new(child_stderr).split(b'\n') {
             let line = line.unwrap();
             let text = String::from_utf8_lossy(&line).ansi_strip().into_owned();
-            if text.contains("Queued safe branch deletion") && text.contains("(pending: 7)") {
-                assert!(
-                    worktrees.iter().all(|path| !path.exists()),
-                    "all worktrees staged before CAS queueing"
-                );
-                crate::common::wait_for("trash cleanup while CAS is blocked", || {
-                    std::fs::read_dir(&trash).unwrap().next().is_none()
-                });
-                std::fs::write(&cleanup_marker, "cleaned").unwrap();
-                std::fs::write(&release, "ready").unwrap();
+            if text.contains("Waiting for safe branch deletion") {
+                waiting += 1;
+                if waiting == 8 {
+                    assert!(worktrees.iter().all(|path| !path.exists()));
+                    crate::common::wait_for("first CAS blocked", || first_ref_marker.exists());
+                    crate::common::wait_for("trash cleanup while CAS is blocked", || {
+                        std::fs::read_dir(&trash).unwrap().next().is_none()
+                    });
+                    // All peers reached the coordinator; an unlocked deletion
+                    // could now start. Keep observing for the absence window.
+                    let started = std::time::Instant::now();
+                    while started.elapsed() < worktrunk::testing::SLEEP_FOR_ABSENCE_CHECK {
+                        assert_eq!(prune_delete_calls(&recorded_calls).len(), 1);
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    std::fs::write(&cleanup_marker, "cleaned").unwrap();
+                    std::fs::write(&release, "ready").unwrap();
+                }
             }
             captured.extend(line);
             captured.push(b'\n');
@@ -2539,192 +2501,72 @@ fi
     let stderr = String::from_utf8_lossy(&stderr_bytes)
         .ansi_strip()
         .into_owned();
-    assert_eq!(
-        output.status.success(),
-        !(external_lock || ref_lock),
-        "{stderr}"
-    );
     assert!(
         !barriers.join("timeout").exists(),
-        "queue did not gather peers:\n{stderr}"
+        "waiting deletions did not all arrive:\n{stderr}"
     );
     assert!(barriers.join("cleanup-before-cas").exists());
-    if interrupted {
-        assert_eq!(output.status.code(), Some(130), "{stderr}");
-        let marker = if inventory_failure == BatchInventoryFailure::Interrupt {
-            "inventory-interrupt"
-        } else {
-            "fallback-interrupt"
-        };
-        assert!(barriers.join(marker).exists());
-    } else if inventory_failure == BatchInventoryFailure::Error {
-        assert!(barriers.join("inventory-error").exists());
+    assert_eq!(
+        output.status.success(),
+        matches!(
+            failure,
+            SerializedDeleteFailure::None | SerializedDeleteFailure::Moved
+        ),
+        "{stderr}"
+    );
+    let calls = prune_delete_calls(&wrapper);
+    assert_eq!(calls.len(), if interrupted { 1 } else { 8 }, "{stderr}");
+    let first_ref = std::fs::read_to_string(barriers.join("first-ref")).unwrap();
+    let mut attempted = std::collections::HashSet::new();
+    for call in calls {
+        let mut args = call.lines();
+        let reference = args.next().unwrap();
         assert!(
-            !stderr.contains("classification inventory unavailable"),
-            "the caller must receive the original mutation error:\n{stderr}"
+            attempted.insert(reference.to_owned()),
+            "no blind CAS retries"
         );
-    }
-    let batch_refs = |path: &std::path::Path| -> Vec<String> {
-        std::fs::read(path)
-            .unwrap()
-            .split(|byte| *byte == 0)
-            .filter_map(|field| {
-                std::str::from_utf8(field)
-                    .unwrap()
-                    .strip_prefix("delete refs/heads/")
-                    .map(str::to_owned)
-            })
-            .collect()
-    };
-    let first = batch_refs(&barriers.join("first-input"));
-    let second = if interrupted && fail_leader {
-        assert!(
-            !barriers.join("second-input").exists(),
-            "queued peers must receive the interrupt without another Git mutation"
-        );
-        Vec::new()
-    } else {
-        batch_refs(&barriers.join("second-input"))
-    };
-    assert_eq!(first.len(), 1);
-    assert_eq!(second.len(), if interrupted && fail_leader { 0 } else { 7 });
-    let inputs: Vec<_> = std::fs::read_dir(&wrapper)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| {
-            path.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("input-")
-        })
-        .collect();
-    if !(external_lock || ref_lock) {
-        assert_eq!(
-            inputs.len(),
-            if moved { 3 } else { 2 },
-            "one transaction per ready batch, plus one reduced retry"
-        );
-    }
-    if interrupted {
-        assert_eq!(
-            inputs.len(),
-            if fail_leader {
-                1
-            } else if inventory_failure == BatchInventoryFailure::FallbackInterrupt {
-                3
-            } else {
-                2
-            },
-            "no further mutation after an interrupt"
-        );
-    }
-    let mut attempts = std::collections::HashMap::<String, usize>::new();
-    for input in inputs {
-        let bytes = std::fs::read(input).unwrap();
-        let fields: Vec<_> = bytes
-            .split(|byte| *byte == 0)
-            .filter(|field| !field.is_empty())
-            .collect();
-        for pair in fields.as_chunks::<2>().0 {
-            *attempts
-                .entry(std::str::from_utf8(pair[0]).unwrap().to_owned())
-                .or_default() += 1;
-            assert_eq!(
-                std::str::from_utf8(pair[1]).unwrap(),
-                original_sha.trim(),
-                "retry keeps original expected SHA"
-            );
-        }
+        assert_eq!(args.next().unwrap(), original_sha.trim());
+        assert!(args.next().is_none());
     }
     for name in &names {
-        let attempts = attempts
-            .get(&format!("delete refs/heads/{name}"))
-            .copied()
-            .unwrap_or(0);
-        if interrupted && fail_leader && !first.contains(name) {
-            assert_eq!(attempts, 0, "{name} must not be attempted after interrupt");
-        } else {
-            assert!(
-                (1..=2).contains(&attempts),
-                "{name} must be attempted, without blindly retrying an unchanged singleton: {attempts}"
-            );
-        }
-    }
-    if fail_leader {
-        assert_eq!(
-            attempts[&format!("delete refs/heads/{}", first[0])],
-            1,
-            "an unchanged failed singleton must not be blindly retried"
-        );
-    }
-    let locked_ref = if ref_lock {
-        Some(std::fs::read_to_string(barriers.join("locked-ref")).unwrap())
-    } else {
-        None
-    };
-    let advanced_ref = if moved {
-        Some(std::fs::read_to_string(barriers.join("advanced-ref")).unwrap())
-    } else {
-        None
-    };
-    for name in &names {
+        let reference = format!("refs/heads/{name}");
         let result = repo
             .git_command()
-            .args(["rev-parse", "--verify", &format!("refs/heads/{name}")])
+            .args(["rev-parse", "--verify", &reference])
             .run()
             .unwrap();
-        if advanced_ref
-            .as_deref()
-            .is_some_and(|reference| reference.trim() == format!("refs/heads/{name}"))
-        {
-            assert!(result.status.success());
+        let retained = interrupted
+            || (failure != SerializedDeleteFailure::None && reference == first_ref.trim());
+        assert_eq!(result.status.success(), retained, "{name}: {stderr}");
+        if retained {
             assert_eq!(
                 String::from_utf8_lossy(&result.stdout).trim(),
-                advanced_sha.trim()
+                if failure == SerializedDeleteFailure::Moved && reference == first_ref.trim() {
+                    advanced_sha.trim()
+                } else {
+                    original_sha.trim()
+                }
             );
-        } else if (interrupted && (fail_leader || second.contains(name)))
-            || (external_lock && (fail_leader || second.contains(name)))
-            || locked_ref
-                .as_deref()
-                .is_some_and(|reference| reference.trim() == format!("refs/heads/{name}"))
-        {
-            assert!(result.status.success());
-            assert_eq!(
-                String::from_utf8_lossy(&result.stdout).trim(),
-                original_sha.trim()
-            );
-        } else {
-            assert!(!result.status.success(), "{name} should be deleted");
         }
     }
-    if moved {
+    if interrupted {
+        assert_eq!(output.status.code(), Some(130), "{stderr}");
+        assert!(barriers.join(mode).exists());
+    } else if failure == SerializedDeleteFailure::Moved {
         assert!(stderr.contains("moved during deletion"), "{stderr}");
+    } else if failure != SerializedDeleteFailure::None {
+        assert!(stderr.contains(".lock"), "{stderr}");
+        assert!(!stderr.contains("moved during deletion"), "{stderr}");
+        assert!(common.join(format!("{}.lock", first_ref.trim())).is_file());
     }
-    if ref_lock && !interrupted {
+    if failure == SerializedDeleteFailure::ClassificationError {
+        assert!(barriers.join(mode).exists());
         assert!(
-            stderr.contains(".lock") && !stderr.contains("moved during deletion"),
-            "{stderr}"
-        );
-        assert!(
-            common
-                .join(format!("{}.lock", locked_ref.as_ref().unwrap().trim()))
-                .is_file()
+            !stderr.contains("classification unavailable"),
+            "classification failure must preserve original mutation error: {stderr}"
         );
     }
-    if external_lock {
-        assert!(
-            stderr.contains("packed-refs.lock") && !stderr.contains("moved during deletion"),
-            "{stderr}"
-        );
-    }
-    if (external_lock || ref_lock) && !interrupted {
-        assert_eq!(
-            stderr.matches("removing worktree for batch-").count(),
-            1,
-            "only first error reaches terminal:\n{stderr}"
-        );
-    }
-    crate::common::wait_for("all completed removals run post-remove", || {
+    crate::common::wait_for("all staged removals run post-remove", || {
         std::fs::read_to_string(&hooks).is_ok_and(|text| text.lines().count() == 8)
     });
 }
@@ -2873,8 +2715,7 @@ fn test_prune_removal_failure_aborts_remaining_queue(repo: TestRepo) {
     }
 }
 
-/// Preserve the NUL-delimited transaction exactly while letting a shim inspect
-/// requested refs. Recorded inputs also prove tests exercised batch plumbing.
+/// Record the exact ref and expected SHA while letting shims intercept CAS.
 #[cfg(unix)]
 fn write_prune_git_wrapper(dir: &std::path::Path, real_git: &std::path::Path, body: &str) {
     use std::os::unix::fs::PermissionsExt;
@@ -2883,24 +2724,14 @@ fn write_prune_git_wrapper(dir: &std::path::Path, real_git: &std::path::Path, bo
     let shell_dir = shell_escape::unix::escape(dir.to_string_lossy());
     let script = format!(
         r#"#!/bin/sh
-input=
-if [ "$1 $2" = "update-ref --stdin" ]; then
-  input={shell_dir}/input-$$
-  cat > "$input"
+if [ "$1 $2" = 'update-ref -d' ]; then
+  printf '%s\n%s\n' "$3" "$4" > {shell_dir}/delete-$$
 fi
 has_delete() {{
-  if [ -n "$input" ]; then
-    tr '\000' '\n' < "$input" | grep -Fxq "delete refs/heads/$1"
-  else
-    [ "$original_command" = "update-ref -d refs/heads/$1" ]
-  fi
+  [ "$original_command" = "update-ref -d refs/heads/$1" ]
 }}
 run_git() {{
-  if [ -n "$input" ]; then
-    {real_git} "$@" < "$input"
-  else
-    {real_git} "$@"
-  fi
+  {real_git} "$@"
 }}
 original_command="$1 $2 $3"
 {body}
@@ -2912,6 +2743,21 @@ run_git "$@"
     let mut permissions = std::fs::metadata(&path).unwrap().permissions();
     permissions.set_mode(0o755);
     std::fs::set_permissions(&path, permissions).unwrap();
+}
+
+#[cfg(unix)]
+fn prune_delete_calls(dir: &std::path::Path) -> Vec<String> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("delete-")
+        })
+        .map(|path| std::fs::read_to_string(path).unwrap())
+        .collect()
 }
 
 /// Advance or remove the requested ref before rejecting its CAS transaction.
