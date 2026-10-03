@@ -85,9 +85,9 @@ pub use sections::{
 pub enum LoadError {
     /// A file parser failed, retaining its source and raw diagnosis.
     File(super::ConfigParseError),
-    /// Config files parsed cleanly; applying env-var overrides failed.
-    /// `vars` lists the exact `WORKTRUNK_*` env vars that were parsed
-    /// as `(name, value)` pairs.
+    /// An env-var override setting was rejected; other settings' overrides
+    /// may still apply. `vars` lists the `WORKTRUNK_*` env vars forming the
+    /// rejected setting as `(name, value)` pairs.
     Env {
         err: String,
         vars: Vec<(String, String)>,

@@ -628,7 +628,7 @@ On first run without shell integration, Worktrunk offers to install it. On first
 ## Environment variables
 
 All user config options can be overridden with environment variables using the `WORKTRUNK_` prefix.
-Invalid environment overrides are ignored with a warning; other valid overrides still apply.
+An invalid override is reported with a warning. `wt list` skips it and still applies the other valid overrides; commands such as `wt switch`, `wt merge`, and `wt remove` stop with an error instead.
 
 ### Naming convention
 

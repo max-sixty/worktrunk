@@ -615,7 +615,7 @@ On first run without shell integration, Worktrunk offers to install it. On first
 [1m[32mEnvironment variables[0m
 
 All user config options can be overridden with environment variables using the [2mWORKTRUNK_[0m prefix.
-Invalid environment overrides are ignored with a warning; other valid overrides still apply.
+An invalid override is reported with a warning. [2mwt list[0m skips it and still applies the other valid overrides; commands such as [2mwt switch[0m, [2mwt merge[0m, and [2mwt remove[0m stop with an error instead.
 
 [32mNaming convention[0m
 
