@@ -79,6 +79,43 @@ fn test_prune_removes_merged(mut repo: TestRepo) {
     assert!(!worktree_path.exists(), "Worktree should be fully removed");
 }
 
+/// Worktrees sharing a directory basename (Codex's `<id>/<repo>` layout) each
+/// stage into trash. The suite pins `epoch_now()`, so with basename-derived
+/// staging names the second rename would collide and fall back to a
+/// synchronous `git worktree remove`, which spawns no detached cleanup.
+#[rstest]
+fn test_prune_stages_worktrees_sharing_a_basename(mut repo: TestRepo) {
+    repo.commit("initial");
+    let parent = repo.root_path().parent().unwrap().to_path_buf();
+    let worktrees = [
+        ("one", parent.join("aaaa/repo")),
+        ("two", parent.join("bbbb/repo")),
+    ];
+    for (branch, path) in &worktrees {
+        repo.add_worktree_at_path(branch, path);
+    }
+
+    let output = repo
+        .wt_command()
+        .args(["step", "prune", "--yes", "--min-age=0s"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let logs = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/logs");
+    for (branch, path) in &worktrees {
+        assert!(!path.exists(), "{branch} must be removed");
+        assert!(
+            logs.join(branch).join("internal/remove.log").exists(),
+            "{branch} must be staged into trash with a detached cleanup"
+        );
+    }
+}
+
 /// Prune skips worktrees with unique commits (not merged)
 #[rstest]
 fn test_prune_skips_unmerged(mut repo: TestRepo) {
