@@ -6787,6 +6787,41 @@ fn test_switch_pr_azure_fork(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
+/// With no `webUrl` in the response, the org and host come from the local
+/// remote. An `ssh.dev.azure.com` remote must still suggest an HTTPS
+/// `dev.azure.com` URL for the PR's repository, not one on the SSH host.
+#[rstest]
+fn test_switch_pr_azure_ssh_remote_suggests_web_host(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "git@ssh.dev.azure.com:v3/myorg/myproject/test-repo",
+    ]);
+
+    let az_response = r#"{
+        "title": "Fix in a sibling repository",
+        "createdBy": {"uniqueName": "alice@example.com"},
+        "status": "active",
+        "isDraft": false,
+        "sourceRefName": "refs/heads/feature-auth",
+        "repository": {
+            "name": "other-repo",
+            "project": {"name": "myproject"}
+        },
+        "forkSource": null
+    }"#;
+
+    let mock_bin = setup_mock_az(&repo, az_response);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_azure_ssh_remote_suggests_web_host", cmd);
+    });
+}
+
 /// A missing PR reaches the user as the `TF401174` line `az` printed.
 ///
 /// Once the extension question is settled, `azure::fetch_pr_info` classifies
