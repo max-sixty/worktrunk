@@ -506,19 +506,20 @@ fn rename_into_trash(repo: &Repository, worktree_path: &Path, git_dir: &Path) ->
     let _ = std::fs::create_dir_all(&trash_dir);
     let staged_path = generate_removing_path(&trash_dir, git_dir);
 
-    match std::fs::rename(worktree_path, &staged_path) {
-        Ok(()) => {
-            // The rename moved the directory out from under `worktree_path`,
-            // leaving its registration stale for the prune to delete.
-            if let Err(e) = repo.prune_worktree_entry(worktree_path) {
-                tracing::debug!(error = %e, "Failed to prune worktree entry after rename: {e}");
-            }
-            Some(staged_path)
-        }
-        Err(e) => {
+    if std::fs::rename(worktree_path, &staged_path)
+        .inspect_err(|e| {
             tracing::debug!(error = %e, "Failed to stage worktree into trash, falling back: {e}");
-            None
+        })
+        .is_ok()
+    {
+        // The rename moved the directory out from under `worktree_path`,
+        // leaving its registration stale for the prune to delete.
+        if let Err(e) = repo.prune_worktree_entry(worktree_path) {
+            tracing::debug!(error = %e, "Failed to prune worktree entry after rename: {e}");
         }
+        Some(staged_path)
+    } else {
+        None
     }
 }
 
