@@ -818,7 +818,7 @@ $ wt config alias dry-run deploy -- --env=staging
 ## Supported tools
 
 - **claude** — Claude Code plugin (activity tracking + statusline)
-- **codex** — Codex plugin (Worktrunk configuration skill)
+- **codex** — Codex plugin (activity tracking + Worktrunk configuration skill)
 - **omp** — oh-my-pi hook (activity tracking)
 - **opencode** — OpenCode plugin (activity tracking)
 - **pi** — Pi extension (activity tracking)
@@ -1077,7 +1077,7 @@ Hook output lives in per-branch subtrees under `.git/wt/logs/{branch}/`:
 | Background hooks | `{branch}/{source}/{hook-type}/{name}.log` |
 | Background removal | `{branch}/internal/remove.log` |
 
-All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the background and produce log files. Source is `user` or `project`. Branch and hook names are sanitized for filesystem safety. Same operation on same branch overwrites the previous log. Removing a branch clears its subtree; orphans from deleted branches can be swept with `wt config state logs clear`.
+All `post-*` hooks (post-start, post-switch, post-commit, post-merge, post-remove) run in the background and produce log files. Source is `user` or `project`. Branch and hook names are sanitized for filesystem safety. Same operation on same branch overwrites the previous log. Removing a branch clears its subtree; orphans from deleted branches can be swept with `wt config state logs clear`.
 
 ### Diagnostic files
 
@@ -1198,7 +1198,7 @@ wt list
 ## Use cases
 
 - **Work status** — `🚧` WIP, `✅` ready for review, `🔥` urgent
-- **Agent tracking** — The [Claude Code](/claude-code/) plugin sets markers automatically
+- **Agent tracking** — The agent plugins ([Claude Code](/claude-code/), Codex, OpenCode, Pi, oh-my-pi) set markers automatically
 - **Notes** — Any short text: `"blocked"`, `"needs tests"`
 
 ## Storage
@@ -1737,7 +1737,7 @@ $ wt config state vars clear --all
 
 Clear all keys for a specific branch:
 ```console
-$ wt config state vars clear env --branch=feature
+$ wt config state vars clear --all --branch=feature
 ```"#)]
     Clear {
         /// Key to clear (required unless --all)
