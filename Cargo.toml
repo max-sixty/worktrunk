@@ -343,7 +343,7 @@ regex = "1.12.3"
 vt100 = "0.16.2"
 wt-perf = { path = "tests/helpers/wt-perf" }
 similar = "3.1.1"
-jsonschema = { version = "0.57", default-features = false }
+jsonschema = { version = "0.58", default-features = false }
 
 [[bench]]
 name = "alias"
