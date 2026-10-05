@@ -138,6 +138,8 @@ jobs:
       if: ${{ !cancelled() }}
       uses: codecov/codecov-action@v7.1.1
       with:
+        use_pypi: true
+        version: 11.3.1
         token: ${{ secrets.CODECOV_TOKEN }}
         files: target/nextest/default/junit.xml
         report_type: test_results
