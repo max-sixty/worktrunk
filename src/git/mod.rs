@@ -272,7 +272,7 @@ pub fn check_integration(signals: &IntegrationSignals) -> Option<IntegrationReas
 /// For batch operations, use parallel tasks to build [`IntegrationSignals`] directly.
 ///
 /// Resolves both `branch` and `target` to commit SHAs via `snapshot` so the
-/// integration probes are immune to ambient ref→SHA cache staleness — this
+/// integration probes read the ref state the caller captured — this
 /// is the safety contract that lets `wt merge`'s post-update-ref check
 /// observe the new local target SHA instead of the pre-merge value.
 /// Refs not in the snapshot (typically transient HEAD commits during a

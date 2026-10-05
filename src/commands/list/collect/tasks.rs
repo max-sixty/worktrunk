@@ -81,8 +81,8 @@ pub struct TaskContext {
     pub integration_targets: Option<IntegrationTargets>,
     /// Captured ref state for this list invocation. Tasks resolve ref
     /// names to commit SHAs through this snapshot before calling
-    /// `_by_sha` methods on `Repository`, side-stepping the ambient
-    /// ref→SHA cache. `None` when snapshot capture failed (degraded
+    /// `_by_sha` methods on `Repository`, so every task reads the same
+    /// point-in-time ref state. `None` when snapshot capture failed (degraded
     /// mode — tasks fall back to ref-taking methods).
     pub snapshot: Option<Arc<RefSnapshot>>,
 }

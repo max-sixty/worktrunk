@@ -199,7 +199,7 @@ impl VarScope<'_> {
 #[derive(Debug, Clone, Copy)]
 pub enum ValidationScope {
     /// A hook of the given type. Adds hook infrastructure vars (`hook_type`,
-    /// `hook_name`) plus hook-specific vars (`base`, `target`, etc.).
+    /// `hook_name`), hook-specific vars (`base`, `target`, etc.), and `args`.
     Hook(HookType),
     /// The `--execute` template or trailing args for `wt switch --create`.
     /// Adds `base` / `base_worktree_path` for the source worktree.
@@ -996,8 +996,8 @@ pub fn validate_template_syntax(template: &str, name: &str) -> Result<(), Templa
 /// Performs a trial expansion with placeholder values for exactly the variables
 /// available in `scope` (see [`vars_available_in`]). Catches syntax errors and
 /// undefined variable references *before* irreversible operations like worktree
-/// creation — including context-mismatch typos like `{{ args }}` in a hook or
-/// `{{ target }}` in a `pre-start` hook.
+/// creation — including context-mismatch typos like `{{ base }}` in a
+/// `pre-merge` hook or `{{ args }}` in a `--execute` template.
 ///
 /// This is deliberately more permissive than real expansion: conditional vars
 /// like `upstream` are provided even when they may be absent at runtime. A
