@@ -2105,6 +2105,45 @@ fn test_standalone_hook_post_start_foreground_inherits_stdin(repo: TestRepo) {
     );
 }
 
+/// A foreground hook runs in wt's process group, like an alias (see
+/// `test_alias_child_shares_parent_pgroup`). In its own pgroup it isn't the
+/// terminal's foreground group, so a tool that touches the tty (turbo,
+/// `gum confirm`) gets SIGTTOU and stops — `wt switch` then hangs.
+#[rstest]
+#[cfg(unix)]
+fn test_pre_start_hook_shares_parent_pgroup(repo: TestRepo) {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    repo.write_project_config(r#"pre-start = "ps -o pgid= -p $$ | tr -d ' \n' > hook_pgid.txt""#);
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "pre-start", "--yes"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    // wt becomes its own pgroup leader, so wt.pid == wt.pgid.
+    cmd.process_group(0);
+    let mut child = cmd.spawn().expect("failed to spawn wt hook pre-start");
+    let wt_pid = child.id() as i32;
+    let status = child.wait().expect("failed to wait for wt");
+    assert!(status.success(), "hook should succeed, got: {status:?}");
+
+    let marker = repo.root_path().join("hook_pgid.txt");
+    let recorded = fs::read_to_string(&marker)
+        .unwrap_or_else(|e| panic!("missing pgid marker {marker:?}: {e}"));
+    let hook_pgid: i32 = recorded
+        .trim()
+        .parse()
+        .unwrap_or_else(|e| panic!("could not parse pgid {recorded:?}: {e}"));
+    assert_eq!(
+        hook_pgid, wt_pid,
+        "foreground hook shell must share wt's pgroup (wt pid={wt_pid}); \
+         got child pgid {hook_pgid}, indicating a new pgroup was created"
+    );
+}
+
 #[rstest]
 fn test_foreground_pipeline_steps_share_one_stdin(repo: TestRepo) {
     use std::io::Write;
