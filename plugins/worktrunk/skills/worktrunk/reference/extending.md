@@ -210,6 +210,7 @@ Arguments pass through verbatim, stdio is inherited, and the child's exit code p
 
 - [`worktrunk-sync`](https://github.com/pablospe/worktrunk-sync): rebases stacked worktree branches in the dependency order inferred from git history. Install with `cargo install worktrunk-sync`, then run as `wt sync`.
 - [`workz`](https://github.com/rohansx/workz): provisions the current worktree with a collision-free port range plus its own database and Docker Compose project, merged into `.env.local`, so parallel worktrees don't clash. Install with `cargo install workz`, drop its [`wt-workz`](https://github.com/rohansx/workz/blob/main/examples/wt-workz) adapter on `PATH`, then run as `wt workz`.
+- [`wt-tui`](https://github.com/marcusjihansson/worktrunk-tui): an observational dashboard for watching worktrees rather than driving them, with live updates as agents create and remove worktrees, search across every worktree at once, a diff or log preview, and create, merge, remove, and prune behind dialogs that explain what Worktrunk is about to do. Install with `cargo install --git https://github.com/marcusjihansson/worktrunk-tui`, then run as `wt tui`.
 
 ## Reference: hooks vs. aliases
 
