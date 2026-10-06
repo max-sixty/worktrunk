@@ -2010,3 +2010,38 @@ fn test_copy_ignored_require_include_empty_worktreeinclude(mut repo: TestRepo) {
         "empty .worktreeinclude matches nothing — nothing copied"
     );
 }
+
+/// Inside a background hook pipeline, copy-ignored lowers its own priority.
+/// The helper it spawns for that goes through `shell_exec::Cmd`, so it shows
+/// up in the `-vv` trace like every other subprocess.
+#[rstest]
+#[cfg(unix)]
+fn test_copy_ignored_background_priority_helper_is_traced(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    let output = repo
+        .wt_command()
+        .args(["-vv", "step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .env("WORKTRUNK_FOREGROUND", "-1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "copy-ignored should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let helper = if cfg!(target_os = "macos") {
+        "/usr/sbin/taskpolicy -b -p"
+    } else {
+        "renice -n 19 -p"
+    };
+    let trace_log =
+        crate::common::resolve_git_common_dir(repo.root_path()).join("wt/logs/trace.log");
+    let trace = fs::read_to_string(&trace_log).unwrap();
+    assert!(
+        trace.contains(helper),
+        "the priority helper should appear in the -vv trace. trace.log: {trace}"
+    );
+}
