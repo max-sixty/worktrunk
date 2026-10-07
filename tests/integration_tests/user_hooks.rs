@@ -2909,6 +2909,35 @@ test = "echo '{{ branch }}' > shorthand_output.txt"
     );
 }
 
+/// `--args=VALUE` forwards into `{{ args }}` rather than binding it, since the
+/// forwarded positional list would overwrite the binding and drop the token.
+#[rstest]
+fn test_var_shorthand_args_key_forwards(repo: TestRepo) {
+    repo.write_test_config(
+        r#"[pre-start]
+test = "echo '{{ args }}' > args_output.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "pre-start", "--yes", "--args=KEPT"])
+        .output()
+        .expect("Failed to run wt hook");
+
+    assert!(
+        output.status.success(),
+        "Hook should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let contents = fs::read_to_string(repo.root_path().join("args_output.txt")).unwrap();
+    assert!(
+        contents.contains("--args=KEPT"),
+        "--args=KEPT should forward into args, got: {contents}"
+    );
+}
+
 #[rstest]
 fn test_var_shorthand_mixed_with_long_form(repo: TestRepo) {
     // Shorthand and `--var` forms coexist in the same invocation.

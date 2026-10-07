@@ -85,6 +85,18 @@ pub fn base_vars() -> Vec<&'static str> {
 /// indexing, iteration, and `length` behave like a sequence.
 pub const ALIAS_ARGS_KEY: &str = "args";
 
+/// Whether a `--KEY=VALUE` token on an alias or `wt hook` command line binds
+/// to `{{ KEY }}` rather than forwarding into `{{ args }}`.
+///
+/// `key` is the canonical (underscored) name and `referenced` the template's
+/// top-level variables. `args` and `vars` are never bindable even when
+/// referenced: the runtime always sets both (the positional list, the
+/// per-branch vars object) after CLI bindings, so a bound value would be
+/// overwritten and the token lost. Forwarding keeps it in `{{ args }}`.
+pub fn binds_cli_var(key: &str, referenced: &BTreeSet<String>) -> bool {
+    key != ALIAS_ARGS_KEY && key != "vars" && referenced.contains(key)
+}
+
 /// Variables available in `wt list` custom-column templates (plus `vars.*`).
 ///
 /// Deliberately narrower than [`base_vars`]: column values are computed per

@@ -211,11 +211,12 @@ pub use deprecation::{
 pub use deprecation::{DeprecationKind, Deprecations};
 pub use expansion::{
     ACTIVE_VARS, ALIAS_ARGS_KEY, EXEC_BASE_VARS, REPO_VARS, TemplateContext, TemplateExpandError,
-    ValidationScope, VarScope, VarsMode, alias_context_filter, base_vars, expand_template,
-    format_alias_variables, format_base_variables, format_hook_variables, redact_credentials,
-    referenced_vars_for_config, referenced_vars_for_templates, sanitize_branch_name, sanitize_db,
-    short_hash, template_environment, template_references_var, validate_list_column_template,
-    validate_template, validate_template_syntax, vars_available_in, vars_map_to_value,
+    ValidationScope, VarScope, VarsMode, alias_context_filter, base_vars, binds_cli_var,
+    expand_template, format_alias_variables, format_base_variables, format_hook_variables,
+    redact_credentials, referenced_vars_for_config, referenced_vars_for_templates,
+    sanitize_branch_name, sanitize_db, short_hash, template_environment, template_references_var,
+    validate_list_column_template, validate_template, validate_template_syntax, vars_available_in,
+    vars_map_to_value,
 };
 pub use hooks::HooksConfig;
 pub use project::{

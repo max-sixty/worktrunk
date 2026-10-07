@@ -11,7 +11,8 @@ use color_print::cformat;
 use strum::IntoEnumIterator;
 use worktrunk::HookType;
 use worktrunk::config::{
-    ALIAS_ARGS_KEY, Approvals, CommandConfig, ProjectConfig, UserConfig, referenced_vars_for_config,
+    ALIAS_ARGS_KEY, Approvals, CommandConfig, ProjectConfig, UserConfig, binds_cli_var,
+    referenced_vars_for_config,
 };
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
@@ -259,7 +260,7 @@ pub fn run_hook(
     let mut args: Vec<String> = Vec::new();
     for raw in shorthand_vars {
         let (canon_key, orig_key, value) = parse_shorthand_token(raw)?;
-        if referenced.contains(&canon_key) {
+        if binds_cli_var(&canon_key, &referenced) {
             bindings.push((canon_key, value));
         } else {
             args.push(format!("--{orig_key}={value}"));

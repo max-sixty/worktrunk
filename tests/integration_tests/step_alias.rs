@@ -198,6 +198,37 @@ run = "echo got {{ args }}"
     ));
 }
 
+/// `--args=VALUE` can't bind `{{ args }}` — the alias's own positional list
+/// fills that slot — so the token forwards into it rather than vanishing.
+#[rstest]
+fn test_step_alias_args_flag_forwards_to_args(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+run = "echo got {{ args }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let output = repo
+        .wt_command()
+        .args(["-y", "run", "--args=x", "y"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "alias should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("got --args=x y"),
+        "--args=x should reach {{{{ args }}}}, got: {stdout}"
+    );
+}
+
 /// `--` is a literal-forward escape: every later token goes to `{{ args }}`,
 /// so flag-shaped values that would normally bind are passed through verbatim.
 #[rstest]
