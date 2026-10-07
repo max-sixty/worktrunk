@@ -8349,6 +8349,295 @@ fn test_switch_format_json_already_at(mut repo: TestRepo) {
 }
 
 #[rstest]
+fn test_switch_format_json_failures_emit_one_error(repo: TestRepo) {
+    let early = repo
+        .wt_command()
+        .args([
+            "switch",
+            "missing-json",
+            "--format=json",
+            "--no-cd",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(!early.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&early.stdout).unwrap();
+    assert_eq!(json.as_object().unwrap().len(), 1);
+    insta::assert_snapshot!(json["error"].as_str().expect("error is a plain string"), @"
+    ✗ No branch named missing-json
+    ↳ To create a new branch, run wt switch --create missing-json; to list branches, run wt list --branches --remotes
+    ");
+    assert!(!early.stderr.is_empty());
+
+    // Git can reject a planned creation after planning has succeeded.
+    let rejected = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "bad..name",
+            "--format=json",
+            "--no-cd",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&rejected.stdout).unwrap();
+    let error = json["error"].as_str().expect("error is a plain string");
+    assert!(
+        error.contains("not a valid branch name"),
+        "JSON must retain Git's rejection reason: {error}"
+    );
+    assert_eq!(error, error.ansi_strip());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("not a valid branch name"));
+
+    // The worktree is created before --execute fails. The result must describe
+    // the whole synchronous command, rather than reporting success too early.
+    let late = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "failed-json",
+            "--format=json",
+            "--no-cd",
+            "--yes",
+            "--execute=sh",
+            "--",
+            "-c",
+            "echo child-output; exit 7",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(late.status.code(), Some(7));
+    let json: serde_json::Value = serde_json::from_slice(&late.stdout).unwrap();
+    assert_eq!(json, serde_json::json!({ "error": "exit status: 7" }));
+    assert!(String::from_utf8_lossy(&late.stderr).contains("child-output"));
+    assert!(
+        repo.root_path()
+            .parent()
+            .unwrap()
+            .join("repo.failed-json")
+            .is_dir()
+    );
+}
+
+#[rstest]
+fn test_switch_format_json_fetch_failure(#[from(repo_with_remote)] repo: TestRepo) {
+    let github_url = "https://github.com/owner/test-repo.git";
+    repo.run_git(&["remote", "set-url", "origin", github_url]);
+    // Redirect the URL to an absent local repository: exercise real Git
+    // failure without a network request or an external authentication state.
+    let missing = repo.root_path().join("missing-remote");
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", missing.display()),
+        github_url,
+    ]);
+    let response = r#"{"title":"Missing branch","user":{"login":"owner"},"state":"open","draft":false,"head":{"ref":"missing-head","repo":{"name":"test-repo","owner":{"login":"owner"}}},"base":{"ref":"main","repo":{"name":"test-repo","owner":{"login":"owner"}}},"html_url":"https://github.com/owner/test-repo/pull/101"}"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, response);
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "pr:101", "--format=json", "--no-cd", "--yes"]);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(!output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let message = json["error"].as_str().unwrap();
+    assert!(
+        message.contains("does not appear to be a git repository"),
+        "{json}"
+    );
+    assert!(message.contains(missing.to_str().unwrap()), "{json}");
+    assert!(json.get("action").is_none());
+}
+
+#[rstest]
+fn test_switch_format_json_directive_failure_emits_one_error(repo: TestRepo) {
+    // The directory cannot be opened as a CD directive file. That write runs
+    // after the worktree has already been created.
+    let mut cmd = repo.wt_command();
+    configure_directive_file(&mut cmd, repo.root_path());
+    let output = cmd
+        .args([
+            "switch",
+            "--create",
+            "failed-directive-json",
+            "--format=json",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let message = json["error"].as_str().unwrap();
+    assert!(message.starts_with("Failed to write the cd directive file"));
+    assert!(message.contains(repo.root_path().to_str().unwrap()));
+    assert!(json.get("action").is_none());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Failed to write the cd directive file")
+    );
+    assert!(
+        repo.root_path()
+            .parent()
+            .unwrap()
+            .join("repo.failed-directive-json")
+            .is_dir()
+    );
+}
+
+#[rstest]
+fn test_switch_format_json_early_validation_errors(repo: TestRepo) {
+    for args in [
+        vec!["switch", "main", "--format=json", "--base"],
+        vec!["switch", "main", "--oops", "--format=json"],
+        vec!["switch", "main", "--format=json", "--oops"],
+    ] {
+        let invalid_args = repo.wt_command().args(args).output().unwrap();
+        assert_eq!(invalid_args.status.code(), Some(2));
+        assert!(invalid_args.stdout.is_empty());
+        assert!(!invalid_args.stderr.is_empty());
+    }
+
+    // -C discovery fails before planning, with the requested JSON mode intact.
+    let missing_dir = repo.root_path().join("missing-cwd");
+    let invalid_cwd = repo
+        .wt_command()
+        .arg("-C")
+        .arg(&missing_dir)
+        .args(["switch", "main", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(!invalid_cwd.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&invalid_cwd.stdout).unwrap();
+    assert!(
+        json["error"]
+            .as_str()
+            .unwrap()
+            .contains("git rev-parse --git-common-dir"),
+        "JSON: {json}"
+    );
+
+    // A spawn failure must describe its producer, rather than expose only an
+    // AlreadyDisplayed marker or append an error after a success object.
+    let missing_program = repo
+        .wt_command()
+        .args([
+            "switch",
+            "main",
+            "--format=json",
+            "--no-cd",
+            "--yes",
+            "--execute=wt-json-missing-executable-14",
+        ])
+        .output()
+        .unwrap();
+    assert!(!missing_program.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&missing_program.stdout).unwrap();
+    assert!(
+        json["error"]
+            .as_str()
+            .unwrap()
+            .contains("Failed to execute command")
+    );
+}
+
+#[cfg(unix)]
+#[rstest]
+fn test_switch_format_json_execute_signal(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "main",
+            "--format=json",
+            "--no-cd",
+            "--yes",
+            "--execute=sh",
+            "--",
+            "-c",
+            "kill -TERM $$",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(143));
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({ "error": "Interrupted by signal 15" })
+    );
+
+    // Hook interruption has its own typed signal error whose terminal display
+    // is deliberately silent. JSON must still describe the actual signal.
+    repo.write_test_config("pre-switch = \"kill -INT $$\"\n");
+    let interrupted = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "interrupted-json",
+            "--format=json",
+            "--no-cd",
+            "--yes",
+            "--execute=sh",
+            "--",
+            "-c",
+            "echo should-not-run",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(interrupted.status.code(), Some(130));
+    assert!(
+        !repo
+            .root_path()
+            .parent()
+            .unwrap()
+            .join("repo.interrupted-json")
+            .exists()
+    );
+    assert!(!String::from_utf8_lossy(&interrupted.stderr).contains("should-not-run"));
+    let json: serde_json::Value = serde_json::from_slice(&interrupted.stdout).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({ "error": "Interrupted by signal 2" })
+    );
+}
+
+#[rstest]
+fn test_switch_execute_stdout_follows_format(repo: TestRepo) {
+    for format in ["json", "text"] {
+        let output = repo
+            .wt_command()
+            .args([
+                "switch",
+                "main",
+                "--no-cd",
+                "--yes",
+                "--format",
+                format,
+                "--execute=sh",
+                "--",
+                "-c",
+                "echo child-output",
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        if format == "json" {
+            // Parsing the complete stream rejects a second document or child
+            // output before/after the result.
+            let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(json["action"], "already_at");
+            assert_eq!(json["branch"], "main");
+            assert!(String::from_utf8_lossy(&output.stderr).contains("child-output"));
+        } else {
+            assert_eq!(String::from_utf8(output.stdout).unwrap(), "child-output\n");
+        }
+    }
+}
+
+#[rstest]
 fn test_switch_format_table_rejected_by_clap(repo: TestRepo) {
     let output = repo
         .wt_command()
@@ -8470,7 +8759,9 @@ fn switch_base_accepts_worktree_path(mut repo: TestRepo) {
 }
 
 #[rstest]
-fn test_switch_create_names_branch_left_by_failed_worktree_add(repo: TestRepo) {
+#[case(false)]
+#[case(true)]
+fn test_switch_create_names_branch_left_by_failed_worktree_add(repo: TestRepo, #[case] json: bool) {
     // `git worktree add -b` writes the branch ref before it populates the
     // worktree, so a failure in between leaves the branch with nothing checked
     // out on it (issue #4108). A regular file where the worktree's leading
@@ -8478,11 +8769,12 @@ fn test_switch_create_names_branch_left_by_failed_worktree_add(repo: TestRepo) {
     repo.write_test_config(r#"worktree-path = "blocked/{{ branch | sanitize }}""#);
     fs::write(repo.root_path().join("blocked"), "not a directory").unwrap();
 
-    let output = repo
-        .wt_command()
-        .args(["switch", "--create", "stranded"])
-        .output()
-        .unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "--create", "stranded"]);
+    if json {
+        cmd.args(["--format=json", "--no-cd"]);
+    }
+    let output = cmd.output().unwrap();
     assert!(
         !output.status.success(),
         "switch --create should fail when git cannot create the worktree"
@@ -8515,6 +8807,21 @@ fn test_switch_create_names_branch_left_by_failed_worktree_add(repo: TestRepo) {
         stderr.contains("wt switch stranded"),
         "expected a recovery suggestion for the leftover branch, got: {stderr}"
     );
+    if json {
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let error = result["error"].as_str().expect("error is a plain string");
+        assert!(
+            error.contains("fatal: could not create leading directories"),
+            "JSON must retain Git's directory-creation error: {error}"
+        );
+        assert!(
+            error.contains("Branch stranded was created before the failure, with no worktree")
+                && error.contains("git branch -d -- stranded")
+                && error.contains("wt switch stranded"),
+            "JSON must name the leftover branch and both recovery choices: {error}"
+        );
+        assert_eq!(error, error.ansi_strip());
+    }
 }
 
 // `--path` tests

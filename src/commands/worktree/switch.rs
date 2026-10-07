@@ -7,6 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::display::format_relative_time_short;
+use ansi_str::AnsiStr as _;
 use anyhow::{Context, bail};
 use color_print::cformat;
 use dunce::canonicalize;
@@ -1537,7 +1538,7 @@ impl SwitchJsonOutput {
     }
 }
 
-/// Emit the structured `--format=json` result to stdout when requested.
+/// Emit the structured `--format=json` result after synchronous work succeeds.
 ///
 /// One compact line rather than [`crate::output::print_json`]'s pretty form —
 /// a switch reports a single result, and a line is what a shell loop reads.
@@ -1557,6 +1558,13 @@ fn emit_switch_json(
     let json = serde_json::to_string(&json).context("Failed to serialize to JSON")?;
     println!("{json}");
     Ok(())
+}
+
+/// Emit the single failure result for a parsed JSON switch invocation.
+/// Main owns the failure boundary, including errors before pipeline creation.
+pub(crate) fn print_switch_json_error(message: &str) {
+    let payload = serde_json::json!({ "error": message.ansi_strip() });
+    println!("{payload}");
 }
 
 /// Options for the switch command
@@ -1789,8 +1797,8 @@ fn capture_switch_source(repo: &Repository, is_recovered: bool) -> (String, Stri
 /// else runs in [`SwitchPipeline::run`] — the bare-repo path-fix offer,
 /// pre-switch hooks, source-identity capture, `plan_switch` →
 /// `approve_switch_hooks` → `validate_switch_templates` → `execute_switch` →
-/// output → background hooks → `--execute`. One sequence, so the two entry
-/// points cannot drift. In particular the single `verify` / `yes` pair gates
+/// output → background hooks → `--execute` → JSON result. One sequence, so the
+/// two entry points cannot drift. In particular the single `verify` / `yes` pair gates
 /// every hook, so the picker and the argument path cannot diverge on hook
 /// approval — the picker once auto-approved `pre-switch` hooks because it kept
 /// its own copy of that call.
@@ -1932,14 +1940,9 @@ impl SwitchPipeline<'_> {
         let (result, branch_info) =
             execute_switch(repo, plan, config, yes, hooks_approved, &hook_plan)?;
 
-        // --format=json: write structured result to stdout. All behavior
-        // (hooks, --execute, shell integration) proceeds normally — format only
-        // affects output.
-        emit_switch_json(format, &result, &branch_info)?;
-
         // Early exit for benchmarking time-to-first-output.
         if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {
-            return Ok(());
+            return emit_switch_json(format, &result, &branch_info);
         }
 
         // Show success message (temporal locality: immediately after the
@@ -2056,10 +2059,14 @@ impl SwitchPipeline<'_> {
                 &argv,
                 display_paths.execute.as_deref(),
                 &display_paths.execute_dir,
+                format == SwitchFormat::Json,
             )?;
         }
 
-        Ok(())
+        // Reserve stdout for one result after every fallible synchronous step.
+        // A late failure still leaves the worktree in place, but reports no
+        // success document. Detached hooks keep their independent lifecycle.
+        emit_switch_json(format, &result, &branch_info)
     }
 }
 
