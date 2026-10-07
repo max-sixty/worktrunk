@@ -10,7 +10,7 @@ use worktrunk::shell_exec::{Cmd, shell_cwd};
 use worktrunk::styling::{eprint, format_bash_with_gutter, stderr};
 
 use crate::commands::command_executor::CommandContext;
-use crate::commands::command_executor::FailureStrategy;
+use crate::commands::command_executor::{FailureStrategy, ForegroundStdin};
 use crate::commands::hook_plan::{ApprovedHookPlan, execute_planned_hook, register_planned};
 use crate::commands::hooks::HookAnnouncer;
 use crate::commands::process::{
@@ -1233,6 +1233,7 @@ pub fn execute_user_command(
 pub fn handle_remove_output(
     plan: &RemovalPlan,
     execution: RemovalExecution,
+    stdin: ForegroundStdin,
     hook_plan: &ApprovedHookPlan,
     quiet: bool,
     announcer: &mut HookAnnouncer<'_>,
@@ -1263,6 +1264,7 @@ pub fn handle_remove_output(
                 branch_checked_out_at: branch_checked_out_at.as_ref(),
                 hook_plan,
                 execution,
+                stdin,
             },
             announcer,
         ),
@@ -1799,6 +1801,7 @@ struct WorktreeRemovalContext<'a> {
     /// no `ProjectConfig` snapshot to thread.
     hook_plan: &'a ApprovedHookPlan,
     execution: RemovalExecution,
+    stdin: ForegroundStdin,
 }
 
 impl WorktreeRemovalContext<'_> {
@@ -1831,7 +1834,8 @@ fn execute_pre_remove_hooks_if_needed(
         ctx.branch_name,
         ctx.worktree_path,
         false, // yes=false for CommandContext (not approval-related)
-    );
+    )
+    .with_stdin(ctx.stdin);
     let display_path = if ctx.changed_directory {
         None
     } else {
@@ -2175,7 +2179,7 @@ fn remove_removed_worktree_silently(
 ///
 /// ## Stdin
 ///
-/// The child always inherits the parent's stdin, so an interactive body keeps
+/// An input-owning pipeline inherits the parent's stdin, so an interactive body keeps
 /// the controlling terminal — a `pre-*` hook can `gum confirm`, an alias body's
 /// `wt switch` picker can drive `/dev/tty`. `inherit_stdin()` also keeps the
 /// child in wt's process group, which is what makes its `tcsetattr` on
@@ -2184,9 +2188,10 @@ fn remove_removed_worktree_silently(
 /// [`worktrunk::shell_exec`] for what a shared pgroup costs on teardown.
 ///
 /// Nothing is ever written to that stdin — a hook reads its context through
-/// template variables, whatever form it runs in. The two forms that can't be
-/// interactive close stdin instead, in their own spawn paths: concurrent groups
-/// in `output/concurrent.rs`, detached `post-*` pipelines in
+/// template variables, whatever form it runs in. Pipelines without exclusive
+/// input ownership close stdin: parallel prune removals and picker
+/// removals pass `ForegroundStdin::Closed`; concurrent groups in
+/// `output/concurrent.rs` and detached `post-*` pipelines in
 /// `commands/run_pipeline.rs`.
 ///
 /// ## Directive files
@@ -2233,6 +2238,7 @@ pub fn execute_shell_command(
     command: &str,
     command_log_label: Option<&str>,
     directives: DirectivePassthrough,
+    stdin: ForegroundStdin,
     redirect_stdout_to_stderr: bool,
     scrub_git_discovery: bool,
 ) -> anyhow::Result<()> {
@@ -2264,10 +2270,10 @@ pub fn execute_shell_command(
         cmd = cmd.external(label);
     }
 
-    // Inherit the parent's stdin so interactive children (e.g. TUI pickers,
-    // a `gum confirm` in a hook body) keep their controlling terminal — see
-    // the "Stdin" section of this function's docs.
-    cmd = cmd.inherit_stdin();
+    cmd = match stdin {
+        ForegroundStdin::Inherit => cmd.inherit_stdin(),
+        ForegroundStdin::Closed => cmd.stdin(Stdio::null()),
+    };
 
     if let Some(path) = directives.cd_file {
         cmd = cmd.directive_cd_file(path);

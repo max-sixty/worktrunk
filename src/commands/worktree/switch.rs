@@ -1037,13 +1037,22 @@ fn reject_path_overlapping_worktrees(repo: &Repository, requested: &Path) -> any
     let Ok(requested) = canonicalize(requested) else {
         return Ok(());
     };
-    let registered = repo.list_worktrees()?.iter().map(|wt| wt.path.as_path());
-    for existing in registered.chain([repo.git_common_dir()]) {
+    let registered = repo
+        .list_worktrees()?
+        .iter()
+        .map(|wt| (wt.path.as_path(), true));
+    for (existing, is_worktree) in registered.chain([(repo.git_common_dir(), false)]) {
         let existing = canonicalize(existing).unwrap_or_else(|_| existing.to_path_buf());
-        if existing == requested {
-            continue;
-        }
-        let relation = if existing.starts_with(&requested) {
+        let relation = if existing == requested {
+            // An exact worktree path gets its occupant diagnosis from
+            // validate_worktree_creation. The existing Git common directory
+            // must never be clobbered: bare and separate-git-dir stores have
+            // no worktree at this path.
+            if is_worktree {
+                continue;
+            }
+            "is"
+        } else if existing.starts_with(&requested) {
             "contains"
         } else if requested.starts_with(&existing) {
             "is inside"

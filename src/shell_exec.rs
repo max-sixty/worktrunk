@@ -18,16 +18,18 @@
 //!   SIGTERM in wt and `killpg`s the child group with SIGINT→SIGTERM→SIGKILL
 //!   escalation. Used for children wt runs on its own behalf across worktrees
 //!   (`wt step for-each`), which may fork further subprocesses — `killpg`
-//!   reaches the whole subtree, which a shared-pgroup approach cannot.
+//!   reaches the whole subtree, which a shared-pgroup approach cannot. Hooks
+//!   in parallel prune removals and picker removals also use this shape because
+//!   they do not own the caller's input.
 //!
 //! - **Shared-tty** (`forward_signals().inherit_stdin()`): the child stays in
 //!   wt's process group so it can drive `/dev/tty` (raw mode, `tcsetattr`)
 //!   without the kernel raising SIGTTOU. Tty-initiated signals (Ctrl-C, hangup)
 //!   reach the child via the kernel's foreground-pgroup broadcast; the listener
 //!   additionally delivers externally-targeted signals (e.g. `kill -TERM
-//!   <wt-pid>`) to the child by PID, single-shot. Used for every `Single`
-//!   foreground step of a hook or alias pipeline, which inherits wt's stdin so
-//!   the step can prompt, and for the program `wt switch --execute` launches
+//!   <wt-pid>`) to the child by PID, single-shot. Used for input-owning `Single`
+//!   foreground steps of hook and alias pipelines, and for the program
+//!   `wt switch --execute` launches
 //!   (`execute_command` in `output/global.rs`). Such a child's own subtree is
 //!   therefore not reachable by `killpg`: an externally-targeted signal
 //!   reaches the child by PID and stops there, while Ctrl-C still reaches the

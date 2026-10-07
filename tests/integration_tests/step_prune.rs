@@ -2326,6 +2326,8 @@ fn test_prune_stages_concurrently_without_packed_ref_contention(
 #[rstest]
 fn test_prune_pre_remove_hooks_run_concurrently(mut repo: TestRepo) {
     use path_slash::PathExt as _;
+    use std::io::Write;
+    use std::process::Stdio;
 
     repo.commit("initial");
     let worktrees: Vec<_> = ["parallel-a", "parallel-b"]
@@ -2346,25 +2348,161 @@ while [ ! -f {0}/started-parallel-a ] || [ ! -f {0}/started-parallel-b ]; do
   fi
   sleep 0.05
 done
+cat > {0}/stdin-{{{{ branch }}}}
 [ -e .git ] || exit 1
 touch {0}/completed-{{{{ branch }}}}
 """"#,
         barriers.to_slash_lossy()
     ));
-    let output = repo
+    let mut child = repo
         .wt_command()
         .env("RAYON_NUM_THREADS", "2")
         .args(["step", "prune", "--yes", "--min-age=0s"])
-        .output()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"parent input must stay unread\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stderr}");
     let branches = repo.git_output(&["branch", "--format=%(refname:short)"]);
     for (name, path) in worktrees {
         assert!(barriers.join(format!("completed-{name}")).exists());
+        assert_eq!(
+            std::fs::read_to_string(barriers.join(format!("stdin-{name}"))).unwrap(),
+            "",
+            "parallel removals must not compete for parent stdin"
+        );
         assert!(!path.exists());
         assert!(!branches.lines().any(|branch| branch == name));
     }
+}
+
+/// Exclusive removals own input: foreground cleanup serializes with the other
+/// candidates, and the current worktree is deferred until the fan-out finishes.
+#[rstest]
+#[case::foreground(true)]
+#[case::current_worktree(false)]
+fn test_prune_exclusive_pre_remove_hooks_inherit_stdin(
+    mut repo: TestRepo,
+    #[case] foreground: bool,
+) {
+    use path_slash::PathExt as _;
+    use std::io::Write;
+    use std::process::Stdio;
+
+    repo.commit("initial");
+    let worktree = repo.add_worktree("exclusive");
+    let input_marker = repo.home_path().join("hook-input.txt");
+    repo.write_test_config(&format!(
+        "pre-remove = 'cat > {}'",
+        input_marker.to_slash_lossy()
+    ));
+    let mut command = repo.wt_command();
+    command.args(["step", "prune", "--yes", "--min-age=0s"]);
+    if foreground {
+        command.arg("--foreground");
+    } else {
+        command.current_dir(&worktree);
+    }
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"exclusive hook input\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(input_marker).unwrap(),
+        "exclusive hook input\n"
+    );
+    crate::common::assert_worktree_removed(&worktree);
+}
+
+/// Closed-input prune hooks remain cancellable through the existing isolated
+/// process group: a signal sent only to wt must reach its running hook.
+#[cfg(unix)]
+#[rstest]
+fn test_prune_parallel_hook_external_sigterm_reaches_child(mut repo: TestRepo) {
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+    use path_slash::PathExt as _;
+    use std::os::unix::process::{CommandExt, ExitStatusExt};
+    use std::process::Stdio;
+
+    repo.commit("initial");
+    let worktree = repo.add_worktree("waiting");
+    let started = repo.home_path().join("hook-pgid.txt");
+    let interrupted = repo.home_path().join("hook-interrupted.txt");
+    repo.write_test_config(&format!(
+        r#"pre-remove = """
+trap 'printf interrupted > {1}; exit 143' TERM
+ps -o pgid= -p $$ > {0}
+sleep 30 &
+wait $!
+""""#,
+        started.to_slash_lossy(),
+        interrupted.to_slash_lossy()
+    ));
+    let mut command = repo.wt_command();
+    command
+        .args(["step", "prune", "--yes", "--min-age=0s"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0);
+    let mut child = command.spawn().unwrap();
+    crate::common::wait_for("pre-remove hook process group", || {
+        std::fs::read_to_string(&started)
+            .is_ok_and(|contents| contents.trim().parse::<i32>().is_ok())
+    });
+    let hook_pgid: u32 = std::fs::read_to_string(&started)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert_ne!(
+        hook_pgid,
+        child.id(),
+        "closed-input hook must have an isolated process group"
+    );
+    kill(Pid::from_raw(child.id() as i32), Signal::SIGTERM).unwrap();
+    let status = child.wait().unwrap();
+    assert!(
+        status.signal() == Some(15) || status.code() == Some(143),
+        "{status:?}"
+    );
+    assert_eq!(std::fs::read_to_string(interrupted).unwrap(), "interrupted");
+    assert!(
+        worktree.join(".git").is_file(),
+        "interrupted pre-remove must preserve its worktree"
+    );
+    assert!(
+        repo.git_command()
+            .args(["show-ref", "--verify", "refs/heads/waiting"])
+            .run()
+            .unwrap()
+            .status
+            .success()
+    );
 }
 
 #[cfg(unix)]

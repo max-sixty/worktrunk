@@ -45,6 +45,7 @@ use super::super::hook_plan::{ApprovedHookPlan, HookPlan, HookPlanBuilder};
 use super::super::hooks::HookAnnouncer;
 use super::super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::super::worktree::{BranchFate, RemovalPlan};
+use crate::commands::command_executor::ForegroundStdin;
 use crate::output::{BackgroundFallbackMode, RemovalExecution, handle_remove_output};
 
 /// A candidate worktree or branch selected for removal.
@@ -314,7 +315,8 @@ fn try_remove(
     // Recover the guard rather than `.expect()`-ing: a panic elsewhere should
     // surface as itself, not as a cascade of secondary poison panics on every
     // later removal/reader.
-    let (_read, _write) = if removal_needs_write(candidate.kind, &plan, ctx) {
+    let exclusive = removal_needs_write(candidate.kind, &plan, ctx);
+    let (_read, _write) = if exclusive {
         (
             None,
             Some(ctx.output_lock.write().unwrap_or_else(|e| e.into_inner())),
@@ -334,7 +336,12 @@ fn try_remove(
     } else {
         RemovalExecution::Background(BackgroundFallbackMode::SynchronousForNonCurrent)
     };
-    let fate = handle_remove_output(&plan, execution, ctx.hook_plan, true, &mut announcer)?;
+    let stdin = if exclusive {
+        ForegroundStdin::Inherit
+    } else {
+        ForegroundStdin::Closed
+    };
+    let fate = handle_remove_output(&plan, execution, stdin, ctx.hook_plan, true, &mut announcer)?;
     announcer.flush()?;
     let branch_deleted = fate.deleted();
     // A branch-only candidate that kept its branch removed nothing at all —

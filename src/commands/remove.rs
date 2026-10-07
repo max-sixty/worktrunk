@@ -4,6 +4,7 @@
 //! Target failures are reported independently; later targets still run and
 //! the batch exits unsuccessfully. An interrupt cancels the batch immediately.
 
+use crate::commands::command_executor::ForegroundStdin;
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -484,6 +485,7 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                 let fate = handle_remove_output(
                     &result,
                     removal_execution(args.foreground),
+                    ForegroundStdin::Inherit,
                     &plan,
                     false,
                     &mut announcer,
@@ -546,6 +548,7 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                     let fate = handle_remove_output(
                         result,
                         removal_execution(args.foreground),
+                    ForegroundStdin::Inherit,
                         &plan,
                         false,
                         &mut announcer,

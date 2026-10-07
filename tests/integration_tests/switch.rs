@@ -8620,3 +8620,96 @@ fn test_switch_path_rejects_directory_overlapping_repo(repo: TestRepo) {
     assert!(repo.root_path().join("src").is_dir());
     assert!(repo.root_path().join(".git").exists());
 }
+
+/// Git metadata outside a worktree has no worktree-occupant check to save it
+/// from --clobber. Both bare and separate-git-dir repositories must refuse
+/// their common directory before any files or refs move.
+#[test]
+fn test_switch_path_never_moves_git_common_dir() {
+    for bare in [true, false] {
+        let repo = TestRepo::with_initial_commit();
+        let git_dir = repo.home_path().join("git-data");
+        let cwd = if bare {
+            repo.run_git(&["clone", "--bare", ".", git_dir.to_str().unwrap()]);
+            git_dir.as_path()
+        } else {
+            repo.run_git(&["init", "--separate-git-dir", git_dir.to_str().unwrap()]);
+            repo.run_git(&[
+                "config",
+                "core.worktree",
+                repo.root_path().to_str().unwrap(),
+            ]);
+            repo.root_path()
+        };
+        // Pin discovery's cache before recording bytes: default-branch
+        // detection may legitimately save this value before the path guard.
+        assert!(
+            repo.git_command()
+                .current_dir(cwd)
+                .args(["config", "worktrunk.default-branch", "main"])
+                .run()
+                .unwrap()
+                .status
+                .success()
+        );
+        let config_before = fs::read(git_dir.join("config")).unwrap();
+        let head_before = repo
+            .git_command()
+            .current_dir(cwd)
+            .args(["rev-parse", "HEAD"])
+            .run()
+            .unwrap()
+            .stdout;
+
+        let output = repo
+            .wt_command()
+            .current_dir(cwd)
+            .args(["switch", "--create", "feature", "--path"])
+            .arg(git_dir.join("."))
+            .args(["--clobber", "--yes", "--no-hooks", "--no-cd"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "bare={bare}: {output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("choose a directory outside"),
+            "bare={bare}: {output:?}"
+        );
+        assert_eq!(fs::read(git_dir.join("config")).unwrap(), config_before);
+        let head_after = repo
+            .git_command()
+            .current_dir(cwd)
+            .args(["rev-parse", "HEAD"])
+            .run()
+            .unwrap();
+        assert!(head_after.status.success(), "bare={bare}: {head_after:?}");
+        assert_eq!(head_after.stdout, head_before);
+        assert!(
+            !repo
+                .git_command()
+                .current_dir(cwd)
+                .args(["show-ref", "--verify", "refs/heads/feature"])
+                .run()
+                .unwrap()
+                .status
+                .success()
+        );
+    }
+}
+
+/// A new directory nested under a worktree is a legal destination: nothing
+/// exists there for --clobber to move, and Git owns the creation decision.
+#[rstest]
+fn test_switch_path_allows_new_nested_worktree(repo: TestRepo) {
+    let destination = repo.root_path().join("nested");
+    assert!(!destination.exists());
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "nested", "--path"])
+        .arg(&destination)
+        .args(["--yes", "--no-hooks", "--no-cd"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(destination.join(".git").is_file());
+    assert!(repo.root_path().join(".git").is_dir());
+}
