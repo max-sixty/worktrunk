@@ -508,7 +508,7 @@ feature/auth
     ///
     /// Executes sequentially with real-time output; continues past command failures.
     #[command(
-        after_long_help = r#"A summary of successes and failures is shown at the end. Context JSON — a flat object of every template variable — is piped to stdin for scripts that need structured data.
+        after_long_help = r#"A summary of successes and failures is shown at the end. Context JSON — a flat object of every template variable — is provided on stdin for scripts that need structured data.
 
 ## Arguments
 

@@ -423,7 +423,7 @@ pub fn handle_hook_show(
         ctx.as_ref(),
     )?;
 
-    show_help_in_pager(&output, true);
+    show_help_in_pager(&output, true)?;
 
     Ok(())
 }

@@ -46,7 +46,7 @@ pub(super) fn print_dry_run(
         message_block = format_with_gutter(&formatted, None),
     );
 
-    crate::help_pager::show_help_in_pager(&out, true);
+    crate::help_pager::show_help_in_pager(&out, true)?;
     Ok(())
 }
 

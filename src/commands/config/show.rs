@@ -133,7 +133,7 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
     render_runtime_info(&mut show_output)?;
 
     // Display through pager (config show is always long-form output)
-    show_help_in_pager(&show_output, true);
+    show_help_in_pager(&show_output, true)?;
 
     if invalid {
         return Err(WorktrunkError::AlreadyDisplayed { exit_code: 1 }.into());

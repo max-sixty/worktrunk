@@ -1159,7 +1159,7 @@ fn test_remove_interrupt_stops_batch(
         .output()
         .unwrap();
     assert_eq!(
-        output.status.code(),
+        crate::common::shell_exit_code(&output.status),
         Some(exit_code),
         "stderr:\n{}",
         String::from_utf8_lossy(&output.stderr)
@@ -1254,7 +1254,11 @@ exec {real_git} "$@"
     if boundary == "status" {
         assert!(interrupted.exists(), "the clean check precedes removal");
     }
-    assert_eq!(output.status.code(), Some(exit_code), "stderr:\n{stderr}");
+    assert_eq!(
+        crate::common::shell_exit_code(&output.status),
+        Some(exit_code),
+        "stderr:\n{stderr}"
+    );
     assert!(
         output.stdout.is_empty(),
         "a canceled batch must not publish success JSON"

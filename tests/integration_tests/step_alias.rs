@@ -1179,396 +1179,343 @@ fail = "exit 1"
     );
 }
 
-/// Aliases must run their child in wt's process group when stdin is inherited,
-/// not isolate it in a new pgroup. Interactive children (`wt switch`'s picker,
-/// pagers, anything that calls `tcsetattr` on `/dev/tty`) only work when they
-/// share the foreground tty pgroup — otherwise the kernel sends SIGTTOU and
-/// stops the child mid-render. We check the invariant directly: the alias body
-/// records its shell pgid, and we assert it matches wt's pid (== wt's pgid
-/// because the test spawns wt as its own pgroup leader).
-#[rstest]
+// Signal fixtures synchronize through files and avoid background descendants.
+// An owned, unreaped keeper reserves the native group for scoped cleanup.
 #[cfg(unix)]
-fn test_alias_child_shares_parent_pgroup(repo: TestRepo) {
-    use std::os::unix::process::CommandExt;
-    use std::process::Stdio;
+struct AliasSignalJob {
+    child: Option<std::process::Child>,
+    keeper: std::process::Child,
+    release: std::path::PathBuf,
+}
 
-    repo.write_test_config(
-        r#"
-[aliases]
-record-pgid = "ps -o pgid= -p $$ | tr -d ' \n' > alias_pgid.txt"
+#[cfg(unix)]
+impl AliasSignalJob {
+    fn spawn(repo: &TestRepo) -> Self {
+        Self::spawn_with_stderr(repo, Stdio::null())
+    }
+
+    fn spawn_with_stderr(repo: &TestRepo, stderr: Stdio) -> Self {
+        Self::spawn_command(repo, &["step", "signal-test"], stderr)
+    }
+
+    fn spawn_traced(repo: &TestRepo, stderr: Stdio) -> Self {
+        Self::spawn_command(repo, &["-vv", "step", "signal-test"], stderr)
+    }
+
+    fn spawn_command(repo: &TestRepo, args: &[&str], stderr: Stdio) -> Self {
+        use std::os::unix::process::CommandExt;
+        // This owned, unreaped child reserves the caller group's numeric ID
+        // even after wt finishes or a group interrupt kills the keeper.
+        let keeper = std::process::Command::new("sleep")
+            .arg("300")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let mut job = Self {
+            child: None,
+            keeper,
+            release: repo.root_path().join("release"),
+        };
+        let mut command = repo.wt_command();
+        command.args(args);
+        command
+            .current_dir(repo.root_path())
+            .env("RUST_LOG", crate::common::FOREGROUND_TRACE_FILTER)
+            .stdout(Stdio::null())
+            .stderr(stderr)
+            .process_group(job.group().as_raw());
+        job.child = Some(command.spawn().unwrap());
+        job
+    }
+
+    fn pid(&self) -> nix::unistd::Pid {
+        nix::unistd::Pid::from_raw(self.child.as_ref().unwrap().id() as i32)
+    }
+
+    fn group(&self) -> nix::unistd::Pid {
+        nix::unistd::Pid::from_raw(self.keeper.id() as i32)
+    }
+
+    fn running(&mut self) -> bool {
+        self.child.as_mut().unwrap().try_wait().unwrap().is_none()
+    }
+
+    fn release(&self) {
+        std::fs::write(&self.release, "release").unwrap();
+    }
+
+    fn wait(&mut self) -> std::process::ExitStatus {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            if let Some(status) = self.child.as_mut().unwrap().try_wait().unwrap() {
+                return status;
+            }
+            assert!(std::time::Instant::now() < deadline, "alias did not finish");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for AliasSignalJob {
+    fn drop(&mut self) {
+        let _ = std::fs::write(&self.release, "release");
+        // No wait for the keeper precedes this signal. Its reserved PID pins
+        // the group's identity, independently of wt's cached wait status.
+        let _ = nix::sys::signal::killpg(self.group(), nix::sys::signal::Signal::SIGKILL);
+        if let Some(child) = &mut self.child {
+            let _ = child.wait();
+        }
+        let _ = self.keeper.wait();
+    }
+}
+
+#[cfg(unix)]
+fn signal_alias(repo: &TestRepo, concurrent: bool, caught_int: Option<bool>) -> Vec<&'static str> {
+    let labels = if concurrent {
+        vec!["one", "two"]
+    } else {
+        vec!["one"]
+    };
+    let commands: Vec<_> = labels.iter().map(|label| {
+        let int_trap = match caught_int {
+            Some(true) => format!("trap 'echo got-int >> int-{label}' INT; "),
+            Some(false) => "trap '' INT; ".to_owned(),
+            None => String::new(),
+        };
+        let body = format!("{int_trap}trap 'echo got-term > term-{label}; exit 0' TERM; echo $$ > pid-{label}; echo ready > start-{label}; while test ! -f release; do :; done");
+        (*label, serde_json::to_string(&body).unwrap())
+    }).collect();
+    let first = if concurrent {
+        format!(
+            "{{ {} }}",
+            commands
+                .iter()
+                .map(|(label, command)| format!("{label} = {command}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    } else {
+        commands[0].1.clone()
+    };
+    repo.write_test_config(&format!(
+        "[aliases]\nsignal-test = [{first}, 'echo next > next']\n"
+    ));
+    labels
+}
+
+#[cfg(unix)]
+fn ready_alias_children(repo: &TestRepo, labels: &[&str], group: nix::unistd::Pid) -> Vec<i32> {
+    labels
+        .iter()
+        .map(|label| {
+            crate::common::wait_for_file_content(&repo.root_path().join(format!("start-{label}")));
+            let pid =
+                std::fs::read_to_string(repo.root_path().join(format!("pid-{label}"))).unwrap();
+            let pid = nix::unistd::Pid::from_raw(pid.trim().parse().unwrap());
+            assert_eq!(
+                nix::unistd::getpgid(Some(pid)).unwrap(),
+                group,
+                "{label} left wt's native group"
+            );
+            pid.as_raw()
+        })
+        .collect()
+}
+
+/// A child that crashes in its TERM handler must not let a Warn hook pipeline
+/// continue after controller cancellation. The same crash alone stays ordinary.
+#[rstest]
+#[case::ordinary_child_death(false)]
+#[case::controller_cancellation(true)]
+#[cfg(unix)]
+fn test_controller_cancellation_survives_child_term_handler_crash(
+    repo: TestRepo,
+    #[case] controller_cancel: bool,
+) {
+    repo.write_project_config(r#"post-start = ["exec python3 worker.py", "printf NEXT > next"]"#);
+    std::fs::write(
+        repo.root_path().join("worker.py"),
+        r#"import os, signal, time
+from pathlib import Path
+def on_term(*_):
+    Path('term-handled').write_text('handled')
+    os.kill(os.getpid(), signal.SIGKILL)
+signal.signal(signal.SIGTERM, on_term)
+Path('pid-one').write_text(str(os.getpid()))
+Path('start-one').write_text('ready')
+while not Path('release').exists():
+    time.sleep(.001)
+os.kill(os.getpid(), signal.SIGKILL)
 "#,
+    )
+    .unwrap();
+    let stderr_path = repo.root_path().join("stderr");
+    let mut job = AliasSignalJob::spawn_command(
+        &repo,
+        &["hook", "post-start", "--yes", "--foreground"],
+        Stdio::from(std::fs::File::create(&stderr_path).unwrap()),
     );
-    repo.commit("initial");
-
-    let mut cmd = repo.wt_command();
-    cmd.args(["step", "record-pgid"]);
-    cmd.current_dir(repo.root_path());
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::null());
-    // wt becomes its own pgroup leader: wt.pid == wt.pgid. The alias child
-    // (a `sh -c '...'` shell) should inherit that pgid rather than being
-    // moved into a new group.
-    cmd.process_group(0);
-    let mut child = cmd.spawn().expect("failed to spawn wt step record-pgid");
-    let wt_pid = child.id() as i32;
-    let status = child.wait().expect("failed to wait for wt");
-    assert!(status.success(), "alias should succeed, got: {status:?}");
-
-    let marker = repo.root_path().join("alias_pgid.txt");
-    let recorded = std::fs::read_to_string(&marker)
-        .unwrap_or_else(|e| panic!("missing pgid marker {marker:?}: {e}"));
-    let alias_pgid: i32 = recorded
-        .trim()
-        .parse()
-        .unwrap_or_else(|e| panic!("could not parse pgid {recorded:?}: {e}"));
+    ready_alias_children(&repo, &["one"], job.group());
+    if controller_cancel {
+        nix::sys::signal::kill(job.pid(), nix::sys::signal::Signal::SIGTERM).unwrap();
+        crate::common::wait_for_file_content(&repo.root_path().join("term-handled"));
+    } else {
+        job.release();
+    }
+    let status = job.wait();
+    let stderr = std::fs::read_to_string(stderr_path).unwrap();
     assert_eq!(
-        alias_pgid, wt_pid,
-        "alias child shell must share wt's pgroup (wt pid={wt_pid}); \
-         got child pgid {alias_pgid}, indicating a new pgroup was created"
+        crate::common::shell_exit_code(&status),
+        Some(if controller_cancel { 143 } else { 0 }),
+        "{status:?}\n{stderr}",
+    );
+    assert_eq!(
+        repo.root_path().join("next").exists(),
+        !controller_cancel,
+        "{stderr}",
     );
 }
 
-/// Externally-delivered SIGTERM to wt (e.g. `kill -TERM <wt-pid>`) must still
-/// reach the alias child in the shared-pgroup case. The kernel only delivers
-/// PID-targeted signals to the named process, not the foreground pgroup, so
-/// the listener in `Cmd::stream` must re-deliver to the child by PID.
-/// Without that, wt would latch the signal but the child would keep running
-/// indefinitely.
+/// Native policy: TERM aimed at wt cancels owned work even when its
+/// child handles TERM successfully; PID-only INT is observed without delivery.
 #[rstest]
+#[case::single_term(false, true)]
+#[case::concurrent_term(true, true)]
+#[case::single_int(false, false)]
+#[case::concurrent_int(true, false)]
 #[cfg(unix)]
-fn test_alias_external_sigterm_reaches_child(repo: TestRepo) {
-    use crate::common::wait_for_file_content;
+fn test_alias_pid_signal_policy(repo: TestRepo, #[case] concurrent: bool, #[case] terminate: bool) {
     use nix::sys::signal::{Signal, kill};
-    use nix::unistd::Pid;
-    use std::os::unix::process::CommandExt;
-    use std::process::Stdio;
-
-    // The trap installs in wt's wrapper sh (no inner `sh -c`), so SIGTERM
-    // delivered to wt's child by PID hits the same shell that has the
-    // handler. The body uses `sleep 30 & wait $!` rather than a plain
-    // `sleep 30` because POSIX shells defer trap execution until the
-    // current foreground command returns; `wait` (a builtin) is the
-    // canonical interruptible idiom.
-    repo.write_test_config(
-        r#"
-[aliases]
-trapped = "trap 'echo got-term >> trap.log; exit 143' TERM; echo started >> start.log; sleep 30 & wait $!"
-"#,
-    );
-    repo.commit("initial");
-
-    let mut cmd = repo.wt_command();
-    cmd.args(["step", "trapped"]);
-    cmd.current_dir(repo.root_path());
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::null());
-    // wt becomes its own pgroup leader so a PID-targeted `kill -TERM` against
-    // wt does NOT incidentally hit the test harness's pgroup, and only reaches
-    // wt itself (not the alias child via kernel broadcast).
-    cmd.process_group(0);
-    let mut child = cmd.spawn().expect("failed to spawn wt step trapped");
-
-    // Wait until the alias shell has installed its trap and entered `sleep`.
-    let start_marker = repo.root_path().join("start.log");
-    wait_for_file_content(&start_marker);
-
-    // Target wt's PID specifically (not its pgroup) — simulates an external
-    // `kill -TERM <wt-pid>`.
-    let wt_pid = Pid::from_raw(child.id() as i32);
-    kill(wt_pid, Signal::SIGTERM).expect("failed to send SIGTERM to wt");
-
-    let status = child.wait().expect("failed to wait for wt");
-
-    // wt forwarded SIGTERM to the wrapper sh by PID (the contract this test
-    // pins), so the trap's `exit` orphaned the backgrounded `sleep 30` in wt's
-    // process group. wt led that group (`process_group(0)` above) and is now
-    // reaped, so SIGKILL the whole group (negative pgid) to reap the sleep
-    // before returning — otherwise it lingers ~30s as a stray process.
-    let _ = kill(Pid::from_raw(-wt_pid.as_raw()), Signal::SIGKILL);
-
-    // The trap marker proves the alias shell received SIGTERM. Without the
-    // PID-targeted forwarding, this file would never appear and wt would
-    // block on the 30s sleep.
-    let trap_marker = repo.root_path().join("trap.log");
-    let recorded = std::fs::read_to_string(&trap_marker).unwrap_or_else(|e| {
-        panic!(
-            "missing trap marker {trap_marker:?}: {e} — \
-             alias child did not receive SIGTERM (forwarding regressed?)"
-        )
-    });
-    assert!(
-        recorded.contains("got-term"),
-        "trap marker missing expected content: {recorded:?}"
-    );
-
-    // wt itself exits with the signal-derived code (128 + 15 = 143).
-    use std::os::unix::process::ExitStatusExt;
-    assert!(
-        status.signal() == Some(15) || status.code() == Some(143),
-        "wt should exit from SIGTERM (signal 15) or with code 143, got: {status:?}"
-    );
+    let labels = signal_alias(&repo, concurrent, Some(true));
+    let stderr_path = repo.root_path().join("stderr");
+    let stderr = std::fs::File::create(&stderr_path).unwrap();
+    let mut job = AliasSignalJob::spawn_traced(&repo, stderr.into());
+    let children = ready_alias_children(&repo, &labels, job.group());
+    // A child can announce readiness before wt returns from spawn. This test
+    // sends its signal to an admitted command, not during startup cancellation.
+    crate::common::wait_for_foreground_admission(&repo, &children);
+    kill(
+        job.pid(),
+        if terminate {
+            Signal::SIGTERM
+        } else {
+            Signal::SIGINT
+        },
+    )
+    .unwrap();
+    if terminate {
+        for label in &labels {
+            crate::common::wait_for_file_content(&repo.root_path().join(format!("term-{label}")));
+        }
+        use std::os::unix::process::ExitStatusExt;
+        let status = job.wait();
+        assert!(
+            status.code() == Some(143) || status.signal() == Some(15),
+            "forwarded TERM must cancel after caught success: {status:?}\n{}",
+            std::fs::read_to_string(stderr_path).unwrap()
+        );
+        assert!(!repo.root_path().join("next").exists());
+    } else {
+        std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
+        assert!(job.running(), "PID-only INT stopped the waiting caller");
+        for label in &labels {
+            assert!(
+                !repo.root_path().join(format!("int-{label}")).exists(),
+                "PID-only INT reached {label}"
+            );
+        }
+        job.release();
+        let status = job.wait();
+        assert!(
+            status.success(),
+            "PID-only INT changed an admitted command's status: {status:?}\n{}",
+            std::fs::read_to_string(stderr_path).unwrap()
+        );
+        assert!(repo.root_path().join("next").exists());
+    }
 }
 
-/// SIGINT counterpart of `test_alias_external_sigterm_reaches_child`. A
-/// PID-targeted `kill -INT <wt-pid>` (not pgroup-broadcast) must traverse the
-/// SIGINT arm of `forward_signal_to_pid` — kernel pgroup delivery is bypassed
-/// when the signal is aimed at a single PID, so the child only sees SIGINT if
-/// wt re-delivers it.
-#[rstest]
-#[cfg(unix)]
-fn test_alias_external_sigint_reaches_child(repo: TestRepo) {
-    use crate::common::wait_for_file_content;
-    use nix::sys::signal::{Signal, kill};
-    use nix::unistd::Pid;
-    use std::os::unix::process::CommandExt;
-    use std::process::Stdio;
-
-    repo.write_test_config(
-        r#"
-[aliases]
-trapped = "trap 'echo got-int >> trap.log; exit 130' INT; echo started >> start.log; sleep 30 & wait $!"
-"#,
-    );
-    repo.commit("initial");
-
-    let mut cmd = repo.wt_command();
-    cmd.args(["step", "trapped"]);
-    cmd.current_dir(repo.root_path());
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::null());
-    cmd.process_group(0);
-    let mut child = cmd.spawn().expect("failed to spawn wt step trapped");
-
-    let start_marker = repo.root_path().join("start.log");
-    wait_for_file_content(&start_marker);
-
-    // Target wt's PID specifically (not its pgroup). Kernel won't broadcast to
-    // the alias child; the only way the child sees SIGINT is via wt's PID-
-    // forwarding path.
-    let wt_pid = Pid::from_raw(child.id() as i32);
-    kill(wt_pid, Signal::SIGINT).expect("failed to send SIGINT to wt");
-
-    let status = child.wait().expect("failed to wait for wt");
-
-    // wt forwarded SIGINT to the wrapper sh by PID (the contract this test
-    // pins), so the trap's `exit` orphaned the backgrounded `sleep 30` in wt's
-    // process group. wt led that group (`process_group(0)` above) and is now
-    // reaped, so SIGKILL the whole group (negative pgid) to reap the sleep
-    // before returning — otherwise it lingers ~30s as a stray process.
-    let _ = kill(Pid::from_raw(-wt_pid.as_raw()), Signal::SIGKILL);
-
-    let trap_marker = repo.root_path().join("trap.log");
-    let recorded = std::fs::read_to_string(&trap_marker).unwrap_or_else(|e| {
-        panic!(
-            "missing trap marker {trap_marker:?}: {e} — \
-             alias child did not receive SIGINT (forwarding regressed?)"
-        )
-    });
-    assert!(
-        recorded.contains("got-int"),
-        "trap marker missing expected content: {recorded:?}"
-    );
-
-    use std::os::unix::process::ExitStatusExt;
-    assert!(
-        status.signal() == Some(2) || status.code() == Some(130),
-        "wt should exit from SIGINT (signal 2) or with code 130, got: {status:?}"
-    );
-}
-
-/// SIGINT sent to `wt step <alias>` while a concurrent group is mid-flight
-/// must reach every child's process group and tear them all down — otherwise
-/// Ctrl-C on a long-running concurrent alias would leave orphans behind.
-///
-/// We spawn the alias in its own process group, wait until BOTH children have
-/// written their "start" marker (proving they're actually running concurrently),
-/// send SIGINT to the group, then verify that the subsequent "done" markers
-/// never appear — every child was interrupted.
+/// Kernel group delivery reaches both children; actual interrupted status
+/// stops the following alias step.
 #[rstest]
 #[cfg(unix)]
 fn test_alias_concurrent_receives_sigint(repo: TestRepo) {
-    use crate::common::wait_for_file_content;
-    use nix::sys::signal::{Signal, kill};
-    use nix::unistd::Pid;
-    use std::os::unix::process::CommandExt;
-    use std::process::Stdio;
-
-    repo.write_test_config(
-        r#"
-[aliases.slow]
-one = "sh -c 'echo start-one >> slow_one.log; sleep 30; echo done-one >> slow_one.log'"
-two = "sh -c 'echo start-two >> slow_two.log; sleep 30; echo done-two >> slow_two.log'"
-"#,
-    );
-    repo.commit("initial");
-
-    let mut cmd = repo.wt_command();
-    cmd.args(["step", "slow"]);
-    cmd.current_dir(repo.root_path());
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::null());
-    cmd.process_group(0); // wt becomes leader of its own process group
-    let mut child = cmd.spawn().expect("failed to spawn wt step slow");
-
-    // Wait until BOTH children write their start marker — proves the group
-    // is running concurrently before we send the signal.
-    let one_log = repo.root_path().join("slow_one.log");
-    let two_log = repo.root_path().join("slow_two.log");
-    wait_for_file_content(&one_log);
-    wait_for_file_content(&two_log);
-
-    // SIGINT the wt process group (wt == leader). The concurrent executor's
-    // signal forwarder must propagate it to every child's process group.
-    let wt_pgid = Pid::from_raw(child.id() as i32);
-    kill(Pid::from_raw(-wt_pgid.as_raw()), Signal::SIGINT)
-        .expect("failed to send SIGINT to wt's process group");
-
-    let status = child.wait().expect("failed to wait for wt");
-
+    let labels = signal_alias(&repo, true, None);
+    let mut job = AliasSignalJob::spawn(&repo);
+    ready_alias_children(&repo, &labels, job.group());
+    nix::sys::signal::killpg(job.group(), nix::sys::signal::Signal::SIGINT).unwrap();
     use std::os::unix::process::ExitStatusExt;
+    let status = job.wait();
     assert!(
-        status.signal() == Some(2) || status.code() == Some(130),
-        "wt should exit from SIGINT (signal 2) or with code 130, got: {status:?}"
+        status.code() == Some(130) || status.signal() == Some(2),
+        "group INT should exit 130: {status:?}"
     );
-
-    // Grace period — the killed children must NOT reach their "done" write.
-    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
-    for log in [&one_log, &two_log] {
-        let contents = std::fs::read_to_string(log).unwrap_or_default();
-        assert!(
-            !contents.contains("done"),
-            "sibling child reached 'done' after SIGINT, log: {contents:?}"
-        );
-    }
+    assert!(!repo.root_path().join("next").exists());
 }
 
-/// Children that trap SIGINT survive a single Ctrl-C — wt forwards the
-/// user's signal once and waits. Matches `make` / `cargo` behavior:
-/// stubborn children need a second Ctrl-C (see
-/// `test_alias_concurrent_second_sigint_kills`) to escalate to SIGKILL.
-///
-/// Counterpart to `test_alias_concurrent_receives_sigint` (cooperative
-/// children, single press is sufficient). Together they pin the
-/// no-per-child-escalation contract: the previous design escalated
-/// SIGINT → SIGTERM → SIGKILL inside one press, which under CI scheduling
-/// latency could land SIGTERM on a cooperative-but-slow child and make
-/// `wt step <alias>` exit 143 instead of 130 on Ctrl-C.
+/// Repeated group interrupts retain the child's disposition and status. One
+/// contrast per handler/key/cardinality covers both stream execution paths.
 #[rstest]
+#[case::single_caught_once(false, true, 1)]
+#[case::concurrent_caught_twice(true, true, 2)]
+#[case::single_ignored_twice(false, false, 2)]
+#[case::concurrent_ignored_once(true, false, 1)]
 #[cfg(unix)]
-fn test_alias_concurrent_sigint_trapped_survives_first_press(repo: TestRepo) {
-    use crate::common::wait_for_file_content;
-    use nix::sys::signal::{Signal, kill};
-    use nix::unistd::Pid;
-    use std::os::unix::process::CommandExt;
-    use std::process::Stdio;
-
-    // Children trap SIGINT (ignore it). With the new no-escalation
-    // contract, a single SIGINT should NOT kill them.
-    repo.write_test_config(
-        r#"
-[aliases.intignored]
-one = "sh -c 'trap \"\" INT; echo start-one >> ignored_one.log; sleep 30'"
-two = "sh -c 'trap \"\" INT; echo start-two >> ignored_two.log; sleep 30'"
-"#,
-    );
-    repo.commit("initial");
-
-    let mut cmd = repo.wt_command();
-    cmd.args(["step", "intignored"]);
-    cmd.current_dir(repo.root_path());
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::null());
-    cmd.process_group(0);
-    let mut child = cmd.spawn().expect("failed to spawn wt step intignored");
-
-    wait_for_file_content(&repo.root_path().join("ignored_one.log"));
-    wait_for_file_content(&repo.root_path().join("ignored_two.log"));
-
-    let wt_pgid = Pid::from_raw(child.id() as i32);
-    kill(Pid::from_raw(-wt_pgid.as_raw()), Signal::SIGINT)
-        .expect("failed to send SIGINT to wt's process group");
-
-    // Give the signal a moment to traverse the forwarder. With escalation
-    // (the old design), within ~400 ms SIGTERM would have killed both
-    // children and wt would be in the process of exiting. With the new
-    // contract, both children keep sleeping and wt is still running.
-    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
-
-    match child.try_wait().expect("try_wait failed") {
-        None => {
-            // Expected: wt is still running, blocked on its sleeping
-            // children. Clean up with a second SIGINT (impatient
-            // SIGKILL path).
-            kill(Pid::from_raw(-wt_pgid.as_raw()), Signal::SIGINT)
-                .expect("failed to send second SIGINT");
-            let _ = child.wait();
+fn test_alias_group_sigint_does_not_escalate(
+    repo: TestRepo,
+    #[case] concurrent: bool,
+    #[case] caught: bool,
+    #[case] presses: usize,
+) {
+    let labels = signal_alias(&repo, concurrent, Some(caught));
+    let mut job = AliasSignalJob::spawn_traced(&repo, Stdio::null());
+    let children = ready_alias_children(&repo, &labels, job.group());
+    crate::common::wait_for_foreground_admission(&repo, &children);
+    for press in 1..=presses {
+        nix::sys::signal::killpg(job.group(), nix::sys::signal::Signal::SIGINT).unwrap();
+        if caught {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            for label in &labels {
+                let marker = repo.root_path().join(format!("int-{label}"));
+                while std::fs::read_to_string(&marker)
+                    .unwrap_or_default()
+                    .lines()
+                    .count()
+                    != press
+                {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "{label} did not handle interrupt {press} exactly once"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+            }
         }
-        Some(status) => panic!(
-            "wt exited after a single SIGINT against SIGINT-trapping children — \
-             per-child escalation appears to have crept back in. status: {status:?}"
-        ),
+        std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
+        assert!(job.running(), "interrupt {press} killed wt before release");
+        ready_alias_children(&repo, &labels, job.group());
     }
-}
-
-/// A second SIGINT (user mashing Ctrl-C) must escalate to SIGKILL on every
-/// child immediately — otherwise a child that traps SIGINT keeps the group
-/// alive for up to N × 400ms of per-pgid escalation, with subsequent
-/// presses silently discarded.
-#[rstest]
-#[cfg(unix)]
-fn test_alias_concurrent_second_sigint_kills(repo: TestRepo) {
-    use crate::common::wait_for_file_content;
-    use nix::sys::signal::{Signal, kill};
-    use nix::unistd::Pid;
-    use std::os::unix::process::CommandExt;
-    use std::process::Stdio;
-
-    // Both children trap SIGINT and sleep; first SIGINT does nothing
-    // (graceful escalation to SIGTERM is also trapped), a second SIGINT
-    // must SIGKILL the pgids and exit wt promptly.
-    repo.write_test_config(
-        r#"
-[aliases.stubborn]
-one = "sh -c 'trap \"\" INT TERM; echo start-one >> stubborn_one.log; sleep 30'"
-two = "sh -c 'trap \"\" INT TERM; echo start-two >> stubborn_two.log; sleep 30'"
-"#,
-    );
-    repo.commit("initial");
-
-    let mut cmd = repo.wt_command();
-    cmd.args(["step", "stubborn"]);
-    cmd.current_dir(repo.root_path());
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::null());
-    cmd.process_group(0);
-    let mut child = cmd.spawn().expect("failed to spawn wt step stubborn");
-
-    wait_for_file_content(&repo.root_path().join("stubborn_one.log"));
-    wait_for_file_content(&repo.root_path().join("stubborn_two.log"));
-
-    let wt_pgid = Pid::from_raw(child.id() as i32);
-    // First SIGINT — trapped by children; graceful path chews through
-    // escalation serially.
-    kill(Pid::from_raw(-wt_pgid.as_raw()), Signal::SIGINT).expect("failed to send first SIGINT");
-
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
-    // Second SIGINT — impatient path should SIGKILL the whole tree now.
-    kill(Pid::from_raw(-wt_pgid.as_raw()), Signal::SIGINT).expect("failed to send second SIGINT");
-
-    let start = std::time::Instant::now();
-    let _status = child.wait().expect("failed to wait for wt");
-    let elapsed = start.elapsed();
-
-    // With only graceful escalation (200ms × 2 grace windows × 2 pgids),
-    // worst case would be ~800ms. The impatient SIGKILL should be faster
-    // still. Give 3s headroom for slow CI without being so loose that a
-    // regression (no SIGKILL on 2nd press) would slip through — that
-    // regression would leave wt waiting ~60s for the sleeps to finish.
+    job.release();
     assert!(
-        elapsed < std::time::Duration::from_secs(3),
-        "wt took too long to die after 2nd SIGINT; impatient path may not be firing: {elapsed:?}"
+        job.wait().success(),
+        "caught/ignored interrupts must preserve child success"
     );
+    assert!(repo.root_path().join("next").exists());
+    if caught {
+        for label in &labels {
+            assert_eq!(
+                std::fs::read_to_string(repo.root_path().join(format!("int-{label}")))
+                    .unwrap()
+                    .lines()
+                    .count(),
+                presses
+            );
+        }
+    }
 }
 
 /// Non-UTF-8 bytes and CRLF line endings in child output must not stall the
@@ -1675,6 +1622,134 @@ second = "yes 'SECOND-PAYLOAD-BBBBB' | head -n 50000"
         second_count, 50_000,
         "expected 50000 occurrences of second payload in stderr, got {second_count}"
     );
+}
+
+/// Ordinary success and failure both retain EOF semantics, including delayed
+/// diagnostics from the failed command and output from healthy siblings.
+#[rstest]
+#[cfg(unix)]
+fn test_alias_failure_preserves_descendant_output(repo: TestRepo) {
+    repo.write_test_config(
+        r#"[aliases.signal-test]
+bad = "(sleep .6; printf 'FAILED_%s' TAIL) & exit 17"
+good = "(sleep .6; printf 'LATE_%s' TAIL) & printf EARLY_"
+"#,
+    );
+    let output_path = repo.root_path().join("output");
+    let stderr = std::fs::File::create(&output_path).unwrap();
+    let mut job = AliasSignalJob::spawn_with_stderr(&repo, stderr.into());
+    assert_eq!(job.wait().code(), Some(17));
+    let output = std::fs::read_to_string(output_path).unwrap();
+    assert!(
+        output.contains("EARLY_LATE_TAIL"),
+        "healthy output lost: {output}"
+    );
+    assert!(
+        output.contains("FAILED_TAIL"),
+        "failure diagnostics lost: {output}"
+    );
+}
+
+/// Ctrl-C handled successfully by a direct child must not truncate its later
+/// descendant output or change the child's successful result.
+#[rstest]
+#[cfg(unix)]
+fn test_alias_caught_sigint_preserves_successful_descendant_output(repo: TestRepo) {
+    repo.write_test_config(
+        r#"[aliases.signal-test]
+one = "trap 'printf handled > caught' INT; echo $$ > worker-pid; printf ready > first-ready; while test ! -f caught; do :; done; (sleep .6; printf 'LATE_%s' TAIL) & printf EARLY_"
+two = "echo $$ > second-pid; printf ready > second-ready"
+"#,
+    );
+    let output_path = repo.root_path().join("output");
+    let stderr = std::fs::File::create(&output_path).unwrap();
+    let mut job = AliasSignalJob::spawn_traced(&repo, stderr.into());
+    for marker in ["first-ready", "second-ready"] {
+        crate::common::wait_for_file_content(&repo.root_path().join(marker));
+    }
+    let worker = std::fs::read_to_string(repo.root_path().join("worker-pid")).unwrap();
+    let worker = nix::unistd::Pid::from_raw(worker.trim().parse().unwrap());
+    assert_eq!(nix::unistd::getpgid(Some(worker)).unwrap(), job.group());
+    let second = std::fs::read_to_string(repo.root_path().join("second-pid")).unwrap();
+    crate::common::wait_for_foreground_admission(
+        &repo,
+        &[worker.as_raw(), second.trim().parse().unwrap()],
+    );
+    nix::sys::signal::killpg(job.group(), nix::sys::signal::Signal::SIGINT).unwrap();
+    assert!(job.wait().success());
+    let output = std::fs::read_to_string(output_path).unwrap();
+    assert!(
+        output.contains("EARLY_LATE_TAIL"),
+        "caught key truncated output: {output}"
+    );
+}
+
+/// Cancellation must finish even when an unowned descendant continuously
+/// refills an output pipe, retaining buffered bytes and the final diagnostic.
+#[rstest]
+#[cfg(all(unix, feature = "shell-integration-tests"))]
+fn test_alias_cancelled_continuous_writer_flushes_partial_output(repo: TestRepo) {
+    std::fs::write(
+        repo.root_path().join("writer.py"),
+        r#"import os, signal, time
+from pathlib import Path
+signal.signal(signal.SIGTERM, lambda *_: os._exit(0))
+if os.fork():
+    while True:
+        time.sleep(60)
+os.write(1, b'BUFFERED_STDOUT')
+os.write(2, b'FINAL_PARTIAL_DIAGNOSTIC')
+Path('descendant-ready').write_text('ready')
+try:
+    while not Path('release').exists():
+        os.write(1, b'x' * 8192)
+except BrokenPipeError:
+    pass
+os._exit(0)
+"#,
+    )
+    .unwrap();
+    repo.write_test_config(
+        r#"[aliases.signal-test]
+bad = "exec python3 writer.py"
+good = "true"
+"#,
+    );
+    let output_path = repo.root_path().join("output");
+    let stderr = std::fs::File::create(&output_path).unwrap();
+    let mut job = AliasSignalJob::spawn_with_stderr(&repo, stderr.into());
+    crate::common::wait_for_file_content(&repo.root_path().join("descendant-ready"));
+    nix::sys::signal::kill(job.pid(), nix::sys::signal::Signal::SIGTERM).unwrap();
+    let release = job.release.clone();
+    let (stop, done) = std::sync::mpsc::channel::<()>();
+    let (status, watchdog_fired) = std::thread::scope(|scope| {
+        let watchdog = scope.spawn(move || {
+            if matches!(
+                done.recv_timeout(std::time::Duration::from_secs(5)),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            ) {
+                std::fs::write(release, "release").unwrap();
+                true
+            } else {
+                false
+            }
+        });
+        let status = job.wait();
+        let _ = stop.send(());
+        (status, watchdog.join().unwrap())
+    });
+    assert!(
+        !watchdog_fired,
+        "cancelled reader needed producer release to finish"
+    );
+    use std::os::unix::process::ExitStatusExt;
+    assert!(
+        status.signal() == Some(15) || status.code() == Some(143),
+        "{status:?}"
+    );
+    let output = std::fs::read_to_string(output_path).unwrap();
+    assert!(output.contains("BUFFERED_STDOUT"));
+    assert!(output.contains("FINAL_PARTIAL_DIAGNOSTIC"));
 }
 
 /// Pipeline-form aliases (list of steps) run sequentially. A later step

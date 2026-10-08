@@ -14,6 +14,8 @@
 //! reproduces the serial total order the deterministic-output tests pin. The
 //! first failing removal
 //! flips an abort flag that drains the remaining queue unexecuted; the
+//! command's cancellation latch also stops admission before an interrupted
+//! sibling's cleanup completes. The
 //! current worktree is removed last, after the fan-out, because its removal
 //! cd's the shell to the primary.
 
@@ -46,6 +48,19 @@ use super::super::hooks::HookAnnouncer;
 use super::super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::super::worktree::{BranchFate, RemovalPlan};
 use crate::output::{BackgroundFallbackMode, RemovalExecution, handle_remove_output};
+
+/// Stop queued removals and retain cancellation independently of which error
+/// supplies the command's diagnostic. Captures do not publish this themselves.
+fn abort_removals(_error: &anyhow::Error, abort: &AtomicBool) {
+    #[cfg(unix)]
+    {
+        use worktrunk::git::ErrorExt as _;
+        if let Some(signal) = _error.interrupt_signal() {
+            worktrunk::signal_forwarder::cancel_foreground(signal);
+        }
+    }
+    abort.store(true, Ordering::Relaxed);
+}
 
 /// A candidate worktree or branch selected for removal.
 #[derive(Clone)]
@@ -289,10 +304,29 @@ fn try_remove(
 ) -> anyhow::Result<Option<BranchFate>> {
     let _span = Span::new(format!("prune-remove:{}", candidate.label));
 
+    // Cancellation may arrive while this admitted job waits for terminal output.
+    // Check after acquiring it, before either stale-entry or planned mutation.
+    let needs_write = plan
+        .as_ref()
+        .is_some_and(|plan| removal_needs_write(candidate.kind, plan, ctx));
+    // These guards protect (), so poison cannot corrupt shared data.
+    let (_read, _write) = if needs_write {
+        (
+            None,
+            Some(ctx.output_lock.write().unwrap_or_else(|e| e.into_inner())),
+        )
+    } else {
+        (
+            Some(ctx.output_lock.read().unwrap_or_else(|e| e.into_inner())),
+            None,
+        )
+    };
+    #[cfg(unix)]
+    if let Some(signal) = worktrunk::signal_forwarder::operation_interrupt_signal() {
+        return Err(worktrunk::git::WorktrunkError::Interrupted { signal, hint: None }.into());
+    }
+
     if matches!(candidate.kind, CandidateKind::StaleDetached) {
-        // Output side: no exclusive output here (no spinner, no hook stream),
-        // so join the parallel read side of `output_lock`.
-        let _read = ctx.output_lock.read().unwrap_or_else(|e| e.into_inner());
         // Name the stale entry rather than sweeping the repository, so a
         // sibling whose directory is merely absent right now (unmounted
         // volume, half-finished `mv`) keeps its registration. `gather_check_items`
@@ -308,23 +342,6 @@ fn try_remove(
     }
 
     let plan = plan.context("candidate arrived without a removal plan")?;
-    // Read side for the parallel default, write side for the exclusive cases
-    // (see `removal_needs_write`). The guards protect `()` — there is no
-    // shared state to corrupt, so a poisoned lock is meaningless here.
-    // Recover the guard rather than `.expect()`-ing: a panic elsewhere should
-    // surface as itself, not as a cascade of secondary poison panics on every
-    // later removal/reader.
-    let (_read, _write) = if removal_needs_write(candidate.kind, &plan, ctx) {
-        (
-            None,
-            Some(ctx.output_lock.write().unwrap_or_else(|e| e.into_inner())),
-        )
-    } else {
-        (
-            Some(ctx.output_lock.read().unwrap_or_else(|e| e.into_inner())),
-            None,
-        )
-    };
     let mut announcer = HookAnnouncer::new(ctx.repo, true);
     // `SynchronousForNonCurrent`: a rename-failure fallback completes inline,
     // so the candidate counts as removed only once the worktree and branch
@@ -1238,10 +1255,8 @@ pub fn step_prune(
                                     continue;
                                 }
                                 let result = try_remove(&candidate, *plan, removal_ctx_ref)
-                                    .with_context(|| candidate.removal_context());
-                                if result.is_err() {
-                                    abort_ref.store(true, Ordering::Relaxed);
-                                }
+                                    .with_context(|| candidate.removal_context())
+                                    .inspect_err(|error| abort_removals(error, abort_ref));
                                 if done_tx.send((candidate, result)).is_err() {
                                     return;
                                 }
@@ -1270,7 +1285,7 @@ pub fn step_prune(
                 // (whose results this early return would silently drop).
                 let outcome = outcome
                     .context("checking branch integration")
-                    .inspect_err(|_| abort_ref.store(true, Ordering::Relaxed))?;
+                    .inspect_err(|error| abort_removals(error, abort_ref))?;
                 let Some(_reason) = outcome.reason else {
                     continue;
                 };

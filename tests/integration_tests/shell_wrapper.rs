@@ -776,6 +776,49 @@ mod unix_tests {
     use crate::common::repo;
     use rstest::rstest;
 
+    /// Errexit must wait for cleanup, and a failed CD must retain child failure.
+    #[rstest]
+    #[case("bash", "/bin/bash")]
+    #[case("bash", "bash")]
+    #[case("zsh", "zsh")]
+    fn wrapper_errexit_preserves_status_and_cleanup(
+        repo: TestRepo,
+        #[case] shell: &str,
+        #[case] executable: &str,
+    ) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temporary = repo.root_path().join("wrapper-temps");
+        fs::create_dir(&temporary).unwrap();
+        let child = repo.root_path().join("failing-child");
+        fs::write(
+            &child,
+            "#!/bin/sh\nprintf '%s' \"$WORKTRUNK_TEST_WRAPPER_MISSING\" > \"$WORKTRUNK_DIRECTIVE_CD_FILE\"\nexit 3\n",
+        )
+        .unwrap();
+        fs::set_permissions(&child, fs::Permissions::from_mode(0o755)).unwrap();
+        // An explicit template keeps mktemp inside the fixture on every OS.
+        let script = format!(
+            "{}\nmktemp() {{ command mktemp \"$WORKTRUNK_TEST_WRAPPER_TEMP/XXXXXX\"; }}\nset -e\nwt\nprintf UNREACHABLE\n",
+            generate_wrapper(&repo, shell)
+        );
+        let mut command = Command::new(executable);
+        repo.configure_wt_cmd(&mut command);
+        let output = command
+            .args(["-c", &script])
+            .env("WORKTRUNK_BIN", &child)
+            .env("WORKTRUNK_TEST_WRAPPER_TEMP", &temporary)
+            .env(
+                "WORKTRUNK_TEST_WRAPPER_MISSING",
+                repo.root_path().join("missing"),
+            )
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(3), "{output:?}");
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("UNREACHABLE"));
+        assert_eq!(fs::read_dir(temporary).unwrap().count(), 0);
+    }
+
     // ========================================================================
     // Cross-Shell Error Handling Tests
     // ========================================================================
@@ -1043,8 +1086,11 @@ mod unix_tests {
     fn test_nu_wrapper_ignores_execute_flags_after_argument_boundary(repo: TestRepo) {
         let mut script = String::new();
         append_wrapper_setup(&mut script, "nu", &repo);
+        // Nu 0.113 passes unquoted wrapped words as glob values. Keep that
+        // native argument type explicit on newer Nu versions too.
         script.push_str(
-            "let out = (wt step for-each --format=json -- printf -- -x)\n\
+            "let subcommand = (\"step\" | into glob)\n\
+             let out = (wt $subcommand for-each --format=json -- printf -- -x)\n\
              print $\"PIPELINE_CAPTURED:(not ($out | is-empty))\"\n",
         );
 
@@ -1225,6 +1271,82 @@ mod unix_tests {
             leftover.is_empty(),
             "wrapper aborted before cleanup and leaked temp files: {leftover:?}\nOutput:\n{combined}"
         );
+    }
+
+    /// A failed directive must still release both wrapper temp files.
+    #[rstest]
+    fn test_nu_wrapper_cd_failure_runs_cleanup(repo: TestRepo) {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let executable = repo.root_path().join("invalid-directive");
+        fs::write(
+            &executable,
+            "#!/bin/sh\nprintf '%s' \"$PWD/missing-directory\" > \"$WORKTRUNK_DIRECTIVE_CD_FILE\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut script = String::new();
+        append_wrapper_setup(&mut script, "nu", &repo);
+        script.push_str(&format!(
+            "$env.WORKTRUNK_BIN = {}\nwt config show\n",
+            nushell_quote(&executable.to_string_lossy()),
+        ));
+        let config_path = repo.test_config_path().to_string_lossy().to_string();
+        let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
+        let tmp_path = tmp.path().to_string_lossy().to_string();
+        let mut env_vars = build_test_env_vars(&config_path, &approvals_path);
+        env_vars.push(("TMPDIR", &tmp_path));
+        let (combined, exit_code) =
+            exec_in_pty_interactive("nu", &script, repo.root_path(), &env_vars, &[]);
+        assert_ne!(exit_code, 0, "invalid directive should fail: {combined}");
+        assert!(combined.contains("missing-directory"), "{combined}");
+        assert_eq!(fs::read_dir(tmp.path()).unwrap().count(), 0, "{combined}");
+    }
+
+    /// Native signal deaths must cross Nushell's negative-status boundary
+    /// before the wrapper propagates the status, after applying CD and cleanup.
+    #[rstest]
+    fn test_nu_wrapper_signal_status_runs_cleanup(mut repo: TestRepo) {
+        repo.add_worktree("nu-signal");
+        let target = canonicalize(repo.worktree_path("nu-signal")).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let tmp_path = tmp.path().to_string_lossy().to_string();
+        let mut script = String::new();
+        append_wrapper_setup(&mut script, "nu", &repo);
+        for (body, expected) in [
+            ("kill -INT $$", 130),
+            ("kill -TERM $$", 143),
+            ("exit 130", 130),
+            ("exit 143", 143),
+        ] {
+            script.push_str(&format!(
+                "let code = (try {{ wt switch nu-signal --yes --execute sh -- -c {}; 0 }} catch {{ $env.LAST_EXIT_CODE }})\nprint $\"WT_EXIT:($code)\"\nprint $\"WT_CD:($env.PWD == {})\"\n",
+                nushell_quote(body),
+                nushell_quote(&target.to_string_lossy()),
+            ));
+            // Each iteration starts outside the destination, so every call
+            // must apply the directive before propagating its failure.
+            script.push_str(&format!(
+                "cd {}\n",
+                nushell_quote(&repo.root_path().to_string_lossy())
+            ));
+            script.push_str(&format!(
+                "if $code != {expected} {{ error make {{ msg: $\"unexpected wrapper status: ($code)\" }} }}\n"
+            ));
+        }
+
+        let config_path = repo.test_config_path().to_string_lossy().to_string();
+        let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
+        let mut env_vars = build_test_env_vars(&config_path, &approvals_path);
+        env_vars.push(("TMPDIR", &tmp_path));
+        let (combined, exit_code) =
+            exec_in_pty_interactive("nu", &script, repo.root_path(), &env_vars, &[]);
+
+        assert_eq!(exit_code, 0, "Output:\n{combined}");
+        assert_eq!(combined.matches("WT_CD:true").count(), 4, "{combined}");
+        assert_eq!(combined.matches("WT_EXIT:130").count(), 2, "{combined}");
+        assert_eq!(combined.matches("WT_EXIT:143").count(), 2, "{combined}");
+        assert_eq!(fs::read_dir(tmp.path()).unwrap().count(), 0, "{combined}");
     }
 
     /// Test switch --create with pre-start (blocking) and post-start (background)
