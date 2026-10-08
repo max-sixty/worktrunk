@@ -978,7 +978,8 @@ fn captured_deadline_and_delayed_interrupt_bound_descendant_output() {
     use worktrunk::git::ErrorExt;
     use worktrunk::shell_exec::Cmd;
 
-    for captured in [true, false] {
+    // Capture deadline, fully buffered interruption, and a quiet pre-threshold exit.
+    for delay in [None, Some(-1), Some(30_000)] {
         let dir = tempfile::tempdir().unwrap();
         let release = dir.path().join("release");
         let finished = dir.path().join("finished");
@@ -986,7 +987,11 @@ fn captured_deadline_and_delayed_interrupt_bound_descendant_output() {
             "(finish() {{ printf finished > {}; }}; trap 'finish; exit 0' TERM; while [ ! -f {} ]; do sleep .01; done; finish) & printf prior; {}",
             shell_escape::escape(finished.to_string_lossy()),
             shell_escape::escape(release.to_string_lossy()),
-            if captured { "exit 0" } else { "kill -TERM $$" },
+            if delay.is_none() {
+                "exit 0"
+            } else {
+                "kill -TERM $$"
+            },
         );
         // A safety watchdog releases the pipe holder if the wait regresses.
         let (release_tx, release_rx) = mpsc::channel();
@@ -1001,23 +1006,23 @@ fn captured_deadline_and_delayed_interrupt_bound_descendant_output() {
                 assert!(finished.exists(), "descendant did not finish after release");
                 fallback
             });
-            if captured {
+            if let Some(delay) = delay {
                 let error = Cmd::new("sh")
                     .args(["-c", &body])
-                    .timeout(Duration::from_millis(200))
-                    .run()
-                    .expect_err("a retained output pipe must respect the capture deadline");
-                assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
-            } else {
-                let error = Cmd::new("sh")
-                    .args(["-c", &body])
-                    .delayed_stream(-1, None)
+                    .delayed_stream(delay, None)
                     .unwrap_err();
                 assert_eq!(error.interrupt_signal(), Some(15));
                 let failure = error
                     .downcast_ref::<worktrunk::shell_exec::StreamCommandError>()
                     .unwrap();
                 assert_eq!(failure.output, "prior");
+            } else {
+                let error = Cmd::new("sh")
+                    .args(["-c", &body])
+                    .timeout(Duration::from_millis(200))
+                    .run()
+                    .expect_err("a retained output pipe must respect the capture deadline");
+                assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
             }
             release_tx.send(()).unwrap();
             assert!(

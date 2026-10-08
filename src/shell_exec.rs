@@ -2302,44 +2302,26 @@ impl Cmd {
 
         let start = Instant::now();
 
-        // Phase 1: If the delay threshold is enabled, wait that long for the
-        // child to exit. If it finishes before the threshold, output stays
-        // buffered (quiet).
-        if delay_ms >= 0 {
-            let delay = Duration::from_millis(delay_ms as u64);
-            let remaining = delay.saturating_sub(start.elapsed());
+        let wait_result = 'wait: {
+            // Phase 1: wait up to the presentation threshold; an early exit stays quiet.
+            if delay_ms >= 0 {
+                let delay = Duration::from_millis(delay_ms as u64);
+                let remaining = delay.saturating_sub(start.elapsed());
 
-            // Zero delay means "stream immediately", not "try a zero-timeout reap".
-            if !remaining.is_zero() {
-                match wait_shared_child(&child, Some(Instant::now() + remaining)) {
-                    Ok(status) => {
-                        #[cfg(unix)]
-                        if matches!(
-                            std::os::unix::process::ExitStatusExt::signal(&status),
-                            Some(signal_hook::consts::SIGINT | signal_hook::consts::SIGTERM)
-                        ) {
-                            cancel.take();
+                // Zero delay streams immediately, without a zero-timeout reap.
+                if !remaining.is_zero() {
+                    match wait_shared_child(&child, Some(Instant::now() + remaining)) {
+                        Ok(status) => break 'wait Ok(status),
+                        // This deadline controls presentation, not child lifetime.
+                        // On a timeout or wait-setup error, stream output and retry.
+                        outcome => {
+                            tracing::debug!(?outcome, "No exit status yet; switching to streaming");
                         }
-                        if let Err(error) = join_delayed_readers([stdout_handle, stderr_handle]) {
-                            trace.fail(&error);
-                            return Err(error).context("Failed to read command output");
-                        }
-                        trace.complete(status.success());
-                        return stream_exit_result(status, &state, &cmd_str);
-                    }
-                    // This deadline controls presentation, not child lifetime.
-                    // On a timeout or wait-setup error, stream output and retry
-                    // the canonical wait below.
-                    outcome => {
-                        tracing::debug!(?outcome, "No exit status yet; switching to streaming");
                     }
                 }
-            }
 
-            // Delay threshold exceeded — switch to streaming. The flip, the
-            // progress message, and the drain happen under the same lock the
-            // readers take per line, so no reader can print between them.
-            {
+                // Switch to streaming under the readers' lock so no line can
+                // print between the progress message and the buffered output.
                 let mut state = state.lock().unwrap();
                 state.streaming = true;
                 if let Some(ref msg) = progress_message {
@@ -2349,10 +2331,10 @@ impl Cmd {
                     eprintln!("{}", line);
                 }
             }
-        }
 
-        // Phase 2: Block until the child exits (no polling).
-        let wait_result = wait_shared_child(&child, None);
+            // Phase 2: block until the child exits.
+            wait_shared_child(&child, None)
+        };
         #[cfg(unix)]
         if match &wait_result {
             Ok(status) => matches!(
