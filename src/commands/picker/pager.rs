@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use shared_child::SharedChild;
 
-use worktrunk::config::UserConfig;
+use worktrunk::git::Repository;
 use worktrunk::shell::extract_filename_from_path;
 
 use crate::pager::{git_config_pager, parse_pager_value};
@@ -41,20 +41,21 @@ fn needs_paging_disabled(pager_cmd: &str) -> bool {
 ///
 /// Returns the pager command with any necessary flags (like `--paging=never`)
 /// already appended. Precedence:
-/// 1. `[switch.picker] pager` in user config (used as-is)
-/// 2. `[select] pager` in user config (deprecated, used as-is)
-/// 3. `GIT_PAGER` environment variable (auto-detection applied)
-/// 4. `core.pager` git config (auto-detection applied)
-pub(super) fn diff_pager() -> Option<&'static String> {
+/// 1. `[switch.picker] pager` in user config, with any `[projects."<id>"]`
+///    override for `repo` applied (used as-is). A deprecated `[select] pager`
+///    is migrated into `[switch.picker]` before the config parses.
+/// 2. `GIT_PAGER` environment variable (auto-detection applied)
+/// 3. `core.pager` git config (auto-detection applied)
+///
+/// The cache is process-wide: the picker runs against one repository.
+pub(super) fn diff_pager(repo: &Repository) -> Option<&'static String> {
     CACHED_PAGER
         .get_or_init(|| {
-            // Check user config first - use exactly as specified (no auto-detection)
-            // Uses switch_picker() accessor which handles [switch.picker] → [select] fallback
-            if let Ok(config) = UserConfig::load()
-                && let Some(pager) = config.switch_picker(None).pager
+            // Configured pager first - use exactly as specified (no auto-detection)
+            if let Some(pager) = repo.config().switch_picker.pager()
                 && !pager.trim().is_empty()
             {
-                return Some(pager);
+                return Some(pager.to_string());
             }
 
             // GIT_PAGER or core.pager - apply auto-detection for delta/bat
@@ -183,13 +184,6 @@ mod tests {
         assert!(needs_paging_disabled("BatCat"));
         assert!(needs_paging_disabled("delta.exe"));
         assert!(needs_paging_disabled("Delta.EXE"));
-    }
-
-    #[test]
-    fn test_get_diff_pager_initializes() {
-        // Exercise the config initialization path
-        // Returns None or Some depending on user's pager config
-        let _ = diff_pager();
     }
 
     #[test]

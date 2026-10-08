@@ -1352,20 +1352,33 @@ impl PickerRow {
     ) -> (String, bool) {
         match mode {
             PreviewMode::UnifiedDiff => (
-                Self::page_diff(Self::compute_unified_diff_preview(repo, item, width), width),
+                Self::page_diff(
+                    repo,
+                    Self::compute_unified_diff_preview(repo, item, width),
+                    width,
+                ),
                 false,
             ),
             PreviewMode::WorkingTree => (
-                Self::page_diff(Self::compute_working_tree_preview(repo, item, width), width),
+                Self::page_diff(
+                    repo,
+                    Self::compute_working_tree_preview(repo, item, width),
+                    width,
+                ),
                 false,
             ),
             PreviewMode::Log => Self::compute_log_preview(repo, item, width, height),
             PreviewMode::BranchDiff => (
-                Self::page_diff(Self::compute_branch_diff_preview(repo, item, width), width),
+                Self::page_diff(
+                    repo,
+                    Self::compute_branch_diff_preview(repo, item, width),
+                    width,
+                ),
                 false,
             ),
             PreviewMode::UpstreamDiff => (
                 Self::page_diff(
+                    repo,
                     Self::compute_upstream_diff_preview(repo, item, width),
                     width,
                 ),
@@ -1381,8 +1394,8 @@ impl PickerRow {
         }
     }
 
-    fn page_diff(content: String, width: usize) -> String {
-        if let Some(pager_cmd) = diff_pager() {
+    fn page_diff(repo: &Repository, content: String, width: usize) -> String {
+        if let Some(pager_cmd) = diff_pager(repo) {
             pipe_through_pager(&content, pager_cmd, width)
         } else {
             content
