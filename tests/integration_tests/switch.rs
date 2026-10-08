@@ -1286,6 +1286,56 @@ fn test_switch_execute_failure(repo: TestRepo) {
     );
 }
 
+/// Suppressing wt's own failure message must preserve a program's native
+/// termination signal, distinct from an ordinary exit with the same shell code.
+#[rstest]
+#[case::interrupt(Some(nix::libc::SIGINT))]
+#[case::terminate(Some(nix::libc::SIGTERM))]
+#[case::ordinary_exit(None)]
+#[cfg(unix)]
+fn test_switch_execute_preserves_native_signal(repo: TestRepo, #[case] signal: Option<i32>) {
+    use std::os::unix::process::ExitStatusExt;
+
+    let program = r#"import os, signal, sys
+number = int(sys.argv[1])
+print('child output', flush=True)
+if number:
+    signal.signal(number, signal.SIG_DFL)
+    os.kill(os.getpid(), number)
+else:
+    os._exit(130)
+"#;
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "main",
+            "--no-cd",
+            "--execute",
+            "python3",
+            "--",
+            "-c",
+            program,
+        ])
+        .arg(signal.unwrap_or(0).to_string())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.signal(), signal, "{output:?}");
+    assert_eq!(
+        output.status.code(),
+        signal.is_none().then_some(130),
+        "{output:?}"
+    );
+    assert_eq!(output.stdout, b"child output\n");
+    let raw_stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = raw_stderr.ansi_strip();
+    assert!(
+        !stderr.contains('✗'),
+        "unexpected wt failure message: {stderr}"
+    );
+}
+
 // Execute template expansion tests
 #[rstest]
 fn test_switch_execute_template_branch(repo: TestRepo) {

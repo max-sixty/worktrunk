@@ -1067,6 +1067,58 @@ fn test_switch_picker_preview_navigation_and_log_panel(mut repo: TestRepo) {
     });
 }
 
+/// The completed diff proves pager selection has finished before checking that
+/// an interactive fallback was not launched. All cases run from outside -C.
+#[cfg(unix)]
+#[rstest]
+#[case::fallback("fallback", false)]
+#[case::git("git", true)]
+#[case::core("core", true)]
+fn preview_pager_priority_honors_c(
+    mut repo: TestRepo,
+    #[case] source: &str,
+    #[case] selected: bool,
+) {
+    repo.run_git(&["remote", "remove", "origin"]);
+    let feature = repo.add_worktree("feature");
+    std::fs::write(feature.join("pager-test.txt"), "pager test\n").unwrap();
+    repo.run_git_in(&feature, &["add", "pager-test.txt"]);
+    repo.run_git_in(&feature, &["commit", "-m", "Pager preview"]);
+    let pager = repo.home_path().join("selected-pager.sh");
+    let fallback = repo.home_path().join("fallback-pager.sh");
+    std::fs::write(&pager, "printf 'SELECTED_PAGER\\n'\ncat\n").unwrap();
+    std::fs::write(&fallback, "printf 'FALLBACK_PAGER\\n'\ncat\n").unwrap();
+    let command =
+        |path: &Path| format!("sh {}", shell_escape::unix::escape(path.to_string_lossy()));
+    if source == "core" {
+        repo.run_git(&["config", "core.pager", &command(&pager)]);
+    }
+    let mut env_vars = repo.test_env_vars();
+    env_vars.retain(|(key, _)| key != "GIT_PAGER" && key != "PAGER");
+    env_vars.push(("PAGER".into(), command(&fallback)));
+    if source == "git" {
+        env_vars.push(("GIT_PAGER".into(), command(&pager)));
+    }
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
+        wt_bin().to_str().unwrap(),
+        &["-C", repo.root_path().to_str().unwrap(), "switch"],
+        repo.home_path(),
+        &env_vars,
+    );
+    send_input_awaiting_content(&writer, &rx, &mut parser, "\x1b[B", Some("feature"));
+    wait_for_stable_with_content(&rx, &mut parser, Some("diff --git"));
+    let preview = preview_pane_text(parser.screen());
+    assert_valid_abort_exit_code(abort_and_exit_code(child, writer, rx));
+    assert_eq!(preview.contains("SELECTED_PAGER"), selected, "{preview}");
+    assert!(!preview.contains("FALLBACK_PAGER"), "{preview}");
+}
+
 /// Seed a fresh CI-status cache entry for `branch` so the picker primes the
 /// row's `pr_status` at skeleton time (`populate_from_cache`) — making the `pr`
 /// and `comments` tabs resolve deterministically with no dependence on the live

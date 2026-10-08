@@ -24,28 +24,39 @@ if command -v {{ cmd }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
         local cd_file exit_code=0
         cd_file="$(mktemp)"
 
-        # --source: use cargo run (builds from source)
+        # The tail command lets Bash run RETURN cleanup during native SIGINT
+        # unwind. The outer function returns the resulting CD/command status;
+        # returning from inside a RETURN trap loses that status on Bash 3.2.
+        _{{ cmd_ident }}_run() {
+            local return_trap
+            return_trap="$(builtin trap -p RETURN)"
+            builtin trap '
+                exit_code=$?
+                if [[ -s "$cd_file" ]]; then
+                    local cd_exit=0
+                    builtin cd -- "$(<"$cd_file")" || cd_exit=$?
+                    if [[ $exit_code -eq 0 ]]; then
+                        exit_code=$cd_exit
+                    fi
+                fi
+                command rm -f "$cd_file"
+                builtin unset -f _{{ cmd_ident }}_run
+                builtin trap - RETURN
+                if [[ -n "$return_trap" ]]; then
+                    builtin eval "$return_trap"
+                fi
+            ' RETURN
+            WORKTRUNK_DIRECTIVE_CD_FILE="$cd_file" command "$@"
+        }
+
+        # Prepare both paths before the tail command: RETURN runs during
+        # native interruption only when no statement follows the child.
+        local -a execution=("${WORKTRUNK_BIN:-{{ cmd }}}" "${args[@]}")
         if [[ "$use_source" == true ]]; then
-            WORKTRUNK_DIRECTIVE_CD_FILE="$cd_file" \
-                cargo run --bin {{ cmd }} --quiet -- "${args[@]}" || exit_code=$?
-        else
-            WORKTRUNK_DIRECTIVE_CD_FILE="$cd_file" \
-                command "${WORKTRUNK_BIN:-{{ cmd }}}" "${args[@]}" || exit_code=$?
+            execution=(cargo run --bin {{ cmd }} --quiet -- "${args[@]}")
         fi
-
-        # cd file holds a raw path (no shell escaping needed).
-        # `builtin cd` bypasses any user `cd` alias or function (e.g. zoxide's
-        # `alias cd=__zoxide_z`) that would otherwise be substituted into this
-        # function body when it's defined. See #2643.
-        if [[ -s "$cd_file" ]]; then
-            builtin cd -- "$(<"$cd_file")"
-            local cd_exit=$?
-            if [[ $exit_code -eq 0 ]]; then
-                exit_code=$cd_exit
-            fi
-        fi
-
-        command rm -f "$cd_file"
+        # A failed child must reach RETURN cleanup even under `set -e`.
+        _{{ cmd_ident }}_run "${execution[@]}" || :
         return "$exit_code"
     }
 

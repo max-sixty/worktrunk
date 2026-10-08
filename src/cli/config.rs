@@ -50,7 +50,7 @@ Zsh (~/.zshrc):
 eval "$(wt config shell init zsh)"
 ```
 
-Nushell [experimental] — save to vendor autoload directory:
+Nushell 0.113+ [experimental] — save to vendor autoload directory:
 ```console
 $ wt config shell init nu | save -f ($nu.vendor-autoload-dirs | last | path join wt.nu)
 ```"#

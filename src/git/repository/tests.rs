@@ -695,11 +695,15 @@ fn worktree_config_enabled_detects_extension() {
 #[test]
 fn extract_failed_command_from_stream_error() {
     use crate::shell_exec::StreamCommandError;
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt;
+    #[cfg(windows)]
+    use std::os::windows::process::ExitStatusExt;
 
     let err: anyhow::Error = StreamCommandError {
         output: "fatal: ref exists".into(),
         command: "git worktree add /path".into(),
-        exit_info: "exit code 128".into(),
+        status: std::process::ExitStatus::from_raw(if cfg!(unix) { 128 << 8 } else { 128 }),
     }
     .into();
 

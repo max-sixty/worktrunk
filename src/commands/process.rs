@@ -232,7 +232,8 @@ fn spawn_detached_unix(
         .process_group(0); // New process group, not in PTY's foreground group
     // Prevent hooks from writing to the directive file
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
-    let mut child = cmd.spawn().context("Failed to spawn detached process")?;
+    let mut child =
+        worktrunk::shell_exec::spawn(&mut cmd).context("Failed to spawn detached process")?;
 
     // Wait for sh to exit (immediate, doesn't block on background command)
     child
@@ -258,8 +259,7 @@ fn spawn_detached_windows(
 
     let shell = ShellConfig::get()?;
 
-    // Git Bash and the PowerShell fallback both run the command as written —
-    // nothing is piped in, so neither needs a wrapper around it.
+    // Git Bash runs the command as written; no stdin wrapper is needed.
     let mut cmd = shell.command(command);
 
     cmd.current_dir(worktree_path)
@@ -273,7 +273,7 @@ fn spawn_detached_windows(
         .creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
     // Prevent hooks from writing to the directive file
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
-    cmd.spawn().context("Failed to spawn detached process")?;
+    worktrunk::shell_exec::spawn(&mut cmd).context("Failed to spawn detached process")?;
 
     // Windows: Process is fully detached with a hidden window via CREATE_NO_WINDOW flag,
     // no need to wait (unlike Unix which waits for the outer shell)
@@ -284,11 +284,11 @@ fn spawn_detached_windows(
 /// Spawn a detached background process by executing a binary directly.
 ///
 /// Unlike [`spawn_detached`] (which wraps a shell command in `sh -c`), this
-/// spawns the executable without an intermediate shell. Stdin bytes are written
-/// to the child's stdin pipe and then the pipe is closed.
+/// spawns the executable without an intermediate shell. Complete input is
+/// prepared by [`worktrunk::shell_exec::buffered_stdin`] before spawn.
 ///
 /// Used for structured child processes like `wt hook run-pipeline` where the parent
-/// passes data via stdin rather than through a temp file or shell arguments.
+/// passes data via stdin rather than through shell arguments.
 ///
 /// When `hook_log` is [`HookLog::Hook`], the spawn is treated as a background
 /// hook pipeline: the child (and every process it later spawns) receives
@@ -366,14 +366,16 @@ fn spawn_detached_exec_unix(
     low_priority: bool,
     is_background_hook: bool,
 ) -> anyhow::Result<()> {
-    use std::io::Write;
     use std::os::unix::process::CommandExt;
 
     // See [`worktrunk::priority`] for the priority-lowering rationale.
     let mut cmd = worktrunk::priority::command(program, low_priority);
     cmd.args(args)
         .current_dir(worktree_path)
-        .stdin(Stdio::piped())
+        .stdin(
+            worktrunk::shell_exec::buffered_stdin(stdin_bytes)
+                .context("Failed to prepare detached input")?,
+        )
         .stdout(Stdio::from(
             log_file
                 .try_clone()
@@ -383,12 +385,7 @@ fn spawn_detached_exec_unix(
         .process_group(0);
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
     set_background_hook_env(&mut cmd, is_background_hook);
-    let mut child = cmd.spawn().context("Failed to spawn detached process")?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        // Ignore BrokenPipe — child may exit before reading all input.
-        let _ = stdin.write_all(stdin_bytes);
-    }
+    worktrunk::shell_exec::spawn(&mut cmd).context("Failed to spawn detached process")?;
 
     Ok(())
 }
@@ -402,7 +399,6 @@ fn spawn_detached_exec_windows(
     stdin_bytes: &[u8],
     is_background_hook: bool,
 ) -> anyhow::Result<()> {
-    use std::io::Write;
     use std::os::windows::process::CommandExt;
 
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
@@ -411,7 +407,10 @@ fn spawn_detached_exec_windows(
     let mut cmd = Command::new(program);
     cmd.args(args)
         .current_dir(worktree_path)
-        .stdin(Stdio::piped())
+        .stdin(
+            worktrunk::shell_exec::buffered_stdin(stdin_bytes)
+                .context("Failed to prepare detached input")?,
+        )
         .stdout(Stdio::from(
             log_file
                 .try_clone()
@@ -421,11 +420,7 @@ fn spawn_detached_exec_windows(
         .creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
     set_background_hook_env(&mut cmd, is_background_hook);
-    let mut child = cmd.spawn().context("Failed to spawn detached process")?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(stdin_bytes);
-    }
+    worktrunk::shell_exec::spawn(&mut cmd).context("Failed to spawn detached process")?;
 
     Ok(())
 }

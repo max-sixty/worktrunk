@@ -675,7 +675,7 @@ Automation:
 
 Run command in each worktree. Executes sequentially with real-time output; continues past command failures.
 
-A summary of successes and failures is shown at the end. Context JSON — a flat object of every template variable — is piped to stdin for scripts that need structured data.
+A summary of successes and failures is shown at the end. Context JSON — a flat object of every template variable — is provided on stdin for scripts that need structured data.
 
 ### Arguments
 

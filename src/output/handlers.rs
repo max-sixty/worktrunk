@@ -2170,18 +2170,14 @@ fn remove_removed_worktree_silently(
 /// detached) have their own spawning logic.
 ///
 /// Capabilities: optional stdout→stderr redirect for deterministic ordering,
-/// SIGINT/SIGTERM forwarding to child process group, ANSI reset before child
+/// native Ctrl-C and direct-child SIGTERM delivery, ANSI reset before child
 /// runs, `Cmd` tracing/logging, and CD directive control.
 ///
 /// ## Stdin
 ///
-/// The child always inherits the parent's stdin, so an interactive body keeps
-/// the controlling terminal — a `pre-*` hook can `gum confirm`, an alias body's
-/// `wt switch` picker can drive `/dev/tty`. `inherit_stdin()` also keeps the
-/// child in wt's process group, which is what makes its `tcsetattr` on
-/// `/dev/tty` succeed; see that method's docs for the SIGTTOU rationale, and
-/// the "Process groups and signal handling" module docs in
-/// [`worktrunk::shell_exec`] for what a shared pgroup costs on teardown.
+/// The child inherits the parent's stdin for interactive input. Foreground children
+/// share the caller's process group independently of stdin, so a `pre-*` hook
+/// can `gum confirm`, and an alias body's `wt switch` picker can drive `/dev/tty`.
 ///
 /// Nothing is ever written to that stdin — a hook reads its context through
 /// template variables, whatever form it runs in. The two forms that can't be

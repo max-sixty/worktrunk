@@ -24,6 +24,28 @@ function wt
     end
     set -l cd_file (mktemp)
 
+    # Fish cancels an interactive function when its child dies from SIGINT.
+    # Its post-command event still runs before the next prompt, so it owns
+    # directive application and cleanup on both ordinary and interrupted exits.
+    set -l cleanup_function _wt_cleanup_(string replace -a / _ -- "$cd_file")
+    function $cleanup_function --on-event fish_postexec --inherit-variable cd_file --inherit-variable cleanup_function
+        set -l cd_exit 0
+        # cd file holds a raw path — read with fish builtin (no cat subprocess,
+        # safe even if CWD was removed by worktree removal).
+        if test -s "$cd_file"
+            set -l target (string trim < "$cd_file")
+            # `builtin cd` bypasses any user `cd` override (e.g. the zoxide.fish
+            # plugin replaces `cd` with a query function that mishandles the `--`
+            # separator). Matches the bash/zsh wrappers. (#3159)
+            builtin cd -- "$target"
+            set cd_exit $status
+        end
+
+        command rm -f "$cd_file"
+        functions -e $cleanup_function
+        return $cd_exit
+    end
+
     # --source: use cargo run (builds from source)
     if test $use_source = true
         env WORKTRUNK_DIRECTIVE_CD_FILE=$cd_file \
@@ -34,21 +56,11 @@ function wt
     end
     set -l exit_code $status
 
-    # cd file holds a raw path — read with fish builtin (no cat subprocess,
-    # safe even if CWD was removed by worktree removal).
-    if test -s "$cd_file"
-        set -l target (string trim < "$cd_file")
-        # `builtin cd` bypasses any user `cd` override (e.g. the zoxide.fish
-        # plugin replaces `cd` with a query function that mishandles the `--`
-        # separator). Matches the bash/zsh wrappers. (#3159)
-        builtin cd -- "$target"
-        set -l cd_exit $status
-        if test $exit_code -eq 0
-            set exit_code $cd_exit
-        end
+    $cleanup_function
+    set -l cd_exit $status
+    if test $exit_code -eq 0
+        set exit_code $cd_exit
     end
-
-    command rm -f "$cd_file"
     return $exit_code
 end
 

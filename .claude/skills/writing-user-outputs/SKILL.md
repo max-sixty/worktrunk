@@ -180,12 +180,12 @@ Examples that page: `--help`, `wt config show`, `wt hook show`, `wt step {commit
 Build the whole output into a `String` first (don't stream), then:
 
 ```rust
-crate::help_pager::show_help_in_pager(&out, true);
+crate::help_pager::show_help_in_pager(&out, true)?;
 ```
 
-The helper is infallible from the caller's perspective — it falls back to
-plain stdout itself when no pager is configured, stdout isn't a TTY, or the
-pager fails.
+The helper falls back to plain stdout when paging is disabled or unavailable,
+stdout is not a TTY, or the pager cannot start. Propagate its result so native
+signal failures and cancellation reach command cleanup.
 
 ## Security
 

@@ -3,7 +3,7 @@
 //! Each [`TaskKind`] dispatches here to one private computation over a shared
 //! [`TaskContext`].
 
-use std::net::{SocketAddr, TcpStream};
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use std::sync::Arc;
@@ -742,7 +742,9 @@ fn compute_url_status(ctx: &TaskContext) -> anyhow::Result<TaskResult> {
         parse_port_from_url(url).map(|port| {
             // Quick TCP connect check with 50ms timeout
             let addr = SocketAddr::from(([127, 0, 0, 1], port));
-            TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok()
+            worktrunk::shell_exec::stream_socket(socket2::Domain::IPV4)
+                .and_then(|socket| socket.connect_timeout(&addr.into(), Duration::from_millis(50)))
+                .is_ok()
         })
     };
 
