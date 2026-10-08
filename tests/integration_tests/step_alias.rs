@@ -1308,17 +1308,22 @@ fn signal_alias(repo: &TestRepo, concurrent: bool, caught_int: Option<bool>) -> 
 }
 
 #[cfg(unix)]
-fn ready_alias_children(repo: &TestRepo, labels: &[&str], group: nix::unistd::Pid) {
-    for label in labels {
-        crate::common::wait_for_file_content(&repo.root_path().join(format!("start-{label}")));
-        let pid = std::fs::read_to_string(repo.root_path().join(format!("pid-{label}"))).unwrap();
-        let pid = nix::unistd::Pid::from_raw(pid.trim().parse().unwrap());
-        assert_eq!(
-            nix::unistd::getpgid(Some(pid)).unwrap(),
-            group,
-            "{label} left wt's native group"
-        );
-    }
+fn ready_alias_children(repo: &TestRepo, labels: &[&str], group: nix::unistd::Pid) -> Vec<i32> {
+    labels
+        .iter()
+        .map(|label| {
+            crate::common::wait_for_file_content(&repo.root_path().join(format!("start-{label}")));
+            let pid =
+                std::fs::read_to_string(repo.root_path().join(format!("pid-{label}"))).unwrap();
+            let pid = nix::unistd::Pid::from_raw(pid.trim().parse().unwrap());
+            assert_eq!(
+                nix::unistd::getpgid(Some(pid)).unwrap(),
+                group,
+                "{label} left wt's native group"
+            );
+            pid.as_raw()
+        })
+        .collect()
 }
 
 /// A child that crashes in its TERM handler must not let a Warn hook pipeline
@@ -1386,8 +1391,13 @@ os.kill(os.getpid(), signal.SIGKILL)
 fn test_alias_pid_signal_policy(repo: TestRepo, #[case] concurrent: bool, #[case] terminate: bool) {
     use nix::sys::signal::{Signal, kill};
     let labels = signal_alias(&repo, concurrent, Some(true));
-    let mut job = AliasSignalJob::spawn(&repo);
-    ready_alias_children(&repo, &labels, job.group());
+    let stderr_path = repo.root_path().join("stderr");
+    let stderr = std::fs::File::create(&stderr_path).unwrap();
+    let mut job = AliasSignalJob::spawn_traced(&repo, stderr.into());
+    let children = ready_alias_children(&repo, &labels, job.group());
+    // A child can announce readiness before wt returns from spawn. This test
+    // sends its signal to an admitted command, not during startup cancellation.
+    crate::common::wait_for_foreground_admission(&repo, &children);
     kill(
         job.pid(),
         if terminate {
@@ -1405,7 +1415,8 @@ fn test_alias_pid_signal_policy(repo: TestRepo, #[case] concurrent: bool, #[case
         let status = job.wait();
         assert!(
             status.code() == Some(143) || status.signal() == Some(15),
-            "forwarded TERM must cancel after caught success: {status:?}"
+            "forwarded TERM must cancel after caught success: {status:?}\n{}",
+            std::fs::read_to_string(stderr_path).unwrap()
         );
         assert!(!repo.root_path().join("next").exists());
     } else {
@@ -1418,7 +1429,12 @@ fn test_alias_pid_signal_policy(repo: TestRepo, #[case] concurrent: bool, #[case
             );
         }
         job.release();
-        assert!(job.wait().success());
+        let status = job.wait();
+        assert!(
+            status.success(),
+            "PID-only INT changed an admitted command's status: {status:?}\n{}",
+            std::fs::read_to_string(stderr_path).unwrap()
+        );
         assert!(repo.root_path().join("next").exists());
     }
 }
@@ -1457,17 +1473,7 @@ fn test_alias_group_sigint_does_not_escalate(
 ) {
     let labels = signal_alias(&repo, concurrent, Some(caught));
     let mut job = AliasSignalJob::spawn_traced(&repo, Stdio::null());
-    ready_alias_children(&repo, &labels, job.group());
-    let children: Vec<_> = labels
-        .iter()
-        .map(|label| {
-            std::fs::read_to_string(repo.root_path().join(format!("pid-{label}")))
-                .unwrap()
-                .trim()
-                .parse()
-                .unwrap()
-        })
-        .collect();
+    let children = ready_alias_children(&repo, &labels, job.group());
     crate::common::wait_for_foreground_admission(&repo, &children);
     for press in 1..=presses {
         nix::sys::signal::killpg(job.group(), nix::sys::signal::Signal::SIGINT).unwrap();

@@ -20,11 +20,15 @@ function {{ cmd }}
     end
     set -l cd_file (mktemp)
 
-    # Fish cancels an interactive function when its child dies from SIGINT.
-    # Its post-command event still runs before the next prompt, so it owns
-    # directive application and cleanup on both ordinary and interrupted exits.
+    # Older fish unwinds only the function that directly launched an interrupted
+    # child. This boundary lets ordinary cleanup run before its caller continues.
+    # Newer fish unwinds the whole input line; postexec owns cleanup in that case.
     set -l cleanup_function _{{ cmd }}_cleanup_(string replace -a / _ -- "$cd_file")
-    function $cleanup_function --on-event fish_postexec --inherit-variable cd_file --inherit-variable cleanup_function
+    set -l run_function "$cleanup_function"_run
+    function $run_function
+        command $argv
+    end
+    function $cleanup_function --on-event fish_postexec --inherit-variable cd_file --inherit-variable cleanup_function --inherit-variable run_function
         set -l cd_exit 0
         # cd file holds a raw path — read with fish builtin (no cat subprocess,
         # safe even if CWD was removed by worktree removal).
@@ -38,16 +42,16 @@ function {{ cmd }}
         end
 
         command rm -f "$cd_file"
-        functions -e $cleanup_function
+        functions -e $cleanup_function $run_function
         return $cd_exit
     end
 
     # --source: use cargo run (builds from source)
     if test $use_source = true
-        env WORKTRUNK_DIRECTIVE_CD_FILE=$cd_file \
+        $run_function env WORKTRUNK_DIRECTIVE_CD_FILE=$cd_file \
             cargo run --bin {{ cmd }} --quiet -- $args
     else
-        env WORKTRUNK_DIRECTIVE_CD_FILE=$cd_file \
+        $run_function env WORKTRUNK_DIRECTIVE_CD_FILE=$cd_file \
             $WORKTRUNK_BIN $args
     end
     set -l exit_code $status

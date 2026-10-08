@@ -1037,11 +1037,38 @@ fn wrapper_prompt(shell: &mut Shell, marker: &str) {
     shell.wait_for("wrapper-prompt> ");
 }
 
-fn wrapper_shell(
-    repo: &TestRepo,
-    name: &str,
-    binary: &std::path::Path,
-) -> (Shell, std::path::PathBuf) {
+// Record the producer's actual path: BSD mktemp need not use TMPDIR.
+fn recording_wrapper_binary(repo: &TestRepo, binary: &std::path::Path) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let quote = |path: &std::path::Path| {
+        shell_escape::escape(path.to_string_lossy().into_owned().into()).into_owned()
+    };
+    let launcher = repo.root_path().join("wrapper-recording-binary");
+    std::fs::write(
+        &launcher,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$WORKTRUNK_DIRECTIVE_CD_FILE\" >> {}\nexec {} \"$@\"\n",
+            quote(&repo.root_path().join("wrapper-directive-files")),
+            quote(binary)
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755)).unwrap();
+    launcher
+}
+
+fn assert_wrapper_directives_removed(repo: &TestRepo) {
+    let paths = std::fs::read_to_string(repo.root_path().join("wrapper-directive-files")).unwrap();
+    assert!(!paths.is_empty(), "the wrapper never ran its binary");
+    for path in paths.lines() {
+        assert!(
+            !std::path::Path::new(path).exists(),
+            "directive file leaked: {path}"
+        );
+    }
+}
+
+fn wrapper_shell(repo: &TestRepo, name: &str, binary: &std::path::Path) -> Shell {
     let dialect = if name == "/bin/bash" { "bash" } else { name };
     let temporary = repo.root_path().join("wrapper-temporary");
     std::fs::create_dir(&temporary).unwrap();
@@ -1062,6 +1089,7 @@ fn wrapper_shell(
     }
     let mut shell = Shell::spawn(repo, command);
     let temporary = shell_escape::escape(temporary.to_string_lossy().into_owned().into());
+    let binary = recording_wrapper_binary(repo, binary);
     let binary = shell_escape::escape(binary.to_string_lossy().into_owned().into());
     let target = shell_escape::escape(repo.root_path().to_string_lossy().into_owned().into());
     let setup = if name == "fish" {
@@ -1075,7 +1103,7 @@ fn wrapper_shell(
     };
     shell.send(&format!("{setup}; printf 'WRAPPER_%s\\n' READY\n"));
     wrapper_prompt(&mut shell, "WRAPPER_READY");
-    (shell, repo.root_path().join("wrapper-temporary"))
+    shell
 }
 
 /// Nushell must apply the directive and release its temp files even when a
@@ -1106,8 +1134,10 @@ fn nushell_interrupt_runs_wrapper_cleanup(
     )
     .unwrap();
     let quote = |path: &std::path::Path| serde_json::to_string(&path.to_string_lossy()).unwrap();
+    let binary = recording_wrapper_binary(&repo, &wt_bin());
     let script = format!(
-        "$env.WORKTRUNK_BIN = $env.WT_JOB_TEST_BINARY; $env.TMPDIR = {}; $env.RUST_LOG = '{}'; source wrapper-init; cd {}; try {{ wt -vv switch main --yes --execute python3 -- {} }} finally {{ $env.PWD | save {} }}",
+        "$env.WORKTRUNK_BIN = {}; $env.TMPDIR = {}; $env.RUST_LOG = '{}'; source wrapper-init; cd {}; try {{ wt -vv switch main --yes --execute python3 -- {} }} finally {{ $env.PWD | save {} }}",
+        quote(&binary),
         quote(&temporary),
         crate::common::FOREGROUND_TRACE_FILTER,
         quote(&feature),
@@ -1138,6 +1168,8 @@ fn nushell_interrupt_runs_wrapper_cleanup(
             .trim(),
         repo.root_path().to_str().unwrap()
     );
+    assert_wrapper_directives_removed(&repo);
+    // Nushell's mktemp --tmpdir also puts its captured stdout file here.
     assert_eq!(std::fs::read_dir(temporary).unwrap().count(), 0);
 }
 
@@ -1177,7 +1209,7 @@ while not seen:
 "#,
     )
     .unwrap();
-    let (mut shell, temporary) = wrapper_shell(&repo, name, &wt_bin());
+    let mut shell = wrapper_shell(&repo, name, &wt_bin());
     let quote = |path: &std::path::Path| {
         shell_escape::escape(path.to_string_lossy().into_owned().into()).into_owned()
     };
@@ -1217,7 +1249,7 @@ while not seen:
             .trim(),
         repo.root_path().to_str().unwrap()
     );
-    assert_eq!(std::fs::read_dir(&temporary).unwrap().count(), 0);
+    assert_wrapper_directives_removed(&repo);
     assert_eq!(
         std::fs::read(repo.root_path().join("wrapper-traps-before")).unwrap(),
         std::fs::read(repo.root_path().join("wrapper-traps-after")).unwrap()
@@ -1248,14 +1280,21 @@ while not seen:
         std::fs::read_to_string(repo.root_path().join("wrapper-caught-status")).unwrap(),
         "0"
     );
-    assert_eq!(std::fs::read_dir(&temporary).unwrap().count(), 0);
+    assert_wrapper_directives_removed(&repo);
 }
 
 #[rstest]
-#[case("bash")]
-#[case("zsh")]
-#[case("fish")]
-fn shell_wrapper_preserves_native_compound_interrupts(mut repo: TestRepo, #[case] name: &str) {
+#[case("bash", false)]
+#[case("/bin/bash", false)]
+#[case("zsh", false)]
+#[case("fish", false)]
+#[case("bash", true)]
+#[case("/bin/bash", true)]
+fn shell_wrapper_preserves_native_compound_interrupts(
+    mut repo: TestRepo,
+    #[case] name: &str,
+    #[case] exported_prompt: bool,
+) {
     use std::os::unix::fs::PermissionsExt;
     let feature = repo.add_worktree("feature");
     // Exercise the generated wrapper's documented binary/directive boundary
@@ -1277,51 +1316,134 @@ sys.exit({'zero': 0, 'three': 3}.get(sys.argv[1], 130))
     )
     .unwrap();
     std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let (mut shell, temporary) = wrapper_shell(&repo, name, &executable);
+    let mut shell = wrapper_shell(&repo, name, &executable);
     let quote = |path: &std::path::Path| {
         shell_escape::escape(path.to_string_lossy().into_owned().into()).into_owned()
     };
+    let bash = matches!(name, "bash" | "/bin/bash");
+    if bash {
+        let export = if exported_prompt { "export " } else { "" };
+        shell.send(&format!(
+            "{export}PROMPT_COMMAND='status=$?'; printf 'WRAPPER_%s\\n' PROMPT\n"
+        ));
+        wrapper_prompt(&mut shell, "WRAPPER_PROMPT");
+    }
     let feature = quote(&feature);
     let next = quote(&repo.root_path().join("wrapper-next"));
     let status = if name == "fish" { "$status" } else { "$?" };
-    // Bash 3.2 natively continues after a signal-killed subprocess, whereas
-    // current Bash/zsh/fish abort the input line. Compare to the host shell.
-    let reference = quote(&repo.root_path().join("wrapper-native-reference"));
+    let raw_status_path = quote(&repo.root_path().join("wrapper-raw-status"));
+    let continuation_cwd = repo.root_path().join("wrapper-continuation-cwd");
+    let assert_continuation_cwd = || {
+        assert_eq!(
+            std::fs::read_to_string(&continuation_cwd).unwrap().trim(),
+            repo.root_path().to_str().unwrap()
+        );
+    };
+    // Compare the same function and compound context as the wrapper. Fish
+    // 3.x continues after a signal-killed child inside a function, while 4.x
+    // aborts the input line; a bare external command is not the same boundary.
     let reference_cd = quote(&repo.root_path().join("wrapper-reference-cd"));
-    shell.send(&format!(
-        "env WORKTRUNK_DIRECTIVE_CD_FILE={reference_cd} {} raw; printf next > {reference}\n",
+    let reference_command = format!(
+        "env WORKTRUNK_DIRECTIVE_CD_FILE={reference_cd} {} raw",
         quote(&executable)
-    ));
+    );
+    let reference_function = if name == "fish" {
+        format!("function native_reference; {reference_command}; end")
+    } else {
+        format!("native_reference() {{ {reference_command}; }}")
+    };
+    shell.send(&format!("{reference_function}\n"));
     shell.wait_for("wrapper-prompt> ");
-    let native_continues = repo.root_path().join("wrapper-native-reference").exists();
-    for looping in [false, true] {
-        let interrupted = if looping && name == "fish" {
-            format!(
-                "for iteration in first second; wt raw; printf '%s' {status} > wrapper-raw-status; printf next >> {next}; end"
-            )
+    let compound = |command: &str, raw_status: &str, next: &str, looping: bool| {
+        let body = format!(
+            "{command}; printf '%s' {status} > {raw_status}; pwd > {}; printf next >> {next}",
+            quote(&continuation_cwd)
+        );
+        if looping && name == "fish" {
+            format!("for iteration in first second; {body}; end")
         } else if looping {
+            format!("for iteration in first second; do {body}; done")
+        } else {
+            body
+        }
+    };
+    let mut native_expectations = Vec::new();
+    for looping in [false, true] {
+        let reference = repo
+            .root_path()
+            .join(format!("wrapper-reference-{looping}"));
+        let reference_raw_status = repo.root_path().join("wrapper-reference-raw-status");
+        let reference_native_status = repo.root_path().join("wrapper-reference-native-status");
+        let native = compound(
+            "native_reference",
+            &quote(&reference_raw_status),
+            &quote(&reference),
+            looping,
+        );
+        shell.send(&format!("cd {feature}; {native}\n"));
+        shell.wait_for("wrapper-prompt> ");
+        let reference_prompt_status = repo.root_path().join("wrapper-reference-prompt-status");
+        let record_prompt = if bash {
             format!(
-                "for iteration in first second; do wt raw; printf '%s' {status} > wrapper-raw-status; printf next >> {next}; done"
+                "printf '%s' \"$status\" > {}; ",
+                quote(&reference_prompt_status)
             )
         } else {
-            format!("wt raw; printf '%s' {status} > wrapper-raw-status; printf next > {next}")
+            String::new()
         };
-        shell.send(&format!("cd {feature}; {interrupted}\n"));
-        shell.wait_for("wrapper-prompt> ");
         shell.send(&format!(
-            "printf '%s' {status} > {}; pwd > {}; printf 'WRAPPER_%s\\n' ABORTED\n",
+            "printf '%s' {status} > {}; {record_prompt}printf 'WRAPPER_%s\\n' REFERENCE\n",
+            quote(&reference_native_status)
+        ));
+        wrapper_prompt(&mut shell, "WRAPPER_REFERENCE");
+        let native_continues = reference.exists();
+        let native_status = std::fs::read_to_string(if native_continues {
+            &reference_raw_status
+        } else {
+            &reference_native_status
+        })
+        .unwrap();
+        let next_path = repo.root_path().join(format!("wrapper-next-{looping}"));
+        let interrupted = compound("wt raw", &raw_status_path, &quote(&next_path), looping);
+        let reset_prompt_status = if bash { "status=seed; " } else { "" };
+        shell.send(&format!(
+            "{reset_prompt_status}cd {feature}; {interrupted}\n"
+        ));
+        shell.wait_for("wrapper-prompt> ");
+        let raw_output = shell.output.clone();
+        let wrapper_prompt_status = repo.root_path().join("wrapper-prompt-status");
+        let record_prompt = if bash {
+            format!(
+                "printf '%s' \"$status\" > {}; ",
+                quote(&wrapper_prompt_status)
+            )
+        } else {
+            String::new()
+        };
+        shell.send(&format!(
+            "printf '%s' {status} > {}; {record_prompt}pwd > {}; printf 'WRAPPER_%s\\n' ABORTED\n",
             quote(&repo.root_path().join("wrapper-native-status")),
             quote(&repo.root_path().join("wrapper-native-cwd"))
         ));
         wrapper_prompt(&mut shell, "WRAPPER_ABORTED");
+        if bash {
+            assert_eq!(
+                std::fs::read_to_string(wrapper_prompt_status).unwrap(),
+                std::fs::read_to_string(reference_prompt_status).unwrap(),
+                "the prompt callback must run in its caller's variable scope"
+            );
+        }
         let raw_status = if native_continues {
             "wrapper-raw-status"
         } else {
             "wrapper-native-status"
         };
         assert_eq!(
-            std::fs::read_to_string(repo.root_path().join(raw_status)).unwrap(),
-            "130"
+            std::fs::read_to_string(repo.root_path().join(raw_status)).unwrap_or_else(|error| {
+                panic!("missing {raw_status}, shell={name}, looping={looping}, native_continues={native_continues}: {error}; terminal output:\n{raw_output}")
+            }),
+            native_status,
+            "shell={name}, looping={looping}, native_continues={native_continues}; terminal output:\n{raw_output}"
         );
         assert_eq!(
             std::fs::read_to_string(repo.root_path().join("wrapper-native-cwd"))
@@ -1329,11 +1451,12 @@ sys.exit({'zero': 0, 'three': 3}.get(sys.argv[1], 130))
                 .trim(),
             repo.root_path().to_str().unwrap()
         );
-        assert_eq!(
-            repo.root_path().join("wrapper-next").exists(),
-            native_continues
-        );
-        assert_eq!(std::fs::read_dir(&temporary).unwrap().count(), 0);
+        assert_eq!(next_path.exists(), native_continues);
+        if native_continues {
+            assert_continuation_cwd();
+        }
+        assert_wrapper_directives_removed(&repo);
+        native_expectations.push((native_continues, native_status));
     }
     shell.send(&format!(
         "cd {feature}; wt ordinary; printf '%s' {status} > {}; printf next > {next}; printf 'WRAPPER_%s\\n' CONTINUED\n",
@@ -1345,7 +1468,7 @@ sys.exit({'zero': 0, 'three': 3}.get(sys.argv[1], 130))
         "130"
     );
     assert!(repo.root_path().join("wrapper-next").exists());
-    assert_eq!(std::fs::read_dir(&temporary).unwrap().count(), 0);
+    assert_wrapper_directives_removed(&repo);
 
     let missing = quote(&repo.root_path().join("missing-wrapper-target"));
     let target = if name == "fish" {
@@ -1360,32 +1483,34 @@ sys.exit({'zero': 0, 'three': 3}.get(sys.argv[1], 130))
             std::fs::read_to_string(repo.root_path().join("wrapper-native-status")).unwrap(),
             expected
         );
-        assert_eq!(std::fs::read_dir(&temporary).unwrap().count(), 0);
+        assert_wrapper_directives_removed(&repo);
     }
     // A foreground hook uses an exec leaf, so actual wt propagates a real
     // SIGINT rather than a shell intermediary's ordinary exit code 130.
     repo.write_project_config("post-start = 'exec python3 -c \"import os,signal; signal.signal(2,signal.SIG_DFL); signal.pthread_sigmask(signal.SIG_UNBLOCK,{2}); os.kill(os.getpid(),2)\"'");
+    let binary = quote(&recording_wrapper_binary(&repo, &wt_bin()));
     let binary = if name == "fish" {
-        "set -gx WORKTRUNK_BIN $WT_JOB_TEST_BINARY"
+        format!("set -gx WORKTRUNK_BIN {binary}")
     } else {
-        "export WORKTRUNK_BIN=\"$WT_JOB_TEST_BINARY\""
+        format!("export WORKTRUNK_BIN={binary}")
     };
     shell.send(&format!("{binary}; printf 'WRAPPER_%s\\n' ACTUAL\n"));
     wrapper_prompt(&mut shell, "WRAPPER_ACTUAL");
-    let actual_next = quote(&repo.root_path().join("wrapper-actual-next"));
-    for looping in [false, true] {
-        let body = format!(
-            "cd {feature}; wt switch main --yes; wt hook post-start --yes --foreground; printf '%s' {status} > wrapper-raw-status; printf next > {actual_next}"
+    for (looping, (native_continues, native_status)) in
+        [false, true].into_iter().zip(native_expectations)
+    {
+        let actual_next = repo
+            .root_path()
+            .join(format!("wrapper-actual-next-{looping}"));
+        let command = compound(
+            &format!("cd {feature}; wt switch main --yes; wt hook post-start --yes --foreground"),
+            &raw_status_path,
+            &quote(&actual_next),
+            looping,
         );
-        let command = if looping && name == "fish" {
-            format!("for iteration in first second; {body}; end")
-        } else if looping {
-            format!("for iteration in first second; do {body}; done")
-        } else {
-            body
-        };
         shell.send(&format!("{command}\n"));
         shell.wait_for("wrapper-prompt> ");
+        let raw_output = shell.output.clone();
         shell.send(&format!(
             "printf '%s' {status} > {}; printf 'WRAPPER_%s\\n' ACTUAL_ABORTED\n",
             quote(&repo.root_path().join("wrapper-native-status"))
@@ -1398,14 +1523,289 @@ sys.exit({'zero': 0, 'three': 3}.get(sys.argv[1], 130))
                 "wrapper-native-status"
             }))
             .unwrap(),
-            "130"
+            native_status,
+            "shell={name}, looping={looping}, native_continues={native_continues}; terminal output:\n{raw_output}"
+        );
+        assert_eq!(actual_next.exists(), native_continues);
+        if native_continues {
+            assert_continuation_cwd();
+        }
+        assert_wrapper_directives_removed(&repo);
+    }
+}
+
+/// A terminal key can exit a noninteractive Bash before RETURN runs. Cleanup
+/// must precede the caller's existing EXIT handler and preserve its native status.
+#[rstest]
+#[case("bash")]
+#[case("/bin/bash")]
+fn bash_script_interrupt_cleans_before_exit_handler(mut repo: TestRepo, #[case] name: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let feature = repo.add_worktree("feature");
+    let executable = repo.root_path().join("native-wrapper-command");
+    std::fs::write(
+        &executable,
+        r#"#!/usr/bin/env python3
+import os, signal, sys, time
+from pathlib import Path
+root = Path(os.environ['WT_WRAPPER_TEST_TARGET'])
+Path(os.environ['WORKTRUNK_DIRECTIVE_CD_FILE']).write_text(str(root))
+signal.signal(signal.SIGINT, signal.SIG_DFL)
+signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT})
+(root / ('script-info-' + sys.argv[1])).write_text(f'{os.getpid()} {os.getpgrp()} {os.getppid()}')
+while True:
+    time.sleep(.01)
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let init = repo
+        .wt_command()
+        .args(["config", "shell", "init", "bash"])
+        .output()
+        .unwrap();
+    assert!(init.status.success());
+    let init_path = repo.root_path().join("wrapper-init");
+    std::fs::write(&init_path, init.stdout).unwrap();
+    let binary = recording_wrapper_binary(&repo, &executable);
+    let quote = |path: &std::path::Path| {
+        shell_escape::escape(path.to_string_lossy().into_owned().into()).into_owned()
+    };
+    let mut expectations = None;
+    for mode in ["reference", "wrapper"] {
+        let status_path = repo.root_path().join(format!("script-status-{mode}"));
+        let cwd_path = repo.root_path().join(format!("script-cwd-{mode}"));
+        let global_path = repo.root_path().join(format!("script-global-{mode}"));
+        let next_path = repo.root_path().join(format!("script-next-{mode}"));
+        let after_path = repo.root_path().join(format!("script-after-{mode}"));
+        let command = if mode == "reference" {
+            "native_reference"
+        } else {
+            "wt wrapper"
+        };
+        let script = format!(
+            "export WORKTRUNK_BIN={} WT_WRAPPER_TEST_TARGET={}; source {}; status=seed; native_reference() {{ env WORKTRUNK_DIRECTIVE_CD_FILE={} {} reference; }}; trap 'printf \"%s\\n\" \"$?\" >> {}; printf \"%s\" \"$status\" > {}; pwd > {}' EXIT; cd {}; for iteration in only; do {command}; printf next > {}; done; printf after > {}",
+            quote(&binary),
+            quote(repo.root_path()),
+            quote(&init_path),
+            quote(&repo.root_path().join("script-reference-cd")),
+            quote(&executable),
+            quote(&status_path),
+            quote(&global_path),
+            quote(&cwd_path),
+            quote(&feature),
+            quote(&next_path),
+            quote(&after_path)
+        );
+        let mut command = CommandBuilder::new(name);
+        command.args(["--noprofile", "--norc", "-c", &script]);
+        let mut shell = Shell::spawn(&repo, command);
+        let info = native_info(&repo, &format!("script-info-{mode}"));
+        shell.remember(info[0]);
+        assert_eq!(info[1], shell.foreground());
+        shell.send("\u{3}");
+        crate::common::wait_for_file_content(&cwd_path);
+        let status = std::fs::read_to_string(&status_path).unwrap();
+        assert_eq!(std::fs::read_to_string(global_path).unwrap(), "seed");
+        assert_eq!(
+            status.lines().count(),
+            1,
+            "EXIT ran more than once: {status}"
+        );
+        let observed = (status, next_path.exists(), after_path.exists());
+        if mode == "reference" {
+            expectations = Some(observed);
+        } else {
+            assert_eq!(&observed, expectations.as_ref().unwrap());
+            assert_wrapper_directives_removed(&repo);
+            assert_eq!(
+                std::fs::read_to_string(cwd_path).unwrap().trim(),
+                repo.root_path().to_str().unwrap()
+            );
+        }
+    }
+}
+
+/// A subshell can report its parent's inactive EXIT trap. A wrapper must not
+/// activate that handler, or replace a subshell's own handler.
+#[rstest]
+#[case("bash")]
+#[case("/bin/bash")]
+fn bash_wrapper_preserves_subshell_exit_ownership(repo: TestRepo, #[case] name: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let executable = repo.root_path().join("native-wrapper-command");
+    std::fs::write(
+        &executable,
+        "#!/bin/sh\nprintf '%s' \"$WORKTRUNK_TEST_WRAPPER_TARGET\" > \"$WORKTRUNK_DIRECTIVE_CD_FILE\"\nexit 3\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let init = repo
+        .wt_command()
+        .args(["config", "shell", "init", "bash"])
+        .output()
+        .unwrap();
+    assert!(init.status.success());
+    let init = String::from_utf8(init.stdout).unwrap();
+    let binary = recording_wrapper_binary(&repo, &executable);
+    for (body, expected) in [
+        (
+            "value=$(wt; printf INNER); printf 'VALUE_%s\\n' \"$value\"",
+            "VALUE_INNER\nPARENT_0\n",
+        ),
+        ("wt | cat; printf AFTER", "AFTERPARENT_0\n"),
+        ("(wt; printf INNER); printf AFTER", "INNERAFTERPARENT_0\n"),
+        (
+            "(trap 'printf \"SUB_%s\\n\" \"$?\"' EXIT; wt; exit 17); printf AFTER",
+            "SUB_17\nAFTERPARENT_0\n",
+        ),
+    ] {
+        let script = format!("{init}\ntrap 'printf \"PARENT_%s\\n\" \"$?\"' EXIT; {body}");
+        let mut command = std::process::Command::new(name);
+        repo.configure_wt_cmd(&mut command);
+        let output = command
+            .args(["--noprofile", "--norc", "-c", &script])
+            .current_dir(repo.root_path())
+            .env("WORKTRUNK_BIN", &binary)
+            .env("WORKTRUNK_TEST_WRAPPER_TARGET", repo.root_path())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{name}, {body}: {output:?}");
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            expected,
+            "{name}, {body}"
+        );
+        assert_wrapper_directives_removed(&repo);
+    }
+}
+
+/// Prompt hooks with caller-owned attributes must not prevent ordinary commands,
+/// lose those attributes, or export the wrapper's temporary callback to children.
+#[rstest]
+#[case("bash", "readonly PROMPT_COMMAND=:")]
+#[case("/bin/bash", "readonly PROMPT_COMMAND=:")]
+#[case("bash", "export PROMPT_COMMAND=:")]
+#[case("/bin/bash", "export PROMPT_COMMAND=:")]
+#[case("bash", "unset PROMPT_COMMAND; export PROMPT_COMMAND")]
+#[case("/bin/bash", "unset PROMPT_COMMAND; export PROMPT_COMMAND")]
+#[case("bash", "readonly PROMPT_COMMAND=:; export PROMPT_COMMAND")]
+#[case("/bin/bash", "readonly PROMPT_COMMAND=:; export PROMPT_COMMAND")]
+#[case("bash", "PROMPT_COMMAND=:; set -a")]
+#[case("/bin/bash", "PROMPT_COMMAND=:; set -a")]
+#[case("bash", "unset PROMPT_COMMAND; set -a")]
+#[case("/bin/bash", "unset PROMPT_COMMAND; set -a")]
+#[case("bash", "unset PROMPT_COMMAND; readonly PROMPT_COMMAND")]
+#[case("/bin/bash", "unset PROMPT_COMMAND; readonly PROMPT_COMMAND")]
+#[case("bash", "unset PROMPT_COMMAND")]
+#[case("/bin/bash", "unset PROMPT_COMMAND")]
+fn bash_wrapper_preserves_protected_prompt(
+    repo: TestRepo,
+    #[case] name: &str,
+    #[case] setup: &str,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    let executable = repo.root_path().join("native-wrapper-command");
+    std::fs::write(
+        &executable,
+        "#!/bin/sh\nprintf '%s' \"$WT_WRAPPER_TEST_TARGET\" > \"$WORKTRUNK_DIRECTIVE_CD_FILE\"\nprintf '%s' \"${PROMPT_COMMAND-}\" > \"$WT_WRAPPER_TEST_TARGET/prompt-child\"\nexit \"$1\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // A literal x makes flag parsing failures deterministic rather than
+    // depending on the allocator's random suffix appearing in the callback.
+    let quote = |path: &std::path::Path| {
+        shell_escape::escape(path.to_string_lossy().into_owned().into()).into_owned()
+    };
+    let tools = repo.root_path().join("wrapper-tools");
+    std::fs::create_dir(&tools).unwrap();
+    let mktemp = tools.join("mktemp");
+    std::fs::write(
+        &mktemp,
+        format!(
+            "#!/bin/sh\nexec {} {}\n",
+            quote(&which::which("mktemp").unwrap()),
+            quote(&repo.root_path().join("directive-x.XXXXXX"))
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&mktemp, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut shell = wrapper_shell(&repo, name, &executable);
+    shell.send(&format!(
+        "PATH={}:$PATH; {setup}; declare -p PROMPT_COMMAND > prompt-before; export -p > prompt-exports-before; printf 'WRAPPER_%s\\n' PROTECTED\n", quote(&tools)
+    ));
+    wrapper_prompt(&mut shell, "WRAPPER_PROTECTED");
+    for status in [0, 130] {
+        shell.send(&format!("wt {status}\n"));
+        shell.wait_for("wrapper-prompt> ");
+        shell.send("printf '%s' $? > prompt-status; declare -p PROMPT_COMMAND > prompt-after; export -p > prompt-exports-after; printf 'WRAPPER_%s\\n' CHECKED\n");
+        wrapper_prompt(&mut shell, "WRAPPER_CHECKED");
+        assert_eq!(
+            std::fs::read_to_string(repo.root_path().join("prompt-status")).unwrap(),
+            status.to_string(),
+            "{name}, {setup}"
         );
         assert_eq!(
-            repo.root_path().join("wrapper-actual-next").exists(),
-            native_continues
+            std::fs::read(repo.root_path().join("prompt-before")).unwrap(),
+            std::fs::read(repo.root_path().join("prompt-after")).unwrap(),
+            "{name}, {setup}"
         );
-        assert_eq!(std::fs::read_dir(&temporary).unwrap().count(), 0);
+        let exported_prompt = |file: &str| {
+            std::fs::read_to_string(repo.root_path().join(file))
+                .unwrap()
+                .lines()
+                .find(|line| line.starts_with("declare -x PROMPT_COMMAND"))
+                .map(str::to_owned)
+        };
+        assert_eq!(
+            exported_prompt("prompt-exports-before"),
+            exported_prompt("prompt-exports-after"),
+            "{name}, {setup}"
+        );
+        assert!(
+            !std::fs::read_to_string(repo.root_path().join("prompt-child"))
+                .unwrap()
+                .contains("_wt_cleanup_"),
+            "{name}, {setup}"
+        );
+        assert_wrapper_directives_removed(&repo);
     }
+}
+
+#[rstest]
+#[case("bash")]
+#[case("/bin/bash")]
+fn bash_wrapper_preserves_exported_prompt_in_interactive_child(repo: TestRepo, #[case] name: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let executable = repo.root_path().join("native-wrapper-command");
+    std::fs::write(&executable, "#!/bin/sh\nexec \"$@\"\n").unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut shell = wrapper_shell(&repo, name, &executable);
+    let events = repo.root_path().join("child-prompt-events");
+    let events_quoted = shell_escape::escape(events.to_string_lossy().into_owned().into());
+    let callback =
+        shell_escape::escape(format!("printf 'CHILD_PROMPT\\n' >> {events_quoted}").into());
+    shell.send(&format!(
+        "export PROMPT_COMMAND={callback}; wt {name} --noprofile --norc -i\n"
+    ));
+    crate::common::wait_for_file_content(&events);
+    assert_eq!(std::fs::read_to_string(&events).unwrap(), "CHILD_PROMPT\n");
+    shell.send("exit\n");
+    shell.wait_for("wrapper-prompt> ");
+    shell.send("printf 'WRAPPER_%s\\n' CHILD_RETURNED\n");
+    shell.wait_for("WRAPPER_CHILD_RETURNED");
+    assert!(
+        !shell.output.contains("command not found"),
+        "{}",
+        shell.output
+    );
+    assert!(
+        !shell.output.contains("maximum evaluation"),
+        "{}",
+        shell.output
+    );
+    wrapper_prompt(&mut shell, "WRAPPER_CHILD_RETURNED");
+    assert_wrapper_directives_removed(&repo);
 }
 
 #[rstest]
@@ -1413,7 +1813,7 @@ sys.exit({'zero': 0, 'three': 3}.get(sys.argv[1], 130))
 #[case("/bin/bash")]
 fn bash_wrapper_preserves_functrace_return_handler(mut repo: TestRepo, #[case] name: &str) {
     let feature = repo.add_worktree("feature");
-    let (mut shell, temporary) = wrapper_shell(&repo, name, &wt_bin());
+    let mut shell = wrapper_shell(&repo, name, &wt_bin());
     let quote = |path: &std::path::Path| {
         shell_escape::escape(path.to_string_lossy().into_owned().into()).into_owned()
     };
@@ -1441,5 +1841,5 @@ fn bash_wrapper_preserves_functrace_return_handler(mut repo: TestRepo, #[case] n
     // The prior handler receives wt's return as it did before the fence.
     let events = std::fs::read_to_string(repo.root_path().join("wrapper-return-events")).unwrap();
     assert_eq!(events.lines().filter(|name| *name == "wt").count(), 1);
-    assert_eq!(std::fs::read_dir(&temporary).unwrap().count(), 0);
+    assert_wrapper_directives_removed(&repo);
 }
