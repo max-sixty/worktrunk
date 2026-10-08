@@ -1207,7 +1207,7 @@ fn test_switch_picker_open_url_keeps_launcher_output_out_of_terminal(
     let mock_bin = repo.root_path().join("mock-bin");
     std::fs::create_dir_all(&mock_bin).unwrap();
     let pr_json = format!(
-        r#"[{{"number":42,"title":"Open this PR","headRefName":"browser-test","author":{{"login":"octocat"}},"isDraft":false,"url":"{URL}","body":"body"}}]"#,
+        r#"[{{"number":42,"title":"Open this PR","headRefName":"url","author":{{"login":"octocat"}},"isDraft":false,"url":"{URL}","body":"body"}}]"#,
     );
     MockConfig::new("gh")
         .version("gh version 1.0.0 (mock)")
@@ -1243,7 +1243,7 @@ fn test_switch_picker_open_url_keeps_launcher_output_out_of_terminal(
         repo.root_path(),
         &env_vars,
     );
-    send_input_awaiting_content(&writer, &rx, &mut parser, ARROW_DOWN, Some("browser-test"));
+    send_input_awaiting_content(&writer, &rx, &mut parser, ARROW_DOWN, Some("url"));
     {
         let mut writer = writer.lock().unwrap();
         writer.write_all(b"\x1bo").unwrap();
