@@ -15,6 +15,9 @@ if command -v wt >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
         for arg in "$@"; do
             if [[ "$arg" == --source ]]; then use_source=true; else args+=("$arg"); fi
         done
+        # Completion mode: call binary directly, no directive files needed.
+        # This check MUST be here (not in the binary) because clap's completion
+        # handler runs before argument parsing.
         if [[ -n "${COMPLETE:-}" ]]; then
             command "${WORKTRUNK_BIN:-wt}" "${args[@]}"
             return
@@ -41,6 +44,9 @@ if command -v wt >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
             local cd_file=%q owner=%q exit_trap=%q owns_exit=%q
             local prompt_value=%q prompt_present=%q prompt_declared=%q prompt_provider=%q
         ' "$cd_file" "$owner" "$exit_trap" "$owns_exit" "$prompt_value" "$prompt_present" "$prompt_declared" "$prompt_provider"
+        # `builtin cd` bypasses any user `cd` alias or function (e.g. zoxide's
+        # `alias cd=__zoxide_z`) that would otherwise be substituted into the
+        # function body when it's defined. See #2643.
         cleanup_body+='
             local event=$1 status=$2 cd_status=0
             if [[ "$owns_exit" == true ]]; then builtin trap - EXIT; fi

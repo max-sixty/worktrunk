@@ -378,7 +378,8 @@ name = "picker_preview"
 harness = false
 
 [lints.rust]
-# Signal-disposition inspection permits one read-only native query.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage)"] }
+# Native signal inspection and coverage flushing permit scoped runtime calls.
 unsafe_code = "deny"
 
 # The profile that 'dist' will build with

@@ -1120,6 +1120,18 @@ fn handle_command_failure(error: anyhow::Error, verbose_level: u8, command_line:
     if let Some(signal) = signal {
         match worktrunk::signal_forwarder::should_reraise(signal) {
             Ok(true) => {
+                // Native signal death skips LLVM's atexit writer. Dump once
+                // before handing control back to the OS, only in coverage builds.
+                #[cfg(coverage)]
+                #[expect(unsafe_code, reason = "LLVM provides this no-argument profiling API")]
+                // SAFETY: cargo-llvm-cov links LLVM's profiling runtime. This
+                // no-argument API runs on the main thread, outside signal handlers.
+                unsafe {
+                    unsafe extern "C" {
+                        fn __llvm_profile_dump() -> std::ffi::c_int;
+                    }
+                    let _ = __llvm_profile_dump();
+                }
                 let _ = signal_hook::low_level::emulate_default_handler(signal);
             }
             Ok(false) => {}

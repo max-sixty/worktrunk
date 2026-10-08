@@ -2600,6 +2600,7 @@ def wait(name):
             raise RuntimeError(name)
         time.sleep(.01)
 if branch == 'a' and role == 'one':
+    wait('b-one-ready')
     wait('b-two-ready')
     print('a: important refusal', file=sys.stderr)
     sys.exit(3)

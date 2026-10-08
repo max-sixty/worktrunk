@@ -322,4 +322,10 @@ mod tests {
         let result = pipe_through_pager(input, "false", 80);
         assert_eq!(result, input);
     }
+
+    #[test]
+    fn test_pipe_through_pager_invalid_utf8_returns_original() {
+        let input = "original text";
+        assert_eq!(pipe_through_pager(input, "printf '\\377'", 80), input);
+    }
 }

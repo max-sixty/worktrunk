@@ -1178,6 +1178,117 @@ impl Drop for MockReleaseGate {
     }
 }
 
+/// Browser launchers must receive the selected URL without writing into skim's
+/// terminal. A launcher that starts and fails must not open a second browser.
+/// Linux launchers resolve through PATH; macOS uses absolute /usr/bin/open.
+#[rstest]
+#[case::success(0)]
+#[case::failed_launcher(17)]
+#[cfg(target_os = "linux")]
+fn test_switch_picker_open_url_keeps_launcher_output_out_of_terminal(
+    repo: TestRepo,
+    #[case] launcher_exit: i32,
+) {
+    use worktrunk::trace::{TraceEntryKind, TraceResult};
+
+    const URL: &str = "https://github.com/owner/test-repo/pull/42";
+    // WSL uses PowerShell's environment transport rather than Unix launcher argv.
+    if open::commands(URL)[0].get_program() != "xdg-open" {
+        return;
+    }
+    const STDOUT: &str = "BROWSER_LAUNCHER_STDOUT";
+    const STDERR: &str = "BROWSER_LAUNCHER_STDERR";
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    let mock_bin = repo.root_path().join("mock-bin");
+    std::fs::create_dir_all(&mock_bin).unwrap();
+    let pr_json = format!(
+        r#"[{{"number":42,"title":"Open this PR","headRefName":"browser-test","author":{{"login":"octocat"}},"isDraft":false,"url":"{URL}","body":"body"}}]"#,
+    );
+    MockConfig::new("gh")
+        .version("gh version 1.0.0 (mock)")
+        .command("pr list --state", MockResponse::output(&pr_json))
+        .command("pr list --head", MockResponse::output("[]"))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    for launcher in ["xdg-open", "gio", "gnome-open", "kde-open"] {
+        MockConfig::new(launcher)
+            .command(
+                "_default",
+                MockResponse::output(STDOUT)
+                    .with_stderr(STDERR)
+                    .with_exit_code(launcher_exit),
+            )
+            .write(&mock_bin);
+    }
+    let call_log = tempfile::tempdir().unwrap();
+    let mut env_vars = forge_mock_env_vars(&repo, &mock_bin);
+    env_vars.push((
+        "WORKTRUNK_TEST_MOCK_CALL_LOG_DIR".into(),
+        call_log.path().display().to_string(),
+    ));
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
+        wt_bin().to_str().unwrap(),
+        &["-vv", "switch", "--prs"],
+        repo.root_path(),
+        &env_vars,
+    );
+    send_input_awaiting_content(&writer, &rx, &mut parser, ARROW_DOWN, Some("browser-test"));
+    {
+        let mut writer = writer.lock().unwrap();
+        writer.write_all(b"\x1bo").unwrap();
+        writer.flush().unwrap();
+    }
+
+    // The trace establishes launcher completion before the absence window.
+    // Inspect every PTY byte: a later redraw could hide leaked launcher output.
+    let trace = repo.root_path().join(".git/wt/logs/trace.jsonl");
+    let mut terminal_output = Vec::new();
+    let mut completed_at = None;
+    crate::common::wait_for(
+        "browser launcher completion without terminal output",
+        || {
+            while let Ok(chunk) = rx.try_recv() {
+                terminal_output.extend_from_slice(&chunk);
+                parser.process(&chunk);
+            }
+            if completed_at.is_none() && {
+                let records =
+                    std::fs::read_to_string(&trace).expect("read -vv trace after picker startup");
+                worktrunk::trace::parse_lines(&records).iter().any(|entry| {
+                    matches!(&entry.kind,
+                        TraceEntryKind::Command {
+                            command,
+                            result: TraceResult::Completed { success },
+                            ..
+                        } if command.contains("xdg-open") && *success == (launcher_exit == 0))
+                })
+            } {
+                completed_at = Some(Instant::now());
+            }
+            completed_at.is_some_and(|at| at.elapsed() >= crate::common::SLEEP_FOR_ABSENCE_CHECK)
+        },
+    );
+    assert_valid_abort_exit_code(abort_and_exit_code(child, writer, rx));
+    assert_eq!(mock_calls(call_log.path(), "xdg-open"), [URL]);
+    for fallback in ["gio", "gnome-open", "kde-open"] {
+        assert!(mock_calls(call_log.path(), fallback).is_empty());
+    }
+    let terminal_output = String::from_utf8_lossy(&terminal_output);
+    assert!(!terminal_output.contains(STDOUT), "{terminal_output}");
+    assert!(!terminal_output.contains(STDERR), "{terminal_output}");
+}
+
 /// Removing a worktree row with alt-x in `--prs` mode must keep the streamed
 /// PR/MR rows on screen — only the removed worktree row leaves the list, no
 /// alt-r refresh needed.
