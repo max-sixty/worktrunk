@@ -1655,10 +1655,13 @@ good = "(sleep .6; printf 'LATE_%s' TAIL) & printf EARLY_"
 #[rstest]
 #[cfg(unix)]
 fn test_alias_caught_sigint_preserves_successful_descendant_output(repo: TestRepo) {
+    // `two` ignores SIGINT: the group interrupt can land after it writes its
+    // marker but before it exits, and a native SIGINT death there would
+    // legitimately cancel the alias.
     repo.write_test_config(
         r#"[aliases.signal-test]
 one = "trap 'printf handled > caught' INT; echo $$ > worker-pid; printf ready > first-ready; while test ! -f caught; do :; done; (sleep .6; printf 'LATE_%s' TAIL) & printf EARLY_"
-two = "echo $$ > second-pid; printf ready > second-ready"
+two = "trap '' INT; echo $$ > second-pid; printf ready > second-ready"
 "#,
     );
     let output_path = repo.root_path().join("output");
