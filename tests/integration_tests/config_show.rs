@@ -1761,6 +1761,63 @@ fn test_config_show_full_azure_remote(
     });
 }
 
+/// Azure CLI's WinGet install puts `az.cmd` on PATH beside an extensionless
+/// bash script, with no `az.exe`. A bare `az` spawn has to reach the batch
+/// launcher, or `wt` reports an installed CLI as missing (#4401).
+#[cfg(windows)]
+#[rstest]
+fn test_config_show_finds_batch_launcher_az(mut repo: TestRepo, temp_home: TempDir) {
+    use crate::common::mock_commands::MockConfig;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    let mock_bin = repo.mock_bin_path().unwrap().to_path_buf();
+    fs::write(
+        mock_bin.join("az_extensions.json"),
+        r#"[{"name": "azure-devops", "version": "1.0.0"}]"#,
+    )
+    .unwrap();
+    // The mock answers under another name, so the only `az` on the mock
+    // directory is the launcher pair WinGet installs.
+    MockConfig::new("azmock")
+        .version("azure-cli 2.60.0 (mock)")
+        .command("account show", MockResponse::exit(0))
+        .command("extension list", MockResponse::file("az_extensions.json"))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    let _ = fs::remove_file(mock_bin.join("az.exe"));
+    fs::write(mock_bin.join("az.cmd"), "@\"%~dp0azmock.exe\" %*\r\n").unwrap();
+    fs::write(
+        mock_bin.join("az"),
+        "#!/usr/bin/env bash\nexec \"$(dirname \"$0\")/azmock.exe\" \"$@\"\n",
+    )
+    .unwrap();
+
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://dev.azure.com/myorg/myproject/_git/test-repo",
+    ]);
+
+    let mut cmd = repo.wt_command();
+    cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
+    cmd.args(["config", "show", "--full"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    let output = cmd.output().unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = text.ansi_strip();
+    assert!(
+        text.contains("az installed & authenticated"),
+        "az.cmd was not found:\n{text}"
+    );
+}
+
 #[rstest]
 fn test_config_show_github_remote(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output

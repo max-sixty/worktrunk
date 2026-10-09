@@ -1396,6 +1396,45 @@ fn join_delayed_readers(
     result
 }
 
+/// The batch launcher a bare program name resolves to on PATH, if any.
+///
+/// `std::process::Command` resolves a bare name like `az` to `az.exe` only: it
+/// neither walks `PATHEXT` nor falls back to `az.cmd`. Some CLIs ship only a
+/// batch launcher — Azure CLI's WinGet install has `az.cmd` plus an
+/// extensionless bash script, and no `az.exe` — so a bare spawn fails with
+/// `NotFound` although the shell runs them. `which` follows `PATHEXT` and skips
+/// files Windows can't execute; when what it finds is a `.cmd` or `.bat`, its
+/// full path is what to spawn, and std then applies its batch-file argument
+/// quoting. Any other result keeps the bare name and std's own search order.
+///
+/// Resolved once per name: PATH doesn't change during a run, and the search
+/// stats every `PATHEXT` candidate in every PATH directory.
+#[cfg(windows)]
+fn windows_batch_launcher(program: &str) -> Option<PathBuf> {
+    use std::collections::HashMap;
+
+    static RESOLVED: OnceLock<Mutex<HashMap<String, Option<PathBuf>>>> = OnceLock::new();
+
+    let path = Path::new(program);
+    if path.extension().is_some() || path.components().count() != 1 {
+        return None;
+    }
+    let mut resolved = RESOLVED
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    resolved
+        .entry(program.to_string())
+        .or_insert_with(|| {
+            which::which(program).ok().filter(|found| {
+                found.extension().is_some_and(|ext| {
+                    ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat")
+                })
+            })
+        })
+        .clone()
+}
+
 impl Cmd {
     fn builder(program: impl Into<String>, shell_wrap: bool) -> Self {
         Self {
@@ -1444,6 +1483,12 @@ impl Cmd {
     }
 
     fn direct_command(&self) -> Command {
+        #[cfg(windows)]
+        let mut cmd = match windows_batch_launcher(&self.program) {
+            Some(launcher) => Command::new(launcher),
+            None => Command::new(&self.program),
+        };
+        #[cfg(not(windows))]
         let mut cmd = Command::new(&self.program);
         cmd.args(&self.args);
         cmd
