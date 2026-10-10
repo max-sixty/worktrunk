@@ -2865,6 +2865,8 @@ fn test_no_nested_auto_generated_markers() {
 ///
 /// Only pages the sidebar names are checked. A page may carry an order without
 /// a sidebar entry (`code-signing.md`); the order still places it in llms.txt.
+/// An Astro page (`docs/src/pages/try-it.astro`) is not in llms.txt, so it has
+/// no order to agree with.
 #[test]
 fn test_sidebar_matches_frontmatter_order() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -2882,6 +2884,11 @@ fn test_sidebar_matches_frontmatter_order() {
         .map(|link| match link.trim_matches('/') {
             "" => "worktrunk".to_string(),
             slug => slug.to_string(),
+        })
+        .filter(|slug| {
+            !project_root
+                .join(format!("docs/src/pages/{slug}.astro"))
+                .exists()
         })
         .collect();
 
