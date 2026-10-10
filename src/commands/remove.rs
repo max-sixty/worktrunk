@@ -548,7 +548,7 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                     let fate = handle_remove_output(
                         result,
                         removal_execution(args.foreground),
-                    ForegroundStdin::Inherit,
+                        ForegroundStdin::Inherit,
                         &plan,
                         false,
                         &mut announcer,

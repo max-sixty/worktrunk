@@ -2147,7 +2147,11 @@ fn test_removal_runs_post_remove_after_cleanup_spawn_failure(
         .into_owned();
     assert!(!output.status.success(), "{stderr}");
     if interrupt {
-        assert_eq!(output.status.code(), Some(130), "{stderr}");
+        assert_eq!(
+            crate::common::shell_exit_code(&output.status),
+            Some(130),
+            "{stderr}"
+        );
         assert_eq!(
             repo.git_output(&["rev-parse", "cleanup-error"]),
             repo.git_output(&["rev-parse", "main"])
@@ -2437,8 +2441,8 @@ fn test_prune_exclusive_pre_remove_hooks_inherit_stdin(
     crate::common::assert_worktree_removed(&worktree);
 }
 
-/// Closed-input prune hooks remain cancellable through the existing isolated
-/// process group: a signal sent only to wt must reach its running hook.
+/// Closed stdin must not change foreground job membership or cancellation:
+/// SIGTERM sent only to wt must reach its owned direct hook process.
 #[cfg(unix)]
 #[rstest]
 fn test_prune_parallel_hook_external_sigterm_reaches_child(mut repo: TestRepo) {
@@ -2454,10 +2458,11 @@ fn test_prune_parallel_hook_external_sigterm_reaches_child(mut repo: TestRepo) {
     let interrupted = repo.home_path().join("hook-interrupted.txt");
     repo.write_test_config(&format!(
         r#"pre-remove = """
-trap 'printf interrupted > {1}; exit 143' TERM
-ps -o pgid= -p $$ > {0}
+trap 'kill "$wait_pid"; wait "$wait_pid"; printf interrupted > {1}; exit 143' TERM
 sleep 30 &
-wait $!
+wait_pid=$!
+ps -o pgid= -p $$ > {0}
+wait "$wait_pid"
 """"#,
         started.to_slash_lossy(),
         interrupted.to_slash_lossy()
@@ -2479,10 +2484,10 @@ wait $!
         .trim()
         .parse()
         .unwrap();
-    assert_ne!(
+    assert_eq!(
         hook_pgid,
         child.id(),
-        "closed-input hook must have an isolated process group"
+        "closed-input hook must share wt's foreground process group"
     );
     kill(Pid::from_raw(child.id() as i32), Signal::SIGTERM).unwrap();
     let status = child.wait().unwrap();
@@ -2503,6 +2508,402 @@ wait $!
             .status
             .success()
     );
+}
+
+#[cfg(unix)]
+struct PruneSignalJob {
+    keeper: std::process::Child,
+    child: Option<std::process::Child>,
+    release: std::path::PathBuf,
+}
+
+#[cfg(unix)]
+impl PruneSignalJob {
+    fn spawn(mut cmd: std::process::Command, release: std::path::PathBuf) -> Self {
+        use std::os::unix::process::CommandExt;
+        use std::process::{Command, Stdio};
+
+        let mut job = Self {
+            keeper: Command::new("sleep")
+                .arg("300")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .process_group(0)
+                .spawn()
+                .unwrap(),
+            child: None,
+            release,
+        };
+        job.child = Some(
+            cmd.stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .process_group(job.keeper.id() as i32)
+                .spawn()
+                .unwrap(),
+        );
+        job
+    }
+
+    fn output(mut self) -> std::process::Output {
+        crate::common::wait_for("parallel prune completion", || {
+            self.child.as_mut().unwrap().try_wait().unwrap().is_some()
+        });
+        self.child.take().unwrap().wait_with_output().unwrap()
+    }
+}
+
+#[cfg(unix)]
+impl Drop for PruneSignalJob {
+    fn drop(&mut self) {
+        use nix::sys::signal::{Signal, killpg};
+        use nix::unistd::Pid;
+
+        // Captured Git commands own separate groups. Release their fixture
+        // barriers even when an assertion prevents the normal path.
+        let _ = std::fs::write(&self.release, "");
+        // The unreaped keeper reserves the group even if wt was collected.
+        let _ = killpg(Pid::from_raw(self.keeper.id() as i32), Signal::SIGKILL);
+        if let Some(child) = &mut self.child {
+            let _ = child.wait();
+        }
+        let _ = self.keeper.wait();
+    }
+}
+
+/// A signaled hook cancels the operation before its healthy sibling finishes.
+/// Release a later worktree's scan after an owned child actually dies, while
+/// its earlier or later sibling remains alive. Input order cannot delay cancellation.
+#[cfg(unix)]
+#[rstest]
+#[case::first("one")]
+#[case::later("two")]
+fn test_prune_interrupt_stops_later_parallel_removal(mut repo: TestRepo, #[case] dying_role: &str) {
+    use std::os::unix::process::ExitStatusExt;
+    use worktrunk::trace::{TraceEntryKind, TraceResult, parse_lines};
+
+    repo.commit("initial");
+    repo.add_worktree("a");
+    let later = repo.add_worktree("c");
+    let barriers = repo.home_path().join("barriers");
+    std::fs::create_dir(&barriers).unwrap();
+    let worker = repo.home_path().join("worker.py");
+    std::fs::write(
+        &worker,
+        r#"import os, pathlib, signal, sys, time
+branch, role, directory = sys.argv[1], sys.argv[2], pathlib.Path(sys.argv[3])
+def wait(name):
+    deadline = time.monotonic() + 15
+    while not (directory / name).exists():
+        if time.monotonic() > deadline:
+            raise RuntimeError(name)
+        time.sleep(.01)
+if role == 'scan':
+    (directory / 'c-scan-blocked').touch()
+    wait('release-c')
+elif branch == 'a' and role == sys.argv[4]:
+    wait('c-scan-blocked')
+    wait('a-held-ready')
+    (directory / 'dying-info').write_text(f'{os.getpid()} {os.getppid()} {os.getpgrp()}')
+    wait('interrupt-child')
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    os.kill(os.getpid(), signal.SIGINT)
+elif branch == 'a':
+    (directory / 'a-held-ready').touch()
+    wait('c-scan-completed')
+    # Release the rendezvous even when cancellation correctly prevents c's
+    # hook. This is a watchdog, not an assertion about execution speed.
+    deadline = time.monotonic() + 2
+    while not (directory / 'c-started').exists() and time.monotonic() < deadline:
+        time.sleep(.01)
+    (directory / 'a-held-finished').touch()
+else:
+    (directory / 'c-started').touch()
+"#,
+    )
+    .unwrap();
+    let worker = shell_escape::unix::escape(worker.to_string_lossy());
+    let barriers_arg = shell_escape::unix::escape(barriers.to_string_lossy());
+    repo.write_test_config(&format!(
+        r#"pre-remove = {{ one = """exec python3 {worker} {{{{ branch }}}} one {barriers_arg} {dying_role}""", two = """exec python3 {worker} {{{{ branch }}}} two {barriers_arg} {dying_role}""" }}"#
+    ));
+    let wrapper = repo.home_path().join("git-wrapper");
+    std::fs::create_dir(&wrapper).unwrap();
+    write_prune_git_wrapper(
+        &wrapper,
+        &which::which("git").unwrap(),
+        &format!(
+            r#"
+case "$PWD:$1:$2" in
+  *.c:status:* | *.c:--no-optional-locks:status)
+    python3 {worker} c scan {barriers_arg} || exit 2
+    run_git "$@"
+    status=$?
+    touch {barriers_arg}/c-scan-completed
+    exit "$status"
+    ;;
+esac
+"#
+        ),
+    );
+    let mut cmd = repo.wt_command();
+    prepend_path(&mut cmd, &wrapper);
+    cmd.args(["-vv", "step", "prune", "--yes", "--min-age=0s"])
+        .env("RAYON_NUM_THREADS", "2")
+        .env("RUST_LOG", "worktrunk::wt_trace=debug");
+    let job = PruneSignalJob::spawn(cmd, barriers.join("release-c"));
+    crate::common::wait_for_file_content(&barriers.join("dying-info"));
+    let info: Vec<i32> = std::fs::read_to_string(barriers.join("dying-info"))
+        .unwrap()
+        .split_whitespace()
+        .map(|number| number.parse().unwrap())
+        .collect();
+    assert_eq!(info[1], job.child.as_ref().unwrap().id() as i32);
+    assert_eq!(info[2], job.keeper.id() as i32);
+    std::fs::write(barriers.join("interrupt-child"), "").unwrap();
+    if dying_role == "one" {
+        let trace = repo.root_path().join(".git/wt/logs/trace.jsonl");
+        crate::common::wait_for("prune's observed child interruption", || {
+            std::fs::read_to_string(&trace).is_ok_and(|records| {
+                parse_lines(&records).into_iter().any(|entry| {
+                    matches!(entry.kind, TraceEntryKind::Command {
+                        command, result: TraceResult::Completed { success: false }, ..
+                    } if command.contains(" a one "))
+                })
+            })
+        });
+    } else {
+        // Waiting for cmd_completed would mask serial input-order waits.
+        // A zombie or reaped PID establishes actual death independently.
+        let pid = info[0].to_string();
+        crate::common::wait_for("later input child's native death", || {
+            let state = std::process::Command::new("ps")
+                .args(["-o", "stat=", "-p", &pid])
+                .output()
+                .unwrap();
+            let state = String::from_utf8_lossy(&state.stdout);
+            state.trim().is_empty() || state.trim().starts_with('Z')
+        });
+    }
+    assert!(barriers.join("c-scan-blocked").exists());
+    assert!(barriers.join("a-held-ready").exists());
+    assert!(!barriers.join("a-held-finished").exists());
+    std::fs::write(barriers.join("release-c"), "").unwrap();
+    let output = job.output();
+    assert_eq!(
+        output.status.signal(),
+        Some(nix::libc::SIGINT),
+        "{output:?}"
+    );
+    assert!(barriers.join("c-scan-completed").exists());
+    assert!(!barriers.join("c-started").exists(), "{output:?}");
+    assert!(
+        later.exists(),
+        "cancelled prune must retain the later worktree"
+    );
+    assert!(
+        repo.git_output(&["branch", "--format=%(refname:short)"])
+            .lines()
+            .any(|branch| branch == "c")
+    );
+}
+
+/// Rendering retains an earlier ordinary failure even when an already-running
+/// sibling later interrupts the operation and determines the native exit status.
+#[cfg(unix)]
+#[rstest]
+#[case::ordinary(false)]
+#[case::later_interrupt(true)]
+fn test_prune_preserves_failure_diagnostic_after_sibling_interrupt(
+    mut repo: TestRepo,
+    #[case] interrupt: bool,
+) {
+    use std::os::unix::process::ExitStatusExt;
+    use worktrunk::trace::{TraceEntryKind, parse_lines};
+
+    repo.commit("initial");
+    let failed = repo.add_worktree("a");
+    repo.add_worktree("b");
+    let barriers = repo.home_path().join("barriers");
+    std::fs::create_dir(&barriers).unwrap();
+    let worker = repo.home_path().join("worker.py");
+    std::fs::write(
+        &worker,
+        r#"import os, pathlib, signal, sys, time
+branch, role, directory = sys.argv[1], sys.argv[2], pathlib.Path(sys.argv[3])
+def wait(name):
+    deadline = time.monotonic() + 15
+    while not (directory / name).exists():
+        if time.monotonic() > deadline:
+            raise RuntimeError(name)
+        time.sleep(.01)
+if branch == 'a' and role == 'one':
+    wait('b-one-ready')
+    wait('b-two-ready')
+    print('a: important refusal', file=sys.stderr)
+    sys.exit(3)
+elif branch == 'b' and role == 'two':
+    (directory / 'b-two-ready').touch()
+elif branch == 'b':
+    (directory / 'b-one-ready').touch()
+    wait('release-b')
+    if sys.argv[4] == 'interrupt':
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        os.kill(os.getpid(), signal.SIGINT)
+"#,
+    )
+    .unwrap();
+    let worker = shell_escape::unix::escape(worker.to_string_lossy());
+    let barriers_arg = shell_escape::unix::escape(barriers.to_string_lossy());
+    let mode = if interrupt { "interrupt" } else { "success" };
+    repo.write_test_config(&format!(
+        r#"pre-remove = {{ one = """exec python3 {worker} {{{{ branch }}}} one {barriers_arg} {mode}""", two = """exec python3 {worker} {{{{ branch }}}} two {barriers_arg} {mode}""" }}"#
+    ));
+    let mut cmd = repo.wt_command();
+    cmd.args(["-vv", "step", "prune", "--yes", "--min-age=0s"])
+        .env("RAYON_NUM_THREADS", "2")
+        .env(
+            "RUST_LOG",
+            "worktrunk::wt_trace=debug,worktrunk::trace::emit=debug",
+        );
+    let job = PruneSignalJob::spawn(cmd, barriers.join("release-b"));
+    let trace = repo.root_path().join(".git/wt/logs/trace.jsonl");
+    crate::common::wait_for("first prune removal's complete failure", || {
+        std::fs::read_to_string(&trace).is_ok_and(|records| {
+            parse_lines(&records).into_iter().any(|entry| {
+                matches!(entry.kind, TraceEntryKind::Span { name, .. } if name == "prune-remove:a")
+            })
+        })
+    });
+    assert!(barriers.join("b-one-ready").exists());
+    assert!(barriers.join("b-two-ready").exists());
+    std::fs::write(barriers.join("release-b"), "").unwrap();
+    let output = job.output();
+    if interrupt {
+        assert_eq!(
+            output.status.signal(),
+            Some(nix::libc::SIGINT),
+            "{output:?}"
+        );
+    } else {
+        assert_eq!(output.status.code(), Some(3), "{output:?}");
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(stderr.contains("a: important refusal"), "{stderr}");
+    assert!(
+        stderr.contains("pre-remove command failed: one: exit status: 3"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("To skip pre-remove hooks, re-run with --no-hooks"),
+        "{stderr}"
+    );
+    assert!(failed.exists());
+}
+
+/// An accepted captured Git interrupt cancels the operation even when an
+/// earlier hook failure owns its diagnostic. Ordinary Git failures do not.
+#[cfg(unix)]
+#[rstest]
+#[case::ordinary(false)]
+#[case::native_interrupt(true)]
+fn test_prune_preserves_prior_failure_after_captured_git_error(
+    mut repo: TestRepo,
+    #[case] interrupt: bool,
+) {
+    use std::os::unix::process::ExitStatusExt;
+    use worktrunk::trace::{TraceEntryKind, parse_lines};
+
+    repo.commit("initial");
+    let failed = repo.add_worktree("a");
+    repo.add_worktree("b");
+    let original = repo.git_output(&["rev-parse", "b"]);
+    let barriers = repo.home_path().join("barriers");
+    std::fs::create_dir(&barriers).unwrap();
+    let worker = repo.home_path().join("worker.py");
+    std::fs::write(
+        &worker,
+        r#"import os, pathlib, signal, sys, time
+branch, role, directory = sys.argv[1], sys.argv[2], pathlib.Path(sys.argv[3])
+def wait(name):
+    deadline = time.monotonic() + 15
+    while not (directory / name).exists():
+        if time.monotonic() > deadline:
+            raise RuntimeError(name)
+        time.sleep(.01)
+if role == 'delete':
+    (directory / 'b-at-delete').touch()
+    wait('release-b')
+    if sys.argv[4] == 'interrupt':
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        os.kill(os.getpid(), signal.SIGINT)
+    sys.exit(7)
+elif branch == 'a':
+    wait('b-at-delete')
+    print('a: important refusal', file=sys.stderr)
+    sys.exit(3)
+"#,
+    )
+    .unwrap();
+    let worker = shell_escape::unix::escape(worker.to_string_lossy());
+    let barriers_arg = shell_escape::unix::escape(barriers.to_string_lossy());
+    let mode = if interrupt { "interrupt" } else { "ordinary" };
+    repo.write_test_config(&format!(
+        r#"pre-remove = """exec python3 {worker} {{{{ branch }}}} hook {barriers_arg}""""#
+    ));
+    let wrapper = repo.home_path().join("git-wrapper");
+    std::fs::create_dir(&wrapper).unwrap();
+    write_prune_git_wrapper(
+        &wrapper,
+        &which::which("git").unwrap(),
+        &format!("if has_delete b; then exec python3 {worker} b delete {barriers_arg} {mode}; fi"),
+    );
+    let mut cmd = repo.wt_command();
+    prepend_path(&mut cmd, &wrapper);
+    cmd.args(["-vv", "step", "prune", "--yes", "--min-age=0s"])
+        .env("RAYON_NUM_THREADS", "2")
+        .env(
+            "RUST_LOG",
+            "worktrunk::wt_trace=debug,worktrunk::trace::emit=debug",
+        );
+    let job = PruneSignalJob::spawn(cmd, barriers.join("release-b"));
+    let trace = repo.root_path().join(".git/wt/logs/trace.jsonl");
+    crate::common::wait_for("ordinary failure before captured Git error", || {
+        std::fs::read_to_string(&trace).is_ok_and(|records| {
+            parse_lines(&records).into_iter().any(|entry| {
+                matches!(entry.kind, TraceEntryKind::Span { name, .. } if name == "prune-remove:a")
+            })
+        })
+    });
+    assert!(barriers.join("b-at-delete").exists());
+    std::fs::write(barriers.join("release-b"), "").unwrap();
+    let output = job.output();
+    if interrupt {
+        assert_eq!(
+            output.status.signal(),
+            Some(nix::libc::SIGINT),
+            "{output:?}"
+        );
+    } else {
+        assert_eq!(output.status.code(), Some(3), "{output:?}");
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(stderr.contains("a: important refusal"), "{stderr}");
+    assert!(
+        stderr.contains("pre-remove command failed: exit status: 3"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("To skip pre-remove hooks, re-run with --no-hooks"),
+        "{stderr}"
+    );
+    assert!(failed.exists());
+    assert_eq!(repo.git_output(&["rev-parse", "b"]), original);
 }
 
 #[cfg(unix)]
@@ -2725,7 +3126,11 @@ fi
         }
     }
     if interrupted {
-        assert_eq!(output.status.code(), Some(130), "{stderr}");
+        assert_eq!(
+            crate::common::shell_exit_code(&output.status),
+            Some(130),
+            "{stderr}"
+        );
         assert!(barriers.join(mode).exists());
     } else if failure == SerializedDeleteFailure::Moved {
         assert!(stderr.contains("moved during deletion"), "{stderr}");

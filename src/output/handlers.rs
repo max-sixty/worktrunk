@@ -1272,6 +1272,7 @@ pub fn handle_remove_output(
             branch_name,
             deletion_mode,
             prune_entry,
+            force_worktree,
             target_branch,
             integration_reason,
             branch_checked_out_at,
@@ -1280,6 +1281,7 @@ pub fn handle_remove_output(
             branch_name,
             *deletion_mode,
             prune_entry.as_deref(),
+            *force_worktree,
             *integration_reason,
             target_branch.as_deref(),
             branch_checked_out_at.as_ref(),
@@ -1292,8 +1294,8 @@ pub fn handle_remove_output(
 /// Handle output for BranchOnly removal (branch exists but no worktree)
 ///
 /// `prune_entry` is the stale worktree entry the plan fell back from, if any;
-/// it is unregistered here, first — unconditionally, unlike the branch
-/// deletion the `should_keep`/CAS logic below may decline.
+/// it is unregistered here first, after rechecking its lock, staleness and
+/// retained work. A refused prune also keeps the branch.
 ///
 /// When `quiet` is true, suppresses the "No worktree found for branch X"
 /// info line for non-pruned cases (noise in prune/batch context).
@@ -1312,6 +1314,7 @@ fn handle_branch_only_output(
     branch_name: &str,
     deletion_mode: BranchDeletionMode,
     prune_entry: Option<&Path>,
+    force_worktree: bool,
     integration_reason: Option<IntegrationReason>,
     target_branch: Option<&str>,
     branch_checked_out_at: Option<&SharedBranchCheckout>,
@@ -1319,7 +1322,7 @@ fn handle_branch_only_output(
     quiet: bool,
 ) -> anyhow::Result<BranchFate> {
     let pruned = if let Some(path) = prune_entry {
-        Repository::current()?.prune_worktree_entry(path)?;
+        Repository::current()?.prune_worktree_entry(path, force_worktree)?;
         true
     } else {
         false
@@ -2174,18 +2177,15 @@ fn remove_removed_worktree_silently(
 /// detached) have their own spawning logic.
 ///
 /// Capabilities: optional stdout→stderr redirect for deterministic ordering,
-/// SIGINT/SIGTERM forwarding to child process group, ANSI reset before child
+/// native Ctrl-C and direct-child SIGTERM delivery, ANSI reset before child
 /// runs, `Cmd` tracing/logging, and CD directive control.
 ///
 /// ## Stdin
 ///
-/// An input-owning pipeline inherits the parent's stdin, so an interactive body keeps
-/// the controlling terminal — a `pre-*` hook can `gum confirm`, an alias body's
-/// `wt switch` picker can drive `/dev/tty`. `inherit_stdin()` also keeps the
-/// child in wt's process group, which is what makes its `tcsetattr` on
-/// `/dev/tty` succeed; see that method's docs for the SIGTTOU rationale, and
-/// the "Process groups and signal handling" module docs in
-/// [`worktrunk::shell_exec`] for what a shared pgroup costs on teardown.
+/// An input-owning pipeline inherits the parent's stdin for interactive input.
+/// Foreground children share the caller's process group independently of stdin,
+/// so a `pre-*` hook can `gum confirm`, and an alias body's `wt switch` picker
+/// can drive `/dev/tty`.
 ///
 /// Nothing is ever written to that stdin — a hook reads its context through
 /// template variables, whatever form it runs in. Pipelines without exclusive

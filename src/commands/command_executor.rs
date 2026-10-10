@@ -122,8 +122,9 @@ impl PipelineKind {
 
 /// Whether a foreground pipeline owns the caller's input.
 ///
-/// An exclusive pipeline can prompt and share the controlling terminal. A
-/// pipeline running alongside another input consumer must read EOF instead.
+/// An exclusive pipeline inherits stdin for interactive input. A pipeline
+/// running alongside another input consumer must read EOF instead. Foreground
+/// process-group membership is independent of this input allocation.
 #[derive(Clone, Copy, Debug)]
 pub enum ForegroundStdin {
     Inherit,

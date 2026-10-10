@@ -4,11 +4,13 @@
 
 ### Improved
 
-- **Foreground hooks can prompt**: serial hooks with exclusive input inherit stdin, so tools such as `gum` and uncached `turbo` tasks work without hanging. Parallel and detached hooks read EOF; `prune --foreground` keeps removal hooks interactive. (Breaking: hooks no longer receive JSON on stdin; pass context through template arguments. `wt step for-each` keeps its JSON.) [Docs](https://worktrunk.dev/hook/#interactive-hooks) ([#3129](https://github.com/max-sixty/worktrunk/pull/3129), thanks @endigma for requesting and @user753 and @willparsons for reporting)
+- **Foreground hooks preserve native terminal behavior**: serial hooks with exclusive input inherit stdin; parallel and detached hooks read EOF. On Unix, foreground commands share the shell’s job group, so terminal-setting tools no longer stop with SIGTTOU and Ctrl-Z/fg work normally. `prune --foreground` keeps pre-remove hooks interactive. (Breaking: hooks no longer receive JSON on stdin; use template arguments. `wt step for-each` keeps JSON.) [Docs](https://worktrunk.dev/hook/#interactive-hooks) ([#3129](https://github.com/max-sixty/worktrunk/pull/3129), [#4400](https://github.com/max-sixty/worktrunk/pull/4400), thanks @endigma for requesting and @user753 and @willparsons for reporting)
+
+- **Nushell integration requires 0.113 or newer** (Breaking): shell cleanup now uses native `finally` handling. [Docs](https://worktrunk.dev/shell-integration/) ([#4400](https://github.com/max-sixty/worktrunk/pull/4400))
 
 - **Choose a worktree directory independently of its branch**: experimental `wt switch --create feature/JIRA-1234 --path ../dark-mode` overrides the path template for one worktree. Switch by branch or path as usual; `wt step relocate` can return it to the template location. The repository's Git metadata directory is refused even with `--clobber`. [Docs](https://worktrunk.dev/switch/#custom-path) ([#4317](https://github.com/max-sixty/worktrunk/pull/4317), thanks @christowiz for requesting in [#1982](https://github.com/max-sixty/worktrunk/issues/1982))
 
-- **Prune runs removal hooks concurrently across worktrees**: each worktree's pre-remove hooks finish before its removal, but hooks writing shared resources must coordinate those writes themselves. `--foreground` keeps hook-bearing removals serial and interactive. [Docs](https://worktrunk.dev/step/#wt-step-prune) ([#4337](https://github.com/max-sixty/worktrunk/pull/4337))
+- **Prune runs removal hooks concurrently across worktrees**: each worktree's pre-remove hooks finish before its removal, but hooks writing shared resources must coordinate those writes themselves. `--foreground` serializes removals and lets pre-remove hooks prompt. [Docs](https://worktrunk.dev/step/#wt-step-prune) ([#4337](https://github.com/max-sixty/worktrunk/pull/4337))
 
 - **Config views distinguish state from advice**: installation and authentication instructions have their own rows, while config and approvals parse errors name the source file and show one consistent diagnostic. ([#4351](https://github.com/max-sixty/worktrunk/pull/4351))
 
@@ -18,11 +20,13 @@
 
 - **Cargo caches copied by `wt step copy-ignored`**: all copied regular files now share one modification time, avoiding rebuilds caused by the order in which files were copied. ([#4319](https://github.com/max-sixty/worktrunk/pull/4319), thanks @dmy-gh for reporting and @paul-hansen for the Cargo reproduction in [#4248](https://github.com/max-sixty/worktrunk/issues/4248))
 
+- **Help and picker pagers**: Git’s pager-disable settings are respected; quitting help early no longer reprints it, and Unix picker previews stop waiting when a pager’s output remains open past the deadline. ([#4400](https://github.com/max-sixty/worktrunk/pull/4400))
+
 - **Formatters in pre-commit hooks during a squash**: `wt merge` and `wt step squash` run those hooks before auto-staging, so their edits enter the commit instead of being left uncommitted. ([#4321](https://github.com/max-sixty/worktrunk/pull/4321))
 
-- **Removing several targets when one fails**: a failing hook or removal now reports the failure and continues with later targets, returning exit status 1 if any failed. SIGINT and SIGTERM still cancel the batch. ([#4357](https://github.com/max-sixty/worktrunk/pull/4357))
+- **Removing several targets when one fails**: a failing hook or removal now reports the failure and continues with later targets, returning exit status 1 if any failed. Uncaught SIGINT and SIGTERM still cancel the batch. ([#4357](https://github.com/max-sixty/worktrunk/pull/4357))
 
-- **Concurrent pruning and same-named worktree directories**: packed-ref lock failures no longer masquerade as branch movement or get reported as success; missing commit snapshots refuse deletion. Removal staging distinguishes worktrees with identical directory names. ([#4337](https://github.com/max-sixty/worktrunk/pull/4337), [#4361](https://github.com/max-sixty/worktrunk/pull/4361))
+- **Concurrent pruning and stale registrations**: packed-ref lock failures no longer masquerade as success; missing commit snapshots refuse deletion; removal staging distinguishes same-named directories. When an earlier removal hook stages work or starts an operation in a stale registration, cleanup rechecks and preserves it unless explicitly forced. ([#4337](https://github.com/max-sixty/worktrunk/pull/4337), [#4361](https://github.com/max-sixty/worktrunk/pull/4361), [#4393](https://github.com/max-sixty/worktrunk/pull/4393))
 
 - **List status and loading output**: clipped tables disclose how many rows are shown; JSON status symbols follow terminal order; the irregular-worktree flag becomes an outline `⚐`. ([#4333](https://github.com/max-sixty/worktrunk/pull/4333), [#4335](https://github.com/max-sixty/worktrunk/pull/4335), [#4334](https://github.com/max-sixty/worktrunk/pull/4334))
 
@@ -32,7 +36,7 @@
 
 - **Mixed valid and invalid environment overrides**: an invalid `WORKTRUNK_*` setting no longer discards unrelated valid overrides; compound settings such as a custom column's template and width are validated together. ([#4348](https://github.com/max-sixty/worktrunk/pull/4348))
 
-- **Fixes for unusual names and setups**: untracked `:x` and glob-like file names count in diffs; Azure PR queries select the repository and SSH remotes suggest a web URL; relocation cycles avoid temporary-path collisions; aliases forward `--args`/`--vars`, and completion drops unsupported alias flags. ([#4320](https://github.com/max-sixty/worktrunk/pull/4320), [#4326](https://github.com/max-sixty/worktrunk/pull/4326), [#4364](https://github.com/max-sixty/worktrunk/pull/4364), [#4256](https://github.com/max-sixty/worktrunk/pull/4256), [#4391](https://github.com/max-sixty/worktrunk/pull/4391), [#4329](https://github.com/max-sixty/worktrunk/pull/4329), thanks @Duang777)
+- **Unusual setups**: untracked `:x` and glob-like names count in diffs; Azure selects its repository and Windows launcher; SSH remotes suggest web URLs; relocation cycles avoid path collisions; aliases preserve `--args`/`--vars`; completion drops unsupported alias flags; fsmonitor ignores Git discovery overrides for chosen worktrees. ([#4320](https://github.com/max-sixty/worktrunk/pull/4320), [#4326](https://github.com/max-sixty/worktrunk/pull/4326), [#4402](https://github.com/max-sixty/worktrunk/pull/4402), [#4364](https://github.com/max-sixty/worktrunk/pull/4364), [#4256](https://github.com/max-sixty/worktrunk/pull/4256), [#4391](https://github.com/max-sixty/worktrunk/pull/4391), [#4329](https://github.com/max-sixty/worktrunk/pull/4329), [#4393](https://github.com/max-sixty/worktrunk/pull/4393), thanks @Duang777 for fixing and @wmmc88 for reporting)
 
 ### Documentation
 
@@ -44,7 +48,7 @@
 
 ### Internal
 
-- **Library API changes** (Breaking library API): `ConfigError` becomes an enum; `LoadError::File` wraps a typed error; both lose unwind-safety traits; `GitError` loses `Clone` and retains removal errors; copy helpers take a timestamp; `ensure_holds_this_worktree` returns its Git directory. ([#4351](https://github.com/max-sixty/worktrunk/pull/4351), [#4357](https://github.com/max-sixty/worktrunk/pull/4357), [#4319](https://github.com/max-sixty/worktrunk/pull/4319), [#4361](https://github.com/max-sixty/worktrunk/pull/4361))
+- **Library API changes** (Breaking): config and error types changed; signal forwarding methods and shell fields were removed; copy helpers take a timestamp; `ensure_holds_this_worktree` returns its Git directory; `prune_worktree_entry` takes a force flag. ([#4351](https://github.com/max-sixty/worktrunk/pull/4351), [#4357](https://github.com/max-sixty/worktrunk/pull/4357), [#4319](https://github.com/max-sixty/worktrunk/pull/4319), [#4361](https://github.com/max-sixty/worktrunk/pull/4361), [#4400](https://github.com/max-sixty/worktrunk/pull/4400), [#4393](https://github.com/max-sixty/worktrunk/pull/4393))
 
 - **Building from source requires Rust 1.98**. ([#4367](https://github.com/max-sixty/worktrunk/pull/4367))
 

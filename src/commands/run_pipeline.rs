@@ -2,7 +2,7 @@
 //!
 //! The parent `wt` process serializes a [`PipelineSpec`] to JSON and spawns
 //! `wt hook run-pipeline` as a detached process (via `spawn_detached_exec`, which
-//! pipes the JSON to stdin, redirects stdout/stderr to a log file, and puts
+//! supplies the JSON on stdin, redirects stdout/stderr to a log file, and puts
 //! the process in its own process group). This module is that background
 //! process.
 //!
@@ -175,7 +175,7 @@ fn spawn_shell_command(
     // worktree cwd, not an inherited GIT_DIR/GIT_WORK_TREE (issue #3373). This
     // runner only ever executes hook pipelines, so the scrub is unconditional.
     scrub_git_discovery_env_vars(&mut command);
-    let child = match command.spawn() {
+    let child = match worktrunk::shell_exec::spawn(&mut command) {
         Ok(child) => child,
         Err(e) => {
             trace.fail(&e);
@@ -395,7 +395,7 @@ mod tests {
             assert_eq!(message, expected_msg, "message for {sig}");
             assert_eq!(
                 err.interrupt_signal(),
-                Some(sig),
+                matches!(sig, 2 | 15).then_some(sig),
                 "interrupt_signal for {sig}"
             );
         }

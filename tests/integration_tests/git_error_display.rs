@@ -135,7 +135,7 @@ fn worktree_errors_render() {
         (
             "stale worktree holding staged changes",
             GitError::StaleWorktreeHoldsWork {
-                branch: "stale-branch".into(),
+                branch: Some("stale-branch".into()),
                 path: PathBuf::from("/tmp/repo.stale-branch"),
                 directory_remains: true,
                 work: StaleWorktreeWork::StagedChanges,
@@ -153,7 +153,7 @@ fn worktree_errors_render() {
             ]
             .map(|operation| {
                 GitError::StaleWorktreeHoldsWork {
-                    branch: "stale-branch".into(),
+                    branch: Some("stale-branch".into()),
                     path: PathBuf::from("/tmp/my repo.stale-branch"),
                     directory_remains: false,
                     work: StaleWorktreeWork::Operation(operation),
@@ -161,6 +161,16 @@ fn worktree_errors_render() {
                 .render()
             })
             .join("\n"),
+        ),
+        (
+            "detached stale worktree holding staged changes offers repair, not unsupported discard",
+            GitError::StaleWorktreeHoldsWork {
+                branch: None,
+                path: PathBuf::from("/tmp/my repo.detached"),
+                directory_remains: false,
+                work: StaleWorktreeWork::StagedChanges,
+            }
+            .render(),
         ),
         (
             "no worktree at a leftover directory",

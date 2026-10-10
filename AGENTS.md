@@ -76,7 +76,7 @@ Worktrunk touches the network only when the user asks for it. The first Reposito
 
 ### Signal Handling: Ctrl-C Cancels the Current Command
 
-When a child is interrupted, every foreground loop stops before its next step, including Warn hook pipelines and worktree loops. Use err.interrupt_signal() from ErrorExt and propagate WorktrunkError::Interrupted. Capture mode treats SIGINT and SIGTERM as interrupts; other child signals remain visible failures. See src/shell_exec.rs and src/commands/command_executor.rs for signal normalization and rendering.
+Foreground commands share the caller's native job group. A child terminated by SIGINT or SIGTERM stops every foreground loop before its next step, including Warn hook pipelines and worktree loops. A caught Ctrl-C retains the child's normal exit semantics, including an ordinary exit code 130; do not infer cancellation from numeric exit codes. SIGTERM addressed to wt cancels its owned work even if the child catches it. Use err.interrupt_signal() from ErrorExt and propagate WorktrunkError::Interrupted through loops. Capture mode also classifies native SIGINT/SIGTERM exits; other child signals remain visible failures. See src/shell_exec.rs and src/signal_forwarder.rs for the contracts.
 
 ### Project Commands Run Only After Approval
 

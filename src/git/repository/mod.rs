@@ -619,8 +619,8 @@ pub fn set_base_path(path: PathBuf) {
     BASE_PATH.set(path).ok();
 }
 
-/// Get the base path for repository operations.
-fn base_path() -> &'static PathBuf {
+/// Directory used for repository discovery, including the command's `-C` base.
+pub fn base_path() -> &'static PathBuf {
     BASE_PATH.get().unwrap_or(&DEFAULT_BASE_PATH)
 }
 
@@ -1859,7 +1859,7 @@ impl Repository {
     /// too long for `sun_path`, an unresolvable git dir) falls through to the
     /// fork, which starts the daemon or reports it running.
     ///
-    /// Uses `Command::status()` with null stdio instead of `Cmd::run()` to avoid
+    /// Spawns with null stdio instead of `Cmd::run()` to avoid
     /// pipe inheritance: the daemon process (`git fsmonitor--daemon run --detach`)
     /// inherits pipe file descriptors from its parent, keeping them open
     /// indefinitely. `read_to_end()` in `Command::output()` then blocks forever
@@ -1867,10 +1867,11 @@ impl Repository {
     pub fn start_fsmonitor_daemon_at(&self, path: &Path) {
         #[cfg(unix)]
         if let Ok(git_dir) = self.worktree_at(path).git_dir()
-            && std::os::unix::net::UnixStream::connect(
-                git_dir.join(super::fsmonitor::IPC_SOCKET_NAME),
-            )
-            .is_ok()
+            && socket2::SockAddr::unix(git_dir.join(super::fsmonitor::IPC_SOCKET_NAME))
+                .and_then(|address| {
+                    crate::shell_exec::stream_socket(socket2::Domain::UNIX)?.connect(&address)
+                })
+                .is_ok()
         {
             return;
         }
@@ -1886,12 +1887,13 @@ impl Repository {
         // The one production git spawn that bypasses `Cmd` (see the daemon
         // rationale above), so it re-applies the test floor by hand.
         crate::shell_exec::apply_hermetic_test_env(&mut cmd);
+        crate::shell_exec::scrub_git_discovery_env_vars(&mut cmd);
         crate::shell_exec::scrub_directive_env_vars(&mut cmd);
         // Trace the daemon launch so it's attributed in the timeline rather than
-        // appearing as a gap on the switch hot path. Uses `status()` (not
-        // `Cmd::run`) deliberately — see the doc comment.
+        // appearing as a gap on the switch hot path. Wait without captured
+        // pipes (unlike `Cmd::run`) — see the daemon rationale above.
         let mut trace = crate::trace::CommandTrace::new(Some(&context), cmd_str);
-        let result = cmd.status();
+        let result = crate::shell_exec::spawn(&mut cmd).and_then(|mut child| child.wait());
         match result {
             Ok(status) => {
                 trace.complete(status.success());
@@ -2162,7 +2164,7 @@ impl Repository {
                 e.output.clone(),
                 Some(super::error::FailedCommand {
                     command: e.command.clone(),
-                    exit_info: e.exit_info.clone(),
+                    exit_info: e.exit_info(),
                 }),
             );
         }

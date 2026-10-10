@@ -148,6 +148,7 @@ pub fn stop_fsmonitor_daemon(worktree: &WorkingTree) {
     let _ = Cmd::new("git")
         .args(["fsmonitor--daemon", "stop"])
         .current_dir(worktree.path())
+        .scrub_git_discovery_env()
         .context(crate::git::repository::path_to_logging_context(
             worktree.path(),
         ))
@@ -487,7 +488,12 @@ pub fn stage_worktree_removal(
 
     stop_fsmonitor_daemon(&repo.worktree_at(worktree_path));
 
-    Ok(rename_into_trash(repo, worktree_path, &git_dir))
+    Ok(rename_into_trash(
+        repo,
+        worktree_path,
+        &git_dir,
+        force_worktree,
+    ))
 }
 
 /// Rename a worktree into `<git-common-dir>/wt/trash/` and prune git metadata.
@@ -501,7 +507,12 @@ pub fn stage_worktree_removal(
 /// sweeping the repository, so a sibling worktree whose directory happens to
 /// be absent right now keeps its registration. A locked worktree never reaches
 /// here — [`stage_worktree_removal`] rejects one before the rename.
-fn rename_into_trash(repo: &Repository, worktree_path: &Path, git_dir: &Path) -> Option<PathBuf> {
+fn rename_into_trash(
+    repo: &Repository,
+    worktree_path: &Path,
+    git_dir: &Path,
+    force_worktree: bool,
+) -> Option<PathBuf> {
     let trash_dir = repo.wt_trash_dir();
     let _ = std::fs::create_dir_all(&trash_dir);
     let staged_path = generate_removing_path(&trash_dir, git_dir);
@@ -514,7 +525,7 @@ fn rename_into_trash(repo: &Repository, worktree_path: &Path, git_dir: &Path) ->
     {
         // The rename moved the directory out from under `worktree_path`,
         // leaving its registration stale for the prune to delete.
-        if let Err(e) = repo.prune_worktree_entry(worktree_path) {
+        if let Err(e) = repo.prune_worktree_entry(worktree_path, force_worktree) {
             tracing::debug!(error = %e, "Failed to prune worktree entry after rename: {e}");
         }
         Some(staged_path)

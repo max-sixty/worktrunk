@@ -69,6 +69,11 @@ expression: render_cases(cases)
 [31m✗[39m [31mWorktree for [1mstale-branch[22m is stale with a bisect in progress[39m
 [2m↳[22m [2mTo discard the stale worktree, run [4mwt remove -f stale-branch[24m; to restore it, recreate its directory, then run [4mgit worktree repair '/tmp/my repo.stale-branch'[24m[22m
 
+## detached stale worktree holding staged changes offers repair, not unsupported discard
+
+[31m✗[39m [31mDetached worktree @ '/tmp/my repo.detached' is stale but holds staged changes[39m
+[2m↳[22m [2mTo restore it, recreate its directory, then run [4mgit worktree repair '/tmp/my repo.detached'[24m[22m
+
 ## no worktree at a leftover directory
 
 [31m✗[39m [31mNo worktree @ [1m/tmp/repo/.claude/worktrees/ghost[22m[39m

@@ -1,7 +1,6 @@
 //! Help text pager integration for CLI help output.
 //!
-//! Provides pager support for `--help` output, following git's pager precedence:
-//! GIT_PAGER → core.pager config → PAGER environment variable → "less" default.
+//! Provides pager support for `--help` output using Git's pager selection.
 //!
 //! # Difference from the diff preview pager
 //!
@@ -11,60 +10,26 @@
 //! differently:
 //!
 //! - Help pager: top-level user command, needs a TTY for interactive scrolling
-//! - Diff preview pager: pipes the diff over stdin, appends `--paging=never`
+//! - Diff preview pager: supplies the diff on stdin, appends `--paging=never`
 //!   for pagers that would otherwise launch their own `less` (delta, bat), and
-//!   is killed by a `PAGER_TIMEOUT` watchdog if it blocks — it is never given a
+//!   is bounded by `PAGER_TIMEOUT` — it is never given a
 //!   TTY, so it can't hang the picker's event loop
 //!
 //! Both follow git's pager detection but spawn differently based on their usage context.
 //!
 //! # Cross-Platform Support
 //!
-//! On Windows, Git Bash (if available) enables standard pagers like `less`.
-//! Without Git Bash, we only use a pager if the configured command works under
-//! the PowerShell fallback; otherwise we print directly.
+//! On Windows, Git Bash enables standard pagers like `less`. If the configured
+//! pager cannot execute, help prints directly.
 
-use std::io::{IsTerminal, Write};
-use std::process::Stdio;
-use worktrunk::shell_exec::ShellConfig;
+use std::io::IsTerminal;
+
+use anyhow::{Context, Result};
+use worktrunk::git::{ErrorExt, WorktrunkError};
+use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::print;
 
-use crate::pager::{git_config_pager, parse_pager_value};
-
-/// Detect pager for help output, following git's pager precedence.
-///
-/// Checks in order: GIT_PAGER → git config core.pager → PAGER → "less"
-///
-/// On Windows without Git Bash, returns None if only `less` would be selected
-/// (since `less` isn't available without Git for Windows).
-fn detect_help_pager() -> Option<String> {
-    let shell = ShellConfig::get().ok()?;
-
-    // Check environment variables in git's precedence order
-    let pager = std::env::var("GIT_PAGER")
-        .ok()
-        .and_then(|s| parse_pager_value(&s))
-        .or_else(git_config_pager)
-        .or_else(|| {
-            std::env::var("PAGER")
-                .ok()
-                .and_then(|s| parse_pager_value(&s))
-        });
-
-    // If user explicitly configured a pager, use it
-    if pager.is_some() {
-        return pager;
-    }
-
-    // Default to "less" only if we have a POSIX shell (Unix or Git Bash on Windows)
-    // Without Git Bash, less isn't typically available on Windows
-    if shell.is_posix {
-        Some("less".to_string())
-    } else {
-        tracing::debug!("No POSIX shell available, skipping pager (less not available)");
-        None
-    }
-}
+use crate::pager::git_pager;
 
 /// Show help text through a pager with TTY access for interactive scrolling.
 ///
@@ -76,61 +41,81 @@ fn detect_help_pager() -> Option<String> {
 /// while `--help` uses a pager for longer content.
 ///
 /// Even when `use_pager=true`, falls back to direct output if:
-/// - No pager configured (prints to stdout)
+/// - Paging disabled or unavailable (prints to stdout)
 /// - stdout is not a TTY (prints to stdout)
-/// - Pager spawn fails (prints to stdout)
-/// - Pager closes stdin early or wait fails (prints to stdout)
+/// - Pager cannot start or I/O fails (prints to stdout)
+///
+/// A running pager owns its exit status and may close stdin early when the user
+/// quits. Neither causes the help text to be printed a second time.
+///
+/// Native child interruption or controller cancellation propagates to the
+/// command's normal cleanup and signal handling instead of printing fallback help.
 ///
 /// Help text goes to stdout — POSIX convention (`wt --help | less` should work
 /// without redirection), matching `cargo`, `curl`, `python`, `git <cmd> -h`,
 /// and `--version` (see #2072).
-pub(crate) fn show_help_in_pager(help_text: &str, use_pager: bool) {
+pub(crate) fn show_help_in_pager(help_text: &str, use_pager: bool) -> Result<()> {
     // Short help (-h) never uses a pager
     if !use_pager {
         tracing::debug!("Short help (-h) requested, printing directly to stdout");
         print!("{}", help_text);
-        return;
+        return Ok(());
     }
-
-    let Some(pager_cmd) = detect_help_pager() else {
-        tracing::debug!("No pager configured, printing help directly to stdout");
-        print!("{}", help_text);
-        return;
-    };
 
     // Only page when our output destination is a terminal.
     // If stdout is piped/redirected (e.g., `wt --help | grep foo`), print directly.
     if !std::io::stdout().is_terminal() {
         tracing::debug!("stdout is not a TTY, skipping pager");
         print!("{}", help_text);
-        return;
+        return Ok(());
     }
+
+    let Some(pager_cmd) = git_pager(true) else {
+        tracing::debug!("Paging disabled or unavailable, printing help directly to stdout");
+        print!("{}", help_text);
+        return Ok(());
+    };
 
     tracing::debug!(pager_cmd = %pager_cmd, "Invoking pager: {}", pager_cmd);
-    if let Err(e) = pipe_through_pager(&pager_cmd, help_text) {
-        tracing::debug!(error = %e, "Pager failed, falling back to stdout: {}", e);
+    if !pipe_through_pager(&pager_cmd, help_text)? {
         print!("{}", help_text);
     }
+    Ok(())
 }
 
-/// Pipe `help_text` to the given pager command and wait for it to exit.
-///
-/// Spawn / write / wait failures all surface as `Err` so the caller can fall back
-/// to direct stdout. Extracted from `show_help_in_pager` so the failure paths can
-/// be exercised by unit tests with stand-in commands (`true`, `cat > /dev/null`)
-/// that don't depend on a real TTY.
-fn pipe_through_pager(pager_cmd: &str, help_text: &str) -> std::io::Result<()> {
+/// Return whether the pager handled help, or false to request stdout fallback.
+/// A POSIX shell reserves 126/127 for a command it could not execute; other
+/// completed statuses belong to the pager (including less -K quitting with 2).
+/// Native signal failures propagate instead of requesting fallback.
+fn pipe_through_pager(pager_cmd: &str, help_text: &str) -> Result<bool> {
     let less_flags = compute_less_flags(std::env::var("LESS").ok().as_deref());
-    let shell = ShellConfig::get().map_err(std::io::Error::other)?;
-    tracing::debug!(pager_cmd = %pager_cmd, "$ {} (pager)", pager_cmd);
-    let mut cmd = shell.command(pager_cmd);
-    worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
-    let mut child = cmd.stdin(Stdio::piped()).env("LESS", &less_flags).spawn()?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(help_text.as_bytes())?;
+    match Cmd::shell(pager_cmd)
+        .stdin_bytes(help_text.as_bytes())
+        .env("LESS", less_flags)
+        .forward_signals()
+        .stream()
+    {
+        Ok(()) => Ok(true),
+        Err(error) => {
+            if let Some(signal) = error.interrupt_signal() {
+                return Err(WorktrunkError::Interrupted { signal, hint: None }.into());
+            }
+            match error.downcast_ref::<WorktrunkError>() {
+                Some(WorktrunkError::ChildProcessExited {
+                    signal: Some(_), ..
+                }) => Err(error).with_context(|| format!("Help pager `{pager_cmd}` failed")),
+                Some(WorktrunkError::ChildProcessExited { code, .. })
+                    if !matches!(*code, 126 | 127) =>
+                {
+                    Ok(true)
+                }
+                _ => {
+                    tracing::debug!(error = %error, "Pager failed, falling back to stdout: {}", error);
+                    Ok(false)
+                }
+            }
+        }
     }
-    child.wait()?;
-    Ok(())
 }
 
 /// Compute LESS flags by appending our required flags to user's existing LESS setting.
@@ -153,9 +138,9 @@ fn compute_less_flags(user_less: Option<&str>) -> String {
 /// terminal wedged (#2968). `-K` routes Ctrl-C through the same clean-exit
 /// path as quitting with `q`, which restores the terminal correctly.
 ///
-/// `-K` is Windows-only on purpose: on Unix the signal forwarder coordinates a
-/// clean teardown, and many users rely on Ctrl-C returning `less` to its
-/// prompt rather than quitting.
+/// `-K` is Windows-only on purpose: on Unix the pager receives the terminal's
+/// Ctrl-C directly, and wt waits while a pager that handles it keeps running.
+/// Many users rely on Ctrl-C returning `less` to its prompt rather than quitting.
 fn compute_less_flags_for(user_less: Option<&str>, windows: bool) -> String {
     let base = user_less.unwrap_or_default();
     if windows {
@@ -167,32 +152,54 @@ fn compute_less_flags_for(user_less: Option<&str>, windows: bool) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_less_flags_for, parse_pager_value};
+    use super::compute_less_flags_for;
 
-    /// `cat > /dev/null` exercises the full spawn → write → wait path with a
-    /// stand-in pager that always succeeds. Covers every line of
-    /// `pipe_through_pager`'s body; the `?` propagations are line-hit even on
-    /// the Ok branch.
     #[cfg(unix)]
     #[test]
     fn test_pipe_through_pager_pipes_to_real_command() {
-        super::pipe_through_pager("cat > /dev/null", "help text").expect("cat should succeed");
+        assert!(super::pipe_through_pager("cat > /dev/null", "help text").unwrap());
     }
 
+    #[cfg(unix)]
     #[test]
-    fn test_validate_excludes_cat() {
-        assert_eq!(parse_pager_value("cat"), None);
-        assert_eq!(parse_pager_value("  cat  "), None);
-        assert_eq!(parse_pager_value(""), None);
-        assert_eq!(parse_pager_value("  "), None);
+    fn successful_pager_can_quit_before_consuming_input() {
+        assert!(
+            super::pipe_through_pager("head -c 50 > /dev/null", &"help text\n".repeat(100_000))
+                .unwrap()
+        );
     }
 
+    #[cfg(unix)]
     #[test]
-    fn test_validate_accepts_valid_pagers() {
-        assert_eq!(parse_pager_value("less"), Some("less".to_string()));
-        assert_eq!(parse_pager_value("  less  "), Some("less".to_string()));
-        assert_eq!(parse_pager_value("delta"), Some("delta".to_string()));
-        assert_eq!(parse_pager_value("less -R"), Some("less -R".to_string()));
+    fn completed_pager_owns_its_exit_status() {
+        assert!(super::pipe_through_pager("cat > /dev/null; exit 1", "help text").unwrap());
+        assert!(super::pipe_through_pager("exit 2", &"help text\n".repeat(100_000)).unwrap());
+        assert!(super::pipe_through_pager("exit 7", "help text").unwrap());
+        assert!(super::pipe_through_pager("exit 137", "help text").unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pager_signal_remains_a_visible_failure() {
+        let error = super::pipe_through_pager("kill -KILL $$", "help text").unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<worktrunk::git::WorktrunkError>(),
+            Some(worktrunk::git::WorktrunkError::ChildProcessExited {
+                signal: Some(9),
+                ..
+            })
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pager_that_cannot_execute_triggers_fallback() {
+        assert!(!super::pipe_through_pager("worktrunk-test-missing-pager", "help text").unwrap());
+        let script = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(script.path(), "#!/bin/sh\n").unwrap();
+        // NamedTempFile is not executable: the shell returns reserved status 126.
+        let command = shell_escape::unix::escape(script.path().to_string_lossy());
+        assert!(!super::pipe_through_pager(&command, "help text").unwrap());
     }
 
     #[test]

@@ -19,6 +19,79 @@ use std::fs;
 use std::thread;
 use std::time::Duration;
 
+#[rstest]
+#[cfg(unix)]
+fn test_concurrent_hooks_log_labels_and_pass_cd_directive(repo: TestRepo) {
+    repo.write_project_config(
+        r#"[pre-start]
+first = 'printf CD > "$WORKTRUNK_DIRECTIVE_CD_FILE"'
+second = 'true'
+"#,
+    );
+    let cd_file = repo.home_path().join("cd-directive");
+    let output = repo
+        .wt_command()
+        .args(["hook", "pre-start", "--yes"])
+        .env("WORKTRUNK_DIRECTIVE_CD_FILE", &cd_file)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(fs::read_to_string(cd_file).unwrap(), "CD");
+    let log = fs::read_to_string(repo.root_path().join(".git/wt/logs/commands.jsonl")).unwrap();
+    let mut labels: Vec<String> = log
+        .lines()
+        .map(|line| {
+            let entry: serde_json::Value = serde_json::from_str(line).unwrap();
+            assert_eq!(entry["exit"], 0);
+            entry["label"].as_str().unwrap().to_owned()
+        })
+        .collect();
+    labels.sort();
+    assert_eq!(
+        labels,
+        ["pre-start project:first", "pre-start project:second"]
+    );
+}
+
+/// A Git checkout hook interrupts its owned Git parent during worktree creation.
+/// The creation error's presentation must retain the command's native status.
+#[rstest]
+#[case::interrupt("INT", 130)]
+#[case::terminate("TERM", 143)]
+#[cfg(unix)]
+fn test_worktree_creation_preserves_git_hook_interrupt(
+    repo: TestRepo,
+    #[case] signal: &str,
+    #[case] expected: i32,
+) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let hook = resolve_git_common_dir(repo.root_path()).join("hooks/post-checkout");
+    let marker = repo.root_path().join("git-hook-ran");
+    fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\nprintf called > {}\nkill -{signal} \"$PPID\"\n",
+            shell_escape::escape(marker.to_string_lossy()),
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "interrupted", "--yes"])
+        .output()
+        .unwrap();
+    assert_eq!(fs::read_to_string(marker).unwrap(), "called");
+    assert_eq!(
+        crate::common::shell_exit_code(&output.status),
+        Some(expected),
+        "{output:?}",
+    );
+}
+
 // ============================================================================
 // User Post-Create Hook Tests
 // ============================================================================
@@ -518,7 +591,7 @@ fn test_pre_merge_pipeline_aborts_on_signal_exit(repo: TestRepo) {
 
     // 128 + SIGTERM (15) = 143
     assert_eq!(
-        output.status.code(),
+        crate::common::shell_exit_code(&output.status),
         Some(143),
         "expected exit 143 (SIGTERM); got {:?}\nstderr: {}",
         output.status.code(),
@@ -2105,10 +2178,7 @@ fn test_standalone_hook_post_start_foreground_inherits_stdin(repo: TestRepo) {
     );
 }
 
-/// A foreground hook runs in wt's process group, like an alias (see
-/// `test_alias_child_shares_parent_pgroup`). In its own pgroup it isn't the
-/// terminal's foreground group, so a tool that touches the tty (turbo,
-/// `gum confirm`) gets SIGTTOU and stops — `wt switch` then hangs.
+/// Foreground children share the caller's native job group.
 #[rstest]
 #[cfg(unix)]
 fn test_pre_start_hook_shares_parent_pgroup(repo: TestRepo) {
@@ -2139,8 +2209,7 @@ fn test_pre_start_hook_shares_parent_pgroup(repo: TestRepo) {
         .unwrap_or_else(|e| panic!("could not parse pgid {recorded:?}: {e}"));
     assert_eq!(
         hook_pgid, wt_pid,
-        "foreground hook shell must share wt's pgroup (wt pid={wt_pid}); \
-         got child pgid {hook_pgid}, indicating a new pgroup was created"
+        "foreground hook must share its caller group"
     );
 }
 
@@ -4697,4 +4766,106 @@ fn test_concurrent_hook_does_not_inherit_git_discovery_vars(repo: TestRepo) {
     let marker = repo.root_path().join("env_seen.txt");
     assert!(marker.exists(), "concurrent hook did not run");
     assert_git_env_scrubbed(&marker);
+}
+
+/// Sibling count must not change access to /dev/tty. Exercise the reported
+/// terminal-settings failure, input allocation, and restoration after the job.
+#[rstest]
+#[cfg(all(unix, feature = "shell-integration-tests"))]
+#[case::single(false)]
+#[case::concurrent(true)]
+fn test_foreground_hook_terminal_job(repo: TestRepo, #[case] concurrent: bool) {
+    use crate::common::{configure_pty_command, open_pty, wt_bin};
+    use portable_pty::CommandBuilder;
+    use std::io::Read;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    let probe = "stty -echo < /dev/tty; ps -o pgid= -p $$ > job.txt; ps -o tpgid= -p $$ >> job.txt; stty \"$WT_TEST_TERMINAL_MODES\" < /dev/tty";
+    let input = if concurrent {
+        "test ! -t 0"
+    } else {
+        "test -t 0"
+    };
+    let config = if concurrent {
+        format!(
+            "[pre-start]\none = '{probe}; {input}'\ntwo = 'stty -echo < /dev/tty; test ! -t 0; ps -o pgid= -p $$ > sibling.txt; stty \"$WT_TEST_TERMINAL_MODES\" < /dev/tty'\n"
+        )
+    } else {
+        format!("pre-start = '{probe}; {input}'\n")
+    };
+    repo.write_project_config(&config);
+    let mut command = CommandBuilder::new("bash");
+    command.args([
+        "--noprofile",
+        "--norc",
+        "-c",
+        r#"
+before=$(stty -g)
+export WT_TEST_TERMINAL_MODES="$before"
+"$WT_JOB_TEST_BINARY" hook pre-start --yes
+result=$?
+after=$(stty -g)
+[ "$before" = "$after" ] || exit 99
+printf 'TERMINAL-RESTORED\n'
+exit "$result"
+"#,
+    ]);
+    configure_pty_command(&mut command);
+    command.cwd(repo.root_path());
+    command.env("WT_JOB_TEST_BINARY", wt_bin());
+    command.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    let pair = open_pty();
+    let mut child = pair.slave.spawn_command(command).unwrap();
+    drop(pair.slave);
+    let mut reader = pair.master.try_clone_reader().unwrap();
+    let (tx, rx) = mpsc::channel();
+    let reading = std::thread::spawn(move || {
+        let mut output = Vec::new();
+        let _ = reader.read_to_end(&mut output);
+        let _ = tx.send(String::from_utf8_lossy(&output).into_owned());
+    });
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            if let Some(group) = pair.master.process_group_leader() {
+                let _ = nix::sys::signal::killpg(
+                    nix::unistd::Pid::from_raw(group),
+                    nix::sys::signal::Signal::SIGKILL,
+                );
+            }
+            let _ = child.kill();
+            panic!("foreground hook stopped or hung (concurrent={concurrent})");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    drop(pair.master);
+    let output = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    reading.join().unwrap();
+    assert_eq!(status.exit_code(), 0, "{output}");
+    assert!(output.contains("TERMINAL-RESTORED"), "{output}");
+    let groups: Vec<i32> = fs::read_to_string(repo.root_path().join("job.txt"))
+        .unwrap()
+        .split_whitespace()
+        .map(|group| group.parse().unwrap())
+        .collect();
+    assert_eq!(groups.len(), 2);
+    assert_eq!(
+        groups[0], groups[1],
+        "child must own the terminal's foreground group"
+    );
+    if concurrent {
+        let sibling: i32 = fs::read_to_string(repo.root_path().join("sibling.txt"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert_eq!(
+            sibling, groups[0],
+            "siblings must share one foreground job group"
+        );
+    }
 }

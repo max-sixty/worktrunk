@@ -255,7 +255,11 @@ impl Repository {
     ///
     /// Git also `rmdir`s `.git/worktrees` once its last entry goes. This
     /// leaves the empty directory, which git reads as no linked worktrees.
-    pub fn prune_worktree_entry(&self, path: &Path) -> anyhow::Result<()> {
+    ///
+    /// Unless `force_worktree` explicitly permits discarding it, recheck index
+    /// and operation state under that same lock immediately before deletion.
+    /// Planning can precede approved hooks that put new work in the entry.
+    pub fn prune_worktree_entry(&self, path: &Path, force_worktree: bool) -> anyhow::Result<()> {
         let display = format_path_for_display(path);
         let _registry = self.worktree_registry_write();
         let (registration, recorded) = self.registration_at(path)?;
@@ -264,6 +268,21 @@ impl Repository {
         }
         if !definitely_absent(&recorded.join(".git"))? {
             anyhow::bail!("Worktree @ {display} is no longer stale; its .git exists");
+        }
+        if !force_worktree && let Some(work) = self.stale_worktree_work_at(path, &registration)? {
+            let head = std::fs::read_to_string(registration.join("HEAD"))
+                .with_context(|| format!("Failed to read HEAD for stale worktree @ {display}"))?;
+            let branch = head
+                .trim()
+                .strip_prefix("ref: refs/heads/")
+                .map(str::to_owned);
+            return Err(GitError::StaleWorktreeHoldsWork {
+                branch,
+                path: path.to_path_buf(),
+                directory_remains: path.is_dir(),
+                work,
+            }
+            .into());
         }
         std::fs::remove_dir_all(&registration).with_context(|| {
             format!(
@@ -282,14 +301,25 @@ impl Repository {
     /// or bisect state go with it. While the registration survives, `git
     /// worktree repair <path>` reconnects the directory — recreated first, if
     /// it went too — and all of that comes back; afterwards staged files
-    /// survive only as dangling blobs. So the stale-removal paths ask this
-    /// first and keep an entry that holds either, which is where they are
-    /// more careful than `git worktree prune`. Files in a directory that
-    /// remains stay on disk either way, and a registration with no index has
-    /// nothing staged.
+    /// survive only as dangling blobs. Planning asks this first, and the
+    /// deletion primitive repeats it under its registry write lock unless
+    /// explicitly forced. Both keep an entry that holds either, which is
+    /// where they are more careful than `git worktree prune`. Files in a
+    /// directory that remains stay on disk either way, and a registration with
+    /// no index has nothing staged.
     pub fn stale_worktree_work(&self, path: &Path) -> anyhow::Result<Option<StaleWorktreeWork>> {
         let (registration, _) = self.registration_at(path)?;
-        if let Some(operation) = operation_in_progress_at(&registration) {
+        self.stale_worktree_work_at(path, &registration)
+    }
+
+    /// Read exactly the registration selected by the caller. The deletion
+    /// primitive keeps its registry write guard through this check and deletion.
+    fn stale_worktree_work_at(
+        &self,
+        path: &Path,
+        registration: &Path,
+    ) -> anyhow::Result<Option<StaleWorktreeWork>> {
+        if let Some(operation) = operation_in_progress_at(registration) {
             return Ok(Some(StaleWorktreeWork::Operation(operation)));
         }
         if definitely_absent(&registration.join("index"))? {
