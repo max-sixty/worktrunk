@@ -410,7 +410,7 @@ The single highest-priority state describing the branch's relation to the defaul
 
 ### integration reasons
 
-`default_branch.integration.reason` records which check matched. Checks run cheapest-first and the first match wins. The reason itself is JSON-only: the table shows `"same_commit"` as `_` (or `–` with uncommitted changes) and every other reason as `⊂` when the working tree is clean:
+`default_branch.integration.reason` records which check matched. Checks run cheapest-first and the first match wins. See [Default branch](#default-branch) for symbols.
 
 | Value | Meaning |
 |-------|---------|
