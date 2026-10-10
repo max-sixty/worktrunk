@@ -1653,7 +1653,7 @@ pub fn handle_picker(
     let is_preview_bench = std::env::var_os("WORKTRUNK_PREVIEW_BENCH").is_some();
     let skip_tui = is_dry_run || is_preview_bench;
     if !skip_tui && !std::io::stdin().is_terminal() {
-        anyhow::bail!("Interactive picker requires an interactive terminal");
+        return Err(worktrunk::git::GitError::InteractivePickerRequiresTerminal.into());
     }
     worktrunk::trace::instant("Picker started");
 

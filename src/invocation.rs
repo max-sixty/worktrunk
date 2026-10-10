@@ -101,8 +101,8 @@ fn normalize_invocation_path(arg0: &std::ffi::OsStr) -> String {
 /// - **`git wt` subcommand**: When invoked as `git wt`, git dispatches to `git-wt` binary
 ///   and sets argv\[0\] = `git-wt` (no path separator) → returns `false`. However, shell
 ///   integration configured for `wt` won't intercept `git wt` — they're different commands.
-///   This is handled separately by `Shell::is_shell_configured()` which checks for the
-///   actual binary name (`git-wt`), not `wt`.
+///   The shell installation scan checks for the actual binary name (`git-wt`),
+///   not `wt`.
 ///
 /// # Why Not Other Approaches?
 ///

@@ -957,7 +957,13 @@ fn test_config_show_fish_with_completions(mut repo: TestRepo, temp_home: TempDir
 
 /// Test that config show displays fish shell without completions configured
 #[rstest]
-fn test_config_show_fish_without_completions(mut repo: TestRepo, temp_home: TempDir) {
+#[case(false)]
+#[case(true)]
+fn test_config_show_fish_without_completions(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+    #[case] completion_directory: bool,
+) {
     // Setup mock gh/glab for deterministic BINARIES output
     repo.setup_mock_ci_tools_unauthenticated();
 
@@ -976,7 +982,11 @@ fn test_config_show_fish_without_completions(mut repo: TestRepo, temp_home: Temp
     let wrapper_content = init.generate_fish_wrapper().unwrap();
     fs::write(&fish_config, format!("{}\n", wrapper_content)).unwrap();
 
-    // Do NOT create fish completions file - completions not configured
+    // A missing completion file and a directory at its path must both leave
+    // the installed wrapper visible, with completions not configured.
+    if completion_directory {
+        fs::create_dir_all(temp_home.path().join(".config/fish/completions/wt.fish")).unwrap();
+    }
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
@@ -985,7 +995,7 @@ fn test_config_show_fish_without_completions(mut repo: TestRepo, temp_home: Temp
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
 
-        assert_cmd_snapshot!(cmd);
+        assert_cmd_snapshot!("config_show_fish_without_completions", cmd);
     });
 }
 
