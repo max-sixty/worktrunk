@@ -17,7 +17,7 @@ See [`wt config shell install`](https://worktrunk.dev/config/#wt-config-shell-in
 - **Bash**: `~/.bashrc`
 - **Zsh**: `~/.zshrc` (or `$ZDOTDIR/.zshrc`)
 - **Fish**: `~/.config/fish/functions/wt.fish` and `~/.config/fish/completions/wt.fish` (under `$XDG_CONFIG_HOME/fish` when that is set)
-- **Nushell** [experimental]: `wt.nu` in Nushell's user vendor-autoload directory — the last entry of `$nu.vendor-autoload-dirs`, under `$nu.data-dir` (typically `~/.local/share/nushell/vendor/autoload` on Linux, `~/Library/Application Support/nushell/vendor/autoload` on macOS)
+- **Nushell 0.113+** [experimental]: `wt.nu` in Nushell's user vendor-autoload directory — the last entry of `$nu.vendor-autoload-dirs`, under `$nu.data-dir` (typically `~/.local/share/nushell/vendor/autoload` on Linux, `~/Library/Application Support/nushell/vendor/autoload` on macOS)
 - **PowerShell** (Windows): both profile files:
   - `Documents/PowerShell/Microsoft.PowerShell_profile.ps1` (PowerShell 7+)
   - `Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1` (Windows PowerShell 5.1)

@@ -333,8 +333,8 @@ pub struct JsonDefaultBranch {
     pub orphan: Option<bool>,
 
     /// How committed content is integrated; absent when determined
-    /// not-integrated, null when undetermined (dirty trees skip the
-    /// expensive checks).
+    /// not-integrated, null when undetermined (a probe timed out or was
+    /// skipped).
     #[serde(skip_serializing_if = "Tri::is_absent")]
     pub integration: Tri<JsonIntegration>,
 
