@@ -1067,6 +1067,54 @@ fn test_switch_picker_preview_navigation_and_log_panel(mut repo: TestRepo) {
     });
 }
 
+/// A `[projects."<id>".switch.picker] pager` override reaches the diff preview.
+/// The picker used to resolve the pager with no project, so only the global
+/// `[switch.picker]` setting took effect.
+#[rstest]
+fn test_switch_picker_project_pager_override(mut repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+    let feature_path = repo.add_worktree("feature");
+    std::fs::write(feature_path.join("file.txt"), "content\n").unwrap();
+    repo.run_git_in(&feature_path, &["add", "file.txt"]);
+    repo.run_git_in(
+        &feature_path,
+        &["commit", "-m", "Commit for pager override"],
+    );
+    seed_ci_status(&repo, "feature", "null");
+
+    repo.write_test_config(&format!(
+        r#"[projects.'{}'.switch.picker]
+pager = 'echo PROJECT-PAGER; cat'
+"#,
+        repo.project_id()
+    ));
+
+    let env_vars = repo.test_env_vars();
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+    );
+
+    send_input_awaiting_content(&writer, &rx, &mut parser, "\x1b[B", Some("feature"));
+    wait_for_stable_with_content(&rx, &mut parser, Some("PROJECT-PAGER"));
+    let preview = preview_pane_text(parser.screen());
+    let exit_code = abort_and_exit_code(child, writer, rx);
+    assert_valid_abort_exit_code(exit_code);
+
+    assert!(
+        preview.contains("PROJECT-PAGER"),
+        "the project-scoped pager should page the diff preview:\n{preview}"
+    );
+}
+
 /// The completed diff proves pager selection has finished before checking that
 /// an interactive fallback was not launched. All cases run from outside -C.
 #[cfg(unix)]

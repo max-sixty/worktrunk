@@ -525,19 +525,10 @@ fn detect_windows_shell() -> Result<ShellConfig, String> {
 #[cfg(windows)]
 fn find_git_bash() -> Option<PathBuf> {
     // Primary: find git in PATH and derive bash location
-    if let Ok(git_path) = which::which("git") {
-        // git.exe is typically at Git/cmd/git.exe or Git/bin/git.exe
-        // bash.exe is at Git/bin/bash.exe or Git/usr/bin/bash.exe
-        if let Some(git_dir) = git_path.parent().and_then(|p| p.parent()) {
-            let bash_path = git_dir.join("bin").join("bash.exe");
-            if bash_path.exists() {
-                return Some(bash_path);
-            }
-            let bash_path = git_dir.join("usr").join("bin").join("bash.exe");
-            if bash_path.exists() {
-                return Some(bash_path);
-            }
-        }
+    if let Ok(git_path) = which::which("git")
+        && let Some(bash_path) = git_bash_beside_git(&git_path)
+    {
+        return Some(bash_path);
     }
 
     // Fallback: standard Git for Windows paths (needed on some CI environments
@@ -560,6 +551,40 @@ fn find_git_bash() -> Option<PathBuf> {
     }
 
     None
+}
+
+/// Derive Git Bash's location from a Git for Windows `git.exe` path.
+///
+/// `git.exe` sits one level below the install root (`Git/cmd`, `Git/bin`) or
+/// below `usr` (`Git/usr/bin`), or two levels below the root in
+/// `Git/mingw64/bin` — the copy MSYS puts first on PATH inside a Git Bash
+/// session. bash.exe is at `Git/bin/bash.exe` or `Git/usr/bin/bash.exe`.
+#[cfg(any(windows, test))]
+fn git_bash_beside_git(git_path: &Path) -> Option<PathBuf> {
+    let git_dir = git_path.parent()?;
+    let root = git_dir.parent()?;
+    // Only known nested runtime layouts justify another ascent. A shallow
+    // Git/cmd or Git/bin install must not select a sibling ../bin/bash.exe.
+    let nested_runtime = git_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("bin"))
+        && root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| {
+                ["usr", "mingw32", "mingw64"]
+                    .iter()
+                    .any(|runtime| name.eq_ignore_ascii_case(runtime))
+            });
+    std::iter::once(root)
+        .chain(root.parent().filter(|_| nested_runtime))
+        .find_map(|root| {
+            [root.join("bin"), root.join("usr").join("bin")]
+                .into_iter()
+                .map(|dir| dir.join("bash.exe"))
+                .find(|bash_path| bash_path.exists())
+        })
 }
 
 /// Environment variable naming the directive file for `cd` path changes.
@@ -2939,6 +2964,58 @@ print(*counts)
             "stdout should contain 'hello', got: '{}'",
             stdout.trim()
         );
+    }
+
+    #[test]
+    fn test_git_bash_beside_git_install_layouts() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("Git");
+        for sub in ["bin", "usr/bin", "cmd", "mingw32/bin", "mingw64/bin"] {
+            std::fs::create_dir_all(root.join(sub)).unwrap();
+        }
+        let bin_bash = root.join("bin").join("bash.exe");
+        std::fs::write(&bin_bash, "").unwrap();
+        std::fs::write(root.join("usr").join("bin").join("bash.exe"), "").unwrap();
+
+        for git in [
+            "cmd/git.exe",
+            "bin/git.exe",
+            "mingw32/bin/git.exe",
+            "mingw64/bin/git.exe",
+        ] {
+            assert_eq!(
+                git_bash_beside_git(&root.join(git)),
+                Some(bin_bash.clone()),
+                "{git}"
+            );
+        }
+        assert_eq!(
+            git_bash_beside_git(&root.join("usr/bin/git.exe")),
+            Some(root.join("usr").join("bin").join("bash.exe"))
+        );
+
+        // A minimal install with only usr/bin/bash.exe, reached from mingw64/bin
+        std::fs::remove_file(&bin_bash).unwrap();
+        assert_eq!(
+            git_bash_beside_git(&root.join("mingw64/bin/git.exe")),
+            Some(root.join("usr").join("bin").join("bash.exe"))
+        );
+
+        // A missing Git Bash does not authorize searching outside this install.
+        // In particular shallow cmd/bin layouts must stop at Git, even if its
+        // parent has an unrelated (or attacker-controlled) bin/bash.exe.
+        std::fs::remove_file(root.join("usr/bin/bash.exe")).unwrap();
+        std::fs::create_dir(dir.path().join("bin")).unwrap();
+        std::fs::write(dir.path().join("bin/bash.exe"), "outside install").unwrap();
+        for git in [
+            "cmd/git.exe",
+            "bin/git.exe",
+            "usr/bin/git.exe",
+            "mingw32/bin/git.exe",
+            "mingw64/bin/git.exe",
+        ] {
+            assert_eq!(git_bash_beside_git(&root.join(git)), None, "{git}");
+        }
     }
 
     #[test]

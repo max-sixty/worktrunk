@@ -130,7 +130,11 @@ pub(super) fn list_and_filter_ignored_entries(
         };
         ignored_entries
             .into_iter()
-            .filter(|(path, is_dir)| include_matcher.matched(path, *is_dir).is_ignore())
+            .filter(|(path, is_dir)| {
+                include_matcher
+                    .matched_path_or_any_parents(relative_entry(path, worktree_path), *is_dir)
+                    .is_ignore()
+            })
             .collect()
     } else {
         ignored_entries
@@ -157,27 +161,34 @@ pub(super) fn list_and_filter_ignored_entries(
         )
     };
 
+    // Built-in metadata exclusions apply independently of caller configuration,
+    // including to individual ignored files under a directory with tracked
+    // siblings. Promote deliberately supplies no configurable exclusions.
+    let mut builder = GitignoreBuilder::new(worktree_path);
+    for pattern in BUILTIN_COPY_IGNORED_EXCLUDES {
+        builder.add_line(None, pattern)?;
+    }
+    let builtin_matcher = builder
+        .build()
+        .context("Failed to build metadata exclude matcher")?;
+
     // Filter out excluded patterns, VCS metadata directories, and nested worktrees
     Ok(filtered
         .into_iter()
         .filter(|(path, is_dir)| {
             // Skip entries matching configured exclude patterns
-            if let Some(ref matcher) = exclude_matcher {
-                let relative = path.strip_prefix(worktree_path).unwrap_or(path.as_path());
-                if matcher.matched(relative, *is_dir).is_ignore() {
-                    return false;
-                }
+            if let Some(ref matcher) = exclude_matcher
+                && matcher
+                    .matched_path_or_any_parents(relative_entry(path, worktree_path), *is_dir)
+                    .is_ignore()
+            {
+                return false;
             }
-            // Skip built-in excluded directories (.jj, .hg, .worktrees, etc.)
-            if *is_dir
-                && path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|name| {
-                        BUILTIN_COPY_IGNORED_EXCLUDES
-                            .iter()
-                            .any(|pat| pat.trim_end_matches('/') == name)
-                    })
+            // Never transfer worktree-local VCS or tool metadata, regardless
+            // of whether Git listed the directory or a file inside it.
+            if builtin_matcher
+                .matched_path_or_any_parents(relative_entry(path, worktree_path), *is_dir)
+                .is_ignore()
             {
                 return false;
             }
@@ -187,6 +198,18 @@ pub(super) fn list_and_filter_ignored_entries(
                 .any(|wt_path| wt_path != worktree_path && wt_path.starts_with(path))
         })
         .collect())
+}
+
+/// An entry's path relative to its worktree, for gitignore matching.
+///
+/// Matching walks the entry's parents (`matched_path_or_any_parents`) because
+/// `git ls-files --directory` lists an ignored file individually when its
+/// directory also holds tracked files, so a `config/` pattern has to reach
+/// `config/local.yml` through its parent, as it would in a `.gitignore`.
+/// Every entry is `worktree_path.join(..)` (see `list_ignored_entries`), so the
+/// strip always succeeds.
+fn relative_entry<'a>(path: &'a Path, worktree_path: &Path) -> &'a Path {
+    path.strip_prefix(worktree_path).unwrap_or(path)
 }
 
 /// List ignored entries using git ls-files
