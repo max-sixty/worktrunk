@@ -1059,6 +1059,149 @@ exec {real_git} -c core.fsmonitor=false "$@"
     );
 }
 
+/// Removal only needs an early status when it must preserve a configured
+/// builtin daemon on dirty refusal. All removals retain the post-stop full
+/// scan. Record actual Git calls after the approved hook, excluding planning.
+#[cfg(unix)]
+#[rstest]
+#[case::unset(None, None, None, false)]
+#[case::disabled(Some("false"), None, None, false)]
+#[case::builtin(Some("true"), None, None, true)]
+#[case::hook(Some("/unused/watchman-hook"), None, None, false)]
+#[case::implicit(Some("implicit"), None, None, true)]
+#[case::empty(Some(""), None, None, false)]
+#[case::numeric(Some("2"), None, None, true)]
+#[case::negative(Some("-1"), None, None, true)]
+#[case::selected_builtin(Some("false"), Some("true"), None, true)]
+#[case::selected_disabled(Some("true"), Some("false"), None, false)]
+#[case::environment_builtin(Some("false"), None, Some("true"), true)]
+#[case::environment_disabled(Some("true"), None, Some("false"), false)]
+fn test_remove_scans_once_without_builtin_fsmonitor(
+    mut repo: TestRepo,
+    #[case] shared: Option<&str>,
+    #[case] selected: Option<&str>,
+    #[case] environment: Option<&str>,
+    #[case] builtin: bool,
+) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let log = repo.home_path().join("removal-scan-log");
+    let quoted_log = shell_escape::unix::escape(log.to_string_lossy());
+    let hook = format!("echo gate >> {quoted_log}");
+    repo.write_project_config(&format!("pre-remove = {hook:?}"));
+    repo.commit("Add removal hook");
+    if shared == Some("implicit") {
+        use std::io::Write;
+        writeln!(
+            fs::OpenOptions::new()
+                .append(true)
+                .open(repo.root_path().join(".git/config"))
+                .unwrap(),
+            "[core]\nfsmonitor"
+        )
+        .unwrap();
+    } else if let Some(shared) = shared {
+        repo.run_git(&["config", "core.fsmonitor", shared]);
+    }
+    if selected.is_some() {
+        repo.run_git(&["config", "extensions.worktreeConfig", "true"]);
+    }
+
+    let bin_dir = repo.home_path().join("removal-scan-git");
+    fs::create_dir(&bin_dir).unwrap();
+    let shim = bin_dir.join("git");
+    let real_git = which::which("git").unwrap();
+    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
+    fs::write(
+        &shim,
+        format!(
+            r#"#!/bin/sh
+if [ "$1" = fsmonitor--daemon ]; then
+  printf 'stop\n' >> "$WORKTRUNK_TEST_REMOVAL_SCAN_LOG"
+  exit 0
+fi
+if [ "$1" = status ]; then
+  printf 'configured\n' >> "$WORKTRUNK_TEST_REMOVAL_SCAN_LOG"
+elif [ "$1" = -c ] && [ "$2" = core.fsmonitor=false ] && [ "$3" = status ]; then
+  printf 'full\n' >> "$WORKTRUNK_TEST_REMOVAL_SCAN_LOG"
+fi
+# Config must see real worktree and environment overrides. Other commands use
+# real Git without invoking a daemon or the fixture's nonexistent hook.
+if [ "$1" = config ]; then
+  exec {real_git} "$@"
+fi
+exec {real_git} -c core.fsmonitor=false "$@"
+"#,
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = std::env::join_paths(
+        std::iter::once(bin_dir).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    for (branch, dirty) in [("scan-clean", false), ("scan-dirty", true)] {
+        let worktree = repo.add_worktree(branch);
+        if let Some(selected) = selected {
+            repo.run_git_in(
+                &worktree,
+                &["config", "--worktree", "core.fsmonitor", selected],
+            );
+        }
+        // The hook runs after planning and marks the precise removal window.
+        let hook = if dirty {
+            format!("{hook} && echo work > hook-created.txt")
+        } else {
+            hook.clone()
+        };
+        repo.write_project_config(&format!("pre-remove = {hook:?}"));
+        let mut command = repo.wt_command();
+        command
+            .args([
+                "remove",
+                branch,
+                "--foreground",
+                "--yes",
+                "--no-delete-branch",
+            ])
+            .env("PATH", &path)
+            .env("GIT_DIR", repo.root_path().join(".git"))
+            .env("GIT_WORK_TREE", repo.root_path())
+            .env("WORKTRUNK_TEST_REMOVAL_SCAN_LOG", &log);
+        if let Some(environment) = environment {
+            command
+                .env("GIT_CONFIG_COUNT", "1")
+                .env("GIT_CONFIG_KEY_0", "core.fsmonitor")
+                .env("GIT_CONFIG_VALUE_0", environment);
+        }
+        let output = command.output().unwrap();
+        assert_eq!(
+            output.status.success(),
+            !dirty,
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let calls = fs::read_to_string(&log).unwrap();
+        let after_hook = calls.rsplit_once("gate\n").unwrap().1;
+        let expected = match (builtin, dirty) {
+            (true, false) => "configured\nstop\nfull\n",
+            (true, true) => "configured\n",
+            (false, _) => "stop\nfull\n",
+        };
+        assert_eq!(
+            after_hook, expected,
+            "builtin={builtin}, dirty={dirty}; all calls:\n{calls}"
+        );
+        assert_eq!(worktree.exists(), dirty);
+        if dirty {
+            assert_eq!(
+                fs::read_to_string(worktree.join("hook-created.txt")).unwrap(),
+                "work\n"
+            );
+        }
+    }
+}
+
 /// A registration whose directory now holds a *different* repository is not
 /// this repository's worktree, and removing it would destroy that one — its
 /// uncommitted work and, for a repo that was never pushed, the only copy of
@@ -1384,7 +1527,9 @@ fn test_remove_interrupt_stops_batch(
 
 /// Signals from execution-time Git commands cancel removal just like hook
 /// signals. The hook arms the shim only after validation has succeeded;
-/// everything except the selected Git boundary delegates to real Git.
+/// everything except the selected Git boundary delegates to real Git. Select
+/// the final fsmonitor-disabled status explicitly, rather than an optional
+/// pre-shutdown scan, and exercise interruption of the selected config read.
 #[cfg(unix)]
 #[rstest]
 #[case::status_foreground("status", true, false, "INT", 130)]
@@ -1392,6 +1537,8 @@ fn test_remove_interrupt_stops_batch(
 #[case::delete_foreground("delete", true, false, "TERM", 143)]
 #[case::delete_background("delete", false, false, "INT", 130)]
 #[case::detached_status_foreground("status", true, true, "TERM", 143)]
+#[case::config_foreground("config", true, false, "INT", 130)]
+#[case::config_background("config", false, false, "TERM", 143)]
 fn test_remove_git_interrupt_stops_batch(
     mut repo: TestRepo,
     #[case] boundary: &str,
@@ -1423,9 +1570,10 @@ fn test_remove_git_interrupt_stops_batch(
         format!(
             r#"#!/bin/sh
 if [ -f "$WORKTRUNK_TEST_INTERRUPT_ARMED" ]; then
-  if {{ [ "$WORKTRUNK_TEST_INTERRUPT_BOUNDARY" = status ] && [ "$1" = status ] && [ "$PWD" = "$WORKTRUNK_TEST_INTERRUPT_WORKTREE" ]; }} ||
+  if {{ [ "$WORKTRUNK_TEST_INTERRUPT_BOUNDARY" = status ] && [ "$1" = -c ] && [ "$2" = core.fsmonitor=false ] && [ "$3" = status ] && [ "$PWD" = "$WORKTRUNK_TEST_INTERRUPT_WORKTREE" ]; }} ||
+     {{ [ "$WORKTRUNK_TEST_INTERRUPT_BOUNDARY" = config ] && [ "$1" = config ] && [ "$2" = --type=bool ] && [ "$3" = --get ] && [ "$4" = core.fsmonitor ] && [ "$PWD" = "$WORKTRUNK_TEST_INTERRUPT_WORKTREE" ]; }} ||
      {{ [ "$WORKTRUNK_TEST_INTERRUPT_BOUNDARY" = delete ] && [ "$1" = update-ref ] && [ "$3" = refs/heads/interrupted ]; }}; then
-    touch "$WORKTRUNK_TEST_INTERRUPT_TRIGGERED"
+    printf '%s\n' "$*" > "$WORKTRUNK_TEST_INTERRUPT_TRIGGERED"
     kill "-$WORKTRUNK_TEST_INTERRUPT_SIGNAL" "$$"
   fi
 fi
@@ -1457,14 +1605,27 @@ exec {real_git} "$@"
         armed.exists() && triggered.exists(),
         "the selected execution-time Git command must receive the signal; stderr:\n{stderr}"
     );
+    let triggered_args = fs::read_to_string(&triggered).unwrap();
+    match boundary {
+        "status" => assert_eq!(
+            triggered_args.trim(),
+            "-c core.fsmonitor=false status --porcelain --untracked-files=normal --ignore-submodules=none"
+        ),
+        "config" => assert_eq!(
+            triggered_args.trim(),
+            "config --type=bool --get core.fsmonitor"
+        ),
+        "delete" => assert!(triggered_args.starts_with("update-ref ")),
+        _ => unreachable!(),
+    }
     assert!(
         later.exists(),
         "cancellation must preserve the later worktree; stderr:\n{stderr}"
     );
     assert_branch_exists(&repo, "later", true, &stderr);
     assert_branch_exists(&repo, "interrupted", true, &stderr);
-    if boundary == "status" {
-        assert!(interrupted.exists(), "the clean check precedes removal");
+    if boundary != "delete" {
+        assert!(interrupted.exists(), "the safety gate precedes removal");
     }
     assert_eq!(
         crate::common::shell_exit_code(&output.status),

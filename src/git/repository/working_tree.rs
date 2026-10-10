@@ -391,6 +391,29 @@ impl<'a> WorkingTree<'a> {
     // Worktree-specific methods
     // =========================================================================
 
+    /// Whether this selected worktree uses Git's builtin fsmonitor daemon.
+    ///
+    /// Read freshly in the selected worktree, with discovery overrides scrubbed:
+    /// the repository's common-dir config snapshot can differ because of
+    /// worktree config or conditional includes. Command-scope config is retained.
+    /// Hook-valued fsmonitor configurations do not use the builtin daemon.
+    pub(crate) fn is_builtin_fsmonitor_enabled(&self) -> anyhow::Result<bool> {
+        let args = ["config", "--type=bool", "--get", "core.fsmonitor"];
+        let output = self.run_command_output(&args)?;
+        match output.status.code() {
+            Some(0) => Ok(output.stdout.trim_ascii() == b"true"),
+            Some(1) => Ok(false), // Unset.
+            Some(128) => {
+                // A hook path is valid core.fsmonitor but not a boolean. Read
+                // it untyped so malformed config and other read errors still
+                // surface, rather than treating every failed bool read as off.
+                self.run_command(&["config", "--get", "core.fsmonitor"])?;
+                Ok(false)
+            }
+            _ => Err(CommandError::from_failed_output("git", &args, &output).into()),
+        }
+    }
+
     /// Pre-warm the worktree caches with a single batched `git rev-parse` and
     /// return a snapshot of what it resolved.
     ///

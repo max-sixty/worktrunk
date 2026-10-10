@@ -55,8 +55,9 @@
 //!
 //! # Cleanliness before and after fsmonitor shutdown
 //!
-//! The early gate follows ordinary `git status`, including `core.fsmonitor`,
-//! so a dirty worktree is refused before touching its daemon. Shutdown is an
+//! When the selected worktree enables the builtin daemon, an early gate follows
+//! ordinary `git status` so a dirty worktree is refused before touching its daemon.
+//! Other fsmonitor configurations need only the final scan. Shutdown is an
 //! external command and can overlap writers. The final gate therefore uses
 //! `core.fsmonitor=false` to rescan staged, modified and untracked files without
 //! restarting the daemon. It pays the full filesystem scan on a successful
@@ -422,8 +423,9 @@ pub fn remove_worktree_with_cleanup(
 ///
 /// # Why this order
 ///
-/// The early gate runs before daemon shutdown to refuse already-dirty
-/// worktrees without altering their daemon. After shutdown, a full scan with
+/// When a builtin daemon is configured, the early gate refuses already-dirty
+/// worktrees without altering their daemon. Otherwise, no early scan is needed.
+/// After shutdown, a full scan with
 /// fsmonitor disabled catches staged, modified and untracked files that
 /// appeared during it. Ownership and locks are then rechecked immediately
 /// before the rename. See the [module-level docs](self).
@@ -465,7 +467,7 @@ pub fn stage_worktree_removal(
 ) -> anyhow::Result<Option<PathBuf>> {
     let worktree = repo.worktree_at(worktree_path);
     let git_dir = require_removal_allowed(&worktree, branch, None)?;
-    if !force_worktree {
+    if !force_worktree && worktree.is_builtin_fsmonitor_enabled()? {
         worktree.ensure_clean(
             "remove worktree",
             branch,
