@@ -114,7 +114,7 @@ fn list_aliases() -> anyhow::Result<()> {
         out.push_str(&format_entry(name, cfg, *source, &bodies, None));
         out.push('\n');
     }
-    crate::help_pager::show_help_in_pager(&out, true);
+    crate::help_pager::show_help_in_pager(&out, true)?;
     Ok(())
 }
 

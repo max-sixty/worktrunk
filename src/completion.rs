@@ -856,11 +856,9 @@ fn try_forward_completion_to_custom(
     // candidates. Uses `std::process::Command` rather than `shell_exec::Cmd`
     // because we only need that captured stdout, not `Cmd`'s tracing/streaming;
     // stderr is discarded so the child can't write above the user's prompt.
-    let result = cmd
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()?
-        .wait_with_output()?;
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    let result = worktrunk::shell_exec::spawn(&mut cmd)?.wait_with_output()?;
     if result.status.success() {
         Ok(String::from_utf8(result.stdout).ok())
     } else {

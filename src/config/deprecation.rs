@@ -27,15 +27,14 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::io::Write;
-use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex, OnceLock};
 
 use anyhow::Context;
 use color_print::cformat;
-use minijinja::machinery::{ast, parse as parse_template};
 use shell_escape::unix::escape;
 
+use super::template_analysis::TemplateVars;
 use crate::config::WorktrunkConfig;
 use crate::shell_exec::Cmd;
 use crate::styling::{
@@ -191,9 +190,8 @@ pub fn normalize_template_vars(template: &str) -> Cow<'_, str> {
 /// order.
 ///
 /// `None` leaves the template exactly as written: no retired name is read, it
-/// doesn't parse, or a statement binds either half of a pair — see
-/// [`TemplateVars`] for why a bound name drops the pair rather than renaming
-/// half a scope. An identifier that isn't a variable read — an attribute
+/// doesn't parse, or a statement binds either half of a pair. An identifier
+/// that isn't a variable read — an attribute
 /// (`{{ foo.repo_root }}`), a keyword argument, an assignment target — isn't a
 /// use, so it doesn't bring a pair in on its own.
 ///
@@ -205,6 +203,8 @@ fn migrate_retired_vars(template: &str) -> Option<(String, Vec<(&'static str, &'
         return None;
     }
 
+    // Renames are template-wide, so exclude both sides of a pair when either
+    // is locally bound. Renaming only some reads could capture a local value.
     let vars = TemplateVars::of(template)?;
     let replacements = RETIRED_VARS
         .iter()
@@ -241,243 +241,6 @@ fn migrate_retired_vars(template: &str) -> Option<(String, Vec<(&'static str, &'
     }
     migrated.push_str(&template[cursor..]);
     Some((migrated, replacements))
-}
-
-/// A template as MiniJinja's own parser reads it: every variable read, with
-/// the byte range of the identifier behind it, and every name a statement
-/// binds.
-///
-/// Both halves were once scanned by hand, which meant re-deriving MiniJinja's
-/// delimiters, whitespace control, string quoting, `{% raw %}` handling and
-/// assignment-target grammar. Each place the two readings disagreed was
-/// visible in the file worktrunk writes (#4117): a `}}` inside a string ended
-/// a tag early, so the reference after it never migrated, and an unrecognized
-/// target list renamed a local's uses out from under its binding. Parsing
-/// through [`minijinja::machinery`] removes the second reading instead of
-/// correcting it — the reads are the `Expr::Var` nodes, which is by
-/// construction the set the renderer resolves against the context, and the
-/// bindings are the statements' own target expressions.
-///
-/// `machinery` carries no semver guarantee, so the coupling is to the AST's
-/// shape alone: the matches below are exhaustive over `Stmt` and `Expr`, and
-/// `Cargo.toml` takes MiniJinja with `default-features = false`, so the
-/// `macros`, `multi_template` and `loop_controls` variants don't exist to
-/// handle. A MiniJinja that adds or moves a node fails this build rather than
-/// quietly mis-migrating a config, and the compile error names what to
-/// handle.
-struct TemplateVars<'a> {
-    /// The name and byte range of every `Expr::Var`, in visit order.
-    reads: Vec<(&'a str, Range<usize>)>,
-    /// Every name a `set`, `for`, or `with` binds, at any depth.
-    ///
-    /// The rewrite has no notion of scope — it replaces reads wherever they
-    /// sit — so a deprecated name bound anywhere is dropped from the
-    /// replacement set entirely rather than renamed per scope:
-    /// `{{ repo_root }}{% set repo_root = "local" %}{{ repo_root }}` must not
-    /// have its last use renamed away from the binding it reads. Detection
-    /// reads that same set, so such a template neither migrates nor warns.
-    /// Losing the warning is the price of not quietly rendering something
-    /// else.
-    ///
-    /// Since [`RETIRED_VARS`] became a [`DeprecationRule::Structural`] row
-    /// that price is paid at render time rather than deferred: the retired
-    /// name survives the load-path rewrite and reaches a renderer that has
-    /// nothing to resolve it to, failing a `SemiStrict` expansion loudly or
-    /// rendering empty in a squash template. Both beat renaming one scope's
-    /// worth of uses out from under the template that bound the name.
-    ///
-    /// The *canonical* name is checked against this set too. Binding it
-    /// captures the global use the rename produces: `{% for repo_path in items
-    /// %}` around a `{{ repo_root }}` reads the global today and the loop
-    /// variable once renamed. The same collision reaches every pair — `{% for
-    /// commit_details in … %}{{ commits }}` is the squash-template shape of it.
-    bound: HashSet<&'a str>,
-}
-
-impl<'a> TemplateVars<'a> {
-    /// `None` when MiniJinja can't parse `template` — the templates its
-    /// renderer rejects too, left untouched rather than guessed at.
-    fn of(template: &'a str) -> Option<Self> {
-        // The syntax and whitespace defaults, spelled `Default::default()`
-        // because `SyntaxConfig` is a unit struct without MiniJinja's
-        // `custom_syntax` feature. Neither has to match the environment that
-        // renders the template — `expand_template_with` sets
-        // `keep_trailing_newline(true)` for every `ShellEscapeMode` but
-        // `Literal`, and a `WhitespaceConfig` only ever shapes literal text
-        // (which byte the tokenizer stops at, where an `EmitRaw` node's
-        // boundaries fall), never an `Expr::Var` span. Everything outside
-        // those spans is copied from the original string, so the two readings
-        // cannot move an edit apart.
-        let ast =
-            parse_template(template, "<config>", Default::default(), Default::default()).ok()?;
-        let mut vars = TemplateVars {
-            reads: Vec::new(),
-            bound: HashSet::new(),
-        };
-        vars.stmt(&ast);
-        Some(vars)
-    }
-
-    fn body(&mut self, body: &[ast::Stmt<'a>]) {
-        for stmt in body {
-            self.stmt(stmt);
-        }
-    }
-
-    fn stmt(&mut self, stmt: &ast::Stmt<'a>) {
-        match stmt {
-            ast::Stmt::Template(node) => self.body(&node.children),
-            ast::Stmt::EmitExpr(node) => self.expr(&node.expr),
-            // Literal output — the text around the tags, and everything inside
-            // a `{% raw %}` block.
-            ast::Stmt::EmitRaw(_) => {}
-            ast::Stmt::ForLoop(node) => {
-                self.target(&node.target);
-                self.expr(&node.iter);
-                if let Some(filter) = &node.filter_expr {
-                    self.expr(filter);
-                }
-                self.body(&node.body);
-                self.body(&node.else_body);
-            }
-            ast::Stmt::IfCond(node) => {
-                self.expr(&node.expr);
-                self.body(&node.true_body);
-                self.body(&node.false_body);
-            }
-            ast::Stmt::WithBlock(node) => {
-                for (target, value) in &node.assignments {
-                    self.target(target);
-                    self.expr(value);
-                }
-                self.body(&node.body);
-            }
-            ast::Stmt::Set(node) => {
-                self.target(&node.target);
-                self.expr(&node.expr);
-            }
-            ast::Stmt::SetBlock(node) => {
-                self.target(&node.target);
-                if let Some(filter) = &node.filter {
-                    self.expr(filter);
-                }
-                self.body(&node.body);
-            }
-            ast::Stmt::AutoEscape(node) => {
-                self.expr(&node.enabled);
-                self.body(&node.body);
-            }
-            ast::Stmt::FilterBlock(node) => {
-                self.expr(&node.filter);
-                self.body(&node.body);
-            }
-            ast::Stmt::Do(node) => self.call(&node.call),
-        }
-    }
-
-    fn expr(&mut self, expr: &ast::Expr<'a>) {
-        match expr {
-            ast::Expr::Var(node) => {
-                let span = node.span();
-                self.reads.push((
-                    node.id,
-                    span.start_offset as usize..span.end_offset as usize,
-                ));
-            }
-            ast::Expr::Const(_) => {}
-            ast::Expr::Slice(node) => {
-                self.expr(&node.expr);
-                for bound in [&node.start, &node.stop, &node.step].into_iter().flatten() {
-                    self.expr(bound);
-                }
-            }
-            ast::Expr::UnaryOp(node) => self.expr(&node.expr),
-            ast::Expr::BinOp(node) => {
-                self.expr(&node.left);
-                self.expr(&node.right);
-            }
-            ast::Expr::Compare(node) => {
-                self.expr(&node.expr);
-                for op in &node.ops {
-                    self.expr(&op.expr);
-                }
-            }
-            ast::Expr::IfExpr(node) => {
-                self.expr(&node.test_expr);
-                self.expr(&node.true_expr);
-                if let Some(false_expr) = &node.false_expr {
-                    self.expr(false_expr);
-                }
-            }
-            // A filter or test names a function the environment supplies, not
-            // a variable, so only its input and arguments are reads.
-            ast::Expr::Filter(node) => {
-                if let Some(expr) = &node.expr {
-                    self.expr(expr);
-                }
-                self.args(&node.args);
-            }
-            ast::Expr::Test(node) => {
-                self.expr(&node.expr);
-                self.args(&node.args);
-            }
-            // `{{ foo.repo_root }}` reads `foo`; the attribute belongs to
-            // whatever that resolves to, never to the deprecated global.
-            ast::Expr::GetAttr(node) => self.expr(&node.expr),
-            ast::Expr::GetItem(node) => {
-                self.expr(&node.expr);
-                self.expr(&node.subscript_expr);
-            }
-            ast::Expr::Call(node) => self.call(node),
-            ast::Expr::List(node) => {
-                for item in &node.items {
-                    self.expr(item);
-                }
-            }
-            ast::Expr::Map(node) => {
-                for entry in node.keys.iter().chain(&node.values) {
-                    self.expr(entry);
-                }
-            }
-        }
-    }
-
-    fn call(&mut self, call: &ast::Call<'a>) {
-        self.expr(&call.expr);
-        self.args(&call.args);
-    }
-
-    /// A keyword argument's name belongs to the call it is passed to, so only
-    /// the argument values are reads.
-    fn args(&mut self, args: &[ast::CallArg<'a>]) {
-        for arg in args {
-            match arg {
-                ast::CallArg::Pos(expr)
-                | ast::CallArg::Kwarg(_, expr)
-                | ast::CallArg::PosSplat(expr)
-                | ast::CallArg::KwargSplat(expr) => self.expr(expr),
-            }
-        }
-    }
-
-    /// The names an assignment target binds.
-    fn target(&mut self, target: &ast::Expr<'a>) {
-        match target {
-            ast::Expr::Var(node) => {
-                self.bound.insert(node.id);
-            }
-            // A tuple target, nested arbitrarily: `{% for (a, (b, c)) in … %}`.
-            ast::Expr::List(node) => {
-                for item in &node.items {
-                    self.target(item);
-                }
-            }
-            // A dotted target mutates an attribute of whatever the path
-            // resolves to, so `{% set repo_root.x = … %}` reads the global
-            // rather than binding it.
-            read => self.expr(read),
-        }
-    }
 }
 
 /// Replace every [`RETIRED_VARS`] template variable in every string value of
@@ -1610,12 +1373,8 @@ fn validate_existing_approvals_file(approvals_path: &Path) -> anyhow::Result<()>
             crate::path::format_path_for_display(approvals_path)
         )
     })?;
-    toml::from_str::<super::approvals::Approvals>(&content).with_context(|| {
-        format!(
-            "Failed to parse existing approvals file {}",
-            crate::path::format_path_for_display(approvals_path)
-        )
-    })?;
+    toml::from_str::<super::approvals::Approvals>(&content)
+        .map_err(|error| super::ConfigParseError::approvals(approvals_path, error))?;
     Ok(())
 }
 
@@ -4713,10 +4472,7 @@ approved-commands = ["npm install"]
             "Invalid existing approvals.toml must surface as Err; got {result:?}"
         );
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Failed to parse existing approvals file"),
+            result.unwrap_err().to_string().contains("Approvals @"),
             "Error should identify the invalid approvals file"
         );
     }

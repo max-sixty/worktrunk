@@ -51,6 +51,28 @@ async function sitemapRoutes() {
     .map((match) => new URL(match[1]).pathname);
 }
 
+// Layout checks measure the page as set in its web fonts. The stylesheet loads
+// them with `display=swap`, so at DOMContentLoaded text can still be in a wider
+// fallback face, and a terminal sized to the column overflows it.
+async function openPage(page, url) {
+  await page.goto(url, { waitUntil: 'load' });
+  await page.evaluate(() => document.fonts.ready);
+}
+
+// Every page header carries the shields.io GitHub-stars badge, the one
+// third-party resource besides the web fonts. Serve a stand-in at the badge's
+// declared size so `load` waits only on the local server and the fonts.
+const starsBadge = '<svg xmlns="http://www.w3.org/2000/svg" width="90" height="20"></svg>';
+
+async function newPage(browser, options) {
+  const page = await browser.newPage(options);
+  await page.route('https://img.shields.io/**', (route) => route.fulfill({
+    contentType: 'image/svg+xml',
+    body: starsBadge,
+  }));
+  return page;
+}
+
 function rgbChannels(value) {
   const channels = value.match(/[\d.]+/gu).slice(0, 3).map(Number);
   return value.startsWith('color(srgb')
@@ -82,9 +104,9 @@ test('mobile pages stay viewport-bound while code remains readable', { timeout: 
   try {
     for (const theme of ['light', 'dark']) {
       for (const width of mobileWidths) {
-        const page = await browser.newPage({ viewport: { width, height: 844 }, colorScheme: theme });
+        const page = await newPage(browser, { viewport: { width, height: 844 }, colorScheme: theme });
         for (const route of publicRoutes) {
-          await page.goto(`${baseUrl}${route}`, { waitUntil: 'domcontentloaded' });
+          await openPage(page, `${baseUrl}${route}`);
           await page.evaluate((selectedTheme) => {
             document.documentElement.dataset.theme = selectedTheme;
           }, theme);
@@ -188,9 +210,9 @@ test('desktop code examples fit the content column', { timeout: 60_000 }, async 
   const browser = await webkit.launch();
   try {
     for (const width of [1152, 1376, 1401, 1920]) {
-      const page = await browser.newPage({ viewport: { width, height: 900 } });
+      const page = await newPage(browser, { viewport: { width, height: 900 } });
       for (const route of await sitemapRoutes()) {
-        await page.goto(`${baseUrl}${route}`, { waitUntil: 'domcontentloaded' });
+        await openPage(page, `${baseUrl}${route}`);
         const { column, blocks, terminals } = await page.evaluate(() => {
           const { left, right } = document.querySelector('.sl-markdown-content').getBoundingClientRect();
           return {
@@ -227,8 +249,8 @@ test('desktop code examples fit the content column', { timeout: 60_000 }, async 
       await page.close();
     }
 
-    const page = await browser.newPage({ viewport: { width: 1920, height: 900 } });
-    await page.goto(baseUrl + '/', { waitUntil: 'domcontentloaded' });
+    const page = await newPage(browser, { viewport: { width: 1920, height: 900 } });
+    await openPage(page, baseUrl + '/');
     const rail = await page.evaluate(() => {
       const frame = [...document.querySelectorAll('.expressive-code .frame')]
         .find((candidate) => candidate.querySelector('.wt-command')?.textContent.trim() === 'wt list');
@@ -279,13 +301,13 @@ test('copy buttons sit in view on the line they copy without overlapping', { tim
   const browser = await webkit.launch();
   try {
     for (const { width, touch } of [{ width: 393, touch: true }, { width: 1376, touch: false }]) {
-      const page = await browser.newPage({
+      const page = await newPage(browser, {
         viewport: { width, height: 900 },
         hasTouch: touch,
         isMobile: touch,
       });
       for (const route of await sitemapRoutes()) {
-        await page.goto(`${baseUrl}${route}`, { waitUntil: 'domcontentloaded' });
+        await openPage(page, `${baseUrl}${route}`);
         const frames = await page.evaluate(() => {
           for (const details of document.querySelectorAll('.sl-markdown-content details')) details.open = true;
           return [...document.querySelectorAll('.expressive-code .frame')].map((frame) => {
@@ -335,9 +357,9 @@ test('code artifacts keep their visual hierarchy in both themes', async () => {
   const browser = await webkit.launch();
   try {
     for (const theme of ['light', 'dark']) {
-      const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, colorScheme: theme });
+      const page = await newPage(browser, { viewport: { width: 1280, height: 900 }, colorScheme: theme });
 
-      await page.goto(`${baseUrl}/claude-code/`, { waitUntil: 'domcontentloaded' });
+      await openPage(page, `${baseUrl}/claude-code/`);
       await page.evaluate((selectedTheme) => {
         document.documentElement.dataset.theme = selectedTheme;
       }, theme);
@@ -366,7 +388,7 @@ test('code artifacts keep their visual hierarchy in both themes', async () => {
         assert.ok(ratio >= 4.5, `${theme} shell token ${text} contrast is ${ratio.toFixed(2)}:1`);
       }
 
-      await page.goto(baseUrl + '/', { waitUntil: 'domcontentloaded' });
+      await openPage(page, baseUrl + '/');
       await page.evaluate((selectedTheme) => {
         document.documentElement.dataset.theme = selectedTheme;
       }, theme);
@@ -461,7 +483,7 @@ test('code artifacts keep their visual hierarchy in both themes', async () => {
         );
       }
 
-      await page.goto(`${baseUrl}/list/`, { waitUntil: 'domcontentloaded' });
+      await openPage(page, `${baseUrl}/list/`);
       await page.evaluate((selectedTheme) => {
         document.documentElement.dataset.theme = selectedTheme;
       }, theme);
@@ -507,7 +529,7 @@ test('code artifacts keep their visual hierarchy in both themes', async () => {
         assert.ok(ratio >= 4.5, `${theme} help-role contrast is ${ratio.toFixed(2)}:1`);
       }
 
-      await page.goto(`${baseUrl}/config/`, { waitUntil: 'domcontentloaded' });
+      await openPage(page, `${baseUrl}/config/`);
       await page.evaluate((selectedTheme) => {
         document.documentElement.dataset.theme = selectedTheme;
       }, theme);

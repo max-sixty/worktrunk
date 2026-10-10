@@ -1,11 +1,12 @@
 ---
-source: tests/integration_tests/eval.rs
+source: tests/integration_tests/approvals.rs
 info:
   program: wt
   args:
-    - step
-    - eval
-    - "{% if optional %}{{ unvisited }}{% endif %}{{ brnch | upper }}"
+    - config
+    - approvals
+    - add
+    - "--yes"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
@@ -60,7 +61,9 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mFailed to expand eval: undefined variable brnch @ line 1[39m
-[107m [0m {% if optional %}{{ unvisited }}{% endif %}{{ brnch | upper }}
-[2m↳[22m [2mDid you mean [4mbranch[24m?[22m
-[2m↳[22m [2mAvailable variables: [4mbranch[24m, [4mcommit[24m, [4mcwd[24m, [4mdefault_branch[24m, [4mprimary_worktree_path[24m, [4mremote[24m, [4mremote_url[24m, [4mrepo[24m, [4mrepo_path[24m, [4mshort_commit[24m, [4mupstream[24m, [4mworktree_name[24m, [4mworktree_path[24m[22m
+[31m✗[39m [31mApprovals @ [TEST_APPROVALS] failed to parse[39m
+[107m [0m TOML parse error at line 1, column 10
+[107m [0m   |
+[107m [0m 1 | [projects
+[107m [0m   |          ^
+[107m [0m unclosed table, expected `]`
