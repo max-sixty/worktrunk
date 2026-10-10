@@ -23,5 +23,8 @@
     "@astrojs/check": "^0.9.10",
     "playwright": "^1.63.0",
     "typescript": "^6.0.3"
+  },
+  "overrides": {
+    "postcss-nested": "^7.0.2"
   }
 }
