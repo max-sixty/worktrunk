@@ -79,7 +79,7 @@ A string is a single command:
 pre-start = "npm install"
 ```
 
-A table is multiple commands that run concurrently:
+A table names commands. With multiple keys, they run concurrently:
 
 ```toml
 # .config/wt.toml
@@ -262,7 +262,7 @@ setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path 
 
 ## Interactive hooks
 
-A `pre-start` hook can ask before continuing:
+Hooks can prompt when run serially in the foreground, as in this `pre-start` hook:
 
 ```toml
 # .config/wt.toml
