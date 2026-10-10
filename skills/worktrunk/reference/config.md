@@ -628,7 +628,6 @@ On first run without shell integration, Worktrunk offers to install it. On first
 ## Environment variables
 
 All user config options can be overridden with environment variables using the `WORKTRUNK_` prefix.
-Invalid environment overrides are ignored with a warning; other valid overrides still apply.
 
 ### Naming convention
 
@@ -1249,7 +1248,7 @@ $ wt list
 ### Use cases
 
 - **Work status** — `🚧` WIP, `✅` ready for review, `🔥` urgent
-- **Agent tracking** — The agent plugins ([Claude Code](https://worktrunk.dev/claude-code/), Codex, OpenCode, Pi, oh-my-pi) set markers automatically
+- **Agent tracking** — [Agent plugins](https://worktrunk.dev/claude-code/) set markers automatically
 - **Notes** — Any short text: `"blocked"`, `"needs tests"`
 
 ### Storage
