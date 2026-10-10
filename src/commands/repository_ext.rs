@@ -362,7 +362,12 @@ impl RepositoryCliExt for Repository {
         target_wt.ensure_holds_this_worktree()?;
 
         if !force_worktree {
-            target_wt.ensure_clean("remove worktree", branch_name.as_deref(), true)?;
+            target_wt.ensure_clean(
+                "remove worktree",
+                branch_name.as_deref(),
+                true,
+                worktrunk::git::CleanCheckMode::ConfiguredFsmonitor,
+            )?;
         }
 
         // main_path: where post-remove hooks run from and background removal

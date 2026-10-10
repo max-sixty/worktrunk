@@ -1322,7 +1322,10 @@ fn handle_branch_only_output(
     quiet: bool,
 ) -> anyhow::Result<BranchFate> {
     let pruned = if let Some(path) = prune_entry {
-        Repository::current()?.prune_worktree_entry(path, force_worktree)?;
+        Repository::current()?.prune_worktree_entry(
+            path,
+            worktrunk::git::WorktreePruneMode::stale(force_worktree),
+        )?;
         true
     } else {
         false

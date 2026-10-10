@@ -408,7 +408,10 @@ impl AltXRemover {
                 // never collects. A failed prune keeps the branch, so the row
                 // is restored.
                 if let Some(path) = prune_entry
-                    && let Err(e) = repo.prune_worktree_entry(path, *force_worktree)
+                    && let Err(e) = repo.prune_worktree_entry(
+                        path,
+                        worktrunk::git::WorktreePruneMode::stale(*force_worktree),
+                    )
                 {
                     tracing::warn!(branch = %branch_name, error = %e, "picker: failed to prune stale worktree for '{branch_name}': {e:#}");
                     return Ok(());

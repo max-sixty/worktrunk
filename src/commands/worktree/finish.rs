@@ -142,7 +142,12 @@ pub fn finish_after_merge(
         check_not_default_branch(repo, current_branch, &BranchDeletionMode::SafeDelete)?;
 
         let current_wt = repo.current_worktree();
-        current_wt.ensure_clean("remove worktree after merge", Some(current_branch), false)?;
+        current_wt.ensure_clean(
+            "remove worktree after merge",
+            Some(current_branch),
+            false,
+            worktrunk::git::CleanCheckMode::ConfiguredFsmonitor,
+        )?;
 
         let worktree_root = current_wt.root()?;
 

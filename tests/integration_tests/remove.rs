@@ -953,9 +953,10 @@ fn test_remove_stale_detached_worktree_reports_it(repo: TestRepo) {
     ));
 }
 
-/// Both fsmonitor lifecycle commands use a Worktrunk-selected worktree. An
-/// inherited main-worktree GIT_DIR must not redirect them to the main daemon.
-/// The shim records the actual Git discovery result without running daemons.
+/// Fsmonitor lifecycle commands use a Worktrunk-selected worktree. An inherited
+/// main-worktree GIT_DIR must not redirect them to the main daemon. Removal stops
+/// the daemon on Unix; list proactively starts it only on macOS. The shim records
+/// actual Git discovery without running daemons.
 #[cfg(unix)]
 #[rstest]
 fn test_fsmonitor_lifecycle_uses_selected_worktree(mut repo: TestRepo) {
@@ -1040,13 +1041,22 @@ exec {real_git} -c core.fsmonitor=false "$@"
         String::from_utf8_lossy(&output.stderr)
     );
     let logged = fs::read_to_string(&log).unwrap();
-    for action in ["start", "stop"] {
+    #[cfg(target_os = "macos")]
+    let actions: &[&str] = &["start", "stop"];
+    #[cfg(not(target_os = "macos"))]
+    let actions: &[&str] = &["stop"];
+    for action in actions {
         let expected = format!("{action}\t{}\tunset\tunset\t{linked_git}", linked.display());
         assert!(
             logged.lines().any(|line| line == expected),
             "missing selected-worktree {action}: {logged}"
         );
     }
+    #[cfg(not(target_os = "macos"))]
+    assert!(
+        !logged.lines().any(|line| line.starts_with("start\t")),
+        "list should only proactively start fsmonitor on macOS: {logged}"
+    );
 }
 
 /// A registration whose directory now holds a *different* repository is not
@@ -5859,4 +5869,479 @@ fn test_remove_stale_entry_spares_absent_sibling(mut repo: TestRepo) {
         !listed.contains("branch refs/heads/victim"),
         "the stale entry should have been pruned\n{listed}"
     );
+}
+
+/// A clean live worktree can be removed while a Git operation is paused, as
+/// with `git worktree remove`. The same operation in a pre-existing stale
+/// registration remains recoverable and requires explicit force to discard.
+#[rstest]
+#[case::bisect(false)]
+#[case::rebase(true)]
+fn test_remove_live_operation_cleans_registration_but_stale_operation_is_protected(
+    mut repo: TestRepo,
+    #[case] rebase: bool,
+) {
+    for (branch, stale, force) in [
+        ("live", false, false),
+        ("live-forced", false, true),
+        ("stale", true, false),
+        ("stale-forced", true, true),
+        ("git-control", false, false),
+    ] {
+        let worktree = repo.add_worktree(branch);
+        repo.commit_in_worktree(&worktree, "operation.txt", "committed", "Operation commit");
+        let registration_output = repo
+            .git_command()
+            .current_dir(&worktree)
+            .args(["rev-parse", "--absolute-git-dir"])
+            .run()
+            .unwrap();
+        assert!(registration_output.status.success());
+        let registration =
+            PathBuf::from(String::from_utf8_lossy(&registration_output.stdout).trim());
+        if rebase {
+            let output = repo
+                .git_command()
+                .current_dir(&worktree)
+                .args(["rebase", "--exec", "false", "HEAD~1"])
+                .run()
+                .unwrap();
+            assert!(!output.status.success(), "exec must pause the rebase");
+            assert!(registration.join("rebase-merge").is_dir());
+        } else {
+            repo.run_git_in(&worktree, &["bisect", "start"]);
+            assert!(registration.join("BISECT_LOG").is_file());
+        }
+        let status = repo
+            .git_command()
+            .current_dir(&worktree)
+            .args(["status", "--porcelain"])
+            .run()
+            .unwrap();
+        assert!(status.status.success());
+        assert!(
+            status.stdout.is_empty(),
+            "operation must leave a clean worktree"
+        );
+
+        if branch == "git-control" {
+            // Establish the Git behavior the live-removal fast path follows.
+            repo.run_git(&["worktree", "remove", worktree.to_str().unwrap()]);
+        } else {
+            if stale {
+                std::fs::remove_file(worktree.join(".git")).unwrap();
+            }
+            let mut command = repo.wt_command();
+            command.args([
+                "remove",
+                worktree.to_str().unwrap(),
+                "--foreground",
+                "--yes",
+                "--no-delete-branch",
+            ]);
+            if force {
+                command.arg("--force");
+            }
+            let output = command.output().unwrap();
+            assert_eq!(
+                output.status.success(),
+                !stale || force,
+                "branch {branch}, rebase {rebase}: {}",
+                String::from_utf8_lossy(&output.stderr),
+            );
+        }
+        assert_eq!(
+            registration.exists(),
+            stale && !force,
+            "registration cleanup for branch {branch}, rebase {rebase}",
+        );
+        assert_eq!(worktree.exists(), stale, "directory for branch {branch}");
+    }
+}
+
+/// Work created during fsmonitor shutdown is refused after the first clean
+/// check, whether staged, modified or untracked. Paused operations cannot hide
+/// it; explicit force alone may discard it.
+#[cfg(unix)]
+#[rstest]
+#[case::staged(false, true, false)]
+#[case::bisect_staged(true, true, false)]
+#[case::untracked(false, false, false)]
+#[case::bisect_untracked(true, false, false)]
+#[case::modified(false, false, true)]
+#[case::bisect_modified(true, false, true)]
+fn test_remove_keeps_work_staged_during_fsmonitor_stop(
+    mut repo: TestRepo,
+    #[case] operation: bool,
+    #[case] stage: bool,
+    #[case] modified: bool,
+) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let bin_dir = repo.home_path().join("late-index-git");
+    fs::create_dir(&bin_dir).unwrap();
+    let shim = bin_dir.join("git");
+    let real_git = which::which("git").unwrap();
+    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
+    fs::write(
+        &shim,
+        format!(
+            r#"#!/bin/sh
+if [ "$1" = fsmonitor--daemon ]; then
+  if [ "$2" = stop ]; then
+    printf 'late staged work' > late.txt
+    if [ "$WORKTRUNK_TEST_REMOVAL_STAGE" = true ]; then
+      {real_git} -c core.fsmonitor=false add late.txt || exit 1
+    fi
+  fi
+  exit 0
+fi
+exec {real_git} -c core.fsmonitor=false "$@"
+"#
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = std::env::join_paths(
+        std::iter::once(bin_dir).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    for (branch, force) in [("keep-late", false), ("discard-late", true)] {
+        let worktree = repo.add_worktree(branch);
+        let registration = registration_dir(&worktree);
+        if modified {
+            repo.commit_in_worktree(
+                &worktree,
+                "late.txt",
+                "original tracked work",
+                "Track late file",
+            );
+        }
+        if operation {
+            repo.run_git_in(&worktree, &["bisect", "start"]);
+        }
+        let mut command = repo.wt_command();
+        command
+            .args([
+                "remove",
+                branch,
+                "--foreground",
+                "--yes",
+                "--no-delete-branch",
+            ])
+            .env("PATH", &path)
+            .env("WORKTRUNK_TEST_REMOVAL_STAGE", stage.to_string());
+        if force {
+            command.arg("--force");
+        }
+        let output = command.output().unwrap();
+        assert_eq!(
+            output.status.success(),
+            force,
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(worktree.exists(), !force);
+        assert_eq!(registration.exists(), !force);
+        if !force {
+            assert_eq!(
+                fs::read_to_string(worktree.join("late.txt")).unwrap(),
+                "late staged work"
+            );
+            let staged = repo
+                .git_command()
+                .current_dir(&worktree)
+                .args(["show", ":late.txt"])
+                .run()
+                .unwrap();
+            assert_eq!(staged.status.success(), stage || modified);
+            if stage {
+                assert_eq!(staged.stdout, b"late staged work");
+            } else if modified {
+                assert_eq!(staged.stdout, b"original tracked work");
+            }
+        }
+    }
+}
+
+/// A writer can still change the index after staging. A failed final check
+/// preserves its checkout outside swept trash, including when the old path is
+/// occupied again. Neither the janitor nor state clearing may delete it.
+#[cfg(unix)]
+#[rstest]
+#[case::primary(false)]
+#[case::removed_cwd(true)]
+fn test_remove_preserves_late_index_and_payload_after_staging(
+    mut repo: TestRepo,
+    #[case] from_removed_cwd: bool,
+) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let worktree = repo.add_worktree("late-after-stage");
+    let registration = registration_dir(&worktree);
+    repo.run_git_in(&worktree, &["bisect", "start"]);
+    let bin_dir = repo.home_path().join("post-stage-git");
+    fs::create_dir(&bin_dir).unwrap();
+    let shim = bin_dir.join("git");
+    let real_git = which::which("git").unwrap();
+    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
+    fs::write(
+        &shim,
+        format!(
+            r#"#!/bin/sh
+if [ "$1" = --git-dir ] && [ "$3" = rev-parse ] && [ ! -d "$WORKTRUNK_TEST_REMOVAL_PATH" ]; then
+  blob=$(printf 'post-stage unique work' | {real_git} hash-object -w --stdin) || exit 1
+  {real_git} --git-dir "$2" update-index --add --cacheinfo "100644,$blob,late.txt" || exit 1
+  mkdir "$WORKTRUNK_TEST_REMOVAL_PATH" || exit 1
+  printf 'new occupant' > "$WORKTRUNK_TEST_REMOVAL_PATH/occupant.txt"
+fi
+exec {real_git} -c core.fsmonitor=false "$@"
+"#
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = std::env::join_paths(
+        std::iter::once(bin_dir).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    let mut command = repo.wt_command();
+    if from_removed_cwd {
+        command.current_dir(&worktree);
+    }
+    let output = command
+        .args([
+            "remove",
+            "late-after-stage",
+            "--foreground",
+            "--yes",
+            "--no-delete-branch",
+        ])
+        .env("PATH", &path)
+        .env("WORKTRUNK_TEST_REMOVAL_PATH", &worktree)
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(registration.is_dir());
+    assert_eq!(
+        fs::read_to_string(worktree.join("occupant.txt")).unwrap(),
+        "new occupant"
+    );
+    let retained_dir = repo.root_path().join(".git/wt/retained");
+    let retained = fs::read_dir(&retained_dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect::<Vec<_>>();
+    assert_eq!(retained.len(), 1);
+    let retained = &retained[0];
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains(&retained.display().to_string()), "{stderr}");
+    assert!(stderr.contains("worktree repair"), "{stderr}");
+    assert!(retained.join(".git").is_file());
+    let staged = repo
+        .git_command()
+        .args([
+            "--git-dir",
+            registration.to_str().unwrap(),
+            "show",
+            ":late.txt",
+        ])
+        .run()
+        .unwrap();
+    assert!(staged.status.success());
+    assert_eq!(staged.stdout, b"post-stage unique work");
+
+    repo.add_worktree("janitor-trigger");
+    let output = repo
+        .wt_command()
+        .args(["remove", "janitor-trigger", "--foreground", "--yes"])
+        .env(
+            "WORKTRUNK_TEST_EPOCH",
+            (crate::common::TEST_EPOCH + 3 * 86400).to_string(),
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = repo
+        .wt_command()
+        .args(["config", "state", "clear", "--yes"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        retained.join(".git").is_file(),
+        "retained work survives cleanup"
+    );
+    assert!(registration.join("index").is_file());
+    repo.run_git(&[
+        "-C",
+        registration
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "worktree",
+        "repair",
+        retained.to_str().unwrap(),
+    ]);
+    let restored = repo
+        .git_command()
+        .current_dir(retained)
+        .args(["show", ":late.txt"])
+        .run()
+        .unwrap();
+    assert!(restored.status.success());
+    assert_eq!(restored.stdout, b"post-stage unique work");
+}
+
+/// A lock or replacement appearing during fsmonitor shutdown must still block
+/// removal after the final status scan, even forced;
+/// a same-repository replacement must not retarget the originally chosen entry.
+#[cfg(unix)]
+#[rstest]
+#[case::lock("lock")]
+#[case::foreign("foreign")]
+#[case::sibling("sibling")]
+fn test_remove_rechecks_ownership_and_lock_after_fsmonitor_stop(
+    mut repo: TestRepo,
+    #[case] mutation: &str,
+) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let bin_dir = repo.home_path().join("shutdown-ownership-git");
+    fs::create_dir(&bin_dir).unwrap();
+    let shim = bin_dir.join("git");
+    let real_git = which::which("git").unwrap();
+    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
+    fs::write(
+        &shim,
+        format!(
+            r#"#!/bin/sh
+if [ "$1" = fsmonitor--daemon ]; then
+  if [ "$2" = stop ]; then
+    case "$WORKTRUNK_TEST_REMOVAL_MUTATION" in
+      lock) {real_git} worktree lock "$PWD" --reason 'keep after shutdown' || exit 1 ;;
+      foreign|sibling)
+        mv "$PWD" "$WORKTRUNK_TEST_REMOVAL_PARKED" || exit 1
+        if [ "$WORKTRUNK_TEST_REMOVAL_MUTATION" = foreign ]; then
+          mkdir "$PWD" || exit 1
+          {real_git} -C "$PWD" init --quiet || exit 1
+        else
+          mv "$WORKTRUNK_TEST_REMOVAL_REPLACEMENT" "$PWD" || exit 1
+          printf '%s/.git\n' "$PWD" > "$WORKTRUNK_TEST_REMOVAL_REPLACEMENT_REGISTRATION/gitdir" || exit 1
+        fi
+        printf 'replacement data' > "$PWD/precious.txt"
+        ;;
+    esac
+    printf '%s' "$WORKTRUNK_TEST_REMOVAL_MUTATION" > "$WORKTRUNK_TEST_REMOVAL_PROOF" || exit 1
+  fi
+  exit 0
+fi
+exec {real_git} -c core.fsmonitor=false "$@"
+"#
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = std::env::join_paths(
+        std::iter::once(bin_dir).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    for (branch, force) in [("normal-gate", false), ("forced-gate", true)] {
+        let worktree = repo.add_worktree(branch);
+        let registration = registration_dir(&worktree);
+        let parked = worktree.with_extension("parked");
+        let replacement = repo.add_worktree(&format!("{branch}-replacement"));
+        let replacement_registration = registration_dir(&replacement);
+        let proof = repo.home_path().join(format!("{branch}-mutation-proof"));
+        let mut command = repo.wt_command();
+        command
+            .args([
+                "remove",
+                branch,
+                "--foreground",
+                "--yes",
+                "--no-delete-branch",
+            ])
+            .env("PATH", &path)
+            .env("WORKTRUNK_TEST_REMOVAL_MUTATION", mutation)
+            .env("WORKTRUNK_TEST_REMOVAL_PARKED", &parked)
+            .env("WORKTRUNK_TEST_REMOVAL_REPLACEMENT", &replacement)
+            .env(
+                "WORKTRUNK_TEST_REMOVAL_REPLACEMENT_REGISTRATION",
+                &replacement_registration,
+            )
+            .env("WORKTRUNK_TEST_REMOVAL_PROOF", &proof);
+        if force {
+            command.arg("--force");
+        }
+        let output = command.output().unwrap();
+        assert!(
+            !output.status.success(),
+            "mutation {mutation}, force {force}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            fs::read_to_string(&proof).unwrap(),
+            mutation,
+            "mutation must complete"
+        );
+        assert!(worktree.is_dir(), "target path must not be staged");
+        assert!(registration.is_dir(), "original registration must survive");
+        if mutation == "lock" {
+            assert!(registration.join("locked").is_file());
+        } else {
+            assert_eq!(
+                fs::read_to_string(worktree.join("precious.txt")).unwrap(),
+                "replacement data"
+            );
+            assert!(parked.join(".git").is_file(), "original checkout survives");
+        }
+    }
+}
+
+/// An unavailable staging home falls back to Git removal; an unavailable trash
+/// home cleans the authorized retained payload. Either blocker stays untouched.
+#[rstest]
+#[case::trash("trash")]
+#[case::retained("retained")]
+fn test_remove_cleans_worktree_when_staging_home_is_blocked(
+    mut repo: TestRepo,
+    #[case] blocked: &str,
+) {
+    let worktree = repo.add_worktree("trash-blocked");
+    let registration = registration_dir(&worktree);
+    let wt_dir = repo.root_path().join(".git/wt");
+    fs::create_dir_all(&wt_dir).unwrap();
+    let blocker = wt_dir.join(blocked);
+    fs::write(&blocker, "preserve blocker").unwrap();
+    run_remove(
+        &repo,
+        &[
+            "trash-blocked",
+            "--foreground",
+            "--yes",
+            "--no-delete-branch",
+        ],
+    );
+    assert!(!worktree.exists());
+    assert!(!registration.exists());
+    assert_eq!(fs::read_to_string(&blocker).unwrap(), "preserve blocker");
+    if blocked == "trash" {
+        assert_eq!(fs::read_dir(wt_dir.join("retained")).unwrap().count(), 0);
+    }
 }

@@ -17,6 +17,16 @@ use crate::git::{CommandError, PlumbingDiff};
 
 const TEMP_INDEX_PREFIX: &str = "worktrunk-temp-index-";
 
+/// Whether a cleanliness gate uses Git's configured fsmonitor or rescans the
+/// filesystem without starting a daemon. Removal rescans after daemon shutdown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CleanCheckMode {
+    /// Follow `core.fsmonitor`, as an ordinary `git status` does.
+    ConfiguredFsmonitor,
+    /// Bypass fsmonitor to observe changes made during shutdown.
+    FullScan,
+}
+
 #[derive(Debug)]
 struct NumstatEntry {
     diff: LineDiff,
@@ -596,13 +606,7 @@ impl<'a> WorkingTree<'a> {
     /// the user's `status.showUntrackedFiles` or `submodule.<name>.ignore`
     /// display preferences.
     pub fn is_dirty(&self) -> anyhow::Result<bool> {
-        let stdout = self.run_command(&[
-            "status",
-            "--porcelain",
-            "--untracked-files=normal",
-            "--ignore-submodules=none",
-        ])?;
-        Ok(!stdout.trim().is_empty())
+        Ok(!self.dirty_files()?.is_empty())
     }
 
     /// Return the raw `git status --porcelain` lines for a dirty working tree
@@ -612,12 +616,21 @@ impl<'a> WorkingTree<'a> {
     /// [`GitError::UncommittedChanges`] in [`Self::ensure_clean`]. The same
     /// caveats as [`Self::is_dirty`] apply (skip-worktree files are invisible).
     pub fn dirty_files(&self) -> anyhow::Result<Vec<String>> {
-        let stdout = self.run_command(&[
+        self.dirty_files_with_mode(CleanCheckMode::ConfiguredFsmonitor)
+    }
+
+    fn dirty_files_with_mode(&self, mode: CleanCheckMode) -> anyhow::Result<Vec<String>> {
+        let mut args = Vec::new();
+        if mode == CleanCheckMode::FullScan {
+            args.extend(["-c", "core.fsmonitor=false"]);
+        }
+        args.extend([
             "status",
             "--porcelain",
             "--untracked-files=normal",
             "--ignore-submodules=none",
-        ])?;
+        ]);
+        let stdout = self.run_command(&args)?;
         Ok(stdout.lines().map(str::to_owned).collect())
     }
 
@@ -933,13 +946,15 @@ impl<'a> WorkingTree<'a> {
     /// - `action` describes what was blocked (e.g., "remove worktree").
     /// - `branch` identifies which branch for multi-worktree operations.
     /// - `force_hint` when true, the error hint mentions `--force` as an alternative.
+    /// - `mode` controls whether the gate trusts configured fsmonitor or rescans.
     pub fn ensure_clean(
         &self,
         action: &str,
         branch: Option<&str>,
         force_hint: bool,
+        mode: CleanCheckMode,
     ) -> anyhow::Result<()> {
-        let dirty_files = self.dirty_files()?;
+        let dirty_files = self.dirty_files_with_mode(mode)?;
         if !dirty_files.is_empty() {
             return Err(GitError::UncommittedChanges {
                 action: Some(action.into()),

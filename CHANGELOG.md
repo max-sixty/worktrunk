@@ -26,7 +26,7 @@
 
 - **Removing several targets when one fails**: a failing hook or removal now reports the failure and continues with later targets, returning exit status 1 if any failed. Uncaught SIGINT and SIGTERM still cancel the batch. ([#4357](https://github.com/max-sixty/worktrunk/pull/4357))
 
-- **Concurrent pruning and stale registrations**: packed-ref lock failures no longer masquerade as success; missing commit snapshots refuse deletion; removal staging distinguishes same-named directories. When an earlier removal hook stages work or starts an operation in a stale registration, cleanup rechecks and preserves it unless explicitly forced. Fsmonitor clears inherited Git discovery overrides. ([#4337](https://github.com/max-sixty/worktrunk/pull/4337), [#4361](https://github.com/max-sixty/worktrunk/pull/4361), [#4393](https://github.com/max-sixty/worktrunk/pull/4393))
+- **Concurrent pruning and stale registrations**: packed-ref lock failures no longer masquerade as success; missing commit snapshots refuse deletion; staging distinguishes same-named directories. If a hook stages work or pauses operations in a stale registration, cleanup preserves it unless forced. Failed metadata cleanup preserves files. Removal rechecks cleanliness after shutdown and clears inherited Git discovery overrides. ([#4337](https://github.com/max-sixty/worktrunk/pull/4337), [#4361](https://github.com/max-sixty/worktrunk/pull/4361), [#4393](https://github.com/max-sixty/worktrunk/pull/4393))
 
 - **List and picker output**: clipped tables disclose how many rows are shown; JSON status symbols follow terminal order; the irregular-worktree flag becomes an outline `⚐`. Selected picker rows keep readable text after ANSI resets. ([#4333](https://github.com/max-sixty/worktrunk/pull/4333), [#4335](https://github.com/max-sixty/worktrunk/pull/4335), [#4334](https://github.com/max-sixty/worktrunk/pull/4334), [#4408](https://github.com/max-sixty/worktrunk/pull/4408), thanks @willparsons for reporting)
 
@@ -48,7 +48,7 @@
 
 ### Internal
 
-- **Library API changes** (Breaking): config and error types changed; signal forwarding methods and shell fields were removed; copy helpers take a timestamp; `ensure_holds_this_worktree` returns its Git directory; `prune_worktree_entry` takes a force flag. ([#4351](https://github.com/max-sixty/worktrunk/pull/4351), [#4357](https://github.com/max-sixty/worktrunk/pull/4357), [#4319](https://github.com/max-sixty/worktrunk/pull/4319), [#4361](https://github.com/max-sixty/worktrunk/pull/4361), [#4400](https://github.com/max-sixty/worktrunk/pull/4400), [#4393](https://github.com/max-sixty/worktrunk/pull/4393))
+- **Library API changes** (Breaking): config and error types changed; signal forwarding methods and shell fields were removed; copy helpers take a timestamp; `ensure_holds_this_worktree` returns its Git directory; `prune_worktree_entry` takes a cleanup mode; `ensure_clean` takes a scan mode. ([#4351](https://github.com/max-sixty/worktrunk/pull/4351), [#4357](https://github.com/max-sixty/worktrunk/pull/4357), [#4319](https://github.com/max-sixty/worktrunk/pull/4319), [#4361](https://github.com/max-sixty/worktrunk/pull/4361), [#4400](https://github.com/max-sixty/worktrunk/pull/4400), [#4393](https://github.com/max-sixty/worktrunk/pull/4393))
 
 - **Building from source requires Rust 1.98**. ([#4367](https://github.com/max-sixty/worktrunk/pull/4367))
 

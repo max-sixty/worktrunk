@@ -149,10 +149,13 @@ Worktrunk stores repository state, caches, and logs under `.git/`:
 | `.git/wt/logs/subprocess.log` | Raw uncapped subprocess stdout/stderr (may be multi-MB) | Running with `-vv` |
 | `.git/wt/logs/diagnostic.md` | Diagnostic report for issue reporting (leads with the performance profile) | Running with `-vv` |
 | `.git/wt/trash/<name>-<timestamp>` | Staged worktree contents pending background deletion | `wt remove` |
+| `.git/wt/retained/<name>-<timestamp>` | Worktree contents preserved when removal cannot safely unregister them | `wt remove` |
 
 None of this is tracked by git or pushed to remotes.
 
-**To remove:** `wt config state clear` removes all repository data: config keys, caches, markers, hints, variables, logs, and stale trash. It prompts before removing anything worktrunk can't recompute, unless you pass `--yes`.
+**To remove:** `wt config state clear` removes repository state: config keys, caches, markers, hints, variables, logs, and stale trash. It prompts before removing anything worktrunk can't recompute, unless you pass `--yes`.
+
+Retained worktrees are user data and stay through state clearing and automatic trash cleanup. A failed removal prints their path; run `git worktree repair <retained-path>` to reconnect the checkout and its preserved index and operation state.
 
 ### 5. Agent integrations
 

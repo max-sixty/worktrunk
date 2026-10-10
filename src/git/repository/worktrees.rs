@@ -256,10 +256,11 @@ impl Repository {
     /// Git also `rmdir`s `.git/worktrees` once its last entry goes. This
     /// leaves the empty directory, which git reads as no linked worktrees.
     ///
-    /// Unless `force_worktree` explicitly permits discarding it, recheck index
-    /// and operation state under that same lock immediately before deletion.
+    /// Unless explicitly forced, recheck the index under that same lock just
+    /// before deletion. Also retain operation state for an already-stale entry;
+    /// an authorized live removal may discard its clean operation state.
     /// Planning can precede approved hooks that put new work in the entry.
-    pub fn prune_worktree_entry(&self, path: &Path, force_worktree: bool) -> anyhow::Result<()> {
+    pub fn prune_worktree_entry(&self, path: &Path, mode: WorktreePruneMode) -> anyhow::Result<()> {
         let display = format_path_for_display(path);
         let _registry = self.worktree_registry_write();
         let (registration, recorded) = self.registration_at(path)?;
@@ -269,7 +270,13 @@ impl Repository {
         if !definitely_absent(&recorded.join(".git"))? {
             anyhow::bail!("Worktree @ {display} is no longer stale; its .git exists");
         }
-        if !force_worktree && let Some(work) = self.stale_worktree_work_at(path, &registration)? {
+        if let Some(work) = match mode {
+            WorktreePruneMode::Stale => self.stale_worktree_work_at(path, &registration)?,
+            WorktreePruneMode::RemovedLive => self
+                .worktree_index_has_staged_changes(path, &registration)?
+                .then_some(StaleWorktreeWork::StagedChanges),
+            WorktreePruneMode::Force => None,
+        } {
             let head = std::fs::read_to_string(registration.join("HEAD"))
                 .with_context(|| format!("Failed to read HEAD for stale worktree @ {display}"))?;
             let branch = head
@@ -322,8 +329,21 @@ impl Repository {
         if let Some(operation) = operation_in_progress_at(registration) {
             return Ok(Some(StaleWorktreeWork::Operation(operation)));
         }
+        Ok(self
+            .worktree_index_has_staged_changes(path, registration)?
+            .then_some(StaleWorktreeWork::StagedChanges))
+    }
+
+    /// Read the index directly, including when a paused operation exists or
+    /// the checkout has moved. Both live staging and metadata deletion use
+    /// this query so operation state cannot hide newly staged work.
+    pub(crate) fn worktree_index_has_staged_changes(
+        &self,
+        path: &Path,
+        registration: &Path,
+    ) -> anyhow::Result<bool> {
         if definitely_absent(&registration.join("index"))? {
-            return Ok(None);
+            return Ok(false);
         }
         // The registration is a git dir in its own right, so its index is read
         // against its `HEAD` without the working tree git can no longer find.
@@ -355,7 +375,7 @@ impl Repository {
         let base = self.index_base_for(born.then_some(head))?;
         // `--quiet` exits 1 when the index differs from the base.
         let (unchanged, _) = git(&PlumbingDiff::Index.args(&["--cached", "--quiet", &base, "--"]))?;
-        Ok((!unchanged).then_some(StaleWorktreeWork::StagedChanges))
+        Ok(!unchanged)
     }
 
     /// The registration `<common>/worktrees/<id>` whose `gitdir` names the
@@ -440,6 +460,7 @@ impl Repository {
                 "remove worktree with submodules",
                 None,
                 /* force_hint */ true,
+                super::CleanCheckMode::ConfiguredFsmonitor,
             )?;
             tracing::debug!("Using --force for worktree removal due to initialized submodules");
         }
@@ -767,6 +788,35 @@ impl Repository {
     pub fn home_path(&self) -> anyhow::Result<PathBuf> {
         self.primary_worktree()?
             .map_or_else(|| self.repo_path().map(|p| p.to_path_buf()), Ok)
+    }
+}
+
+/// Authorization for unregistering one worktree. Locks and reconnected
+/// checkouts are protected in every mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorktreePruneMode {
+    /// A pre-existing stale registration: preserve staged work and operations.
+    Stale,
+    /// A live worktree passed its removal gates and was moved aside. Clean
+    /// operation state may be discarded, but newly staged work is retained.
+    RemovedLive,
+    /// Explicit force authorizes discarding staged work and operation state.
+    Force,
+}
+
+impl WorktreePruneMode {
+    /// Authorization for a registration that was stale before removal began.
+    pub fn stale(force: bool) -> Self {
+        if force { Self::Force } else { Self::Stale }
+    }
+
+    /// Authorization after a live worktree passes its removal gates.
+    pub fn removed_live(force: bool) -> Self {
+        if force {
+            Self::Force
+        } else {
+            Self::RemovedLive
+        }
     }
 }
 

@@ -2398,16 +2398,23 @@ fn prune_worktree_entry_repeats_git_prune_test() {
             .collect::<Vec<_>>()
     };
 
-    for force in [false, true] {
-        let err = repo.prune_worktree_entry(&live, force).unwrap_err();
+    for mode in [
+        crate::git::WorktreePruneMode::Stale,
+        crate::git::WorktreePruneMode::RemovedLive,
+        crate::git::WorktreePruneMode::Force,
+    ] {
+        let err = repo.prune_worktree_entry(&live, mode).unwrap_err();
         assert!(err.to_string().contains("no longer stale"), "got: {err}");
-        let err = repo.prune_worktree_entry(&locked, force).unwrap_err();
+        let err = repo.prune_worktree_entry(&locked, mode).unwrap_err();
         assert!(err.to_string().contains("is locked"), "got: {err}");
     }
 
-    repo.prune_worktree_entry(&absent, false).unwrap();
-    repo.prune_worktree_entry(&dotgit_gone, false).unwrap();
-    repo.prune_worktree_entry(&now_a_file, false).unwrap();
+    repo.prune_worktree_entry(&absent, crate::git::WorktreePruneMode::stale(false))
+        .unwrap();
+    repo.prune_worktree_entry(&dotgit_gone, crate::git::WorktreePruneMode::stale(false))
+        .unwrap();
+    repo.prune_worktree_entry(&now_a_file, crate::git::WorktreePruneMode::stale(false))
+        .unwrap();
     let names = registered();
     for (path, kept) in [
         (&live, true),
@@ -2425,7 +2432,9 @@ fn prune_worktree_entry_repeats_git_prune_test() {
     }
     assert!(dotgit_gone.join("leftover.txt").is_file());
 
-    let err = repo.prune_worktree_entry(&absent, false).unwrap_err();
+    let err = repo
+        .prune_worktree_entry(&absent, crate::git::WorktreePruneMode::stale(false))
+        .unwrap_err();
     assert!(
         err.to_string().contains("No worktree registered"),
         "got: {err}"
@@ -2464,7 +2473,8 @@ fn prune_worktree_entry_keeps_an_entry_it_cannot_check() {
         crate::styling::eprintln!("Skipping - running with elevated privileges");
         return;
     }
-    let result = repo.prune_worktree_entry(&worktree_path, false);
+    let result =
+        repo.prune_worktree_entry(&worktree_path, crate::git::WorktreePruneMode::stale(false));
     set_mode(0o755);
 
     let err = result.unwrap_err();
@@ -2586,8 +2596,10 @@ fn prune_worktree_entry_waits_for_registry_readers() {
         let worker_path = worktree_path.clone();
 
         let reader = repo.worktree_registry_read();
-        let worker =
-            std::thread::spawn(move || worker_repo.prune_worktree_entry(&worker_path, false));
+        let worker = std::thread::spawn(move || {
+            worker_repo
+                .prune_worktree_entry(&worker_path, crate::git::WorktreePruneMode::stale(false))
+        });
         let deadline = Instant::now() + Duration::from_millis(200);
         while registration.exists() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(10));
@@ -2618,7 +2630,8 @@ fn prune_worktree_entry_waits_for_registry_readers() {
             };
             assert_eq!(branch.as_deref(), (!detached).then_some("feature"));
             assert!(registration.join("MERGE_HEAD").is_file());
-            repo.prune_worktree_entry(&worktree_path, true).unwrap();
+            repo.prune_worktree_entry(&worktree_path, crate::git::WorktreePruneMode::stale(true))
+                .unwrap();
         } else {
             result.unwrap();
         }
