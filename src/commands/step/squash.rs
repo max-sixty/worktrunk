@@ -7,7 +7,7 @@ use worktrunk::config::UserConfig;
 use worktrunk::git::{Repository, WorkingTree};
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, println, progress_message,
-    success_message,
+    success_message, suggest_command,
 };
 
 use super::super::command_approval::{
@@ -264,8 +264,27 @@ pub fn handle_squash(
     // Back up working-tree changes before the squash commit absorbs them
     if has_staged {
         let backup_message = format!("{} → {} (squash)", current_branch, span_target);
-        let sha = wt.create_safety_backup(&backup_message)?;
-        eprintln!("{}", hint_message(format!("Backup created @ {sha}")));
+        let backup = wt.create_safety_backup(&backup_message)?;
+        let short_sha = repo.short_sha(&backup.sha)?;
+        eprintln!(
+            "{}",
+            hint_message(cformat!(
+                "Backup created @ <underline>{}</> ({short_sha})",
+                backup.ref_name
+            ))
+        );
+        let recovery_branch = format!("recovery/{short_sha}");
+        let command = suggest_command(
+            "switch",
+            &[&recovery_branch],
+            &["--create", "--base", &backup.sha, "--no-hooks"],
+        );
+        eprintln!(
+            "{}",
+            hint_message(cformat!(
+                "To recover in a new worktree, run <underline>{command}</>"
+            ))
+        );
     }
 
     // Get commit subjects and bodies for the squash message

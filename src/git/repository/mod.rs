@@ -176,7 +176,7 @@ pub use integration::{BranchDiffSpec, IntegrationTargets, select_comparison_base
 pub use ref_snapshot::RefSnapshot;
 pub(super) use working_tree::path_to_logging_context;
 use working_tree::registration_worktree_path;
-pub use working_tree::{CleanCheckMode, InProgressOperation, TempIndex, WorkingTree};
+pub use working_tree::{CleanCheckMode, InProgressOperation, SafetyBackup, TempIndex, WorkingTree};
 pub use worktrees::{StaleWorktreeWork, WorktreePruneMode, duplicated_branches};
 
 // ============================================================================

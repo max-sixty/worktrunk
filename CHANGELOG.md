@@ -14,6 +14,8 @@
 
 - **Config views distinguish state from advice**: installation and authentication instructions have their own rows, while config and approvals parse errors name the source file and show one consistent diagnostic. ([#4351](https://github.com/max-sixty/worktrunk/pull/4351))
 
+- **Removal and squash recovery advice**: forced removal reports uncommitted changes or a listing failure; dirty-worktree hints recommend `git stash -u` when untracked files need preserving. Squashing staged work prints the backup ref and a command to recover its exact commit in a new worktree. ([#4347](https://github.com/max-sixty/worktrunk/pull/4347))
+
 - **Worktrunk branding in Codex**: the plugin manifest now supplies a Worktrunk logo and composer icon. ([#4327](https://github.com/max-sixty/worktrunk/pull/4327))
 
 ### Fixed
@@ -48,7 +50,7 @@
 
 ### Internal
 
-- **Library API changes** (Breaking): config and error types changed; signal forwarding methods and shell fields were removed; copy helpers take a timestamp; `ensure_holds_this_worktree` returns its Git directory; `prune_worktree_entry` takes a cleanup mode; `ensure_clean` takes a scan mode. ([#4351](https://github.com/max-sixty/worktrunk/pull/4351), [#4357](https://github.com/max-sixty/worktrunk/pull/4357), [#4319](https://github.com/max-sixty/worktrunk/pull/4319), [#4361](https://github.com/max-sixty/worktrunk/pull/4361), [#4400](https://github.com/max-sixty/worktrunk/pull/4400), [#4393](https://github.com/max-sixty/worktrunk/pull/4393))
+- **Library API changes** (Breaking): config and error types changed; signal forwarding methods and shell fields were removed; copy helpers take a timestamp; `ensure_holds_this_worktree` returns its Git directory; `prune_worktree_entry` takes a cleanup mode; `ensure_clean` takes a scan mode; `create_safety_backup` returns a `SafetyBackup`. ([#4347](https://github.com/max-sixty/worktrunk/pull/4347), [#4351](https://github.com/max-sixty/worktrunk/pull/4351), [#4357](https://github.com/max-sixty/worktrunk/pull/4357), [#4319](https://github.com/max-sixty/worktrunk/pull/4319), [#4361](https://github.com/max-sixty/worktrunk/pull/4361), [#4400](https://github.com/max-sixty/worktrunk/pull/4400), [#4393](https://github.com/max-sixty/worktrunk/pull/4393))
 
 - **Building from source requires Rust 1.98**. ([#4367](https://github.com/max-sixty/worktrunk/pull/4367))
 

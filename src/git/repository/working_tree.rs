@@ -27,6 +27,14 @@ pub enum CleanCheckMode {
     FullScan,
 }
 
+/// A squash safety backup: an immutable snapshot of the index and the ref
+/// whose reflog retains it. The backup commit's parent is the pre-squash HEAD.
+#[derive(Debug)]
+pub struct SafetyBackup {
+    pub sha: String,
+    pub ref_name: String,
+}
+
 #[derive(Debug)]
 struct NumstatEntry {
     diff: LineDiff,
@@ -1202,7 +1210,7 @@ impl<'a> WorkingTree<'a> {
     /// `git read-tree <sha>` restores that index, `git checkout <sha> -- .` also
     /// restores the files, and `<sha>^` is the branch tip before the squash.
     ///
-    /// Returns the short SHA of the backup commit.
+    /// Returns the backup commit's SHA and the ref retaining it.
     ///
     /// # Example
     /// ```no_run
@@ -1210,11 +1218,11 @@ impl<'a> WorkingTree<'a> {
     ///
     /// let repo = Repository::current()?;
     /// let wt = repo.current_worktree();
-    /// let sha = wt.create_safety_backup("feature → main (squash)")?;
-    /// println!("Backup created: {}", sha);
+    /// let backup = wt.create_safety_backup("feature → main (squash)")?;
+    /// println!("Backup created: {}", backup.sha);
     /// # Ok::<(), anyhow::Error>(())
     /// ```
-    pub fn create_safety_backup(&self, message: &str) -> anyhow::Result<String> {
+    pub fn create_safety_backup(&self, message: &str) -> anyhow::Result<SafetyBackup> {
         let tree = self.run_command(&["write-tree"])?;
         let backup_sha = self
             .run_command(&[
@@ -1252,7 +1260,10 @@ impl<'a> WorkingTree<'a> {
         ])
         .context("Failed to create backup ref")?;
 
-        self.repo().short_sha(&backup_sha)
+        Ok(SafetyBackup {
+            sha: backup_sha,
+            ref_name,
+        })
     }
 }
 
