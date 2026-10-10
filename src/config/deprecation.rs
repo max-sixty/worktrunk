@@ -1610,12 +1610,8 @@ fn validate_existing_approvals_file(approvals_path: &Path) -> anyhow::Result<()>
             crate::path::format_path_for_display(approvals_path)
         )
     })?;
-    toml::from_str::<super::approvals::Approvals>(&content).with_context(|| {
-        format!(
-            "Failed to parse existing approvals file {}",
-            crate::path::format_path_for_display(approvals_path)
-        )
-    })?;
+    toml::from_str::<super::approvals::Approvals>(&content)
+        .map_err(|error| super::ConfigParseError::approvals(approvals_path, error))?;
     Ok(())
 }
 
@@ -4713,10 +4709,7 @@ approved-commands = ["npm install"]
             "Invalid existing approvals.toml must surface as Err; got {result:?}"
         );
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Failed to parse existing approvals file"),
+            result.unwrap_err().to_string().contains("Approvals @"),
             "Error should identify the invalid approvals file"
         );
     }

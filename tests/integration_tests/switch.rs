@@ -331,7 +331,18 @@ fn test_switch_dwim_ambiguous_remotes(#[from(repo_with_remote)] mut repo: TestRe
 
     // Now shared-feature exists on origin and upstream but not locally
     // DWIM can't pick — git worktree add should error
-    snapshot_switch("switch_dwim_ambiguous_remotes", &repo, &["shared-feature"]);
+    let mut settings = setup_snapshot_settings(&repo);
+    // Git 2.50 reports an invalid reference; Git 2.56 names the ambiguity.
+    settings.add_filter(
+        r"'shared-feature' matched multiple \(2\) remote tracking branches",
+        "invalid reference: shared-feature",
+    );
+    settings.bind(|| {
+        assert_cmd_snapshot!(
+            "switch_dwim_ambiguous_remotes",
+            make_snapshot_cmd(&repo, "switch", &["shared-feature"], None)
+        );
+    });
 }
 
 /// `--base <branch>` should accept a branch that exists only as a remote-tracking ref
@@ -1272,6 +1283,56 @@ fn test_switch_execute_failure(repo: TestRepo) {
             "-c",
             "exit 1",
         ],
+    );
+}
+
+/// Suppressing wt's own failure message must preserve a program's native
+/// termination signal, distinct from an ordinary exit with the same shell code.
+#[rstest]
+#[case::interrupt(Some(nix::libc::SIGINT))]
+#[case::terminate(Some(nix::libc::SIGTERM))]
+#[case::ordinary_exit(None)]
+#[cfg(unix)]
+fn test_switch_execute_preserves_native_signal(repo: TestRepo, #[case] signal: Option<i32>) {
+    use std::os::unix::process::ExitStatusExt;
+
+    let program = r#"import os, signal, sys
+number = int(sys.argv[1])
+print('child output', flush=True)
+if number:
+    signal.signal(number, signal.SIG_DFL)
+    os.kill(os.getpid(), number)
+else:
+    os._exit(130)
+"#;
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "main",
+            "--no-cd",
+            "--execute",
+            "python3",
+            "--",
+            "-c",
+            program,
+        ])
+        .arg(signal.unwrap_or(0).to_string())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.signal(), signal, "{output:?}");
+    assert_eq!(
+        output.status.code(),
+        signal.is_none().then_some(130),
+        "{output:?}"
+    );
+    assert_eq!(output.stdout, b"child output\n");
+    let raw_stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = raw_stderr.ansi_strip();
+    assert!(
+        !stderr.contains('✗'),
+        "unexpected wt failure message: {stderr}"
     );
 }
 
@@ -5982,7 +6043,7 @@ fn test_switch_pr_malformed_project_config_bails_before_forge_selection(
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Failed to load project config"),
+        stderr.contains("Project config @"),
         "expected project-config load error, got:\n{stderr}"
     );
     assert!(
@@ -6773,6 +6834,41 @@ fn test_switch_pr_azure_fork(#[from(repo_with_remote)] repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_azure_fork", cmd);
+    });
+}
+
+/// With no `webUrl` in the response, the org and host come from the local
+/// remote. An `ssh.dev.azure.com` remote must still suggest an HTTPS
+/// `dev.azure.com` URL for the PR's repository, not one on the SSH host.
+#[rstest]
+fn test_switch_pr_azure_ssh_remote_suggests_web_host(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "git@ssh.dev.azure.com:v3/myorg/myproject/test-repo",
+    ]);
+
+    let az_response = r#"{
+        "title": "Fix in a sibling repository",
+        "createdBy": {"uniqueName": "alice@example.com"},
+        "status": "active",
+        "isDraft": false,
+        "sourceRefName": "refs/heads/feature-auth",
+        "repository": {
+            "name": "other-repo",
+            "project": {"name": "myproject"}
+        },
+        "forkSource": null
+    }"#;
+
+    let mock_bin = setup_mock_az(&repo, az_response);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_azure_ssh_remote_suggests_web_host", cmd);
     });
 }
 

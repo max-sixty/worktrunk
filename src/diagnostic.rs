@@ -449,9 +449,6 @@ fn environment_vars(repo: &Repository) -> String {
         .collect();
 
     // git's `core.pager` is the pager source `PAGER`/`GIT_PAGER` don't capture.
-    // Read the raw config value (not `pager::git_config_pager`, which folds an
-    // explicit `cat`/empty into "unset") so the report shows what git actually
-    // sees.
     let core_pager = repo
         .config_value("core.pager")
         .ok()
