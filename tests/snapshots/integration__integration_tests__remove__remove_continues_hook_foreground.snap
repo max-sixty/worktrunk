@@ -1,0 +1,25 @@
+---
+source: tests/integration_tests/remove.rs
+expression: stderr
+---
+[36m◎[39m [36mRunning pre-remove project hook @ [1m_REPO_.failed-a[22m[39m
+[107m [0m [2m[0m[2m[35mcase[0m[2m [0m[2m[32m'failed-a'[0m[2m [0m[2m[35min[0m[2m failed-*) [0m[2m[34mexit[0m[2m 7 ;; [0m[2m[35mesac[0m
+[0m[31m✗[39m [31mpre-remove command failed: exit status: 7[39m
+[2m↳[22m [2mTo skip pre-remove hooks, re-run with [4m--no-hooks[24m[22m
+[36m◎[39m [36mRunning pre-remove project hook @ [1m_REPO_.valid[22m[39m
+[107m [0m [2m[0m[2m[35mcase[0m[2m [0m[2m[32m'valid'[0m[2m [0m[2m[35min[0m[2m failed-*) [0m[2m[34mexit[0m[2m 7 ;; [0m[2m[35mesac[0m
+[0m[36m◎[39m [36mRemoving [1mvalid[22m worktree...[39m
+[32m✓[39m [32mRemoved [1mvalid[22m worktree & branch (same commit as [1mmain[22m,[39m [2m_[22m[32m)[39m [90m(4 files · [BYTES] B[39m[90m)[39m
+[36m◎[39m [36mRunning pre-remove project hook @ [1m_REPO_.failed-b[22m[39m
+[107m [0m [2m[0m[2m[35mcase[0m[2m [0m[2m[32m'failed-b'[0m[2m [0m[2m[35min[0m[2m failed-*) [0m[2m[34mexit[0m[2m 7 ;; [0m[2m[35mesac[0m
+[0m[31m✗[39m [31mpre-remove command failed: exit status: 7[39m
+[2m↳[22m [2mTo skip pre-remove hooks, re-run with [4m--no-hooks[24m[22m
+[2m○[22m No worktree found for branch [1mbranch-only[22m
+[32m✓ Removed branch [1mbranch-only[22m (same commit as [1mmain[22m,[39m [2m_[22m[32m)[39m
+[36m◎[39m [36mRunning pre-remove project hook[39m
+[107m [0m [2m[0m[2m[35mcase[0m[2m [0m[2m[32m'current'[0m[2m [0m[2m[35min[0m[2m failed-*) [0m[2m[34mexit[0m[2m 7 ;; [0m[2m[35mesac[0m
+[0m[36m◎[39m [36mRemoving [1mcurrent[22m worktree...[39m
+[32m✓[39m [32mRemoved [1mcurrent[22m worktree & branch (same commit as [1mmain[22m,[39m [2m_[22m[32m)[39m [90m(4 files · [BYTES] B[39m[90m)[39m
+[33m▲[39m [33mWorktree for [1mmain[22m @ [1m_REPO_[22m, but cannot change directory — shell integration not installed[39m
+[2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m
+[2m↳[22m [2mCurrent directory was removed; to see worktrees, run [4mwt list[24m[22m

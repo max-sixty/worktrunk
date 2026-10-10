@@ -27,7 +27,7 @@ pub(crate) fn acquire_config_lock(
     // Create parent directory if needed
     if let Some(parent) = lock_path.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|e| ConfigError(format!("Failed to create config directory: {e}")))?;
+            .map_err(|e| ConfigError::Message(format!("Failed to create config directory: {e}")))?;
     }
 
     let file = std::fs::OpenOptions::new()
@@ -36,10 +36,10 @@ pub(crate) fn acquire_config_lock(
         .create(true)
         .truncate(false)
         .open(&lock_path)
-        .map_err(|e| ConfigError(format!("Failed to open lock file: {e}")))?;
+        .map_err(|e| ConfigError::Message(format!("Failed to open lock file: {e}")))?;
 
     file.lock_exclusive()
-        .map_err(|e| ConfigError(format!("Failed to acquire config lock: {e}")))?;
+        .map_err(|e| ConfigError::Message(format!("Failed to acquire config lock: {e}")))?;
 
     Ok(file)
 }
@@ -73,7 +73,7 @@ impl UserConfig {
         };
         let edited = file.edited(&edit, &changed)?;
         crate::utils::write_atomically(config_path, edited.content()).map_err(|e| {
-            ConfigError(format!(
+            ConfigError::Message(format!(
                 "Failed to write config file {}: {}",
                 format_path_for_display(config_path),
                 e
