@@ -21,6 +21,10 @@ use crate::shell_exec::Cmd;
 use crate::styling::{eprintln, format_with_gutter, hint_message, warning_message};
 
 impl Repository {
+    /// Temporary metadata disposal directories directly in the Git common dir.
+    /// Only complete, unregistered admin directories enter this namespace.
+    pub const UNREGISTERED_WORKTREE_PREFIX: &str = "worktrunk-unregistered-";
+
     /// List all worktrees for this repository.
     ///
     /// Returns a list of worktrees with bare entries filtered out.
@@ -240,26 +244,28 @@ impl Repository {
     ///
     /// # Concurrent calls
     ///
-    /// This deletion and [`Repository::remove_worktree`]'s `git worktree
-    /// remove` serialize with each other for the same repository. Naming one
-    /// entry bounds what a call *deletes*, not what others *read*: `git
-    /// worktree remove` and `git worktree list` enumerate *every* entry under
-    /// `.git/worktrees/` and read each one's files, so one overlapping this
-    /// deletion can read the entry mid-deletion and fail (`failed to read
-    /// …/commondir` / `Invalid path …/.git/worktrees/<id>`). That is Git's own
-    /// TOCTOU between the enumerator's `readdir` and its `open`. The
-    /// repository-scoped write lock closes the in-process window;
-    /// [`Repository::list_worktrees`] takes the matching read side. A `git
-    /// worktree list` in an *unrelated* process — outside wt's lock — remains
-    /// exposed; wt's serialization only covers its own removals.
+    /// This unregister and [`Repository::remove_worktree`]'s `git worktree
+    /// remove` serialize with each other for the same repository. Both Git
+    /// removal and listing enumerate every entry under `.git/worktrees/`.
+    /// A call that enumerates before the atomic move but opens the entry after
+    /// it can fail (`failed to read …/commondir` / `Invalid path …/worktrees/<id>`).
+    /// The repository-scoped write lock closes that in-process window;
+    /// [`Repository::list_worktrees`] takes its matching read side. An unrelated
+    /// Git process remains exposed to the readdir/open race, but never sees an
+    /// admin directory being partially deleted in place.
     ///
     /// Git also `rmdir`s `.git/worktrees` once its last entry goes. This
     /// leaves the empty directory, which git reads as no linked worktrees.
     ///
     /// Unless explicitly forced, recheck the index under that same lock just
-    /// before deletion. Also retain operation state for an already-stale entry;
-    /// an authorized live removal may discard its clean operation state.
+    /// before unregistering. Also retain operation state for an already-stale
+    /// entry; an authorized live removal may discard its clean operation state.
     /// Planning can precede approved hooks that put new work in the entry.
+    ///
+    /// Unregistering atomically moves the complete admin directory outside
+    /// Git's registry before deleting it. A failed move leaves it intact for
+    /// repair; failed cleanup after the move leaves only garbage outside the
+    /// registry, which the trash janitor can sweep later.
     pub fn prune_worktree_entry(&self, path: &Path, mode: WorktreePruneMode) -> anyhow::Result<()> {
         let display = format_path_for_display(path);
         let _registry = self.worktree_registry_write();
@@ -291,12 +297,36 @@ impl Repository {
             }
             .into());
         }
-        std::fs::remove_dir_all(&registration).with_context(|| {
+        // Rename is the unregister commit: a failure leaves every registration
+        // file available for repair. Recursive deletion before that commit can
+        // fail after deleting HEAD/commondir while leaving an undeletable index.
+        // Payload staging under wt/trash is optional. Metadata disposal must
+        // still work when wt or trash is unavailable, so reserve its temporary
+        // parent directly in the Git common directory.
+        let garbage = tempfile::Builder::new()
+            .prefix(Self::UNREGISTERED_WORKTREE_PREFIX)
+            .suffix(&format!("-{}", crate::utils::epoch_now()))
+            .tempdir_in(self.git_common_dir())
+            .with_context(|| {
+                format!(
+                    "Failed to prepare metadata disposal in {}",
+                    format_path_for_display(self.git_common_dir())
+                )
+            })?;
+        // The uniquely created parent owns this absent child. A concurrent
+        // janitor sweep before the move only makes it fail, preserving metadata.
+        std::fs::rename(&registration, garbage.path().join("registration")).with_context(|| {
             format!(
-                "Failed to delete {}",
+                "Failed to unregister {}",
                 format_path_for_display(&registration)
             )
-        })
+        })?;
+        // Removal has committed. Failed cleanup leaves only disposable metadata
+        // in the disposal namespace, where the janitor can try again later.
+        if let Err(error) = garbage.close() {
+            tracing::debug!(%error, "Failed to clean unregistered worktree metadata");
+        }
+        Ok(())
     }
 
     /// What unregistering the stale worktree at `path` would destroy that
@@ -309,7 +339,7 @@ impl Repository {
     /// worktree repair <path>` reconnects the directory — recreated first, if
     /// it went too — and all of that comes back; afterwards staged files
     /// survive only as dangling blobs. Planning asks this first, and the
-    /// deletion primitive repeats it under its registry write lock unless
+    /// unregister primitive repeats it under its registry write lock unless
     /// explicitly forced. Both keep an entry that holds either, which is
     /// where they are more careful than `git worktree prune`. Files in a
     /// directory that remains stay on disk either way, and a registration with

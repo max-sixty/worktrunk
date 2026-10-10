@@ -4,21 +4,23 @@
 
 ### Improved
 
-- **Foreground hooks preserve native terminal behavior**: serial hooks with exclusive input inherit stdin; parallel and detached hooks read EOF. On Unix, foreground commands share the shell’s job group, so terminal-setting tools no longer stop with SIGTTOU and Ctrl-Z/fg work normally. `prune --foreground` keeps pre-remove hooks interactive. (Breaking: hooks no longer receive JSON on stdin; use template arguments. `wt step for-each` keeps JSON.) [Docs](https://worktrunk.dev/hook/#interactive-hooks) ([#3129](https://github.com/max-sixty/worktrunk/pull/3129), [#4400](https://github.com/max-sixty/worktrunk/pull/4400), thanks @endigma for requesting and @user753 and @willparsons for reporting)
+- **Interactive hooks**: a `pre-start` hook with one command can prompt. On Unix, Ctrl-Z/fg suspend and resume foreground commands normally. (Breaking: hooks no longer receive JSON on stdin; pass context through template arguments. `wt step for-each` keeps JSON.) [Docs](https://worktrunk.dev/hook/#interactive-hooks) ([#3129](https://github.com/max-sixty/worktrunk/pull/3129), [#4400](https://github.com/max-sixty/worktrunk/pull/4400), thanks @endigma for requesting and @user753 and @willparsons for reporting)
 
-- **Nushell integration requires 0.113 or newer** (Breaking): shell cleanup now uses native `finally` handling. [Docs](https://worktrunk.dev/shell-integration/) ([#4400](https://github.com/max-sixty/worktrunk/pull/4400))
+- **Nushell integration requires 0.113 or newer** (Breaking). [Docs](https://worktrunk.dev/shell-integration/) ([#4400](https://github.com/max-sixty/worktrunk/pull/4400))
 
-- **Choose a worktree directory independently of its branch**: experimental `wt switch --create feature/JIRA-1234 --path ../dark-mode` overrides the path template for one worktree. Switch by branch or path as usual; `wt step relocate` can return it to the template location. The repository's Git metadata directory is refused even with `--clobber`. [Docs](https://worktrunk.dev/switch/#custom-path) ([#4317](https://github.com/max-sixty/worktrunk/pull/4317), thanks @christowiz for requesting in [#1982](https://github.com/max-sixty/worktrunk/issues/1982))
+- **Choose a worktree directory independently of its branch**: experimental `wt switch --create feature/JIRA-1234 --path ../dark-mode` overrides the path template for one worktree. Switch by branch or path as usual; `wt step relocate` can return it to the template location. [Docs](https://worktrunk.dev/switch/#custom-path) ([#4317](https://github.com/max-sixty/worktrunk/pull/4317), thanks @christowiz for requesting in [#1982](https://github.com/max-sixty/worktrunk/issues/1982))
 
-- **Prune runs removal hooks concurrently across worktrees**: each worktree's pre-remove hooks finish before its removal, but hooks writing shared resources must coordinate those writes themselves. `--foreground` serializes removals and lets pre-remove hooks prompt. [Docs](https://worktrunk.dev/step/#wt-step-prune) ([#4337](https://github.com/max-sixty/worktrunk/pull/4337))
+- **Prune runs pre-remove hooks concurrently across worktrees** (Breaking): hooks writing shared resources must coordinate those writes. `wt step prune --foreground` serializes worktree removals. [Docs](https://worktrunk.dev/step/#wt-step-prune) ([#4337](https://github.com/max-sixty/worktrunk/pull/4337))
 
-- **Config views distinguish state from advice**: installation and authentication instructions have their own rows, while config and approvals parse errors name the source file and show one consistent diagnostic. ([#4351](https://github.com/max-sixty/worktrunk/pull/4351))
+- **Config views and shell integration advice**: installation and authentication instructions have their own rows, while config and approvals parse errors name the source file and show one consistent diagnostic. Merge and removal suggest restarting the shell when integration is installed but inactive. ([#4351](https://github.com/max-sixty/worktrunk/pull/4351), [#4343](https://github.com/max-sixty/worktrunk/pull/4343))
 
 - **Removal and squash recovery advice**: forced removal reports uncommitted changes or a listing failure; dirty-worktree hints recommend `git stash -u` when untracked files need preserving. Squashing staged work prints the backup ref and a command to recover its exact commit in a new worktree. ([#4347](https://github.com/max-sixty/worktrunk/pull/4347))
 
 - **Worktrunk branding in Codex**: the plugin manifest now supplies a Worktrunk logo and composer icon. ([#4327](https://github.com/max-sixty/worktrunk/pull/4327))
 
 ### Fixed
+
+- **Switch diagnostics**: invalid branch names, missing `--base` refs and missing worktrees get specific errors. With `--no-cd`, existing worktrees report their location without claiming the shell changed directories. ([#4349](https://github.com/max-sixty/worktrunk/pull/4349))
 
 - **Copying ignored files**: regular files share one modification time, avoiding copy-order Cargo rebuilds. Directory patterns in `.worktreeinclude` and `exclude` now cover ignored files alongside tracked siblings; `promote` also honors directory includes while keeping VCS metadata in place. ([#4393](https://github.com/max-sixty/worktrunk/pull/4393), [#4319](https://github.com/max-sixty/worktrunk/pull/4319), [#4406](https://github.com/max-sixty/worktrunk/pull/4406), thanks @dmy-gh for reporting and @paul-hansen for the Cargo reproduction in [#4248](https://github.com/max-sixty/worktrunk/issues/4248))
 

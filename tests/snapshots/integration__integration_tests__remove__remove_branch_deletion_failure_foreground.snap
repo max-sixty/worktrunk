@@ -1,0 +1,10 @@
+---
+source: tests/integration_tests/remove.rs
+expression: stderr
+---
+[36m◎[39m [36mRemoving [1mfeature[22m worktree...[39m
+[36m◎[39m [36mRunning post-remove: project[39m
+[31m✗[39m [31mWorktree removed @ [1m_REPO_.feature[22m; failed to delete branch [1mfeature[22m[39m
+[107m [0m error: cannot lock ref 'refs/heads/feature': Unable to create _REPO_/.git/refs/heads/feature.lock: File exists.
+[107m [0m 
+[107m [0m Another git process seems to be running in this repository, or the lock file may be stale

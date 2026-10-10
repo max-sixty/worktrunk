@@ -22,7 +22,7 @@ pub enum InternalOp {
     Remove,
     /// Delayed cleanup of the removed current worktree's empty PWD placeholder.
     RemovePlaceholder,
-    /// Background cleanup of stale entries in `.git/wt/trash/`
+    /// Background cleanup of staged worktrees and unregistered metadata
     TrashSweep,
 }
 
@@ -445,8 +445,8 @@ fn spawn_detached_exec_windows(
 ///
 /// Steps:
 ///
-/// 1. [`sweep_stale_trash`] — delete stale `.git/wt/trash/` entries left by
-///    an interrupted background removal.
+/// 1. [`sweep_stale_trash`] — delete stale payload and metadata disposal
+///    entries left by interrupted or incomplete cleanup.
 /// 2. [`worktrunk::git::fsmonitor::reap_orphan_fsmonitor_daemons`] — terminate
 ///    `git fsmonitor--daemon` processes whose worktree no longer exists.
 ///    Defense-in-depth for daemons orphaned by paths that bypass `wt remove`
@@ -458,15 +458,19 @@ pub fn run_internal_sweep(repo: &Repository) {
     worktrunk::git::fsmonitor::reap_orphan_fsmonitor_daemons(repo);
 }
 
-/// How old a `.git/wt/trash/` entry must be before [`sweep_stale_trash`] deletes it.
+/// How old a disposal entry must be before [`sweep_stale_trash`] deletes it.
 pub const TRASH_STALE_THRESHOLD_SECS: u64 = 24 * 60 * 60;
 
-/// Fire-and-forget cleanup of stale entries in `.git/wt/trash/`.
+/// Fire-and-forget cleanup of staged worktrees and unregistered metadata.
 ///
 /// Worktree removal uses a fast path that renames the worktree into
 /// `.git/wt/trash/<name>-<timestamp>/` and deletes it in a detached background
 /// process. If that process is interrupted (SIGKILL, reboot, disk full), the
-/// renamed directory is orphaned. `wt remove` calls this function after its
+/// renamed directory is orphaned. Metadata unregister uses timestamped temporary
+/// directories with [`Repository::UNREGISTERED_WORKTREE_PREFIX`] directly in
+/// the Git common dir, so a blocked payload-trash path cannot prevent removal.
+/// Those directories also become disposable after the atomic unregister move.
+/// `wt remove` calls this function after its
 /// primary user-visible output — so the sweep never delays the progress or
 /// success message — to provide eventual cleanup: entries older than
 /// [`TRASH_STALE_THRESHOLD_SECS`] are removed by a single detached `rm -rf`.
@@ -476,7 +480,14 @@ pub const TRASH_STALE_THRESHOLD_SECS: u64 = 24 * 60 * 60;
 /// `wt remove` operation proceeds regardless of outcome.
 pub fn sweep_stale_trash(repo: &Repository) {
     let trash_dir = repo.wt_trash_dir();
-    let stale = collect_stale_trash_entries(&trash_dir, epoch_now(), TRASH_STALE_THRESHOLD_SECS);
+    let now = epoch_now();
+    let mut stale = collect_stale_trash_entries(&trash_dir, "", now, TRASH_STALE_THRESHOLD_SECS);
+    stale.extend(collect_stale_trash_entries(
+        repo.git_common_dir(),
+        Repository::UNREGISTERED_WORKTREE_PREFIX,
+        now,
+        TRASH_STALE_THRESHOLD_SECS,
+    ));
     if stale.is_empty() {
         return;
     }
@@ -510,13 +521,16 @@ fn build_trash_sweep_command(paths: &[PathBuf]) -> String {
     format!("rm -rf -- {}", escaped.join(" "))
 }
 
-/// Collect paths in `trash_dir` whose embedded timestamp is older than
-/// `threshold_secs` relative to `now`.
-///
-/// Entries whose filename can't be parsed as `<name>-<timestamp>` are skipped —
-/// the sweep only touches directories worktrunk created via
-/// [`worktrunk::git::remove::stage_worktree_removal`].
-fn collect_stale_trash_entries(trash_dir: &Path, now: u64, threshold_secs: u64) -> Vec<PathBuf> {
+/// Collect disposal paths matching `name_prefix` whose embedded timestamp is
+/// older than `threshold_secs` relative to `now`. The payload-trash namespace
+/// needs no prefix; the Git common dir requires its exact metadata prefix.
+/// Entries without a `<name>-<timestamp>` filename are left alone.
+fn collect_stale_trash_entries(
+    trash_dir: &Path,
+    name_prefix: &str,
+    now: u64,
+    threshold_secs: u64,
+) -> Vec<PathBuf> {
     let Ok(read_dir) = fs::read_dir(trash_dir) else {
         return Vec::new();
     };
@@ -525,7 +539,11 @@ fn collect_stale_trash_entries(trash_dir: &Path, now: u64, threshold_secs: u64) 
         .filter_map(|entry| entry.ok())
         .filter_map(|entry| {
             let name = entry.file_name();
-            let timestamp = parse_trash_entry_timestamp(name.to_str()?)?;
+            let name = name.to_str()?;
+            if !name.starts_with(name_prefix) {
+                return None;
+            }
+            let timestamp = parse_trash_entry_timestamp(name)?;
             let age = now.saturating_sub(timestamp);
             (age >= threshold_secs).then(|| entry.path())
         })
@@ -534,8 +552,8 @@ fn collect_stale_trash_entries(trash_dir: &Path, now: u64, threshold_secs: u64) 
 
 /// Extract the Unix timestamp suffix from a trash entry filename.
 ///
-/// Filenames produced by [`worktrunk::git::remove::stage_worktree_removal`]
-/// have the form `<name>-<timestamp>`, where timestamp is a bare unsigned
+/// Worktree and unregistered-metadata trash entries have the form
+/// `<name>-<timestamp>`, where timestamp is a bare unsigned
 /// integer in Unix epoch seconds. The worktree name may contain hyphens, so
 /// splitting from the right and parsing the tail is unambiguous.
 fn parse_trash_entry_timestamp(name: &str) -> Option<u64> {
@@ -864,7 +882,7 @@ mod tests {
         let foreign = trash.path().join("random-folder");
         fs::create_dir(&foreign).unwrap();
 
-        let mut collected = collect_stale_trash_entries(trash.path(), now, day);
+        let mut collected = collect_stale_trash_entries(trash.path(), "", now, day);
         collected.sort();
         let mut expected = vec![stale, boundary];
         expected.sort();
@@ -874,13 +892,82 @@ mod tests {
             "fresh entries must not appear in stale list"
         );
         assert!(foreign.exists(), "unparsable entries must be left alone");
+
+        // The Git common directory is not a trash namespace. Even a valid
+        // old timestamp must be ignored unless the exact owned prefix matches.
+        let metadata = trash.path().join(format!(
+            "{}random-{}",
+            Repository::UNREGISTERED_WORKTREE_PREFIX,
+            now - 2 * day
+        ));
+        fs::create_dir(&metadata).unwrap();
+        assert_eq!(
+            collect_stale_trash_entries(
+                trash.path(),
+                Repository::UNREGISTERED_WORKTREE_PREFIX,
+                now,
+                day,
+            ),
+            vec![metadata],
+        );
+    }
+
+    /// The common directory is an external namespace: delete only the owned
+    /// metadata prefix, and never follow a prefixed symlink into other data.
+    #[cfg(unix)]
+    #[test]
+    fn test_metadata_sweep_preserves_other_git_entries_and_symlink_targets() {
+        use worktrunk::shell_exec::Cmd;
+        let common = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let now = 1_700_000_000;
+        let old = now - 2 * TRASH_STALE_THRESHOLD_SECS;
+        let prefix = Repository::UNREGISTERED_WORKTREE_PREFIX;
+        let disposable = common.path().join(format!("{prefix}random-{old}"));
+        fs::create_dir(&disposable).unwrap();
+        fs::write(disposable.join("index"), "committed disposal").unwrap();
+        let foreign = common.path().join(format!("foreign-{old}"));
+        fs::create_dir(&foreign).unwrap();
+        fs::write(foreign.join("index"), "unrelated data").unwrap();
+        let live_index = common.path().join("worktrees/live/index");
+        fs::create_dir_all(live_index.parent().unwrap()).unwrap();
+        fs::write(&live_index, "live index").unwrap();
+        fs::write(outside.path().join("payload"), "outside data").unwrap();
+        let link = common.path().join(format!("{prefix}symlink-{old}"));
+        std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+        let stale =
+            collect_stale_trash_entries(common.path(), prefix, now, TRASH_STALE_THRESHOLD_SECS);
+        assert_eq!(stale.len(), 2);
+        let output = Cmd::new("sh")
+            .args(["-c".to_string(), build_trash_sweep_command(&stale)])
+            .run()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!disposable.exists());
+        assert_eq!(
+            fs::symlink_metadata(link).unwrap_err().kind(),
+            std::io::ErrorKind::NotFound
+        );
+        assert_eq!(
+            fs::read_to_string(outside.path().join("payload")).unwrap(),
+            "outside data"
+        );
+        assert_eq!(
+            fs::read_to_string(foreign.join("index")).unwrap(),
+            "unrelated data"
+        );
+        assert_eq!(fs::read_to_string(live_index).unwrap(), "live index");
     }
 
     #[test]
     fn test_collect_stale_trash_entries_missing_dir() {
         let missing = std::path::PathBuf::from("/nonexistent/wt/trash/path");
         assert!(
-            collect_stale_trash_entries(&missing, 1_700_000_000, TRASH_STALE_THRESHOLD_SECS)
+            collect_stale_trash_entries(&missing, "", 1_700_000_000, TRASH_STALE_THRESHOLD_SECS)
                 .is_empty()
         );
     }

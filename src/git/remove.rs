@@ -337,9 +337,8 @@ pub struct RemoveOptions {
 ///
 /// `branch_result` is `None` when deletion was skipped (no branch supplied, or
 /// `deletion_mode.should_keep()`). Otherwise it carries the raw result so
-/// callers can decide how to surface branch-deletion failures — the
-/// foreground removal path reports them to the user, the TUI picker ignores
-/// them (best-effort), and external tools can do whatever fits.
+/// callers can surface branch-deletion failures after scheduling cleanup of
+/// the removed worktree.
 ///
 /// `staged_path` is `Some` only after successful fast-path unregistering.
 /// Callers own its cleanup, usually from trash and otherwise from retained
@@ -581,7 +580,7 @@ fn rename_into_trash(
         return Ok(None);
     }
     let retained_path = generate_removing_path(&retained_dir, git_dir);
-    if let Err(e) = renamore::rename_exclusive(worktree_path, &retained_path) {
+    if let Err(e) = rename_worktree_directory(worktree_path, &retained_path) {
         tracing::debug!(error = %e, "Failed to stage worktree, falling back: {e}");
         return Ok(None);
     }
@@ -590,18 +589,18 @@ fn rename_into_trash(
         worktree_path,
         WorktreePruneMode::removed_live(force_worktree),
     ) {
-        anyhow::bail!(
-            "Worktree removal stopped: {e:#}. Worktree files are preserved at {}; run git -C {} worktree repair {} to reconnect them",
-            retained_path.display(),
-            shell_escape::escape(repo.git_common_dir().to_string_lossy()),
-            shell_escape::escape(retained_path.to_string_lossy()),
-        );
+        return Err(GitError::WorktreeRemovalPreserved {
+            path: retained_path,
+            git_common_dir: repo.git_common_dir().to_path_buf(),
+            error: e,
+        }
+        .into());
     }
 
     let trash_dir = repo.wt_trash_dir();
     let staged_path = generate_removing_path(&trash_dir, git_dir);
     if std::fs::create_dir_all(&trash_dir)
-        .and_then(|()| renamore::rename_exclusive(&retained_path, &staged_path))
+        .and_then(|()| rename_worktree_directory(&retained_path, &staged_path))
         .is_ok()
     {
         Ok(Some(staged_path))
@@ -610,6 +609,39 @@ fn rename_into_trash(
         // delete this payload directly even if promoting it to trash failed.
         Ok(Some(retained_path))
     }
+}
+
+/// Move a checkout without overwriting a destination that already exists.
+///
+/// Some Unix filesystems lack atomic no-replace rename. Reserve an empty
+/// directory there first: ordinary directory rename can replace that reservation,
+/// but must refuse if another writer fills it. Never use the general non-atomic
+/// fallback, which checks for absence and can then replace an unrelated path.
+fn rename_worktree_directory(from: &Path, to: &Path) -> std::io::Result<()> {
+    match renamore::rename_exclusive(from, to) {
+        #[cfg(unix)]
+        // Darwin's ENOTSUP is distinct from EOPNOTSUPP and Rust leaves its
+        // ErrorKind uncategorized. renamore returns that raw filesystem error.
+        Err(error) if lacks_atomic_noreplace(&error) => rename_into_reserved_directory(from, to),
+        result => result,
+    }
+}
+
+#[cfg(unix)]
+fn lacks_atomic_noreplace(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::Unsupported
+        || error.raw_os_error() == Some(nix::errno::Errno::ENOTSUP as i32)
+}
+
+#[cfg(unix)]
+fn rename_into_reserved_directory(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::create_dir(to)?;
+    if let Err(error) = std::fs::rename(from, to) {
+        // Remove only our empty reservation. Anything written into it stays.
+        let _ = std::fs::remove_dir(to);
+        return Err(error);
+    }
+    Ok(())
 }
 
 /// Capture fresh refs and run a planned branch deletion.
@@ -791,6 +823,72 @@ mod tests {
     use super::*;
     use crate::git::ErrorExt;
     use crate::testing::TestRepo;
+
+    #[cfg(unix)]
+    #[test]
+    fn unsupported_noreplace_errors_select_portable_fallback() {
+        for error in [
+            std::io::Error::from(std::io::ErrorKind::Unsupported),
+            std::io::Error::from_raw_os_error(nix::errno::Errno::ENOTSUP as i32),
+        ] {
+            assert!(lacks_atomic_noreplace(&error));
+        }
+        for kind in [
+            std::io::ErrorKind::AlreadyExists,
+            std::io::ErrorKind::PermissionDenied,
+        ] {
+            assert!(!lacks_atomic_noreplace(&std::io::Error::from(kind)));
+        }
+    }
+
+    /// The portable fallback moves the payload only into a new reservation.
+    /// Existing destinations, including empty directories, must survive.
+    #[cfg(unix)]
+    #[test]
+    fn reserved_directory_rename_preserves_existing_destinations() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let destination = temp.path().join("destination");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("payload"), "keep").unwrap();
+
+        for kind in ["empty directory", "nonempty directory", "file"] {
+            if kind != "file" {
+                std::fs::create_dir(&destination).unwrap();
+                if kind == "nonempty directory" {
+                    std::fs::write(destination.join("other"), "other").unwrap();
+                }
+            } else {
+                std::fs::write(&destination, "other").unwrap();
+            }
+            let error = rename_into_reserved_directory(&source, &destination).unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+            assert_eq!(
+                std::fs::read_to_string(source.join("payload")).unwrap(),
+                "keep"
+            );
+            if kind != "file" {
+                if kind == "nonempty directory" {
+                    assert_eq!(
+                        std::fs::read_to_string(destination.join("other")).unwrap(),
+                        "other"
+                    );
+                    std::fs::remove_file(destination.join("other")).unwrap();
+                }
+                std::fs::remove_dir(&destination).unwrap();
+            } else {
+                assert_eq!(std::fs::read_to_string(&destination).unwrap(), "other");
+                std::fs::remove_file(&destination).unwrap();
+            }
+        }
+
+        rename_worktree_directory(&source, &destination).unwrap();
+        assert!(!source.exists());
+        assert_eq!(
+            std::fs::read_to_string(destination.join("payload")).unwrap(),
+            "keep"
+        );
+    }
 
     /// A `git worktree lock` must stop the rename even when the caller skipped
     /// `prepare_worktree_removal` (merge used to construct a plan by hand).

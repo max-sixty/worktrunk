@@ -1,0 +1,5 @@
+---
+source: tests/integration_tests/switch.rs
+expression: stderr
+---
+[31m✗[39m [31m[1m--path _PARENT_/git-data[22m is the repository's Git directory; choose a directory outside the repository and its worktrees[39m

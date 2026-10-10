@@ -6314,11 +6314,13 @@ exec {real_git} -c core.fsmonitor=false "$@"
 /// occupied again. Neither the janitor nor state clearing may delete it.
 #[cfg(unix)]
 #[rstest]
-#[case::primary(false)]
-#[case::removed_cwd(true)]
+#[case::primary(false, false)]
+#[case::removed_cwd(true, false)]
+#[case::interrupted(false, true)]
 fn test_remove_preserves_late_index_and_payload_after_staging(
     mut repo: TestRepo,
     #[case] from_removed_cwd: bool,
+    #[case] interrupted: bool,
 ) {
     use std::os::unix::fs::PermissionsExt;
 
@@ -6339,6 +6341,9 @@ if [ "$1" = --git-dir ] && [ "$3" = rev-parse ] && [ ! -d "$WORKTRUNK_TEST_REMOV
   {real_git} --git-dir "$2" update-index --add --cacheinfo "100644,$blob,late.txt" || exit 1
   mkdir "$WORKTRUNK_TEST_REMOVAL_PATH" || exit 1
   printf 'new occupant' > "$WORKTRUNK_TEST_REMOVAL_PATH/occupant.txt"
+  if [ "$WORKTRUNK_TEST_INTERRUPT_AFTER_STAGING" = 1 ]; then
+    kill -INT $$
+  fi
 fi
 exec {real_git} -c core.fsmonitor=false "$@"
 "#
@@ -6354,16 +6359,19 @@ exec {real_git} -c core.fsmonitor=false "$@"
     if from_removed_cwd {
         command.current_dir(&worktree);
     }
+    command.args(["remove", "late-after-stage"]);
+    let later = interrupted.then(|| repo.add_worktree("later"));
+    if interrupted {
+        command.arg("later");
+    }
     let output = command
-        .args([
-            "remove",
-            "late-after-stage",
-            "--foreground",
-            "--yes",
-            "--no-delete-branch",
-        ])
+        .args(["--foreground", "--yes", "--no-delete-branch"])
         .env("PATH", &path)
         .env("WORKTRUNK_TEST_REMOVAL_PATH", &worktree)
+        .env(
+            "WORKTRUNK_TEST_INTERRUPT_AFTER_STAGING",
+            if interrupted { "1" } else { "0" },
+        )
         .output()
         .unwrap();
     assert!(
@@ -6372,6 +6380,11 @@ exec {real_git} -c core.fsmonitor=false "$@"
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(registration.is_dir());
+    if let Some(later) = later {
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(output.status.signal(), Some(nix::libc::SIGINT));
+        assert!(later.is_dir(), "interruption must stop the removal batch");
+    }
     assert_eq!(
         fs::read_to_string(worktree.join("occupant.txt")).unwrap(),
         "new occupant"
@@ -6813,4 +6826,64 @@ fn test_force_remove_interrupted_status_preserves_worktrees(
     assert!(!stderr.contains("Discarding"));
     assert!(!stderr.contains("discarding"));
     assert!(!stderr.contains("Removing later-worktree"));
+}
+
+/// A failed ref deletion does not undo worktree removal. Report its context
+/// once, and still run the removed worktree's approved teardown hook.
+#[rstest]
+#[case::foreground(true, true, "foreground")]
+#[case::background(false, true, "background")]
+#[case::branch_only(true, false, "branch_only")]
+fn test_remove_branch_deletion_failure_context(
+    mut repo: TestRepo,
+    #[case] foreground: bool,
+    #[case] with_worktree: bool,
+    #[case] snapshot_name: &str,
+) {
+    repo.write_project_config("post-remove = 'printf complete > removed-marker'");
+    repo.commit("Add post-remove hook");
+    let worktree = if with_worktree {
+        Some(repo.add_worktree("feature"))
+    } else {
+        repo.create_branch("feature");
+        None
+    };
+    fs::write(
+        repo.root_path().join(".git/refs/heads/feature.lock"),
+        "another ref writer",
+    )
+    .unwrap();
+    let mut command = repo.wt_command();
+    command.args(["remove", "feature", "--yes"]);
+    if foreground {
+        command.arg("--foreground");
+    }
+    let output = command.output().unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let plain = stderr.ansi_strip();
+    assert_eq!(output.status.code(), Some(1), "{plain}");
+    assert_eq!(plain.matches("cannot lock ref").count(), 1, "{plain}");
+    assert_eq!(
+        plain.contains("Worktree removed @"),
+        with_worktree,
+        "{plain}"
+    );
+    assert_branch_exists(&repo, "feature", true, &stderr);
+    if let Some(worktree) = worktree {
+        assert!(!worktree.exists(), "the checkout removal succeeded");
+        crate::common::wait_for("post-remove hook after ref failure", || {
+            repo.root_path().join("removed-marker").is_file()
+        });
+        assert_eq!(
+            fs::read_to_string(repo.root_path().join("removed-marker")).unwrap(),
+            "complete"
+        );
+    }
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!(
+            format!("remove_branch_deletion_failure_{snapshot_name}"),
+            stderr
+        );
+    });
 }

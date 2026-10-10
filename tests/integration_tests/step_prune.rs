@@ -1871,9 +1871,9 @@ fn test_prune_fallback_config_race_canary(mut repo: TestRepo) {
 /// the failure rather than pretending the candidate was removed: the scan
 /// records the prune in the plan (`prune_entry`), execution runs it before
 /// the branch deletion, and its error fails the run — the branch survives and
-/// the entry stays registered. A read-only registration directory is the
-/// deterministic trigger: its files can't be unlinked. Unix-only, since the
-/// trigger is a permission bit.
+/// the entry stays registered. A read-only registry directory is the
+/// deterministic trigger: its registration cannot be moved out. Unix-only,
+/// since the trigger is a permission bit.
 #[cfg(unix)]
 #[rstest]
 fn test_prune_surfaces_failing_metadata_prune(mut repo: TestRepo) {
@@ -1891,13 +1891,13 @@ fn test_prune_surfaces_failing_metadata_prune(mut repo: TestRepo) {
         .join(".git/worktrees")
         .join(wt_path.file_name().unwrap());
     assert!(registration.is_dir(), "{} missing", registration.display());
-    let set_mode = |mode| {
-        std::fs::set_permissions(&registration, std::fs::Permissions::from_mode(mode)).unwrap()
-    };
+    let registry = registration.parent().unwrap();
+    let set_mode =
+        |mode| std::fs::set_permissions(registry, std::fs::Permissions::from_mode(mode)).unwrap();
     set_mode(0o555);
-    // Skip if running as root: euid 0 ignores DAC mode bits, so the deletion
+    // Skip if running as root: euid 0 ignores DAC mode bits, so the rename
     // would succeed. Probe with a write the mode should refuse.
-    let probe = registration.join("probe");
+    let probe = registry.join("probe");
     if std::fs::write(&probe, "").is_ok() {
         let _ = std::fs::remove_file(&probe);
         set_mode(0o755);
@@ -3268,14 +3268,16 @@ fn test_prune_removal_failure_aborts_remaining_queue(repo: TestRepo) {
         .args(["step", "prune", "--yes", "--min-age=0s"])
         .output()
         .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
 
     assert!(
         !output.status.success(),
         "a failed removal must fail the run:\n{stderr}"
     );
     assert!(
-        stderr.contains("removing branch abort-a"),
+        stderr.contains("Failed to delete branch abort-a"),
         "the error should carry the failing candidate's context:\n{stderr}"
     );
     assert!(
@@ -3527,4 +3529,47 @@ fn test_prune_retains_branch_checked_out_in_another_worktree(mut repo: TestRepo)
         stderr.contains("Pruned 1 worktree") && !stderr.contains("Pruned 1 branch"),
         "summary must count the pruned entry, not the retained branch:\n{stderr}",
     );
+}
+
+/// An unavailable payload-trash directory must not veto stale unregister or
+/// branch-only cleanup. The staging blocker and another live worktree survive.
+#[rstest]
+#[case::remove(false)]
+#[case::prune(true)]
+fn test_stale_cleanup_with_blocked_payload_trash(mut repo: TestRepo, #[case] prune: bool) {
+    repo.commit("initial");
+    let stale = repo.add_worktree("stale-trash-blocked");
+    let repository = worktrunk::git::Repository::at(repo.root_path()).unwrap();
+    let registration = repository.worktree_at(&stale).git_dir().unwrap();
+    let bystander = repo.add_worktree_with_commit(
+        "live-bystander",
+        "unique.txt",
+        "keep live work",
+        "bystander",
+    );
+    std::fs::remove_dir_all(&stale).unwrap();
+    let trash = repository.wt_trash_dir();
+    std::fs::create_dir_all(trash.parent().unwrap()).unwrap();
+    std::fs::write(&trash, "keep blocker").unwrap();
+    let mut command = repo.wt_command();
+    if prune {
+        command.args(["step", "prune", "--foreground", "--yes", "--min-age=0s"]);
+    } else {
+        command.args(["remove", "stale-trash-blocked", "--foreground", "--yes"]);
+    }
+    let output = command.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!registration.exists());
+    assert_eq!(std::fs::read_to_string(&trash).unwrap(), "keep blocker");
+    assert_eq!(
+        std::fs::read_to_string(bystander.join("unique.txt")).unwrap(),
+        "keep live work"
+    );
+    let branches = repo.git_output(&["branch", "--format=%(refname:short)"]);
+    assert!(!branches.lines().any(|b| b == "stale-trash-blocked"));
+    assert!(branches.lines().any(|b| b == "live-bystander"));
 }

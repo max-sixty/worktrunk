@@ -8720,10 +8720,16 @@ fn test_switch_path_never_moves_git_common_dir() {
             .output()
             .unwrap();
         assert!(!output.status.success(), "bare={bare}: {output:?}");
-        assert!(
-            String::from_utf8_lossy(&output.stderr).contains("choose a directory outside"),
-            "bare={bare}: {output:?}"
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        let mut settings = setup_snapshot_settings(&repo);
+        crate::common::add_path_placeholder_filter(
+            &mut settings,
+            &git_dir.to_string_lossy(),
+            "[GIT_DIR]",
         );
+        settings.bind(|| {
+            insta::assert_snapshot!("switch_path_git_common_dir", stderr);
+        });
         assert_eq!(fs::read(git_dir.join("config")).unwrap(), config_before);
         let head_after = repo
             .git_command()

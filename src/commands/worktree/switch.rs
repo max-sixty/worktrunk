@@ -1031,7 +1031,7 @@ fn reject_path_overlapping_worktrees(repo: &Repository, requested: &Path) -> any
         .map(|wt| (wt.path.as_path(), true));
     for (existing, is_worktree) in registered.chain([(repo.git_common_dir(), false)]) {
         let existing = canonicalize(existing).unwrap_or_else(|_| existing.to_path_buf());
-        let relation = if existing == requested {
+        let (relation, exact_git_dir) = if existing == requested {
             // An exact worktree path gets its occupant diagnosis from
             // validate_worktree_creation. The existing Git common directory
             // must never be clobbered: bare and separate-git-dir stores have
@@ -1039,18 +1039,22 @@ fn reject_path_overlapping_worktrees(repo: &Repository, requested: &Path) -> any
             if is_worktree {
                 continue;
             }
-            "is"
+            ("is", true)
         } else if existing.starts_with(&requested) {
-            "contains"
+            ("contains", false)
         } else if requested.starts_with(&existing) {
-            "is inside"
+            ("is inside", false)
         } else {
             continue;
         };
         let requested = format_path_for_display(&requested);
-        let existing = format_path_for_display(&existing);
+        let existing = if exact_git_dir {
+            "the repository's Git directory".to_owned()
+        } else {
+            cformat!("<bold>{}</>", format_path_for_display(&existing))
+        };
         bail!(cformat!(
-            "<bold>--path {requested}</> {relation} <bold>{existing}</>; choose a directory outside the repository and its worktrees"
+            "<bold>--path {requested}</> {relation} {existing}; choose a directory outside the repository and its worktrees"
         ));
     }
     Ok(())

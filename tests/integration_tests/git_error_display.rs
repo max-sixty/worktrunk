@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use tempfile::TempDir;
 use worktrunk::git::{
-    Diagnostic, FailedCommand, GitError, HookErrorWithHint, HookType, InProgressOperation, RefType,
-    StaleWorktreeWork, WorktrunkError, add_hook_skip_hint,
+    CommandError, Diagnostic, FailedCommand, GitError, HookErrorWithHint, HookType,
+    InProgressOperation, RefType, StaleWorktreeWork, WorktrunkError, add_hook_skip_hint,
 };
 
 use crate::common::{mock_commands::MockConfig, test_tempdir, wt_command};
@@ -38,6 +38,21 @@ fn render_cases(cases: impl IntoIterator<Item = (&'static str, String)>) -> Stri
 fn worktree_errors_render() {
     let cases = [
         (
+            "failed unregister preserves the moved checkout",
+            GitError::WorktreeRemovalFailed {
+                branch: "feature".into(),
+                path: PathBuf::from("/tmp/original-path"),
+                remaining_entries: Some(vec!["new-occupant.txt".into()]),
+                error: GitError::WorktreeRemovalPreserved {
+                    path: PathBuf::from("/tmp/repo/.git/wt/retained/feature with spaces-123"),
+                    git_common_dir: PathBuf::from("/tmp/repo with spaces/.git"),
+                    error: anyhow::anyhow!("could not remove worktree metadata: Permission denied"),
+                }
+                .into(),
+            }
+            .render(),
+        ),
+        (
             "removal failed",
             GitError::WorktreeRemovalFailed {
                 branch: "feature-x".into(),
@@ -62,6 +77,29 @@ fn worktree_errors_render() {
                     "node_modules/".into(),
                     "target/".into(),
                 ]),
+            }
+            .render(),
+        ),
+        (
+            "git removal leaves directory contents",
+            GitError::WorktreeRemovalFailed {
+                branch: "feature-x".into(),
+                path: PathBuf::from("/tmp/repo.feature-x"),
+                error: CommandError {
+                    program: "git".into(),
+                    args: vec![
+                        "worktree".into(),
+                        "remove".into(),
+                        "/tmp/repo.feature-x".into(),
+                    ],
+                    stderr: "error: failed to delete '/tmp/repo.feature-x': Directory not empty"
+                        .into(),
+                    stdout: String::new(),
+                    exit_code: Some(128),
+                    signal: None,
+                }
+                .into(),
+                remaining_entries: Some(vec!["target/".into()]),
             }
             .render(),
         ),
