@@ -1799,8 +1799,7 @@ impl Repository {
     /// a commit meant to match what porcelain would record passes `-S` itself.
     /// Asked of git from this worktree rather than read from the cached config
     /// map, which is read from the common dir and so misses worktree-scoped
-    /// config, and whose boolean parsing is not git's (a valueless key is true
-    /// to git).
+    /// config.
     pub fn signs_commits(&self) -> anyhow::Result<bool> {
         let args = ["config", "--type=bool", "--get", "commit.gpgSign"];
         let output = self.run_command_output(&args)?;
@@ -2240,8 +2239,10 @@ fn worktree_config_enabled(parsed: &indexmap::IndexMap<String, Vec<String>>) -> 
 
 /// Parse the output of `git config --list -z`.
 ///
-/// Format: each entry is `key\nvalue\0`. Values may be empty (no `\n`) for
-/// keys set via `git config key ""` — handled as `key -> ""`.
+/// Format: each entry is `key\nvalue\0`. An explicitly empty value
+/// (`key = ""`) keeps the newline and parses as `key -> ""`. A key written
+/// with no value at all is emitted as bare `key\0`; git reads that as boolean
+/// true, so it parses as `key -> "true"`.
 ///
 /// Returns a map from canonical key (as git emits it) to the list of
 /// values, preserving order (matches git's own multivar semantics where
@@ -2255,9 +2256,8 @@ fn parse_config_list_z(stdout: &[u8]) -> indexmap::IndexMap<String, Vec<String>>
         let text = String::from_utf8_lossy(entry);
         let (key, value) = match text.split_once('\n') {
             Some((k, v)) => (k, v),
-            // `key` without any newline → no value set (shouldn't happen
-            // with `--list -z`, but tolerate gracefully).
-            None => (text.as_ref(), ""),
+            // A key with no value is git's implicit boolean true.
+            None => (text.as_ref(), "true"),
         };
         map.entry(key.to_string())
             .or_default()

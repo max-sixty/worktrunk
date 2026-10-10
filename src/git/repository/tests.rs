@@ -597,15 +597,27 @@ fn parse_config_list_z_empty() {
 }
 
 #[test]
-fn parse_config_list_z_entry_without_newline_tolerates_key_only() {
-    // `git config --list -z` always emits `key\nvalue\0`, but the parser
-    // tolerates bare `key\0` by mapping it to `key -> ""` rather than
-    // dropping the entry. Lets a future git oddity be diagnosed at the
-    // use-site instead of silently missing.
-    let input = b"core.bare\0other.key\nfalse\0";
+fn parse_config_list_z_key_without_value_is_true() {
+    // A key written with no `= value` is git's implicit boolean true, and
+    // `--list -z` emits it as `key\0` with no newline. An explicitly empty
+    // value (`key = ""`) keeps its newline, and git reads that as false.
+    let input = b"core.bare\0core.fsmonitor\n\0other.key\nfalse\0";
     let map = super::parse_config_list_z(input);
-    assert_eq!(map["core.bare"], vec![""]);
+    assert_eq!(map["core.bare"], vec!["true"]);
+    assert_eq!(map["core.fsmonitor"], vec![""]);
     assert_eq!(map["other.key"], vec!["false"]);
+}
+
+#[test]
+fn config_bool_reads_key_without_value_as_true() {
+    let test = TestRepo::with_initial_commit();
+    let config_path = test.root_path().join(".git/config");
+    let mut config = std::fs::read_to_string(&config_path).unwrap();
+    config.push_str("[core]\n\tfsmonitor\n");
+    std::fs::write(&config_path, config).unwrap();
+
+    let repo = Repository::at(test.root_path()).unwrap();
+    assert!(repo.is_builtin_fsmonitor_enabled());
 }
 
 #[test]
