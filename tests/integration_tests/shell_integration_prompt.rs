@@ -491,7 +491,12 @@ mod pty_tests {
     }
 
     #[rstest]
-    fn test_first_run_preserves_completion_created_after_preview(repo: TestRepo) {
+    #[case(false)]
+    #[case(true)]
+    fn test_first_run_completion_preview_controls_write(
+        repo: TestRepo,
+        #[case] created_after_preview: bool,
+    ) {
         let temp_home = TempDir::new().unwrap();
         fs::write(temp_home.path().join(".bashrc"), "# empty bashrc\n").unwrap();
         fs::create_dir_all(temp_home.path().join(".config/fish/functions")).unwrap();
@@ -510,12 +515,21 @@ mod pty_tests {
         let user_content = b"# user completion\r\n";
 
         let (output, exit_code) = exec_cmd_in_pty_prompted_with(cmd, &["y\n"], "[y/N", move |_| {
-            fs::create_dir_all(callback_path.parent().unwrap()).unwrap();
-            fs::write(&callback_path, user_content).unwrap();
+            if created_after_preview {
+                fs::create_dir_all(callback_path.parent().unwrap()).unwrap();
+                fs::write(&callback_path, user_content).unwrap();
+            }
         });
 
         assert_eq!(exit_code, 0, "switch should still succeed:\n{output}");
-        assert_eq!(fs::read(completion).unwrap(), user_content);
+        if created_after_preview {
+            assert_eq!(fs::read(completion).unwrap(), user_content);
+        } else {
+            assert!(
+                completion.is_file(),
+                "the accepted offer must install fish completions"
+            );
+        }
     }
 
     /// Test: User requests preview with ? then declines

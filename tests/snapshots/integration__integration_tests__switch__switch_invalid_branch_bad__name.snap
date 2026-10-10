@@ -1,10 +1,11 @@
 ---
-source: tests/integration_tests/security.rs
+source: tests/integration_tests/switch.rs
 info:
   program: wt
   args:
     - switch
-    - __WORKTRUNK_EXEC__echo PWNED > /tmp/hacked6
+    - "--create"
+    - bad..name
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
@@ -35,7 +36,6 @@ info:
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
-    WORKTRUNK_DIRECTIVE_CD_FILE: "[DIRECTIVE_CD_FILE]"
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
@@ -60,6 +60,4 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mNo branch or worktree named [1m__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked6[22m[39m
-[2m↳[22m [2mTo see branches and worktree paths, run [4mwt list --branches[24m[22m
-[0m
+[31m✗[39m [31mInvalid branch name [1mbad..name[22m[39m

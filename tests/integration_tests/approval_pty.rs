@@ -123,6 +123,42 @@ fn test_approval_prompt_decline(repo: TestRepo) {
     });
 }
 
+/// Declining an alias prompt prevents the project command from running.
+#[rstest]
+fn test_alias_approval_decline(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "touch alias-ran"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+    let marker = feature_path.join("alias-ran");
+    assert!(!marker.exists());
+
+    let (output, exit_code) = exec_wt_in_pty_cwd(
+        &feature_path,
+        &["step", "deploy"],
+        &repo.test_env_vars(),
+        "n\n",
+    );
+    assert_eq!(exit_code, 0, "{output}");
+    assert!(!marker.exists(), "Declined alias must not run");
+    approval_pty_settings(&repo).bind(|| {
+        assert_snapshot!("alias_approval_decline", &output);
+    });
+
+    let approved = repo
+        .wt_command()
+        .args(["--yes", "step", "deploy"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(approved.status.success(), "{approved:?}");
+    assert!(marker.exists(), "Explicitly approved alias must run");
+}
+
 #[rstest]
 fn test_approval_prompt_multiple_commands(repo: TestRepo) {
     // Remove origin so worktrunk uses directory name as project identifier

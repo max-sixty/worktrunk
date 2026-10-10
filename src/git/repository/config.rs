@@ -626,7 +626,11 @@ impl Repository {
             if target.is_none() {
                 return Err(self.uncached_default_branch_error(reference));
             }
-            return Err(GitError::ReferenceNotFound { reference }.into());
+            return Err(GitError::ReferenceNotFound {
+                reference,
+                flag: None,
+            }
+            .into());
         }
         Ok(reference)
     }

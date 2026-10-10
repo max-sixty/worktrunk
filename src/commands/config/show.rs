@@ -1192,7 +1192,7 @@ fn render_fish_completion_status(out: &mut String, cmd: &str) -> anyhow::Result<
     };
     let completion_display = format_path_for_display(&completion_path);
     let shell = Shell::Fish;
-    if completion_path.exists() {
+    if completion_path.is_file() {
         writeln!(
             out,
             "{}",

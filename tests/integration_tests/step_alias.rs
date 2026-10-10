@@ -624,41 +624,6 @@ greet = "echo USER"
 // Approval tests
 // ============================================================================
 
-/// Helper for alias approval snapshot tests
-fn snapshot_alias_approval(
-    test_name: &str,
-    repo: &TestRepo,
-    alias_args: &[&str],
-    approve: bool,
-    cwd: Option<&std::path::Path>,
-) {
-    let mut cmd = make_snapshot_cmd(repo, "step", alias_args, cwd);
-    cmd.stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let mut child = cmd.spawn().unwrap();
-
-    {
-        let stdin = child.stdin.as_mut().unwrap();
-        let response = if approve { b"y\n" } else { b"n\n" };
-        stdin.write_all(response).unwrap();
-    }
-
-    let output = child.wait_with_output().unwrap();
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined = format!(
-        "exit_code: {}\n----- stdout -----\n{}\n----- stderr -----\n{}",
-        output.status.code().unwrap_or(-1),
-        stdout,
-        stderr
-    );
-
-    insta::assert_snapshot!(test_name, combined);
-}
-
 /// Project-config alias prompts for approval in non-TTY (fails with hint)
 #[rstest]
 fn test_alias_approval_project_config_prompts(mut repo: TestRepo) {
@@ -2515,30 +2480,6 @@ s = "wt switch {{ args }}"
         &["alias", "dry-run", "s", "--", "target-branch"],
         Some(&feature_path),
     ));
-}
-
-/// Declining approval prevents alias execution
-#[rstest]
-fn test_alias_approval_decline(mut repo: TestRepo) {
-    repo.write_project_config(
-        r#"
-[aliases]
-deploy = "echo deploying"
-"#,
-    );
-    repo.commit("Add alias config");
-    let feature_path = repo.add_worktree("feature");
-
-    let settings = setup_snapshot_settings(&repo);
-    let _guard = settings.bind_to_scope();
-
-    snapshot_alias_approval(
-        "alias_approval_decline",
-        &repo,
-        &["deploy"],
-        false,
-        Some(&feature_path),
-    );
 }
 
 /// Under `-v`, aliases print a table of resolved template variables before
