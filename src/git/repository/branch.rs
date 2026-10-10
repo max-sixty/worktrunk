@@ -1,6 +1,7 @@
 //! Branch - a handle for branch-specific git operations.
 
 use super::Repository;
+use crate::git::{CommandError, GitError};
 
 /// Whether `refs/heads/<name>` is a well-formed ref, which is what a branch is.
 ///
@@ -61,6 +62,24 @@ impl<'a> Branch<'a> {
     /// Get the branch name.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Require a name Git accepts when creating a branch.
+    ///
+    /// Branch creation has stricter rules than ref syntax (for example, HEAD
+    /// is reserved). Git owns these rules; selector resolution continues to use
+    /// [`is_valid_branch_name`] for refs that may already exist.
+    pub fn require_valid_name(&self) -> anyhow::Result<()> {
+        let args = ["check-ref-format", "--branch", self.name()];
+        let output = self.repo.run_command_output(&args)?;
+        match output.status.code() {
+            Some(0) => Ok(()),
+            Some(128) => Err(GitError::InvalidBranchName {
+                name: self.name.clone(),
+            }
+            .into()),
+            _ => Err(CommandError::from_failed_output("git", &args, &output).into()),
+        }
     }
 
     /// Check if this branch exists locally.

@@ -57,11 +57,6 @@ pub fn to_posix_path(path: &str) -> String {
 /// relative paths.
 #[cfg(windows)]
 fn find_cygpath_from_shell(shell: &crate::shell_exec::ShellConfig) -> Option<PathBuf> {
-    // Only Git Bash has cygpath
-    if !shell.is_posix {
-        return None;
-    }
-
     let shell_dir = shell.executable.parent()?;
 
     // If bash is at usr/bin/bash.exe, cygpath is in the same directory

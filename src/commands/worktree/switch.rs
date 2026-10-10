@@ -19,7 +19,7 @@ use worktrunk::config::{
 };
 use worktrunk::git::remote_ref::{self, RemoteRefInfo, parse_ref_url};
 use worktrunk::git::{
-    ForgeKind, GitError, GitRemoteUrl, RefType, Repository, ResolvedWorktree, Selector,
+    ErrorExt, ForgeKind, GitError, GitRemoteUrl, RefType, Repository, ResolvedWorktree, Selector,
     SwitchSuggestionCtx, WorktreeId, branch_tracks_ref, current_or_recover, resolve_input_path,
 };
 use worktrunk::path::format_path_for_display;
@@ -666,13 +666,8 @@ fn resolve_switch_target(
 
     // Validate --create constraints
     if create {
-        if !worktrunk::git::is_valid_branch_name(&resolved_branch) {
-            return Err(GitError::InvalidBranchName {
-                name: resolved_branch,
-            }
-            .into());
-        }
         let branch_handle = repo.branch(&resolved_branch);
+        branch_handle.require_valid_name()?;
         if branch_handle.exists_locally()? {
             return Err(GitError::BranchAlreadyExists {
                 branch: resolved_branch,
@@ -882,21 +877,9 @@ fn setup_fork_branch(
         ),
     )
     .map_err(|e| {
-        // Same mapping as the `Regular` arm: git stores refs as file paths, so
-        // a fork PR whose head ref is `feature` cannot create a branch in a
-        // repo that already has `feature/x`. Name the conflicting branch
-        // instead of passing on git's raw "cannot lock ref" text.
-        match detect_branch_namespace_conflict(repo, branch) {
-            Some(conflicting) => GitError::BranchNamespaceConflict {
-                branch: branch.to_string(),
-                conflicting,
-            },
-            // No leftover-branch hint on this path: `wt switch pr:N` is the
-            // re-run, and it adopts or prefixes the branch on its own terms
-            // (see this function's docstring), so naming the ref would point at
-            // a recovery that isn't the one to take.
-            None => worktree_creation_error(&e, branch.to_string(), None, false),
-        }
+        // No leftover-branch hint here: `wt switch pr:N` adopts or prefixes
+        // the branch on re-run, so naming the ref would suggest the wrong recovery.
+        worktree_creation_error(repo, e, branch.to_string(), None, false)
     })?;
 
     // Configure branch tracking for pull and push
@@ -1242,29 +1225,13 @@ fn execute_switch(
                         Repository::SLOW_OPERATION_DELAY_MS,
                         progress_msg,
                     ) {
-                        // A new branch whose name is a path prefix of (or sits
-                        // under) an existing branch can't be created: git stores
-                        // refs as file paths, so `release` and `release/2026.4`
-                        // can't coexist. Surface that as a clear, actionable
-                        // error instead of git's raw "cannot lock ref" text.
-                        if *create_branch
-                            && let Some(conflicting) =
-                                detect_branch_namespace_conflict(repo, &branch)
-                        {
-                            return Err(GitError::BranchNamespaceConflict {
-                                branch: branch.clone(),
-                                conflicting,
-                            }
-                            .into());
-                        }
-                        let leftover = *create_branch && failed_add_left_branch(repo, &branch);
                         return Err(worktree_creation_error(
-                            &e,
+                            repo,
+                            e,
                             branch.clone(),
                             base_branch.clone(),
-                            leftover,
-                        )
-                        .into());
+                            *create_branch,
+                        ));
                     }
 
                     // `--base pr:N` / `--base mr:N` against a same-repo PR/MR: the
@@ -1435,18 +1402,32 @@ fn detect_branch_namespace_conflict(repo: &Repository, branch: &str) -> Option<S
         .map(String::from)
 }
 
-/// Build a `GitError::WorktreeCreationFailed` from a failed `git worktree add`,
-/// extracting the underlying command output for the error message.
+/// Classify a failed `git worktree add` before inspecting any further Git state.
+/// Interruptions retain their native error beneath a single-line context.
+/// Ordinary failures identify namespace conflicts or render the command output.
 ///
-/// `leftover_branch` says whether the failed add left its `-b` branch behind
-/// (see [`failed_add_left_branch`]); it only adds a hint naming the branch.
+/// Regular branch creation inspects whether the failed add left its `-b` branch
+/// behind, adding a recovery hint. Fork creation has its own re-run recovery.
 fn worktree_creation_error(
-    err: &anyhow::Error,
+    repo: &Repository,
+    err: anyhow::Error,
     branch: String,
     base_branch: Option<String>,
-    leftover_branch: bool,
-) -> GitError {
-    let (output, command) = Repository::extract_failed_command(err);
+    inspect_leftover: bool,
+) -> anyhow::Error {
+    if err.interrupt_signal().is_some() {
+        return err.context("Worktree creation interrupted");
+    }
+    // Git stores refs as paths, so `release` and `release/2026.4` cannot coexist.
+    if let Some(conflicting) = detect_branch_namespace_conflict(repo, &branch) {
+        return GitError::BranchNamespaceConflict {
+            branch,
+            conflicting,
+        }
+        .into();
+    }
+    let leftover_branch = inspect_leftover && failed_add_left_branch(repo, &branch);
+    let (output, command) = Repository::extract_failed_command(&err);
     GitError::WorktreeCreationFailed {
         branch,
         base_branch,
@@ -1454,6 +1435,7 @@ fn worktree_creation_error(
         command,
         leftover_branch,
     }
+    .into()
 }
 
 /// Whether a failed `git worktree add -b <branch>` left the branch behind.

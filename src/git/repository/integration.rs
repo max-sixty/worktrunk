@@ -151,8 +151,8 @@ pub(in crate::git) enum MergeTreeOutcome {
 
 impl Repository {
     /// Check if `base_sha` is an ancestor of `head_sha`, taking commit SHAs
-    /// directly. Hits the persistent SHA-keyed cache without going through
-    /// the (stale-prone) ambient ref→SHA cache.
+    /// directly. Hits the persistent SHA-keyed cache without resolving any
+    /// ref names.
     ///
     /// Callers that hold SHAs (e.g., from a `RefSnapshot` or a
     /// `BranchRef.commit_sha`) should prefer this form.
@@ -175,9 +175,9 @@ impl Repository {
     /// For orphan branches (no common ancestor with target), returns true since all
     /// their changes are unique.
     ///
-    /// Bypasses the ambient ref→SHA cache so callers holding SHAs from a
-    /// [`RefSnapshot`] (or `BranchRef.commit_sha`) can short-circuit to the
-    /// persistent SHA-keyed cache directly.
+    /// Takes commit SHAs, so callers holding SHAs from a [`RefSnapshot`] (or
+    /// `BranchRef.commit_sha`) go straight to the persistent SHA-keyed cache
+    /// without resolving ref names.
     pub fn has_added_changes_by_sha(
         &self,
         branch_sha: &str,
@@ -406,8 +406,9 @@ impl Repository {
     /// capped at [`PATCH_ID_SCAN_MAX_COMMITS`].
     ///
     /// Returns `Ok(true)` if a matching squash-merge commit is found on the target,
-    /// `Ok(false)` otherwise (including when the target history is too deep to scan,
-    /// or when patch-id computation fails — both conservative).
+    /// `Ok(false)` otherwise (including when the target history is too deep to
+    /// scan — conservative). A failing git command propagates as `Err`; the
+    /// caller treats that as no match.
     fn is_squash_merged_via_patch_id(&self, branch: &str, target: &str) -> anyhow::Result<bool> {
         let Some(merge_base) = self.merge_base(target, branch)? else {
             return Ok(false);

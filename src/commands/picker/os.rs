@@ -7,6 +7,10 @@
 //! rather than surfacing it — see `PickerCollector`'s copy/open verbs.
 
 use anyhow::Context;
+use std::io;
+use std::process::Stdio;
+
+use worktrunk::trace::CommandTrace;
 
 /// Copy `text` to the system clipboard.
 ///
@@ -23,8 +27,35 @@ pub(super) fn copy_to_clipboard(text: &str) -> anyhow::Result<()> {
 }
 
 /// Open `url` in the user's default browser via the OS opener (`open` on macOS,
-/// `xdg-open` on Linux). Fire-and-forget: the opener detaches, so this returns
-/// as soon as it's launched.
+/// `xdg-open` on Linux). Wait for the launcher, which normally detaches the
+/// browser. Retry another launcher only when spawning or waiting fails.
 pub(super) fn open_url(url: &str) -> anyhow::Result<()> {
-    open::that(url).with_context(|| format!("Failed to open {url}"))
+    let launch = || {
+        let mut last_error = None;
+        for mut command in open::commands(url) {
+            command
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            let mut trace = CommandTrace::new(None, &format!("{command:?}"));
+            match worktrunk::shell_exec::spawn(&mut command).and_then(|mut child| child.wait()) {
+                Ok(status) => {
+                    trace.complete(status.success());
+                    return if status.success() {
+                        Ok(())
+                    } else {
+                        Err(io::Error::other(format!(
+                            "Launcher {command:?} failed with {status:?}"
+                        )))
+                    };
+                }
+                Err(error) => {
+                    trace.fail(&error);
+                    last_error = Some(error);
+                }
+            }
+        }
+        Err(last_error.unwrap_or_else(|| io::Error::other("No browser launcher available")))
+    };
+    launch().with_context(|| format!("Failed to open {url}"))
 }

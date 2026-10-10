@@ -409,7 +409,7 @@ platform = "github"
 
 #[rstest]
 fn test_list_full_with_gitlab_remote(mut repo: TestRepo) {
-    // Set GitLab remote URL - tests get_gitlab_host_for_repo path
+    // Set GitLab remote URL so the GitLab platform is detected
     repo.run_git(&[
         "remote",
         "set-url",
@@ -421,13 +421,11 @@ fn test_list_full_with_gitlab_remote(mut repo: TestRepo) {
     repo.add_worktree("feature");
 
     // No mock glab setup - this tests the hint path when glab isn't available
-    // The get_gitlab_host_for_repo function is called to detect GitLab platform
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
         // Don't configure mocks - we want to test the "no CI tool" hint path
-        // which exercises get_gitlab_host_for_repo
         assert_cmd_snapshot!(cmd);
     });
 }
@@ -934,7 +932,7 @@ fn test_list_full_with_branch_fallback_using_fork_pushremote(mut repo: TestRepo)
         "[]",
         &[
             (
-                &format!("api repos/upstream-owner/test-repo/commits/{feature_a_sha}/check-runs"),
+                &format!("api repos/test-owner/test-repo/commits/{feature_a_sha}/check-runs"),
                 "[]",
             ),
             (

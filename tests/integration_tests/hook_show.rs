@@ -292,10 +292,7 @@ fn test_error_with_context_formatting(temp_home: TempDir) {
 /// half-read hook list is worse than stopping — and the failure renders as one
 /// header over the parser's own output.
 ///
-/// `Repository::project_config()` already wraps the load with "Failed to load
-/// project config", so the handler must not add a second copy: that rendered
-/// as a header restating its own gutter line. The snapshot pins the single
-/// header, and the `@` before the path (never "at", per the path vocabulary).
+/// The typed parser diagnosis owns the title despite the loader's outer context.
 #[rstest]
 fn test_hook_show_invalid_project_config(repo: TestRepo, temp_home: TempDir) {
     // Unclosed table header — the file cannot be parsed at all.
@@ -345,7 +342,7 @@ url = "http://localhost:8080"
 }
 
 /// A hook type declared with an empty command list contributes no commands, so
-/// both sections read as `(none configured)` rather than a bare heading.
+/// both sections read as `No hooks configured` rather than a bare heading.
 #[rstest]
 fn test_hook_show_empty_command_lists(repo: TestRepo, temp_home: TempDir) {
     repo.write_test_config(

@@ -94,7 +94,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
-        version: "=0.79.0"
+        version: "=0.80.0"
 
     - name: "Use fast D: drive for temp files (Windows)"
       if: runner.os == 'Windows'
@@ -138,6 +138,8 @@ jobs:
       if: ${{ !cancelled() }}
       uses: codecov/codecov-action@v7.1.1
       with:
+        use_pypi: true
+        version: 11.3.1
         token: ${{ secrets.CODECOV_TOKEN }}
         files: target/nextest/default/junit.xml
         report_type: test_results
@@ -162,7 +164,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
-        version: "=0.79.0"
+        version: "=0.80.0"
 
     - name: 🧪 Lockfile, doctests, rustdoc
       run: wt hook pre-merge --yes lockfile doctest doc

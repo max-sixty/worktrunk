@@ -60,8 +60,7 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mFailed to load project config[39m
-[107m [0m Project config @ _REPO_/.config/wt.toml failed to parse:
+[31m✗[39m [31mProject config @ [1m_REPO_/.config/wt.toml[22m failed to parse[39m
 [107m [0m TOML parse error at line 1, column 28
 [107m [0m   |
 [107m [0m 1 | pre-start = [invalid syntax

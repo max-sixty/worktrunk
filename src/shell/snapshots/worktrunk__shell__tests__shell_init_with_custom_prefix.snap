@@ -12,11 +12,9 @@ if command -v custom >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
     custom() {
         local use_source=false
         local args=()
-
         for arg in "$@"; do
-            if [[ "$arg" == "--source" ]]; then use_source=true; else args+=("$arg"); fi
+            if [[ "$arg" == --source ]]; then use_source=true; else args+=("$arg"); fi
         done
-
         # Completion mode: call binary directly, no directive files needed.
         # This check MUST be here (not in the binary) because clap's completion
         # handler runs before argument parsing.
@@ -25,32 +23,85 @@ if command -v custom >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
             return
         fi
 
-        local cd_file exit_code=0
-        cd_file="$(mktemp)"
-
-        # --source: use cargo run (builds from source)
-        if [[ "$use_source" == true ]]; then
-            WORKTRUNK_DIRECTIVE_CD_FILE="$cd_file" \
-                cargo run --bin custom --quiet -- "${args[@]}" || exit_code=$?
-        else
-            WORKTRUNK_DIRECTIVE_CD_FILE="$cd_file" \
-                command "${WORKTRUNK_BIN:-custom}" "${args[@]}" || exit_code=$?
-        fi
-
-        # cd file holds a raw path (no shell escaping needed).
+        # Native SIGINT can unwind this body before ordinary cleanup. Capture one
+        # cleanup function for both the next prompt and a noninteractive shell exit.
+        local cd_file owner cleanup_body exit_trap owns_exit=false prompt_provider prompt_armed=true
+        local prompt_value="${PROMPT_COMMAND-}" prompt_present="${PROMPT_COMMAND+x}" prompt_declared=false
+        local prompt_declaration prompt_flags
+        if builtin declare -p PROMPT_COMMAND >/dev/null 2>&1; then prompt_declared=true; fi
+        # Readonly prompts cannot be replaced; allexport would export our callback.
+        if [[ $- == *a* ]] || ! (PROMPT_COMMAND="$prompt_value") 2>/dev/null; then prompt_armed=false; fi
+        cd_file="$(mktemp)" || return
+        owner="_custom_cleanup_${cd_file##*/}"
+        owner="${owner//[^a-zA-Z0-9_]/_}"
+        exit_trap="$(builtin trap -p EXIT)"
+        # trap -p may expose an inherited but inactive EXIT handler in a subshell.
+        # Reinstalling it would activate the parent's handler there.
+        if [[ ( $BASH_SUBSHELL -eq 0 || -z "$exit_trap" ) && ( $- != *i* || "$prompt_armed" == true ) ]]; then owns_exit=true; fi
+        builtin printf -v prompt_provider 'if %s prompt "$?"; then builtin eval %q; else builtin eval %q; fi' "$owner" "$prompt_value" "$prompt_value"
+        # %q captures the state after the caller's local variables have unwound.
+        builtin printf -v cleanup_body '
+            local cd_file=%q owner=%q exit_trap=%q owns_exit=%q
+            local prompt_value=%q prompt_present=%q prompt_declared=%q prompt_provider=%q
+        ' "$cd_file" "$owner" "$exit_trap" "$owns_exit" "$prompt_value" "$prompt_present" "$prompt_declared" "$prompt_provider"
         # `builtin cd` bypasses any user `cd` alias or function (e.g. zoxide's
-        # `alias cd=__zoxide_z`) that would otherwise be substituted into this
+        # `alias cd=__zoxide_z`) that would otherwise be substituted into the
         # function body when it's defined. See #2643.
-        if [[ -s "$cd_file" ]]; then
-            builtin cd -- "$(<"$cd_file")"
-            local cd_exit=$?
-            if [[ $exit_code -eq 0 ]]; then
-                exit_code=$cd_exit
+        cleanup_body+='
+            local event=$1 status=$2 cd_status=0
+            if [[ "$owns_exit" == true ]]; then builtin trap - EXIT; fi
+            if [[ -s "$cd_file" ]]; then
+                builtin cd -- "$(<"$cd_file")" || cd_status=$?
             fi
-        fi
+            command rm -f "$cd_file"
+            if [[ ${PROMPT_COMMAND-} == "$prompt_provider" ]]; then
+                if [[ -n "$prompt_present" ]]; then
+                    PROMPT_COMMAND="$prompt_value"
+                else
+                    local prompt_flags
+                    prompt_flags="$(builtin declare -p PROMPT_COMMAND 2>/dev/null)" || prompt_flags=
+                    prompt_flags=${prompt_flags#declare }
+                    prompt_flags=${prompt_flags%% *}
+                    if [[ "$prompt_declared" == true ]]; then
+                        builtin unset "PROMPT_COMMAND[0]"
+                    else
+                        builtin unset PROMPT_COMMAND
+                    fi
+                    if [[ "$prompt_flags" == *x* ]]; then builtin export PROMPT_COMMAND; fi
+                fi
+            fi
+            if [[ "$owns_exit" == true && -n "$exit_trap" ]]; then builtin eval "$exit_trap"; fi
+            builtin unset -f "$owner"
+            if [[ "$event" == normal && $status -eq 0 ]]; then
+                return "$cd_status"
+            else
+                return "$status"
+            fi
+        '
+        builtin eval "$owner() { $cleanup_body }"
+        if [[ "$prompt_armed" == true ]]; then PROMPT_COMMAND="$prompt_provider"; fi
+        # Bash 3.2 only reports an exported, unset variable after assignment.
+        prompt_declaration="$(builtin declare -p PROMPT_COMMAND 2>/dev/null)" || prompt_declaration=
+        prompt_flags=${prompt_declaration#declare }
+        prompt_flags=${prompt_flags%% *}
 
-        command rm -f "$cd_file"
-        return "$exit_code"
+        local exit_code=0
+        local execution=("${WORKTRUNK_BIN:-custom}" "${args[@]}")
+        if [[ "$use_source" == true ]]; then execution=(cargo run --bin custom --quiet -- "${args[@]}"); fi
+        if [[ "$owns_exit" == true ]]; then
+            local exit_provider="$owner exit \"\$?\""
+            if [[ -n "$exit_trap" ]]; then
+                local exit_callback=${exit_trap#trap -- }
+                exit_callback=${exit_callback% EXIT}
+                builtin printf -v exit_provider 'if %s exit "$?"; then builtin eval %s; else builtin eval %s; fi' "$owner" "$exit_callback" "$exit_callback"
+            fi
+            builtin trap "$exit_provider" EXIT
+        fi
+        case "$prompt_armed:$prompt_flags" in
+            true:*x*) PROMPT_COMMAND="$prompt_value" WORKTRUNK_DIRECTIVE_CD_FILE="$cd_file" command "${execution[@]}" || exit_code=$? ;;
+            *) WORKTRUNK_DIRECTIVE_CD_FILE="$cd_file" command "${execution[@]}" || exit_code=$? ;;
+        esac
+        if "$owner" normal "$exit_code"; then return 0; else return $?; fi
     }
 
     # Lazy completions - generate on first TAB, then delegate to clap's completer

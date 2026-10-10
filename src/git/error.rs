@@ -123,8 +123,8 @@ pub trait ErrorExt {
     /// short single-line label.
     ///
     /// Use this when embedding a sub-error's text inside another typed error's
-    /// message field (e.g., `GitError::WorktreeRemovalFailed::error`,
-    /// `GitError::PushFailed::error`) so the user sees git's real reason
+    /// message field (e.g., `GitError::PushFailed::error`) so the user sees git's
+    /// real reason
     /// rather than just the [`CommandError`] single-line summary.
     fn display_message(&self) -> String;
 
@@ -134,7 +134,7 @@ pub trait ErrorExt {
     /// [`WorktrunkError`] variants that carry an exit code.
     fn exit_code(&self) -> Option<i32>;
 
-    /// If the error is signal-derived, return the terminating signal.
+    /// Return SIGINT or SIGTERM for cancellation; other child signals remain failures.
     ///
     /// Implements the Ctrl-C cancellation policy: command loops call this
     /// on every per-iteration failure and, when it returns `Some(signal)`,
@@ -315,6 +315,9 @@ pub fn try_render_diagnostic(err: &(dyn std::error::Error + 'static)) -> Option<
     if let Some(e) = err.downcast_ref::<CommandError>() {
         return Some(e.render());
     }
+    if let Some(e) = err.downcast_ref::<crate::config::ConfigParseError>() {
+        return Some(e.render());
+    }
     None
 }
 
@@ -379,7 +382,7 @@ impl SwitchSuggestionCtx {
 ///     println!("branch {branch} already exists");
 /// }
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum GitError {
     // Git state errors
     /// A worktree is not on a branch, so a command needing one refuses.
@@ -543,7 +546,7 @@ pub enum GitError {
     WorktreeRemovalFailed {
         branch: String,
         path: PathBuf,
-        error: String,
+        error: anyhow::Error,
         /// Top-level entries remaining in the directory (for "Directory not empty" diagnostics)
         remaining_entries: Option<Vec<String>>,
     },
@@ -724,7 +727,14 @@ pub enum GitError {
     },
 }
 
-impl std::error::Error for GitError {}
+impl std::error::Error for GitError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::WorktreeRemovalFailed { error, .. } => Some(error.as_ref()),
+            _ => None,
+        }
+    }
+}
 
 /// `"1 path with unresolved conflicts"` — the shared tail of every message
 /// about an unmerged index. [`GitError::UnmergedPaths`] refuses outright;
@@ -1359,8 +1369,9 @@ impl GitError {
                 remaining_entries,
                 ..
             } => {
+                let error = error.display_message();
                 let title = self.title();
-                write!(f, "{}", format_error_block(error_message(&title), error))?;
+                write!(f, "{}", format_error_block(error_message(&title), &error))?;
                 if let Some(entries) = remaining_entries {
                     const MAX_SHOWN: usize = 10;
                     let listing = if entries.len() > MAX_SHOWN {
@@ -1776,12 +1787,12 @@ impl std::fmt::Display for GitError {
 /// for cases that need exit code extraction or special handling.
 #[derive(Debug)]
 pub enum WorktrunkError {
-    /// Child process exited with non-zero code (preserves exit code for signals).
+    /// Child outcome, retaining its exit code independently of cancellation.
     ///
-    /// `signal` is `Some(sig)` when the process was terminated by a signal
-    /// (on Unix), `None` for a normal non-zero exit. Callers that must treat
-    /// interrupts differently from ordinary failures (e.g., aborting a loop
-    /// on Ctrl-C) check `signal` rather than inferring from `code`.
+    /// `signal` records native signal termination or a cancellation observed by
+    /// wt. A child may catch that cancellation and exit normally, even with 0;
+    /// `code` still records its real outcome. Loops classify cancellation from
+    /// `signal`, never by inferring from `code`.
     ChildProcessExited {
         code: i32,
         message: String,
@@ -1798,14 +1809,11 @@ pub enum WorktrunkError {
     CommandNotApproved,
     /// Error already displayed, just exit with given code (silent error)
     AlreadyDisplayed { exit_code: i32 },
-    /// A signal killed the foreground child and the command aborted.
+    /// The operation was cancelled, possibly before any child was admitted.
     ///
-    /// Exits `128 + signal` and renders once, at exit, following the shell
-    /// convention for a killed job: nothing for SIGINT (the terminal already
-    /// echoed `^C`), `Terminated` for SIGTERM. wt traps signals to forward
-    /// them to children, so the shell never sees wt die and won't print that
-    /// line itself. `hint` carries an optional recovery line (e.g. a rebase
-    /// left in progress) rendered under the message.
+    /// Exits `128 + signal`; Unix INT/TERM are passed to the parent shell.
+    /// Native job messages belong to that shell, while recovery hints belong
+    /// to wt. Custom commands may also report other signal-derived exits here.
     Interrupted { signal: i32, hint: Option<String> },
 }
 
@@ -1835,6 +1843,27 @@ impl std::fmt::Display for WorktrunkError {
 }
 
 impl WorktrunkError {
+    /// Preserve a child's physical status separately from operation cancellation.
+    pub fn from_child_status(status: &std::process::ExitStatus, cancellation: Option<i32>) -> Self {
+        #[cfg(unix)]
+        let signal = std::os::unix::process::ExitStatusExt::signal(status);
+        #[cfg(not(unix))]
+        let signal: Option<i32> = None;
+        let code = status
+            .code()
+            .or_else(|| signal.map(|signal| 128 + signal))
+            .unwrap_or(1);
+        let message = match signal {
+            Some(signal) => format!("terminated by signal {signal}"),
+            None => format!("exit status: {code}"),
+        };
+        Self::ChildProcessExited {
+            code,
+            message,
+            signal: cancellation.or(signal),
+        }
+    }
+
     /// Exit code carried by this variant, if any.
     pub fn exit_code(&self) -> Option<i32> {
         match self {
@@ -1873,12 +1902,11 @@ impl Diagnostic for WorktrunkError {
                 String::new()
             }
             WorktrunkError::Interrupted { signal, hint } => {
-                // Shell convention for a killed job: silent for SIGINT (the
-                // terminal already echoed ^C), "Terminated" for SIGTERM, the
-                // signal number otherwise (reachable only from stream mode,
-                // where any signal classifies as an interrupt).
+                // Unix passes INT/TERM to the shell; printing its termination
+                // notice here would duplicate the native job message.
                 let message = match *signal {
                     SIGINT => None,
+                    SIGTERM if cfg!(unix) => None,
                     SIGTERM => Some("Terminated".to_string()),
                     sig => Some(format!("Killed by signal {sig}")),
                 };
@@ -1934,21 +1962,25 @@ impl ErrorExt for anyhow::Error {
         // through them can't demote it.
         match self.downcast_ref::<WorktrunkError>() {
             Some(WorktrunkError::ChildProcessExited {
-                signal: Some(sig), ..
+                signal: Some(sig @ (SIGINT | SIGTERM)),
+                ..
             }) => return Some(*sig),
-            Some(WorktrunkError::Interrupted { signal, .. }) => return Some(*signal),
+            Some(WorktrunkError::Interrupted {
+                signal: sig @ (SIGINT | SIGTERM),
+                ..
+            }) => return Some(*sig),
             _ => {}
         }
-        // Capture mode (`Cmd::run`) reports it as a `CommandError` carrying the
-        // raw `status.signal()`. Walk the chain so `.context(...)` layers (e.g.
-        // `run_command`'s "Failed to execute: git …") don't hide it. Only
-        // SIGINT/SIGTERM classify as interrupts here: capture children get no
-        // signal forwarding or escalation (unlike stream mode, where a
-        // SIGKILL death can be wt's own escalation of a second Ctrl-C,
-        // normalized upstream to the originating signal), so any other signal
-        // means the child fell over on its own — and because its captured
-        // output was never displayed, a silent interrupt exit would discard
-        // the evidence. Those fall through to the caller's visible error path.
+        #[cfg(unix)]
+        if let Some(error) = self.downcast_ref::<crate::shell_exec::StreamCommandError>()
+            && let Some(signal @ (SIGINT | SIGTERM)) =
+                std::os::unix::process::ExitStatusExt::signal(&error.status)
+        {
+            return Some(signal);
+        }
+        // Capture mode carries the same raw status behind context layers.
+        // INT/TERM cancel the operation; crashes and other signals stay on
+        // the visible error path in every execution mode.
         if let Some(CommandError {
             signal: Some(sig @ (SIGINT | SIGTERM)),
             ..
@@ -2275,7 +2307,7 @@ mod tests {
     }
 
     #[test]
-    fn interrupt_signal_capture_mode_narrows_to_sigint_sigterm() {
+    fn interrupt_signal_modes_agree_on_cancellation() {
         // Capture mode has no signal forwarding or escalation, so SIGINT and
         // SIGTERM are the only signals a user interrupt can deliver; anything
         // else (a crash, an OOM kill) must stay on the visible error path
@@ -2291,7 +2323,14 @@ mod tests {
                 signal: Some(sig),
             }
             .into();
-            assert_eq!(err.interrupt_signal(), expected, "signal {sig}");
+            assert_eq!(err.interrupt_signal(), expected, "capture signal {sig}");
+            let streamed: anyhow::Error = WorktrunkError::ChildProcessExited {
+                code: 128 + sig,
+                message: format!("terminated by signal {sig}"),
+                signal: Some(sig),
+            }
+            .into();
+            assert_eq!(streamed.interrupt_signal(), expected, "stream signal {sig}");
         }
     }
 
@@ -2360,7 +2399,7 @@ mod tests {
             GitError::WorktreeRemovalFailed {
                 branch: "feature".into(),
                 path: PathBuf::from("/tmp/repo.feature"),
-                error: "fatal: …".into(),
+                error: anyhow::anyhow!("fatal: …"),
                 remaining_entries: None,
             }.to_string(),
             @"Failed to remove worktree for feature @ /tmp/repo.feature"
@@ -2385,14 +2424,15 @@ mod tests {
         let inner = GitError::BranchAlreadyExists {
             branch: "feature".into(),
         };
+        let expected = inner.to_string();
         let wrapped = GitError::WithSwitchSuggestion {
-            source: Box::new(inner.clone()),
+            source: Box::new(inner),
             ctx: SwitchSuggestionCtx {
                 extra_flags: vec!["--execute=claude".into()],
                 trailing_args: vec![],
             },
         };
-        assert_eq!(inner.to_string(), wrapped.to_string());
+        assert_eq!(expected, wrapped.to_string());
 
         // WorktrunkError variants
         assert_snapshot!(
@@ -2906,15 +2946,16 @@ mod tests {
             action: Some("merge".into()),
             worktree: None,
         };
+        let expected = inner.to_string();
         let wrapped = GitError::WithSwitchSuggestion {
-            source: Box::new(inner.clone()),
+            source: Box::new(inner),
             ctx: SwitchSuggestionCtx {
                 extra_flags: vec!["--execute=claude".into()],
                 trailing_args: vec!["Check my emails".into()],
             },
         };
         // Errors without switch suggestions should render identically
-        assert_eq!(inner.to_string(), wrapped.to_string());
+        assert_eq!(expected, wrapped.to_string());
     }
 
     fn sample_command_error() -> CommandError {
@@ -3098,17 +3139,19 @@ mod tests {
         assert_eq!(sigint.to_string(), "");
         assert_eq!(sigint.exit_code(), Some(130));
 
-        // SIGTERM: the line the shell would print if wt weren't trapping
-        // the signal.
+        // Unix delegates the SIGTERM notice to the parent shell.
         let sigterm = WorktrunkError::Interrupted {
             signal: 15,
             hint: None,
         };
+        #[cfg(unix)]
+        assert_eq!(sigterm.render(), "");
+        #[cfg(not(unix))]
         assert_snapshot!(sigterm.render(), @"[31m✗[39m [31mTerminated[39m");
         assert_eq!(sigterm.to_string(), "Terminated");
         assert_eq!(sigterm.exit_code(), Some(143));
 
-        // Any other signal (stream mode counts all): named by number.
+        // Other custom-command signals remain visible failures.
         let sigkill = WorktrunkError::Interrupted {
             signal: 9,
             hint: None,
@@ -3123,6 +3166,9 @@ mod tests {
             signal: 15,
             hint: Some("Rebase left in progress".to_string()),
         };
+        #[cfg(unix)]
+        assert_snapshot!(sigterm_hint.render(), @"[2m↳[22m [2mRebase left in progress[22m");
+        #[cfg(not(unix))]
         assert_snapshot!(sigterm_hint.render(), @"
         [31m✗[39m [31mTerminated[39m
         [2m↳[22m [2mRebase left in progress[22m
