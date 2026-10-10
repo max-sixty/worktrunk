@@ -88,7 +88,7 @@ Markers appear at the end of the Status column, after git symbols:
 [1m[32mUse cases[0m
 
 - [1mWork status[0m — [2m🚧[0m WIP, [2m✅[0m ready for review, [2m🔥[0m urgent
-- [1mAgent tracking[0m — The agent plugins (Claude Code, Codex, OpenCode, Pi, oh-my-pi) set markers automatically
+- [1mAgent tracking[0m — Agent plugins set markers automatically
 - [1mNotes[0m — Any short text: [2m"blocked"[0m, [2m"needs tests"[0m
 
 [1m[32mStorage[0m
