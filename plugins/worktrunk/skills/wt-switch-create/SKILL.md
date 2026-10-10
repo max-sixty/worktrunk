@@ -84,6 +84,13 @@ design choices behind this — read it before re-adding guards or routes. -->
 
    Then call `EnterWorktree({path: "<path from the JSON>"})`.
 
+   With a repo argument, once the session works in the new worktree (entered,
+   or reached by `cd` in the recovery below), read its root `AGENTS.md` (or
+   `CLAUDE.md`) before the task. Claude Code keeps the launch repo's root
+   instructions in context and loads only the new repo's nested ones, so the
+   new repo's root file supersedes the launch repo's for the rest of the
+   session.
+
    - **Accepted** → the session is re-rooted in the worktree. Do the task (or,
      with no task text, confirm it's ready and wait).
    - **Tool error** — the tool ran and returned an error (`Cannot enter

@@ -234,6 +234,26 @@ enlarge that set itself (`/add-dir` is user-typed; the only automatic add is a
 narrow symlink-resolving-to-the-same-cwd fixup), so a repo reachable by neither
 the cwd nor config is a genuine handback to the user.
 
+### Re-rooting keeps the launch repo's instructions
+
+Re-rooting into another repo changes the cwd but not the instruction context.
+Verified 2026-10-10 against Claude Code 2.1.296 with three headless sessions.
+Two launched in another repo, then ran `cd` plus `EnterWorktree({path})` or
+`cd` plus `EnterWorktree({name})`; each context still held the launch repo's
+root `AGENTS.md` and auto-memory index, with nothing from the new repo. The
+third, started in the worktree, loaded the new repo's. Nested instruction files of the
+new repo still load lazily when a file in their directory is read. Both routes
+run the same post-entry code in the binary, which clears the memo of loaded
+instruction files but doesn't rebuild the root block, which reloads only at
+session start and compaction; the entry confirmation's "loads project
+configuration (CLAUDE.md, settings)" doesn't hold for it. The `name` route can't
+cross repos anyway: the `WorktreeCreate` hook `cd`s to `$CLAUDE_PROJECT_DIR`,
+which stays the launch repo, so the worktree lands there.
+
+So with a repo argument, the skill has the agent read the new root file after
+entry. That fixes the instructions only; the launch repo's root file stays in
+context, as does its auto-memory.
+
 ### Why `--no-cd`
 
 The Bash tool is not a bare shell: Claude Code replays the user's shell startup
