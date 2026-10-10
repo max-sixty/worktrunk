@@ -256,15 +256,13 @@ setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path 
 
 ## Interactive hooks
 
-Foreground hooks can prompt for input when they run one at a time:
+A `pre-start` hook can ask before continuing:
 
 ```toml
 # .config/wt.toml
 [pre-start]
 trust = "gum confirm 'trust this worktree?' && mise trust"
 ```
-
-That includes serial `pre-*` hooks and `wt hook <type> --foreground`. Concurrent hook groups (tables with two or more keys), parallel prune removals, picker removals, and detached `post-*` hooks read EOF. For pre-remove hooks that need to prompt, use `wt step prune --foreground`. Hooks receive context through template variables.
 
 Foreground steps run in order and share one stdin, so a step that drains it to EOF — a `cat` or a `read` loop — leaves nothing for the steps behind it when that stdin is a pipe or a file. Under a terminal each step can prompt in turn. Steps accumulate across config files, so a user `[pre-start]` and a project `[pre-start]` form one pipeline.
 
