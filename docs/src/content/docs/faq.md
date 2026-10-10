@@ -155,7 +155,7 @@ None of this is tracked by git or pushed to remotes.
 
 **To remove:** `wt config state clear` removes repository state: config keys, caches, markers, hints, variables, logs, and stale trash. It prompts before removing anything worktrunk can't recompute, unless you pass `--yes`.
 
-Retained worktrees are user data and stay through state clearing and automatic trash cleanup. A failed removal prints their path; run `git worktree repair <retained-path>` to reconnect the checkout and its preserved index and operation state.
+Worktrees kept after a failed removal survive state clearing and automatic trash cleanup. The error includes a recovery command.
 
 ### 5. Agent integrations
 
