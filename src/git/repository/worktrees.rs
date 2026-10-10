@@ -21,10 +21,6 @@ use crate::shell_exec::Cmd;
 use crate::styling::{eprintln, format_with_gutter, hint_message, warning_message};
 
 impl Repository {
-    /// Temporary metadata disposal directories directly in the Git common dir.
-    /// Only complete, unregistered admin directories enter this namespace.
-    pub const UNREGISTERED_WORKTREE_PREFIX: &str = "worktrunk-unregistered-";
-
     /// List all worktrees for this repository.
     ///
     /// Returns a list of worktrees with bare entries filtered out.

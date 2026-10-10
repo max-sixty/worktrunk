@@ -249,10 +249,8 @@ fn execute_instant_removal_or_fallback(
         }
         // Trash cleanup is independent of branch deletion. Start it before a
         // deletion lock wait, and still attempt deletion if scheduling fails.
-        let cleanup = spawn_cleanup(
-            &build_remove_command_staged(&staged_path),
-            InternalOp::Remove,
-        );
+        let cleanup = build_remove_command_staged(&staged_path)
+            .and_then(|command| spawn_cleanup(&command, InternalOp::Remove));
         // Delete branch synchronously now that prune has removed the worktree metadata.
         // Fresh refs, not the pre-hook planning decision: hooks or concurrent
         // processes may have advanced the branch (`execute_branch_deletion`).
@@ -282,10 +280,8 @@ fn execute_instant_removal_or_fallback(
         // The placeholder protects the shell's PWD until exit. Its delay must
         // start after any synchronous branch wait, unlike independent trash.
         let placeholder_cleanup = if changed_directory {
-            spawn_cleanup(
-                &build_remove_placeholder_command(worktree_path),
-                InternalOp::RemovePlaceholder,
-            )
+            build_remove_placeholder_command(worktree_path)
+                .and_then(|command| spawn_cleanup(&command, InternalOp::RemovePlaceholder))
         } else {
             Ok(())
         };
@@ -384,7 +380,7 @@ fn execute_instant_removal_or_fallback(
             ),
         };
         Ok(BackgroundRemovalOutcome {
-            plan: BackgroundRemovalPlan::Deferred(command),
+            plan: BackgroundRemovalPlan::Deferred(command?),
             branch_fate: Ok(fate),
         })
     }
@@ -537,13 +533,13 @@ fn build_remove_command_with_tail(
     force_worktree: bool,
     changed_directory: bool,
     tail: Option<&str>,
-) -> String {
+) -> anyhow::Result<String> {
     let remove_command =
-        build_remove_command(worktree_path, None, force_worktree, changed_directory);
-    match tail {
+        build_remove_command(worktree_path, None, force_worktree, changed_directory)?;
+    Ok(match tail {
         Some(tail) => format!("{remove_command} && {tail}"),
         None => remove_command,
-    }
+    })
 }
 
 /// List top-level entries remaining in a directory after a failed removal.
@@ -2441,7 +2437,7 @@ mod tests {
     #[test]
     fn build_remove_command_with_tail_appends_only_when_present() {
         let path = Path::new("/tmp/wt");
-        let bare = build_remove_command_with_tail(path, false, false, None);
+        let bare = build_remove_command_with_tail(path, false, false, None).unwrap();
         // No tail → the command is exactly the bare worktree removal.
         assert!(!bare.contains("&&"));
         let tailed = build_remove_command_with_tail(
@@ -2449,7 +2445,8 @@ mod tests {
             false,
             false,
             Some("git update-ref -d refs/heads/x deadbeef"),
-        );
+        )
+        .unwrap();
         // A tail is chained with `&&` so it runs only after a successful removal.
         assert_eq!(
             tailed,

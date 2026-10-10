@@ -3,9 +3,7 @@ source: tests/integration_tests/config_state.rs
 expression: "String::from_utf8_lossy(&output.stdout)"
 ---
 [36mDEFAULT BRANCH[39m
-[107m [0m old-default
-[33m▲[39m [33mCached branch differs from [1morigin/HEAD[22m ([1mmain[22m)[39m
-[2m↳[22m [2mTo adopt it, run [4mwt config state default-branch set main[24m; to re-detect, run [4mwt config state default-branch clear[24m[22m
+[107m [0m (none)
 
 [36mPREVIOUS BRANCH[39m
 [107m [0m (none)
@@ -38,4 +36,7 @@ expression: "String::from_utf8_lossy(&output.stdout)"
 [107m [0m (none)
 
 [36mTRASH[39m
-[107m [0m (none)
+                         Path                           Age   
+ ───────────────────────────────────────────────────── ────── 
+ _REPO_/.git/worktrunk-unregistered-control-1234567890 future 
+ _REPO_/.git/wt/trash/zz-stray-file.txt                future

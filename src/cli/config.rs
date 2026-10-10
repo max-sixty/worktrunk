@@ -921,7 +921,7 @@ pub enum StateCommand {
 - **Git commands cache**: Cached merge-tree, ancestry, diff-stat, and `wt switch` preview results
 - **Hints**: One-time hints that have been shown
 - **Log files**: Operation and debug logs
-- **Trash**: Staged worktree directories awaiting background deletion
+- **Trash**: Staged worktrees and unregistered metadata awaiting deletion
 
 Every category that `wt config state clear` sweeps is shown here.
 
@@ -942,7 +942,7 @@ CI cache entries show status, age, and the commit SHA they were fetched for."#)]
 - All caches (CI status, summaries, git commands)
 - All hints
 - All log files
-- Stale trash from worktree removal (`.git/wt/trash/`)
+- Trash from worktree removal (staged worktrees and unregistered metadata)
 
 Prompts for confirmation before clearing, since this removes hand-authored
 markers and vars. Pass `--yes` to skip the prompt.

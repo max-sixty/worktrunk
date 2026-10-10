@@ -100,11 +100,11 @@ pub use remove::{
 };
 pub use repository::sha_cache;
 pub use repository::{
-    Branch, BranchDiffSpec, CleanCheckMode, CommitMessageDetail, InProgressOperation,
-    IntegrationTargets, PreparedDiff, RefSnapshot, Repository, ResolvedWorktree, SafetyBackup,
-    Selector, StaleWorktreeWork, TempIndex, WorkingTree, WorktreePruneMode, base_path,
-    duplicated_branches, is_valid_branch_name, normalize_selector, resolve_input_path,
-    select_comparison_base, set_base_path,
+    Branch, BranchDiffSpec, CleanCheckMode, CommitMessageDetail, DisposalEntry,
+    InProgressOperation, IntegrationTargets, PreparedDiff, RefSnapshot, Repository,
+    ResolvedWorktree, SafetyBackup, Selector, StaleWorktreeWork, TempIndex, WorkingTree,
+    WorktreePruneMode, base_path, duplicated_branches, is_valid_branch_name, normalize_selector,
+    resolve_input_path, select_comparison_base, set_base_path,
 };
 pub use url::parse_owner_repo;
 pub use url::{GitRemoteUrl, GitRepoInfo, GitRepoProvider};

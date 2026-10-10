@@ -1481,8 +1481,40 @@ fn test_unregister_commits_before_partial_metadata_cleanup() {
                 .git_output(&["worktree", "list", "--porcelain"])
                 .contains(worktree.to_str().unwrap())
         );
+        let inspection = repo
+            .wt_command()
+            .args(["config", "state", "get", "--format=json"])
+            .output()
+            .unwrap();
+        assert!(
+            inspection.status.success(),
+            "{}",
+            String::from_utf8_lossy(&inspection.stderr)
+        );
+        let state: serde_json::Value = serde_json::from_slice(&inspection.stdout).unwrap();
+        assert_eq!(state["trash"].as_array().unwrap().len(), 1);
+        let failed_cleanup = repo
+            .wt_command()
+            .args(["config", "state", "clear", "--yes"])
+            .output()
+            .unwrap();
+        assert!(
+            !failed_cleanup.status.success(),
+            "immutable disposal must surface cleanup failure"
+        );
+        assert!(garbage_registration.join("index").exists());
         drop(cleanup);
-        fs::remove_dir_all(&garbage[0]).unwrap();
+        let cleared = repo
+            .wt_command()
+            .args(["config", "state", "clear", "--yes"])
+            .output()
+            .unwrap();
+        assert!(
+            cleared.status.success(),
+            "{}",
+            String::from_utf8_lossy(&cleared.stderr)
+        );
+        assert!(!garbage[0].exists());
     }
 }
 

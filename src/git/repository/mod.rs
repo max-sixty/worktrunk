@@ -161,6 +161,7 @@ mod branch;
 mod branches;
 mod config;
 mod diff;
+mod disposal;
 mod integration;
 mod ref_snapshot;
 mod remotes;
@@ -172,6 +173,7 @@ mod worktrees;
 pub use branch::Branch;
 pub use branch::is_valid_branch_name;
 pub use diff::{CommitMessageDetail, PreparedDiff};
+pub use disposal::DisposalEntry;
 pub use integration::{BranchDiffSpec, IntegrationTargets, select_comparison_base};
 pub use ref_snapshot::RefSnapshot;
 pub(super) use working_tree::path_to_logging_context;
@@ -1569,7 +1571,8 @@ impl Repository {
     /// Get the worktrunk data directory inside the git directory.
     ///
     /// Returns `<git-common-dir>/wt/` (typically `.git/wt/`).
-    /// All worktrunk-managed state lives under this single directory.
+    /// Logs, caches, retained checkouts and payload trash live here. Temporary
+    /// metadata disposal also uses the Git common directory.
     pub fn wt_dir(&self) -> PathBuf {
         self.git_common_dir().join("wt")
     }

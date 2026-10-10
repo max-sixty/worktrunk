@@ -1855,7 +1855,7 @@ fn test_state_get_empty(repo: TestRepo) {
         [36mDIAGNOSTIC[39m @ <PATH>
         [107m [0m (none)
 
-        [36mTRASH[39m @ _REPO_/.git/wt/trash
+        [36mTRASH[39m
         [107m [0m (none)
         ");
     });
@@ -3447,4 +3447,159 @@ fn state_branch_flag_resolves_selectors(mut repo: TestRepo) {
         "the marker set via @ should read back via the worktree's path: {}",
         String::from_utf8_lossy(&get.stderr)
     );
+}
+
+/// Inspection and clearing share the full disposal inventory, while retained
+/// checkouts, live registration state and unrelated Git entries stay outside it.
+#[rstest]
+fn test_state_get_and_clear_both_disposal_locations(mut repo: TestRepo) {
+    use path_slash::PathExt as _;
+    use worktrunk::git::Repository;
+    repo.commit("initial");
+    let live = repo.add_worktree("live-disposal-control");
+    let parked = repo.add_worktree("retained-disposal-control");
+    let repository = Repository::at(repo.root_path()).unwrap();
+    let live_registration = repository.worktree_at(&live).git_dir().unwrap();
+    let parked_registration = repository.worktree_at(&parked).git_dir().unwrap();
+    let live_index = std::fs::read(live_registration.join("index")).unwrap();
+    let retained = repository.wt_dir().join("retained/control");
+    std::fs::create_dir_all(retained.parent().unwrap()).unwrap();
+    std::fs::rename(&parked, &retained).unwrap();
+    std::fs::write(retained.join("keep.txt"), "retained work").unwrap();
+    let payload = repository.wt_trash_dir().join("zz-stray-file.txt");
+    std::fs::create_dir_all(payload.parent().unwrap()).unwrap();
+    std::fs::write(&payload, "authorized disposal").unwrap();
+    let metadata = repository.git_common_dir().join(format!(
+        "{}control-1234567890",
+        Repository::UNREGISTERED_WORKTREE_PREFIX
+    ));
+    std::fs::create_dir(&metadata).unwrap();
+    std::fs::write(metadata.join("index"), "unregistered index").unwrap();
+    let foreign = repository.git_common_dir().join("foreign-1234567890");
+    std::fs::create_dir(&foreign).unwrap();
+    std::fs::write(foreign.join("keep.txt"), "unrelated work").unwrap();
+    let invalid_namespace = repository.git_common_dir().join(format!(
+        "{}not-a-timestamp",
+        Repository::UNREGISTERED_WORKTREE_PREFIX
+    ));
+    std::fs::create_dir(&invalid_namespace).unwrap();
+    let output = wt_state_get_json_cmd(&repo).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let mut actual: Vec<_> = json["trash"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["path"].as_str().unwrap().to_owned())
+        .collect();
+    actual.sort();
+    let mut expected = vec![
+        payload.to_slash_lossy().into_owned(),
+        metadata.to_slash_lossy().into_owned(),
+    ];
+    expected.sort();
+    assert_eq!(actual, expected);
+    let output = wt_state_get_cmd(&repo).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    state_get_settings().bind(|| {
+        assert_snapshot!(
+            "state_disposal_locations",
+            String::from_utf8_lossy(&output.stdout)
+        )
+    });
+    let output = wt_state_clear_all_cmd(&repo).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!payload.exists());
+    assert!(!metadata.exists());
+    assert!(invalid_namespace.is_dir());
+    assert_eq!(
+        std::fs::read_to_string(foreign.join("keep.txt")).unwrap(),
+        "unrelated work"
+    );
+    assert_eq!(
+        std::fs::read_to_string(retained.join("keep.txt")).unwrap(),
+        "retained work"
+    );
+    assert_eq!(
+        std::fs::read(live_registration.join("index")).unwrap(),
+        live_index
+    );
+    assert!(parked_registration.join("index").is_file());
+    repo.run_git(&["worktree", "repair", retained.to_str().unwrap()]);
+    repo.run_git_in(&retained, &["status", "--porcelain"]);
+}
+
+/// A symlink is a disposal entry, never permission to clear its target.
+#[cfg(unix)]
+#[rstest]
+fn test_state_clear_disposal_symlinks_preserves_targets(repo: TestRepo) {
+    use worktrunk::git::Repository;
+    let repository = Repository::at(repo.root_path()).unwrap();
+    let outside = repo.home_path().join("outside-disposal");
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("keep.txt"), "keep target").unwrap();
+    let payload = repository.wt_trash_dir().join("link");
+    std::fs::create_dir_all(payload.parent().unwrap()).unwrap();
+    let metadata = repository.git_common_dir().join(format!(
+        "{}link-1234567890",
+        Repository::UNREGISTERED_WORKTREE_PREFIX
+    ));
+    std::os::unix::fs::symlink(&outside, &payload).unwrap();
+    std::os::unix::fs::symlink(&outside, &metadata).unwrap();
+    let output = wt_state_get_json_cmd(&repo).output().unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["trash"].as_array().unwrap().len(), 2);
+    let output = wt_state_clear_all_cmd(&repo).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(outside.join("keep.txt")).unwrap(),
+        "keep target"
+    );
+    assert_eq!(
+        std::fs::symlink_metadata(payload).unwrap_err().kind(),
+        std::io::ErrorKind::NotFound
+    );
+    assert_eq!(
+        std::fs::symlink_metadata(metadata).unwrap_err().kind(),
+        std::io::ErrorKind::NotFound
+    );
+}
+
+/// A failed inventory must not clear a disposal entry the inspection could
+/// not enumerate. The blocked path stays visible as a command failure.
+#[rstest]
+fn test_state_disposal_inventory_error_prevents_clear(repo: TestRepo) {
+    use worktrunk::git::Repository;
+    let repository = Repository::at(repo.root_path()).unwrap();
+    let metadata = repository.git_common_dir().join(format!(
+        "{}control-1234567890",
+        Repository::UNREGISTERED_WORKTREE_PREFIX
+    ));
+    std::fs::create_dir(&metadata).unwrap();
+    let blocker = repository.wt_trash_dir();
+    std::fs::create_dir_all(blocker.parent().unwrap()).unwrap();
+    std::fs::write(&blocker, "keep blocker").unwrap();
+    for mut command in [wt_state_get_json_cmd(&repo), wt_state_clear_all_cmd(&repo)] {
+        let output = command.output().unwrap();
+        assert!(!output.status.success());
+        assert!(metadata.is_dir());
+        assert_eq!(std::fs::read_to_string(&blocker).unwrap(), "keep blocker");
+    }
 }

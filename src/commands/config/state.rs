@@ -1,7 +1,8 @@
 //! State management commands.
 //!
 //! Commands for getting, setting, and clearing stored state. State lives in
-//! git config (under `worktrunk.*`) and in the `.git/wt/` directory tree.
+//! git config (under `worktrunk.*`), `.git/wt/`, and temporary metadata disposal
+//! directories in the Git common directory.
 //!
 //! # `state get` ↔ `state clear` parity
 //!
@@ -19,7 +20,7 @@
 //! - Branch markers (git config `worktrunk.state.<branch>.marker`)
 //! - Vars (git config `worktrunk.state.<branch>.vars.*`)
 //! - Logs (`.git/wt/logs/`)
-//! - Trash (`.git/wt/trash/`)
+//! - Trash (staged worktrees and unregistered metadata)
 //!
 //! **Regenerable caches** — also surfaced by `wt config state cache get`
 //! (`handle_cache_get`) and dropped by `wt config state cache clear`
@@ -204,80 +205,67 @@ fn sort_hook_entries(entries: &mut [HookOutputEntry]) {
     });
 }
 
-/// A top-level entry staged under `wt_trash_dir()`.
-///
-/// Worktree removal renames directories into `.git/wt/trash/<name>-<timestamp>`
-/// and a background `rm -rf` cleans them up; entries still present here are
-/// awaiting (or escaped) that sweep.
+/// A disposal entry formatted for state views.
 struct TrashEntry {
-    /// Filename, e.g. `myproject.feature-1234567890`.
     name: String,
-    /// Absolute path, forward-slashed for cross-platform display.
     path: String,
     metadata: std::fs::Metadata,
 }
 
-/// List top-level entries under `wt_trash_dir()`.
-///
-/// Only the first level matters — each entry is one staged worktree (a
-/// directory) or a stray file. Sorted by mtime (newest first) with name as
-/// tie-breaker. Individual dirent/metadata failures are skipped: `state get`
-/// is a read-only inspector and can race with the background `rm -rf`, so a
-/// partial listing is more useful than a hard failure.
+/// Both disposal locations, sorted by mtime (newest first), then name.
 fn list_trash_entries(repo: &Repository) -> anyhow::Result<Vec<TrashEntry>> {
-    let trash_dir = repo.wt_trash_dir();
-    if !trash_dir.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut out: Vec<TrashEntry> = std::fs::read_dir(&trash_dir)?
-        .filter_map(|entry| entry.ok())
-        .filter_map(|entry| {
-            let metadata = entry.metadata().ok()?;
-            Some(TrashEntry {
-                name: entry.file_name().to_string_lossy().into_owned(),
-                path: entry.path().to_slash_lossy().into_owned(),
-                metadata,
-            })
+    let mut entries: Vec<_> = repo
+        .disposal_entries()?
+        .into_iter()
+        .map(|entry| TrashEntry {
+            name: entry
+                .path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
+            path: entry.path.to_slash_lossy().into_owned(),
+            metadata: entry.metadata,
         })
         .collect();
-    out.sort_by(|a, b| {
-        let a_time = a.metadata.modified().ok();
-        let b_time = b.metadata.modified().ok();
-        b_time.cmp(&a_time).then_with(|| a.name.cmp(&b.name))
+    entries.sort_by(|a, b| {
+        b.metadata
+            .modified()
+            .ok()
+            .cmp(&a.metadata.modified().ok())
+            .then_with(|| a.name.cmp(&b.name))
     });
-    Ok(out)
+    Ok(entries)
 }
 
-/// Clear stale entries from the wt/trash directory.
-///
-/// Worktree removal renames directories into `.git/wt/trash/` for instant UX,
-/// then deletes them in a background process. If the background `rm -rf` fails
-/// or is killed, entries accumulate. This cleans them up.
+/// Clear exactly the complete inventory shown by state get. A read failure
+/// aborts before any disposal entry is removed; symlinks are unlinked directly.
 fn clear_trash(repo: &Repository) -> anyhow::Result<usize> {
-    let trash_dir = repo.wt_trash_dir();
-
-    if !trash_dir.exists() {
-        return Ok(0);
-    }
-
-    let mut cleared = 0;
-    for entry in std::fs::read_dir(&trash_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            std::fs::remove_dir_all(&path)?;
+    let entries = repo.disposal_entries()?;
+    let cleared = entries.len();
+    for entry in entries {
+        if entry.metadata.is_dir() {
+            std::fs::remove_dir_all(&entry.path)
         } else {
-            std::fs::remove_file(&path)?;
+            std::fs::remove_file(&entry.path)
         }
-        cleared += 1;
+        .with_context(|| {
+            format!(
+                "Failed to clear trash @ {}",
+                format_path_for_display(&entry.path)
+            )
+        })?;
     }
-
-    // Remove the trash directory itself if empty
-    if std::fs::read_dir(&trash_dir)?.next().is_none() {
-        let _ = std::fs::remove_dir(&trash_dir);
+    // An absent or non-empty payload-trash directory needs no further action.
+    match std::fs::remove_dir(repo.wt_trash_dir()) {
+        Ok(()) => {}
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+            ) => {}
+        Err(error) => return Err(error.into()),
     }
-
     Ok(cleared)
 }
 
@@ -1430,14 +1418,8 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     render_all_log_sections(&mut out, repo)?;
     writeln!(out)?;
 
-    // Show trash (staged worktree removals awaiting background delete)
-    let trash_dir = repo.wt_trash_dir();
-    let trash_display = format_path_for_display(&trash_dir);
-    writeln!(
-        out,
-        "{}",
-        format_heading("TRASH", Some(&format!("@ {trash_display}")))
-    )?;
+    // Disposal spans payload trash and unregistered metadata.
+    writeln!(out, "{}", format_heading("TRASH", None))?;
     let trash = list_trash_entries(repo)?;
     if trash.is_empty() {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
@@ -1452,10 +1434,10 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map(|d| format_relative_time_short(d.as_secs() as i64))
                     .unwrap_or_else(|| "?".to_string());
-                vec![e.name.clone(), age]
+                vec![format_path_for_display(std::path::Path::new(&e.path)), age]
             })
             .collect();
-        let rendered = crate::md_help::render_data_table(&["Entry", "Age"], &rows);
+        let rendered = crate::md_help::render_data_table(&["Path", "Age"], &rows);
         writeln!(out, "{}", rendered.trim_end())?;
     }
 
