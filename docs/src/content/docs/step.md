@@ -205,9 +205,9 @@ The squash commit is made on a detached HEAD, as `git rebase` does, so git's own
 
 ### Recovering staged changes
 
-Before absorbing staged changes, Worktrunk backs up the index to `refs/wt-backup/<branch>`. The backup commit's parent preserves the branch tip before squashing. Unstaged and untracked files outside the selected staging mode stay in the original worktree and are not captured by the backup.
+Before squashing staged changes, Worktrunk saves them to `refs/wt-backup/<branch>`. Changes left unstaged are not included in the backup.
 
-The output prints the backup ref and a command to open its saved commit on a recovery branch in a new worktree. That command uses the backup's immutable SHA and skips project hooks. It preserves current branches, files, and staging, and also works after `wt merge` removes the source worktree.
+The output prints a command to recover the saved changes in a new worktree, including after `wt merge` removes the original.
 
 ### Options
 
@@ -825,7 +825,7 @@ In `wt list`, candidates show `_` (same commit) or `⊂` (content integrated). R
 
 Locked worktrees, worktrees with uncommitted changes, and the main worktree are always skipped. The current worktree is removed last, triggering cd to the primary worktree. Pre-remove and post-remove hooks run for each removal; a candidate whose hooks include an unapproved project command is skipped with `(approval required)` (pre-approve with `wt config approvals add`, or pass `--yes`).
 
-Removals and their hooks may run concurrently across worktrees. Each worktree's pre-remove hooks finish before its removal begins. Hooks must coordinate writes to shared resources and avoid writing into other worktrees being pruned.
+Prune removes worktrees concurrently, so hooks that write shared resources must coordinate those writes.
 
 ### Min-age guard
 

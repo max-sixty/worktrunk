@@ -79,7 +79,7 @@ A string is a single command:
 pre-start = "npm install"
 ```
 
-A table is multiple commands that run concurrently:
+A table names commands. With multiple keys, they run concurrently:
 
 ```toml
 # .config/wt.toml
@@ -262,15 +262,13 @@ setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path 
 
 ## Interactive hooks
 
-A `pre-start` hook can ask before continuing:
+Hooks can prompt when run serially in the foreground, as in this `pre-start` hook:
 
 ```toml
 # .config/wt.toml
 [pre-start]
 trust = "gum confirm 'trust this worktree?' && mise trust"
 ```
-
-Foreground steps run in order and share one stdin, so a step that drains it to EOF — a `cat` or a `read` loop — leaves nothing for the steps behind it when that stdin is a pipe or a file. Under a terminal each step can prompt in turn. Steps accumulate across config files, so a user `[pre-start]` and a project `[pre-start]` form one pipeline.
 
 Logic that templates can't express belongs in a script, with the values it needs passed as arguments:
 

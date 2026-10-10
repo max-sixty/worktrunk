@@ -596,9 +596,7 @@ full meaning of each value ([2m"is_main"[0m, [2m"orphan"[0m, [2m"empty"[0m
 [32mintegration reasons[0m
 
 [2mdefault_branch.integration.reason[0m records which check matched. Checks run 
-cheapest-first and the first match wins. The reason itself is JSON-only: the 
-table shows [2m"same_commit"[0m as [2m_[0m (or [2m–[0m with uncommitted changes) and every other 
-reason as [2m⊂[0m when the working tree is clean:
+cheapest-first and the first match wins. See Default branch for symbols.
 
      Value                                  Meaning                             
  ────────────── ─────────────────────────────────────────────────────────────── 

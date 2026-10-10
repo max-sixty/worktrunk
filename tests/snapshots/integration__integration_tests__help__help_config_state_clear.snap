@@ -77,7 +77,7 @@ Clears all stored state:
 - All caches (CI status, summaries, git commands)
 - All hints
 - All log files
-- Stale trash from worktree removal ([2m.git/wt/trash/[0m)
+- Trash from worktree removal (staged worktrees and unregistered metadata)
 
 Prompts for confirmation before clearing, since this removes hand-authored
 markers and vars. Pass [2m--yes[0m to skip the prompt.
