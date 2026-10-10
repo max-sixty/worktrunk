@@ -360,6 +360,7 @@ pub fn handle_configure_shell(
 
     // First, do a dry-run to see what would be changed
     let mut preview = scan_shell_configs(shell_filter, true, &cmd)?;
+    preview.completion_results = preview_shell_completions(&preview.configured, &cmd)?;
 
     // If nothing to do, return early
     if preview.configured.is_empty() {
@@ -512,6 +513,8 @@ fn should_auto_configure_powershell() -> bool {
     }
 }
 
+/// Read or apply shell integration files. Completion planning belongs to the
+/// installation flow so a completion error cannot hide integration status.
 pub fn scan_shell_configs(
     shell_filter: Option<Shell>,
     dry_run: bool,
@@ -623,16 +626,9 @@ pub fn scan_shell_configs(
         }
     }
 
-    let completion_results = if dry_run {
-        let configured_shells: Vec<_> = results.iter().map(|result| result.shell).collect();
-        preview_shell_completions(&configured_shells, cmd)?
-    } else {
-        Vec::new()
-    };
-
     Ok(ScanResult {
         configured: results,
-        completion_results,
+        completion_results: Vec::new(),
         skipped,
         zsh_needs_compinit: false,   // Caller handles compinit detection
         legacy_cleanups: Vec::new(), // Caller handles legacy cleanup
@@ -1150,11 +1146,15 @@ complete --keep-order --exclusive --command {cmd} --arguments "(test -n \"\$WORK
 /// Note: Bash and Zsh use inline lazy completions in the init script.
 /// Fish uses a separate completion file at ~/.config/fish/completions/{cmd}.fish
 /// that finds the command in PATH (with WORKTRUNK_BIN as optional override) to bypass the shell wrapper.
-fn preview_shell_completions(shells: &[Shell], cmd: &str) -> Result<Vec<CompletionResult>, String> {
+pub(crate) fn preview_shell_completions(
+    configured: &[ConfigureResult],
+    cmd: &str,
+) -> Result<Vec<CompletionResult>, String> {
     let mut results = Vec::new();
     let fish_completion = fish_completion_content(cmd);
 
-    for &shell in shells {
+    for entry in configured {
+        let shell = entry.shell;
         // Only fish has a separate completion file
         if shell != Shell::Fish {
             continue;

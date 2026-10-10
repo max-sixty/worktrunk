@@ -26,7 +26,7 @@ Each worktree maps to one branch. Worktree arguments resolve branch first throug
 
 ## Documentation
 
-Public docs are curated product guidance, not an exhaustive specification. Document new capabilities and changed usage; correct existing claims that become false. A correctness fix with no change to usage needs no new prose: an omitted failure case is not an inaccurate claim. Keep regression conditions in tests and commit messages.
+Public docs help users choose and use Worktrunk. Keep them concise, in the reader’s terms, with detail proportional to how many readers need it. Document new capabilities and changed usage; correct false claims in place with the smallest sufficient edit. Implementation rationale belongs in code. A correctness fix that preserves usage needs no new guide prose; keep regression conditions in tests and commit messages.
 
 src/cli/mod.rs is primary for command help and generated command pages; docs/AGENTS.md explains sync. Check that --help matches behavior. Run cargo test --test integration test_docs_are_in_sync, then refresh help snapshots when help text changes.
 

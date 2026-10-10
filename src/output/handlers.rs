@@ -42,7 +42,7 @@ use worktrunk::styling::{
 
 use super::shell_integration::{
     compute_shell_warning_reason, explicit_path_hint, git_subcommand_warning,
-    print_shell_integration_hint, should_show_explicit_path_hint,
+    print_shell_activation_hint, should_show_explicit_path_hint,
 };
 
 // ============================================================================
@@ -687,6 +687,15 @@ fn handle_switch_existing_output(ctx: &SwitchOutputContext) -> Option<PathBuf> {
             ))
         );
         print_switch_directory_hint(&ctx.branch, ctx.is_git_subcommand);
+    } else if ctx.user_wont_be_in_worktree {
+        eprintln!(
+            "{}",
+            info_message(cformat!(
+                "Worktree for <bold>{}</> @ <bold>{}</> (directory change disabled)",
+                ctx.branch,
+                ctx.path_display
+            ))
+        );
     } else {
         eprintln!(
             "{}",
@@ -1033,7 +1042,7 @@ fn print_switch_message_if_changed(
         } else if should_show_explicit_path_hint() {
             eprintln!("{}", hint_message(explicit_path_hint(&dest_branch)));
         } else {
-            print_shell_integration_hint(&repo);
+            print_shell_activation_hint(&repo);
         }
     }
     Ok(())

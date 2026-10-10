@@ -8769,3 +8769,187 @@ fn test_switch_path_allows_new_nested_worktree(repo: TestRepo) {
     assert!(destination.join(".git").is_file());
     assert!(repo.root_path().join(".git").is_dir());
 }
+
+/// Invalid branch names are rejected before worktree creation.
+#[rstest]
+#[case::space("bad name")]
+#[case::ref_syntax("bad..name")]
+#[case::reserved("HEAD")]
+fn switch_creation_rejects_invalid_branch(repo: TestRepo, #[case] name: &str) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", name], None);
+        assert_cmd_snapshot!(
+            format!(
+                "switch_invalid_branch_{}",
+                name.replace([' ', '.', '-'], "_")
+            ),
+            cmd
+        );
+    });
+    assert!(
+        !repo
+            .root_path()
+            .parent()
+            .unwrap()
+            .join(format!("repo.{name}"))
+            .exists()
+    );
+}
+
+/// Creation takes a literal branch name, even when Git could expand checkout
+/// history to a branch that no longer exists.
+#[rstest]
+#[case::present(false)]
+#[case::deleted(true)]
+fn switch_creation_rejects_checkout_history(repo: TestRepo, #[case] deleted: bool) {
+    repo.run_git(&["checkout", "-b", "previous"]);
+    repo.run_git(&["checkout", "main"]);
+    if deleted {
+        repo.run_git(&["branch", "-d", "previous"]);
+    }
+    assert_eq!(
+        repo.git_output(&["check-ref-format", "--branch", "@{-1}"])
+            .trim(),
+        "previous"
+    );
+    let refs_before = repo.git_output(&["for-each-ref", "--format=%(refname)"]);
+    let worktrees_before = repo.git_output(&["worktree", "list", "--porcelain"]);
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "@{-1}", "--no-hooks"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    insta::allow_duplicates! {
+        insta::assert_snapshot!(
+            String::from_utf8_lossy(&output.stderr).ansi_strip(),
+            @"✗ Invalid branch name @{-1}"
+        );
+    }
+    assert_eq!(
+        repo.git_output(&["for-each-ref", "--format=%(refname)"]),
+        refs_before
+    );
+    assert_eq!(
+        repo.git_output(&["worktree", "list", "--porcelain"]),
+        worktrees_before
+    );
+}
+
+#[rstest]
+#[case::nested("topic/nested")]
+#[case::unicode("café")]
+fn switch_creation_preserves_literal_branch_name(repo: TestRepo, #[case] name: &str) {
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", name, "--no-hooks"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        repo.git_output(&[
+            "show-ref",
+            "--verify",
+            "--hash",
+            &format!("refs/heads/{name}")
+        ]),
+        repo.git_output(&["rev-parse", "main"])
+    );
+}
+
+/// A validator subprocess cancellation is an interrupted operation, not an
+/// invalid branch name. Other Git commands still use real Git.
+#[cfg(unix)]
+#[rstest]
+fn switch_creation_preserves_validation_interrupt(repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::ExitStatusExt;
+
+    let bin_dir = repo.home_path().join("validation-interrupt");
+    fs::create_dir_all(&bin_dir).unwrap();
+    let git = bin_dir.join("git");
+    let marker = bin_dir.join("interrupted");
+    let real_git = which::which("git").unwrap();
+    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
+    fs::write(
+        &git,
+        format!(
+            r#"#!/bin/sh
+if [ "$1" = check-ref-format ]; then
+  printf called > "$WORKTRUNK_TEST_VALIDATION_MARKER"
+  kill -TERM "$$"
+fi
+exec {real_git} "$@"
+"#
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&git, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut paths: Vec<_> = std::env::split_paths(&std::env::var_os("PATH").unwrap()).collect();
+    paths.insert(0, bin_dir);
+    let worktrees_before = repo.git_output(&["worktree", "list", "--porcelain"]);
+    assert!(!marker.exists());
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "interrupted", "--no-hooks"])
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .env("WORKTRUNK_TEST_VALIDATION_MARKER", &marker)
+        .output()
+        .unwrap();
+    assert_eq!(fs::read_to_string(marker).unwrap(), "called");
+    assert_eq!(
+        output.status.signal(),
+        Some(nix::sys::signal::Signal::SIGTERM as i32),
+        "{output:?}"
+    );
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        repo.git_output(&["worktree", "list", "--porcelain"]),
+        worktrees_before
+    );
+    assert!(
+        repo.git_output(&["branch", "--list", "interrupted"])
+            .is_empty()
+    );
+}
+
+#[rstest]
+fn switch_missing_path_selector(repo: TestRepo) {
+    snapshot_switch("switch_missing_path_selector", &repo, &["./ghost"]);
+}
+
+/// Explicit and configured suppression both leave the directive untouched and
+/// report the available checkout without claiming the shell switched there.
+#[rstest]
+#[case::flag(false)]
+#[case::config(true)]
+fn switch_existing_without_cd(mut repo: TestRepo, #[case] configured: bool) {
+    let feature = repo.add_worktree("feature");
+    if configured {
+        repo.write_test_config("[switch]\ncd = false\n");
+    }
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let (cd_path, _guard) = directive_file();
+        let args = if configured {
+            vec!["feature"]
+        } else {
+            vec!["feature", "--no-cd"]
+        };
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &args, None);
+        configure_directive_file(&mut cmd, &cd_path);
+        assert_cmd_snapshot!(
+            if configured {
+                "switch_existing_cd_disabled_config"
+            } else {
+                "switch_existing_cd_disabled_flag"
+            },
+            cmd
+        );
+        assert!(fs::read_to_string(&cd_path).unwrap().is_empty());
+    });
+    assert!(feature.is_dir());
+}
