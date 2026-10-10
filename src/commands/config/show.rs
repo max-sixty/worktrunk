@@ -11,8 +11,7 @@ use anyhow::Context;
 use color_print::cformat;
 use serde::{Serialize, de::DeserializeOwned};
 use worktrunk::config::{
-    LoadError, ProjectConfig, UserConfig, default_system_config_path, require_config_path,
-    system_config_path,
+    LoadError, ProjectConfig, UserConfig, require_config_path, system_config_path,
 };
 use worktrunk::git::remote_ref::azure::azure_devops_extension_installed;
 use worktrunk::git::{ErrorExt, ForgeKind, Repository, WorktrunkError};
@@ -196,7 +195,7 @@ fn handle_config_show_json() -> anyhow::Result<()> {
             (None, false, None, None)
         };
 
-    let system_path = system_config_path().or_else(default_system_config_path);
+    let system_path = system_config_path();
     let system_exists = system_path.as_ref().is_some_and(|p| p.exists());
     let system_invalid = if let Some(path) = system_path.as_deref().filter(|_| system_exists) {
         match std::fs::read_to_string(path) {
@@ -671,7 +670,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
 
 /// Render system config when present, returning whether it is invalid.
 fn render_system_config(out: &mut String) -> Option<bool> {
-    let system_path = system_config_path()?;
+    let system_path = system_config_path().filter(|path| path.exists())?;
 
     let _ = writeln!(
         out,
@@ -794,7 +793,7 @@ fn render_user_config(
 }
 
 fn render_system_config_hint(out: &mut String) -> anyhow::Result<()> {
-    if let Some(path) = default_system_config_path() {
+    if let Some(path) = system_config_path() {
         writeln!(
             out,
             "{}",

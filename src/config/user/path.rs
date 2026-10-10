@@ -115,112 +115,32 @@ pub fn default_config_path() -> Option<PathBuf> {
     Some(strategy.config_dir().join("worktrunk").join("config.toml"))
 }
 
-/// Get the system-wide config file path, if one exists.
+/// The system-wide config file's location, whether or not the file exists.
 ///
 /// System config provides organization-wide defaults that user config overrides.
-/// Returns the first existing config file found in the system config directories.
+/// `WORKTRUNK_SYSTEM_CONFIG_PATH` overrides the location; otherwise it is one
+/// fixed path per platform, as git's `--system` file is:
+/// - macOS: `/Library/Application Support/worktrunk/config.toml`
+/// - Windows: `%PROGRAMDATA%\worktrunk\config.toml`
+/// - other Unix: `/etc/xdg/worktrunk/config.toml`
 ///
-/// Priority:
-/// 1. WORKTRUNK_SYSTEM_CONFIG_PATH environment variable (for testing/overrides)
-/// 2. Each directory in $XDG_CONFIG_DIRS (colon-separated, checked in order)
-/// 3. Platform-specific default:
-///    - Linux: /etc/xdg/worktrunk/config.toml (XDG default)
-///    - macOS: /Library/Application Support/worktrunk/config.toml
-///    - Windows: %PROGRAMDATA%\worktrunk\config.toml
+/// `XDG_CONFIG_DIRS` is deliberately not consulted: an administrator deploys to
+/// the fixed path, and a search path read from the environment would bring the
+/// spec's parsing rules with it for a case no one has asked for.
+///
+/// Deliberately unguarded, unlike `config_path()`: this resolves a machine-wide
+/// file rather than the developer's own config.
 pub fn system_config_path() -> Option<PathBuf> {
-    // Priority 1: Explicit environment variable override
-    if let Ok(path) = std::env::var("WORKTRUNK_SYSTEM_CONFIG_PATH") {
-        let path = resolve_input_path(path);
-        if path.exists() {
-            return Some(path);
-        }
-        return None;
-    }
-
-    // Priority 2+3: XDG_CONFIG_DIRS when it names an absolute directory
-    // (exclusively, per XDG spec), otherwise platform defaults.
-    //
-    // Deliberately unguarded, unlike `config_path()`: this resolves a
-    // machine-wide file (`/etc/xdg`, `/Library/Application Support`) rather than
-    // the developer's own config.
-    for dir in &system_config_dirs() {
-        let path = dir.join("worktrunk").join("config.toml");
-        if path.exists() {
-            return Some(path);
-        }
-    }
-
-    None
-}
-
-/// The expected system config path for the current platform.
-///
-/// Used by `wt config show` to display where to put a system config file.
-/// Mirrors the lookup order in `system_config_path()` so the displayed
-/// path matches where the tool actually looks.
-pub fn default_system_config_path() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("WORKTRUNK_SYSTEM_CONFIG_PATH") {
         return Some(resolve_input_path(path));
     }
 
-    system_config_dirs()
-        .first()
-        .map(|dir| dir.join("worktrunk").join("config.toml"))
-}
-
-/// System config directories in priority order.
-///
-/// On Unix, checks `XDG_CONFIG_DIRS` first. When it names at least one absolute
-/// directory, those define the search path exclusively (per XDG spec) — no
-/// fallback to platform defaults. Otherwise — unset, empty, or naming nothing
-/// absolute — returns platform-specific defaults (macOS: `/Library/Application
-/// Support`, Windows: `%PROGRAMDATA%`, Unix: `/etc/xdg`).
-///
-/// Relative entries are dropped, which is what the XDG spec asks for and what
-/// `etcetera` does for the `XDG_*_HOME` variables it resolves for us; it
-/// exposes no accessor for `XDG_CONFIG_DIRS`, so the rule is applied here.
-fn system_config_dirs() -> Vec<PathBuf> {
-    #[cfg(unix)]
-    if let Ok(dirs_str) = std::env::var("XDG_CONFIG_DIRS") {
-        let dirs: Vec<PathBuf> = dirs_str
-            .split(':')
-            .map(PathBuf::from)
-            .filter(|d| d.is_absolute())
-            .collect();
-        if !dirs.is_empty() {
-            return dirs;
-        }
-    }
-
-    platform_default_dirs()
-}
-
-/// Platform-specific default system config directories.
-///
-/// Returns directories in priority order — the first existing config file wins.
-/// On macOS, the native `/Library/Application Support/` is checked before the
-/// XDG fallback `/etc/xdg/`.
-#[allow(clippy::vec_init_then_push)]
-fn platform_default_dirs() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-
     #[cfg(target_os = "macos")]
-    {
-        // macOS native system-wide config location (checked first)
-        dirs.push(PathBuf::from("/Library/Application Support"));
-    }
+    let dir = Some(PathBuf::from("/Library/Application Support"));
+    #[cfg(windows)]
+    let dir = std::env::var_os("PROGRAMDATA").map(PathBuf::from);
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let dir = Some(PathBuf::from("/etc/xdg"));
 
-    #[cfg(target_os = "windows")]
-    {
-        // Windows: %PROGRAMDATA% (typically C:\ProgramData)
-        if let Ok(program_data) = std::env::var("PROGRAMDATA") {
-            dirs.push(PathBuf::from(program_data));
-        }
-    }
-
-    // XDG default: /etc/xdg (standard on Linux, fallback on macOS/other Unix)
-    #[cfg(unix)]
-    dirs.push(PathBuf::from("/etc/xdg"));
-
-    dirs
+    Some(dir?.join("worktrunk").join("config.toml"))
 }
