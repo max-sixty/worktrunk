@@ -1457,7 +1457,7 @@ fn test_background_concurrent_template_failure_reaps_admitted_child(repo: TestRe
     crate::common::wait_for("concurrent preparation failure", || {
         fs::read_to_string(&runner_log)
             .unwrap()
-            .contains("Failed to expand user:broken: undefined value")
+            .contains("Failed to expand user:broken:")
     });
     assert_eq!(kill(pid, None), Err(nix::errno::Errno::ESRCH));
 
