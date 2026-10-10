@@ -314,14 +314,14 @@ impl Repository {
     }
 
     /// Get files changed between base and head, as repository-root-relative
-    /// paths.
+    /// raw path bytes.
     ///
     /// `diff-tree` detects no renames, so a moved file lists both its old and
     /// new path — what overlap detection needs (e.g., detecting conflicts when
     /// a file is renamed in one branch but has uncommitted changes under the
     /// old name).
-    pub fn changed_files(&self, base: &str, head: &str) -> anyhow::Result<Vec<String>> {
-        let stdout = self.run_command(&PlumbingDiff::Tree.args(&[
+    pub fn changed_files(&self, base: &str, head: &str) -> anyhow::Result<Vec<Vec<u8>>> {
+        let args = PlumbingDiff::Tree.args(&[
             "-r",
             "--name-only",
             "-z",
@@ -329,11 +329,12 @@ impl Repository {
             base,
             head,
             "--",
-        ]))?;
-        Ok(stdout
-            .split('\0')
+        ]);
+        Ok(self
+            .run_command_bytes(&args)?
+            .split(|byte| *byte == 0)
             .filter(|path| !path.is_empty())
-            .map(str::to_string)
+            .map(<[u8]>::to_vec)
             .collect())
     }
 
@@ -456,8 +457,7 @@ impl Repository {
 
     /// SHA-keyed variant of [`Self::merge_base`].
     ///
-    /// Inputs are commit SHAs. Skips the ambient ref→SHA conversion
-    /// entirely; cache key is `(min(sha1, sha2), max(sha1, sha2))`.
+    /// Inputs are commit SHAs, so no ref names are resolved; cache key is `(min(sha1, sha2), max(sha1, sha2))`.
     ///
     /// In-memory front over a persistent disk back
     /// (`merge-base/{min}-{max}.json`): the `DashMap` dedups within one
@@ -584,7 +584,7 @@ impl Repository {
 
     /// SHA-keyed variant of [`Self::branch_diff_stats`].
     ///
-    /// Inputs are commit SHAs. Bypasses the ambient ref→SHA cache.
+    /// Inputs are commit SHAs, so no ref names are resolved.
     pub fn branch_diff_stats_by_sha(
         &self,
         base_sha: &str,

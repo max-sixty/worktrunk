@@ -24,7 +24,7 @@ use crate::commands::list::layout::{LinkStyle, format_url_cell};
 /// (Gate 2) from metadata alone. The decision priority is:
 /// `prunable` > `locked` > detached > `duplicate_branch` >
 /// `branch_worktree_mismatch` > `None` — the yellow actionable states outrank
-/// the informational (dim yellow) `⊘` and `⚑`. The last two both render `⚑`,
+/// the informational `⊘` (yellow) and `⚐` (dim). The last two both render `⚐`,
 /// so their order decides only which cause the JSON `worktree.state` names; a
 /// duplicate wins because a force-added worktree lands off-template as a side
 /// effect of being force-added, not as the fact worth reporting.
@@ -93,7 +93,8 @@ pub struct WorktreeData {
 }
 
 impl WorktreeData {
-    /// Returns true if this worktree is prunable (directory deleted but git still tracks metadata).
+    /// Returns true if git reports this worktree prunable: its directory or
+    /// that directory's `.git` is gone.
     pub fn is_prunable(&self) -> bool {
         self.prunable.is_some()
     }
@@ -497,8 +498,9 @@ impl ListItem {
     /// The glyph this row's unresolved cells render, given the render's
     /// current one.
     ///
-    /// A prunable worktree's directory is gone, so `work_items_for_worktree`
-    /// spawns nothing for it and no cell a task would fill will ever arrive.
+    /// A prunable worktree has lost its directory or its `.git`, so
+    /// `work_items_for_worktree` spawns nothing for it and no cell a task
+    /// would fill will ever arrive.
     /// The loading dot would promise data that isn't coming — for the life of
     /// the row, not for a tick — so those cells stay blank and the `⊟` in
     /// Status is the row's whole story.
@@ -959,9 +961,9 @@ impl ListItem {
 mod tests {
     use super::*;
 
-    /// The yellow actionable states outrank the informational (dim yellow)
-    /// `⊘` and `⚑`, so a demoted flag can never mask `⊟` or `⊞`. A force-added
-    /// duplicate lands off-template too, so the two `⚑` states routinely
+    /// The yellow actionable states outrank the informational `⊘` and `⚐`,
+    /// so a demoted flag can never mask `⊟` or `⊞`. A force-added
+    /// duplicate lands off-template too, so the two `⚐` states routinely
     /// co-occur and their order picks the cause the JSON reports.
     #[test]
     fn test_metadata_worktree_state_priority() {
@@ -1003,7 +1005,7 @@ mod tests {
             WorktreeState::Locked
         );
 
-        // Off a branch, `⊘` outranks both `⚑` states — nothing else in the
+        // Off a branch, `⊘` outranks both `⚐` states — nothing else in the
         // row says the Branch cell is a hash — but still yields to `⊟`/`⊞`.
         assert_eq!(
             metadata_worktree_state(&duplicate, false),

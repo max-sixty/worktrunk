@@ -56,9 +56,9 @@ filterset = "test(/aur_pkgbuild/)"
 
 [package]
 name = "worktrunk"
-version = "0.78.0"
+version = "0.80.0"
 edition = "2024"
-rust-version = "1.97"
+rust-version = "1.98"
 build = "build.rs"
 repository = "https://github.com/max-sixty/worktrunk"
 homepage = "https://worktrunk.dev"
@@ -244,7 +244,7 @@ ignore = "0.4"
 reflink-copy = "0.1"
 # Atomic, no-overwrite rename (renameat2 / renamex_np / MoveFileExW) for
 # `--clobber` backups — closes the check-then-rename TOCTOU. Keeps the FFI
-# (and its `unsafe`) out of this crate, which is `unsafe_code = "forbid"`.
+# (and its `unsafe`) out of this crate.
 renamore = "0.3"
 dashmap = "6.2.1"
 fs2 = "0.4.3"
@@ -272,6 +272,8 @@ tempfile = "3.27"
 # picker's pager). Replaced `wait-timeout`, whose SIGCHLD handler aborts the
 # process when its self-pipe write fails — see "Timed waits" in `shell_exec`.
 shared_child = "1.1"
+# Socket construction separate from connection waits under the spawn guard.
+socket2 = "0.6.4"
 
 # Interactive picker (`wt switch`) TUI stack, pulled in only by the `cli`
 # feature's `dep:` entries. These are platform-neutral (skim 4.x is the
@@ -299,7 +301,7 @@ shared_child = "1.1"
 # not panic on push/pop keyboard enhancement flags failure") and is
 # Windows-green again. Kept as an exact pin; it can relax to a range now that
 # the keyboard-enhancement path no longer regresses the legacy console.
-skim = { version = "=5.7.0", optional = true, default-features = false, features = ["frizbee"] }
+skim = { version = "=5.7.2", optional = true, default-features = false, features = ["frizbee"] }
 # Pinned to skim's ratatui line so the `Line` type `display()` returns is the
 # same one skim consumes. `ansi-to-tui` parses ANSI SGR codes into ratatui spans.
 # Floor is 0.30.1: 0.30.0 is a broken release (its `#[instability::unstable]`
@@ -322,11 +324,13 @@ arboard = { version = "3.4", optional = true, default-features = false, features
 open = { version = "5.3", optional = true }
 
 [target.'cfg(unix)'.dependencies]
-# Unix-only syscall crates: `nix` (process/signal) backs the fsmonitor reap and
-# `signal-hook` forwards Ctrl-C to child process groups. Gating keeps both out of
-# the Windows dependency graph.
-nix = { version = "0.31.3", default-features = false, features = ["process", "signal"] }
+# Unix-only syscall crates: `nix` backs process waits and pipe readiness;
+# `signal-hook` observes native job interrupts and relays PID-targeted TERM.
+# Gating keeps both out of the Windows dependency graph.
+nix = { version = "0.31.3", default-features = false, features = ["event", "fs", "poll", "process", "signal"] }
 signal-hook = "0.4.1"
+# Safe FIONREAD snapshots bound cancellation drains even with continuous writers.
+rustix = "1.1.4"
 
 [build-dependencies]
 vergen-gitcl = { version = "10.0.0", features = ["build"] }
@@ -343,7 +347,7 @@ regex = "1.12.3"
 vt100 = "0.16.2"
 wt-perf = { path = "tests/helpers/wt-perf" }
 similar = "3.1.1"
-jsonschema = { version = "0.56", default-features = false }
+jsonschema = { version = "0.58", default-features = false }
 
 [[bench]]
 name = "alias"
@@ -374,7 +378,9 @@ name = "picker_preview"
 harness = false
 
 [lints.rust]
-unsafe_code = "forbid"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage)"] }
+# Native signal inspection and coverage flushing permit scoped runtime calls.
+unsafe_code = "deny"
 
 # The profile that 'dist' will build with
 [profile.dist]

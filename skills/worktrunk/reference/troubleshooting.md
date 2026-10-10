@@ -81,7 +81,7 @@ post-start = "npm run build"
 
 ### A `for-each` or `--execute` alias uses the same value in every worktree
 
-The alias body rendered once at dispatch, baking the variable to the invoking worktree's value before the nested `wt` command iterated. See `reference/extending.md#deferring-expansion-to-a-nested-wt-command` for how to confirm it and how to defer the variable.
+The alias body rendered once at dispatch, baking the variable to the invoking worktree's value before the nested `wt` command iterated. See `reference/extending.md#nesting-templates` for how to pass the template through unrendered.
 
 ## List
 

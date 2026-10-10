@@ -57,11 +57,6 @@ pub fn to_posix_path(path: &str) -> String {
 /// relative paths.
 #[cfg(windows)]
 fn find_cygpath_from_shell(shell: &crate::shell_exec::ShellConfig) -> Option<PathBuf> {
-    // Only Git Bash has cygpath
-    if !shell.is_posix {
-        return None;
-    }
-
     let shell_dir = shell.executable.parent()?;
 
     // If bash is at usr/bin/bash.exe, cygpath is in the same directory
@@ -102,6 +97,14 @@ fn needs_shell_escaping(s: &str) -> bool {
 ///
 /// Uses POSIX shell escaping since all our hints target POSIX-compatible shells
 /// (bash, zsh, fish, and Git Bash on Windows).
+///
+/// The result is already shell-ready, so a hint embeds it by interpolation
+/// (`rm -rf {path}`). Passing it to [`suggest_command`] escapes it a second
+/// time: `~/repo` becomes `'~/repo'`, which the shell no longer tilde-expands,
+/// and `'/tmp/my repo'` becomes a string carrying literal quote characters that
+/// resolves to nothing.
+///
+/// [`suggest_command`]: crate::styling::suggest_command
 ///
 /// # Examples
 /// - `/Users/alex/repo` → `~/repo` (no escaping needed)

@@ -91,7 +91,7 @@ fn test_config_show_rejects_invalid_approvals_file(repo: TestRepo) {
     assert_eq!(output.status.code(), Some(1));
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stdout = stdout.ansi_strip();
-    assert!(stdout.contains("Invalid approvals"), "stdout:\n{stdout}");
+    assert!(stdout.contains("Approvals @"), "stdout:\n{stdout}");
     assert!(stdout.contains("approvals.toml"), "stdout:\n{stdout}");
 }
 
@@ -533,23 +533,8 @@ fn test_config_show_reports_unreadable_source_and_continues(repo: TestRepo, #[ca
     assert!(stdout.contains("OTHER"), "report was truncated:\n{stdout}");
 }
 
-/// A user config that doesn't parse must fail these commands *legibly*.
-///
-/// `UserConfig::load()`'s error is `LoadError::File`'s multi-line Display —
-/// the header plus the TOML parser's caret diagram — flattened into a
-/// `ConfigError` string. Propagated bare with `?`, it reaches anyhow with no
-/// context and no cause chain, which is the one shape `main.rs`'s renderer
-/// has no arm for: it trips that function's `debug_assert!`, so a debug build
-/// panics with exit 101 instead of erroring. A release build still prints the
-/// parse detail in the gutter — what it loses is the header, which becomes a
-/// bare `✗ Command failed` naming neither the config nor the file.
-/// `.context("Failed to load config")` — what 7 of the 22 `UserConfig::load()`
-/// call sites already did, and what all 13 propagating ones do after this —
-/// gives the renderer that header back.
-///
-/// One case per fixed call site, because the `debug_assert!` only fires on a
-/// path something exercises: an uncovered site is one where a future bare `?`
-/// regresses silently. The JSON form has a separate in-band error test below.
+/// Commands that require user config retain its typed parser diagnosis through
+/// their operation context and fail cleanly in both debug and release builds.
 #[rstest]
 #[case::step_prune(&["step", "prune", "--dry-run"])]
 #[case::step_relocate(&["step", "relocate", "--dry-run"])]
@@ -590,7 +575,7 @@ fn test_unparsable_user_config_errors_legibly(
     // The header the renderer needs, and the parse detail it would otherwise
     // have replaced with "Command failed".
     assert!(
-        stderr.contains("Failed to load config"),
+        stderr.contains("User config @"),
         "{args:?} should name what failed; stderr:\n{stderr}"
     );
     assert!(
@@ -724,6 +709,38 @@ fn test_config_show_outside_git_repo(mut repo: TestRepo, temp_home: TempDir) {
 
         assert_cmd_snapshot!(cmd);
     });
+}
+
+/// `--full` outside a repository still renders every section: the
+/// diagnostics skip the repo-specific CI check instead of failing the report.
+#[rstest]
+fn test_config_show_full_outside_git_repo(mut repo: TestRepo, temp_home: TempDir) {
+    let temp_dir = worktrunk::testing::test_tempdir();
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    let mut cmd = wt_command();
+    repo.configure_mock_commands(&mut cmd);
+    cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
+    cmd.args(["config", "show", "--full"])
+        .current_dir(temp_dir.path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    set_xdg_config_path(&mut cmd, temp_home.path());
+
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout)
+        .ansi_strip()
+        .to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "config show --full outside a repo failed: {stderr}"
+    );
+    assert!(stdout.contains("USER CONFIG"), "stdout: {stdout}");
+    assert!(stdout.contains("DIAGNOSTICS"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("CI status requires"),
+        "outside a repo the CI check should fall back to its hint, stdout: {stdout}"
+    );
 }
 
 #[rstest]
@@ -867,7 +884,13 @@ fn test_config_show_fish_with_completions(mut repo: TestRepo, temp_home: TempDir
 
 /// Test that config show displays fish shell without completions configured
 #[rstest]
-fn test_config_show_fish_without_completions(mut repo: TestRepo, temp_home: TempDir) {
+#[case(false)]
+#[case(true)]
+fn test_config_show_fish_without_completions(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+    #[case] completion_directory: bool,
+) {
     // Setup mock gh/glab for deterministic BINARIES output
     repo.setup_mock_ci_tools_unauthenticated();
 
@@ -886,7 +909,11 @@ fn test_config_show_fish_without_completions(mut repo: TestRepo, temp_home: Temp
     let wrapper_content = init.generate_fish_wrapper().unwrap();
     fs::write(&fish_config, format!("{}\n", wrapper_content)).unwrap();
 
-    // Do NOT create fish completions file - completions not configured
+    // A missing completion file and a directory at its path must both leave
+    // the installed wrapper visible, with completions not configured.
+    if completion_directory {
+        fs::create_dir_all(temp_home.path().join(".config/fish/completions/wt.fish")).unwrap();
+    }
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
@@ -895,7 +922,7 @@ fn test_config_show_fish_without_completions(mut repo: TestRepo, temp_home: Temp
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
 
-        assert_cmd_snapshot!(cmd);
+        assert_cmd_snapshot!("config_show_fish_without_completions", cmd);
     });
 }
 
@@ -1459,6 +1486,34 @@ fn test_config_show_full_not_configured(mut repo: TestRepo, temp_home: TempDir) 
     });
 }
 
+/// A successful connectivity probe is existing state, and includes the actual
+/// response from the configured command in the diagnostic report.
+#[rstest]
+fn test_config_show_full_working_commit_generation(repo: TestRepo) {
+    repo.write_test_config(
+        "[commit.generation]\ncommand = \"cat >/dev/null && echo diagnostic-probe\"\n",
+    );
+    let output = repo
+        .wt_command()
+        .env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
+        .args(["config", "show", "--full"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = stdout.ansi_strip();
+    let lines: Vec<_> = stdout.lines().collect();
+    let index = lines
+        .iter()
+        .position(|line| line.contains("Commit generation working"))
+        .unwrap();
+    insta::assert_snapshot!(lines[index..index + 2].join("\n"), @"
+    ○ Commit generation working (cat >/dev/null && echo diagnostic-probe)
+      diagnostic-probe
+    ");
+}
+
 #[rstest]
 fn test_config_show_full_command_not_found(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
@@ -1641,6 +1696,63 @@ fn test_config_show_full_azure_remote(
 
         assert_cmd_snapshot!(snapshot_name, cmd);
     });
+}
+
+/// Azure CLI's WinGet install puts `az.cmd` on PATH beside an extensionless
+/// bash script, with no `az.exe`. A bare `az` spawn has to reach the batch
+/// launcher, or `wt` reports an installed CLI as missing (#4401).
+#[cfg(windows)]
+#[rstest]
+fn test_config_show_finds_batch_launcher_az(mut repo: TestRepo, temp_home: TempDir) {
+    use crate::common::mock_commands::MockConfig;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    let mock_bin = repo.mock_bin_path().unwrap().to_path_buf();
+    fs::write(
+        mock_bin.join("az_extensions.json"),
+        r#"[{"name": "azure-devops", "version": "1.0.0"}]"#,
+    )
+    .unwrap();
+    // The mock answers under another name, so the only `az` on the mock
+    // directory is the launcher pair WinGet installs.
+    MockConfig::new("azmock")
+        .version("azure-cli 2.60.0 (mock)")
+        .command("account show", MockResponse::exit(0))
+        .command("extension list", MockResponse::file("az_extensions.json"))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    let _ = fs::remove_file(mock_bin.join("az.exe"));
+    fs::write(mock_bin.join("az.cmd"), "@\"%~dp0azmock.exe\" %*\r\n").unwrap();
+    fs::write(
+        mock_bin.join("az"),
+        "#!/usr/bin/env bash\nexec \"$(dirname \"$0\")/azmock.exe\" \"$@\"\n",
+    )
+    .unwrap();
+
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://dev.azure.com/myorg/myproject/_git/test-repo",
+    ]);
+
+    let mut cmd = repo.wt_command();
+    cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
+    cmd.args(["config", "show", "--full"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    let output = cmd.output().unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = text.ansi_strip();
+    assert!(
+        text.contains("az installed & authenticated"),
+        "az.cmd was not found:\n{text}"
+    );
 }
 
 #[rstest]
@@ -4136,75 +4248,70 @@ approved-commands = ["cargo test"]
     );
 }
 
-/// `--output` never rewrites the config it migrates, even with `--yes`: that is
-/// the in-place update's job, which previews the diff and migrates
-/// `approved-commands`.
+/// `--output` writes the path it was given, including the config being
+/// migrated. That write drops the config's `approved-commands`, so they move to
+/// approvals.toml first, exactly as the in-place update moves them — warning
+/// instead would point at a `wt config update` with nothing left to migrate.
 #[rstest]
-fn test_config_update_output_rejects_source_path(repo: TestRepo) {
-    let original = "worktree-path = \"../{{ main_worktree }}.{{ branch }}\"\n";
-    fs::write(repo.test_config_path(), original).unwrap();
+fn test_config_update_output_writes_the_config_it_migrates(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+
+[projects."github.com/user/repo"]
+approved-commands = ["npm test"]
+"#,
+    )
+    .unwrap();
 
     let output = repo
         .wt_command()
-        .args(["config", "update", "--yes", "--output"])
+        .args(["config", "update", "--output"])
         .arg(repo.test_config_path())
         .output()
         .unwrap();
 
-    assert_eq!(output.status.code(), Some(1));
-    assert_eq!(
-        fs::read_to_string(repo.test_config_path()).unwrap(),
-        original
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stderr = stderr.ansi_strip();
     assert!(
-        stderr.contains("Cannot overwrite user config") && stderr.contains("wt config update"),
-        "stderr:\n{stderr}"
+        output.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let written = fs::read_to_string(repo.test_config_path()).unwrap();
+    assert!(
+        written.contains("{{ repo }}") && !written.contains("approved-commands"),
+        "the migration should land at the path it named:\n{written}"
+    );
+    let approvals = fs::read_to_string(repo.test_config_path().with_file_name("approvals.toml"))
+        .expect("approvals.toml should carry the commands the write removed");
+    assert!(
+        approvals.contains("npm test"),
+        "the approvals should survive the overwrite:\n{approvals}"
     );
 }
 
-/// An existing destination is overwritten only with `--yes`. Without it, and with
-/// no terminal to prompt on, the command fails and leaves the file as it was —
+/// An existing destination is replaced, the way `cp` and a shell redirect do —
 /// here the user config, which has nothing to migrate but sits at the path a
 /// project-config migration was sent to.
 #[rstest]
-fn test_config_update_output_overwrites_existing_file_only_with_yes(repo: TestRepo) {
-    let user_config = r#"worktree-path = "../{{ repo }}.{{ branch }}"
+fn test_config_update_output_replaces_an_existing_file(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [aliases]
 hi = "echo hi"
-"#;
-    fs::write(repo.test_config_path(), user_config).unwrap();
+"#,
+    )
+    .unwrap();
     repo.write_project_config(
         r#"pre-start = "ln -sf {{ main_worktree }}/node_modules"
 "#,
     );
     repo.commit("Add deprecated project config");
 
-    let refused = repo
-        .wt_command()
-        .args(["config", "update", "--output"])
-        .arg(repo.test_config_path())
-        .output()
-        .unwrap();
-    assert_eq!(refused.status.code(), Some(1));
-    assert_eq!(
-        fs::read_to_string(repo.test_config_path()).unwrap(),
-        user_config
-    );
-    let stderr = String::from_utf8_lossy(&refused.stderr);
-    let stderr = stderr.ansi_strip();
-    assert!(
-        stderr.contains(
-            "already exists; to overwrite it with the project config migration, add --yes"
-        ),
-        "stderr:\n{stderr}"
-    );
-
     let overwritten = repo
         .wt_command()
-        .args(["config", "update", "--yes", "--output"])
+        .args(["config", "update", "--output"])
         .arg(repo.test_config_path())
         .output()
         .unwrap();
@@ -5073,7 +5180,7 @@ fn test_codex_plugin_metadata_is_valid_json() {
     // directory (verified against codex-cli 0.144.1). The scanned tree is the
     // real-file mirror of repo-root skills/ — `codex plugin add` copies the
     // plugin into its cache with a copier that drops symlink entries, which
-    // is why the mirror exists. See CLAUDE.md → "Plugin skills are a
+    // is why the mirror exists. See AGENTS.md → "Plugin skills are a
     // generated mirror".
     assert!(
         plugin.get("skills").is_none(),
@@ -5113,7 +5220,7 @@ fn test_codex_plugin_metadata_is_valid_json() {
     // inline Codex override means Codex never loads it, so the #3362 collision
     // (Codex surfacing the *Claude* file's events) stays closed. `Stop`
     // returns 🤖 to 💬 at turn end, and `SessionEnd` clears the marker when
-    // the main thread ends. See CLAUDE.md → "Plugin Layout".
+    // the main thread ends. See AGENTS.md → "Plugin Layout".
     let codex_hooks = plugin
         .get("hooks")
         .and_then(|h| h.get("hooks"))
@@ -5192,7 +5299,7 @@ fn test_codex_plugin_metadata_is_valid_json() {
 /// also scans `skills/` by convention when the manifest omits the key, but
 /// its installer's cache copy drops symlink entries — which is why the
 /// plugin's `skills/` is a real-file mirror of the repo-root `skills/`,
-/// generated by `test_docs_are_in_sync` (see plugins/worktrunk/CLAUDE.md
+/// generated by `test_docs_are_in_sync` (see plugins/worktrunk/AGENTS.md
 /// → "Plugin skills are a generated mirror"). Gemini
 /// (gemini-cli 0.42) resolves the extension at the repo root, so
 /// `${extensionPath}/skills/` is the real single-sourced repo-root `skills/`
@@ -5214,7 +5321,7 @@ fn test_plugin_layout_is_consolidated() {
     // Repo-local maintainer skills are authored once for Claude and exposed to
     // Codex through its conventional .agents/skills discovery path. Windows
     // checkouts with core.symlinks=false materialize the link as a plain file;
-    // that accepted limitation is documented in plugins/worktrunk/CLAUDE.md.
+    // that accepted limitation is documented in plugins/worktrunk/AGENTS.md.
     #[cfg(unix)]
     {
         let codex_skills = root.join(".agents/skills");
@@ -5368,7 +5475,7 @@ fn test_plugin_layout_is_consolidated() {
         }
     }
     // The assertion above is absence, so an empty mirror satisfies it over
-    // nothing — see "Guards that scan source text" in `tests/CLAUDE.md`.
+    // nothing — see "Guards that scan source text" in `tests/AGENTS.md`.
     assert!(
         mirrored > 0,
         "plugins/worktrunk/skills is empty — the mirror never generated, so the \
@@ -6549,19 +6656,24 @@ fn test_plugins_claude_install_statusline_honors_claude_config_dir(
 }
 
 #[rstest]
+#[case::tilde_slash("~/custom-claude", "custom-claude/settings.json")]
+#[case::bare_tilde("~", "settings.json")]
 fn test_plugins_claude_install_statusline_expands_tilde_in_claude_config_dir(
     repo: TestRepo,
     temp_home: TempDir,
+    #[case] config_dir: &str,
+    #[case] expected_settings: &str,
 ) {
-    // A literal `~/` in CLAUDE_CONFIG_DIR (which only reaches us when the
+    // A literal tilde in CLAUDE_CONFIG_DIR (which only reaches us when the
     // variable is set outside a shell) is expanded against the home directory,
-    // not treated as a relative path under the cwd.
+    // not treated as a relative path under the cwd. A bare `~` names the home
+    // directory itself, so it has no `/` for a prefix strip to key on.
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
     cmd.args(["config", "plugins", "claude", "install-statusline", "--yes"])
         .current_dir(repo.root_path());
     set_temp_home_env(&mut cmd, temp_home.path());
-    cmd.env("CLAUDE_CONFIG_DIR", "~/custom-claude");
+    cmd.env("CLAUDE_CONFIG_DIR", config_dir);
 
     let output = cmd.output().unwrap();
     assert!(
@@ -6570,8 +6682,13 @@ fn test_plugins_claude_install_statusline_expands_tilde_in_claude_config_dir(
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // `~/custom-claude` expanded to <home>/custom-claude.
-    let settings_path = temp_home.path().join("custom-claude/settings.json");
+    // The tilde expanded against <home>.
+    let settings_path = temp_home.path().join(expected_settings);
+    assert!(
+        settings_path.exists(),
+        "expected settings.json at {}",
+        settings_path.display()
+    );
     let content = fs::read_to_string(&settings_path).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
     assert_eq!(

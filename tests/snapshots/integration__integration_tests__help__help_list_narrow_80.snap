@@ -214,7 +214,8 @@ checks object and review states give the JSON form of each value:
  [35m#[0m magenta [2m"changes_requested"[0m  A reviewer requested changes                    
  [36m#[0m cyan    [2m"pending"[0m            A review is required (e.g. branch protection)   
                                 but not yet given                               
- (blank)   [2mpr[0m and [2mchecks[0m absent No upstream, or no PR/MR and no branch workflow 
+ (blank)   [2mpr[0m and [2mchecks[0m absent Branch never pushed, or no PR/MR and no branch  
+                                workflow                                        
 
 The two remaining review states have no indicator of their own: [2m"draft"[0m only 
 dims the cell and [2m"approved"[0m leaves the color unchanged.
@@ -243,6 +244,7 @@ namespaces — [2m{{ vars.* }}[0m, stored with [2mwt config state vars set[0
 you set yourself, or the git-native [2mdescription[0m) — useful for tracking what each
  of many (often agent-driven) branches is for:
 
+[107m [0m [2m# ~/.config/worktrunk/config.toml[0m
 [107m [0m [2m[36m[list.custom-columns.Ticket][0m
 [107m [0m [2mtemplate = [0m[2m[32m"{{ vars.ticket }}"[0m
 
@@ -274,7 +276,7 @@ symbol in the column.
 [32mWorktree[0m
 
 An in-progress git operation, a worktree-location attribute, or a branch with no
- worktree. One symbol shows, highest priority first ([2m✘ > ↻ > ⊟ > ⊞ > ⊘ > ⚑ > /[0m):
+ worktree. One symbol shows, highest priority first ([2m✘ > ↻ > ⊟ > ⊞ > ⊘ > ⚐ > /[0m):
 
  Symbol           JSON                               Meaning                    
  ────── ───────────────────────── ───────────────────────────────────────────── 
@@ -284,11 +286,12 @@ An in-progress git operation, a worktree-location attribute, or a branch with no
         [2m"rebase"[0m, [2m"merge"[0m,        names it                                      
         [2m"cherry_pick"[0m, [2m"revert"[0m,                                                
         [2m"bisect"[0m                                                                
- [33m⊟[0m      [2mworktree.prunable[0m         Prunable (worktree directory missing)         
+ [33m⊟[0m      [2mworktree.prunable[0m         Prunable (worktree directory or its [2m.git[0m      
+                                  gone)                                         
  [33m⊞[0m      [2mworktree.locked[0m           Locked worktree                               
  [2m⊘[0m      [2mworktree.detached[0m         Detached HEAD                                 
- [2m[33m⚑[0m      [2mworktree.duplicate_branch[0m Branch checked out in more than one worktree  
- [2m[33m⚑[0m      [2mworktree.branch_mismatch[0m  Worktree isn't at the path its branch implies 
+ [2m⚐[0m      [2mworktree.duplicate_branch[0m Branch checked out in more than one worktree  
+ [2m⚐[0m      [2mworktree.branch_mismatch[0m  Worktree isn't at the path its branch implies 
  [2m/[0m      no [2mworktree[0m object        Branch without a worktree                     
 
 [32mDefault branch[0m
@@ -341,9 +344,9 @@ field.
 
 These appear across all columns while the table is loading:
 
- Symbol                           Meaning                           
- ────── ─────────────────────────────────────────────────────────── 
- [2m·[0m      Data is loading, or collection timed out / branch too stale 
+ Symbol                 Meaning                  
+ ────── ──────────────────────────────────────── 
+ [2m·[0m      Data is loading, or collection timed out 
 
 [2m────────────────────────────────────────────────────────────────────────────────[0m
 
@@ -393,9 +396,9 @@ How "no value" reads:
 - [1mAbsent[0m — nothing to report: not applicable ([2mworktree[0m on a branch-only
   row), not requested this run (the envelope's [2mcollected[0m records what was),
   or determined-empty (no PR, no lock, not integrated).
-- [1m[2mnull[0m[0m — requested but not determined: a task timed out, the branch was
-  too stale for the expensive checks, or a forge fetch failed. This is the
-  JSON form of the table's [2m·[0m placeholder.
+- [1m[2mnull[0m[0m — requested but not determined: a task timed out, a check was
+  skipped, or a forge fetch failed. This is the JSON form of the table's [2m·[0m
+  placeholder.
 
 jq treats absent and [2mnull[0m identically in path expressions, so filters need
 no null checks; [2mhas()[0m distinguishes the two when it matters.
@@ -502,7 +505,8 @@ Independent facts; the table's priority-collapsed symbol is [2mdisplay.state[0
           l                                                                     
  [2mintegrat[0m object/null [2m{reason}[0m — which check found the content integrated (see  
  [2mion[0m                  integration reasons); absent when determined              
-                      not-integrated, null when a dirty tree skipped the checks 
+                      not-integrated, null when undetermined (a check timed out 
+                      or was skipped)                                           
  [2mmerge_co[0m boolean/nul Merging into the default branch would conflict, simulated 
  [2mnflicts[0m  l           locally with [2mgit merge-tree[0m                               
 
@@ -592,8 +596,9 @@ full meaning of each value ([2m"is_main"[0m, [2m"orphan"[0m, [2m"empty"[0m
 [32mintegration reasons[0m
 
 [2mdefault_branch.integration.reason[0m records which check matched. Checks run 
-cheapest-first and the first match wins. JSON-only — every reason renders as the
- same [2m⊂[0m:
+cheapest-first and the first match wins. The reason itself is JSON-only: the 
+table shows [2m"same_commit"[0m as [2m_[0m (or [2m–[0m with uncommitted changes) and every other 
+reason as [2m⊂[0m when the working tree is clean:
 
      Value                                  Meaning                             
  ────────────── ─────────────────────────────────────────────────────────────── 

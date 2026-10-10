@@ -22,12 +22,12 @@
 //!   emits its rendered output.
 
 use std::borrow::Cow;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use color_print::cformat;
 use shell_escape::unix::escape;
 
-use super::HookType;
+use super::{HookType, InProgressOperation, StaleWorktreeWork};
 use crate::path::format_path_for_display;
 use crate::styling::{
     error_message, format_bash_with_gutter, format_with_gutter, hint_message, info_message,
@@ -123,8 +123,8 @@ pub trait ErrorExt {
     /// short single-line label.
     ///
     /// Use this when embedding a sub-error's text inside another typed error's
-    /// message field (e.g., `GitError::WorktreeRemovalFailed::error`,
-    /// `GitError::PushFailed::error`) so the user sees git's real reason
+    /// message field (e.g., `GitError::PushFailed::error`) so the user sees git's
+    /// real reason
     /// rather than just the [`CommandError`] single-line summary.
     fn display_message(&self) -> String;
 
@@ -134,7 +134,7 @@ pub trait ErrorExt {
     /// [`WorktrunkError`] variants that carry an exit code.
     fn exit_code(&self) -> Option<i32>;
 
-    /// If the error is signal-derived, return the terminating signal.
+    /// Return SIGINT or SIGTERM for cancellation; other child signals remain failures.
     ///
     /// Implements the Ctrl-C cancellation policy: command loops call this
     /// on every per-iteration failure and, when it returns `Some(signal)`,
@@ -142,7 +142,7 @@ pub trait ErrorExt {
     /// per the shell convention (130 SIGINT, 143 SIGTERM) — rather than
     /// continuing.
     ///
-    /// See the "Signal Handling" section of the project `CLAUDE.md` for
+    /// See the "Signal Handling" section of the project `AGENTS.md` for
     /// the rationale and the full list of loops that apply this policy.
     fn interrupt_signal(&self) -> Option<i32>;
 }
@@ -315,6 +315,9 @@ pub fn try_render_diagnostic(err: &(dyn std::error::Error + 'static)) -> Option<
     if let Some(e) = err.downcast_ref::<CommandError>() {
         return Some(e.render());
     }
+    if let Some(e) = err.downcast_ref::<crate::config::ConfigParseError>() {
+        return Some(e.render());
+    }
     None
 }
 
@@ -379,7 +382,7 @@ impl SwitchSuggestionCtx {
 ///     println!("branch {branch} already exists");
 /// }
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum GitError {
     // Git state errors
     /// A worktree is not on a branch, so a command needing one refuses.
@@ -455,9 +458,15 @@ pub enum GitError {
         /// suggesting both `pr:N` and `mr:N`.
         pr_mr_platform: Option<RefType>,
     },
-    /// Reference (branch, tag, commit) not found - used when any commit-ish is accepted
+    /// A requested new branch name rejected by Git.
+    InvalidBranchName {
+        name: String,
+    },
+    /// Reference not found where any commit-ish is accepted.
     ReferenceNotFound {
         reference: String,
+        /// The argument that supplied the reference, when it was an option.
+        flag: Option<&'static str>,
     },
     /// Persisted `worktrunk.default-branch` points at a branch that no longer
     /// resolves locally. Surfaced when a command would use the default branch
@@ -476,12 +485,27 @@ pub enum GitError {
     },
 
     // Worktree errors
+    InteractivePickerRequiresTerminal,
     NotInWorktree {
         /// The action that requires being in a worktree
         action: Option<String>,
     },
+    /// A registered worktree git calls prunable, or whose directory is gone.
+    /// Built with [`GitError::worktree_missing`].
     WorktreeMissing {
         branch: String,
+        /// The worktree's path while its directory remains, where `git
+        /// worktree repair` can reconnect it; `None` once the directory is gone.
+        repairable_at: Option<PathBuf>,
+    },
+    /// A stale worktree whose registration holds what unregistering it would
+    /// destroy — see [`Repository::stale_worktree_work`](super::Repository::stale_worktree_work).
+    StaleWorktreeHoldsWork {
+        branch: String,
+        path: PathBuf,
+        /// Whether the directory remains, so repair needs no recreating first.
+        directory_remains: bool,
+        work: StaleWorktreeWork,
     },
     RemoteOnlyBranch {
         branch: String,
@@ -522,7 +546,7 @@ pub enum GitError {
     WorktreeRemovalFailed {
         branch: String,
         path: PathBuf,
-        error: String,
+        error: anyhow::Error,
         /// Top-level entries remaining in the directory (for "Directory not empty" diagnostics)
         remaining_entries: Option<Vec<String>>,
     },
@@ -703,7 +727,14 @@ pub enum GitError {
     },
 }
 
-impl std::error::Error for GitError {}
+impl std::error::Error for GitError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::WorktreeRemovalFailed { error, .. } => Some(error.as_ref()),
+            _ => None,
+        }
+    }
+}
 
 /// `"1 path with unresolved conflicts"` — the shared tail of every message
 /// about an unmerged index. [`GitError::UnmergedPaths`] refuses outright;
@@ -714,7 +745,27 @@ pub fn format_unresolved_conflicts(count: usize) -> String {
     format!("{count} {paths} with unresolved conflicts")
 }
 
+/// The operation's name as a message reads it ("a rebase in progress").
+fn operation_noun(operation: InProgressOperation) -> &'static str {
+    match operation {
+        InProgressOperation::Merge => "merge",
+        InProgressOperation::Rebase => "rebase",
+        InProgressOperation::CherryPick => "cherry-pick",
+        InProgressOperation::Revert => "revert",
+        InProgressOperation::Bisect => "bisect",
+    }
+}
+
 impl GitError {
+    /// [`GitError::WorktreeMissing`] for the worktree registered at `path`,
+    /// recording whether its directory remains for the hint to offer repair.
+    pub fn worktree_missing(branch: String, path: &Path) -> Self {
+        GitError::WorktreeMissing {
+            branch,
+            repairable_at: path.is_dir().then(|| path.to_path_buf()),
+        }
+    }
+
     /// Styled title for this variant (first line, with inline `<bold>`
     /// highlights on entity names like branch and path).
     ///
@@ -771,8 +822,14 @@ impl GitError {
                 cformat!("No branch named <bold>{branch}</>")
             }
 
-            GitError::ReferenceNotFound { reference } => {
-                cformat!("No branch, tag, or commit named <bold>{reference}</>")
+            GitError::InvalidBranchName { name } => {
+                cformat!("Invalid branch name <bold>{name}</>")
+            }
+            GitError::ReferenceNotFound { reference, flag } => {
+                let context = flag
+                    .map(|flag| cformat!(" (<bold>{flag}</>)"))
+                    .unwrap_or_default();
+                cformat!("No branch, tag, or commit named <bold>{reference}</>{context}")
             }
 
             GitError::StaleDefaultBranch { branch } => {
@@ -783,14 +840,27 @@ impl GitError {
                 cformat!("Default branch <bold>{branch}</> has no commits yet")
             }
 
+            GitError::InteractivePickerRequiresTerminal => {
+                "Interactive picker requires an interactive terminal".to_string()
+            }
             GitError::NotInWorktree { action } => match action {
                 Some(action) => format!("Cannot {action}: not in a worktree"),
                 None => "Not in a worktree".to_string(),
             },
 
-            GitError::WorktreeMissing { branch } => {
-                cformat!("Worktree directory missing for <bold>{branch}</>")
+            GitError::WorktreeMissing { branch, .. } => {
+                cformat!("Worktree for <bold>{branch}</> is stale; its directory or .git is gone")
             }
+
+            GitError::StaleWorktreeHoldsWork { branch, work, .. } => match work {
+                StaleWorktreeWork::StagedChanges => {
+                    cformat!("Worktree for <bold>{branch}</> is stale but holds staged changes")
+                }
+                StaleWorktreeWork::Operation(operation) => cformat!(
+                    "Worktree for <bold>{branch}</> is stale with a {} in progress",
+                    operation_noun(*operation)
+                ),
+            },
 
             GitError::RemoteOnlyBranch { branch, remote } => {
                 cformat!("Branch <bold>{branch}</> exists only on remote ({remote}/{branch})")
@@ -1027,15 +1097,18 @@ impl GitError {
                 ..
             } => {
                 let title = self.title();
+                let keep = if dirty_files.iter().any(|line| line.starts_with("?? ")) {
+                    cformat!("Commit or run <underline>git stash -u</> in the dirty worktree first")
+                } else {
+                    "Commit or stash changes first".to_string()
+                };
                 let hint = if *force_hint {
                     // Construct full command: "wt remove [branch] --force"
                     let args: Vec<&str> = branch.as_deref().into_iter().collect();
                     let cmd = suggest_command("remove", &args, &["--force"]);
-                    cformat!(
-                        "Commit or stash changes first, or to lose uncommitted changes, run <underline>{cmd}</>"
-                    )
+                    cformat!("{keep}, or to lose uncommitted changes, run <underline>{cmd}</>")
                 } else {
-                    "Commit or stash changes first".to_string()
+                    keep
                 };
                 write!(f, "{}", error_message(&title))?;
                 if !dirty_files.is_empty() {
@@ -1097,7 +1170,7 @@ impl GitError {
                 write!(f, "{}\n{}", error_message(&title), hint_message(hint))
             }
 
-            GitError::ReferenceNotFound { .. } => {
+            GitError::InvalidBranchName { .. } | GitError::ReferenceNotFound { .. } => {
                 let title = self.title();
                 write!(f, "{}", error_message(&title))
             }
@@ -1126,6 +1199,17 @@ impl GitError {
                 )
             }
 
+            GitError::InteractivePickerRequiresTerminal => {
+                let command = "wt switch <branch>";
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(self.title()),
+                    hint_message(cformat!(
+                        "To switch to a branch, run <underline>{command}</>"
+                    ))
+                )
+            }
             GitError::NotInWorktree { .. } => {
                 let title = self.title();
                 write!(
@@ -1138,14 +1222,42 @@ impl GitError {
                 )
             }
 
-            GitError::WorktreeMissing { .. } => {
+            GitError::WorktreeMissing { repairable_at, .. } => {
                 let title = self.title();
+                // Repair reconnects a directory that remains, whatever it holds;
+                // once the directory is gone there is nothing to reconnect.
+                let hint = match repairable_at {
+                    Some(path) => cformat!(
+                        "To restore the worktree, run <underline>git worktree repair {}</>",
+                        format_path_for_display(path)
+                    ),
+                    None => cformat!("To clean up, run <underline>git worktree prune</>"),
+                };
+                write!(f, "{}\n{}", error_message(&title), hint_message(hint))
+            }
+
+            GitError::StaleWorktreeHoldsWork {
+                branch,
+                path,
+                directory_remains,
+                ..
+            } => {
+                let title = self.title();
+                let discard = suggest_command("remove", &[branch], &["-f"]);
+                let path_display = format_path_for_display(path);
+                let restore = if *directory_remains {
+                    cformat!("run <underline>git worktree repair {path_display}</>")
+                } else {
+                    cformat!(
+                        "recreate its directory, then run <underline>git worktree repair {path_display}</>"
+                    )
+                };
                 write!(
                     f,
                     "{}\n{}",
                     error_message(&title),
                     hint_message(cformat!(
-                        "To clean up, run <underline>git worktree prune</>"
+                        "To discard the stale worktree, run <underline>{discard}</>; to restore it, {restore}"
                     ))
                 )
             }
@@ -1260,8 +1372,9 @@ impl GitError {
                 remaining_entries,
                 ..
             } => {
+                let error = error.display_message();
                 let title = self.title();
-                write!(f, "{}", format_error_block(error_message(&title), error))?;
+                write!(f, "{}", format_error_block(error_message(&title), &error))?;
                 if let Some(entries) = remaining_entries {
                     const MAX_SHOWN: usize = 10;
                     let listing = if entries.len() > MAX_SHOWN {
@@ -1677,12 +1790,12 @@ impl std::fmt::Display for GitError {
 /// for cases that need exit code extraction or special handling.
 #[derive(Debug)]
 pub enum WorktrunkError {
-    /// Child process exited with non-zero code (preserves exit code for signals).
+    /// Child outcome, retaining its exit code independently of cancellation.
     ///
-    /// `signal` is `Some(sig)` when the process was terminated by a signal
-    /// (on Unix), `None` for a normal non-zero exit. Callers that must treat
-    /// interrupts differently from ordinary failures (e.g., aborting a loop
-    /// on Ctrl-C) check `signal` rather than inferring from `code`.
+    /// `signal` records native signal termination or a cancellation observed by
+    /// wt. A child may catch that cancellation and exit normally, even with 0;
+    /// `code` still records its real outcome. Loops classify cancellation from
+    /// `signal`, never by inferring from `code`.
     ChildProcessExited {
         code: i32,
         message: String,
@@ -1699,14 +1812,11 @@ pub enum WorktrunkError {
     CommandNotApproved,
     /// Error already displayed, just exit with given code (silent error)
     AlreadyDisplayed { exit_code: i32 },
-    /// A signal killed the foreground child and the command aborted.
+    /// The operation was cancelled, possibly before any child was admitted.
     ///
-    /// Exits `128 + signal` and renders once, at exit, following the shell
-    /// convention for a killed job: nothing for SIGINT (the terminal already
-    /// echoed `^C`), `Terminated` for SIGTERM. wt traps signals to forward
-    /// them to children, so the shell never sees wt die and won't print that
-    /// line itself. `hint` carries an optional recovery line (e.g. a rebase
-    /// left in progress) rendered under the message.
+    /// Exits `128 + signal`; Unix INT/TERM are passed to the parent shell.
+    /// Native job messages belong to that shell, while recovery hints belong
+    /// to wt. Custom commands may also report other signal-derived exits here.
     Interrupted { signal: i32, hint: Option<String> },
 }
 
@@ -1736,6 +1846,27 @@ impl std::fmt::Display for WorktrunkError {
 }
 
 impl WorktrunkError {
+    /// Preserve a child's physical status separately from operation cancellation.
+    pub fn from_child_status(status: &std::process::ExitStatus, cancellation: Option<i32>) -> Self {
+        #[cfg(unix)]
+        let signal = std::os::unix::process::ExitStatusExt::signal(status);
+        #[cfg(not(unix))]
+        let signal: Option<i32> = None;
+        let code = status
+            .code()
+            .or_else(|| signal.map(|signal| 128 + signal))
+            .unwrap_or(1);
+        let message = match signal {
+            Some(signal) => format!("terminated by signal {signal}"),
+            None => format!("exit status: {code}"),
+        };
+        Self::ChildProcessExited {
+            code,
+            message,
+            signal: cancellation.or(signal),
+        }
+    }
+
     /// Exit code carried by this variant, if any.
     pub fn exit_code(&self) -> Option<i32> {
         match self {
@@ -1774,12 +1905,11 @@ impl Diagnostic for WorktrunkError {
                 String::new()
             }
             WorktrunkError::Interrupted { signal, hint } => {
-                // Shell convention for a killed job: silent for SIGINT (the
-                // terminal already echoed ^C), "Terminated" for SIGTERM, the
-                // signal number otherwise (reachable only from stream mode,
-                // where any signal classifies as an interrupt).
+                // Unix passes INT/TERM to the shell; printing its termination
+                // notice here would duplicate the native job message.
                 let message = match *signal {
                     SIGINT => None,
+                    SIGTERM if cfg!(unix) => None,
                     SIGTERM => Some("Terminated".to_string()),
                     sig => Some(format!("Killed by signal {sig}")),
                 };
@@ -1835,21 +1965,25 @@ impl ErrorExt for anyhow::Error {
         // through them can't demote it.
         match self.downcast_ref::<WorktrunkError>() {
             Some(WorktrunkError::ChildProcessExited {
-                signal: Some(sig), ..
+                signal: Some(sig @ (SIGINT | SIGTERM)),
+                ..
             }) => return Some(*sig),
-            Some(WorktrunkError::Interrupted { signal, .. }) => return Some(*signal),
+            Some(WorktrunkError::Interrupted {
+                signal: sig @ (SIGINT | SIGTERM),
+                ..
+            }) => return Some(*sig),
             _ => {}
         }
-        // Capture mode (`Cmd::run`) reports it as a `CommandError` carrying the
-        // raw `status.signal()`. Walk the chain so `.context(...)` layers (e.g.
-        // `run_command`'s "Failed to execute: git …") don't hide it. Only
-        // SIGINT/SIGTERM classify as interrupts here: capture children get no
-        // signal forwarding or escalation (unlike stream mode, where a
-        // SIGKILL death can be wt's own escalation of a second Ctrl-C,
-        // normalized upstream to the originating signal), so any other signal
-        // means the child fell over on its own — and because its captured
-        // output was never displayed, a silent interrupt exit would discard
-        // the evidence. Those fall through to the caller's visible error path.
+        #[cfg(unix)]
+        if let Some(error) = self.downcast_ref::<crate::shell_exec::StreamCommandError>()
+            && let Some(signal @ (SIGINT | SIGTERM)) =
+                std::os::unix::process::ExitStatusExt::signal(&error.status)
+        {
+            return Some(signal);
+        }
+        // Capture mode carries the same raw status behind context layers.
+        // INT/TERM cancel the operation; crashes and other signals stay on
+        // the visible error path in every execution mode.
         if let Some(CommandError {
             signal: Some(sig @ (SIGINT | SIGTERM)),
             ..
@@ -2176,7 +2310,7 @@ mod tests {
     }
 
     #[test]
-    fn interrupt_signal_capture_mode_narrows_to_sigint_sigterm() {
+    fn interrupt_signal_modes_agree_on_cancellation() {
         // Capture mode has no signal forwarding or escalation, so SIGINT and
         // SIGTERM are the only signals a user interrupt can deliver; anything
         // else (a crash, an OOM kill) must stay on the visible error path
@@ -2192,7 +2326,14 @@ mod tests {
                 signal: Some(sig),
             }
             .into();
-            assert_eq!(err.interrupt_signal(), expected, "signal {sig}");
+            assert_eq!(err.interrupt_signal(), expected, "capture signal {sig}");
+            let streamed: anyhow::Error = WorktrunkError::ChildProcessExited {
+                code: 128 + sig,
+                message: format!("terminated by signal {sig}"),
+                signal: Some(sig),
+            }
+            .into();
+            assert_eq!(streamed.interrupt_signal(), expected, "stream signal {sig}");
         }
     }
 
@@ -2261,7 +2402,7 @@ mod tests {
             GitError::WorktreeRemovalFailed {
                 branch: "feature".into(),
                 path: PathBuf::from("/tmp/repo.feature"),
-                error: "fatal: …".into(),
+                error: anyhow::anyhow!("fatal: …"),
                 remaining_entries: None,
             }.to_string(),
             @"Failed to remove worktree for feature @ /tmp/repo.feature"
@@ -2286,14 +2427,15 @@ mod tests {
         let inner = GitError::BranchAlreadyExists {
             branch: "feature".into(),
         };
+        let expected = inner.to_string();
         let wrapped = GitError::WithSwitchSuggestion {
-            source: Box::new(inner.clone()),
+            source: Box::new(inner),
             ctx: SwitchSuggestionCtx {
                 extra_flags: vec!["--execute=claude".into()],
                 trailing_args: vec![],
             },
         };
-        assert_eq!(inner.to_string(), wrapped.to_string());
+        assert_eq!(expected, wrapped.to_string());
 
         // WorktrunkError variants
         assert_snapshot!(
@@ -2636,7 +2778,7 @@ mod tests {
         [31m✗[39m [31mCannot remove worktree after merge: [1mfeature-auth[22m has uncommitted changes[39m
         [107m [0m  M auth.rs
         [107m [0m ?? .DS_Store
-        [2m↳[22m [2mCommit or stash changes first[22m
+        [2m↳[22m [2mCommit or run [4mgit stash -u[24m in the dirty worktree first[22m
         ");
     }
 
@@ -2807,15 +2949,16 @@ mod tests {
             action: Some("merge".into()),
             worktree: None,
         };
+        let expected = inner.to_string();
         let wrapped = GitError::WithSwitchSuggestion {
-            source: Box::new(inner.clone()),
+            source: Box::new(inner),
             ctx: SwitchSuggestionCtx {
                 extra_flags: vec!["--execute=claude".into()],
                 trailing_args: vec!["Check my emails".into()],
             },
         };
         // Errors without switch suggestions should render identically
-        assert_eq!(inner.to_string(), wrapped.to_string());
+        assert_eq!(expected, wrapped.to_string());
     }
 
     fn sample_command_error() -> CommandError {
@@ -2999,17 +3142,19 @@ mod tests {
         assert_eq!(sigint.to_string(), "");
         assert_eq!(sigint.exit_code(), Some(130));
 
-        // SIGTERM: the line the shell would print if wt weren't trapping
-        // the signal.
+        // Unix delegates the SIGTERM notice to the parent shell.
         let sigterm = WorktrunkError::Interrupted {
             signal: 15,
             hint: None,
         };
+        #[cfg(unix)]
+        assert_eq!(sigterm.render(), "");
+        #[cfg(not(unix))]
         assert_snapshot!(sigterm.render(), @"[31m✗[39m [31mTerminated[39m");
         assert_eq!(sigterm.to_string(), "Terminated");
         assert_eq!(sigterm.exit_code(), Some(143));
 
-        // Any other signal (stream mode counts all): named by number.
+        // Other custom-command signals remain visible failures.
         let sigkill = WorktrunkError::Interrupted {
             signal: 9,
             hint: None,
@@ -3024,6 +3169,9 @@ mod tests {
             signal: 15,
             hint: Some("Rebase left in progress".to_string()),
         };
+        #[cfg(unix)]
+        assert_snapshot!(sigterm_hint.render(), @"[2m↳[22m [2mRebase left in progress[22m");
+        #[cfg(not(unix))]
         assert_snapshot!(sigterm_hint.render(), @"
         [31m✗[39m [31mTerminated[39m
         [2m↳[22m [2mRebase left in progress[22m

@@ -1,5 +1,101 @@
 # Changelog
 
+## 0.80.0
+
+### Improved
+
+- **`wt list` and the `wt switch` picker settle faster in repos with many worktrees**: rows fill from the top down, and on macOS with `core.fsmonitor=true` no daemon start is forked for a worktree whose daemon is already running. On a 50-worktree repo the picker's per-row work starts at 47ms, down from 120ms. ([#4286](https://github.com/max-sixty/worktrunk/pull/4286), [#4290](https://github.com/max-sixty/worktrunk/pull/4290), [#4288](https://github.com/max-sixty/worktrunk/pull/4288), [#4284](https://github.com/max-sixty/worktrunk/pull/4284))
+
+- **CI status skips branches that were never pushed**: `wt list --full`, the picker, and the statusline no longer query the forge for a local branch no remote has, so a repo with 239 local branches made 25 `gh` calls instead of 249. A PR opened from a branch another clone pushed shows once you fetch. GitLab looks up its project ID once per command, not per row. ([#4289](https://github.com/max-sixty/worktrunk/pull/4289), [#4216](https://github.com/max-sixty/worktrunk/pull/4216))
+
+- **Leaner Codex commit generation**: the recommended Codex command moves to `gpt-6-luna` with reasoning off and unneeded Codex features disabled, so each message sends fewer input tokens. Accepting the first-run Codex prompt now also creates `~/.codex/worktrunk-commit-instructions.txt`, which the command reads. [Docs](https://worktrunk.dev/llm-commits/) ([#4261](https://github.com/max-sixty/worktrunk/pull/4261))
+
+- **Releases ship a signed packslip**: each GitHub release includes `packslip.sigstore.json`, a manifest of the archives' digests, platforms, completions, and agent skills, signed by the release workflow so installers such as mise can verify downloads before unpacking. ([#4301](https://github.com/max-sixty/worktrunk/pull/4301), thanks @jdx)
+
+### Fixed
+
+- **A squash whose commit fails keeps the branch**: when a git commit hook or signing stopped the commit in `wt merge` or `wt step squash`, the branch was left at the merge base with its changes staged, recoverable from the reflog. Now the branch is untouched. (Breaking: git commit hooks run on a detached `HEAD` during a squash.) ([#4206](https://github.com/max-sixty/worktrunk/pull/4206), thanks @Bennyjitsu for finding it in [#4193](https://github.com/max-sixty/worktrunk/pull/4193))
+
+- **`wt step diff` when local `main` lags `origin/main`**: for a branch built on the newer `origin/main`, the diff included the upstream commits in between. It now uses the same base as `wt merge`. ([#4281](https://github.com/max-sixty/worktrunk/pull/4281), thanks @starlightromero, whose [#3519](https://github.com/max-sixty/worktrunk/issues/3519) reported the same case for `wt merge`)
+
+- **Submodules with an `ignore` setting**: when `submodule.<name>.ignore` or `diff.ignoreSubmodules` hid uncommitted changes inside a submodule, `wt remove` and `wt step prune` read the worktree as clean and removed it along with them; they now keep it. With `ignore=all`, `wt step commit` and squashes now commit a staged submodule pointer instead of leaving it staged. ([#4252](https://github.com/max-sixty/worktrunk/pull/4252), [#4192](https://github.com/max-sixty/worktrunk/pull/4192), [#4206](https://github.com/max-sixty/worktrunk/pull/4206), [#4303](https://github.com/max-sixty/worktrunk/pull/4303), thanks @Duang777)
+
+- **Worktrees whose `.git` was deleted but whose directory remains** (macOS `$TMPDIR` cleanup can do this): `wt remove <branch>` failed, and `wt step prune` skipped or errored on them. Both now unregister the worktree and leave its files; one with staged changes or an operation in progress is kept by `wt step prune`, and refused by `wt remove` without `--force`. ([#4228](https://github.com/max-sixty/worktrunk/pull/4228), [#4226](https://github.com/max-sixty/worktrunk/pull/4226), [#4302](https://github.com/max-sixty/worktrunk/pull/4302))
+
+- **`wt merge --no-squash` with a stage mode that stages nothing**: with `--stage=none` and only unstaged changes, `--stage=tracked` and only untracked files, or only dirty submodule contents, it stopped at "Nothing to commit"; it now merges the branch's commits. ([#4251](https://github.com/max-sixty/worktrunk/pull/4251), thanks @Duang777)
+
+- **Nushell 0.116**: the first `wt` tab completion in each session printed a `Positional completer input deprecated` warning. The completer now takes Nushell's new input and still works on older versions. ([#4297](https://github.com/max-sixty/worktrunk/pull/4297))
+
+- **Hook-log JSON's `branch` field**: `wt config state logs --format=json` put the sanitized log directory name (`feature-x-x2d`) there; it now holds `feature/x`, or `null` when no local branch owns the directory. (Breaking: filters on the sanitized form need updating.) ([#4279](https://github.com/max-sixty/worktrunk/pull/4279))
+
+- **`wt config show --full` outside a git repository**: it printed only a `git rev-parse` failure; it now shows the user config and diagnostics. ([#4255](https://github.com/max-sixty/worktrunk/pull/4255))
+
+- **Fixes for unusual git setups**: `--no-ff` merges are signed when `commit.gpgSign` is set without a value or only for one worktree; after `git worktree repair`, `--separate-git-dir` repos put worktrees beside the work tree and `wt remove` works (fixes [#4235](https://github.com/max-sixty/worktrunk/issues/4235)); removing an orphan worktree before its first commit no longer errors; with a custom merge driver, leaving the picker during a conflict check no longer strands `.merge_file_*` files (fixes [#4273](https://github.com/max-sixty/worktrunk/issues/4273)). ([#4206](https://github.com/max-sixty/worktrunk/pull/4206), [#4236](https://github.com/max-sixty/worktrunk/pull/4236), [#4233](https://github.com/max-sixty/worktrunk/pull/4233), [#4274](https://github.com/max-sixty/worktrunk/pull/4274), thanks @zengzheqing and @brndnmtthws for reporting)
+
+- **Fixes for unusual names and values**: branch and remote names starting with `-`; non-UTF-8 file names in `wt step copy-ignored`, `promote`, `push`, and `merge`; a bare `~` in `CLAUDE_CONFIG_DIR`, or Windows `HOME` differing from `USERPROFILE`; post-remove hooks after a pre-remove hook breaks the user config; multiline `wt config state vars` values, which `vars list` and `{{ vars.* }}` truncated and `wt config state clear` failed on. ([#4253](https://github.com/max-sixty/worktrunk/pull/4253), [#4267](https://github.com/max-sixty/worktrunk/pull/4267), [#4277](https://github.com/max-sixty/worktrunk/pull/4277), [#4257](https://github.com/max-sixty/worktrunk/pull/4257), [#4259](https://github.com/max-sixty/worktrunk/pull/4259), [#4262](https://github.com/max-sixty/worktrunk/pull/4262), [#4247](https://github.com/max-sixty/worktrunk/pull/4247), [#4276](https://github.com/max-sixty/worktrunk/pull/4276), [#4272](https://github.com/max-sixty/worktrunk/pull/4272), thanks @Duang777 and @hiro-nikaitou)
+
+### Documentation
+
+- **Help and recipe corrections**: `wt step squash --stage=none` and the `wt step prune` skip list now describe what they do, and the "Database per worktree" and "Monitor hook logs" tips use commands `wt` accepts. ([#4268](https://github.com/max-sixty/worktrunk/pull/4268), [#4279](https://github.com/max-sixty/worktrunk/pull/4279))
+
+- **The worktrunk skill's sub-Agent example runs hooks**: it dropped `--no-hooks`, so `pre-start` provisioning runs in agent-spawned worktrees, with guidance on when to add it back. ([#4219](https://github.com/max-sixty/worktrunk/pull/4219), thanks @passitalong)
+
+### Internal
+
+- **Library API changes** (Breaking library API): `LocalBranch` gains `push_remote`; `GitError` gains `StaleWorktreeHoldsWork` and a `repairable_at` field on `WorktreeMissing`; `Repository::capture_refs_with_ahead_behind` is removed; `git::parse_porcelain_z` and `Repository::changed_files` now use bytes. ([#4228](https://github.com/max-sixty/worktrunk/pull/4228), [#4259](https://github.com/max-sixty/worktrunk/pull/4259), [#4289](https://github.com/max-sixty/worktrunk/pull/4289), [#4290](https://github.com/max-sixty/worktrunk/pull/4290))
+
+- **Agent guidance moved to `AGENTS.md`**, shared by Claude Code and Codex, and trimmed from 2,763 lines to 382. ([#4245](https://github.com/max-sixty/worktrunk/pull/4245), [#4246](https://github.com/max-sixty/worktrunk/pull/4246), [#4287](https://github.com/max-sixty/worktrunk/pull/4287))
+
+## 0.79.0
+
+### Improved
+
+- **`wt switch --no-cd -x <program>` runs the program in the worktree**: it started in the invoking directory, so a program meant for the new worktree had to be handed `{{ worktree_path }}`. `--no-cd` now governs only your shell — `wt switch feature --no-cd -x code -- .` opens the worktree in an editor and leaves your terminal put. (Breaking: a program that wanted the invoking directory needs an explicit `cd`.) Fixes [#4042](https://github.com/max-sixty/worktrunk/issues/4042). ([#4179](https://github.com/max-sixty/worktrunk/pull/4179), thanks @yajo for reporting)
+
+- **The picker's preview tabs show which have content**: a tab's label is dim when that tab is empty for the selected row, and underlined when it's the active tab. Availability sat on the tab's number alone, so every inactive label read dim whatever the row held. ([#4174](https://github.com/max-sixty/worktrunk/pull/4174))
+
+- **Messages name the destination, and end with the command to run**: without shell integration, `wt merge` and `wt remove` printed `Cannot change directory — shell integration not installed` and no path; the warning now names the worktree, as `wt switch` already did. "Cannot determine default branch" had three wordings, and three recovery hints put their command first rather than last. ([#4163](https://github.com/max-sixty/worktrunk/pull/4163), [#4155](https://github.com/max-sixty/worktrunk/pull/4155), thanks @blrain3 for reporting)
+
+- **`/wt-switch-create` no longer stalls at Claude Code's path-entry dialog**: Claude Code confirms every entry outside `.claude/worktrees/`, which is every Worktrunk worktree, so a background session waited for someone to attach. The plugin now approves entry into a worktree at its `worktree-path` location, and reads a bare name as the repo or the branch. ([#4158](https://github.com/max-sixty/worktrunk/pull/4158), [#4159](https://github.com/max-sixty/worktrunk/pull/4159))
+
+- **`wt config update --output` accepts the config being migrated**: it refused that path when the migration dropped `approved-commands`. Those approvals now move to approvals.toml first, exactly as the in-place update moves them. ([#4204](https://github.com/max-sixty/worktrunk/pull/4204))
+
+### Fixed
+
+- **`wt merge` on a dirty worktree describes what it commits**: the generated message covered the branch's earlier commits and said nothing about the work the merge had just staged into the same commit. `wt step squash --dry-run` now previews what the run would commit, as `wt step commit --dry-run` does. ([#4178](https://github.com/max-sixty/worktrunk/pull/4178))
+
+- **A config save no longer rewrites the rest of your config**: declining a prompt, or setting the commit-generation command, rewrote the whole file, dropping values written at their default and re-spelling hook pipelines and dropping their comments. It also reloaded that file over the in-memory config, so `wt step commit --config-set 'commit.stage="none"'` staged everything once it had asked about commit generation. ([#4160](https://github.com/max-sixty/worktrunk/pull/4160), [#4156](https://github.com/max-sixty/worktrunk/pull/4156), [#4151](https://github.com/max-sixty/worktrunk/pull/4151))
+
+- **Diff display config no longer reaches Worktrunk's prompts or its integration check**: `color.ui = always` and `diff.external` reached the commit, squash, and summary prompts. Two corner cases also made `wt remove` and `wt step prune` delete an unmerged branch: `diff.relative` set *and* a Worktrunk command run from a subdirectory the branch's changes sat entirely outside, or `submodule.<name>.ignore = all` (git config or `.gitmodules`) *and* a submodule bump as its only change. ([#4146](https://github.com/max-sixty/worktrunk/pull/4146), [#4147](https://github.com/max-sixty/worktrunk/pull/4147))
+
+- **Auto-staging names a wholly untracked directory once**: since 0.78.0 the warning expanded each one into its files, so `wt step commit`, `wt step squash`, and `wt merge` listed 300 paths for a directory of 300 new files. The listing also stops at ten rows, with a hint counting the rest. ([#4152](https://github.com/max-sixty/worktrunk/pull/4152), thanks @Duang777)
+
+- **Valid empty per-project sections stop warning**: `[projects."host/org/repo".list]` is accepted on load, yet every command reported `unknown field projects.host/org/repo.list` for it — as did the other six per-project sections. Fixes [#4115](https://github.com/max-sixty/worktrunk/issues/4115). ([#4123](https://github.com/max-sixty/worktrunk/pull/4123), thanks @zach-hammad-vs for reporting)
+
+- **An unstaged rename counts as a change**: after `git add -N`, git reports the rename in the worktree column (` R`), which Worktrunk read only in the index column. A worktree whose only change was such a rename showed clean in `wt list`, and `wt merge`'s overlap check on the destination misparsed the old path. ([#4190](https://github.com/max-sixty/worktrunk/pull/4190), [#4191](https://github.com/max-sixty/worktrunk/pull/4191), thanks @Duang777)
+
+- **`wt merge --no-ff` and `wt step push --no-ff` sign their merge commit under `commit.gpgSign`**: they built it with `commit-tree`, which ignores that setting. `wt step rebase` and `wt merge` also pass `--no-update-refs`, so a rebase rewrites only its own worktree's branch. (Breaking: `rebase.updateRefs` no longer moves other local branches stacked in the rebased range.) ([#4146](https://github.com/max-sixty/worktrunk/pull/4146))
+
+- **`wt step prune --min-age` guards branches with no reflog**: they got no age guard at all, so in a bare repository — where `core.logAllRefUpdates` defaults off — a branch that had just arrived at an integrated commit was pruned on the next run. Age now comes from the mtime of the file holding the ref. ([#4154](https://github.com/max-sixty/worktrunk/pull/4154))
+
+- **The picker preview renders the whole pane**: a fenced code block with no closing fence dropped everything from the fence to the end of a PR description or comment, and the pane rendered one column wider than skim paints, so a wrapped line flush against the right edge lost its last character. ([#4178](https://github.com/max-sixty/worktrunk/pull/4178), [#4183](https://github.com/max-sixty/worktrunk/pull/4183))
+
+- **`wt config plugins pi install` expands `~` in `$PI_CODING_AGENT_DIR`**: Pi expands it, so `PI_CODING_AGENT_DIR="~/x"` means a directory under home, where Worktrunk created a literal `~` directory under the current directory. ([#4151](https://github.com/max-sixty/worktrunk/pull/4151))
+
+- **`wt config create` no longer replaces a dangling symlink at the config path**: it wrote a regular file over the link, detaching whatever owns it. It now fails and names the link. ([#4204](https://github.com/max-sixty/worktrunk/pull/4204))
+
+### Documentation
+
+- **The picker demo shows the CI and summary columns filling in**: `alt-p` widens the rows, the cells land behind them, then it pages a diff, a PR's comment thread, and the PR itself. The homepage omnibus demo opens on the picker. [Docs](https://worktrunk.dev/switch/#interactive-picker) ([#4178](https://github.com/max-sixty/worktrunk/pull/4178))
+
+- **The docs got a sweep**: help text drops internals, deprecated behavior, and edge cases the command reports itself when they happen — `wt step diff`'s "How it works", the `wt hook --var` paragraph, and the `wt config state ci-status` page among them. Config samples now name the file they belong in as the block's tab. ([#4157](https://github.com/max-sixty/worktrunk/pull/4157), [#4153](https://github.com/max-sixty/worktrunk/pull/4153), [#4173](https://github.com/max-sixty/worktrunk/pull/4173), [#4177](https://github.com/max-sixty/worktrunk/pull/4177))
+
+### Internal
+
+- **Library API rework** (Breaking library API): `cargo-semver-checks` fails five lints — `BranchDiffSpec` swaps `revs`/`working_base` for `diff_base`, `UserConfig::save_to` gives way to the `ConfigEdit` mutations, `config::UnknownAnalysis` is gone, `Repository::prepare_diff` takes `from`/`to` in place of a revision list, and four diff helpers on `PreparedDiff` and `WorkingTree` go with it. ([#4146](https://github.com/max-sixty/worktrunk/pull/4146), [#4147](https://github.com/max-sixty/worktrunk/pull/4147), [#4160](https://github.com/max-sixty/worktrunk/pull/4160), [#4156](https://github.com/max-sixty/worktrunk/pull/4156))
+
+- **The Nix flake's test sandbox gains `openssh`**, which the merge-signing test needs. ([#4168](https://github.com/max-sixty/worktrunk/pull/4168))
+
 ## 0.78.0
 
 ### Improved

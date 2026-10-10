@@ -25,8 +25,8 @@ pub use omp::{handle_omp_install, handle_omp_uninstall};
 pub use opencode::{handle_opencode_install, handle_opencode_uninstall};
 pub use pi::{handle_pi_install, handle_pi_uninstall};
 pub use plugins::{
-    handle_claude_approve_enter_worktree, handle_claude_install, handle_claude_install_statusline,
-    handle_claude_uninstall,
+    handle_claude_approve_enter_worktree, handle_claude_hook, handle_claude_install,
+    handle_claude_install_statusline, handle_claude_uninstall,
 };
 pub use show::handle_config_show;
 pub use state::{
@@ -386,32 +386,41 @@ mod tests {
     fn test_render_ci_tool_status() {
         // Installed and authenticated
         let mut out = String::new();
-        render_ci_tool_status(&mut out, "gh", "GitHub", true, true).unwrap();
-        assert_snapshot!(out, @"[32m✓[39m [32m[1mgh[22m installed & authenticated[39m");
+        render_ci_tool_status(&mut out, "gh", "GitHub", true, true);
+        assert_snapshot!(out, @"[2m○[22m [1mgh[22m installed & authenticated");
 
         // Installed but not authenticated
         let mut out = String::new();
-        render_ci_tool_status(&mut out, "gh", "GitHub", true, false).unwrap();
-        assert_snapshot!(out, @"[33m▲[39m [33m[1mgh[22m installed but not authenticated; run [1mgh auth login[22m[39m");
+        render_ci_tool_status(&mut out, "gh", "GitHub", true, false);
+        assert_snapshot!(out, @"
+        [33m▲[39m [33m[1mgh[22m installed but not authenticated[39m
+        [2m↳[22m [2mTo authenticate, run [4mgh auth login[24m[22m
+        ");
 
         // The auth-setup command differs by CLI: `tea` uses `tea login add`,
         // `az` uses `az login`, the rest use `<tool> auth login`.
         let mut out = String::new();
-        render_ci_tool_status(&mut out, "tea", "Gitea", true, false).unwrap();
-        assert_snapshot!(out, @"[33m▲[39m [33m[1mtea[22m installed but not authenticated; run [1mtea login add[22m[39m");
+        render_ci_tool_status(&mut out, "tea", "Gitea", true, false);
+        assert_snapshot!(out, @"
+        [33m▲[39m [33m[1mtea[22m installed but not authenticated[39m
+        [2m↳[22m [2mTo authenticate, run [4mtea login add[24m[22m
+        ");
 
         let mut out = String::new();
-        render_ci_tool_status(&mut out, "az", "Azure DevOps", true, false).unwrap();
-        assert_snapshot!(out, @"[33m▲[39m [33m[1maz[22m installed but not authenticated; run [1maz login[22m[39m");
+        render_ci_tool_status(&mut out, "az", "Azure DevOps", true, false);
+        assert_snapshot!(out, @"
+        [33m▲[39m [33m[1maz[22m installed but not authenticated[39m
+        [2m↳[22m [2mTo authenticate, run [4maz login[24m[22m
+        ");
 
         // Not installed
         let mut out = String::new();
-        render_ci_tool_status(&mut out, "glab", "GitLab", false, false).unwrap();
-        assert_snapshot!(out, @"[2m↳[22m [2m[1mglab[22m not found (GitLab CI status unavailable)[22m");
+        render_ci_tool_status(&mut out, "glab", "GitLab", false, false);
+        assert_snapshot!(out, @"[2m○[22m [1mglab[22m not found (GitLab CI status unavailable)");
 
         // glab installed and authenticated
         let mut out = String::new();
-        render_ci_tool_status(&mut out, "glab", "GitLab", true, true).unwrap();
-        assert_snapshot!(out, @"[32m✓[39m [32m[1mglab[22m installed & authenticated[39m");
+        render_ci_tool_status(&mut out, "glab", "GitLab", true, true);
+        assert_snapshot!(out, @"[2m○[22m [1mglab[22m installed & authenticated");
     }
 }

@@ -18,12 +18,15 @@ Binary symbol names are deliberately omitted — they re-minify every build.
 
 ## The design
 
-1. `EnterWorktree({name})` for a new branch in this repo. It creates through
+Steps are numbered as in `SKILL.md`; step 1, picking the branch name, needs
+no rationale.
+
+2. `EnterWorktree({name})` for a new branch in this repo. It creates through
    worktrunk's `WorktreeCreate` hook (`wt switch --create`), so the result is
    an ordinary `wt` worktree, and it passes no `path`, which is what keeps M2's
    confirmation from firing. It fails on an existing branch and from a session
    that already entered a worktree, and it has no repo targeting.
-2. Otherwise `wt -C <repo> switch --create <branch> --no-cd --format=json` in
+3. Otherwise `wt -C <repo> switch --create <branch> --no-cd --format=json` in
    Bash, then, for another repo, `cd <repo>`, then `EnterWorktree({path})`.
    `wt` solves repo targeting (`-C` works from anywhere), existing-branch
    handling (rerun without `--create`), and machine-readable output (`.path`
@@ -33,7 +36,8 @@ Binary symbol names are deliberately omitted — they re-minify every build.
    worktrunk's hook answers the confirmation only for that repository's
    worktrees ("The confirmation hook"). The `cd` satisfies both. Entry that someone declined
    ends there, with the worktree left unentered (M2).
-3. On a tool error (or a denial with no user behind it), the session can still
+
+   On a tool error (or a denial with no user behind it), the session can still
    work there iff the path sits
    inside a directory it's allowed in (an `additionalDirectories` entry). A
    single `cd <path>` discovers which: it sticks when reachable, resets when

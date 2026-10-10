@@ -1,9 +1,11 @@
 ---
-source: tests/integration_tests/list_config.rs
+source: tests/integration_tests/security.rs
 info:
   program: wt
   args:
-    - list
+    - switch
+    - "--create"
+    - __WORKTRUNK_EXEC__touch$IFS/tmp/hacked2
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
@@ -34,6 +36,7 @@ info:
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_DIRECTIVE_CD_FILE: "[DIRECTIVE_CD_FILE]"
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
@@ -51,21 +54,13 @@ info:
     WORKTRUNK_TEST_PROBE_TIMEOUT_MS: "60000"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
-    WORKTRUNK__COMMIT_GENERATION__COMMAND: "42"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-  [1mBranch[0m     [1mStatus[0m      [1mHEAD±[0m     [1mmain↕[0m    [1mmain…±[0m    [1mRemote⇅[0m  [1mPath[0m               [1mCommit[0m    [1mAge[0m  [1mMessage[0m
-@ main           [2m^[22m[2m|[22m                                      [2m|[0m     .                  [2m05a4a45[0m   [2m16h[0m  [2mInitial commit[0m
-+ feature-a      [2m↑[22m                 [32m↑1[0m        [32m+1[0m                ../repo.feature-a  [2m1b87d47[0m   [2m16h[0m  [2mAdd feature-a file[0m
-+ feature-b      [2m↑[22m                 [32m↑1[0m        [32m+1[0m                ../repo.feature-b  [2mf62940f[0m   [2m16h[0m  [2mAdd feature-b file[0m
-+ feature-c      [2m↑[22m                 [32m↑1[0m        [32m+1[0m                ../repo.feature-c  [2m345c7c9[0m   [2m16h[0m  [2mAdd feature-c file[0m
 
 ----- stderr -----
-[33m▲[39m [33mIgnoring env var overrides: WORKTRUNK__COMMIT_GENERATION__COMMAND=42[39m
-[107m [0m invalid type: integer `42`, expected a string
-[107m [0m in `commit.generation.command`
-
-[2m○[22m [2mShowing 4 worktrees, 3 ahead[0m
+[32m✓[39m [32mCreated branch [1m__WORKTRUNK_EXEC__touch$IFS/tmp/hacked2[22m from [1mmain[22m and worktree @ [1m'_REPO_.__WORKTRUNK_EXEC__touch$IFS-tmp-hacked2'[22m[39m
+[2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
+[0m

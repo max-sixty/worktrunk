@@ -1044,15 +1044,21 @@ fn test_bare_repo_no_project_config_when_primary_off_branch_and_none_present() {
     // No config exists, so no worktree should be reported as carrying one and
     // no project hook can run. `wt config show` from the bare root confirms the
     // fallback found nothing rather than resolving a phantom config.
-    let mut show = wt_command();
-    test.configure_wt_cmd(&mut show);
-    show.args(["config", "show"])
+    let mut show = test.wt_command();
+    show.args(["config", "show", "--format=json"])
         .current_dir(test.bare_repo_path());
     let show_out = show.output().unwrap();
-    let stdout = String::from_utf8_lossy(&show_out.stdout);
     assert!(
-        !stdout.contains("[pre-start]") && !stdout.contains("[post-start]"),
-        "no project hooks should be resolved when no config exists:\n{stdout}"
+        show_out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&show_out.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&show_out.stdout)).unwrap();
+    assert!(
+        json["project"]["config"].is_null(),
+        "no project config should be resolved when none exists, got: {}",
+        json["project"]["config"]
     );
 }
 
@@ -1307,6 +1313,50 @@ fn test_bare_repo_config_show_reflects_object_store_fallback() {
     assert!(
         !stdout.contains("Not found"),
         "config show must not report the object-store config as `Not found`; stdout:\n{stdout}"
+    );
+}
+
+#[test]
+fn test_bare_repo_config_show_reads_dash_prefixed_default_branch() {
+    let test = BareRepoTest::new();
+
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit");
+
+    let config_dir = main_worktree.join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        "[list]\nurl = \"http://localhost:3000\"\n",
+    )
+    .unwrap();
+    test.run_git_in(&main_worktree, &["add", ".config/wt.toml"]);
+    test.run_git_in(&main_worktree, &["commit", "-m", "Add project config"]);
+
+    test.run_git_in(
+        test.bare_repo_path(),
+        &["update-ref", "refs/heads/-x", "refs/heads/main"],
+    );
+    test.run_git_in(
+        test.bare_repo_path(),
+        &["config", "worktrunk.default-branch", "-x"],
+    );
+
+    let mut cmd = test.wt_command();
+    cmd.args(["config", "show", "--format=json"])
+        .current_dir(test.bare_repo_path());
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    assert_eq!(
+        json["project"]["config"]["list"]["url"], "http://localhost:3000",
+        "config show must read the committed config when the default branch starts with a dash, got: {}",
+        json["project"]
     );
 }
 

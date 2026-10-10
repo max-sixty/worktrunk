@@ -28,6 +28,30 @@ use worktrunk::path::to_posix_path;
 // Signal handling (for PTY tests)
 // =============================================================================
 
+#[cfg(unix)]
+pub const FOREGROUND_TRACE_FILTER: &str = "worktrunk::wt_trace=debug,worktrunk::trace::emit=debug";
+
+/// Child readiness may precede the parent's spawn return. Caught-signal tests
+/// wait for wt to commit admission before delivering ordinary terminal input.
+#[cfg(unix)]
+pub fn wait_for_foreground_admission(repo: &TestRepo, children: &[i32]) {
+    let trace = resolve_git_common_dir(repo.root_path()).join("wt/logs/trace.jsonl");
+    let admissions: Vec<_> = children
+        .iter()
+        .map(|pid| format!("Foreground admitted:{pid}"))
+        .collect();
+    wait_for("foreground child admission", || {
+        std::fs::read_to_string(&trace).is_ok_and(|records| {
+            let events = worktrunk::trace::parse_lines(&records);
+            admissions.iter().all(|admission| {
+                events.iter().any(|entry| {
+                    matches!(&entry.kind, worktrunk::trace::TraceEntryKind::Instant { name } if name == admission)
+                })
+            })
+        })
+    });
+}
+
 /// Block SIGTTIN and SIGTTOU signals to prevent test processes from being
 /// stopped when PTY operations interact with terminal control in background
 /// process groups.
@@ -831,7 +855,7 @@ fn add_placeholder_cleanup_filters(settings: &mut insta::Settings) {
 /// — macOS keeps the absolute form (canonicalized HOME `/private/var/...`
 /// doesn't prefix the uncanonicalized config path), Linux strips to a tilde
 /// (HOME == tempdir, prefix matches).
-const TEST_PATH_PREFIX: &str =
+pub(crate) const TEST_PATH_PREFIX: &str =
     r"'?(?:~(?:/\.tmp[^/\\']+)?|(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+)[/\\]";
 
 fn add_temp_path_placeholder_filters(settings: &mut insta::Settings) {
@@ -1082,6 +1106,13 @@ fn setup_snapshot_settings_for_paths_with_home(
     settings.add_filter(
         r"(Could not apply [0-9a-f]{7,40}\.\.\.) ([A-Za-z])",
         "$1 # $2",
+    );
+
+    // Git 2.56 names ambiguous remote-tracking branches; older Git reports
+    // the same failed worktree-add lookup as an invalid reference.
+    settings.add_filter(
+        r"fatal: '([^'\r\n]+)' matched multiple \(\d+\) remote tracking branches",
+        "fatal: invalid reference: $1",
     );
 
     // Normalize OS-specific error messages in gutter output
@@ -1373,6 +1404,19 @@ pub fn add_pty_binary_path_filters(settings: &mut insta::Settings) {
     );
 }
 
+/// Shell-visible exit status, including a CLI terminated by its native signal.
+pub fn shell_exit_code(status: &std::process::ExitStatus) -> Option<i32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        status
+            .code()
+            .or_else(|| status.signal().map(|signal| 128 + signal))
+    }
+    #[cfg(not(unix))]
+    status.code()
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -1490,7 +1534,7 @@ mod tests {
         // and would pass unchanged if `tests` or `benches` stopped yielding
         // `.rs` files — the absence claim silently narrowing to one third of
         // what it names. See "Guards that scan source text" in
-        // `tests/CLAUDE.md`.
+        // `tests/AGENTS.md`.
         for dir in ["src", "tests", "benches"] {
             let seen = scan_for_needle(&root.join(dir), &needle, root, &mut offenders);
             assert!(

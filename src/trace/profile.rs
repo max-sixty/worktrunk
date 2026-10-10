@@ -2,7 +2,7 @@
 //!
 //! Where [`parse`](super::parse) turns trace lines into [`TraceEntry`] values and
 //! [`chrome`](super::chrome) exports them for Perfetto, this module answers the
-//! three questions [`benches/CLAUDE.md`] poses about a single `wt` invocation
+//! three questions [`benches/AGENTS.md`] poses about a single `wt` invocation
 //! without leaving the terminal:
 //!
 //! - **Where does time go?** — [`Profile::by_type`] groups subprocesses by command
@@ -27,7 +27,7 @@
 //! the `-vv` diagnostic report (`diagnostic.md`, which embeds the rendered text). The struct's `Serialize` impl
 //! is the single canonical JSON source.
 //!
-//! [`benches/CLAUDE.md`]: ../../../benches/CLAUDE.md
+//! [`benches/AGENTS.md`]: ../../../benches/AGENTS.md
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;

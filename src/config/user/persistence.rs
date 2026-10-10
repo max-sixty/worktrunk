@@ -31,6 +31,16 @@ pub(super) struct ConfigEdit<'a> {
 }
 
 impl ConfigEdit<'_> {
+    /// The dotted key this edit writes, for naming it in an error.
+    fn key_path(&self) -> String {
+        self.tables
+            .iter()
+            .chain(std::iter::once(&self.key))
+            .copied()
+            .collect::<Vec<_>>()
+            .join(".")
+    }
+
     /// Set the value in `doc`, leaving everything else as it is.
     ///
     /// An existing value is replaced in place and keeps its decor — the spacing
@@ -54,7 +64,7 @@ impl ConfigEdit<'_> {
             });
             inline = item.is_inline_table();
             table = item.as_table_like_mut().ok_or_else(|| {
-                ConfigError(format!(
+                ConfigError::Message(format!(
                     "Failed to write config file: `{name}` is not a table"
                 ))
             })?;
@@ -93,23 +103,26 @@ impl ConfigFile {
         }
 
         let content = std::fs::read_to_string(path).map_err(|e| {
-            ConfigError(format!(
+            ConfigError::Message(format!(
                 "Failed to read config file {}: {}",
                 format_path_for_display(path),
                 e
             ))
         })?;
-        let parse_error = |e: String| {
-            ConfigError(format!(
-                "Failed to parse config file {}: {}",
-                format_path_for_display(path),
-                e
+        let doc: DocumentMut = content.parse().map_err(|e: toml_edit::TomlError| {
+            ConfigError::Parse(crate::config::ConfigParseError::new(
+                crate::config::ConfigFileKind::User,
+                path,
+                e,
             ))
-        };
-        let doc: DocumentMut = content
-            .parse()
-            .map_err(|e: toml_edit::TomlError| parse_error(e.to_string()))?;
-        let config = load(&doc).map_err(|e| parse_error(e.to_string()))?;
+        })?;
+        let config = load(&doc).map_err(|e| {
+            ConfigError::Parse(crate::config::ConfigParseError::new(
+                crate::config::ConfigFileKind::User,
+                path,
+                e,
+            ))
+        })?;
         Ok(Self { doc, config })
     }
 
@@ -118,14 +131,17 @@ impl ConfigFile {
     /// The edit goes into the file as written when that loads as `expected`.
     /// Otherwise a load-time migration touches the edit's path — a deprecated
     /// `[commit-generation]` migrates to `[commit.generation]` only while that
-    /// table is absent — and the edit goes into the migrated file, which loads
-    /// as `expected` by construction: the migrations are idempotent and the
-    /// edit lands after them. That file carries *every* load-path migration,
-    /// not just the one on the edit's path, so it can also move an unrelated
-    /// deprecated section and drop the keys its destination has no field for.
-    /// A mutation is otherwise not what materializes migrations —
-    /// `wt config update` is — so [`Edited::Migrated`] says so, and its caller
-    /// tells the user.
+    /// table is absent — and the edit goes into the migrated file, which carries
+    /// *every* load-path migration, not just the one on the edit's path, so it
+    /// can also move an unrelated deprecated section and drop the keys its
+    /// destination has no field for. A mutation is otherwise not what
+    /// materializes migrations — `wt config update` is — so [`Edited::Migrated`]
+    /// says so, and its caller tells the user.
+    ///
+    /// Both candidates face the same test, [`loads_as`], and no content leaves
+    /// here untested: the migrated file is expected to pass by construction (the
+    /// migrations are idempotent and the edit lands after them), and an error
+    /// rather than a silent write is what says so.
     pub(super) fn edited(
         &self,
         edit: &ConfigEdit,
@@ -133,18 +149,30 @@ impl ConfigFile {
     ) -> Result<Edited, ConfigError> {
         let mut doc = self.doc.clone();
         edit.apply(&mut doc)?;
-        if load(&doc).is_ok_and(|config| &config == expected) {
+        if loads_as(&doc, expected) {
             return Ok(Edited::AsWritten(doc.to_string()));
         }
 
         let mut doc = self.doc.clone();
         let changes = migrate_doc(&mut doc);
         edit.apply(&mut doc)?;
+        if !loads_as(&doc, expected) {
+            return Err(ConfigError::Message(format!(
+                "Refusing to write a config file wt could not read back: {} would not load as written",
+                edit.key_path()
+            )));
+        }
         Ok(Edited::Migrated {
             content: doc.to_string(),
             changes,
         })
     }
+}
+
+/// Whether `doc` loads as `expected` — the one test a mutation's content has to
+/// pass before it is written.
+fn loads_as(doc: &DocumentMut, expected: &UserConfig) -> bool {
+    load(doc).is_ok_and(|config| &config == expected)
 }
 
 /// A config file with an edit applied, and whether writing it took the load-path
@@ -178,14 +206,56 @@ fn load(doc: &DocumentMut) -> Result<UserConfig, toml::de::Error> {
 // Validation
 // =========================================================================
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum UserConfigValidationIssue {
+    EmptyWorktreePath,
+    EmptyProjectWorktreePath(String),
+}
+
+impl UserConfigValidationIssue {
+    fn path(&self) -> Vec<&str> {
+        match self {
+            Self::EmptyWorktreePath => vec!["worktree-path"],
+            Self::EmptyProjectWorktreePath(project) => {
+                vec!["projects", project, "worktree-path"]
+            }
+        }
+    }
+
+    /// Whether an overlay explicitly sets the value this issue describes.
+    pub(super) fn is_set_in(&self, table: &toml::Table) -> bool {
+        let path = self.path();
+        path[1..]
+            .iter()
+            .fold(table.get(path[0]), |value, key| {
+                value.and_then(|value| value.get(*key))
+            })
+            .is_some()
+    }
+}
+
+impl std::fmt::Display for UserConfigValidationIssue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} cannot be empty", self.path().join("."))
+    }
+}
+
 impl UserConfig {
     /// Validate configuration values.
     pub fn validate(&self) -> Result<(), ConfigError> {
+        if let Some(issue) = self.validation_issues().into_iter().next() {
+            return Err(ConfigError::Message(issue.to_string()));
+        }
+        Ok(())
+    }
+
+    pub(super) fn validation_issues(&self) -> Vec<UserConfigValidationIssue> {
+        let mut issues = Vec::new();
         // Validate worktree path (only if explicitly set - default is always valid)
         if let Some(ref path) = self.worktree_path
             && path.trim().is_empty()
         {
-            return Err(ConfigError("worktree-path cannot be empty".into()));
+            issues.push(UserConfigValidationIssue::EmptyWorktreePath);
         }
 
         // Validate per-project configs
@@ -194,12 +264,12 @@ impl UserConfig {
             if let Some(ref path) = project_config.worktree_path
                 && path.trim().is_empty()
             {
-                return Err(ConfigError(format!(
-                    "projects.{project}.worktree-path cannot be empty"
-                )));
+                issues.push(UserConfigValidationIssue::EmptyProjectWorktreePath(
+                    project.clone(),
+                ));
             }
         }
 
-        Ok(())
+        issues
     }
 }

@@ -331,7 +331,18 @@ fn test_switch_dwim_ambiguous_remotes(#[from(repo_with_remote)] mut repo: TestRe
 
     // Now shared-feature exists on origin and upstream but not locally
     // DWIM can't pick — git worktree add should error
-    snapshot_switch("switch_dwim_ambiguous_remotes", &repo, &["shared-feature"]);
+    let mut settings = setup_snapshot_settings(&repo);
+    // Git 2.50 reports an invalid reference; Git 2.56 names the ambiguity.
+    settings.add_filter(
+        r"'shared-feature' matched multiple \(2\) remote tracking branches",
+        "invalid reference: shared-feature",
+    );
+    settings.bind(|| {
+        assert_cmd_snapshot!(
+            "switch_dwim_ambiguous_remotes",
+            make_snapshot_cmd(&repo, "switch", &["shared-feature"], None)
+        );
+    });
 }
 
 /// `--base <branch>` should accept a branch that exists only as a remote-tracking ref
@@ -939,14 +950,14 @@ fn test_switch_execute_does_not_inherit_git_discovery_vars(mut repo: TestRepo) {
     );
 }
 
-/// `--no-cd` starts the `--execute` program in the invoking directory, so the
-/// "Executing (--execute) @ …" header must not name the new worktree. The path
-/// it renders is the one the background hooks run in; the program never enters
-/// it, and naming it there sent a reporter looking for a broken template
-/// variable instead of the directory the flag moved (issue #4042).
+/// `--no-cd` governs where the user's shell lands, not where the `--execute`
+/// program runs: the program starts in the worktree the switch selected either
+/// way, so `wt switch feature --no-cd -x code -- .` opens the worktree while
+/// the terminal stays put (issue #4042). The header names that worktree,
+/// because the shell won't be there.
 #[rstest]
-fn test_switch_no_cd_execute_header_omits_worktree_path(mut repo: TestRepo) {
-    repo.add_worktree("feature");
+fn test_switch_no_cd_execute_runs_in_worktree(mut repo: TestRepo) {
+    let worktree = repo.add_worktree("feature");
 
     let output = repo
         .wt_command()
@@ -961,14 +972,21 @@ fn test_switch_no_cd_execute_header_omits_worktree_path(mut repo: TestRepo) {
         String::from_utf8_lossy(&output.stderr)
     );
 
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        dunce::canonicalize(stdout.trim()).unwrap(),
+        dunce::canonicalize(&worktree).unwrap(),
+        "--no-cd ran the program outside the worktree: {stdout}"
+    );
+
     let stderr = String::from_utf8_lossy(&output.stderr);
     let header = stderr
         .lines()
         .find(|line| line.contains("Executing (--execute)"))
         .unwrap_or_else(|| panic!("no --execute header in stderr:\n{stderr}"));
     assert!(
-        !header.contains('@'),
-        "--no-cd runs the program in the invoking directory, but the header named a path: {header}"
+        header.contains('@'),
+        "--no-cd leaves the shell behind, so the header must name the program's directory: {header}"
     );
 }
 
@@ -1268,6 +1286,56 @@ fn test_switch_execute_failure(repo: TestRepo) {
     );
 }
 
+/// Suppressing wt's own failure message must preserve a program's native
+/// termination signal, distinct from an ordinary exit with the same shell code.
+#[rstest]
+#[case::interrupt(Some(nix::libc::SIGINT))]
+#[case::terminate(Some(nix::libc::SIGTERM))]
+#[case::ordinary_exit(None)]
+#[cfg(unix)]
+fn test_switch_execute_preserves_native_signal(repo: TestRepo, #[case] signal: Option<i32>) {
+    use std::os::unix::process::ExitStatusExt;
+
+    let program = r#"import os, signal, sys
+number = int(sys.argv[1])
+print('child output', flush=True)
+if number:
+    signal.signal(number, signal.SIG_DFL)
+    os.kill(os.getpid(), number)
+else:
+    os._exit(130)
+"#;
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "main",
+            "--no-cd",
+            "--execute",
+            "python3",
+            "--",
+            "-c",
+            program,
+        ])
+        .arg(signal.unwrap_or(0).to_string())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.signal(), signal, "{output:?}");
+    assert_eq!(
+        output.status.code(),
+        signal.is_none().then_some(130),
+        "{output:?}"
+    );
+    assert_eq!(output.stdout, b"child output\n");
+    let raw_stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = raw_stderr.ansi_strip();
+    assert!(
+        !stderr.contains('✗'),
+        "unexpected wt failure message: {stderr}"
+    );
+}
+
 // Execute template expansion tests
 #[rstest]
 fn test_switch_execute_template_branch(repo: TestRepo) {
@@ -1485,7 +1553,7 @@ approved-commands = ["{}"]
 
     // post-start runs in the background; with --no-hooks it is never spawned,
     // but sleep briefly so a regression that incorrectly spawns it has time to
-    // create the marker (per tests/CLAUDE.md "Testing absence").
+    // create the marker (per tests/AGENTS.md "Testing absence").
     std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
     let worktree = repo
@@ -1543,7 +1611,7 @@ fn test_switch_no_config_commands_with_yes(repo: TestRepo) {
 
     // post-start runs in the background; with --no-hooks it is never spawned,
     // but sleep briefly so a regression that incorrectly spawns it has time to
-    // create the marker (per tests/CLAUDE.md "Testing absence").
+    // create the marker (per tests/AGENTS.md "Testing absence").
     std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
     let worktree = repo
@@ -2558,10 +2626,27 @@ fn test_switch_create_no_hint_with_custom_worktree_path(repo: TestRepo) {
         .unwrap();
     assert!(output.status.success());
 
+    const HINT: &str = "customize worktree locations";
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !stderr.contains("Customize worktree locations"),
-        "Hint should be suppressed when user has custom worktree-path config"
+        !stderr.contains(HINT),
+        "Hint should be suppressed when user has custom worktree-path config. stderr: {stderr}"
+    );
+
+    // Control: without the custom config the same needle matches the hint, so
+    // the negative assertion above can fail. Suppression doesn't mark the hint
+    // shown, so it still appears once here.
+    repo.write_test_config("");
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "test-hint"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(HINT),
+        "Hint should appear without custom worktree-path config. stderr: {stderr}"
     );
 }
 
@@ -5958,7 +6043,7 @@ fn test_switch_pr_malformed_project_config_bails_before_forge_selection(
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Failed to load project config"),
+        stderr.contains("Project config @"),
         "expected project-config load error, got:\n{stderr}"
     );
     assert!(
@@ -6749,6 +6834,41 @@ fn test_switch_pr_azure_fork(#[from(repo_with_remote)] repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_azure_fork", cmd);
+    });
+}
+
+/// With no `webUrl` in the response, the org and host come from the local
+/// remote. An `ssh.dev.azure.com` remote must still suggest an HTTPS
+/// `dev.azure.com` URL for the PR's repository, not one on the SSH host.
+#[rstest]
+fn test_switch_pr_azure_ssh_remote_suggests_web_host(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "git@ssh.dev.azure.com:v3/myorg/myproject/test-repo",
+    ]);
+
+    let az_response = r#"{
+        "title": "Fix in a sibling repository",
+        "createdBy": {"uniqueName": "alice@example.com"},
+        "status": "active",
+        "isDraft": false,
+        "sourceRefName": "refs/heads/feature-auth",
+        "repository": {
+            "name": "other-repo",
+            "project": {"name": "myproject"}
+        },
+        "forkSource": null
+    }"#;
+
+    let mock_bin = setup_mock_az(&repo, az_response);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_azure_ssh_remote_suggests_web_host", cmd);
     });
 }
 
@@ -8445,4 +8565,292 @@ fn test_switch_create_names_branch_left_by_failed_worktree_add(repo: TestRepo) {
         stderr.contains("wt switch stranded"),
         "expected a recovery suggestion for the leftover branch, got: {stderr}"
     );
+}
+
+// `--path` tests
+
+#[rstest]
+fn test_switch_create_with_path(repo: TestRepo) {
+    let custom = repo.root_path().parent().unwrap().join("dark-mode");
+
+    // Relative to the current directory (the repo root here), like `git worktree add`
+    snapshot_switch(
+        "switch_create_with_path",
+        &repo,
+        &["--create", "feature/dark-mode", "--path", "../dark-mode"],
+    );
+
+    assert!(custom.join(".git").exists());
+
+    // Once created, the worktree is found by branch or by path; `--path`
+    // naming the same directory is accepted too.
+    for args in [
+        &["feature/dark-mode"][..],
+        &["../dark-mode"],
+        &["feature/dark-mode", "--path", "../dark-mode"],
+    ] {
+        let output = repo.wt_command().arg("switch").args(args).output().unwrap();
+        assert!(output.status.success(), "{args:?}: {output:?}");
+    }
+}
+
+#[rstest]
+fn test_switch_path_existing_branch_without_worktree(repo: TestRepo) {
+    repo.run_git(&["branch", "existing"]);
+    let custom = repo.root_path().parent().unwrap().join("custom-dir");
+
+    // No `--create`: the branch exists and only its worktree is new
+    snapshot_switch(
+        "switch_path_existing_branch",
+        &repo,
+        &["existing", "--path", "../custom-dir"],
+    );
+
+    assert!(custom.join(".git").exists());
+}
+
+#[rstest]
+fn test_switch_path_rejects_existing_worktree_elsewhere(mut repo: TestRepo) {
+    repo.add_worktree("feature-z");
+
+    snapshot_switch(
+        "switch_path_existing_worktree_elsewhere",
+        &repo,
+        &["feature-z", "--path", "../somewhere-else"],
+    );
+
+    assert!(
+        !repo
+            .root_path()
+            .parent()
+            .unwrap()
+            .join("somewhere-else")
+            .exists()
+    );
+}
+
+#[rstest]
+fn test_switch_path_occupied_suggests_path_in_clobber_hint(repo: TestRepo) {
+    let custom = repo.root_path().parent().unwrap().join("occupied");
+    std::fs::create_dir_all(&custom).unwrap();
+
+    // The `--clobber` suggestion must keep `--path`, or following it would
+    // back up the template's path instead of this one.
+    snapshot_switch(
+        "switch_path_occupied",
+        &repo,
+        &["--create", "feature-y", "--path", "../occupied"],
+    );
+}
+
+#[rstest]
+fn test_switch_path_rejects_directory_overlapping_repo(repo: TestRepo) {
+    std::fs::create_dir_all(repo.root_path().join("src")).unwrap();
+
+    // `--path ..` holds the repository and `--path src` sits inside it; with
+    // `--clobber` either would be moved aside, so both are refused outright.
+    for (path, relation) in [("..", "contains"), ("src", "is inside")] {
+        let output = repo
+            .wt_command()
+            .args([
+                "switch",
+                "--create",
+                "feature-o",
+                "--clobber",
+                "--path",
+                path,
+            ])
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{path}: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(relation), "{path}: {stderr}");
+    }
+
+    assert!(repo.root_path().join("src").is_dir());
+    assert!(repo.root_path().join(".git").exists());
+}
+
+/// Invalid branch names are rejected before worktree creation.
+#[rstest]
+#[case::space("bad name")]
+#[case::ref_syntax("bad..name")]
+#[case::reserved("HEAD")]
+fn switch_creation_rejects_invalid_branch(repo: TestRepo, #[case] name: &str) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", name], None);
+        assert_cmd_snapshot!(
+            format!(
+                "switch_invalid_branch_{}",
+                name.replace([' ', '.', '-'], "_")
+            ),
+            cmd
+        );
+    });
+    assert!(
+        !repo
+            .root_path()
+            .parent()
+            .unwrap()
+            .join(format!("repo.{name}"))
+            .exists()
+    );
+}
+
+/// Creation takes a literal branch name, even when Git could expand checkout
+/// history to a branch that no longer exists.
+#[rstest]
+#[case::present(false)]
+#[case::deleted(true)]
+fn switch_creation_rejects_checkout_history(repo: TestRepo, #[case] deleted: bool) {
+    repo.run_git(&["checkout", "-b", "previous"]);
+    repo.run_git(&["checkout", "main"]);
+    if deleted {
+        repo.run_git(&["branch", "-d", "previous"]);
+    }
+    assert_eq!(
+        repo.git_output(&["check-ref-format", "--branch", "@{-1}"])
+            .trim(),
+        "previous"
+    );
+    let refs_before = repo.git_output(&["for-each-ref", "--format=%(refname)"]);
+    let worktrees_before = repo.git_output(&["worktree", "list", "--porcelain"]);
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "@{-1}", "--no-hooks"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    insta::allow_duplicates! {
+        insta::assert_snapshot!(
+            String::from_utf8_lossy(&output.stderr).ansi_strip(),
+            @"✗ Invalid branch name @{-1}"
+        );
+    }
+    assert_eq!(
+        repo.git_output(&["for-each-ref", "--format=%(refname)"]),
+        refs_before
+    );
+    assert_eq!(
+        repo.git_output(&["worktree", "list", "--porcelain"]),
+        worktrees_before
+    );
+}
+
+#[rstest]
+#[case::nested("topic/nested")]
+#[case::unicode("café")]
+fn switch_creation_preserves_literal_branch_name(repo: TestRepo, #[case] name: &str) {
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", name, "--no-hooks"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        repo.git_output(&[
+            "show-ref",
+            "--verify",
+            "--hash",
+            &format!("refs/heads/{name}")
+        ]),
+        repo.git_output(&["rev-parse", "main"])
+    );
+}
+
+/// A validator subprocess cancellation is an interrupted operation, not an
+/// invalid branch name. Other Git commands still use real Git.
+#[cfg(unix)]
+#[rstest]
+fn switch_creation_preserves_validation_interrupt(repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::ExitStatusExt;
+
+    let bin_dir = repo.home_path().join("validation-interrupt");
+    fs::create_dir_all(&bin_dir).unwrap();
+    let git = bin_dir.join("git");
+    let marker = bin_dir.join("interrupted");
+    let real_git = which::which("git").unwrap();
+    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
+    fs::write(
+        &git,
+        format!(
+            r#"#!/bin/sh
+if [ "$1" = check-ref-format ]; then
+  printf called > "$WORKTRUNK_TEST_VALIDATION_MARKER"
+  kill -TERM "$$"
+fi
+exec {real_git} "$@"
+"#
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&git, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut paths: Vec<_> = std::env::split_paths(&std::env::var_os("PATH").unwrap()).collect();
+    paths.insert(0, bin_dir);
+    let worktrees_before = repo.git_output(&["worktree", "list", "--porcelain"]);
+    assert!(!marker.exists());
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "interrupted", "--no-hooks"])
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .env("WORKTRUNK_TEST_VALIDATION_MARKER", &marker)
+        .output()
+        .unwrap();
+    assert_eq!(fs::read_to_string(marker).unwrap(), "called");
+    assert_eq!(
+        output.status.signal(),
+        Some(nix::sys::signal::Signal::SIGTERM as i32),
+        "{output:?}"
+    );
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        repo.git_output(&["worktree", "list", "--porcelain"]),
+        worktrees_before
+    );
+    assert!(
+        repo.git_output(&["branch", "--list", "interrupted"])
+            .is_empty()
+    );
+}
+
+#[rstest]
+fn switch_missing_path_selector(repo: TestRepo) {
+    snapshot_switch("switch_missing_path_selector", &repo, &["./ghost"]);
+}
+
+/// Explicit and configured suppression both leave the directive untouched and
+/// report the available checkout without claiming the shell switched there.
+#[rstest]
+#[case::flag(false)]
+#[case::config(true)]
+fn switch_existing_without_cd(mut repo: TestRepo, #[case] configured: bool) {
+    let feature = repo.add_worktree("feature");
+    if configured {
+        repo.write_test_config("[switch]\ncd = false\n");
+    }
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let (cd_path, _guard) = directive_file();
+        let args = if configured {
+            vec!["feature"]
+        } else {
+            vec!["feature", "--no-cd"]
+        };
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &args, None);
+        configure_directive_file(&mut cmd, &cd_path);
+        assert_cmd_snapshot!(
+            if configured {
+                "switch_existing_cd_disabled_config"
+            } else {
+                "switch_existing_cd_disabled_flag"
+            },
+            cmd
+        );
+        assert!(fs::read_to_string(&cd_path).unwrap().is_empty());
+    });
+    assert!(feature.is_dir());
 }

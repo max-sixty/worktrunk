@@ -1,35 +1,36 @@
 $ wt list
-  [1mBranch[0m   [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage[0m
-@ main         [2m^[22m[2m|[22m                           [2m|[0m     [2m8dbd1794[0m  [2m1d[0m    [2mdocs: add developm…[0m
-+ hooks    [36m+[39m[36m![39m  [2m↑[22m       [32m+2[0m        [32m↑1[0m               [2m27ef5da7[0m  [2m2h[0m    [2mfeat: add math ope…[0m
-+ [2mbilling[0m      [2m_[22m[2m|[22m                           [2m|[0m     [2m8dbd1794[0m  [2m1d[0m    [2mdocs: add developm…[0m
-+ alpha     [36m![39m[36m?[39m [2m↑[22m[2m⇡[22m    [32m+105[0m  [31m-14[0m   [32m↑5[0m       [32m⇡1[0m      [2mc53676dd[0m  [2m3d[0m    [2mdocs: add FAQ sect…[0m
-+ beta     [36m+[39m   [2m↓[22m[2m|[22m      [32m+2[0m            [2m[31m↓1[0m     [2m|[0m     [2m6ed05ea1[0m  [2m5d[0m    [2mAdd project hooks[0m
+  [1mBranch[0m   [1mStatus[0m      [1mHEAD±[0m     [1mmain↕[0m    [1mmain…±[0m    [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m
+@ main         [2m^[22m[2m|[22m                                      [2m|[0m     [2m8dd23db[0m    [2m1d[0m
++ hooks    [36m+[39m[36m![39m  [2m↑[22m       [32m+2[0m        [32m↑1[0m       [32m+12[0m   [31m-7[0m           [2m71fcfa0[0m    [2m2h[0m
++ [2mbilling[0m      [2m_[22m[2m|[22m                                      [2m|[0m     [2m8dd23db[0m    [2m1d[0m
++ alpha     [36m![39m[36m?[39m [2m↑[22m[2m⇡[22m    [32m+106[0m  [31m-14[0m   [32m↑5[0m      [32m+264[0m   [31m-3[0m   [32m⇡1[0m      [2mb1e7fc8[0m    [2m3d[0m
++ beta     [36m+[39m   [2m↓[22m[2m|[22m      [32m+2[0m            [2m[31m↓1[0m                [2m|[0m     [2m604a937[0m    [2m5d[0m
 
-[2m○[22m [2mShowing 5 worktrees, 3 with changes, 2 ahead, 1 column hidden[0m
+[2m○[22m [2mShowing 5 worktrees, 3 with changes, 2 ahead, hidden: Path, Message[0m
 [0m
 $ wt switch alpha
-○ Switched to worktree for alpha @ <DEMO_DIR>/.demo-wt-core/w/acme.alpha
+[2m○[22m Switched to worktree for [1malpha[22m @ [1m~/w/acme.alpha[22m
 [0m
 $ wt switch --create api
-✓ Created branch api from main and worktree @ <DEMO_DIR>/.demo-wt-core/w/acme.api
-◎ Running post-start: project:dev
+[32m✓[39m [32mCreated branch [1mapi[22m from [1mmain[22m and worktree @ [1m~/w/acme.api[22m[39m
+[36m◎[39m [36mRunning post-start: [1mdev[22m (project)[39m
 [0m
 $ wt list --full
-  [1mBranch[0m   [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m     [1mmain…±[0m  [1mRemote⇅[0m  [1mCI[0m  [1mCommit[0m    [1mAge[0m
-@ [2mapi[0m          [2m_[22m                                                 [2m8dbd1794[0m  [2m1d[0m
-^ main         [2m^[22m[2m|[22m                                      [2m|[0m         [2m8dbd1794[0m  [2m1d[0m
-+ hooks    [36m+[39m[36m![39m  [2m↑[22m       [32m+2[0m        [32m↑1[0m       [32m+12[0m   [31m-7[0m               [2m27ef5da7[0m  [2m2h[0m
-+ [2mbilling[0m      [2m_[22m[2m|[22m                                      [2m|[0m         [2m8dbd1794[0m  [2m1d[0m
-+ alpha     [36m![39m[36m?[39m [2m↑[22m[2m⇡[22m    [32m+105[0m  [31m-14[0m   [32m↑5[0m      [32m+264[0m   [31m-3[0m   [32m⇡1[0m          [2mc53676dd[0m  [2m3d[0m
-+ beta     [36m+[39m   [2m↓[22m[2m|[22m      [32m+2[0m            [2m[31m↓1[0m                [2m|[0m         [2m6ed05ea1[0m  [2m5d[0m
+  [1mBranch[0m   [1mStatus[0m      [1mHEAD±[0m     [1mmain↕[0m    [1mmain…±[0m    [1mSummary[0m       [1mRemote⇅[0m  [1mCI[0m
+@ [2mapi[0m          [2m_[22m                                                           [31m#4[0m
+^ main         [2m^[22m[2m|[22m                                                    [2m|[0m     [32m#[0m
++ hooks    [36m+[39m[36m![39m  [2m↑[22m       [32m+2[0m        [32m↑1[0m       [32m+12[0m   [31m-7[0m  Add math op…
++ [2mbilling[0m      [2m_[22m[2m|[22m                                                    [2m|[0m     [32m#6[0m
++ alpha     [36m![39m[36m?[39m [2m↑[22m[2m⇡[22m    [32m+106[0m  [31m-14[0m   [32m↑5[0m      [32m+264[0m   [31m-3[0m  Add utility…   [32m⇡1[0m      [2m[32m#1[0m
++ beta     [36m+[39m   [2m↓[22m[2m|[22m      [32m+2[0m            [2m[31m↓1[0m             Add TODO no…     [2m|[0m     [34m#2[0m
 
-[2m○[22m [2mShowing 6 worktrees, 3 with changes, 2 ahead, 2 columns hidden[0m
+[2m○[22m [2mShowing 6 worktrees, 3 with changes, 2 ahead, hidden: Path, Commit, Age,
+  Message[0m
 [0m
 $ wt remove
-◎ Running pre-remove project:cleanup:
-  flyctl scale count 0
-Scaling app to 0 machines
-◎ Removing api worktree & branch in background (same commit as main, _)
-○ Switched to worktree for main @ <DEMO_DIR>/.demo-wt-core/w/acme
+[36m◎[39m [36mRunning pre-remove [1mproject:cleanup[22m[39m
+[107m [0m [2m[0m[2m[34mflyctl[0m[2m scale count 0[0m
+[0mScaling app to 0 machines
+[36m◎[39m [36mRemoving [1mapi[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
+[2m○[22m Switched to worktree for [1mmain[22m @ [1m~/w/acme[22m
 [0m[0m

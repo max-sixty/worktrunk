@@ -5,7 +5,7 @@
 
 use crate::common::{
     TestRepo, make_snapshot_cmd,
-    mock_commands::{MockConfig, MockResponse},
+    mock_commands::{MockConfig, MockResponse, mock_calls},
     repo, setup_snapshot_settings, wt_command,
 };
 use ansi_str::AnsiStr;
@@ -409,7 +409,7 @@ platform = "github"
 
 #[rstest]
 fn test_list_full_with_gitlab_remote(mut repo: TestRepo) {
-    // Set GitLab remote URL - tests get_gitlab_host_for_repo path
+    // Set GitLab remote URL so the GitLab platform is detected
     repo.run_git(&[
         "remote",
         "set-url",
@@ -421,13 +421,11 @@ fn test_list_full_with_gitlab_remote(mut repo: TestRepo) {
     repo.add_worktree("feature");
 
     // No mock glab setup - this tests the hint path when glab isn't available
-    // The get_gitlab_host_for_repo function is called to detect GitLab platform
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
         // Don't configure mocks - we want to test the "no CI tool" hint path
-        // which exercises get_gitlab_host_for_repo
         assert_cmd_snapshot!(cmd);
     });
 }
@@ -641,6 +639,131 @@ fn test_list_full_with_gitlab_filters_by_project_id(mut repo: TestRepo) {
     );
 }
 
+/// `glab repo view` answers a repo-level question over the GitLab API, but MR
+/// detection runs once per row — so a table of N worktrees used to spend N
+/// round trips resolving one constant, on a command that cannot finish until
+/// every row's task returns. Assert the spawn count, not the rendering: the
+/// table looks identical either way.
+#[rstest]
+fn test_gitlab_project_id_resolved_once_per_command(mut repo: TestRepo) {
+    let head_sha = setup_gitlab_repo_with_feature(&mut repo);
+
+    let mr_json = format!(
+        r#"[{{
+        "iid": 1,
+        "sha": "{}",
+        "has_conflicts": false,
+        "detailed_merge_status": null,
+        "head_pipeline": {{"status": "success"}},
+        "source_project_id": 12345,
+        "web_url": "https://gitlab.com/test-group/test-project/-/merge_requests/1"
+    }}]"#,
+        head_sha
+    );
+    repo.setup_mock_glab_with_ci_data(&mr_json, Some(12345));
+
+    // Outside the repo under test, so the log can't dirty the working tree the
+    // command is inspecting.
+    let call_log = tempfile::tempdir().unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.args(["list", "--full"]);
+    repo.configure_mock_commands(&mut cmd);
+    cmd.env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path());
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt list --full should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let calls = mock_calls(call_log.path(), "glab");
+    let repo_views: Vec<_> = calls
+        .iter()
+        .filter(|call| call.starts_with("repo view"))
+        .collect();
+    // More than one row reached MR detection, so a per-row lookup would show up
+    // as more than one `repo view`.
+    let mr_lists = calls
+        .iter()
+        .filter(|call| call.starts_with("mr list"))
+        .count();
+    assert!(
+        mr_lists > 1,
+        "the fixture must exercise several rows, else the count below proves nothing. calls: {calls:#?}"
+    );
+    assert_eq!(
+        repo_views.len(),
+        1,
+        "the project ID is repo-level, so it costs exactly one `glab repo view` however many rows ask for it. calls: {calls:#?}"
+    );
+}
+
+/// A PR's head is a branch on the forge, so a never-pushed local branch can't
+/// head one and costs no `gh pr list`. A missing `refs/remotes/` copy shows a
+/// branch was never pushed only where a push would have recorded one: a URL
+/// push remote (a fork's PR checked out with `gh pr checkout`) records nothing,
+/// and a single-branch clone's remote records only the branch it cloned, so
+/// branches pushing to either are still asked about. Assert the spawns, not
+/// the rendering: an unpushed branch shows no CI either way.
+#[rstest]
+fn test_pr_lookup_skips_branches_on_no_remote(mut repo: TestRepo) {
+    setup_github_repo_with_feature(&mut repo);
+    repo.add_worktree("local-only");
+    repo.add_worktree("fork-pr");
+    repo.run_git(&[
+        "config",
+        "branch.fork-pr.pushremote",
+        "https://github.com/fork-owner/test-repo.git",
+    ]);
+    // A remote fetched the way `git clone --single-branch` sets it up.
+    repo.add_worktree("narrow-pushed");
+    repo.run_git(&[
+        "remote",
+        "add",
+        "-t",
+        "main",
+        "narrow",
+        "https://github.com/test-owner/test-repo.git",
+    ]);
+    repo.run_git(&["config", "branch.narrow-pushed.pushremote", "narrow"]);
+    repo.setup_mock_gh_with_ci_data("[]");
+
+    let call_log = tempfile::tempdir().unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.args(["list", "--full"]);
+    repo.configure_mock_commands(&mut cmd);
+    cmd.env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path());
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt list --full should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let calls = mock_calls(call_log.path(), "gh");
+    let asked = |branch: &str| {
+        calls
+            .iter()
+            .any(|call| call.starts_with(&format!("pr list --head {branch} ")))
+    };
+    assert!(
+        asked("feature"),
+        "a pushed branch is asked about. calls: {calls:#?}"
+    );
+    assert!(
+        asked("fork-pr"),
+        "a URL push remote is asked about. calls: {calls:#?}"
+    );
+    assert!(
+        asked("narrow-pushed"),
+        "a push remote that records no refs for the branch is asked about. calls: {calls:#?}"
+    );
+    assert!(
+        !asked("local-only"),
+        "a never-pushed branch is skipped. calls: {calls:#?}"
+    );
+}
+
 // =============================================================================
 // GitLab project ID edge cases (PR #846 panic prevention)
 // =============================================================================
@@ -809,7 +932,7 @@ fn test_list_full_with_branch_fallback_using_fork_pushremote(mut repo: TestRepo)
         "[]",
         &[
             (
-                &format!("api repos/upstream-owner/test-repo/commits/{feature_a_sha}/check-runs"),
+                &format!("api repos/test-owner/test-repo/commits/{feature_a_sha}/check-runs"),
                 "[]",
             ),
             (
@@ -1076,6 +1199,47 @@ fn test_list_full_with_azure_stale_pipeline(mut repo: TestRepo) {
     }]"#;
 
     run_azure_ci_status_test(&mut repo, "azure_stale_pipeline", "[]", runs_json);
+}
+
+/// `az repos pr list` searches every repository in the project unless it is
+/// told which one, and `az` infers the repository from the git remote only when
+/// `--org` is absent. Since the lookup passes `--org`, it must pass
+/// `--repository` too, or a same-named branch's PR in a sibling repository
+/// shows up on this repository's row.
+#[rstest]
+fn test_list_full_azure_pr_lookup_names_the_repository(mut repo: TestRepo) {
+    setup_azure_repo_with_feature(&mut repo);
+    repo.setup_mock_az_with_ci_data("[]", "[]");
+
+    // Outside the repo under test, so the log can't dirty the working tree the
+    // command is inspecting.
+    let call_log = tempfile::tempdir().unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.args(["list", "--full"]);
+    repo.configure_mock_commands(&mut cmd);
+    cmd.env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path());
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt list --full should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let calls = mock_calls(call_log.path(), "az");
+    let pr_lists: Vec<_> = calls
+        .iter()
+        .filter(|call| call.starts_with("repos pr list"))
+        .collect();
+    assert!(
+        !pr_lists.is_empty(),
+        "the fixture must reach PR detection. calls: {calls:#?}"
+    );
+    for call in pr_lists {
+        assert!(
+            call.contains("--repository test-repo"),
+            "PR lookup must be scoped to this repository: {call}"
+        );
+    }
 }
 
 /// No PR and no pipeline runs → no CI indicator.

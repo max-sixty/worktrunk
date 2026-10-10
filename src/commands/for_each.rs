@@ -47,11 +47,11 @@ use crate::output::print_json;
 /// real-time. Continues on errors and reports a summary at the end.
 ///
 /// All template variables from hooks are available; values are substituted
-/// into argv elements without shell escaping. Context JSON is piped to stdin.
+/// into argv elements without shell escaping. Context JSON is provided on stdin.
 pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> anyhow::Result<()> {
     let json_mode = format == crate::cli::SwitchFormat::Json;
     let repo = Repository::current()?;
-    // Filter out prunable worktrees (directory deleted) - can't run commands there
+    // Filter out prunable worktrees (directory or its `.git` gone) - can't run commands there
     let worktrees: Vec<&WorktreeInfo> = repo
         .list_worktrees()?
         .iter()
@@ -202,7 +202,7 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
 }
 
 /// Run argv directly (no shell) with streaming output, signal forwarding,
-/// stdout→stderr redirect, and JSON context piped on stdin.
+/// stdout→stderr redirect, and JSON context on stdin.
 ///
 /// Mirrors the bookkeeping in `output::execute_shell_command` (flush, ANSI
 /// reset, signal forwarding) but builds the command via `Cmd::new` so the

@@ -182,7 +182,7 @@
           "classes": [
             "wt-terminal-dim"
           ],
-          "text": "Add authenticati…"
+          "text": "Add authenticatio…"
         }
       ],
       [
@@ -257,7 +257,7 @@
         }
       ]
     ],
-    "plain": "  Branch        Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message\n@ feature-auth  +   ↑      +27   -8   ↑1       +31                4bc72dc    2h  Add authenticati…\n^ main              ^⇡                                    ⇡1      0e631ad    1d  Initial commit\n\n○ Showing 2 worktrees, 1 with changes, 1 ahead, hidden: Path"
+    "plain": "  Branch        Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message\n@ feature-auth  +   ↑      +27   -8   ↑1       +31                4bc72dc    2h  Add authenticatio…\n^ main              ^⇡                                    ⇡1      0e631ad    1d  Initial commit\n\n○ Showing 2 worktrees, 1 with changes, 1 ahead, hidden: Path"
   },
   {
     "lines": [
@@ -536,7 +536,7 @@
           "classes": [
             "wt-terminal-dim"
           ],
-          "text": "Merge fix-auth: h…"
+          "text": "Merge fix-auth: ha…"
         }
       ],
       [
@@ -629,7 +629,7 @@
           "classes": [
             "wt-terminal-dim"
           ],
-          "text": "Add secure token…"
+          "text": "Add secure token s…"
         }
       ],
       [
@@ -691,7 +691,7 @@
           "classes": [
             "wt-terminal-dim"
           ],
-          "text": "Merge fix-auth: h…"
+          "text": "Merge fix-auth: ha…"
         }
       ],
       [],
@@ -714,7 +714,7 @@
         }
       ]
     ],
-    "plain": "  Branch       Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message\n@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      6814f02   30m  Add API tests\n^ main             ^⇅                                    ⇡1  ⇣1  41ee083    4d  Merge fix-auth: h…\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68    5h  Add secure token…\n+ fix-typos        _|                                      |     41ee083    4d  Merge fix-auth: h…\n\n○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path"
+    "plain": "  Branch       Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message\n@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      6814f02   30m  Add API tests\n^ main             ^⇅                                    ⇡1  ⇣1  41ee083    4d  Merge fix-auth: ha…\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68    5h  Add secure token s…\n+ fix-typos        _|                                      |     41ee083    4d  Merge fix-auth: ha…\n\n○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path"
   },
   {
     "lines": [
@@ -921,7 +921,7 @@
           "classes": [
             "wt-terminal-dim"
           ],
-          "text": "Add REST API endp…"
+          "text": "Add REST API endpo…"
         }
       ],
       [
@@ -1003,7 +1003,7 @@
           "classes": [
             "wt-terminal-dim"
           ],
-          "text": "Add dashboard com…"
+          "text": "Add dashboard comp…"
         }
       ],
       [
@@ -1088,7 +1088,7 @@
         }
       ]
     ],
-    "plain": "  Branch       Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message\n@ main             ^⇡                                    ⇡1      33323bc    1d  Initial commit\n+ feature-api      ↑ 🤖              ↑1        +1                70343f0    1d  Add REST API endp…\n+ review-ui      ? ↑ 💬    +1        ↑1        +1                a585d6e    1d  Add dashboard com…\n+ wip-docs       ? –       +1                                    33323bc    1d  Initial commit\n\n○ Showing 4 worktrees, 2 with changes, 2 ahead, hidden: Path"
+    "plain": "  Branch       Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message\n@ main             ^⇡                                    ⇡1      33323bc    1d  Initial commit\n+ feature-api      ↑ 🤖              ↑1        +1                70343f0    1d  Add REST API endpo…\n+ review-ui      ? ↑ 💬    +1        ↑1        +1                a585d6e    1d  Add dashboard comp…\n+ wip-docs       ? –       +1                                    33323bc    1d  Initial commit\n\n○ Showing 4 worktrees, 2 with changes, 2 ahead, hidden: Path"
   },
   {
     "lines": [
@@ -1582,7 +1582,7 @@
         },
         {
           "classes": [],
-          "text": "                      "
+          "text": "                       "
         },
         {
           "classes": [
@@ -1685,7 +1685,7 @@
         },
         {
           "classes": [],
-          "text": "  Refactor API to REST archi…   "
+          "text": "  Refactor API to REST archit…   "
         },
         {
           "classes": [
@@ -1718,7 +1718,7 @@
         },
         {
           "classes": [],
-          "text": "                                                                 "
+          "text": "                                                                  "
         },
         {
           "classes": [
@@ -1802,7 +1802,7 @@
         },
         {
           "classes": [],
-          "text": "  Harden auth with constant-…     "
+          "text": "  Harden auth with constant-t…     "
         },
         {
           "classes": [
@@ -1844,7 +1844,7 @@
         },
         {
           "classes": [],
-          "text": "                                                                   "
+          "text": "                                                                    "
         },
         {
           "classes": [
@@ -1883,7 +1883,7 @@
         }
       ]
     ],
-    "plain": "  Branch       Status      HEAD±     main↕    main…±    Summary                      Remote⇅  CI\n@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archi…   ⇡3      #412\n^ main             ^⇅                                                                 ⇡1  ⇣1  #\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-…     |     #408\n+ fix-typos        _|                                                                   |     #410\n\n○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path, Commit, Age, Message"
+    "plain": "  Branch       Status      HEAD±     main↕    main…±    Summary                       Remote⇅  CI\n@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archit…   ⇡3      #412\n^ main             ^⇅                                                                  ⇡1  ⇣1  #\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-t…     |     #408\n+ fix-typos        _|                                                                    |     #410\n\n○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path, Commit, Age, Message"
   },
   {
     "lines": [
@@ -1950,7 +1950,7 @@
         },
         {
           "classes": [],
-          "text": "                      "
+          "text": "                       "
         },
         {
           "classes": [
@@ -2053,7 +2053,7 @@
         },
         {
           "classes": [],
-          "text": "  Refactor API to REST archi…   "
+          "text": "  Refactor API to REST archit…   "
         },
         {
           "classes": [
@@ -2086,7 +2086,7 @@
         },
         {
           "classes": [],
-          "text": "                                                                 "
+          "text": "                                                                  "
         },
         {
           "classes": [
@@ -2170,7 +2170,7 @@
         },
         {
           "classes": [],
-          "text": "  Harden auth with constant-…     "
+          "text": "  Harden auth with constant-t…     "
         },
         {
           "classes": [
@@ -2212,7 +2212,7 @@
         },
         {
           "classes": [],
-          "text": "                                                                   "
+          "text": "                                                                    "
         },
         {
           "classes": [
@@ -2357,7 +2357,7 @@
         }
       ]
     ],
-    "plain": "  Branch       Status      HEAD±     main↕    main…±    Summary                      Remote⇅  CI\n@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archi…   ⇡3      #412\n^ main             ^⇅                                                                 ⇡1  ⇣1  #\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-…     |     #408\n+ fix-typos        _|                                                                   |     #410\n/ exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and…\n/ wip             /↕                 ↑1  ↓1   +33       Start API documentation\n\n○ Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, hidden: Path, Commit, Age, Message"
+    "plain": "  Branch       Status      HEAD±     main↕    main…±    Summary                       Remote⇅  CI\n@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archit…   ⇡3      #412\n^ main             ^⇅                                                                  ⇡1  ⇣1  #\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-t…     |     #408\n+ fix-typos        _|                                                                    |     #410\n/ exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and…\n/ wip             /↕                 ↑1  ↓1   +33       Start API documentation\n\n○ Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, hidden: Path, Commit, Age, Message"
   },
   {
     "lines": [

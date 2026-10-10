@@ -61,17 +61,19 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mAuto-staging 1 untracked path:[39m
-[107m [0m uncommitted.txt
 [36m◎[39m [36mRunning pre-commit [1muser:lint[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'USER_PRE_COMMIT_RAN'[0m[2m [0m[2m[36m>[0m[2m user_precommit.txt[0m
-[0m[36m◎[39m [36mCommitting changes with default message... [90m(1 file, [32m+1[39m, no squashing needed[39m[90m)[39m[39m
+[0m[33m▲[39m [33mAuto-staging 2 untracked paths:[39m
+[107m [0m uncommitted.txt
+[107m [0m user_precommit.txt
+[36m◎[39m [36mCommitting changes with default message... [90m(2 files, [32m+2[39m, no squashing needed[39m[90m)[39m[39m
 [2m↳[22m [2mUsing fallback commit message. For LLM setup guide, run [4mwt config --help[24m[22m
-[107m [0m [1mChanges to uncommitted.txt[22m
+[107m [0m [1mChanges to uncommitted.txt & user_precommit.txt[22m
 [32m✓[39m [32mCommitted changes @ [2m[HASH][22m[39m
 [36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2m[HASH][22m (no rebase needed)[39m
-[107m [0m * [33m[HASH][m Changes to uncommitted.txt
-[107m [0m  uncommitted.txt | 1 [32m+[m
-[107m [0m  1 file changed, 1 insertion(+)
-[32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
+[107m [0m * [33m[HASH][m Changes to uncommitted.txt & user_precommit.txt
+[107m [0m  uncommitted.txt    | 1 [32m+[m
+[107m [0m  user_precommit.txt | 1 [32m+[m
+[107m [0m  2 files changed, 2 insertions(+)
+[32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 2 files, [32m+2[39m[39m[90m)[39m[39m
 [2m○[22m Worktree preserved (--no-remove)

@@ -7,9 +7,7 @@ Worktrunk ships a plugin for each supported agent CLI. What a plugin provides de
 | Configuration skill | ✓ | ✓ |  |  |  | ✓ |
 | Activity tracking (🤖/💬 in `wt list`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Worktree isolation | ✓ |  |  |  |  |  |
-| `/wt-switch-create` skill\* | ✓ |  |  |  |  |  |
-
-\* Codex and Gemini also load the `/wt-switch-create` skill from the shared skill set, but neither lets a skill change the session's working directory, so it does nothing there.
+| `/wt-switch-create` skill | ✓ |  |  |  |  |  |
 
 The configuration skill is documentation the agent reads to help set up LLM commits, hooks, and troubleshooting. Activity tracking shows which worktrees have running sessions. Worktree isolation needs worktree-lifecycle hooks, which only Claude Code exposes, so Codex, OpenCode, Pi, oh-my-pi, and Gemini users invoke `wt switch --create` and `wt remove` directly. Codex tracks activity through its own `Stop` and `SessionEnd` hooks.
 
@@ -90,14 +88,14 @@ Claude Code is designed to load the skill automatically when it detects worktrun
 
 ## Activity tracking
 
-The Claude Code, Codex, OpenCode, Pi, and Gemini plugins track agent sessions with status markers in `wt list`:
+Every plugin tracks agent sessions with status markers in `wt list`:
 
 ```console
 $ wt list
   Branch       Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message
 @ main             ^⇡                                    ⇡1      33323bc    1d  Initial commit
-+ feature-api      ↑ 🤖              ↑1        +1                70343f0    1d  Add REST API endp…
-+ review-ui      ? ↑ 💬    +1        ↑1        +1                a585d6e    1d  Add dashboard com…
++ feature-api      ↑ 🤖              ↑1        +1                70343f0    1d  Add REST API endpo…
++ review-ui      ? ↑ 💬    +1        ↑1        +1                a585d6e    1d  Add dashboard comp…
 + wip-docs       ? –       +1                                    33323bc    1d  Initial commit
 
 ○ Showing 4 worktrees, 2 with changes, 2 ahead, hidden: Path
@@ -106,7 +104,7 @@ $ wt list
 - 🤖 — agent is working
 - 💬 — agent is waiting or idle
 
-All five plugins clear the marker when a session ends. A stale marker can remain if the agent process is killed before its session-end hook runs. In every case, `wt config state marker clear` removes a marker manually.
+Every plugin clears the marker when a session ends. A stale marker can remain if the agent process is killed before its session-end hook runs. In every case, `wt config state marker clear` removes a marker manually.
 
 ### Manual status markers
 
@@ -148,7 +146,7 @@ Worktree state comes from the same cells [`wt list`](https://worktrunk.dev/list/
 
 Add to `~/.claude/settings.json`:
 
-```json
+```json title="~/.claude/settings.json"
 {
   "statusLine": {
     "type": "command",

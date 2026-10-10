@@ -102,10 +102,9 @@ fn approve_merge_plan(
     feature_root: &Path,
     destination_path: &Path,
     project_id: &str,
-    commit: bool,
     verify: bool,
     will_remove: bool,
-    squash_enabled: bool,
+    will_create_commit: bool,
     yes: bool,
 ) -> anyhow::Result<Option<ApprovedHookPlan>> {
     let pid = Some(project_id);
@@ -124,8 +123,7 @@ fn approve_merge_plan(
     // are listed only so the single prompt is complete; their anchor is never
     // looked up.
     let mut feature_hooks = Vec::new();
-    let will_create_commit = repo.current_worktree().is_dirty()? || squash_enabled;
-    if commit && will_create_commit {
+    if will_create_commit {
         feature_hooks.push(HookType::PreCommit);
         feature_hooks.push(HookType::PostCommit);
     }
@@ -276,6 +274,15 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // pre-remove/post-remove hooks in the batch approval prompt.
     let on_target = current_branch == target_branch;
     let remove_requested = remove && !on_target;
+    // Freeze the commit decision before approval so every later gate agrees
+    // with the hooks shown to the user. Squash owns its commit decision and
+    // staging, so it does not need this extra index simulation.
+    let has_committable_changes = if commit && !squash_enabled {
+        current_wt.has_committable_changes(stage_mode)?
+    } else {
+        false
+    };
+    let will_create_commit = squash_enabled || has_committable_changes;
 
     // Build and approve the frozen hook plan once, at the gate. Every covered
     // hook (`pre-merge` / `post-merge` / `pre-remove` / `post-remove` /
@@ -291,10 +298,9 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         &feature_root,
         &destination_path,
         &project_id,
-        commit,
         verify,
         remove_requested,
-        squash_enabled,
+        will_create_commit,
         yes,
     )?;
     let approved = plan.is_some();
@@ -341,7 +347,6 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // The project commit-append is gated independently of hook approval:
     // declining it drops only the append, never the (possibly already-approved)
     // hooks. Mirrors the standalone `wt step commit` path via the shared gate.
-    let will_create_commit = current_wt.is_dirty()? || squash_enabled;
     let llm_configured = env
         .config
         .commit_generation(Some(&project_id))
@@ -354,21 +359,17 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let guidance = super::step::PreApprovedGuidance::Resolved(project_append);
 
     // Handle uncommitted changes (skip if --no-commit) - track whether commit occurred
-    let committed = if commit && current_wt.is_dirty()? {
-        if squash_enabled {
-            false // Squash path handles staging and committing
-        } else {
-            let ctx = env.context(yes);
-            let mut options = CommitOptions::new(&ctx);
-            options.target_branch = Some(&target_branch);
-            options.hooks = commit_hooks;
-            options.stage_mode = stage_mode;
-            options.show_no_squash_note = true;
-            options.guidance = guidance.clone();
+    let committed = if has_committable_changes {
+        let ctx = env.context(yes);
+        let mut options = CommitOptions::new(&ctx);
+        options.target_branch = Some(&target_branch);
+        options.hooks = commit_hooks;
+        options.stage_mode = stage_mode;
+        options.show_no_squash_note = true;
+        options.guidance = guidance.clone();
 
-            let _ = options.commit(&mut announcer)?;
-            true // Committed directly
-        }
+        let _ = options.commit(&mut announcer)?;
+        true // Committed directly
     } else {
         false // No dirty changes or --no-commit
     };

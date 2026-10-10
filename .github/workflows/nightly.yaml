@@ -127,7 +127,7 @@ jobs:
         save-if: false
 
     - name: Install cargo-hack
-      uses: taiki-e/install-action@v2.87.12
+      uses: taiki-e/install-action@v2.87.26
       with:
         tool: cargo-hack
 
@@ -140,7 +140,7 @@ jobs:
     - name: Install nushell
       uses: hustcer/setup-nu@v3
       with:
-        version: '0.115.1'
+        version: '0.116.0'
 
     - run: cargo hack check --feature-powerset --no-dev-deps
 
@@ -204,7 +204,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
-        version: "=0.77.0"
+        version: "=0.80.0"
 
     - name: "Use fast D: drive for temp files (Windows)"
       if: runner.os == 'Windows'
@@ -307,7 +307,7 @@ jobs:
         crate: cargo-udeps
         version: "=0.1.61"
 
-    - uses: clechasseur/rs-cargo@v5.0.8
+    - uses: clechasseur/rs-cargo@v5.1.0
       with:
         command: udeps
         args: --all-targets
@@ -458,7 +458,7 @@ jobs:
     runs-on: ubuntu-24.04
     environment:
       name: tend
-      # A secret scope, not a deploy target — see .github/CLAUDE.md. The cron
+      # A secret scope, not a deploy target — see .github/AGENTS.md. The cron
       # gate above keeps this off the workflow's pull_request and
       # workflow_dispatch triggers, whose refs the `tend` policy can refuse;
       # its push trigger is `main`-only, which the policy already admits.
@@ -473,7 +473,7 @@ jobs:
     - uses: JasonEtco/create-an-issue@v2
       env:
         # Use TEND_BOT_TOKEN for a consistent bot identity (per
-        # .github/CLAUDE.md) and so any future issue-triage automation can
+        # .github/AGENTS.md) and so any future issue-triage automation can
         # cascade off issue creation — events from the default GITHUB_TOKEN
         # don't trigger other workflows.
         GITHUB_TOKEN: ${{ secrets.TEND_BOT_TOKEN }}

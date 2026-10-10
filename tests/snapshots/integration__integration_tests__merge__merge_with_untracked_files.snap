@@ -64,7 +64,8 @@ exit_code: 0
 [107m [0m untracked1.txt
 [107m [0m untracked2.txt
 [36m◎[39m [36mSquashing 1 commit & working tree changes into a single commit [90m(3 files, [32m+3[39m[39m[90m)[39m...[39m
-[2m↳[22m [2mBackup created @ a40b656[22m
+[2m↳[22m [2mBackup created @ [4mrefs/wt-backup/feature[24m (ce9d1c1)[22m
+[2m↳[22m [2mTo recover in a new worktree, run [4mwt switch --create --base ce9d1c11261ee2906292f0f9ce50dda3309f0645 --no-hooks recovery/ce9d1c1[24m[22m
 [36m◎[39m [36mGenerating squash commit message...[39m
 [107m [0m [1mfix: commit changes[22m
 [32m✓[39m [32mSquashed @ [HASH][39m

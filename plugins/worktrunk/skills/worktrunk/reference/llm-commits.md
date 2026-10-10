@@ -9,6 +9,7 @@ Any command that reads a prompt from stdin and outputs a commit message works. A
 ### Claude Code
 
 ```toml
+# ~/.config/worktrunk/config.toml
 [commit.generation]
 command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''"
 ```
@@ -17,14 +18,19 @@ command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haik
 
 ### Codex
 
+Create `~/.codex/worktrunk-commit-instructions.txt` containing just `.` (no newline). Accepting Worktrunk's first-run Codex setup creates the file for you.
+
 ```toml
+# ~/.config/worktrunk/config.toml
 [commit.generation]
-command = "codex exec -m gpt-5.6-luna -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
+command = "codex exec -m gpt-6-luna -c model_reasoning_effort='none' -c project_doc_max_bytes=0 -c skills.max_context_tokens=1 -c agents.enabled=false -c features.goals=false -c web_search=disabled -c 'model_instructions_file=\"~/.codex/worktrunk-commit-instructions.txt\"' -c features.shell_tool=false -c features.unified_exec=false -c features.apps=false -c features.plugins=false --ephemeral --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 ```
 
-Uses the fast, low-cost variant of the current Codex model family with low reasoning effort and an empty system prompt for faster output. Requires `jq` for JSON parsing. See [Codex CLI docs](https://developers.openai.com/codex/cli/).
+Requires `jq` for JSON parsing. See [Codex CLI docs](https://developers.openai.com/codex/cli/).
 
 ### Other tools
+
+Any of these replaces the `command` line above:
 
 ```toml
 # opencode — use a fast model variant
@@ -34,7 +40,7 @@ command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"
 command = "llm -m claude-haiku-4.5"
 
 # aichat
-command = "aichat -m claude:claude-haiku-4.5"
+command = "aichat -m claude:claude-haiku-4.5 --code"
 ```
 
 ## Usage
@@ -107,6 +113,7 @@ Summaries appear in:
 Enable in user config:
 
 ```toml
+# ~/.config/worktrunk/config.toml
 [list]
 summary = true
 ```
@@ -122,6 +129,7 @@ Worktrunk uses [minijinja](https://docs.rs/minijinja/) templates (Jinja2-like sy
 Override the defaults with inline templates:
 
 ```toml
+# ~/.config/worktrunk/config.toml
 [commit.generation]
 command = "llm -m claude-haiku-4.5"
 

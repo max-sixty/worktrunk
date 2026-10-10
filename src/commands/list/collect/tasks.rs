@@ -3,7 +3,7 @@
 //! Each [`TaskKind`] dispatches here to one private computation over a shared
 //! [`TaskContext`].
 
-use std::net::{SocketAddr, TcpStream};
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use std::sync::Arc;
@@ -81,8 +81,8 @@ pub struct TaskContext {
     pub integration_targets: Option<IntegrationTargets>,
     /// Captured ref state for this list invocation. Tasks resolve ref
     /// names to commit SHAs through this snapshot before calling
-    /// `_by_sha` methods on `Repository`, side-stepping the ambient
-    /// ref→SHA cache. `None` when snapshot capture failed (degraded
+    /// `_by_sha` methods on `Repository`, so every task reads the same
+    /// point-in-time ref state. `None` when snapshot capture failed (degraded
     /// mode — tasks fall back to ref-taking methods).
     pub snapshot: Option<Arc<RefSnapshot>>,
 }
@@ -742,7 +742,9 @@ fn compute_url_status(ctx: &TaskContext) -> anyhow::Result<TaskResult> {
         parse_port_from_url(url).map(|port| {
             // Quick TCP connect check with 50ms timeout
             let addr = SocketAddr::from(([127, 0, 0, 1], port));
-            TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok()
+            worktrunk::shell_exec::stream_socket(socket2::Domain::IPV4)
+                .and_then(|socket| socket.connect_timeout(&addr.into(), Duration::from_millis(50)))
+                .is_ok()
         })
     };
 
@@ -837,7 +839,7 @@ pub(super) fn parse_working_tree_status(status_output: &str) -> (WorkingTreeStat
             has_staged = true;
         }
 
-        if index_status == 'R' {
+        if index_status == 'R' || worktree_status == 'R' {
             has_renamed = true;
         }
 
@@ -990,5 +992,17 @@ mod tests {
     fn tracked_changes_ignore_untracked_porcelain_entries() {
         assert!(!has_tracked_changes("?? artifact.bin"));
         assert!(has_tracked_changes("?? artifact.bin\n M src/main.rs"));
+    }
+
+    #[test]
+    fn worktree_rename_is_reported_as_dirty() {
+        let (status, is_dirty, has_conflicts) = parse_working_tree_status(" R old.txt -> new.txt");
+
+        assert_eq!(
+            status,
+            WorkingTreeStatus::new(false, false, false, true, false)
+        );
+        assert!(is_dirty);
+        assert!(!has_conflicts);
     }
 }

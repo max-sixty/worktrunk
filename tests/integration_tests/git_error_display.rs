@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use tempfile::TempDir;
 use worktrunk::git::{
-    Diagnostic, FailedCommand, GitError, HookErrorWithHint, HookType, RefType, WorktrunkError,
-    add_hook_skip_hint,
+    Diagnostic, FailedCommand, GitError, HookErrorWithHint, HookType, InProgressOperation, RefType,
+    StaleWorktreeWork, WorktrunkError, add_hook_skip_hint,
 };
 
 use crate::common::{mock_commands::MockConfig, test_tempdir, wt_command};
@@ -42,7 +42,9 @@ fn worktree_errors_render() {
             GitError::WorktreeRemovalFailed {
                 branch: "feature-x".into(),
                 path: PathBuf::from("/tmp/repo.feature-x"),
-                error: "fatal: worktree is dirty\nerror: could not remove worktree".into(),
+                error: anyhow::anyhow!(
+                    "fatal: worktree is dirty\nerror: could not remove worktree"
+                ),
                 remaining_entries: None,
             }
             .render(),
@@ -52,7 +54,9 @@ fn worktree_errors_render() {
             GitError::WorktreeRemovalFailed {
                 branch: "feature-x".into(),
                 path: PathBuf::from("/tmp/repo.feature-x"),
-                error: "error: failed to delete '/tmp/repo.feature-x': Directory not empty".into(),
+                error: anyhow::anyhow!(
+                    "error: failed to delete '/tmp/repo.feature-x': Directory not empty"
+                ),
                 remaining_entries: Some(vec![
                     ".vite/".into(),
                     "node_modules/".into(),
@@ -66,8 +70,9 @@ fn worktree_errors_render() {
             GitError::WorktreeRemovalFailed {
                 branch: "feature-x".into(),
                 path: PathBuf::from("/tmp/repo.feature-x"),
-                error: "error: failed to remove '/tmp/repo.feature-x/target': Permission denied"
-                    .into(),
+                error: anyhow::anyhow!(
+                    "error: failed to remove '/tmp/repo.feature-x/target': Permission denied"
+                ),
                 remaining_entries: Some(vec!["target/".into()]),
             }
             .render(),
@@ -77,7 +82,9 @@ fn worktree_errors_render() {
             GitError::WorktreeRemovalFailed {
                 branch: "feature-x".into(),
                 path: PathBuf::from("/tmp/repo.feature-x"),
-                error: "error: failed to delete '/tmp/repo.feature-x': Directory not empty".into(),
+                error: anyhow::anyhow!(
+                    "error: failed to delete '/tmp/repo.feature-x': Directory not empty"
+                ),
                 remaining_entries: Some((0..15).map(|i| format!("dir-{i:02}/")).collect()),
             }
             .render(),
@@ -113,8 +120,47 @@ fn worktree_errors_render() {
             "worktree missing",
             GitError::WorktreeMissing {
                 branch: "stale-branch".into(),
+                repairable_at: None,
             }
             .render(),
+        ),
+        (
+            "worktree missing its .git, directory remaining at a path needing quotes",
+            GitError::WorktreeMissing {
+                branch: "stale-branch".into(),
+                repairable_at: Some(PathBuf::from("/tmp/my repo.stale-branch")),
+            }
+            .render(),
+        ),
+        (
+            "stale worktree holding staged changes",
+            GitError::StaleWorktreeHoldsWork {
+                branch: "stale-branch".into(),
+                path: PathBuf::from("/tmp/repo.stale-branch"),
+                directory_remains: true,
+                work: StaleWorktreeWork::StagedChanges,
+            }
+            .render(),
+        ),
+        (
+            "stale worktree mid-operation, directory gone, at a path needing quotes",
+            [
+                InProgressOperation::Merge,
+                InProgressOperation::Rebase,
+                InProgressOperation::CherryPick,
+                InProgressOperation::Revert,
+                InProgressOperation::Bisect,
+            ]
+            .map(|operation| {
+                GitError::StaleWorktreeHoldsWork {
+                    branch: "stale-branch".into(),
+                    path: PathBuf::from("/tmp/my repo.stale-branch"),
+                    directory_remains: false,
+                    work: StaleWorktreeWork::Operation(operation),
+                }
+                .render()
+            })
+            .join("\n"),
         ),
         (
             "no worktree at a leftover directory",

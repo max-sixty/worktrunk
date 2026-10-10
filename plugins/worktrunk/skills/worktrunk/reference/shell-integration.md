@@ -24,7 +24,7 @@ eval "$(wt config shell init zsh)"
 # fish (~/.config/fish/config.fish):
 wt config shell init fish | source
 
-# nushell (experimental) — save to vendor autoload directory:
+# nushell 0.113+ (experimental) — save to vendor autoload directory:
 wt config shell init nu | save -f ($nu.vendor-autoload-dirs | last | path join wt.nu)
 
 # PowerShell ($PROFILE):
@@ -38,7 +38,7 @@ Invoke-Expression (& wt config shell init powershell | Out-String)
 - **Bash**: adds a line to `~/.bashrc`
 - **Zsh**: adds a line to `~/.zshrc` (or `$ZDOTDIR/.zshrc`)
 - **Fish**: creates `~/.config/fish/functions/wt.fish` and `~/.config/fish/completions/wt.fish` (under `$XDG_CONFIG_HOME/fish` when that is set)
-- **Nushell** [experimental]: creates `wt.nu` in Nushell's user vendor-autoload directory — the last entry of `$nu.vendor-autoload-dirs`, under `$nu.data-dir` (typically `~/.local/share/nushell/vendor/autoload` on Linux, `~/Library/Application Support/nushell/vendor/autoload` on macOS)
+- **Nushell 0.113+** [experimental]: creates `wt.nu` in Nushell's user vendor-autoload directory — the last entry of `$nu.vendor-autoload-dirs`, under `$nu.data-dir` (typically `~/.local/share/nushell/vendor/autoload` on Linux, `~/Library/Application Support/nushell/vendor/autoload` on macOS)
 - **PowerShell** (Windows): creates both profile files if they don't exist:
   - `Documents/PowerShell/Microsoft.PowerShell_profile.ps1` (PowerShell 7+)
   - `Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1` (Windows PowerShell 5.1)

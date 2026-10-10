@@ -1,6 +1,7 @@
 //! Branch - a handle for branch-specific git operations.
 
 use super::Repository;
+use crate::git::{CommandError, GitError};
 
 /// Whether `refs/heads/<name>` is a well-formed ref, which is what a branch is.
 ///
@@ -61,6 +62,26 @@ impl<'a> Branch<'a> {
     /// Get the branch name.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Require a literal name Git accepts when creating a branch.
+    ///
+    /// Branch creation has stricter rules than ref syntax (for example, HEAD
+    /// is reserved). Git owns these rules; selector resolution continues to use
+    /// [`is_valid_branch_name`] for refs that may already exist.
+    pub fn require_valid_name(&self) -> anyhow::Result<()> {
+        let args = ["check-ref-format", "--branch", self.name()];
+        let output = self.repo.run_command_output(&args)?;
+        match output.status.code() {
+            // Git expands checkout-history expressions and echoes the result.
+            // Creation must not silently choose a different branch name.
+            Some(0) if output.stdout.trim_ascii_end() == self.name.as_bytes() => Ok(()),
+            Some(0 | 128) => Err(GitError::InvalidBranchName {
+                name: self.name.clone(),
+            }
+            .into()),
+            _ => Err(CommandError::from_failed_output("git", &args, &output).into()),
+        }
     }
 
     /// Check if this branch exists locally.
@@ -126,43 +147,43 @@ impl<'a> Branch<'a> {
             .and_then(|b| b.upstream_short.clone()))
     }
 
+    /// Where this branch pushes: a remote name, or a URL when
+    /// `branch.<name>.pushRemote` is one (`gh pr checkout` sets that for a
+    /// fork's PR). Resolves `pushRemote` → `remote.pushDefault` → the tracking
+    /// remote, as `git push` does.
+    ///
+    /// Reads `%(push:remotename)` from the local-branch inventory (see
+    /// [`Repository::local_branches`]), so it forks nothing after the first
+    /// scan. Unlike `@{push}`, that field doesn't fail when the push remote is
+    /// a URL. Returns `None` when no push remote is configured or no local
+    /// branch has this name.
+    ///
+    /// [`Repository::local_branches`]: super::Repository::local_branches
+    pub fn push_remote(&self) -> Option<String> {
+        self.repo
+            .local_branch(&self.name)
+            .ok()
+            .flatten()
+            .and_then(|b| b.push_remote.clone())
+    }
+
     /// Get the URL of the remote where this branch would be pushed.
     ///
-    /// Uses `%(push:remotename)` which returns either a remote name or URL directly
-    /// (`gh pr checkout` sets pushremote to a URL rather than a remote name).
-    /// For remote names, uses `effective_remote_url` to apply `url.insteadOf` rewrites.
+    /// A remote name goes through `effective_remote_url` to apply
+    /// `url.insteadOf` rewrites; a URL push remote is returned as is.
     /// Returns `None` if no push remote is configured or the remote has no URL.
-    ///
-    /// Result is cached on `RepoCache.push_remote_urls`. The CI-status detector
-    /// calls this from both the PR-based path and the branch fallback, so
-    /// without the cache the `for-each-ref` runs twice for the same branch
-    /// on the no-PR path.
     pub fn push_remote_url(&self) -> Option<String> {
-        self.repo
-            .cache
-            .push_remote_urls
-            .entry(self.name.clone())
-            .or_insert_with(|| {
-                // %(push:remotename) returns either a remote name or URL
-                // directly. Unlike @{push}, this doesn't fail when pushremote
-                // is a URL.
-                let push_remote = self
-                    .repo
-                    .run_command(&[
-                        "for-each-ref",
-                        "--format=%(push:remotename)",
-                        &format!("refs/heads/{}", self.name),
-                    ])
-                    .ok()
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())?;
-
-                if push_remote.contains("://") || push_remote.starts_with("git@") {
-                    Some(push_remote)
-                } else {
-                    self.repo.effective_remote_url(&push_remote)
-                }
-            })
-            .clone()
+        let push_remote = self.push_remote()?;
+        if is_url(&push_remote) {
+            Some(push_remote)
+        } else {
+            self.repo.effective_remote_url(&push_remote)
+        }
     }
+}
+
+/// Whether a push remote from `%(push:remotename)` is a URL rather than a
+/// remote name.
+fn is_url(push_remote: &str) -> bool {
+    push_remote.contains("://") || push_remote.starts_with("git@")
 }

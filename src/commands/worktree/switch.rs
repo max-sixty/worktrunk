@@ -10,6 +10,7 @@ use crate::display::format_relative_time_short;
 use anyhow::{Context, bail};
 use color_print::cformat;
 use dunce::canonicalize;
+use normalize_path::NormalizePath;
 use serde::Serialize;
 use worktrunk::HookType;
 use worktrunk::config::{
@@ -18,9 +19,10 @@ use worktrunk::config::{
 };
 use worktrunk::git::remote_ref::{self, RemoteRefInfo, parse_ref_url};
 use worktrunk::git::{
-    ForgeKind, GitError, GitRemoteUrl, RefType, Repository, ResolvedWorktree, Selector,
-    SwitchSuggestionCtx, WorktreeId, branch_tracks_ref, current_or_recover,
+    ErrorExt, ForgeKind, GitError, GitRemoteUrl, RefType, Repository, ResolvedWorktree, Selector,
+    SwitchSuggestionCtx, WorktreeId, branch_tracks_ref, current_or_recover, resolve_input_path,
 };
+use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::{ShellEscapeMode, shell_cwd};
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, println, progress_message,
@@ -652,6 +654,7 @@ fn resolve_switch_target(
             if !repo.ref_exists(&resolved)? {
                 return Err(GitError::ReferenceNotFound {
                     reference: resolved,
+                    flag: Some("--base"),
                 }
                 .into());
             }
@@ -664,6 +667,7 @@ fn resolve_switch_target(
     // Validate --create constraints
     if create {
         let branch_handle = repo.branch(&resolved_branch);
+        branch_handle.require_valid_name()?;
         if branch_handle.exists_locally()? {
             return Err(GitError::BranchAlreadyExists {
                 branch: resolved_branch,
@@ -748,12 +752,15 @@ fn validate_worktree_creation(
     } = method
         && !repo.branch(branch).exists()?
     {
+        if !worktrunk::git::is_valid_branch_name(branch) {
+            return Err(GitError::WorktreeSelectorNotFound {
+                selector: branch.to_string(),
+            }
+            .into());
+        }
         return Err(GitError::BranchNotFound {
             branch: branch.to_string(),
-            // Offering `--create` for a name git rejects sends the user to a
-            // command that fails; the argument was a path spelling, whether or
-            // not a directory happens to sit at it.
-            show_create_hint: worktrunk::git::is_valid_branch_name(branch),
+            show_create_hint: true,
             last_fetch_ago: format_last_fetch_ago(repo),
             pr_mr_platform: repo.detect_ref_type(),
         }
@@ -764,10 +771,7 @@ fn validate_worktree_creation(
     if let Some((existing_path, occupant)) = repo.worktree_at_path(path)? {
         if !existing_path.exists() {
             let occupant_branch = occupant.unwrap_or_else(|| branch.to_string());
-            return Err(GitError::WorktreeMissing {
-                branch: occupant_branch,
-            }
-            .into());
+            return Err(GitError::worktree_missing(occupant_branch, &existing_path).into());
         }
         return Err(GitError::WorktreePathOccupied {
             branch: branch.to_string(),
@@ -873,21 +877,9 @@ fn setup_fork_branch(
         ),
     )
     .map_err(|e| {
-        // Same mapping as the `Regular` arm: git stores refs as file paths, so
-        // a fork PR whose head ref is `feature` cannot create a branch in a
-        // repo that already has `feature/x`. Name the conflicting branch
-        // instead of passing on git's raw "cannot lock ref" text.
-        match detect_branch_namespace_conflict(repo, branch) {
-            Some(conflicting) => GitError::BranchNamespaceConflict {
-                branch: branch.to_string(),
-                conflicting,
-            },
-            // No leftover-branch hint on this path: `wt switch pr:N` is the
-            // re-run, and it adopts or prefixes the branch on its own terms
-            // (see this function's docstring), so naming the ref would point at
-            // a recovery that isn't the one to take.
-            None => worktree_creation_error(&e, branch.to_string(), None, false),
-        }
+        // No leftover-branch hint here: `wt switch pr:N` adopts or prefixes
+        // the branch on re-run, so naming the ref would suggest the wrong recovery.
+        worktree_creation_error(repo, e, branch.to_string(), None, false)
     })?;
 
     // Configure branch tracking for pull and push
@@ -918,12 +910,14 @@ fn setup_fork_branch(
 ///
 /// Warnings (remote branch shadow, --base without --create, invalid default branch)
 /// are printed during planning since they're informational, not blocking.
+#[allow(clippy::too_many_arguments)]
 fn plan_switch(
     repo: &Repository,
     branch: &str,
     ref_target: Option<ResolvedTarget>,
     create: bool,
     base: Option<&str>,
+    path: Option<&Path>,
     clobber: bool,
     config: &UserConfig,
 ) -> anyhow::Result<SwitchPlan> {
@@ -933,6 +927,15 @@ fn plan_switch(
     // Phase 1: Resolve target (validates --create/--base; `pr:`/`mr:` arrived
     // pre-resolved from the caller, ahead of the pre-switch hooks)
     let target = resolve_switch_target(repo, branch, ref_target, create, base)?;
+
+    // Resolve `--path` the way git resolves `git worktree add <path>`: from
+    // the directory wt was pointed at, normalized so the comparisons below and
+    // the path git records agree.
+    let requested_path = path
+        .map(|path| -> anyhow::Result<PathBuf> {
+            Ok(std::path::absolute(resolve_input_path(path))?.normalize())
+        })
+        .transpose()?;
 
     // Phase 2: the shared worktree ladder — the branch, then the argument as a
     // worktree's own path (the way to name a detached one, which has no
@@ -948,11 +951,24 @@ fn plan_switch(
             // A registration whose directory is gone or broken has nothing to
             // switch into; `wt remove` is the one command that still wants it.
             if repo.worktree_is_unusable(&path)? {
-                return Err(GitError::WorktreeMissing {
-                    branch: branch
-                        .unwrap_or_else(|| worktrunk::git::path_dir_name(&path).to_string()),
-                }
+                return Err(GitError::worktree_missing(
+                    branch.unwrap_or_else(|| worktrunk::git::path_dir_name(&path).to_string()),
+                    &path,
+                )
                 .into());
+            }
+            // `--path` only places a new worktree. Naming a different
+            // directory for one that already exists would otherwise be
+            // silently ignored.
+            if let Some(requested) = requested_path.as_deref()
+                && !same_worktree_path(requested, &path)
+            {
+                let token = target.selector.token();
+                let existing = format_path_for_display(&path);
+                let requested = format_path_for_display(requested);
+                bail!(cformat!(
+                    "<bold>{token}</> already has a worktree @ <bold>{existing}</>, not <bold>{requested}</>; to switch to it, run without <bold>--path</>"
+                ));
             }
             return Ok(SwitchPlan::Existing {
                 path: operational_worktree_path(path),
@@ -971,8 +987,15 @@ fn plan_switch(
         _ => {}
     }
 
-    // Phase 3: Compute expected path (only needed for create)
-    let expected_path = compute_worktree_path(repo, target.selector.token(), config)?;
+    // Phase 3: Compute expected path (only needed for create). `--path`
+    // replaces the template outright.
+    let expected_path = match requested_path {
+        Some(path) => {
+            reject_path_overlapping_worktrees(repo, &path)?;
+            path
+        }
+        None => compute_worktree_path(repo, target.selector.token(), config)?,
+    };
 
     // Phase 4: Validate we can create at this path
     let needs_clobber_backup = validate_worktree_creation(
@@ -992,6 +1015,41 @@ fn plan_switch(
         needs_clobber_backup,
         new_previous,
     })
+}
+
+/// Refuse a `--path` directory that holds a worktree or the repository, or
+/// that sits inside one.
+///
+/// Such a directory always exists, so `validate_worktree_creation` would
+/// otherwise offer `--clobber`, which moves it aside: `--path ..` would move
+/// the repository itself, and `--path src` a tracked directory of the current
+/// worktree. The template never produces these; a typed path easily does. A
+/// directory that does not exist yet is left alone — nesting a new worktree
+/// inside another is git's call, not a clobber.
+fn reject_path_overlapping_worktrees(repo: &Repository, requested: &Path) -> anyhow::Result<()> {
+    let Ok(requested) = canonicalize(requested) else {
+        return Ok(());
+    };
+    let registered = repo.list_worktrees()?.iter().map(|wt| wt.path.as_path());
+    for existing in registered.chain([repo.git_common_dir()]) {
+        let existing = canonicalize(existing).unwrap_or_else(|_| existing.to_path_buf());
+        if existing == requested {
+            continue;
+        }
+        let relation = if existing.starts_with(&requested) {
+            "contains"
+        } else if requested.starts_with(&existing) {
+            "is inside"
+        } else {
+            continue;
+        };
+        let requested = format_path_for_display(&requested);
+        let existing = format_path_for_display(&existing);
+        bail!(cformat!(
+            "<bold>--path {requested}</> {relation} <bold>{existing}</>; choose a directory outside the repository and its worktrees"
+        ));
+    }
+    Ok(())
 }
 
 /// Preserve the filesystem spelling Git and downstream commands can operate
@@ -1167,29 +1225,13 @@ fn execute_switch(
                         Repository::SLOW_OPERATION_DELAY_MS,
                         progress_msg,
                     ) {
-                        // A new branch whose name is a path prefix of (or sits
-                        // under) an existing branch can't be created: git stores
-                        // refs as file paths, so `release` and `release/2026.4`
-                        // can't coexist. Surface that as a clear, actionable
-                        // error instead of git's raw "cannot lock ref" text.
-                        if *create_branch
-                            && let Some(conflicting) =
-                                detect_branch_namespace_conflict(repo, &branch)
-                        {
-                            return Err(GitError::BranchNamespaceConflict {
-                                branch: branch.clone(),
-                                conflicting,
-                            }
-                            .into());
-                        }
-                        let leftover = *create_branch && failed_add_left_branch(repo, &branch);
                         return Err(worktree_creation_error(
-                            &e,
+                            repo,
+                            e,
                             branch.clone(),
                             base_branch.clone(),
-                            leftover,
-                        )
-                        .into());
+                            *create_branch,
+                        ));
                     }
 
                     // `--base pr:N` / `--base mr:N` against a same-repo PR/MR: the
@@ -1360,18 +1402,32 @@ fn detect_branch_namespace_conflict(repo: &Repository, branch: &str) -> Option<S
         .map(String::from)
 }
 
-/// Build a `GitError::WorktreeCreationFailed` from a failed `git worktree add`,
-/// extracting the underlying command output for the error message.
+/// Classify a failed `git worktree add` before inspecting any further Git state.
+/// Interruptions retain their native error beneath a single-line context.
+/// Ordinary failures identify namespace conflicts or render the command output.
 ///
-/// `leftover_branch` says whether the failed add left its `-b` branch behind
-/// (see [`failed_add_left_branch`]); it only adds a hint naming the branch.
+/// Regular branch creation inspects whether the failed add left its `-b` branch
+/// behind, adding a recovery hint. Fork creation has its own re-run recovery.
 fn worktree_creation_error(
-    err: &anyhow::Error,
+    repo: &Repository,
+    err: anyhow::Error,
     branch: String,
     base_branch: Option<String>,
-    leftover_branch: bool,
-) -> GitError {
-    let (output, command) = Repository::extract_failed_command(err);
+    inspect_leftover: bool,
+) -> anyhow::Error {
+    if err.interrupt_signal().is_some() {
+        return err.context("Worktree creation interrupted");
+    }
+    // Git stores refs as paths, so `release` and `release/2026.4` cannot coexist.
+    if let Some(conflicting) = detect_branch_namespace_conflict(repo, &branch) {
+        return GitError::BranchNamespaceConflict {
+            branch,
+            conflicting,
+        }
+        .into();
+    }
+    let leftover_branch = inspect_leftover && failed_add_left_branch(repo, &branch);
+    let (output, command) = Repository::extract_failed_command(&err);
     GitError::WorktreeCreationFailed {
         branch,
         base_branch,
@@ -1379,6 +1435,7 @@ fn worktree_creation_error(
         command,
         leftover_branch,
     }
+    .into()
 }
 
 /// Whether a failed `git worktree add -b <branch>` left the branch behind.
@@ -1499,6 +1556,7 @@ struct SwitchOptions<'a> {
     branch: &'a str,
     create: bool,
     base: Option<&'a str>,
+    path: Option<&'a Path>,
     execute: Option<&'a str>,
     execute_args: &'a [String],
     yes: bool,
@@ -1749,6 +1807,9 @@ pub(crate) struct SwitchPipeline<'a> {
     pub identifier: &'a str,
     pub create: bool,
     pub base: Option<&'a str>,
+    /// `--path`: where to create the worktree instead of the `worktree-path`
+    /// template.
+    pub path: Option<&'a Path>,
     pub clobber: bool,
     pub verify: bool,
     /// `--yes`: skip approval prompts and force past clobber checks.
@@ -1783,6 +1844,7 @@ impl SwitchPipeline<'_> {
             identifier,
             create,
             base,
+            path,
             clobber,
             verify,
             yes,
@@ -1831,18 +1893,20 @@ impl SwitchPipeline<'_> {
         let (source_branch, source_path) = capture_switch_source(repo, is_recovered);
 
         // Validate and resolve the target branch.
-        let plan = plan_switch(repo, identifier, ref_target, create, base, clobber, config)
-            .map_err(|err| match suggestion_ctx {
-                Some(ref ctx) => match err.downcast::<GitError>() {
-                    Ok(git_err) => GitError::WithSwitchSuggestion {
-                        source: Box::new(git_err),
-                        ctx: ctx.clone(),
-                    }
-                    .into(),
-                    Err(err) => err,
-                },
-                None => err,
-            })?;
+        let plan = plan_switch(
+            repo, identifier, ref_target, create, base, path, clobber, config,
+        )
+        .map_err(|err| match suggestion_ctx {
+            Some(ref ctx) => match err.downcast::<GitError>() {
+                Ok(git_err) => GitError::WithSwitchSuggestion {
+                    source: Box::new(git_err),
+                    ctx: ctx.clone(),
+                }
+                .into(),
+                Err(err) => err,
+            },
+            None => err,
+        })?;
 
         // "Approve at the Gate": collect and approve hooks upfront. Approval
         // happens once at the command entry point. If the user declines, skip
@@ -1978,9 +2042,13 @@ impl SwitchPipeline<'_> {
                 .collect();
             let argv: Vec<String> = std::iter::once(program).chain(args?).collect();
             // The header names where the program starts, which is the
-            // directory the switch cd'd to and not the worktree the hooks
+            // directory the switch selected and not the worktree the hooks
             // announce (#4042).
-            execute_user_command(&argv, display_paths.execute.as_deref())?;
+            execute_user_command(
+                &argv,
+                display_paths.execute.as_deref(),
+                &display_paths.execute_dir,
+            )?;
         }
 
         Ok(())
@@ -1997,6 +2065,7 @@ fn run_switch(
         branch,
         create,
         base,
+        path,
         execute,
         execute_args,
         yes,
@@ -2015,15 +2084,22 @@ fn run_switch(
         config.resolved(project_id.as_deref()).switch.cd()
     });
 
-    // Build switch suggestion context for enriching error hints with --execute/trailing args.
+    // Build switch suggestion context for enriching error hints with --path/--execute/trailing args.
     // Without this, errors like "branch already exists" would suggest `wt switch <branch>`
-    // instead of the full `wt switch <branch> --execute=<cmd> -- <args>`.
-    let suggestion_ctx = execute.map(|exec| {
+    // instead of the full `wt switch <branch> --path=<dir> --execute=<cmd> -- <args>`.
+    // Dropping `--path` would point `--clobber` at the template's path instead.
+    let mut extra_flags = Vec::new();
+    if let Some(path) = path {
+        let escaped = shell_escape::unix::escape(path.to_string_lossy());
+        extra_flags.push(format!("--path={escaped}"));
+    }
+    if let Some(exec) = execute {
         let escaped = shell_escape::unix::escape(exec.into());
-        SwitchSuggestionCtx {
-            extra_flags: vec![format!("--execute={escaped}")],
-            trailing_args: execute_args.to_vec(),
-        }
+        extra_flags.push(format!("--execute={escaped}"));
+    }
+    let suggestion_ctx = (!extra_flags.is_empty()).then(|| SwitchSuggestionCtx {
+        extra_flags,
+        trailing_args: execute_args.to_vec(),
     });
 
     SwitchPipeline {
@@ -2032,6 +2108,7 @@ fn run_switch(
         identifier: branch,
         create,
         base,
+        path,
         clobber,
         verify,
         yes,
@@ -2082,6 +2159,7 @@ pub fn handle_switch_command(args: SwitchArgs, yes: bool) -> anyhow::Result<()> 
                     branch: &branch,
                     create: args.create,
                     base: args.base.as_deref(),
+                    path: args.path.as_deref(),
                     execute: args.execute.as_deref(),
                     execute_args: &args.execute_args,
                     yes,

@@ -59,7 +59,12 @@ Cloning a bare repo into `<project>/.git` puts all worktrees under one directory
 ```bash
 git clone --bare <url> myproject/.git
 cd myproject
+git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+git fetch origin
+git remote set-head origin --auto
 ```
+
+`git clone --bare` records the `origin` URL but no fetch refspec, so without the `git config` line `git fetch` never creates remote-tracking branches like `origin/main`, and tools that read them (lazygit, editor integrations) see no remote branches. `git remote set-head` then points `origin/HEAD` at the remote's default branch.
 
 With `worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"`, worktrees become subdirectories of `myproject/`:
 
@@ -147,6 +152,7 @@ See [`wt config state vars`](https://worktrunk.dev/config/#wt-config-state-vars)
 Reference Taskfile/Justfile/Makefile in hooks:
 
 ```toml
+# .config/wt.toml
 [pre-start]
 "setup" = "task install"
 
@@ -159,6 +165,7 @@ Reference Taskfile/Justfile/Makefile in hooks:
 Split checks across hook types — quick feedback before each commit, expensive suites before merge:
 
 ```toml
+# .config/wt.toml
 [[pre-commit]]
 lint = "npm run lint"
 typecheck = "npm run typecheck"
@@ -175,6 +182,7 @@ build = "npm run build"
 Branch on `{{ target }}` to vary behavior per merge destination — for example, deploying to production from `main` and staging from a release branch:
 
 ```toml
+# .config/wt.toml
 post-merge = """
 if [ {{ target }} = main ]; then
     npm run deploy:production
@@ -223,12 +231,12 @@ $ wt list
 Each worktree can have its own isolated database. A pipeline sets up names and ports as [vars](https://worktrunk.dev/config/#wt-config-state-vars), then later steps and hooks reference them:
 
 ```toml
+# .config/wt.toml
 [[post-start]]
 set-vars = """
-wt config state vars set \
-  container='{{ repo }}-{{ branch | sanitize }}-postgres' \
-  port='{{ ('db-' ~ branch) | hash_port }}' \
-  db_url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'
+wt config state vars set container='{{ repo }}-{{ branch | sanitize }}-postgres' &&
+wt config state vars set port='{{ ('db-' ~ branch) | hash_port }}' &&
+wt config state vars set db-url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'
 """
 
 [[post-start]]
@@ -252,7 +260,7 @@ The `('db-' ~ branch)` concatenation hashes differently than plain `branch`, so 
 The connection string is accessible anywhere — not just in hooks:
 
 ```bash
-DATABASE_URL=$(wt config state vars get db_url) npm start
+DATABASE_URL=$(wt config state vars get db-url) npm start
 ```
 
 ### Per-worktree env vars
@@ -262,7 +270,8 @@ To scope environment variables to a worktree — a tool's package path, a profil
 **direnv** — commit `.envrc` at the repo root:
 
 ```sh
-export MY_PACKAGES_PATH="$PWD/.packages"
+# .envrc
+export MY_PACKAGES_PATH="$(expand_path .packages)"
 ```
 
 Run `direnv allow` once per worktree to trust the file ([getting started](https://direnv.net/#getting-started)). After that, switching into a worktree loads the env; switching out unloads it.
@@ -270,6 +279,7 @@ Run `direnv allow` once per worktree to trust the file ([getting started](https:
 **mise** — commit `mise.toml` at the repo root:
 
 ```toml
+# mise.toml
 [env]
 MY_PACKAGES_PATH = "{{ config_root }}/.packages"
 ```
@@ -283,6 +293,7 @@ Both set real environment variables in the shell session, so every child process
 Use [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored) to copy gitignored files (caches, dependencies, `.env`) between worktrees:
 
 ```toml
+# .config/wt.toml
 [post-start]
 copy = "wt step copy-ignored"
 ```
@@ -290,6 +301,7 @@ copy = "wt step copy-ignored"
 When another hook depends on the copy — for example, copying `node_modules/` before `pnpm install` so the install reuses cached packages — sequence them with a `[[post-start]]` pipeline:
 
 ```toml
+# .config/wt.toml
 [[post-start]]
 copy = "wt step copy-ignored"
 
@@ -452,7 +464,7 @@ This lets one agent session hand off work to another that runs in the background
 
 The [worktrunk skill](https://worktrunk.dev/claude-code/) includes guidance for Claude Code (and other agent CLIs that load it) to execute this pattern. To enable it, request it explicitly ("spawn a parallel worktree for...") or add to your project instructions (`CLAUDE.md` or `AGENTS.md`):
 
-```markdown
+```markdown title="AGENTS.md"
 When I ask you to spawn parallel worktrees, use the agent handoff pattern
 from the worktrunk skill.
 ```
@@ -514,13 +526,15 @@ Then `wt mc` opens an editor for the commit message while plain `wt merge` conti
 Follow background hook output:
 
 ```bash
-tail -f "$(wt config state logs get --hook=user:post-start:server)"
+tail -f "$(wt config state logs --format=json | jq -r --arg branch "$(git branch --show-current)" '.hook_output[] | select([.branch, .source, .hook_type, .name] == [$branch, "user", "post-start", "server"]) | .path')"
 ```
 
-The `--hook` format is `source:hook-type:name` — e.g., `project:post-start:build` for project-defined hooks. Use `wt config state logs get` to list all available logs.
+Each `hook_output` entry carries `branch`, `source` (`user`, `project`, or `internal`), `hook_type`, `name`, and `path` — adjust the `select` to pick a different hook or branch. Run `wt config state logs` to list all available logs.
 
-Create an alias for frequent use:
+Create a shell function for frequent use (`wtlog server`):
 
 ```bash
-alias wtlog='f() { tail -f "$(wt config state logs get --hook="$1")"; }; f'
+wtlog() {
+  tail -f "$(wt config state logs --format=json | jq -r --arg branch "$(git branch --show-current)" --arg name "$1" '.hook_output[] | select([.branch, .source, .hook_type, .name] == [$branch, "user", "post-start", $name]) | .path')"
+}
 ```

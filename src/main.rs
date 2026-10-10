@@ -44,12 +44,12 @@ use commands::worktree::{PushKind, PushOutcome, PushResult, handle_no_ff_merge, 
 use commands::{
     HookCliArgs, MergeFlagOverrides, MergeOptions, RebaseResult, SquashResult, add_approvals,
     clear_approvals, flag_pair, handle_alias_dry_run, handle_alias_show, handle_cache_clear,
-    handle_cache_get, handle_claude_approve_enter_worktree, handle_claude_install,
-    handle_claude_install_statusline, handle_claude_uninstall, handle_codex_install,
-    handle_codex_uninstall, handle_completions, handle_config_create, handle_config_show,
-    handle_config_update, handle_configure_shell, handle_custom_command, handle_hints_clear,
-    handle_hints_get, handle_hook_show, handle_init, handle_list, handle_logs_list,
-    handle_logs_profile, handle_merge, handle_omp_install, handle_omp_uninstall,
+    handle_cache_get, handle_claude_approve_enter_worktree, handle_claude_hook,
+    handle_claude_install, handle_claude_install_statusline, handle_claude_uninstall,
+    handle_codex_install, handle_codex_uninstall, handle_completions, handle_config_create,
+    handle_config_show, handle_config_update, handle_configure_shell, handle_custom_command,
+    handle_hints_clear, handle_hints_get, handle_hook_show, handle_init, handle_list,
+    handle_logs_list, handle_logs_profile, handle_merge, handle_omp_install, handle_omp_uninstall,
     handle_opencode_install, handle_opencode_uninstall, handle_pi_install, handle_pi_uninstall,
     handle_promote, handle_rebase, handle_remove_command, handle_show_theme, handle_squash,
     handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
@@ -237,9 +237,9 @@ fn handle_step_command(
             }
             // --show-prompt and --dry-run skip the squash and exit after preview output.
             if args.show_prompt {
-                commands::step_show_squash_prompt(args.target.as_deref())
+                commands::step_show_squash_prompt(args.target.as_deref(), args.stage)
             } else if args.dry_run {
-                commands::step_dry_run_squash(args.target.as_deref(), yes)
+                commands::step_dry_run_squash(args.target.as_deref(), args.stage, yes)
             } else {
                 // Approval is handled inside handle_squash (like step_commit).
                 let repo = Repository::current()?;
@@ -661,6 +661,7 @@ fn handle_plugins_command(action: ConfigPluginsCommand, yes: bool) -> anyhow::Re
             ConfigPluginsClaudeCommand::Install => handle_claude_install(yes),
             ConfigPluginsClaudeCommand::Uninstall => handle_claude_uninstall(yes),
             ConfigPluginsClaudeCommand::InstallStatusline => handle_claude_install_statusline(yes),
+            ConfigPluginsClaudeCommand::Hook => handle_claude_hook(),
             ConfigPluginsClaudeCommand::ApproveEnterWorktree => {
                 handle_claude_approve_enter_worktree()
             }
@@ -1103,9 +1104,40 @@ fn handle_command_failure(error: anyhow::Error, verbose_level: u8, command_line:
     print_command_error(&error);
     print_cwd_removed_hint_if_needed();
 
-    // Preserve exit code from child processes (especially for signals like SIGINT)
-    let code = error.exit_code().unwrap_or(1);
+    // Cancellation governs exit independently of the error's diagnostic and
+    // recovery hints. A parallel sibling may have failed before cancellation.
+    let signal = error.interrupt_signal();
+    #[cfg(unix)]
+    let signal = worktrunk::signal_forwarder::operation_interrupt_signal().or(signal);
+    let code = signal
+        .map(|signal| 128 + signal)
+        .or_else(|| error.exit_code())
+        .unwrap_or(1);
     finish_command(verbose_level, command_line, Some(&error));
+    // Preserve the canonical OS signal through nested wt invocations. Converting
+    // it to an ordinary 128+signal exit makes Warn pipelines continue afterward.
+    #[cfg(unix)]
+    if let Some(signal) = signal {
+        match worktrunk::signal_forwarder::should_reraise(signal) {
+            Ok(true) => {
+                // Native signal death skips LLVM's atexit writer. Dump once
+                // before handing control back to the OS, only in coverage builds.
+                #[cfg(coverage)]
+                #[expect(unsafe_code, reason = "LLVM provides this no-argument profiling API")]
+                // SAFETY: cargo-llvm-cov links LLVM's profiling runtime. This
+                // no-argument API runs on the main thread, outside signal handlers.
+                unsafe {
+                    unsafe extern "C" {
+                        fn __llvm_profile_dump() -> std::ffi::c_int;
+                    }
+                    let _ = __llvm_profile_dump();
+                }
+                let _ = signal_hook::low_level::emulate_default_handler(signal);
+            }
+            Ok(false) => {}
+            Err(error) => eprintln!("{}", error_message(error.to_string())),
+        }
+    }
     process::exit(code);
 }
 
@@ -1232,7 +1264,20 @@ fn main() {
         return;
     };
 
+    // Cancellation belongs to this command, including work admitted by a
+    // parallel worker after another child's interruption was already observed.
+    // The guard leaves idle terminal defaults enabled between foreground waits.
+    #[cfg(unix)]
+    let operation = match worktrunk::signal_forwarder::CommandOperation::start() {
+        Ok(operation) => operation,
+        Err(error) => handle_command_failure(error.into(), verbose, &command_line),
+    };
     let result = dispatch_command(command, directory, yes);
+    #[cfg(unix)]
+    let result = result.and_then(|()| match operation.interrupt_signal() {
+        Some(signal) => Err(WorktrunkError::Interrupted { signal, hint: None }.into()),
+        None => Ok(()),
+    });
 
     match result {
         Ok(()) => finish_command(verbose, &command_line, None),
@@ -1337,8 +1382,8 @@ mod tests {
         assert!(out.contains("git fetch failed"));
     }
 
-    /// Codex P2: typed `GitError` wrappers (e.g., `WorktreeRemovalFailed`,
-    /// `PushFailed`) embed a stringified sub-error into their `error`
+    /// Typed `GitError` wrappers (e.g., `PushFailed`) embed a stringified
+    /// sub-error into their `error`
     /// field. With `display_message`, that field carries git's stderr
     /// rather than our `CommandError` summary.
     #[test]

@@ -21,7 +21,7 @@ concurrency:
 env:
   # Both jobs restore the rust-cache that `test` saves, and Swatinem/rust-cache
   # hashes CARGO*/RUST* into the key, so these must match ci.yaml exactly
-  # (.github/CLAUDE.md → Build environment).
+  # (.github/AGENTS.md → Build environment).
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUSTFLAGS: -C debuginfo=0
@@ -51,7 +51,7 @@ jobs:
   # Until then the full `test` matrix stays required and runs on every PR,
   # unchanged. Do NOT reach affected-only by making the required `test (*)`
   # checks skip=pass on PRs — relaxing the merge gate is a deliberate
-  # branch-protection change owned by the repo admin (see `.github/CLAUDE.md`),
+  # branch-protection change owned by the repo admin (see `.github/AGENTS.md`),
   # not a silent workflow skip.
   #
   # The full suite must keep running after the flip, because cargo-affected
@@ -135,7 +135,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-affected
-        version: "=0.4.0"
+        version: "=0.4.1"
 
     - name: Install llvm-tools
       run: rustup component add llvm-tools
@@ -203,7 +203,10 @@ jobs:
       env:
         PR_HEAD: ${{ github.event.pull_request.head.sha }}
       run: |
-        git fetch --no-tags --depth=200 origin main
+        # `origin/main` is already complete from the full checkout above. A
+        # `git fetch --depth=N` here would graft main's history at N commits
+        # and make the repo shallow, so a PR branched further back would have
+        # no merge-base.
         sha=$(git merge-base origin/main "$PR_HEAD")
         echo "sha=$sha" >> "$GITHUB_OUTPUT"
         echo "merge-base with origin/main: $sha"
@@ -246,7 +249,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-affected
-        version: "=0.4.0"
+        version: "=0.4.1"
 
     - name: 🎯 Run affected tests
       env:

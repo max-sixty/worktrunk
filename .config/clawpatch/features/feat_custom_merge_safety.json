@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "featureId": "feat_custom_merge_safety",
   "title": "wt merge: data safety, rebase, and worktree cleanup",
-  "summary": "The `wt merge` command lands a feature branch onto the target, runs the rebase, performs cleanup of the merged worktree, and runs pre-/post-merge hooks. Critical data-safety surface: a failed merge must not silently discard uncommitted work, and cleanup must not run before approval. See CLAUDE.md > Data Safety and Project Commands Run Only After Approval.",
+  "summary": "The `wt merge` command lands a feature branch onto the target, runs the rebase, performs cleanup of the merged worktree, and runs pre-/post-merge hooks. Critical data-safety surface: a failed merge must not silently discard uncommitted work, and cleanup must not run before approval. See AGENTS.md > Data Safety and Project Commands Run Only After Approval.",
   "kind": "library",
   "source": "manual",
   "confidence": "high",
@@ -50,7 +50,7 @@
       "reason": "dirty/clean detection"
     },
     {
-      "path": "CLAUDE.md",
+      "path": "AGENTS.md",
       "reason": "data safety + approval gate invariants"
     }
   ],

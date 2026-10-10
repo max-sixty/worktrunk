@@ -27,7 +27,7 @@
 //! uses; see the call site. A change to any of this is measured against
 //! `benches/completion.rs`, which runs one repo big enough in every dimension
 //! to make the difference visible — and *not* against a `-vv` trace, which
-//! skips prewarm's rev-parse batch (benches/CLAUDE.md, "Analyzing a trace").
+//! skips prewarm's rev-parse batch (benches/AGENTS.md, "Analyzing a trace").
 
 use std::cell::RefCell;
 use std::ffi::{OsStr, OsString};
@@ -573,10 +573,9 @@ pub(crate) fn inject_hook_subcommands(cmd: Command) -> Command {
     })
 }
 
-/// Build a completion stub `clap::Command` for a hook type. Same shape as
-/// `build_alias_completion_command` — declares the known flags (so they show
-/// up in `wt hook pre-merge --<Tab>` completions) and wires the name completer
-/// for the first positional (hook command name filter).
+/// Build a completion stub `clap::Command` for a hook type. Declares the known
+/// flags (so they show up in `wt hook pre-merge --<Tab>` completions) and wires
+/// the name completer for the first positional (hook command name filter).
 fn build_hook_completion_command(name: &'static str) -> Command {
     let about: &'static str = Box::leak(format!("Run {name} hooks").into_boxed_str());
     Command::new(name)
@@ -688,7 +687,7 @@ fn inject_alias_subcommands(cmd: Command) -> Command {
 /// - **`template_references_var` per command** (minijinja, not a substring) —
 ///   scoped to each command rather than the cross-command union returned by
 ///   `referenced_vars_for_config`, so a non-forwarding sibling referencing
-///   `{{ args }}` can't flip mirroring on. Satisfies CLAUDE.md's "Use Existing
+///   `{{ args }}` can't flip mirroring on. Satisfies AGENTS.md's "Use Existing
 ///   Dependencies" rule.
 /// - **Exactly one forwarder.** Zero means the alias ignores CLI positionals;
 ///   many means args fan out and mirroring any one would mislead.
@@ -756,6 +755,11 @@ fn mirror_alias_command(leaf: Command, alias_name: &str, rep: &CommandConfig) ->
 
 /// Build a completion stub `clap::Command` for an alias. Leaks strings since
 /// completion is a short-lived subprocess that exits after printing candidates.
+///
+/// The stub declares no flags of its own. An alias's flags are its template
+/// variables (`--KEY=VALUE`), which vary per alias: `AliasOptions::parse`
+/// rejects `--dry-run` unless the template references `dry_run`, and forwards
+/// `--var` to the alias as a plain argument.
 fn build_alias_completion_command(name: &str, cmd_config: &CommandConfig) -> Command {
     // Use the first command's template for the help text
     let first_template = cmd_config
@@ -766,16 +770,7 @@ fn build_alias_completion_command(name: &str, cmd_config: &CommandConfig) -> Com
     let help = truncate_template(first_template);
     let name: &'static str = Box::leak(name.to_string().into_boxed_str());
     let about: &'static str = Box::leak(format!("alias: {help}").into_boxed_str());
-    Command::new(name)
-        .about(about)
-        .arg(clap::Arg::new("dry-run").long("dry-run"))
-        .arg(clap::Arg::new("yes").short('y').long("yes"))
-        .arg(
-            clap::Arg::new("var")
-                .long("var")
-                .num_args(1)
-                .action(clap::ArgAction::Append),
-        )
+    Command::new(name).about(about)
 }
 
 /// Load aliases from user and project config for completion. Outside a git
@@ -861,11 +856,9 @@ fn try_forward_completion_to_custom(
     // candidates. Uses `std::process::Command` rather than `shell_exec::Cmd`
     // because we only need that captured stdout, not `Cmd`'s tracing/streaming;
     // stderr is discarded so the child can't write above the user's prompt.
-    let result = cmd
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()?
-        .wait_with_output()?;
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    let result = worktrunk::shell_exec::spawn(&mut cmd)?.wait_with_output()?;
     if result.status.success() {
         Ok(String::from_utf8(result.stdout).ok())
     } else {

@@ -447,7 +447,7 @@ const TEST_IDENTITY_EMAIL: &str = "test@example.com";
 /// settings. The hermetic latch (`shell_exec::enable_hermetic_test_env`)
 /// puts both on every `Cmd` child, so an in-process git resolves those
 /// rather than the developer's — see the Git Config Isolation section of
-/// `tests/CLAUDE.md`.
+/// `tests/AGENTS.md`.
 ///
 /// `protocol.allow = never` with a `file` exception is the config spelling of
 /// `GIT_ALLOW_PROTOCOL=file` (see [`GIT_ALLOWED_PROTOCOLS`] for why the suite
@@ -869,7 +869,7 @@ pub fn test_tempdir() -> TempDir {
 /// Hundreds of thousands of stale entries cost nothing to ignore but are
 /// expensive to enumerate, and `git::recover::recover_from_path` reads every
 /// ancestor directory of a deleted CWD — the measured cost is in
-/// `tests/CLAUDE.md` → Profiling the Suite. One fixed directory never grows.
+/// `tests/AGENTS.md` → Profiling the Suite. One fixed directory never grows.
 fn isolated_test_cwd() -> &'static Path {
     static ISOLATED_CWD: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| {
         let dir = test_temp_root().join("isolated-cwd");
@@ -3494,30 +3494,6 @@ pub fn wait_for_file_lines(path: &Path, expected_lines: usize) {
         BG_TIMEOUT,
         actual,
         path.display()
-    );
-}
-
-/// Wait for a file to contain valid JSON, polling with exponential backoff.
-/// Use when a background process writes JSON that may be partially written.
-pub fn wait_for_valid_json(path: &Path) -> serde_json::Value {
-    let start = std::time::Instant::now();
-    let mut attempt = 0;
-    let mut last_error = String::new();
-    while start.elapsed() < BG_TIMEOUT {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            match serde_json::from_str(&content) {
-                Ok(json) => return json,
-                Err(e) => last_error = format!("{e} (content: {content})"),
-            }
-        }
-        exponential_sleep(attempt);
-        attempt += 1;
-    }
-    panic!(
-        "File did not contain valid JSON within {:?}: {}\nLast error: {}",
-        BG_TIMEOUT,
-        path.display(),
-        last_error
     );
 }
 

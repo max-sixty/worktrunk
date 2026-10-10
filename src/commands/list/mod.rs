@@ -297,11 +297,7 @@ impl SummaryMetrics {
         }
     }
 
-    pub(super) fn summary_parts(
-        &self,
-        include_branches: bool,
-        hidden_columns: &[String],
-    ) -> Vec<String> {
+    pub(super) fn inventory_parts(&self, include_branches: bool) -> Vec<String> {
         let mut parts = Vec::new();
 
         let plural = if self.worktrees == 1 { "" } else { "s" };
@@ -317,6 +313,16 @@ impl SummaryMetrics {
                 parts.push(format!("{} remote branch{}", self.remote_branches, plural));
             }
         }
+
+        parts
+    }
+
+    pub(super) fn summary_parts(
+        &self,
+        include_branches: bool,
+        hidden_columns: &[String],
+    ) -> Vec<String> {
+        let mut parts = self.inventory_parts(include_branches);
 
         if self.dirty_worktrees > 0 {
             parts.push(format!("{} with changes", self.dirty_worktrees));

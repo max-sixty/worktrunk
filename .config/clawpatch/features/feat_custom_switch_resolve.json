@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "featureId": "feat_custom_switch_resolve",
   "title": "wt switch + branch resolution: ref-injection, PR fetching, network policy",
-  "summary": "`wt switch` resolves user-supplied references (branch names, pr:N, mr:N, gh URLs) and may create worktrees. Branch names can contain hyphens, slashes, special chars — must be passed to git without interpretation as flags. PR/MR fetch is the one place where shelling out to `gh`/`glab` is allowed and must not happen on background paths. See CLAUDE.md > Network Access policy and Worktree Model.",
+  "summary": "`wt switch` resolves user-supplied references (branch names, pr:N, mr:N, gh URLs) and may create worktrees. Branch names can contain hyphens, slashes, special chars — must be passed to git without interpretation as flags. PR/MR fetch is the one place where shelling out to `gh`/`glab` is allowed and must not happen on background paths. See AGENTS.md > Network Access policy and Worktree Model.",
   "kind": "library",
   "source": "manual",
   "confidence": "high",
@@ -66,7 +66,7 @@
       "reason": "post-switch hook invocation"
     },
     {
-      "path": "CLAUDE.md",
+      "path": "AGENTS.md",
       "reason": "network policy, branch name handling"
     }
   ],

@@ -120,8 +120,8 @@ pub(crate) fn non_interactive_cmd(program: &str) -> Cmd {
 
 /// Check if a CLI tool is available
 ///
-/// On Windows, CreateProcessW (via Cmd) searches PATH for .exe files.
-/// Tests provide `.exe` mocks via `testing::mock_commands`, so this works consistently.
+/// On Windows, `Cmd` also finds a `.cmd`/`.bat` launcher such as Azure CLI's
+/// `az.cmd`. Tests provide `.exe` mocks via `testing::mock_commands`.
 pub(crate) fn tool_available(tool: &str, args: &[&str]) -> bool {
     Cmd::new(tool)
         .args(args.iter().copied())
@@ -690,7 +690,9 @@ impl PrStatus {
     /// Platform is determined from project config (`forge.platform`), falling
     /// back to the remote URL host. Returns `None` if the platform cannot be
     /// determined (user should set `forge.platform` for non-standard hostnames).
-    /// PR/MR detection always runs. Workflow/pipeline fallback only runs if `has_upstream`.
+    /// PR/MR detection runs when the branch may head one (`may_head_pr`: skipped
+    /// for a branch that was never pushed). Workflow/pipeline fallback only runs
+    /// if `has_upstream`.
     fn detect_uncached(
         repo: &Repository,
         branch: &CiBranchName,

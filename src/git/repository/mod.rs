@@ -56,7 +56,9 @@
 //!   [`Repository::commit_to_tree_sha`].
 //! - *Expensive, worth persisting across invocations* (merge-tree, patch-id,
 //!   diff stats, ahead/behind) → the disk [`sha_cache`]; content-addressed by
-//!   SHA, so never stale.
+//!   SHA. An entry is stable while its producer's semantics are unchanged;
+//!   changing the producer can leave old answers in place across upgrades.
+//!   Assess that effect when changing a cache kind and describe it in the PR.
 //! - *Both expensive and hot-in-parallel* → an in-memory `DashMap` front over
 //!   the disk back, so parallel tasks don't race through the file cache for the
 //!   same key (the in-memory layer pays the first miss once; the disk layer
@@ -118,9 +120,10 @@
 //!   `LLM_SEMAPHORE` (summary), `COPY_POOL` (copy)
 //! - Global state: `OUTPUT_STATE` (output), `TRACE` and `SUBPROCESS` (log_files), `COMMAND_LOG`
 //! - Config: `CONFIG_PATH` (config/user/path), `SHELL_CONFIG`, `GIT_ENV_OVERRIDES` (shell_exec)
-//! - Serialization: `WORKTREE_REGISTRY_LOCKS` (this module) — one `RwLock` per
-//!   canonical git common dir, handed to each `Repository` at construction so
-//!   `list_worktrees` reads and `git worktree remove` teardowns can't overlap.
+//! - Serialization: `REPOSITORY_LOCKS` (this module) — one lock set per canonical
+//!   git common dir, handed to each `Repository` at construction. Its registry
+//!   lock prevents `list_worktrees` reads and `git worktree remove` teardowns
+//!   from overlapping; its deletion coordinator serializes safe ref mutations.
 //!   Keyed like a cache but holding no git data, so nothing in it goes stale;
 //!   see the static's own doc comment for the ordering rules.
 //!
@@ -134,7 +137,6 @@ use std::sync::{Arc, LazyLock, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGua
 
 use crate::shell_exec::Cmd;
 
-use color_print::cformat;
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
 
@@ -173,8 +175,9 @@ pub use diff::{CommitMessageDetail, PreparedDiff};
 pub use integration::{BranchDiffSpec, IntegrationTargets, select_comparison_base};
 pub use ref_snapshot::RefSnapshot;
 pub(super) use working_tree::path_to_logging_context;
-pub use working_tree::{InProgressOperation, TempIndex, WorkingTree};
-pub use worktrees::duplicated_branches;
+use working_tree::registration_worktree_path;
+pub use working_tree::{InProgressOperation, SafetyBackup, TempIndex, WorkingTree};
+pub use worktrees::{StaleWorktreeWork, duplicated_branches};
 
 // ============================================================================
 // Repository Cache
@@ -249,7 +252,8 @@ pub(super) struct RepoCache {
     pub(super) default_branch: OnceCell<Option<String>>,
     /// Upstream-aware comparison base for the diff/summary preview panes —
     /// [`integration::IntegrationTargets::primary`], resolved once. Repo-wide
-    /// like `default_branch`; captures a [`RefSnapshot`] on first access via
+    /// like `default_branch`; builds a [`RefSnapshot`] from the branch
+    /// inventories on first access via
     /// [`Repository::branch_diff_spec`]. `None` when no default branch resolves.
     pub(super) comparison_base: OnceCell<Option<integration::ComparisonBase>>,
     /// Project identifier derived from remote URL
@@ -304,14 +308,6 @@ pub(super) struct RepoCache {
     /// Separate from `all_config` because `git remote get-url` applies
     /// `url.insteadOf` rewrites that aren't visible in raw config.
     pub(super) effective_remote_urls: DashMap<String, Option<String>>,
-    /// Per-branch effective push URL: branch_name -> push URL (or None if
-    /// no push remote is configured). One `for-each-ref %(push:remotename)`
-    /// per branch, then `effective_remote_url` for the resolved remote name.
-    /// `wt list`'s CI-status detection calls `push_remote_url` from both the
-    /// PR-based path and the branch fallback (via `branch_remote_url`), so
-    /// the same branch is queried twice on the no-PR path — this cache
-    /// collapses that to one subprocess.
-    pub(super) push_remote_urls: DashMap<String, Option<String>>,
 
     /// Local branch inventory: one `git for-each-ref refs/heads/` scan, cached
     /// for the lifetime of the repository. Entries are sorted by most recent
@@ -320,8 +316,9 @@ pub(super) struct RepoCache {
     /// [`Repository::local_branches`].
     ///
     /// **The `commit_sha` field on each entry is a snapshot at scan time.**
-    /// Code that needs a current SHA must resolve through a [`RefSnapshot`]
-    /// captured at the moment the read happens — not through this inventory.
+    /// Code that needs a current SHA must resolve through
+    /// [`Repository::capture_refs`] at the moment the read happens — not
+    /// through this inventory or a snapshot built from it.
     /// Everything else the inventory holds goes stale the same way once the
     /// command runs a hook; [`Repository::local_branches`] owns that contract.
     pub(super) local_branches: OnceCell<branches::LocalBranchInventory>,
@@ -508,22 +505,31 @@ static DEFAULT_BASE_PATH: LazyLock<PathBuf> = LazyLock::new(|| PathBuf::from("."
 /// equality on the raw path is sufficient.
 static GIT_COMMON_DIR_CACHE: LazyLock<DashMap<PathBuf, PathBuf>> = LazyLock::new(DashMap::new);
 
-/// Process-local coordination for Git's worktree registry, keyed by the
-/// canonical Git common directory. Every [`Repository`] for the same common
-/// directory shares one read/write lock. The dedicated
-/// [`Repository::list_worktrees`] accessor takes the read side, while
+/// Process-local coordination for repository mutations, keyed by the canonical
+/// Git common directory. Every [`Repository`] for the same common directory
+/// shares these locks. The registry lock's dedicated
+/// [`Repository::list_worktrees`] accessor takes its read side, while
 /// [`Repository::prune_worktree_entry`] and [`Repository::remove_worktree`]
-/// take the write side.
+/// take its write side. The branch deletion coordinator serializes safe ref
+/// mutations, which contend on Git's packed-refs lock even for different branches.
+/// Its interruption state lasts for this process's CLI invocation.
 ///
-/// Guards are non-reentrant: a guarded operation must not call another of
-/// these accessors. In `wt step prune`, the lock order is the command's
-/// `check_lock` followed by this registry lock; code holding a registry guard
-/// must never acquire `check_lock`.
+/// Registry guards are non-reentrant: a guarded operation must not call another
+/// registry accessor. In `wt step prune`, the command's `output_lock` precedes
+/// either repository lock; code holding a repository guard must never acquire
+/// `output_lock`. Safe branch deletion releases the registry read guard before
+/// acquiring the deletion mutex; registry guards never span deletion waits.
 ///
 /// External Git processes and raw worktree commands issued through
-/// [`Repository::run_command`] do not honor this lock.
-static WORKTREE_REGISTRY_LOCKS: LazyLock<DashMap<PathBuf, Arc<RwLock<()>>>> =
+/// [`Repository::run_command`] do not honor these locks.
+static REPOSITORY_LOCKS: LazyLock<DashMap<PathBuf, Arc<RepositoryLocks>>> =
     LazyLock::new(DashMap::new);
+
+#[derive(Debug, Default)]
+struct RepositoryLocks {
+    worktree_registry: RwLock<()>,
+    branch_deletion: super::ref_deletion::RefDeletionCoordinator,
+}
 
 /// Process-wide map of `worktree_path -> canonicalized worktree root`,
 /// keyed by the canonicalized path used as the cache key (same convention as
@@ -613,8 +619,8 @@ pub fn set_base_path(path: PathBuf) {
     BASE_PATH.set(path).ok();
 }
 
-/// Get the base path for repository operations.
-fn base_path() -> &'static PathBuf {
+/// Directory used for repository discovery, including the command's `-C` base.
+pub fn base_path() -> &'static PathBuf {
     BASE_PATH.get().unwrap_or(&DEFAULT_BASE_PATH)
 }
 
@@ -630,7 +636,7 @@ fn base_path() -> &'static PathBuf {
 /// prints its own paths in is a form wt also accepts.
 ///
 /// This is the one resolution point for those paths, so they cannot drift
-/// apart: worktree path arguments (`wt switch ../repo.feature`), `--config`,
+/// apart: worktree path arguments (`wt switch ../repo.feature`), `wt switch --path`, `--config`,
 /// `WORKTRUNK_CONFIG_PATH`, `WORKTRUNK_SYSTEM_CONFIG_PATH`, and the trace file
 /// of `wt config state logs profile`. The rule is "the user named a file for wt
 /// to open" — three neighbours look similar and are deliberately outside it:
@@ -773,7 +779,7 @@ pub struct Repository {
     /// Cached data for this repository. Shared across clones via Arc.
     pub(super) cache: Arc<RepoCache>,
     /// Shared by every `Repository` that resolves to `git_common_dir`.
-    worktree_registry_lock: Arc<RwLock<()>>,
+    locks: Arc<RepositoryLocks>,
     /// When set, object-writing git plumbing is redirected into a temporary
     /// object database. `None` for the normal persistent path. See
     /// [`Repository::redirect_objects_for_observation`].
@@ -831,9 +837,9 @@ impl Repository {
     pub fn at(path: impl Into<PathBuf>) -> anyhow::Result<Self> {
         let discovery_path = path.into();
         let git_common_dir = Self::resolve_git_common_dir(&discovery_path)?;
-        let worktree_registry_lock = WORKTREE_REGISTRY_LOCKS
+        let locks = REPOSITORY_LOCKS
             .entry(git_common_dir.clone())
-            .or_insert_with(|| Arc::new(RwLock::new(())))
+            .or_insert_with(|| Arc::new(RepositoryLocks::default()))
             .clone();
 
         let cache = RepoCache::default();
@@ -862,23 +868,30 @@ impl Repository {
             discovery_path,
             git_common_dir,
             cache: Arc::new(cache),
-            worktree_registry_lock,
+            locks,
             temporary_object_store: None,
         })
     }
 
     /// Share registry coordination across fresh repository caches.
     pub(super) fn worktree_registry_read(&self) -> RwLockReadGuard<'_, ()> {
-        self.worktree_registry_lock
+        self.locks
+            .worktree_registry
             .read()
             .unwrap_or_else(|error| error.into_inner())
     }
 
     /// Exclude registry readers and other teardowns for this repository.
     pub(super) fn worktree_registry_write(&self) -> RwLockWriteGuard<'_, ()> {
-        self.worktree_registry_lock
+        self.locks
+            .worktree_registry
             .write()
             .unwrap_or_else(|error| error.into_inner())
+    }
+
+    /// Serialize safe ref mutations without blocking registry readers.
+    pub(super) fn branch_deletions(&self) -> &super::ref_deletion::RefDeletionCoordinator {
+        &self.locks.branch_deletion
     }
 
     /// Return a clone whose object-writing git plumbing is redirected into a
@@ -1469,9 +1482,11 @@ impl Repository {
     /// the reason that gate uses it rather than the `GIT_DIRS`-cached
     /// [`WorkingTree::git_dir`].
     ///
-    /// Two callers, with opposite readings of `None`:
+    /// Three callers, with different readings of `None`:
     /// [`Self::prime_worktree_path_caches`] declines to seed a cache entry and
-    /// leaves the answer to the subprocess, while the removal gate refuses.
+    /// leaves the answer to the subprocess, `separate_git_dir_work_tree`
+    /// declines the backlink it was confirming and falls back to
+    /// `parent(git_common_dir)`, and the removal gate refuses.
     fn git_dir_at(dir: &Path) -> Option<PathBuf> {
         let dot_git = dir.join(".git");
         // Follows a symlinked `.git`, as git and the subprocess fallback do.
@@ -1597,7 +1612,8 @@ impl Repository {
     /// |----------------------------|----------------------------|-------------------------------|
     /// | Bare `.git`                | `core.bare = true`         | `git_common_dir` is the repo  |
     /// | Submodule `.git/modules/X` | `core.worktree` set by git | `rev-parse --show-toplevel`   |
-    /// | Normal `.git`              | neither set                | `parent(git_common_dir)`      |
+    /// | Separate git dir           | `<common>/gitdir` backlink | `parent(backlink)`            |
+    /// | Normal `.git`              | none of the above          | `parent(git_common_dir)`      |
     ///
     /// Submodules need `core.worktree` because their git data lives in the
     /// parent's `.git/modules/` — the `parent(.git)` rule would point at
@@ -1612,6 +1628,12 @@ impl Repository {
     /// the probe fails (non-local value, git ignored it) we fall through
     /// to the normal-repo path. The common case — no `core.worktree`
     /// anywhere — skips the subprocess, which is the point.
+    ///
+    /// A repository whose git directory lives outside its work tree
+    /// (`--separate-git-dir`) has neither signal, and `parent(git_common_dir)`
+    /// names the store's parent rather than the work tree. The backlink git
+    /// writes there covers it where it exists; see
+    /// `separate_git_dir_work_tree` for when that is.
     ///
     /// # Errors
     ///
@@ -1640,6 +1662,10 @@ impl Repository {
                     return Ok(PathBuf::from(String::from_utf8_lossy(&out.stdout).trim()));
                 }
 
+                if let Some(work_tree) = self.separate_git_dir_work_tree() {
+                    return Ok(work_tree);
+                }
+
                 Ok(self
                     .git_common_dir
                     .parent()
@@ -1647,6 +1673,42 @@ impl Repository {
                     .to_path_buf())
             })
             .map(|p| p.as_path())
+    }
+
+    /// The work tree a `--separate-git-dir` repository records in its `gitdir`
+    /// backlink, if it has one.
+    ///
+    /// When the git directory lives outside the work tree, the work tree's
+    /// `.git` is a *file* pointing at the store and `parent(git_common_dir)`
+    /// names the store's parent — the wrong answer, and the one
+    /// `git worktree list` gives too, since git derives its main-worktree
+    /// entry by stripping a trailing `/.git` that isn't there (see the
+    /// submodule correction in [`Self::list_worktrees`], which this layout
+    /// trips the same way).
+    ///
+    /// Git's own record of the other direction is `<git-common-dir>/gitdir`,
+    /// holding the path of the work tree's `.git` file — the same format as a
+    /// linked worktree's `.git/worktrees/<name>/gitdir`, down to the relative
+    /// form git writes under `worktree.useRelativePaths`, so
+    /// [`registration_worktree_path`] reads it. Only
+    /// `git worktree repair` writes it; `git init --separate-git-dir` and
+    /// `git clone --separate-git-dir` leave the store with no backlink, so a
+    /// repository that has never been repaired records its work tree nowhere
+    /// and still falls through to `parent(git_common_dir)`. Running
+    /// `git worktree repair` from the work tree is what materializes it.
+    ///
+    /// The backlink is one-way, so it is confirmed rather than trusted:
+    /// [`Self::git_dir_at`] reads the `.git` entry sitting at the work tree it
+    /// names, and only a work tree that points back at this common dir is
+    /// accepted. A backlink left behind by a work tree that has since moved,
+    /// been deleted, or been re-pointed at another repository resolves to
+    /// something else and falls through to `parent(git_common_dir)` — the
+    /// same answer as before, rather than a path that no longer holds this
+    /// repository. That round trip is also why a normal repository or a
+    /// submodule can't misfire here on a stray `gitdir` file.
+    fn separate_git_dir_work_tree(&self) -> Option<PathBuf> {
+        let work_tree = registration_worktree_path(&self.git_common_dir)?;
+        (Self::git_dir_at(&work_tree)? == self.git_common_dir).then_some(work_tree)
     }
 
     /// Access the bulk git config map, populating on first call.
@@ -1734,8 +1796,19 @@ impl Repository {
     ///
     /// `git commit` and `git merge` honor it; `git commit-tree` ignores it, so
     /// a commit meant to match what porcelain would record passes `-S` itself.
+    /// Asked of git from this worktree rather than read from the cached config
+    /// map, which is read from the common dir and so misses worktree-scoped
+    /// config, and whose boolean parsing is not git's (a valueless key is true
+    /// to git).
     pub fn signs_commits(&self) -> anyhow::Result<bool> {
-        self.config_bool("commit.gpgSign")
+        let args = ["config", "--type=bool", "--get", "commit.gpgSign"];
+        let output = self.run_command_output(&args)?;
+        match output.status.code() {
+            Some(0) => Ok(String::from_utf8_lossy(&output.stdout).trim() == "true"),
+            // Exit 1: the key is unset.
+            Some(1) => Ok(false),
+            _ => Err(super::error::CommandError::from_failed_output("git", &args, &output).into()),
+        }
     }
 
     /// Get the sparse checkout paths for this repository.
@@ -1777,12 +1850,30 @@ impl Repository {
     /// Idempotent — if the daemon is already running, this is a no-op.
     /// Used to avoid auto-start races when running many parallel git commands.
     ///
-    /// Uses `Command::status()` with null stdio instead of `Cmd::run()` to avoid
+    /// A running daemon is detected in-process first, the way `git
+    /// fsmonitor--daemon start` itself checks before refusing with "already
+    /// running": connect to `<git-dir>/fsmonitor--daemon.ipc` and close. That
+    /// skips a ~20ms fork per worktree in the steady state, where every daemon
+    /// is already up. Any failure to connect (no daemon, stale socket, a path
+    /// too long for `sun_path`, an unresolvable git dir) falls through to the
+    /// fork, which starts the daemon or reports it running.
+    ///
+    /// Spawns with null stdio instead of `Cmd::run()` to avoid
     /// pipe inheritance: the daemon process (`git fsmonitor--daemon run --detach`)
     /// inherits pipe file descriptors from its parent, keeping them open
     /// indefinitely. `read_to_end()` in `Command::output()` then blocks forever
     /// waiting for EOF that never comes.
     pub fn start_fsmonitor_daemon_at(&self, path: &Path) {
+        #[cfg(unix)]
+        if let Ok(git_dir) = self.worktree_at(path).git_dir()
+            && socket2::SockAddr::unix(git_dir.join(super::fsmonitor::IPC_SOCKET_NAME))
+                .and_then(|address| {
+                    crate::shell_exec::stream_socket(socket2::Domain::UNIX)?.connect(&address)
+                })
+                .is_ok()
+        {
+            return;
+        }
         let context = path_to_logging_context(path);
         let cmd_str = "git fsmonitor--daemon start";
         tracing::debug!(cmd = cmd_str, context = %context, "$ {cmd_str} [{context}]");
@@ -1797,10 +1888,10 @@ impl Repository {
         crate::shell_exec::apply_hermetic_test_env(&mut cmd);
         crate::shell_exec::scrub_directive_env_vars(&mut cmd);
         // Trace the daemon launch so it's attributed in the timeline rather than
-        // appearing as a gap on the switch hot path. Uses `status()` (not
-        // `Cmd::run`) deliberately — see the doc comment.
+        // appearing as a gap on the switch hot path. Wait without captured
+        // pipes (unlike `Cmd::run`) — see the daemon rationale above.
         let mut trace = crate::trace::CommandTrace::new(Some(&context), cmd_str);
-        let result = cmd.status();
+        let result = crate::shell_exec::spawn(&mut cmd).and_then(|mut child| child.wait());
         match result {
             Ok(status) => {
                 trace.complete(status.success());
@@ -1911,6 +2002,19 @@ impl Repository {
         args: &[&str],
         timeout: Option<std::time::Duration>,
     ) -> anyhow::Result<String> {
+        Ok(String::from_utf8_lossy(&self.run_command_bytes_bounded(args, timeout)?).into_owned())
+    }
+
+    /// Run a git command and return stdout without decoding paths.
+    pub fn run_command_bytes(&self, args: &[&str]) -> anyhow::Result<Vec<u8>> {
+        self.run_command_bytes_bounded(args, None)
+    }
+
+    fn run_command_bytes_bounded(
+        &self,
+        args: &[&str],
+        timeout: Option<std::time::Duration>,
+    ) -> anyhow::Result<Vec<u8>> {
         let mut cmd = self.with_object_store_env(
             Cmd::new("git")
                 .args(args.iter().copied())
@@ -1920,7 +2024,6 @@ impl Repository {
         if let Some(timeout) = timeout {
             cmd = cmd.timeout(timeout);
         }
-
         let output = cmd
             .run()
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
@@ -1931,8 +2034,7 @@ impl Repository {
             );
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        Ok(stdout)
+        Ok(output.stdout)
     }
 
     /// Run a git command and return whether it succeeded (exit code 0).
@@ -2060,7 +2162,7 @@ impl Repository {
                 e.output.clone(),
                 Some(super::error::FailedCommand {
                     command: e.command.clone(),
-                    exit_info: e.exit_info.clone(),
+                    exit_info: e.exit_info(),
                 }),
             );
         }
@@ -2184,19 +2286,8 @@ fn emit_user_config_warnings(warnings: &[LoadError]) {
 /// counterpart are one line of code rather than two that can drift.
 fn emit_config_load_warning(warning: &LoadError) {
     match warning {
-        LoadError::File { path, kind, err } => {
-            let label = kind.label();
-            let path_display = crate::path::format_path_for_display(path);
-            crate::styling::eprintln!(
-                "{}",
-                crate::styling::warning_message(cformat!(
-                    "{label} @ <bold>{path_display}</> failed to parse, skipping"
-                ))
-            );
-            crate::styling::eprintln!(
-                "{}",
-                crate::styling::format_with_gutter(&err.to_string(), None)
-            );
+        LoadError::File(error) => {
+            crate::styling::eprintln!("{}", error.render_warning());
         }
         LoadError::Env { err, vars } => {
             let var_list: Vec<_> = vars

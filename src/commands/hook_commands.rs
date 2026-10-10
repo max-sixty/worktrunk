@@ -11,13 +11,14 @@ use color_print::cformat;
 use strum::IntoEnumIterator;
 use worktrunk::HookType;
 use worktrunk::config::{
-    ALIAS_ARGS_KEY, Approvals, CommandConfig, ProjectConfig, UserConfig, referenced_vars_for_config,
+    ALIAS_ARGS_KEY, Approvals, CommandConfig, ProjectConfig, UserConfig, binds_cli_var,
+    referenced_vars_for_config,
 };
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
-    INFO_SYMBOL, PROMPT_SYMBOL, eprintln, format_bash_with_gutter, format_heading, hint_message,
-    info_message, println, warning_message,
+    INFO_SYMBOL, PROMPT_SYMBOL, eprintln, format_bash_with_gutter, format_heading, info_message,
+    println, warning_message,
 };
 
 use crate::output::print_json;
@@ -79,9 +80,15 @@ fn run_post_hook(
 ///
 /// When hooks run during real operations (switch, merge, remove), each call site
 /// builds precise vars from the actual source/destination context. When invoked
-/// manually via `wt hook <type>`, we only have the current worktree — so we
-/// provide reasonable defaults: the current branch as both base and target, and
-/// the current worktree path for directional path vars.
+/// manually via `wt hook <type>`, we only have the current worktree — so each
+/// hook type gets the directional vars its real call site sets, filled in from
+/// that worktree. The merge and remove hooks bind `target` and
+/// `target_worktree_path` to it; the switch and start hooks also bind `base`
+/// and `base_worktree_path`, naming the source a real switch starts from,
+/// which manually is that same worktree; the commit hooks bind `target` to the
+/// default branch as a stand-in for the target their real callers pass — the
+/// merge target from `wt merge`, the integration target from `wt step squash`
+/// — since `wt step commit` itself passes none.
 ///
 /// The directional *path* vars apply either way, since the worktree exists
 /// whether or not it is on a branch. The directional *branch* vars follow
@@ -253,7 +260,7 @@ pub fn run_hook(
     let mut args: Vec<String> = Vec::new();
     for raw in shorthand_vars {
         let (canon_key, orig_key, value) = parse_shorthand_token(raw)?;
-        if referenced.contains(&canon_key) {
+        if binds_cli_var(&canon_key, &referenced) {
             bindings.push((canon_key, value));
         } else {
             args.push(format!("--{orig_key}={value}"));
@@ -358,9 +365,7 @@ pub fn handle_hook_show(
 
     let repo = Repository::current().context("Failed to show hooks")?;
     let config: &UserConfig = repo.user_config();
-    // No `.context()`: `project_config()` already wraps the load failure with
-    // exactly that header, and a second copy renders as a header restating
-    // its own gutter.
+    // Preserve the loader's typed source diagnosis through command context.
     let project_config: Option<&ProjectConfig> = repo.project_config()?;
     let approvals = Approvals::load().context("Failed to load approvals")?;
     let project_id = repo.project_identifier().ok();
@@ -418,7 +423,7 @@ pub fn handle_hook_show(
         ctx.as_ref(),
     )?;
 
-    show_help_in_pager(&output, true);
+    show_help_in_pager(&output, true)?;
 
     Ok(())
 }
@@ -557,7 +562,7 @@ fn render_project_hooks(
     )?;
 
     let Some(config) = project_config else {
-        writeln!(out, "{}", hint_message("(not found)"))?;
+        writeln!(out, "{}", info_message("Not found"))?;
         return Ok(());
     };
 
@@ -578,7 +583,7 @@ fn render_project_hooks(
 }
 
 /// Render a section's body: every hook that survives `filter`, or
-/// `(none configured)` when that leaves the section with nothing.
+/// a neutral "No hooks configured" state when nothing remains.
 ///
 /// The fallback keys off what was printed, not off what the config declared —
 /// a hook type carrying an empty command list (`post-switch = []`) has an entry
@@ -605,7 +610,7 @@ fn render_hook_section(
     }
 
     if !has_any {
-        writeln!(out, "{}", hint_message("(none configured)"))?;
+        writeln!(out, "{}", info_message("No hooks configured"))?;
     }
 
     Ok(())

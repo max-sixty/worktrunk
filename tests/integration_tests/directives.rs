@@ -516,8 +516,8 @@ fn test_switch_no_cd_execute_does_not_emit_cd(#[from(repo_with_remote)] repo: Te
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
         configure_directive_file(&mut cmd, &cd_path);
-        // The wrapper will launch pwd from the invoking directory because
-        // --no-cd deliberately leaves its shell there.
+        // pwd runs in the new worktree — --no-cd suppresses the cd directive,
+        // so the wrapper leaves the shell behind, not the program.
         cmd.args([
             "switch",
             "--create",
