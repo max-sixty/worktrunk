@@ -60,7 +60,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning pre-merge: [1mtest[22m (project)[39m
+[36m◎[39m [36mRunning pre-merge [1mproject:test[22m[39m
 [107m [0m [2m[0m[2m[34mcargo[0m[2m nextest run[0m
 [0m    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
      Summary [   0.002s] 2 tests run: 2 passed, 0 skipped

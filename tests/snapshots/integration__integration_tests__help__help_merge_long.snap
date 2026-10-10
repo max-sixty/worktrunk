@@ -116,7 +116,7 @@ Unlike [2mgit merge[0m, this merges the current branch into the target branch 
 Merge to the default branch:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m merge[0m
-[107m [0m [2m[0m[2m[34m◎[0m[2m Running pre-merge: test ([0m[2m[34mproject[0m[2m)[0m
+[107m [0m [2m[0m[2m[34m◎[0m[2m Running pre-merge project:test[0m
 [107m [0m [2m  [0m[2m[34mcargo[0m[2m nextest run[0m
 [107m [0m [2m    [0m[2m[34mFinished[0m[2m `[0m[2m[34mtest[0m[2m` profile [unoptimized + debuginfo] target([0m[2m[34ms[0m[2m) [0m[2m[35min[0m[2m [0m[2m[34m0.02s[0m
 [107m [0m [2m     [0m[2m[34mSummary[0m[2m [   0.002s] 2 tests run: 2 passed, 0 skipped[0m

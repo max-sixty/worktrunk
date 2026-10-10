@@ -1005,7 +1005,7 @@ These appear across all columns while the table is loading:
 
 | Symbol | Meaning |
 |--------|---------|
-| `·` | Data is loading, or collection timed out / branch too stale |
+| `·` | Data is loading, or collection timed out |
 
 ---
 
@@ -1053,9 +1053,9 @@ How "no value" reads:
 - **Absent** — nothing to report: not applicable (`worktree` on a branch-only
   row), not requested this run (the envelope's `collected` records what was),
   or determined-empty (no PR, no lock, not integrated).
-- **`null`** — requested but not determined: a task timed out, the branch was
-  too stale for the expensive checks, or a forge fetch failed. This is the
-  JSON form of the table's `·` placeholder.
+- **`null`** — requested but not determined: a task timed out, a check was
+  skipped, or a forge fetch failed. This is the JSON form of the table's `·`
+  placeholder.
 
 jq treats absent and `null` identically in path expressions, so filters need
 no null checks; `has()` distinguishes the two when it matters.
@@ -1138,7 +1138,7 @@ Independent facts; the table's priority-collapsed symbol is `display.state`.
 | `behind` | number/null | Commits behind the default branch (null for orphans) |
 | `diff` | object/null | Lines changed vs the default branch: `{added, deleted}` |
 | `orphan` | boolean/null | No common ancestor with the default branch |
-| `integration` | object/null | `{reason}` — which check found the content [integrated](/remove/#branch-cleanup) (see [integration reasons](#integration-reasons)); absent when determined not-integrated, null when a dirty tree skipped the checks |
+| `integration` | object/null | `{reason}` — which check found the content [integrated](/remove/#branch-cleanup) (see [integration reasons](#integration-reasons)); absent when determined not-integrated, null when undetermined (a check timed out or was skipped) |
 | `merge_conflicts` | boolean/null | Merging into the default branch would conflict, simulated locally with `git merge-tree` |
 
 ### upstream object
@@ -1210,7 +1210,7 @@ The single highest-priority state describing the branch's relation to the defaul
 
 ### integration reasons
 
-`default_branch.integration.reason` records which check matched. Checks run cheapest-first and the first match wins. JSON-only — every reason renders as the same `⊂`:
+`default_branch.integration.reason` records which check matched. Checks run cheapest-first and the first match wins. The reason itself is JSON-only: the table shows `"same_commit"` as `_` (or `–` with uncommitted changes) and every other reason as `⊂` when the working tree is clean:
 
 | Value | Meaning |
 |-------|---------|
@@ -1312,7 +1312,7 @@ Remove current worktree:
 <!-- wt remove (docs-example) -->
 ```console
 $ wt remove
-◎ Running pre-remove: cleanup (project)
+◎ Running pre-remove project:cleanup
   flyctl scale count 0
 Scaling app to 0 machines
 ◎ Removing api worktree & branch in background (same commit as main, _)
@@ -1357,8 +1357,6 @@ The 'same commit' check uses the local default branch; for other checks, 'target
 
 Branches matching these conditions and with empty working trees are dimmed in `wt list` as safe to delete.
 
-If a detached worktree remains at the branch's configured path, removing the branch reports that directory and the command to remove it by path.
-
 ## Force flags
 
 Worktrunk has two force flags for different situations:
@@ -1402,7 +1400,7 @@ Unix only; on Windows `--reap` is rejected.
 
 ## JSON output
 
-`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal, plus `detached_worktree` — the directory left at that branch's path with a detached HEAD, which the branch no longer names and this removal therefore leaves alone.
+`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal, plus `detached_worktree` — a detached worktree left at the branch's configured path.
 
 `branch_outcome` names what happened to the branch, so a caller can tell a deletion the removal declined from one it was never asked to make:
 
@@ -1445,7 +1443,7 @@ Merge to the default branch:
 <!-- wt merge (docs-example) -->
 ```console
 $ wt merge
-◎ Running pre-merge: test (project)
+◎ Running pre-merge project:test
   cargo nextest run
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
      Summary [   0.002s] 2 tests run: 2 passed, 0 skipped
@@ -1869,21 +1867,33 @@ The `worktree_path_of_branch` function returns the filesystem path of a worktree
 setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path }}"
 ```
 
-## JSON context
+## Interactive hooks
 
-Hooks receive all template variables as JSON on stdin, enabling complex logic that templates can't express. Variables that are unset in a template are absent from the JSON too, so read the optional ones with a default — `branch` has none in a detached worktree:
+A hook running in the foreground inherits wt's stdin, so it can ask before continuing:
 
 ```toml
 # .config/wt.toml
 [pre-start]
-setup = "python3 scripts/pre-start-setup.py"
+trust = "gum confirm 'trust this worktree?' && mise trust"
+```
+
+That covers `pre-*` hooks and any type under `wt hook <type> --foreground`, except where the hook is a concurrent group — a table with two or more keys, whose children would race for the terminal, so each reads EOF instead. A detached `post-*` hook reads EOF too, having no terminal at all. Nothing is ever piped in — a hook reads its context through template variables, whatever form it runs in.
+
+Foreground steps run in order and share one stdin, so a step that drains it to EOF — a `cat` or a `read` loop — leaves nothing for the steps behind it when that stdin is a pipe or a file. Under a terminal each step can prompt in turn. Steps accumulate across config files, so a user `[pre-start]` and a project `[pre-start]` form one pipeline.
+
+Logic that templates can't express belongs in a script, with the values it needs passed as arguments:
+
+```toml
+# .config/wt.toml
+[post-start]
+setup = "python3 scripts/post-start-setup.py {{ branch }} {{ repo }}"
 ```
 
 ```python
-# scripts/pre-start-setup.py
-import json, sys, subprocess
-ctx = json.load(sys.stdin)
-if ctx.get('branch', '').startswith('feature/') and 'backend' in ctx['repo']:
+# scripts/post-start-setup.py
+import subprocess, sys
+branch, repo = sys.argv[1], sys.argv[2]
+if branch.startswith('feature/') and 'backend' in repo:
     subprocess.run(['make', 'seed-db'])
 ```
 
@@ -1918,7 +1928,7 @@ The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` 
 <!-- wt hook pre-merge (docs-example) -->
 ```console
 $ wt hook pre-merge
-◎ Running pre-merge: test (project)
+◎ Running pre-merge project:test
   cargo test
     Finished test [unoptimized + debuginfo] target(s) in 0.12s
      Running unittests src/lib.rs (target/debug/deps/worktrunk-abc123)
@@ -1930,7 +1940,7 @@ test auth::tests::test_token_refresh ... ok
 test auth::tests::test_token_validation ... ok
 
 test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
-◎ Running pre-merge: lint (project)
+◎ Running pre-merge project:lint
   cargo clippy
     Checking worktrunk v0.1.0
     Finished dev [unoptimized + debuginfo] target(s) in 1.23s
@@ -2135,8 +2145,6 @@ command = "llm -m claude-haiku-4.5"
 ```
 
 ### aichat
-
-`--code` drops the `<think>` block aichat prints before the message when the model reasons.
 
 ```toml
 [commit.generation]
@@ -2599,6 +2607,7 @@ On first run without shell integration, Worktrunk offers to install it. On first
 ## Environment variables
 
 All user config options can be overridden with environment variables using the `WORKTRUNK_` prefix.
+Invalid environment overrides are ignored with a warning; other valid overrides still apply.
 
 ### Naming convention
 

@@ -167,8 +167,6 @@ command = "llm -m claude-haiku-4.5"
 
 ### aichat
 
-`--code` drops the `<think>` block aichat prints before the message when the model reasons.
-
 ```toml
 [commit.generation]
 command = "aichat -m claude:claude-haiku-4.5 --code"
@@ -630,6 +628,7 @@ On first run without shell integration, Worktrunk offers to install it. On first
 ## Environment variables
 
 All user config options can be overridden with environment variables using the `WORKTRUNK_` prefix.
+Invalid environment overrides are ignored with a warning; other valid overrides still apply.
 
 ### Naming convention
 
@@ -1157,7 +1156,7 @@ Hook output lives in per-branch subtrees under `.git/wt/logs/{branch}/`:
 | Background hooks | `{branch}/{source}/{hook-type}/{name}.log` |
 | Background removal | `{branch}/internal/remove.log` |
 
-All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the background and produce log files. Source is `user` or `project`. Branch and hook names are sanitized for filesystem safety. Same operation on same branch overwrites the previous log. Removing a branch clears its subtree; orphans from deleted branches can be swept with `wt config state logs clear`.
+All `post-*` hooks (post-start, post-switch, post-commit, post-merge, post-remove) run in the background and produce log files. Source is `user` or `project`. Branch and hook names are sanitized for filesystem safety. Same operation on same branch overwrites the previous log. Removing a branch clears its subtree; orphans from deleted branches can be swept with `wt config state logs clear`.
 
 #### Diagnostic files
 
@@ -1250,7 +1249,7 @@ $ wt list
 ### Use cases
 
 - **Work status** — `🚧` WIP, `✅` ready for review, `🔥` urgent
-- **Agent tracking** — The [Claude Code](https://worktrunk.dev/claude-code/) plugin sets markers automatically
+- **Agent tracking** — The agent plugins ([Claude Code](https://worktrunk.dev/claude-code/), Codex, OpenCode, Pi, oh-my-pi) set markers automatically
 - **Notes** — Any short text: `"blocked"`, `"needs tests"`
 
 ### Storage

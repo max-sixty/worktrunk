@@ -5,6 +5,48 @@ use crate::git::HookType;
 
 use super::commands::CommandConfig;
 
+/// Whether a hook or alias body came from user config or project config.
+///
+/// Drives approval and source-qualified filtering.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    strum::Display,
+    strum::EnumString,
+)]
+#[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case")]
+pub enum HookSource {
+    /// User config (~/.config/worktrunk/config.toml). No approval required.
+    User,
+    /// Project config (.config/wt.toml). Approval is handled at the gate.
+    Project,
+}
+
+impl HookSource {
+    /// Source-qualified command identity, shared by announcements and failures.
+    pub fn command_label(self, name: Option<&str>) -> String {
+        match name {
+            Some(name) => format!("{self}:{name}"),
+            None => self.to_string(),
+        }
+    }
+    /// Hook identity in announcements and failure summaries.
+    pub fn hook_label(self, hook_type: HookType, name: Option<&str>) -> String {
+        match name {
+            Some(_) => format!("{hook_type} {}", self.command_label(name)),
+            None => format!("{hook_type} {self} hook"),
+        }
+    }
+}
+
 /// Shared hook configuration for user and project configs.
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
 pub struct HooksConfig {

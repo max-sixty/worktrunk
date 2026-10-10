@@ -496,7 +496,7 @@ fn repo_path_error_when_is_bare_fails() {
         discovery_path: PathBuf::from("/nonexistent/repo"),
         git_common_dir: PathBuf::from("/nonexistent/.git"),
         cache: Arc::new(RepoCache::default()),
-        worktree_registry_lock: Arc::new(std::sync::RwLock::new(())),
+        locks: Arc::new(super::RepositoryLocks::default()),
         temporary_object_store: None,
     };
 
@@ -540,7 +540,7 @@ fn repo_path_ignores_non_local_core_worktree() {
         discovery_path: tmp.path().to_path_buf(),
         git_common_dir: git_dir.clone(),
         cache: Arc::new(cache),
-        worktree_registry_lock: Arc::new(std::sync::RwLock::new(())),
+        locks: Arc::new(super::RepositoryLocks::default()),
         temporary_object_store: None,
     };
 
@@ -695,22 +695,15 @@ fn worktree_config_enabled_detects_extension() {
 #[test]
 fn extract_failed_command_from_stream_error() {
     use crate::shell_exec::StreamCommandError;
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt;
+    #[cfg(windows)]
+    use std::os::windows::process::ExitStatusExt;
 
     let err: anyhow::Error = StreamCommandError {
         output: "fatal: ref exists".into(),
         command: "git worktree add /path".into(),
-        status: {
-            #[cfg(unix)]
-            {
-                use std::os::unix::process::ExitStatusExt;
-                std::process::ExitStatus::from_raw(128 << 8)
-            }
-            #[cfg(windows)]
-            {
-                use std::os::windows::process::ExitStatusExt;
-                std::process::ExitStatus::from_raw(128)
-            }
-        },
+        status: std::process::ExitStatus::from_raw(if cfg!(unix) { 128 << 8 } else { 128 }),
     }
     .into();
 
@@ -775,7 +768,7 @@ fn is_builtin_fsmonitor_enabled_variants() {
             discovery_path: PathBuf::from("/nonexistent/repo"),
             git_common_dir: PathBuf::from("/nonexistent/.git"),
             cache: Arc::new(cache),
-            worktree_registry_lock: Arc::new(std::sync::RwLock::new(())),
+            locks: Arc::new(super::RepositoryLocks::default()),
             temporary_object_store: None,
         }
     }
@@ -1584,7 +1577,7 @@ fn prewarm_after_early_repository_still_preloads_config() {
 }
 
 #[test]
-fn repository_instances_share_worktree_registry_coordination() {
+fn repository_instances_share_mutation_coordination() {
     use crate::git::Repository;
     use crate::testing::TestRepo;
 
@@ -1592,11 +1585,30 @@ fn repository_instances_share_worktree_registry_coordination() {
     let linked = test.add_worktree("registry-lock-linked");
     let first = Repository::at(test.root_path()).unwrap();
     let second = Repository::at(linked).unwrap();
+    test.run_git(&["branch", "safe-deletion"]);
+    let expected = test.git_output(&["rev-parse", "safe-deletion"]);
+    assert!(std::ptr::eq(
+        first.branch_deletions(),
+        second.branch_deletions()
+    ));
 
-    let _write = first.worktree_registry_write();
+    {
+        let _write = first.worktree_registry_write();
+        assert!(
+            second.locks.worktree_registry.try_read().is_err(),
+            "fresh repository handles for one common directory must share the registry lock"
+        );
+        assert!(
+            second
+                .branch_deletions()
+                .delete(&second, "refs/heads/safe-deletion", &expected)
+                .unwrap(),
+            "registry coordination must not block ref mutation"
+        );
+    }
     assert!(
-        second.worktree_registry_lock.try_read().is_err(),
-        "fresh repository handles for one common directory must share the registry lock"
+        second.locks.worktree_registry.try_read().is_ok(),
+        "registry remains readable after branch deletion"
     );
 }
 

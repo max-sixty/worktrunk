@@ -344,16 +344,21 @@ impl CommandTrace {
     /// nothing to time. Equivalent to `new` immediately followed by `fail`.
     /// `reads_stdin` records the same stdin shape a successful run would have, so
     /// a precondition-failed stdin command is excluded from dedup like any other.
-    pub fn record_failed(context: Option<&str>, cmd: &str, reads_stdin: bool, err: impl Display) {
+    pub fn record_failed(
+        context: Option<&str>,
+        cmd: &str,
+        reads_stdin: bool,
+        err: &(dyn std::error::Error + 'static),
+    ) {
         let mut trace = Self::new(context, cmd).reads_stdin(reads_stdin);
         trace.fail(err);
     }
 
     /// The command never ran to completion (spawn failure, wait failure).
     /// Emits an `err=…` record with the elapsed duration.
-    pub fn fail(&mut self, err: impl Display) {
+    pub fn fail(&mut self, err: &(dyn std::error::Error + 'static)) {
         let dur_us = self.start.elapsed().as_micros() as u64;
-        command_errored(self, dur_us, err);
+        command_errored(self, dur_us, crate::git::error_chain_message(err));
         self.resolved = true;
     }
 }
@@ -474,10 +479,15 @@ mod tests {
         drop(completed);
 
         let mut failed = CommandTrace::new(None, "git nope");
-        failed.fail(std::io::Error::other("boom"));
+        failed.fail(&std::io::Error::other("boom"));
         drop(failed);
 
-        CommandTrace::record_failed(None, "git nope", false, "precondition");
+        CommandTrace::record_failed(
+            None,
+            "git nope",
+            false,
+            &std::io::Error::other("precondition"),
+        );
     }
 
     #[test]

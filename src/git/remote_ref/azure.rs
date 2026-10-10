@@ -122,22 +122,30 @@ struct AzForkRepository {
 /// Prefers the primary remote (typically `origin` or whatever the user pushed
 /// with) so fork workflows hit the right tenant. Falls back to the first
 /// Azure remote found if the primary isn't Azure DevOps.
+///
+/// The host is a web host, the same shape [`parse_web_url`] returns: an
+/// `ssh.dev.azure.com` remote reports `dev.azure.com`, since the URL builders
+/// that consume it put the host into an HTTPS URL.
 fn detect_azure_target(repo: &Repository) -> Option<(String, String)> {
+    let target = |parsed: &GitRemoteUrl| {
+        let org = parsed.azure_organization()?;
+        let host = if host_is_within(parsed.host(), "visualstudio.com") {
+            parsed.host()
+        } else {
+            "dev.azure.com"
+        };
+        Some((host.to_string(), org.to_string()))
+    };
     if let Ok(remote) = repo.primary_remote()
         && let Some(url) = repo.effective_remote_url(&remote)
         && let Some(parsed) = GitRemoteUrl::parse(&url)
-        && let Some(org) = parsed.azure_organization()
+        && let Some(found) = target(&parsed)
     {
-        return Some((parsed.host().to_string(), org.to_string()));
+        return Some(found);
     }
-    for (_, url) in repo.all_remote_urls() {
-        if let Some(parsed) = GitRemoteUrl::parse(&url)
-            && let Some(org) = parsed.azure_organization()
-        {
-            return Some((parsed.host().to_string(), org.to_string()));
-        }
-    }
-    None
+    repo.all_remote_urls()
+        .into_iter()
+        .find_map(|(_, url)| target(&GitRemoteUrl::parse(&url)?))
 }
 
 /// Build the `--org` URL for the `az` CLI from a host and organization.

@@ -107,7 +107,7 @@ Hook output lives in per-branch subtrees under [2m.git/wt/logs/{branch}/[0m:
  Background hooks   [2m{branch}/{source}/{hook-type}/{name}.log[0m 
  Background removal [2m{branch}/internal/remove.log[0m             
 
-All [2mpost-*[0m hooks (post-start, post-switch, post-commit, post-merge) run in the background and produce log files. Source is [2muser[0m or [2mproject[0m. Branch and hook names are sanitized for filesystem safety. Same operation on same branch overwrites the previous log. Removing a branch clears its subtree; orphans from deleted branches can be swept with [2mwt config state logs clear[0m.
+All [2mpost-*[0m hooks (post-start, post-switch, post-commit, post-merge, post-remove) run in the background and produce log files. Source is [2muser[0m or [2mproject[0m. Branch and hook names are sanitized for filesystem safety. Same operation on same branch overwrites the previous log. Removing a branch clears its subtree; orphans from deleted branches can be swept with [2mwt config state logs clear[0m.
 
 [32mDiagnostic files[0m
 

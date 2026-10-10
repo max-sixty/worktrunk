@@ -59,6 +59,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning pre-switch: [1mcheck[22m (user)[39m
+[36m◎[39m [36mRunning pre-switch [1muser:check[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'MANUAL_PRE_SWITCH'[0m[2m [0m[2m[36m>[0m[2m pre_switch_marker.txt[0m
 [0m

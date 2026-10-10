@@ -20,10 +20,11 @@ rem hands each hook the session env snapshot, so an inherited BASH would name
 rem what every event runs.
 set "BASH="
 
-rem git.exe installs at Git\cmd\git.exe or Git\bin\git.exe, and bash.exe at
-rem Git\bin\bash.exe or Git\usr\bin\bash.exe. The lookup uses `where`'s `$var:`
-rem prefix, which searches the directories named in that variable and nowhere
-rem else: a bare `where git.exe` searches the current directory first, as cmd's
+rem git.exe installs at Git\cmd\git.exe, Git\bin\git.exe, or
+rem Git\mingw64\bin\git.exe, and bash.exe at Git\bin\bash.exe or
+rem Git\usr\bin\bash.exe. The lookup uses `where`'s `$var:` prefix, which
+rem searches the directories named in that variable and nowhere else: a bare
+rem `where git.exe` searches the current directory first, as cmd's
 rem own bare-name lookup does, and a hook's current directory is the user's
 rem project -- so a `git.exe` committed to a repo would otherwise choose the
 rem bash every event runs. `where` itself is spelled absolutely for the same
@@ -41,13 +42,17 @@ if not defined BASH goto :missing
 "%BASH%" "%~dp0wt.sh" %*
 exit /b %ERRORLEVEL%
 
-rem %1 is a Git install's cmd\ or bin\ directory, with the trailing separator
-rem `%~dpI` leaves on. Git\bin\bash.exe first, as find_git_bash does: it is the
-rem wrapper that sets up the MSYS environment for a caller outside Git Bash,
-rem which is what puts `uname` and friends within reach of wt.sh.
+rem %1 is a Git install's cmd\, bin\, or mingw64\bin\ directory, with the
+rem trailing separator `%~dpI` leaves on; the last sits a level deeper, so the
+rem install root is tried one level further up when the first two miss.
+rem Git\bin\bash.exe first, as find_git_bash does: it is the wrapper that
+rem sets up the MSYS environment for a caller outside Git Bash, which is what
+rem puts `uname` and friends within reach of wt.sh.
 :derive
 call :accept "%~1..\bin\bash.exe"
 if not defined BASH call :accept "%~1..\usr\bin\bash.exe"
+if not defined BASH call :accept "%~1..\..\bin\bash.exe"
+if not defined BASH call :accept "%~1..\..\usr\bin\bash.exe"
 goto :eof
 
 :accept

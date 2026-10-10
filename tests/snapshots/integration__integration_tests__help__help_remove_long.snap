@@ -108,7 +108,7 @@ Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...[0m
 Remove current worktree:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m remove[0m
-[107m [0m [2m[0m[2m[34m◎[0m[2m Running pre-remove: cleanup ([0m[2m[34mproject[0m[2m)[0m
+[107m [0m [2m[0m[2m[34m◎[0m[2m Running pre-remove project:cleanup[0m
 [107m [0m [2m  [0m[2m[34mflyctl[0m[2m scale count 0[0m
 [107m [0m [2m[0m[2m[34mScaling[0m[2m app to 0 machines[0m
 [107m [0m [2m[0m[2m[34m◎[0m[2m Removing api worktree & [0m[2m[34mbranch[0m[2m in background ([0m[2m[34msame[0m[2m commit as main, _)[0m
@@ -145,8 +145,6 @@ The default-branch walk is capped so a single check stays fast; a squash merge w
 The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., [2morigin/main[0m) when strictly ahead.
 
 Branches matching these conditions and with empty working trees are dimmed in [2mwt list[0m as safe to delete.
-
-If a detached worktree remains at the branch's configured path, removing the branch reports that directory and the command to remove it by path.
 
 [1m[32mForce flags[0m
 
@@ -187,7 +185,7 @@ Unix only; on Windows [2m--reap[0m is rejected.
 
 [1m[32mJSON output[0m
 
-[2m--format=json[0m prints one object per removal to stdout: [2m{kind, branch, path, branch_outcome, branch_checked_out_at}[0m for a worktree, with [2mpruned[0m in place of [2mpath[0m for a branch-only removal, plus [2mdetached_worktree[0m — the directory left at that branch's path with a detached HEAD, which the branch no longer names and this removal therefore leaves alone.
+[2m--format=json[0m prints one object per removal to stdout: [2m{kind, branch, path, branch_outcome, branch_checked_out_at}[0m for a worktree, with [2mpruned[0m in place of [2mpath[0m for a branch-only removal, plus [2mdetached_worktree[0m — a detached worktree left at the branch's configured path.
 
 [2mbranch_outcome[0m names what happened to the branch, so a caller can tell a deletion the removal declined from one it was never asked to make:
 

@@ -70,6 +70,7 @@ pub(crate) use worktree::{
 // Re-export Shell from the canonical location
 pub(crate) use worktrunk::shell::Shell;
 
+use color_print::cformat;
 use worktrunk::styling::{eprintln, format_with_gutter};
 
 pub(crate) fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
@@ -77,6 +78,18 @@ pub(crate) fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
         (true, _) => Some(true),
         (_, true) => Some(false),
         _ => None,
+    }
+}
+
+/// Format command execution label with optional command name.
+///
+/// Examples:
+/// - `format_command_label("post-start", Some("install"))` → `"Running post-start install"` (with bold)
+/// - `format_command_label("post-start", None)` → `"Running post-start"`
+pub(crate) fn format_command_label(command_type: &str, name: Option<&str>) -> String {
+    match name {
+        Some(name) => cformat!("Running {command_type} <bold>{name}</>"),
+        None => format!("Running {command_type}"),
     }
 }
 
@@ -199,4 +212,18 @@ pub(crate) fn show_diffstat(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_command_label() {
+        use insta::assert_snapshot;
+        assert_snapshot!(format_command_label("post-start", Some("install")), @"Running post-start [1minstall[22m");
+        assert_snapshot!(format_command_label("pre-merge", None), @"Running pre-merge");
+        assert_snapshot!(format_command_label("post-start", Some("build")), @"Running post-start [1mbuild[22m");
+        assert_snapshot!(format_command_label("pre-commit", None), @"Running pre-commit");
+    }
 }

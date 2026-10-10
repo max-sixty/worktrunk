@@ -2,7 +2,7 @@
 //!
 //! The parent `wt` process serializes a [`PipelineSpec`] to JSON and spawns
 //! `wt hook run-pipeline` as a detached process (via `spawn_detached_exec`, which
-//! pipes the JSON to stdin, redirects stdout/stderr to a log file, and puts
+//! supplies the JSON on stdin, redirects stdout/stderr to a log file, and puts
 //! the process in its own process group). This module is that background
 //! process.
 //!
@@ -31,9 +31,11 @@
 //! git config, so order matters for `vars.*`), so a later command's expansion
 //! can run after an earlier command's child has already started.
 //!
-//! **Stdin**: every child receives its prepared context as JSON on stdin,
-//! matching the foreground hook convention. Commands that don't read stdin
-//! ignore it.
+//! **Stdin**: every child gets a closed stdin — this runner is detached, so
+//! there is no terminal to hand over and nothing to read. The foreground path
+//! inherits wt's stdin instead, so a step there can prompt (see
+//! `execute_shell_command` in `output/handlers.rs`). Every template variable
+//! reaches a step either way, through `{{ }}` expansion.
 //!
 //! ## Template freshness
 //!
@@ -68,10 +70,10 @@ use worktrunk::shell_exec::{ShellConfig, scrub_git_discovery_env_vars};
 use worktrunk::trace::CommandTrace;
 
 use super::command_executor::{
-    PreparedCommand, PreparedStep, expand_shell_template, wait_first_error,
+    PreparedCommand, PreparedStep, expand_shell_template, hook_error_wrapper, wait_first_error,
 };
-use super::hook_filter::HookSource;
 use super::process::HookLog;
+use worktrunk::config::HookSource;
 
 /// Serialized specification for a background hook pipeline.
 ///
@@ -113,6 +115,7 @@ pub fn run_pipeline() -> anyhow::Result<()> {
     fs::create_dir_all(&log_dir)
         .with_context(|| format!("failed to create log directory: {}", log_dir.display()))?;
 
+    let error_wrapper = hook_error_wrapper(spec.hook_type, spec.source, true);
     let mut cmd_index = 0usize;
 
     for step in &spec.steps {
@@ -122,12 +125,15 @@ pub fn run_pipeline() -> anyhow::Result<()> {
                 let log_file = create_command_log(&spec, &log_dir, &log_name)?;
                 let expanded =
                     expand_shell_template(&cmd.template, &cmd.context, &repo, &cmd.template_name)?;
-                let step_json = cmd.context_json();
                 let (mut child, mut trace) =
-                    spawn_shell_command(&expanded, &spec.worktree_path, &step_json, log_file)?;
+                    spawn_shell_command(&expanded, &spec.worktree_path, log_file)
+                        .map_err(|error| error_wrapper(cmd, error))?;
                 let status = wait_resolving(&mut child, &mut trace, &expanded)?;
                 if !status.success() {
-                    return Err(failure_error(&status, spec.hook_type, cmd.name.as_deref()));
+                    return Err(error_wrapper(
+                        cmd,
+                        WorktrunkError::from_child_status(&status, None).into(),
+                    ));
                 }
                 cmd_index += 1;
             }
@@ -140,16 +146,18 @@ pub fn run_pipeline() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Spawn a shell command with context JSON piped to stdin.
+/// Spawn a shell command with its output redirected to a log file.
 ///
 /// Uses `ShellConfig` for portable shell detection (Git Bash on Windows,
 /// `sh` on Unix). stdout/stderr are redirected to `log_file` so each
 /// command gets its own log. Returns the `Child` so the caller controls
 /// when to wait.
+///
+/// Stdin is closed: a detached step has no terminal, so a read returns EOF
+/// rather than blocking on one that isn't there.
 fn spawn_shell_command(
     expanded: &str,
     worktree_path: &Path,
-    context_json: &str,
     log_file: fs::File,
 ) -> anyhow::Result<(Child, CommandTrace)> {
     let shell = ShellConfig::get()?;
@@ -157,34 +165,25 @@ fn spawn_shell_command(
         .try_clone()
         .context("failed to clone log file handle")?;
     // Start the trace just before spawning; the caller resolves it once the
-    // child is waited on (see `wait_resolving`). The step is fed its own
-    // `context_json` on stdin, so mark it stdin-reading — the same command
-    // across worktrees isn't a duplicate (different per-worktree input).
-    let mut trace = CommandTrace::new(None, expanded).reads_stdin(true);
+    // child is waited on (see `wait_resolving`).
+    let mut trace = CommandTrace::new(None, expanded);
     let mut command = shell.command(expanded);
     command
         .current_dir(worktree_path)
-        .stdin(Stdio::piped())
+        .stdin(Stdio::null())
         .stdout(Stdio::from(log_file))
         .stderr(Stdio::from(log_err));
     // Background hooks, like foreground ones, discover their repo from the
     // worktree cwd, not an inherited GIT_DIR/GIT_WORK_TREE (issue #3373). This
     // runner only ever executes hook pipelines, so the scrub is unconditional.
     scrub_git_discovery_env_vars(&mut command);
-    let mut child = match command.spawn() {
+    let child = match worktrunk::shell_exec::spawn(&mut command) {
         Ok(child) => child,
         Err(e) => {
             trace.fail(&e);
-            return Err(worktrunk::shell_exec::spawn_error(&command, e).into());
+            return Err(e.into());
         }
     };
-
-    // Write context JSON to stdin, then drop to close the pipe.
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        // Ignore BrokenPipe — child may exit or close stdin early.
-        let _ = stdin.write_all(context_json.as_bytes());
-    }
 
     Ok((child, trace))
 }
@@ -227,12 +226,12 @@ fn run_concurrent_group(
     log_dir: &Path,
     cmd_index: &mut usize,
 ) -> anyhow::Result<()> {
+    let error_wrapper = hook_error_wrapper(spec.hook_type, spec.source, true);
     let serial = super::force_serial_concurrent();
-    let mut children: Vec<(Option<String>, String, Child, CommandTrace)> =
-        Vec::with_capacity(if serial { 0 } else { commands.len() });
+    let mut children = Vec::with_capacity(if serial { 0 } else { commands.len() });
 
     // Spawn (and, in serial mode, run) each command. Wrapped so that a mid-loop
-    // error — a setup `?` or a spawn failure for a later command — tears down
+    // setup or expansion error tears down
     // the children already spawned this group rather than dropping them with
     // unresolved trace guards (and as unreaped orphans).
     let spawn_result = (|| -> anyhow::Result<()> {
@@ -241,41 +240,52 @@ fn run_concurrent_group(
             let log_file = create_command_log(spec, log_dir, &log_name)?;
             let expanded =
                 expand_shell_template(&cmd.template, &cmd.context, repo, &cmd.template_name)?;
-            let cmd_json = cmd.context_json();
-            let (mut child, mut trace) =
-                spawn_shell_command(&expanded, &spec.worktree_path, &cmd_json, log_file)?;
+            let spawned = spawn_shell_command(&expanded, &spec.worktree_path, log_file)
+                .map_err(|error| error_wrapper(cmd, error));
             *cmd_index += 1;
 
             if serial {
+                let (mut child, mut trace) = spawned?;
                 let status = wait_resolving(&mut child, &mut trace, &expanded)?;
                 if !status.success() {
-                    return Err(failure_error(&status, spec.hook_type, cmd.name.as_deref()));
+                    return Err(error_wrapper(
+                        cmd,
+                        WorktrunkError::from_child_status(&status, None).into(),
+                    ));
                 }
             } else {
-                children.push((cmd.name.clone(), expanded, child, trace));
+                children.push((cmd, expanded, spawned));
             }
         }
         Ok(())
     })();
 
     if let Err(e) = spawn_result {
-        for (_, _, mut child, mut trace) in children {
-            let _ = child.kill();
-            let _ = child.wait();
-            trace.complete(false);
+        for (_, _, spawned) in children {
+            if let Ok((mut child, mut trace)) = spawned {
+                let _ = child.kill();
+                let _ = child.wait();
+                trace.complete(false);
+            }
         }
         return Err(e);
     }
 
-    wait_first_error(children.into_iter().map(
-        |(name, expanded, mut child, mut trace)| -> anyhow::Result<()> {
-            let status = wait_resolving(&mut child, &mut trace, &expanded)?;
-            if !status.success() {
-                return Err(failure_error(&status, spec.hook_type, name.as_deref()));
-            }
-            Ok(())
-        },
-    ))
+    wait_first_error(
+        children
+            .into_iter()
+            .map(|(cmd, expanded, spawned)| -> anyhow::Result<()> {
+                let (mut child, mut trace) = spawned?;
+                let status = wait_resolving(&mut child, &mut trace, &expanded)?;
+                if !status.success() {
+                    return Err(error_wrapper(
+                        cmd,
+                        WorktrunkError::from_child_status(&status, None).into(),
+                    ));
+                }
+                Ok(())
+            }),
+    )
 }
 
 /// Derive the log file name for a command.
@@ -298,47 +308,29 @@ fn create_command_log(spec: &PipelineSpec, log_dir: &Path, name: &str) -> anyhow
         .with_context(|| format!("failed to create log file: {}", path.display()))
 }
 
-/// Build the `anyhow::Error` for a failed pipeline step.
-///
-/// Signal-killed children surface as `WorktrunkError::ChildProcessExited`
-/// with `signal: Some(sig)` and `code: 128 + sig`, matching the foreground
-/// convention established by `shell_exec`. That lets `exit_code()` and
-/// `interrupt_signal()` work consistently and the `wt hook run-pipeline`
-/// process exits 130 on SIGINT and 143 on SIGTERM — the expectation the
-/// "Signal Handling" section of the project `AGENTS.md` sets for every
-/// command loop.
-///
-/// Non-signal failures carry the child's exit code verbatim so log readers
-/// (and any future observer of the background process) see the real code
-/// instead of a generic `1`.
-///
-/// On non-Unix (`status.signal()` unavailable), the function falls through
-/// to the exit-code path; `status.code()` is always `Some` on Windows.
-fn failure_error(status: &ExitStatus, hook_type: HookType, name: Option<&str>) -> anyhow::Error {
-    #[cfg(unix)]
-    let signal = std::os::unix::process::ExitStatusExt::signal(status);
-    #[cfg(not(unix))]
-    let signal = None;
-    let error: anyhow::Error = WorktrunkError::ChildProcessExited {
-        code: status
-            .code()
-            .unwrap_or_else(|| signal.map_or(1, |sig| 128 + sig)),
-        signal,
-    }
-    .into();
-    WorktrunkError::HookCommandFailed {
-        hook_type,
-        command_name: name.map(str::to_owned),
-        error,
-    }
-    .into()
-}
-
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::os::unix::process::ExitStatusExt;
     use worktrunk::git::ErrorExt;
+
+    fn failure_error(
+        status: &ExitStatus,
+        hook_type: HookType,
+        name: Option<&str>,
+    ) -> anyhow::Error {
+        let cmd = PreparedCommand {
+            name: name.map(str::to_owned),
+            template: "exit 7".into(),
+            context: Default::default(),
+            template_name: "user hook".into(),
+            label: name.map_or_else(|| "user".into(), |name| format!("user:{name}")),
+        };
+        hook_error_wrapper(hook_type, HookSource::User, true)(
+            &cmd,
+            WorktrunkError::from_child_status(status, None).into(),
+        )
+    }
 
     fn downcast_child_exit(err: &anyhow::Error) -> (i32, Option<i32>, String) {
         match err.chain().find_map(|error| {
@@ -346,9 +338,11 @@ mod tests {
                 .downcast_ref::<WorktrunkError>()
                 .filter(|error| matches!(error, WorktrunkError::ChildProcessExited { .. }))
         }) {
-            Some(WorktrunkError::ChildProcessExited { code, signal }) => {
-                (*code, *signal, err.to_string())
-            }
+            Some(WorktrunkError::ChildProcessExited {
+                code,
+                physical_signal,
+                ..
+            }) => (*code, *physical_signal, format!("{err:#}")),
             _ => panic!("expected ChildProcessExited, got {err:?}"),
         }
     }
@@ -358,9 +352,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("missing-worktree");
         let log = fs::File::create(dir.path().join("command.log")).unwrap();
-        let error = spawn_shell_command("true", &missing, "{}", log)
-            .err()
-            .unwrap();
+        let error = spawn_shell_command("true", &missing, log).err().unwrap();
         let cause = error.root_cause().downcast_ref::<std::io::Error>().unwrap();
         assert_eq!(cause.kind(), std::io::ErrorKind::NotFound);
         assert_eq!(cause.raw_os_error(), Some(2));
@@ -376,18 +368,10 @@ mod tests {
             (
                 15,
                 143,
-                "pre-merge command my-step failed (killed by signal 15)",
+                "pre-merge user:my-step failed: killed by signal 15",
             ),
-            (
-                2,
-                130,
-                "pre-merge command my-step failed (killed by signal 2)",
-            ),
-            (
-                9,
-                137,
-                "pre-merge command my-step failed (killed by signal 9)",
-            ),
+            (2, 130, "pre-merge user:my-step failed: killed by signal 2"),
+            (9, 137, "pre-merge user:my-step failed: killed by signal 9"),
         ];
         for (sig, expected_code, expected_msg) in cases {
             let status = ExitStatus::from_raw(sig);
@@ -398,7 +382,7 @@ mod tests {
             assert_eq!(message, expected_msg, "message for {sig}");
             assert_eq!(
                 err.interrupt_signal(),
-                Some(sig),
+                matches!(sig, 2 | 15).then_some(sig),
                 "interrupt_signal for {sig}"
             );
         }
@@ -412,7 +396,7 @@ mod tests {
         let (code, signal, message) = downcast_child_exit(&err);
         assert_eq!(signal, None);
         assert_eq!(code, 2);
-        assert_eq!(message, "pre-merge command my-step failed (exit code 2)");
+        assert_eq!(message, "pre-merge user:my-step failed: exit code 2");
         // Non-signal errors must NOT trip the interrupt abort path.
         assert_eq!(err.interrupt_signal(), None);
     }

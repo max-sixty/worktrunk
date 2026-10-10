@@ -24,7 +24,7 @@ Merge to the default branch:
 
 ```console
 $ wt merge
-◎ Running pre-merge: test (project)
+◎ Running pre-merge project:test
   cargo nextest run
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
      Summary [   0.002s] 2 tests run: 2 passed, 0 skipped

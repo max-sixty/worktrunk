@@ -139,7 +139,12 @@ mod tests {
     use worktrunk::git::{CommandError, ErrorExt, GitError, WorktrunkError};
 
     fn child_exit(code: i32, signal: Option<i32>) -> anyhow::Error {
-        WorktrunkError::ChildProcessExited { code, signal }.into()
+        WorktrunkError::ChildProcessExited {
+            cancellation: None,
+            code,
+            physical_signal: signal,
+        }
+        .into()
     }
 
     /// The error shape `run_command` (capture mode) actually returns on a

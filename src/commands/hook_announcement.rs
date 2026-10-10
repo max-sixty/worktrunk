@@ -68,7 +68,7 @@
 use color_print::cformat;
 
 use super::command_executor::PreparedStep;
-use super::hook_filter::HookSource;
+use worktrunk::config::HookSource;
 
 /// A pipeline step with source information, for pipeline-aware execution.
 ///
@@ -168,7 +168,7 @@ pub(crate) fn format_pipeline_summary_from_names(
 /// (1) or `…×N` (≥2).
 pub(crate) fn format_pipeline_summary(steps: &[SourcedStep]) -> String {
     // All steps in a group share the same source.
-    let source = steps[0].source;
+    let source_label = steps[0].source.to_string();
 
     let step_names: Vec<Vec<Option<&str>>> = steps
         .iter()
@@ -178,19 +178,10 @@ pub(crate) fn format_pipeline_summary(steps: &[SourcedStep]) -> String {
         })
         .collect();
 
-    format_source_summary(&step_names, source)
-}
-
-/// Shared source grammar for an entire background pipeline or one foreground command.
-pub(crate) fn format_source_summary(
-    step_names: &[Vec<Option<&str>>],
-    source: HookSource,
-) -> String {
-    let source_label = source.to_string();
     let total_unnamed: usize = step_names.iter().flatten().filter(|n| n.is_none()).count();
     let any_named = step_names.iter().flatten().any(|n| n.is_some());
 
-    // All-unnamed pipelines show the source alone.
+    // All-unnamed degenerate case: no names to list, so skip the colon.
     if !any_named {
         return if total_unnamed == 1 {
             source_label
@@ -200,7 +191,7 @@ pub(crate) fn format_source_summary(
     }
 
     let body = format_pipeline_summary_from_names(
-        step_names,
+        &step_names,
         |name| cformat!("<bold>{name}</>"),
         |count| {
             Some(if count == 1 {

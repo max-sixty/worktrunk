@@ -42,7 +42,9 @@ fn worktree_errors_render() {
             GitError::WorktreeRemovalFailed {
                 branch: "feature-x".into(),
                 path: PathBuf::from("/tmp/repo.feature-x"),
-                error: "fatal: worktree is dirty\nerror: could not remove worktree".into(),
+                error: anyhow::anyhow!(
+                    "fatal: worktree is dirty\nerror: could not remove worktree"
+                ),
                 remaining_entries: None,
             }
             .render(),
@@ -52,7 +54,9 @@ fn worktree_errors_render() {
             GitError::WorktreeRemovalFailed {
                 branch: "feature-x".into(),
                 path: PathBuf::from("/tmp/repo.feature-x"),
-                error: "error: failed to delete '/tmp/repo.feature-x': Directory not empty".into(),
+                error: anyhow::anyhow!(
+                    "error: failed to delete '/tmp/repo.feature-x': Directory not empty"
+                ),
                 remaining_entries: Some(vec![
                     ".vite/".into(),
                     "node_modules/".into(),
@@ -66,8 +70,9 @@ fn worktree_errors_render() {
             GitError::WorktreeRemovalFailed {
                 branch: "feature-x".into(),
                 path: PathBuf::from("/tmp/repo.feature-x"),
-                error: "error: failed to remove '/tmp/repo.feature-x/target': Permission denied"
-                    .into(),
+                error: anyhow::anyhow!(
+                    "error: failed to remove '/tmp/repo.feature-x/target': Permission denied"
+                ),
                 remaining_entries: Some(vec!["target/".into()]),
             }
             .render(),
@@ -77,7 +82,9 @@ fn worktree_errors_render() {
             GitError::WorktreeRemovalFailed {
                 branch: "feature-x".into(),
                 path: PathBuf::from("/tmp/repo.feature-x"),
-                error: "error: failed to delete '/tmp/repo.feature-x': Directory not empty".into(),
+                error: anyhow::anyhow!(
+                    "error: failed to delete '/tmp/repo.feature-x': Directory not empty"
+                ),
                 remaining_entries: Some((0..15).map(|i| format!("dir-{i:02}/")).collect()),
             }
             .render(),
@@ -409,29 +416,38 @@ fn integration_errors_render() {
 fn command_errors_render() {
     let hook_with_name = WorktrunkError::HookCommandFailed {
         hook_type: HookType::PreMerge,
+        source: worktrunk::config::HookSource::User,
+        template: Some("echo test".into()),
         command_name: Some("test".into()),
         error: WorktrunkError::ChildProcessExited {
+            cancellation: None,
             code: 1,
-            signal: None,
+            physical_signal: None,
         }
         .into(),
     };
     let hook_without_name = WorktrunkError::HookCommandFailed {
         hook_type: HookType::PreCreate,
+        source: worktrunk::config::HookSource::User,
+        template: Some("echo test".into()),
         command_name: None,
         error: WorktrunkError::ChildProcessExited {
+            cancellation: None,
             code: 127,
-            signal: None,
+            physical_signal: None,
         }
         .into(),
     };
     let hook_with_hint = add_hook_skip_hint(
         WorktrunkError::HookCommandFailed {
             hook_type: HookType::PreMerge,
+            source: worktrunk::config::HookSource::User,
+            template: Some("echo test".into()),
             command_name: Some("test".into()),
             error: WorktrunkError::ChildProcessExited {
+                cancellation: None,
                 code: 1,
-                signal: None,
+                physical_signal: None,
             }
             .into(),
         }

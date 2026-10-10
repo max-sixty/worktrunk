@@ -47,7 +47,7 @@ use crate::output::print_json;
 /// real-time. Continues on errors and reports a summary at the end.
 ///
 /// All template variables from hooks are available; values are substituted
-/// into argv elements without shell escaping. Context JSON is piped to stdin.
+/// into argv elements without shell escaping. Context JSON is provided on stdin.
 pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> anyhow::Result<()> {
     let json_mode = format == crate::cli::SwitchFormat::Json;
     let repo = Repository::current()?;
@@ -109,14 +109,11 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                 // hints from typed diagnostics) and a plain string for
                 // JSON (consumers shouldn't see ANSI codes or symbols).
                 let (exit_info, exit_code, stderr_detail, json_detail) =
-                    if let Some(WorktrunkError::ChildProcessExited { code, signal }) =
+                    if let Some(WorktrunkError::ChildProcessExited { code, .. }) =
                         err.downcast_ref::<WorktrunkError>()
                     {
                         (
-                            format!(
-                                " ({})",
-                                worktrunk::git::process_exit_description(Some(*code), *signal)
-                            ),
+                            format!(" ({err})"),
                             serde_json::json!(code),
                             None,
                             err.to_string(),
@@ -206,7 +203,7 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
 }
 
 /// Run argv directly (no shell) with streaming output, signal forwarding,
-/// stdout→stderr redirect, and JSON context piped on stdin.
+/// stdout→stderr redirect, and JSON context on stdin.
 ///
 /// Mirrors the bookkeeping in `output::execute_shell_command` (flush, ANSI
 /// reset, signal forwarding) but builds the command via `Cmd::new` so the

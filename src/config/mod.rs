@@ -19,6 +19,7 @@
 pub mod approvals;
 mod commands;
 pub(crate) mod deprecation;
+mod error;
 mod expansion;
 mod hooks;
 mod project;
@@ -97,20 +98,7 @@ impl WorktrunkConfig for ProjectConfig {
     }
 }
 
-/// Configuration error type.
-///
-/// Replaces the `config` crate's `ConfigError` with a simple string wrapper.
-/// Every usage was `ConfigError::Message(String)` — no other variants were used.
-#[derive(Debug)]
-pub struct ConfigError(pub String);
-
-impl std::fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for ConfigError {}
+pub use error::{ConfigError, ConfigParseError};
 
 /// Returns true if the given value equals `T::default()`.
 ///
@@ -193,7 +181,7 @@ pub fn is_user_project_override_key(key: &str) -> bool {
 /// itself broke the syntax, and the file on disk stays as it was.
 pub fn ensure_config_parses(content: &str) -> Result<(), ConfigError> {
     content.parse::<toml::Table>().map(|_| ()).map_err(|e| {
-        ConfigError(format!(
+        ConfigError::Message(format!(
             "Refusing to write a config file wt could not read back: {e}"
         ))
     })
@@ -223,13 +211,14 @@ pub use deprecation::{
 pub use deprecation::{DeprecationKind, Deprecations};
 pub use expansion::{
     ACTIVE_VARS, ALIAS_ARGS_KEY, EXEC_BASE_VARS, REPO_VARS, TemplateContext, TemplateExpandError,
-    ValidationScope, VarScope, VarsMode, alias_context_filter, base_vars, expand_template,
-    format_alias_variables, format_base_variables, format_hook_variables, redact_credentials,
-    referenced_vars_for_config, referenced_vars_for_templates, sanitize_branch_name, sanitize_db,
-    short_hash, template_environment, template_references_var, validate_list_column_template,
-    validate_template, validate_template_syntax, vars_available_in, vars_map_to_value,
+    ValidationScope, VarScope, VarsMode, alias_context_filter, base_vars, binds_cli_var,
+    expand_template, format_alias_variables, format_base_variables, format_hook_variables,
+    redact_credentials, referenced_vars_for_config, referenced_vars_for_templates,
+    sanitize_branch_name, sanitize_db, short_hash, template_environment, template_references_var,
+    validate_list_column_template, validate_template, validate_template_syntax, vars_available_in,
+    vars_map_to_value,
 };
-pub use hooks::HooksConfig;
+pub use hooks::{HookSource, HooksConfig};
 pub use project::{
     ProjectCiConfig, ProjectCommitConfig, ProjectCommitGenerationConfig, ProjectConfig,
     ProjectForgeConfig, ProjectListConfig, valid_project_config_keys,
@@ -265,7 +254,7 @@ mod tests {
         // comment rendered inside the brackets.
         let err =
             ensure_config_parses("[# why squash is off\nmerge ]\nsquash = true\n").unwrap_err();
-        assert!(err.0.contains("could not read back"), "{}", err.0);
+        assert!(err.to_string().contains("could not read back"), "{}", err);
         ensure_config_parses("# why squash is off\n[merge]\nsquash = true\n").unwrap();
     }
 

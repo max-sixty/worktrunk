@@ -2799,20 +2799,14 @@
           "classes": [
             "wt-terminal-cyan"
           ],
-          "text": "Running pre-merge: "
+          "text": "Running pre-merge "
         },
         {
           "classes": [
             "wt-terminal-cyan",
             "wt-terminal-bold"
           ],
-          "text": "test"
-        },
-        {
-          "classes": [
-            "wt-terminal-cyan"
-          ],
-          "text": " (project)"
+          "text": "project:test"
         }
       ],
       [
@@ -3086,7 +3080,7 @@
         }
       ]
     ],
-    "plain": "◎ Running pre-merge: test (project)\n  cargo nextest run\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s\n     Summary [   0.002s] 2 tests run: 2 passed, 0 skipped\n◎ Merging 1 commit to main @ a1b2c3d (no commit/squash/rebase needed)\n  * a1b2c3d feat: add hook registration\n   hook.rs | 31 +++++++++++++++++++++++++++++++\n   1 file changed, 31 insertions(+)\n✓ Merged to main (1 commit, 1 file, +31)\n◎ Removing hooks worktree & branch in background (same commit as main, _)\n○ Switched to worktree for main @ ~/repo"
+    "plain": "◎ Running pre-merge project:test\n  cargo nextest run\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s\n     Summary [   0.002s] 2 tests run: 2 passed, 0 skipped\n◎ Merging 1 commit to main @ a1b2c3d (no commit/squash/rebase needed)\n  * a1b2c3d feat: add hook registration\n   hook.rs | 31 +++++++++++++++++++++++++++++++\n   1 file changed, 31 insertions(+)\n✓ Merged to main (1 commit, 1 file, +31)\n◎ Removing hooks worktree & branch in background (same commit as main, _)\n○ Switched to worktree for main @ ~/repo"
   },
   {
     "lines": [
@@ -3105,20 +3099,14 @@
           "classes": [
             "wt-terminal-cyan"
           ],
-          "text": "Running pre-merge: "
+          "text": "Running pre-merge "
         },
         {
           "classes": [
             "wt-terminal-cyan",
             "wt-terminal-bold"
           ],
-          "text": "test"
-        },
-        {
-          "classes": [
-            "wt-terminal-cyan"
-          ],
-          "text": " (project)"
+          "text": "project:test"
         }
       ],
       [
@@ -3211,20 +3199,14 @@
           "classes": [
             "wt-terminal-cyan"
           ],
-          "text": "Running pre-merge: "
+          "text": "Running pre-merge "
         },
         {
           "classes": [
             "wt-terminal-cyan",
             "wt-terminal-bold"
           ],
-          "text": "lint"
-        },
-        {
-          "classes": [
-            "wt-terminal-cyan"
-          ],
-          "text": " (project)"
+          "text": "project:lint"
         }
       ],
       [
@@ -3265,7 +3247,7 @@
         }
       ]
     ],
-    "plain": "◎ Running pre-merge: test (project)\n  cargo test\n    Finished test [unoptimized + debuginfo] target(s) in 0.12s\n     Running unittests src/lib.rs (target/debug/deps/worktrunk-abc123)\n\nrunning 18 tests\ntest auth::tests::test_jwt_decode ... ok\ntest auth::tests::test_jwt_encode ... ok\ntest auth::tests::test_token_refresh ... ok\ntest auth::tests::test_token_validation ... ok\n\ntest result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s\n◎ Running pre-merge: lint (project)\n  cargo clippy\n    Checking worktrunk v0.1.0\n    Finished dev [unoptimized + debuginfo] target(s) in 1.23s"
+    "plain": "◎ Running pre-merge project:test\n  cargo test\n    Finished test [unoptimized + debuginfo] target(s) in 0.12s\n     Running unittests src/lib.rs (target/debug/deps/worktrunk-abc123)\n\nrunning 18 tests\ntest auth::tests::test_jwt_decode ... ok\ntest auth::tests::test_jwt_encode ... ok\ntest auth::tests::test_token_refresh ... ok\ntest auth::tests::test_token_validation ... ok\n\ntest result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s\n◎ Running pre-merge project:lint\n  cargo clippy\n    Checking worktrunk v0.1.0\n    Finished dev [unoptimized + debuginfo] target(s) in 1.23s"
   },
   {
     "lines": [
@@ -3284,20 +3266,14 @@
           "classes": [
             "wt-terminal-cyan"
           ],
-          "text": "Running pre-remove: "
+          "text": "Running pre-remove "
         },
         {
           "classes": [
             "wt-terminal-cyan",
             "wt-terminal-bold"
           ],
-          "text": "cleanup"
-        },
-        {
-          "classes": [
-            "wt-terminal-cyan"
-          ],
-          "text": " (project)"
+          "text": "project:cleanup"
         }
       ],
       [
@@ -3420,7 +3396,7 @@
         }
       ]
     ],
-    "plain": "◎ Running pre-remove: cleanup (project)\n  flyctl scale count 0\nScaling app to 0 machines\n◎ Removing api worktree & branch in background (same commit as main, _)\n○ Switched to worktree for main @ ~/repo"
+    "plain": "◎ Running pre-remove project:cleanup\n  flyctl scale count 0\nScaling app to 0 machines\n◎ Removing api worktree & branch in background (same commit as main, _)\n○ Switched to worktree for main @ ~/repo"
   },
   {
     "lines": [

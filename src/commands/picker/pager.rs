@@ -1,18 +1,22 @@
 //! Pager detection and execution.
 //!
 //! Handles detection and use of diff pagers (delta, bat, etc.) for preview windows.
+//! Input is prepared in an anonymous file before spawn. On Unix, one deadline
+//! bounds both output consumption and the direct child wait,
+//! including descendants retaining the pipes. Timeout closes our pipe endpoints
+//! and kills/reaps only the owned pager; preview falls back to the original text.
 
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use shared_child::SharedChild;
 
-use worktrunk::config::UserConfig;
+use worktrunk::git::Repository;
 use worktrunk::shell::extract_filename_from_path;
 
-use crate::pager::{git_config_pager, parse_pager_value};
+use crate::pager::git_pager;
 
 /// Cached pager command, ready to use. None means no pager.
 static CACHED_PAGER: OnceLock<Option<String>> = OnceLock::new();
@@ -41,28 +45,25 @@ fn needs_paging_disabled(pager_cmd: &str) -> bool {
 ///
 /// Returns the pager command with any necessary flags (like `--paging=never`)
 /// already appended. Precedence:
-/// 1. `[switch.picker] pager` in user config (used as-is)
-/// 2. `[select] pager` in user config (deprecated, used as-is)
-/// 3. `GIT_PAGER` environment variable (auto-detection applied)
-/// 4. `core.pager` git config (auto-detection applied)
-pub(super) fn diff_pager() -> Option<&'static String> {
+/// 1. `[switch.picker] pager` in user config, with any `[projects."<id>"]`
+///    override for `repo` applied (used as-is). A deprecated `[select] pager`
+///    is migrated into `[switch.picker]` before the config parses.
+/// 2. `GIT_PAGER` environment variable (auto-detection applied)
+/// 3. `core.pager` git config (auto-detection applied)
+///
+/// The cache is process-wide: the picker runs against one repository.
+pub(super) fn diff_pager(repo: &Repository) -> Option<&'static String> {
     CACHED_PAGER
         .get_or_init(|| {
-            // Check user config first - use exactly as specified (no auto-detection)
-            // Uses switch_picker() accessor which handles [switch.picker] → [select] fallback
-            if let Ok(config) = UserConfig::load()
-                && let Some(pager) = config.switch_picker(None).pager
+            // Configured pager first - use exactly as specified (no auto-detection)
+            if let Some(pager) = repo.config().switch_picker.pager()
                 && !pager.trim().is_empty()
             {
-                return Some(pager);
+                return Some(pager.to_string());
             }
 
             // GIT_PAGER or core.pager - apply auto-detection for delta/bat
-            let pager = if let Ok(p) = std::env::var("GIT_PAGER") {
-                parse_pager_value(&p)
-            } else {
-                git_config_pager()
-            };
+            let pager = git_pager(false);
 
             pager.map(|p| {
                 if needs_paging_disabled(&p) {
@@ -82,35 +83,73 @@ pub(super) fn diff_pager() -> Option<&'static String> {
 pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> String {
     tracing::debug!(pager_cmd = %pager_cmd, "Piping through pager: {}", pager_cmd);
 
-    // Spawn pager with stdin piped
+    let mut trace = worktrunk::trace::CommandTrace::new(None, pager_cmd).reads_stdin(true);
+    let input = match worktrunk::shell_exec::buffered_stdin(text.as_bytes()) {
+        Ok(input) => input,
+        Err(error) => {
+            trace.fail(&error);
+            return text.to_string();
+        }
+    };
     let mut cmd = Command::new("sh");
     cmd.arg("-c")
         .arg(pager_cmd)
-        .stdin(Stdio::piped())
+        .stdin(input)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .env("COLUMNS", width.to_string());
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
-    let child = match SharedChild::spawn(&mut cmd) {
+    let child = match worktrunk::shell_exec::spawn_shared_child(&mut cmd) {
         Ok(child) => child,
         Err(e) => {
-            tracing::debug!(error = %e, "Failed to spawn pager: {}", e);
+            trace.fail(&e);
+            let error = anyhow::Error::new(e);
+            tracing::debug!(error = %format!("{error:#}"), "Failed to spawn pager");
             return text.to_string();
         }
     };
 
-    // Write input to stdin in a thread to avoid deadlock.
-    // Thread will unblock when: (a) write completes, or (b) pipe breaks (pager exits/killed).
-    let stdin = child.take_stdin();
-    let input = text.to_string();
-    let writer_thread = std::thread::spawn(move || {
-        if let Some(mut stdin) = stdin {
-            use std::io::Write;
-            let _ = stdin.write_all(input.as_bytes());
+    let deadline = Instant::now() + PAGER_TIMEOUT;
+    match pager_output(&child, deadline) {
+        Ok(output) => {
+            trace.complete(true);
+            if let Ok(output) = String::from_utf8(output) {
+                return output;
+            }
         }
-    });
+        Err(error) => {
+            trace.fail(&error);
+            tracing::debug!(%error, "Pager failed; using unpaged text");
+            // SharedChild retains ownership even after reaping. Never signal a
+            // process group: descendants are not owned by this preview.
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+    text.to_string()
+}
 
-    // Read output in a thread to avoid deadlock (can't read stdout after stdin fills)
+/// Consume output and wait for the direct pager within the same deadline.
+#[cfg(unix)]
+fn pager_output(child: &SharedChild, deadline: Instant) -> std::io::Result<Vec<u8>> {
+    let stdout = child
+        .take_stdout()
+        .ok_or_else(|| std::io::Error::other("Pager stdout was not captured"))?;
+    let mut reader = worktrunk::shell_exec::pipe::PipeReader::new(stdout, Some(deadline), None)?;
+    let mut output = Vec::new();
+    reader.read_to_end(&mut output)?;
+    let status = worktrunk::shell_exec::wait_shared_child(child, Some(deadline))?;
+    if !status.success() {
+        return Err(std::io::Error::other(format!(
+            "Pager exited with status: {status}"
+        )));
+    }
+    Ok(output)
+}
+
+#[cfg(not(unix))]
+fn pager_output(child: &SharedChild, deadline: Instant) -> std::io::Result<Vec<u8>> {
+    // Drain output while waiting so a full stdout pipe cannot block the pager.
     let stdout = child.take_stdout();
     let reader_thread = std::thread::spawn(move || {
         stdout.map(|mut stdout| {
@@ -121,15 +160,13 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
     });
 
     // Wait for pager with timeout
-    match child.wait_timeout(PAGER_TIMEOUT) {
-        Ok(Some(status)) => {
+    match worktrunk::shell_exec::wait_shared_child(child, Some(deadline)) {
+        Ok(status) => {
             // Pager exited within timeout
-            let _ = writer_thread.join();
             if let Ok(Some(output)) = reader_thread.join()
                 && status.success()
-                && let Ok(s) = String::from_utf8(output)
             {
-                return s;
+                return Ok(output);
             }
             tracing::debug!(status = %status, "Pager exited with status: {}", status);
         }
@@ -143,7 +180,7 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
         }
     }
 
-    text.to_string()
+    Err(std::io::Error::other("Pager failed or timed out"))
 }
 
 #[cfg(test)]
@@ -186,17 +223,11 @@ mod tests {
     }
 
     #[test]
-    fn test_get_diff_pager_initializes() {
-        // Exercise the config initialization path
-        // Returns None or Some depending on user's pager config
-        let _ = diff_pager();
-    }
-
-    #[test]
     fn test_pipe_through_pager_passthrough() {
         // Use cat as a simple pager that passes through input unchanged
-        let input = "line 1\nline 2\nline 3";
-        let result = pipe_through_pager(input, "cat", 80);
+        // A large complete input reaches the pager without pipe-capacity limits.
+        let input = "line 1\nline 2\nline 3\n".repeat(25_000);
+        let result = pipe_through_pager(&input, "cat", 80);
         assert_eq!(result, input);
     }
 
@@ -210,11 +241,6 @@ mod tests {
 
     /// A pager that never exits must not freeze skim's event loop: it is killed at
     /// `PAGER_TIMEOUT` and the preview falls back to the unpaged text.
-    ///
-    /// Explicit `exec`, because the kill reaches the pager and not its children:
-    /// a grandchild inherits the stdout pipe, and the reader thread this function
-    /// joins blocks until *it* exits. `sh -c "sleep 30"` forks here, so without
-    /// the `exec` the wait runs the full 30 s despite the pager being dead.
     #[test]
     #[cfg(unix)]
     fn test_pipe_through_pager_times_out() {
@@ -227,6 +253,53 @@ mod tests {
             elapsed < PAGER_TIMEOUT * 4,
             "the timeout did not bound the wait: {elapsed:?}"
         );
+    }
+
+    /// Descendants retaining output must not extend the preview deadline;
+    /// retaining only buffered stdin must not delay completion at all.
+    /// The release watchdog prevents a broken implementation from hanging the
+    /// test. Correctness is the fallback output, not a wall-clock threshold.
+    #[test]
+    #[cfg(unix)]
+    fn test_pipe_through_pager_descendant_pipes_time_out() {
+        for redirect in ["", ">/dev/null"] {
+            let fixture = tempfile::tempdir().unwrap();
+            let release = fixture.path().join("release");
+            let done = fixture.path().join("done");
+            let quote =
+                |path: &std::path::Path| shell_escape::escape(path.to_string_lossy()).into_owned();
+            let command = format!(
+                "(while [ ! -f {} ]; do sleep 0.02; done; : > {}) <&0 {} & printf transformed; exit 0",
+                quote(&release),
+                quote(&done),
+                redirect,
+            );
+            let (tx, rx) = std::sync::mpsc::channel();
+            let watchdog = std::thread::spawn(move || {
+                let _ = rx.recv_timeout(PAGER_TIMEOUT * 3);
+                std::fs::write(release, "").unwrap();
+            });
+            // Closing descendant stdout leaves only its inherited input file.
+            // It cannot prolong the completed direct pager's lifetime.
+            let input = "input\n".repeat(if redirect.is_empty() { 1 } else { 100_000 });
+            let output = pipe_through_pager(&input, &command, 80);
+            let _ = tx.send(());
+            watchdog.join().unwrap();
+            let cleanup_deadline = Instant::now() + PAGER_TIMEOUT * 3;
+            while !done.exists() {
+                assert!(Instant::now() < cleanup_deadline, "descendant did not exit");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!(
+                output,
+                if redirect.is_empty() {
+                    input.as_str()
+                } else {
+                    "transformed"
+                },
+                "descendant redirect: {redirect}"
+            );
+        }
     }
 
     #[test]
@@ -243,5 +316,11 @@ mod tests {
         let input = "original text";
         let result = pipe_through_pager(input, "false", 80);
         assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_pipe_through_pager_invalid_utf8_returns_original() {
+        let input = "original text";
+        assert_eq!(pipe_through_pager(input, "printf '\\377'", 80), input);
     }
 }

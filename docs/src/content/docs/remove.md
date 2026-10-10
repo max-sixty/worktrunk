@@ -14,7 +14,7 @@ Remove current worktree:
 
 ```console
 $ wt remove
-◎ Running pre-remove: cleanup (project)
+◎ Running pre-remove project:cleanup
   flyctl scale count 0
 Scaling app to 0 machines
 ◎ Removing api worktree & branch in background (same commit as main, _)
@@ -58,8 +58,6 @@ The default-branch walk is capped so a single check stays fast; a squash merge w
 The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., `origin/main`) when strictly ahead.
 
 Branches matching these conditions and with empty working trees are dimmed in `wt list` as safe to delete.
-
-If a detached worktree remains at the branch's configured path, removing the branch reports that directory and the command to remove it by path.
 
 ## Force flags
 
@@ -106,7 +104,7 @@ Unix only; on Windows `--reap` is rejected.
 
 ## JSON output
 
-`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal, plus `detached_worktree` — the directory left at that branch's path with a detached HEAD, which the branch no longer names and this removal therefore leaves alone.
+`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal, plus `detached_worktree` — a detached worktree left at the branch's configured path.
 
 `branch_outcome` names what happened to the branch, so a caller can tell a deletion the removal declined from one it was never asked to make:
 
