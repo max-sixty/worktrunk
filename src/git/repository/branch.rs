@@ -64,7 +64,7 @@ impl<'a> Branch<'a> {
         &self.name
     }
 
-    /// Require a name Git accepts when creating a branch.
+    /// Require a literal name Git accepts when creating a branch.
     ///
     /// Branch creation has stricter rules than ref syntax (for example, HEAD
     /// is reserved). Git owns these rules; selector resolution continues to use
@@ -73,8 +73,10 @@ impl<'a> Branch<'a> {
         let args = ["check-ref-format", "--branch", self.name()];
         let output = self.repo.run_command_output(&args)?;
         match output.status.code() {
-            Some(0) => Ok(()),
-            Some(128) => Err(GitError::InvalidBranchName {
+            // Git expands checkout-history expressions and echoes the result.
+            // Creation must not silently choose a different branch name.
+            Some(0) if output.stdout.trim_ascii_end() == self.name.as_bytes() => Ok(()),
+            Some(0 | 128) => Err(GitError::InvalidBranchName {
                 name: self.name.clone(),
             }
             .into()),
