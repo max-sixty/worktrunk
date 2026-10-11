@@ -74,6 +74,10 @@ fn replace_readonly(src: &Path, dest: &Path) -> io::Result<()> {
     let mut buffer =
         vec![FILE_RENAME_INFO::default(); bytes.div_ceil(size_of::<FILE_RENAME_INFO>())];
     let info = buffer.as_mut_ptr();
+    #[expect(
+        unsafe_code,
+        reason = "Windows atomic read-only replacement requires a native handle and rename buffer"
+    )]
     // SAFETY: the aligned buffer includes the header and complete UTF-16 name;
     // the owned source handle and buffer remain live until the synchronous API
     // returns. OPEN_REPARSE_POINT ensures a symlink's target is never opened.
