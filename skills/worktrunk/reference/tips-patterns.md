@@ -64,7 +64,7 @@ git fetch origin
 git remote set-head origin --auto
 ```
 
-`git clone --bare` records the `origin` URL but no fetch refspec, so without the `git config` line `git fetch` never creates remote-tracking branches like `origin/main`, and tools that read them (lazygit, editor integrations) see no remote branches. `git remote set-head` then points `origin/HEAD` at the remote's default branch.
+The fetch refspec creates remote-tracking branches such as `origin/main`; `git remote set-head` records the remote's default branch.
 
 With `worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"`, worktrees become subdirectories of `myproject/`:
 
@@ -110,7 +110,7 @@ Now `wt switch --create feature` creates `myproject/feature/`.
 The project config (`.config/wt.toml`) must live inside a worktree — the bare `.git` directory has no tracked files. Once the first worktree exists, create it from there:
 
 ```bash
-cd myproject/main
+wt switch main
 wt config create --project
 ```
 

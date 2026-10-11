@@ -79,7 +79,8 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use shared_child::SharedChild;
 
-use crate::git::{ErrorExt, GitError, WorktrunkError};
+use crate::git::WorktrunkError;
+use crate::path::format_path_for_display;
 use crate::styling::eprintln;
 use crate::sync::Semaphore;
 use crate::trace::CommandTrace;
@@ -116,7 +117,7 @@ pub(crate) fn with_process_creation_guard<T>(
 
 /// Spawn a child under the shared process-creation guard.
 pub fn spawn(command: &mut Command) -> std::io::Result<std::process::Child> {
-    with_process_creation_guard(|| command.spawn())
+    with_process_creation_guard(|| command.spawn()).map_err(|error| spawn_error(command, error))
 }
 
 /// Spawn a shared child under the same process-creation lock as [`spawn`].
@@ -124,6 +125,7 @@ pub fn spawn_shared_child(command: &mut Command) -> std::io::Result<SharedChild>
     // SharedChild::new calls try_wait and can reap a short-lived child here.
     // Keep SharedChild::spawn's unreaped ownership for process-tree cleanup.
     with_process_creation_guard(|| SharedChild::spawn(command))
+        .map_err(|error| spawn_error(command, error))
 }
 
 /// Create wakeup endpoints under the same guard as process creation.
@@ -1266,6 +1268,45 @@ impl CapturedChild {
     }
 }
 
+/// A spawn failure identifies the program and cwd actually supplied to the OS.
+/// `NotFound` can mean a missing program, cwd, or interpreter, so it does not
+/// establish which is absent. Keep the original I/O error as the source.
+#[derive(Debug)]
+struct SpawnError {
+    program: std::ffi::OsString,
+    cwd: Option<std::path::PathBuf>,
+    source: std::io::Error,
+}
+
+impl std::fmt::Display for SpawnError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Failed to execute {}", self.program.to_string_lossy())?;
+        if let Some(cwd) = &self.cwd {
+            write!(f, " @ {}", format_path_for_display(cwd))?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for SpawnError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+/// Enrich an OS spawn failure without changing its kind or guessing its cause.
+fn spawn_error(command: &std::process::Command, source: std::io::Error) -> std::io::Error {
+    let cwd = command.get_current_dir().map(std::path::Path::to_path_buf);
+    std::io::Error::new(
+        source.kind(),
+        SpawnError {
+            program: command.get_program().to_os_string(),
+            cwd,
+            source,
+        },
+    )
+}
+
 /// Structured error from [`Cmd::delayed_stream`].
 ///
 /// Separates command output from command identity so callers can format each
@@ -1295,10 +1336,11 @@ impl std::fmt::Display for StreamCommandError {
 
 impl StreamCommandError {
     pub fn exit_info(&self) -> String {
-        self.status
-            .code()
-            .map(|code| format!("exit code {code}"))
-            .unwrap_or_else(|| "killed by signal".to_string())
+        #[cfg(unix)]
+        let signal = std::os::unix::process::ExitStatusExt::signal(&self.status);
+        #[cfg(not(unix))]
+        let signal = None;
+        crate::git::process_exit_description(self.status.code(), signal)
     }
 }
 
@@ -1505,30 +1547,33 @@ impl Cmd {
     /// commands haven't been cancelled. Background callers check after taking
     /// their semaphore permit: a command can be cancelled while parked on the
     /// semaphore, and that is the common case in a large fan-out.
-    fn check_before_spawn(&self) -> std::io::Result<()> {
+    fn check_before_spawn(&self, command: &Command) -> std::io::Result<()> {
         if background_cancelled() {
             return Err(cancelled_error());
         }
-        self.check_spawn_preconditions()
+        self.check_spawn_preconditions(command)
     }
 
-    fn check_spawn_preconditions(&self) -> std::io::Result<()> {
-        if let Some(dir) = &self.current_dir {
-            let metadata = std::fs::metadata(dir)?;
-            if !metadata.is_dir() {
-                return Err(std::io::Error::new(
-                    ErrorKind::NotADirectory,
-                    format!("{} is not a directory", dir.display()),
-                ));
+    fn check_spawn_preconditions(&self, command: &Command) -> std::io::Result<()> {
+        (|| {
+            if let Some(dir) = &self.current_dir {
+                let metadata = std::fs::metadata(dir)?;
+                if !metadata.is_dir() {
+                    return Err(std::io::Error::new(
+                        ErrorKind::NotADirectory,
+                        format!("{} is not a directory", dir.display()),
+                    ));
+                }
             }
-        }
 
-        let program = Path::new(&self.program);
-        if !self.shell_wrap && program.is_absolute() {
-            ensure_executable_path(program)?;
-        }
+            let program = Path::new(&self.program);
+            if !self.shell_wrap && program.is_absolute() {
+                ensure_executable_path(program)?;
+            }
 
-        Ok(())
+            Ok(())
+        })()
+        .map_err(|error| spawn_error(command, error))
     }
 
     fn apply_common_settings(&self, cmd: &mut Command) {
@@ -1800,14 +1845,14 @@ impl Cmd {
         let mut trace = CommandTrace::new(self.context.as_deref(), &cmd_str)
             .reads_stdin(self.stdin_data.is_some());
 
-        if let Err(e) = self.check_before_spawn() {
+        let mut cmd = self.direct_command();
+        self.apply_common_settings(&mut cmd);
+
+        if let Err(e) = self.check_before_spawn(&cmd) {
             trace.fail(&e);
             external_log.record(None);
             return Err(e);
         }
-
-        let mut cmd = self.direct_command();
-        self.apply_common_settings(&mut cmd);
 
         // Preparation failures and child outcomes resolve the same trace.
         let result = (|| {
@@ -1887,13 +1932,14 @@ impl Cmd {
         self.log_run_start(&cmd_str);
         let mut trace = CommandTrace::new(self.context.as_deref(), &cmd_str);
 
-        if let Err(e) = self.check_before_spawn() {
+        let mut cmd = self.direct_command();
+        self.apply_common_settings(&mut cmd);
+
+        if let Err(e) = self.check_before_spawn(&cmd) {
             trace.fail(&e);
             return Err(e);
         }
 
-        let mut cmd = self.direct_command();
-        self.apply_common_settings(&mut cmd);
         cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -1970,11 +2016,16 @@ impl Cmd {
 
         let _guard = (!is_foreground_thread()).then(|| semaphore().acquire());
 
+        let mut first = self.direct_command();
+        self.apply_common_settings(&mut first);
+        let mut second = next.direct_command();
+        next.apply_common_settings(&mut second);
+
         // Validate both commands before spawning either. Nothing has spawned
         // yet, so a cancellation or precondition failure emits a one-shot
         // failed record rather than holding a guard across an execution that
         // never happens.
-        if let Err(e) = self.check_before_spawn() {
+        if let Err(e) = self.check_before_spawn(&first) {
             // stdin_data is still owned here (taken below), so it reflects
             // whether the source would have read a buffer; the sink always reads
             // the upstream pipe.
@@ -1986,7 +2037,7 @@ impl Cmd {
             );
             return Err(e);
         }
-        if let Err(e) = next.check_spawn_preconditions() {
+        if let Err(e) = next.check_spawn_preconditions(&second) {
             CommandTrace::record_failed(next.context.as_deref(), &second_cmd_str, true, &e);
             return Err(e);
         }
@@ -2003,8 +2054,6 @@ impl Cmd {
                 first_trace.fail(error);
             })?
             .unwrap_or_else(Stdio::null);
-        let mut first = self.direct_command();
-        self.apply_common_settings(&mut first);
         first
             .stdin(input)
             .stdout(Stdio::piped())
@@ -2021,8 +2070,6 @@ impl Cmd {
             .stdout
             .take()
             .expect("stdout was configured as piped");
-        let mut second = next.direct_command();
-        next.apply_common_settings(&mut second);
         second
             .stdin(Stdio::from(first_stdout))
             .stdout(Stdio::piped())
@@ -2137,7 +2184,7 @@ impl Cmd {
             apply_cd_directive_env(&mut cmd, path);
         }
 
-        if let Err(e) = self.check_spawn_preconditions() {
+        if let Err(e) = self.check_spawn_preconditions(&cmd) {
             // Nothing spawned yet — emit a one-shot failed record (the trace
             // guard is constructed just before spawn, below).
             CommandTrace::record_failed(
@@ -2146,9 +2193,7 @@ impl Cmd {
                 self.stdin_data.is_some(),
                 &e,
             );
-            return Err(anyhow::Error::from(GitError::Other {
-                message: format!("Failed to execute command ({}): {}", exec_mode, e),
-            }));
+            return Err(e.into());
         }
 
         #[cfg(not(unix))]
@@ -2196,15 +2241,9 @@ impl Cmd {
         let spawned = spawn_shared_child(&mut cmd).map_err(anyhow::Error::from);
         let child = match spawned {
             Ok(child) => Arc::new(child),
-            Err(error) if error.interrupt_signal().is_some() => {
-                trace.fail(&error);
+            Err(error) => {
+                trace.fail(error.as_ref());
                 return Err(error);
-            }
-            Err(e) => {
-                trace.fail(&e);
-                return Err(anyhow::Error::from(GitError::Other {
-                    message: format!("Failed to execute command ({}): {}", exec_mode, e),
-                }));
             }
         };
 
@@ -2317,7 +2356,7 @@ impl Cmd {
             Ok(child) => child,
             Err(e) => {
                 trace.fail(&e);
-                return Err(e).with_context(|| format!("Failed to spawn: {}", cmd_str));
+                return Err(e.into());
             }
         };
 
@@ -3205,7 +3244,7 @@ print(*counts)
             wt_err,
             WorktrunkError::ChildProcessExited {
                 code: 141,
-                signal: Some(13),
+                physical_signal: Some(13),
                 ..
             }
         ));
@@ -3231,9 +3270,156 @@ print(*counts)
     }
 
     #[test]
+    #[cfg(unix)]
+    fn test_real_process_failure_descriptions() {
+        for (script, description) in [
+            ("exit 7", "exit code 7"),
+            ("kill -9 $$", "killed by signal 9"),
+        ] {
+            let output = Cmd::new("sh").args(["-c", script]).run().unwrap();
+            let error =
+                crate::git::CommandError::from_failed_output("sh", &["-c", script], &output);
+            assert!(
+                error
+                    .to_string()
+                    .ends_with(&format!("failed ({description})"))
+            );
+            let error = Cmd::new("sh").args(["-c", script]).stream().unwrap_err();
+            assert_eq!(error.to_string(), description);
+            let error = Cmd::new("sh")
+                .args(["-c", script])
+                .delayed_stream(1000, None)
+                .unwrap_err();
+            let (_, command) = crate::git::Repository::extract_failed_command(&error);
+            assert_eq!(command.unwrap().exit_info, description);
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_spawn_errors_identify_program_and_cwd_without_guessing_cause() {
+        use crate::git::ErrorExt;
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("broken-interpreter");
+        std::fs::write(&script, "#!/no/such/interpreter-7f3a9b2c\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let missing_cwd = dir.path().join("missing");
+        for (program, cwd) in [
+            ("missing-program-7f3a9b2c".to_string(), dir.path()),
+            ("/bin/sh".to_string(), missing_cwd.as_path()),
+            (script.to_string_lossy().into_owned(), dir.path()),
+        ] {
+            for command in [
+                Cmd::new(&program).current_dir(cwd),
+                Cmd::new(&program).current_dir(cwd).stdin_bytes("{}"),
+                Cmd::new(&program)
+                    .current_dir(cwd)
+                    .timeout(Duration::from_secs(1)),
+            ] {
+                let error = command.run().unwrap_err();
+                assert_eq!(error.kind(), ErrorKind::NotFound);
+                assert!(error.to_string().contains(&program), "{error}");
+                assert!(
+                    error
+                        .to_string()
+                        .contains(&cwd.to_string_lossy().to_string()),
+                    "{error}"
+                );
+                let source = std::error::Error::source(error.get_ref().unwrap()).unwrap();
+                assert_eq!(
+                    source
+                        .downcast_ref::<std::io::Error>()
+                        .unwrap()
+                        .raw_os_error(),
+                    Some(2)
+                );
+                let cause = source.to_string();
+                // The borrowed detail used by captured-command traces and the
+                // embedded Git-failure detail both retain the OS cause once.
+                let trace_detail = crate::git::error_chain_message(&error);
+                let error: anyhow::Error = error.into();
+                let detail = error.display_message();
+                assert_eq!(detail, trace_detail);
+                assert_eq!(detail.matches(&cause).count(), 1, "{detail}");
+                let (extracted, command) = crate::git::Repository::extract_failed_command(&error);
+                assert_eq!(extracted, detail);
+                assert!(command.is_none());
+            }
+            let error = Cmd::new(&program).current_dir(cwd).stream().unwrap_err();
+            assert!(error.to_string().contains(&program), "{error}");
+            assert!(
+                error
+                    .to_string()
+                    .contains(&cwd.to_string_lossy().to_string()),
+                "{error}"
+            );
+            assert_eq!(error.exit_code(), None);
+            assert!(
+                error
+                    .chain()
+                    .any(|source| source.downcast_ref::<std::io::Error>().is_some())
+            );
+        }
+    }
+
+    #[test]
     fn test_cmd_run_spawn_failure_is_errored() {
         let err = Cmd::new("/no/such/binary-7f3a9b2c").run().unwrap_err();
         assert_eq!(err.kind(), ErrorKind::NotFound);
+    }
+
+    /// Every runner reports the native OS cause once through the same trace owner.
+    /// A scoped subscriber records real failures without changing the process logger.
+    #[test]
+    #[cfg(all(feature = "cli", unix))]
+    fn test_spawn_trace_retains_io_cause_once_in_every_execution_mode() {
+        let log = tempfile::NamedTempFile::new().unwrap();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(std::sync::Arc::new(log.reopen().unwrap()))
+            .finish();
+        let causes = tracing::subscriber::with_default(subscriber, || {
+            let missing = "worktrunk-no-such-program-trace";
+            [
+                Cmd::new(missing).run().unwrap_err().into(),
+                Cmd::new(missing)
+                    .stdin_bytes("{}")
+                    .run()
+                    .unwrap_err()
+                    .into(),
+                Cmd::new(missing)
+                    .timeout(Duration::from_secs(1))
+                    .run()
+                    .unwrap_err()
+                    .into(),
+                Cmd::new(missing).stream().unwrap_err(),
+                Cmd::new(missing).delayed_stream(-1, None).unwrap_err(),
+                Cmd::new(missing)
+                    .pipe_into(Cmd::new("cat"))
+                    .unwrap_err()
+                    .into(),
+                Cmd::new("true")
+                    .pipe_into(Cmd::new(missing))
+                    .unwrap_err()
+                    .into(),
+            ]
+            .into_iter()
+            .map(|error: anyhow::Error| error.root_cause().to_string())
+            .collect::<Vec<_>>()
+        });
+        let output = std::fs::read_to_string(log.path()).unwrap();
+        let events: Vec<_> = output
+            .lines()
+            .filter(|line| line.contains("cmd_errored"))
+            .collect();
+        assert_eq!(events.len(), causes.len(), "{output}");
+        for (event, cause) in events.into_iter().zip(causes) {
+            assert!(event.contains("Failed to execute worktrunk-no-such-program-trace"));
+            assert_eq!(event.matches(&cause).count(), 1, "{event}");
+        }
     }
 
     #[test]
@@ -3287,7 +3473,7 @@ print(*counts)
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("Failed to execute command"),
+            msg.contains("Failed to execute /no/such/binary"),
             "expected spawn-failure message, got: {msg}"
         );
     }
@@ -3425,7 +3611,7 @@ print(*counts)
         // delay_ms=-1 disables phase 1; the spawn failure resolves the trace
         // via `fail` rather than dropping it unresolved.
         let err = Cmd::new(MISSING_CMD).delayed_stream(-1, None).unwrap_err();
-        assert!(err.to_string().contains("Failed to spawn"), "{err}");
+        assert!(err.to_string().contains("Failed to execute"), "{err}");
     }
 
     #[test]

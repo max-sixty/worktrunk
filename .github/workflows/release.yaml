@@ -119,13 +119,11 @@ jobs:
       matrix: ${{ fromJson(needs.plan.outputs.val).ci.github.artifacts_matrix }}
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container && matrix.container.image || null }}
-    # This job doesn't deploy anything; the environment scopes
-    # SIGNPATH_API_TOKEN so it isn't readable by every workflow the repo runs.
-    # It is deliberately not `release`, which also holds the publish
-    # credentials — see .github/AGENTS.md. The policy admits tags only, so
-    # setting `pr-run-mode = "upload"` in dist-workspace.toml would make GitHub
-    # reject this job on a PR ref.
-    environment: signing
+    # Signing and publishing share the admin-controlled tag gate. Pass each
+    # credential only to the step that uses it; see .github/AGENTS.md.
+    # The tag-only policy rejects this job on PR refs if dist-workspace.toml
+    # sets `pr-run-mode = "upload"`.
+    environment: release
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       BUILD_MANIFEST_NAME: target/distrib/${{ join(matrix.targets, '-') }}-dist-manifest.json
@@ -314,6 +312,8 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     runs-on: "ubuntu-24.04"
     # id-token and attestations are for the packslip step below.
+    # Gate OIDC on admin-controlled tags, alongside the other release jobs.
+    environment: release
     permissions:
       contents: write
       id-token: write

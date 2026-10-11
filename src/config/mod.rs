@@ -218,7 +218,7 @@ pub use expansion::{
     validate_list_column_template, validate_template, validate_template_syntax, vars_available_in,
     vars_map_to_value,
 };
-pub use hooks::HooksConfig;
+pub use hooks::{HookSource, HooksConfig};
 pub use project::{
     ProjectCiConfig, ProjectCommitConfig, ProjectCommitGenerationConfig, ProjectConfig,
     ProjectForgeConfig, ProjectListConfig, valid_project_config_keys,
@@ -232,8 +232,8 @@ pub use user::{
     CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListColumnConfig, ListConfig,
     MergeConfig, RemoveConfig, ResolvedConfig, StageMode, StepConfig, SwitchConfig,
     SwitchPickerConfig, UserConfig, UserProjectOverrides, config_path, config_path_for_display,
-    default_config_path, default_system_config_path, require_config_path, set_config_overrides,
-    set_config_path, system_config_path, valid_user_config_keys,
+    default_config_path, require_config_path, set_config_overrides, set_config_path,
+    system_config_path, valid_user_config_keys,
 };
 
 #[cfg(test)]

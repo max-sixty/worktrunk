@@ -147,7 +147,8 @@ use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
 
 // Import types from parent module
 use super::{
-    CommandError, DefaultBranchName, ForgeKind, GitError, GitItemId, LineDiff, WorktreeInfo,
+    CommandError, DefaultBranchName, ErrorExt, ForgeKind, GitError, GitItemId, LineDiff,
+    WorktreeInfo,
 };
 
 // Re-export types needed by submodules
@@ -645,9 +646,8 @@ pub fn base_path() -> &'static PathBuf {
 ///   config directory) are already absolute.
 /// - `WORKTRUNK_PROJECT_CONFIG_PATH` resolves from the worktree root, its
 ///   documented base, because the project config is per-worktree.
-/// - `WORKTRUNK_BIN` and `XDG_CONFIG_DIRS` are never opened by wt: the first is
-///   expanded by the generated shell wrapper, and the XDG spec already requires
-///   the second to be absolute.
+/// - `WORKTRUNK_BIN` is never opened by wt: the generated shell wrapper
+///   expands it.
 pub fn resolve_input_path(path: impl AsRef<Path>) -> PathBuf {
     let path = crate::path::expand_tilde(path.as_ref());
     match BASE_PATH.get() {
@@ -1902,7 +1902,7 @@ impl Repository {
             }
             Err(e) => {
                 trace.fail(&e);
-                tracing::debug!(error = %e, "fsmonitor daemon start failed (usually fine): {e}");
+                tracing::debug!(error = %crate::git::error_chain_message(&e), "fsmonitor daemon start failed (usually fine)");
             }
         }
     }
@@ -2168,10 +2168,8 @@ impl Repository {
             );
         }
         if let Some(cmd_err) = CommandError::find_in(err) {
-            let exit_info = match cmd_err.exit_code {
-                Some(code) => format!("exit code {code}"),
-                None => "killed by signal".to_string(),
-            };
+            let exit_info =
+                super::error::process_exit_description(cmd_err.exit_code, cmd_err.signal);
             return (
                 cmd_err.combined_output(),
                 Some(super::error::FailedCommand {
@@ -2180,7 +2178,7 @@ impl Repository {
                 }),
             );
         }
-        (err.to_string(), None)
+        (err.display_message(), None)
     }
 }
 

@@ -1,3 +1,10 @@
+//! Foreground execution for prepared hook and alias pipelines.
+//!
+//! Prepared commands retain their configured identity; templates render just
+//! before execution so earlier steps can update variables. This layer owns
+//! announcements and failure policy. The process runner owns child status and
+//! cancellation, and error wrappers preserve that typed source chain.
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -19,9 +26,9 @@ use worktrunk::styling::{
 use worktrunk::trace::Span;
 
 use super::format_command_label;
-use super::hook_filter::HookSource;
 use crate::output::concurrent::{ConcurrentCommand, run_concurrent_commands};
 use crate::output::{DirectivePassthrough, execute_shell_command};
+use worktrunk::config::HookSource;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PreparedCommand {
@@ -70,16 +77,15 @@ impl PreparedStep {
 
 /// Wraps a command failure (FailFast path) into the final error.
 ///
-/// Receives the failing command, the message extracted from the inner error,
-/// and the optional exit code (set when the inner error is
-/// `WorktrunkError::ChildProcessExited`). Signal-derived errors bypass this
+/// Receives the failing command and its original error, retaining typed status
+/// and the source of spawn failures. Signal-derived errors bypass this
 /// wrapper and short-circuit to `Interrupted` — see
 /// [`handle_command_error`] for the rationale.
 ///
 /// The wrapper is invoked on the calling thread after concurrent children
 /// have joined (`run_concurrent_group` folds outcomes serially), so no
 /// `Send + Sync` bounds are required.
-pub type ErrorWrapper = Box<dyn Fn(&PreparedCommand, String, Option<i32>) -> anyhow::Error>;
+pub type ErrorWrapper = Box<dyn Fn(&PreparedCommand, anyhow::Error) -> anyhow::Error>;
 
 /// What kind of pipeline a sourced step belongs to.
 ///
@@ -128,6 +134,7 @@ pub struct ForegroundStep {
     /// line plus the bash gutter; aliases stay silent (the caller emits one
     /// pipeline summary line).
     pub announce: PipelineKind,
+    pub source: HookSource,
     /// Merge the child's stdout onto wt's stderr (`true`, hooks) or pass it
     /// through unchanged (`false`, aliases). Hooks merge so their output stays
     /// ordered with wt's own stderr "Running …" lines; aliases pass through so
@@ -446,14 +453,6 @@ pub fn render_template_preview(
     )?)
 }
 
-/// Short summary name: "user:name" for named commands, "user" otherwise.
-pub(crate) fn command_summary_name(name: Option<&str>, source: HookSource) -> String {
-    match name {
-        Some(n) => format!("{source}:{n}"),
-        None => source.to_string(),
-    }
-}
-
 /// Execute a pipeline of prepared steps in the foreground.
 ///
 /// This is the canonical foreground execution path for both hooks and aliases.
@@ -508,7 +507,7 @@ fn run_concurrent_group(
         .collect::<Result<_>>()?;
 
     for (cmd, command_str) in cmds.iter().zip(&expanded) {
-        announce_command(cmd, &fg_step.announce, command_str);
+        announce_command(cmd, &fg_step.announce, fg_step.source, command_str);
     }
 
     // Both alias tables and hook tables produce named commands (TOML keys
@@ -573,7 +572,7 @@ fn run_one_command(
         let _span = Span::new(format!("template_render:{}", cmd.label));
         resolve_command_str(cmd, repo)?
     };
-    announce_command(cmd, &fg_step.announce, &command_str);
+    announce_command(cmd, &fg_step.announce, fg_step.source, &command_str);
 
     // Foreground steps inherit the parent's stdin so an interactive child keeps
     // its controlling terminal — a `pre-*` hook can prompt (e.g. `gum confirm`
@@ -602,7 +601,12 @@ fn run_one_command(
 /// showing `command_str` — the rendered command about to run. Alias pipelines
 /// emit nothing — the alias caller renders a single pipeline summary
 /// externally.
-fn announce_command(cmd: &PreparedCommand, kind: &PipelineKind, command_str: &str) {
+fn announce_command(
+    cmd: &PreparedCommand,
+    kind: &PipelineKind,
+    source: HookSource,
+    command_str: &str,
+) {
     let PipelineKind::Hook {
         hook_type,
         display_path,
@@ -613,7 +617,7 @@ fn announce_command(cmd: &PreparedCommand, kind: &PipelineKind, command_str: &st
 
     let full_label = match &cmd.name {
         Some(_) => format_command_label(&hook_type.to_string(), Some(&cmd.label)),
-        None => format!("Running {hook_type} {} hook", cmd.label),
+        None => format!("Running {}", source.hook_label(*hook_type, None)),
     };
     let message = match display_path.as_deref() {
         Some(path) => {
@@ -638,13 +642,18 @@ fn announce_command(cmd: &PreparedCommand, kind: &PipelineKind, command_str: &st
 ///
 /// Wraps non-signal failures in `WorktrunkError::HookCommandFailed`. Signal
 /// errors short-circuit upstream (see [`handle_command_error`]).
-pub fn hook_error_wrapper(hook_type: HookType) -> ErrorWrapper {
-    Box::new(move |cmd, err_msg, exit_code| {
+pub fn hook_error_wrapper(
+    hook_type: HookType,
+    source: HookSource,
+    show_template: bool,
+) -> ErrorWrapper {
+    Box::new(move |cmd, error| {
         WorktrunkError::HookCommandFailed {
             hook_type,
+            source,
             command_name: cmd.name.clone(),
-            error: err_msg,
-            exit_code,
+            template: show_template.then(|| cmd.template.clone()),
+            error,
         }
         .into()
     })
@@ -654,11 +663,14 @@ pub fn hook_error_wrapper(hook_type: HookType) -> ErrorWrapper {
 ///
 /// Children that report a child exit code surface as `AlreadyDisplayed` so
 /// `wt` propagates the alias's exit status. Anything else (template errors,
-/// spawn failures) is wrapped with the alias name.
+/// spawn failures) is wrapped with the alias and configured member names.
 pub fn alias_error_wrapper(alias_name: String) -> ErrorWrapper {
-    Box::new(move |_cmd, err_msg, exit_code| match exit_code {
+    Box::new(move |cmd, error| match error.exit_code() {
         Some(code) => WorktrunkError::AlreadyDisplayed { exit_code: code }.into(),
-        None => anyhow::anyhow!("Failed to run alias '{}': {}", alias_name, err_msg),
+        None => error.context(match &cmd.name {
+            Some(name) => format!("Failed to run alias '{alias_name}' command '{name}'"),
+            None => format!("Failed to run alias '{alias_name}'"),
+        }),
     })
 }
 
@@ -679,25 +691,14 @@ fn handle_command_error(
         return Err(WorktrunkError::Interrupted { signal, hint: None }.into());
     }
 
-    let (err_msg, exit_code) = if let Some(wt_err) = err.downcast_ref::<WorktrunkError>() {
-        match wt_err {
-            WorktrunkError::ChildProcessExited { message, code, .. } => {
-                (message.clone(), Some(*code))
-            }
-            _ => (err.to_string(), None),
-        }
-    } else {
-        (err.to_string(), None)
-    };
-
     match failure_strategy {
-        FailureStrategy::FailFast => Err(error_wrapper(cmd, err_msg, exit_code)),
+        FailureStrategy::FailFast => Err(error_wrapper(cmd, err)),
         FailureStrategy::Warn => {
-            let message = match &cmd.name {
-                Some(name) => cformat!("Command <bold>{name}</> failed: {err_msg}"),
-                None => format!("Command failed: {err_msg}"),
-            };
-            eprintln!("{}", error_message(message));
+            let error = error_wrapper(cmd, err);
+            let rendered = error
+                .render_diagnostic()
+                .unwrap_or_else(|| error_message(error.to_string()).to_string());
+            eprintln!("{rendered}");
             Ok(())
         }
     }
@@ -799,8 +800,8 @@ pub fn prepare_steps(
         }
 
         let template_name = match &cmd.name {
-            Some(name) => format!("{source}:{name}"),
-            None => format!("{source} {hook_type} hook"),
+            Some(_) => source.command_label(cmd.name.as_deref()),
+            None => source.hook_label(hook_type, None),
         };
 
         Ok(PreparedCommand {
@@ -808,7 +809,7 @@ pub fn prepare_steps(
             template: cmd.template.clone(),
             context: cmd_context,
             template_name,
-            label: command_summary_name(cmd.name.as_deref(), source),
+            label: source.command_label(cmd.name.as_deref()),
         })
     })?;
     Ok(PreparedPipeline(steps))
@@ -819,7 +820,7 @@ mod tests {
     use super::*;
 
     fn make_cmd(name: Option<&str>) -> PreparedCommand {
-        let label = command_summary_name(name, HookSource::User);
+        let label = HookSource::User.command_label(name);
         PreparedCommand {
             name: name.map(String::from),
             template: "echo test".to_string(),
@@ -832,23 +833,18 @@ mod tests {
     #[test]
     fn test_handle_command_error_hook_failfast_child_process_exited() {
         let err: anyhow::Error = WorktrunkError::ChildProcessExited {
+            cancellation: None,
             code: 42,
-            message: "command failed".into(),
-            signal: None,
+            physical_signal: None,
         }
         .into();
         let cmd = make_cmd(Some("lint"));
-        let wrapper = hook_error_wrapper(HookType::PreMerge);
+        let wrapper = hook_error_wrapper(HookType::PreMerge, HookSource::User, false);
         let result = handle_command_error(err, &cmd, &wrapper, FailureStrategy::FailFast);
         let err = result.unwrap_err();
         let wt_err = err.downcast_ref::<WorktrunkError>().unwrap();
-        assert!(matches!(
-            wt_err,
-            WorktrunkError::HookCommandFailed {
-                exit_code: Some(42),
-                ..
-            }
-        ));
+        assert!(matches!(wt_err, WorktrunkError::HookCommandFailed { .. }));
+        assert_eq!(err.exit_code(), Some(42));
     }
 
     #[test]
@@ -856,25 +852,55 @@ mod tests {
         // WorktrunkError that isn't ChildProcessExited
         let err: anyhow::Error = WorktrunkError::CommandNotApproved.into();
         let cmd = make_cmd(Some("build"));
-        let wrapper = hook_error_wrapper(HookType::PreMerge);
+        let wrapper = hook_error_wrapper(HookType::PreMerge, HookSource::User, false);
         let result = handle_command_error(err, &cmd, &wrapper, FailureStrategy::FailFast);
         let err = result.unwrap_err();
         let wt_err = err.downcast_ref::<WorktrunkError>().unwrap();
-        assert!(matches!(
-            wt_err,
-            WorktrunkError::HookCommandFailed {
-                exit_code: None,
-                ..
-            }
-        ));
+        assert!(matches!(wt_err, WorktrunkError::HookCommandFailed { .. }));
+        assert_eq!(err.exit_code(), None);
+    }
+
+    #[test]
+    fn test_hook_spawn_failure_retains_io_error_and_has_no_child_exit_code() {
+        let missing = tempfile::tempdir().unwrap().path().join("missing-cwd");
+        let shell = worktrunk::shell_exec::ShellConfig::get().unwrap();
+        let error = worktrunk::shell_exec::Cmd::new(shell.executable.to_string_lossy())
+            .current_dir(&missing)
+            .run()
+            .unwrap_err();
+        let cmd = make_cmd(Some("check"));
+        let error = handle_command_error(
+            error.into(),
+            &cmd,
+            &hook_error_wrapper(HookType::PreMerge, HookSource::User, false),
+            FailureStrategy::FailFast,
+        )
+        .unwrap_err();
+        assert_eq!(error.exit_code(), None);
+        assert_eq!(error.to_string(), "pre-merge user:check failed");
+        let detail = format!("{error:#}");
+        assert!(detail.contains("Failed to execute"));
+        assert!(detail.contains(&worktrunk::path::format_path_for_display(&missing)));
+        let io_error = error.root_cause().downcast_ref::<std::io::Error>().unwrap();
+        assert_eq!(io_error.kind(), std::io::ErrorKind::NotFound);
+        let io_detail = io_error.to_string();
+        assert_eq!(detail.matches(&io_detail).count(), 1);
+        assert_eq!(
+            error
+                .render_diagnostic()
+                .unwrap()
+                .matches(&io_detail)
+                .count(),
+            1
+        );
     }
 
     #[test]
     fn test_handle_command_error_alias_failfast_child_process_exited() {
         let err: anyhow::Error = WorktrunkError::ChildProcessExited {
+            cancellation: None,
             code: 1,
-            message: "exit 1".into(),
-            signal: None,
+            physical_signal: None,
         }
         .into();
         let cmd = make_cmd(None);
@@ -894,21 +920,21 @@ mod tests {
         let cmd = make_cmd(None);
         let wrapper = alias_error_wrapper("deploy".into());
         let result = handle_command_error(err, &cmd, &wrapper, FailureStrategy::FailFast);
-        let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("Failed to run alias 'deploy'"));
-        assert!(err_msg.contains("template error"));
+        let error = result.unwrap_err();
+        assert_eq!(error.to_string(), "Failed to run alias 'deploy'");
+        assert_eq!(error.root_cause().to_string(), "template error");
     }
 
     #[test]
     fn test_handle_command_error_warn_continues() {
         let err: anyhow::Error = WorktrunkError::ChildProcessExited {
+            cancellation: None,
             code: 1,
-            message: "lint failed".into(),
-            signal: None,
+            physical_signal: None,
         }
         .into();
         let cmd = make_cmd(Some("lint"));
-        let wrapper = hook_error_wrapper(HookType::PostCreate);
+        let wrapper = hook_error_wrapper(HookType::PostCreate, HookSource::User, false);
         let result = handle_command_error(err, &cmd, &wrapper, FailureStrategy::Warn);
         assert!(result.is_ok());
     }
@@ -916,13 +942,13 @@ mod tests {
     #[test]
     fn test_handle_command_error_warn_signal_aborts() {
         let err: anyhow::Error = WorktrunkError::ChildProcessExited {
+            cancellation: None,
             code: 143,
-            message: "terminated".into(),
-            signal: Some(15),
+            physical_signal: Some(15),
         }
         .into();
         let cmd = make_cmd(Some("cleanup"));
-        let wrapper = hook_error_wrapper(HookType::PostCreate);
+        let wrapper = hook_error_wrapper(HookType::PostCreate, HookSource::User, false);
         let result = handle_command_error(err, &cmd, &wrapper, FailureStrategy::Warn);
         let err = result.unwrap_err();
         let wt_err = err.downcast_ref::<WorktrunkError>().unwrap();
@@ -940,7 +966,7 @@ mod tests {
         // Covers the `cmd.name = None` branch of the Warn arm.
         let err = anyhow::anyhow!("unexpected failure");
         let cmd = make_cmd(None);
-        let wrapper = hook_error_wrapper(HookType::PostCreate);
+        let wrapper = hook_error_wrapper(HookType::PostCreate, HookSource::User, false);
         let result = handle_command_error(err, &cmd, &wrapper, FailureStrategy::Warn);
         assert!(result.is_ok());
     }
