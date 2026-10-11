@@ -1357,7 +1357,7 @@ broken = "echo {{ does_not_exist }} > should_not_exist.txt"
     let log_content = fs::read_to_string(&runner_log).unwrap();
     // Template errors identify the hook type, source, and command.
     assert_snapshot!(log_content, @"
-    [31m✗[39m [31mFailed to expand post-start user:broken: undefined value @ line 1[39m
+    [31m✗[39m [31mFailed to expand post-start user:broken: undefined variable does_not_exist @ line 1[39m
     [107m [0m echo {{ does_not_exist }} > should_not_exist.txt
     [2m↳[22m [2mAvailable variables: [4margs[24m, [4mbase[24m, [4mbase_worktree_path[24m, [4mbranch[24m, [4mcommit[24m, [4mcwd[24m, [4mdefault_branch[24m, [4mhook_name[24m, [4mhook_type[24m, [4mprimary_worktree_path[24m, [4mremote[24m, [4mremote_url[24m, [4mrepo[24m, [4mrepo_path[24m, [4mshort_commit[24m, [4mtarget[24m, [4mtarget_worktree_path[24m, [4mupstream[24m, [4mworktree_name[24m, [4mworktree_path[24m[22m
     ");
@@ -1715,6 +1715,17 @@ project = "echo ran > project.txt"
     assert!(repo.root_path().join("later.txt").exists(), "{stderr}");
     assert!(repo.root_path().join("project.txt").exists(), "{stderr}");
     assert_eq!(repo.root_path().join("sibling.txt").exists(), concurrent);
+}
+
+#[rstest]
+fn test_hook_template_typo_names_variable(repo: TestRepo) {
+    repo.write_test_config("pre-merge = \"echo {{ brnch }}\"\n");
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["hook", "pre-merge", "--yes"]);
+        assert_cmd_snapshot!(cmd);
+    });
 }
 
 /// The other half of that contract: a *syntax* error anywhere in the pipeline
