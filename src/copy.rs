@@ -39,7 +39,7 @@
 //! outputs older than freshly checked-out sources.
 
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -80,6 +80,36 @@ fn classify_copy(fallback: Option<u64>) -> DataCopy {
     match fallback {
         None => DataCopy::Reflinked,
         Some(_) => DataCopy::Written,
+    }
+}
+
+/// `reflink_copy::reflink_or_copy`, also falling back to a byte copy when the
+/// clone is rejected with `PermissionDenied`.
+///
+/// The crate passes `PermissionDenied` straight through, but some filesystems
+/// answer `FICLONE` with `EPERM` rather than `EOPNOTSUPP` (#4433), where
+/// `cp --reflink=auto` copies the file anyway. A genuine permission problem on
+/// the source or destination fails the retry with the same error. The crate
+/// removes a destination it created before returning the error, so the retry
+/// starts clean.
+fn reflink_or_copy(src: &Path, dest: &Path) -> io::Result<Option<u64>> {
+    fall_back_on_rejected_reflink(reflink_copy::reflink_or_copy(src, dest), || {
+        fs::copy(src, dest)
+    })
+}
+
+/// The decision half of [`reflink_or_copy`], split out because no CI
+/// filesystem rejects a clone with `EPERM`.
+fn fall_back_on_rejected_reflink(
+    result: io::Result<Option<u64>>,
+    copy: impl FnOnce() -> io::Result<u64>,
+) -> io::Result<Option<u64>> {
+    match result {
+        Err(e) if e.kind() == ErrorKind::PermissionDenied => {
+            tracing::debug!("reflink rejected ({e}), falling back to a byte copy");
+            copy().map(Some)
+        }
+        result => result,
     }
 }
 
@@ -185,7 +215,7 @@ pub fn copy_leaf(
         create_symlink(&target, src, dest)?;
         DataCopy::Neither
     } else {
-        match reflink_copy::reflink_or_copy(src, dest) {
+        match reflink_or_copy(src, dest) {
             Ok(fallback) => {
                 // Preserve file permissions (especially the execute bit) —
                 // needed on Linux, skipped on macOS.
@@ -549,6 +579,36 @@ mod tests {
         // produces one of the two.
         assert_eq!(classify_copy(None), DataCopy::Reflinked);
         assert_eq!(classify_copy(Some(4096)), DataCopy::Written);
+    }
+
+    #[test]
+    fn test_reflink_rejected_with_eperm_falls_back_to_copy() {
+        // Some filesystems reject FICLONE with EPERM rather than EOPNOTSUPP
+        // (#4433); `reflink_or_copy` returns that without trying `fs::copy`.
+        let rejected = Err(io::Error::from(ErrorKind::PermissionDenied));
+        let result = fall_back_on_rejected_reflink(rejected, || Ok(42));
+        assert_eq!(result.unwrap(), Some(42));
+
+        // A real permission problem fails the retry too, and is reported.
+        let rejected = Err(io::Error::from(ErrorKind::PermissionDenied));
+        let result = fall_back_on_rejected_reflink(rejected, || {
+            Err(io::Error::from(ErrorKind::PermissionDenied))
+        });
+        assert_eq!(result.unwrap_err().kind(), ErrorKind::PermissionDenied);
+
+        // Other outcomes pass through without a retry.
+        let retry = || -> io::Result<u64> { panic!("retried") };
+        assert_eq!(
+            fall_back_on_rejected_reflink(Ok(None), retry).unwrap(),
+            None
+        );
+        let exists = Err(io::Error::from(ErrorKind::AlreadyExists));
+        assert_eq!(
+            fall_back_on_rejected_reflink(exists, retry)
+                .unwrap_err()
+                .kind(),
+            ErrorKind::AlreadyExists
+        );
     }
 
     #[test]
