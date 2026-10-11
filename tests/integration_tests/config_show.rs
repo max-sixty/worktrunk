@@ -5943,12 +5943,12 @@ fn test_codex_hooks_carry_windows_commands() {
             "commandWindows must not invoke Windows Terminal as wt:\n{windows}"
         );
         assert!(
-            windows.starts_with(r#"cmd /d /c call "${PLUGIN_ROOT}\hooks\wt.cmd" "#)
+            windows.starts_with(r#"set WT_HOOK=; & "${PLUGIN_ROOT}\hooks\wt.cmd" "#)
                 && root.join("plugins/worktrunk/hooks/wt.cmd").is_file(),
-            "commandWindows must invoke the shipped shim through cmd /d /c call:\n{windows}"
+            "commandWindows must invoke the shipped shim without a bare executable lookup:\n{windows}"
         );
         assert!(
-            !windows.contains("||") && !windows.contains('&') && !windows.contains("exit /b"),
+            !windows.contains("||") && !windows.contains("exit /b"),
             "commandWindows must leave cmd-only failure handling in the shim:\n{windows}"
         );
         assert!(
@@ -6039,6 +6039,12 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
         .unwrap();
     }
 
+    fs::write(
+        plugin_root.join("hooks/quiet.cmd"),
+        "@echo off\r\nexit /b 0\r\n",
+    )
+    .unwrap();
+
     let command_for = |event: &str| -> String {
         codex["hooks"]["hooks"][event][0]["hooks"][0]["commandWindows"]
             .as_str()
@@ -6053,9 +6059,8 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
     let with_worktrunk = pinned_windows_path(&[path_dir]);
     let without_worktrunk = pinned_windows_path(&[]);
 
-    let run_hook =
-        |shell: &std::path::Path, event: &str, path: &std::ffi::OsString| -> std::process::Output {
-            let line = command_for(event);
+    let run_line =
+        |shell: &std::path::Path, line: &str, path: &std::ffi::OsString| -> std::process::Output {
             let mut cmd = std::process::Command::new(shell);
             repo.configure_wt_cmd(&mut cmd);
             if shell.file_name() == Some(std::ffi::OsStr::new("cmd.exe")) {
@@ -6065,10 +6070,14 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
             }
             cmd.env("PATH", path)
                 .env_remove("WORKTRUNK_BIN")
+                .env_remove("NoDefaultCurrentDirectoryInExePath")
                 .current_dir(repo.root_path())
                 .output()
                 .unwrap()
         };
+    let run_hook = |shell: &std::path::Path, event: &str, path: &std::ffi::OsString| {
+        run_line(shell, &command_for(event), path)
+    };
     let describe = |shell: &std::path::Path, output: &std::process::Output| {
         format!(
             "under {}, got {}\nstdout:\n{}\nstderr:\n{}",
@@ -6083,59 +6092,75 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
         let output = repo
             .git_command()
             .args(["config", "--get", &marker_key])
-            .run();
-        output.map_or_else(
-            |_| String::new(),
-            |output| String::from_utf8_lossy(&output.stdout).trim().to_owned(),
-        )
+            .run()
+            .unwrap();
+        if output.status.code() == Some(1) && output.stdout.is_empty() {
+            return String::new();
+        }
+        assert!(output.status.success(), "{output:?}");
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()["marker"]
+            .as_str()
+            .unwrap()
+            .to_owned()
     };
 
+    // Prove that the old bare-cmd hop selects a project-local executable.
+    // Keep that decoy in place while exercising every shipped hook below.
+    let selected = repo.root_path().join("cmd-selected");
+    fs::write(
+        repo.root_path().join("cmd.cmd"),
+        "@echo off\r\necho selected> \"%~dp0cmd-selected\"\r\nexit /b 0\r\n",
+    )
+    .unwrap();
+    let system_cmd =
+        std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/cmd.exe");
+    let old_command = format!(
+        r#"cmd /d /c call "{}\hooks\wt.cmd" config state marker set 🤖"#,
+        plugin_root.display()
+    );
+    let output = run_line(&system_cmd, &old_command, &with_worktrunk);
+    assert!(
+        output.status.success() && selected.is_file(),
+        "the vulnerable command must select the project decoy; {}",
+        describe(&system_cmd, &output)
+    );
+    fs::remove_file(&selected).unwrap();
+
     for shell in [
-        which::which("cmd.exe").expect("cmd.exe must be installed"),
+        system_cmd,
         which::which("powershell.exe").expect("Windows PowerShell must be installed"),
         which::which("pwsh.exe").expect("shell-integration-tests requires PowerShell 7 on PATH"),
     ] {
         let shell = shell.as_path();
 
-        let output = run_hook(shell, "UserPromptSubmit", &with_worktrunk);
+        // Separate shell diagnostics from Worktrunk's own marker messages.
+        let quiet_command = command_for("UserPromptSubmit").replace("\\wt.cmd", "\\quiet.cmd");
+        let output = run_line(shell, &quiet_command, &with_worktrunk);
         assert!(
-            output.status.success(),
-            "UserPromptSubmit hook must succeed; {}",
-            describe(shell, &output)
-        );
-        assert!(
-            marker().contains('🤖'),
-            "UserPromptSubmit must store the working marker, not a mangled byte sequence; \
-             got {:?} {}",
-            marker(),
+            output.status.success() && output.stdout.is_empty() && output.stderr.is_empty(),
+            "the launcher must not emit shell output; {}",
             describe(shell, &output)
         );
 
-        let output = run_hook(shell, "Stop", &with_worktrunk);
-        assert!(
-            output.status.success(),
-            "Stop hook must succeed; {}",
-            describe(shell, &output)
-        );
-        assert!(
-            marker().contains('💬'),
-            "Stop must replace the marker with the waiting one; got {:?} {}",
-            marker(),
-            describe(shell, &output)
-        );
-
-        let output = run_hook(shell, "SessionEnd", &with_worktrunk);
-        assert!(
-            output.status.success(),
-            "SessionEnd hook must succeed; {}",
-            describe(shell, &output)
-        );
-        assert!(
-            marker().is_empty(),
-            "SessionEnd must clear the marker; got {:?} {}",
-            marker(),
-            describe(shell, &output)
-        );
+        for (event, expected) in [
+            ("UserPromptSubmit", "🤖"),
+            ("PermissionRequest", "💬"),
+            ("Stop", "💬"),
+            ("SessionEnd", ""),
+        ] {
+            let output = run_hook(shell, event, &with_worktrunk);
+            assert!(
+                output.status.success() && output.stdout.is_empty(),
+                "{event} must succeed without hook context; {}",
+                describe(shell, &output)
+            );
+            assert_eq!(marker(), expected, "{event}: {}", describe(shell, &output));
+            assert!(
+                !selected.exists(),
+                "{event} must not execute the project-local cmd; {}",
+                describe(shell, &output)
+            );
+        }
 
         // Worktrunk not installed: the marker is optional decoration, so the
         // hook must stay silent rather than fail every prompt (#4007).

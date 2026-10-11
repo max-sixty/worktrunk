@@ -3,12 +3,12 @@ rem Windows hook entrypoint: find Git Bash by installation path, avoiding the
 rem System32\bash.exe WSL launcher (#4007), then run the shared wt.sh.
 rem Usage: wt.cmd [args...]
 rem
-rem Codex uses the session shell, so commandWindows must parse in cmd and both
-rem PowerShell editions (#4239). `cmd /d /c call "${PLUGIN_ROOT}\hooks\wt.cmd"`
-rem starts with a command rather than a PowerShell string expression. `call`
-rem avoids cmd's initial-quote stripping; /d disables AutoRun for this cmd hop.
-rem The outer cmd, if Codex uses one, still runs its own AutoRun. A cmd-session
-rem lookup of the bare `cmd` can also resolve an executable in the project cwd.
+rem Codex uses the session shell. The manifest starts with `set WT_HOOK=; &`:
+rem cmd sets an unused environment variable, then & runs this absolute path;
+rem PowerShell sets an unused variable, then ; ends that statement and & calls
+rem this path. Both builtins are silent. Avoid a bare cmd launcher: cmd would
+rem search the project directory first. Direct batch execution uses the system
+rem interpreter (MS14-019). The session shell still owns its startup behavior.
 rem
 rem Always exit 0: markers are best-effort, and cmd's `|| exit /b 0` cannot live
 rem in the cross-shell command string. Diagnostics still go to stderr.

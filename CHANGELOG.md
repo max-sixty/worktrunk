@@ -8,6 +8,8 @@
 
 - **Merge another worktree’s branch**: `wt merge --branch feature/auth` runs the merge pipeline in that branch’s existing worktree, using its configuration, while your shell stays put. [Docs](https://worktrunk.dev/merge/) ([#4360](https://github.com/max-sixty/worktrunk/pull/4360), thanks @liuyinchu for implementing)
 
+- **Picker preview preference**: set `[switch.picker] preview = false` to open the picker without a preview; `Alt-p` shows it. [Docs](https://worktrunk.dev/switch/#interactive-picker) ([#4428](https://github.com/max-sixty/worktrunk/pull/4428), thanks @emacampolo for requesting in [#4072](https://github.com/max-sixty/worktrunk/issues/4072))
+
 - **Nushell integration requires 0.113 or newer** (Breaking). [Docs](https://worktrunk.dev/config/#wt-config-shell-init--manual-setup) ([#4400](https://github.com/max-sixty/worktrunk/pull/4400))
 
 - **Choose a worktree directory independently of its branch**: experimental `wt switch --create feature/JIRA-1234 --path ../dark-mode` overrides the path template for one worktree. Switch by branch or path as usual; `wt step relocate` can return it to the template location. [Docs](https://worktrunk.dev/switch/#custom-path) ([#4317](https://github.com/max-sixty/worktrunk/pull/4317), thanks @christowiz for requesting in [#1982](https://github.com/max-sixty/worktrunk/issues/1982))
@@ -21,6 +23,8 @@
 - **Repositories using `--separate-git-dir`** (Breaking): new worktree paths use the main checkout rather than the Git directory’s parent. Commands from a linked worktree fail if main cannot be identified; `git worktree repair` from main records its location. ([#4393](https://github.com/max-sixty/worktrunk/pull/4393))
 
 - **Config views and shell integration advice**: `wt config show` lists installation and authentication advice on their own lines; config and approvals parse errors name the source file. Merge and removal suggest restarting the shell when integration is installed but inactive. ([#4351](https://github.com/max-sixty/worktrunk/pull/4351), [#4343](https://github.com/max-sixty/worktrunk/pull/4343))
+
+- **Template diagnostics**: errors can identify missing variables and suggest corrections. (Breaking: custom filters now reject undefined inputs, including absent optional values such as `upstream`; guard them or supply a default.) ([#4350](https://github.com/max-sixty/worktrunk/pull/4350))
 
 - **Hook failure diagnostics**: failures name the hook and its source; commands that cannot start report the program, working directory and OS error. A concurrent hook that cannot start no longer stops its siblings. ([#4352](https://github.com/max-sixty/worktrunk/pull/4352))
 
@@ -52,7 +56,13 @@
 
 - **Mixed valid and invalid environment overrides**: an invalid `WORKTRUNK_*` setting no longer discards unrelated valid overrides; compound settings such as a custom column's template and width are validated together. ([#4348](https://github.com/max-sixty/worktrunk/pull/4348))
 
-- **Unusual setups**: untracked `:x` and glob-like names count in diffs; Azure selects its repository and Windows launcher; SSH remotes suggest web URLs; aliases preserve `--args`/`--vars`; completion drops unsupported alias flags; custom Git Bash installations work with `mingw64/bin` paths. ([#4320](https://github.com/max-sixty/worktrunk/pull/4320), [#4326](https://github.com/max-sixty/worktrunk/pull/4326), [#4402](https://github.com/max-sixty/worktrunk/pull/4402), [#4364](https://github.com/max-sixty/worktrunk/pull/4364), [#4391](https://github.com/max-sixty/worktrunk/pull/4391), [#4329](https://github.com/max-sixty/worktrunk/pull/4329), [#4411](https://github.com/max-sixty/worktrunk/pull/4411), thanks @wmmc88 and @LeoWSY-hashblue for reporting)
+- **IPv6, non-default SSH ports and uppercase hosts**: project identifiers keep distinct servers separate and lowercase hostnames. (Breaking: update affected `[projects]` keys to the identifier shown by `wt config show`; saved approvals prompt again.) ([#4421](https://github.com/max-sixty/worktrunk/pull/4421))
+
+- **PowerShell setup and Windows plugin hooks**: Unix setup uses the profile selected by PowerShell, including custom `XDG_CONFIG_HOME`. Codex hooks now run from cmd, Windows PowerShell and PowerShell 7. ([#4422](https://github.com/max-sixty/worktrunk/pull/4422), [#4241](https://github.com/max-sixty/worktrunk/pull/4241), thanks @wstczyw for reporting in [#4239](https://github.com/max-sixty/worktrunk/issues/4239))
+
+- **Gitea login discovery and Claude settings**: Gitea authentication detection uses tea’s own login list, including SSH hosts. Installing the Claude statusline preserves existing settings key order. ([#4420](https://github.com/max-sixty/worktrunk/pull/4420))
+
+- **Unusual setups**: untracked `:x` and glob-like names count in diffs; Azure selects its repository and Windows launcher; SSH remotes suggest web URLs; aliases preserve `--args`/`--vars`; completion drops unsupported alias flags; custom Git Bash installations work with `mingw64/bin` paths; valueless Git booleans read as true. ([#4320](https://github.com/max-sixty/worktrunk/pull/4320), [#4326](https://github.com/max-sixty/worktrunk/pull/4326), [#4402](https://github.com/max-sixty/worktrunk/pull/4402), [#4364](https://github.com/max-sixty/worktrunk/pull/4364), [#4391](https://github.com/max-sixty/worktrunk/pull/4391), [#4329](https://github.com/max-sixty/worktrunk/pull/4329), [#4411](https://github.com/max-sixty/worktrunk/pull/4411), [#4314](https://github.com/max-sixty/worktrunk/pull/4314), thanks @wmmc88 and @LeoWSY-hashblue for reporting)
 
 ### Documentation
 

@@ -955,14 +955,15 @@ mod tests {
                     "--exact",
                     "git::remove::tests::rename_refuses_cancelled_operation",
                 ])
-                .env(CHILD_ENV, "1");
-            assert!(
-                crate::shell_exec::spawn(&mut command)
-                    .unwrap()
-                    .wait()
-                    .unwrap()
-                    .success()
-            );
+                .env(CHILD_ENV, "1")
+                .stdout(std::process::Stdio::piped());
+            let output = crate::shell_exec::spawn(&mut command)
+                .unwrap()
+                .wait_with_output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(output.status.success(), "{stdout}");
+            assert!(stdout.contains(" 1 passed;"), "{stdout}");
             return;
         }
         let mut test = TestRepo::with_initial_commit();
