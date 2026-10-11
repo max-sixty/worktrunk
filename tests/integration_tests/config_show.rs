@@ -5592,47 +5592,9 @@ fn test_plugin_layout_is_consolidated() {
     }
 }
 
-/// Codex resolves a hook `command` through a shell. On Windows that is the
-/// *session* shell — `build_hooks_config` in `codex-rs/core/src/session/mod.rs`
-/// derives it from the turn environment, so a PowerShell session runs
-/// `pwsh -NoProfile -Command "<commandWindows>"` — and `%COMSPEC% /C` only when
-/// Codex knows of no session shell (`default_shell_command` in
-/// `codex-rs/hooks/src/engine/command_runner.rs`). The Unix commands lead with
-/// `bash "$PLUGIN_ROOT/hooks/wt.sh"`, and under either Windows shell that bare
-/// `bash` resolves through the Windows PATH to `System32\bash.exe`, the WSL
-/// launcher — not Git Bash. In a sandboxed Codex session the launcher refuses to
-/// start (`Bash/Service/CreateInstance/E_ACCESSDENIED`), so every prompt,
-/// permission, stop, and session-end event raises a "Hook failed" banner
-/// (#4007).
-///
-/// Codex's fix for this is the per-handler `commandWindows` override, which
-/// *replaces* `command` on Windows (`command_windows.unwrap_or(command)` in
-/// `codex-rs/hooks/src/engine/discovery.rs`). Every Codex command hook must
-/// carry one, and it must name neither `bash` — the WSL launcher — nor bare
-/// `wt`, which belongs to Windows Terminal on Windows. It calls `hooks/wt.cmd`,
-/// which finds Git Bash *by path* and runs the same `wt.sh`.
-///
-/// That one string has to parse in *both* Windows shells, which is what pins
-/// its shape (#4239):
-///
-/// - It leads with `cmd /d /c call`, not with the quoted shim path. PowerShell
-///   reads a statement that opens with a quote as an *expression*, so the bare
-///   arguments after it are a parse error and nothing runs at all; a leading
-///   bareword puts the line in command mode, where the quoted path is just an
-///   argument. `call` then keeps cmd's own `/C` quote-stripping off a path with
-///   a space in it — that rule fires only when the command line *starts* with a
-///   quote — and `/d` keeps a user's `AutoRun` out of the cmd hop this line
-///   spawns, whose stdout Codex reads back as context. Only that hop: the outer
-///   cmd Codex spawns passes no `/d`, so on a cmd session AutoRun still runs.
-/// - It carries no cmd-only control flow. `|| exit /b 0` is a PowerShell parse
-///   error (`exit` takes an expression, and 5.1 has no `||` at all), and a parse
-///   error loses the whole line, marker included. `hooks/wt.cmd` absorbs the
-///   `|| true` instead, which is why that shim always exits 0.
-///
-/// Codex substitutes only the braced `${PLUGIN_ROOT}` form textually, before
-/// the shell runs; the unbraced `$PLUGIN_ROOT` survives to the shell and is
-/// expanded only by the Unix `/bin/sh`. Neither Windows shell expands it, so
-/// the Windows commands must brace it.
+/// Keep Windows-specific Codex commands present and shell-neutral on every platform.
+/// The invocation rationale lives in plugins/worktrunk/hooks/wt.cmd; the Windows
+/// shell-integration test below exercises the commands themselves.
 #[test]
 fn test_codex_hooks_carry_windows_commands() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -5664,44 +5626,30 @@ fn test_codex_hooks_carry_windows_commands() {
             .as_str()
             .expect("each Codex hook must define a command");
         let windows = hook["commandWindows"].as_str().unwrap_or_else(|| {
-            panic!(
-                "Codex hook has no `commandWindows`; on Windows its `command` runs under \
-                 cmd.exe, where bare `bash` resolves to the WSL launcher rather than Git \
-                 Bash and fails outright in a sandboxed session (#4007). command:\n{command}"
-            )
+            panic!("Codex hook must define commandWindows; command:\n{command}")
         });
         assert!(
             !windows.split_whitespace().any(|word| word == "bash"),
-            "`commandWindows` must not name bash — a Windows shell resolves that name to \
-             the WSL launcher (#4007); the shim finds Git Bash by path instead. \
-             commandWindows:\n{windows}"
+            "commandWindows must use the Git Bash shim, not bare bash:\n{windows}"
         );
         assert!(
             !windows
                 .split_whitespace()
                 .any(|word| word == "wt" || word == "wt.exe" || word.ends_with("\\wt.exe")),
-            "`commandWindows` must not invoke bare `wt` — that name resolves to Windows \
-             Terminal. commandWindows:\n{windows}"
+            "commandWindows must not invoke Windows Terminal as wt:\n{windows}"
         );
         assert!(
             windows.starts_with(r#"cmd /d /c call "${PLUGIN_ROOT}\hooks\wt.cmd" "#)
                 && root.join("plugins/worktrunk/hooks/wt.cmd").is_file(),
-            "`commandWindows` must lead with `cmd /d /c call` and the quoted shim that \
-             ships beside wt.sh: a line opening with a quote is an expression to \
-             PowerShell, which is the session shell on most Windows machines, and its \
-             bare arguments are then a parse error (#4239). commandWindows:\n{windows}"
+            "commandWindows must invoke the shipped shim through cmd /d /c call:\n{windows}"
         );
         assert!(
             !windows.contains("||") && !windows.contains('&') && !windows.contains("exit /b"),
-            "`commandWindows` must carry no cmd-only control flow — PowerShell cannot parse \
-             `|| exit /b 0`, and a parse error loses the whole line, marker included \
-             (#4239). `hooks/wt.cmd` swallows the failure instead. commandWindows:\n{windows}"
+            "commandWindows must leave cmd-only failure handling in the shim:\n{windows}"
         );
         assert!(
             windows.contains("${PLUGIN_ROOT}") && !windows.contains("$PLUGIN_ROOT/"),
-            "`commandWindows` must reference the plugin root as ${{PLUGIN_ROOT}}: Codex \
-             substitutes only the braced form textually, and neither Windows shell would \
-             expand the unbraced one. commandWindows:\n{windows}"
+            "commandWindows must use Codex's textual ${{PLUGIN_ROOT}} substitution:\n{windows}"
         );
         // The Unix side keeps the unbraced form the login shell expands.
         assert!(
@@ -5762,49 +5710,10 @@ fn msys_path(path: &std::path::Path) -> String {
     )
 }
 
-/// The absolute path of a shell the test drives, resolved from the ambient PATH
-/// rather than handed to `Command::new` as a bare name: the tests below pin a
-/// narrow `PATH` for the child, and a bare name would then be resolved against
-/// whichever of the two PATHs the platform happens to consult.
-#[cfg(windows)]
-fn shell_on_path(name: &str) -> std::path::PathBuf {
-    let path = std::env::var_os("PATH").expect("a Windows test runner must set PATH");
-    std::env::split_paths(&path)
-        .map(|dir| dir.join(name))
-        .find(|candidate| candidate.is_file())
-        .unwrap_or_else(|| panic!("a Windows test runner must have {name} on PATH"))
-}
-
-/// The structural guard above pins that a `commandWindows` exists and avoids
-/// `bash`; this one runs the real ones the way Codex does and checks they land
-/// the marker.
-///
-/// Codex hands a hook to the *session* shell, so one string has to work under
-/// all three it can pick (`build_command` in
-/// `codex-rs/hooks/src/engine/command_runner.rs`, fed by `build_hooks_config` in
-/// `codex-rs/core/src/session/mod.rs`):
-///
-/// - `cmd.exe /C` with the whole line wrapped in quotes as a single raw
-///   argument — the `%COMSPEC%` fallback, taken when Codex knows of no session
-///   shell.
-/// - `powershell.exe -NoProfile -Command <line>` and `pwsh -NoProfile -Command
-///   <line>`, the shape `Shell::derive_exec_args` produces for a PowerShell
-///   session, with the line as an ordinary argument. PowerShell is the usual
-///   Windows session shell, and the cmd-syntax command this repo shipped before
-///   #4239 was a parse error under it, so every event failed before `wt.cmd`
-///   started. Both editions run, because 5.1 ships with Windows and 7 is what a
-///   PowerShell user is likely to have configured.
-///
-/// The plugin root carries a space, which is the ordinary case — `$CODEX_HOME`
-/// sits under the user profile — and the one cmd's `/C` quote handling turns
-/// on. What this covers beyond the manifest text: each shell's own quoting
-/// across the two hops to the shim, the shim's `goto`-based search for Git Bash,
-/// `wt.sh` running under the bash it picks (which is what needs
-/// `Git\bin\bash.exe`, the wrapper that puts `uname` and friends on PATH for a
-/// caller outside Git Bash), the emoji argument surviving every hop intact, and
-/// the shim's own `exit /b 0` keeping a failed marker best-effort — a hook that
-/// exits nonzero is what raises the repeated "Hook failed" banner #4007 reports.
-#[cfg(windows)]
+/// Run the shipped hooks through Codex's cmd /C and PowerShell -Command shapes.
+/// Check marker updates, Unicode arguments, and best-effort failures from a plugin
+/// path containing spaces. PowerShell 7 is required by shell-integration-tests.
+#[cfg(all(windows, feature = "shell-integration-tests"))]
 #[rstest]
 fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
     use std::os::windows::process::CommandExt;
@@ -5878,9 +5787,9 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
     };
 
     for shell in [
-        shell_on_path("cmd.exe"),
-        shell_on_path("powershell.exe"),
-        shell_on_path("pwsh.exe"),
+        which::which("cmd.exe").expect("cmd.exe must be installed"),
+        which::which("powershell.exe").expect("Windows PowerShell must be installed"),
+        which::which("pwsh.exe").expect("shell-integration-tests requires PowerShell 7 on PATH"),
     ] {
         let shell = shell.as_path();
 

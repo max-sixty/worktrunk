@@ -1,22 +1,17 @@
 @echo off
-rem Windows counterpart of the `bash "$PLUGIN_ROOT/hooks/wt.sh"` that the Unix
-rem hook commands lead with: it finds Git Bash by path, then runs wt.sh through
-rem it, so every integration resolves the worktrunk binary through that one
-rem script.
-rem
-rem Codex runs a hook command through a shell, where a bare `bash` resolves
-rem through PATH to System32\bash.exe -- the WSL launcher, not Git Bash -- and in
-rem a sandboxed session refuses to start at all (#4007). Only the bare name is
-rem the problem, so this resolves bash.exe the way find_git_bash does in
-rem src/shell_exec.rs and changes nothing else.
+rem Windows hook entrypoint: find Git Bash by installation path, avoiding the
+rem System32\bash.exe WSL launcher (#4007), then run the shared wt.sh.
 rem Usage: wt.cmd [args...]
 rem
-rem This shim always exits 0, because it is where the hooks' `|| true` lives. The
-rem shell running `commandWindows` is the session shell -- PowerShell on most
-rem Windows machines, cmd.exe only when Codex knows of no session shell (#4239) --
-rem and no spelling of `|| true` parses in both, so the swallow cannot live in
-rem the hook command line. A marker is decoration; a nonzero exit is what raises
-rem Codex's repeated "Hook failed" banner. Diagnostics still go to stderr.
+rem Codex uses the session shell, so commandWindows must parse in cmd and both
+rem PowerShell editions (#4239). `cmd /d /c call "${PLUGIN_ROOT}\hooks\wt.cmd"`
+rem starts with a command rather than a PowerShell string expression. `call`
+rem avoids cmd's initial-quote stripping; /d disables AutoRun for this cmd hop.
+rem The outer cmd, if Codex uses one, still runs its own AutoRun. A cmd-session
+rem lookup of the bare `cmd` can also resolve an executable in the project cwd.
+rem
+rem Always exit 0: markers are best-effort, and cmd's `|| exit /b 0` cannot live
+rem in the cross-shell command string. Diagnostics still go to stderr.
 rem
 rem Every branch here is a bare `goto` or `call`: `if <cond> <cmd1> & <cmd2>`
 rem runs cmd2 unconditionally, and `if <cond> <cmd1> || <cmd2>` tests the `if`
