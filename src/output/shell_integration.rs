@@ -83,8 +83,9 @@ use worktrunk::styling::{
 };
 
 use crate::commands::configure_shell::{
-    ConfigAction, UninstallScanResult, apply_confirmed_shell_config, collect_legacy_cleanups,
-    format_matched_lines, preview_shell_completions, prompt_for_install, scan_shell_configs,
+    ConfigAction, ShellConfigError, UninstallScanResult, apply_confirmed_shell_config,
+    collect_legacy_cleanups, format_matched_lines, preview_shell_completions, prompt_for_install,
+    scan_shell_configs,
 };
 
 /// Git config key tracking how many times the shell-integration install hint
@@ -162,31 +163,37 @@ pub(crate) fn explicit_path_hint(branch: &str) -> String {
 
 /// Check if we should show the explicit path hint.
 /// True when: explicit path invocation AND current shell has integration configured.
-pub(crate) fn should_show_explicit_path_hint() -> bool {
-    crate::was_invoked_with_explicit_path() && current_shell_is_configured()
+pub(crate) fn should_show_explicit_path_hint() -> anyhow::Result<bool> {
+    Ok(crate::was_invoked_with_explicit_path() && current_shell_is_configured()?)
 }
 
 /// Whether integration is installed for the shell running this invocation,
 /// using the installer’s read-only comparison for both rc lines and wrapper files.
 /// Legacy or outdated wrappers need installation rather than a restart.
-fn current_shell_is_configured() -> bool {
-    current_shell()
-        .and_then(|shell| scan_shell_configs(Some(shell), true, &crate::binary_name()).ok())
-        .is_some_and(|scan| {
-            scan.configured
-                .iter()
-                .any(|result| matches!(result.action, ConfigAction::AlreadyExists))
-        })
+/// A failed scan reads as "not configured"; a cancelled one is an error.
+fn current_shell_is_configured() -> anyhow::Result<bool> {
+    let Some(shell) = current_shell() else {
+        return Ok(false);
+    };
+    match scan_shell_configs(Some(shell), true, &crate::binary_name()) {
+        Ok(scan) => Ok(scan
+            .configured
+            .iter()
+            .any(|result| matches!(result.action, ConfigAction::AlreadyExists))),
+        Err(ShellConfigError::Failed(_)) => Ok(false),
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Merge and remove report after changing worktrees, without prompting to
 /// install. Match their advice to the current shell's installation state.
-pub(crate) fn print_shell_activation_hint(repo: &Repository) {
-    if current_shell_is_configured() {
+pub(crate) fn print_shell_activation_hint(repo: &Repository) -> anyhow::Result<()> {
+    if current_shell_is_configured()? {
         eprintln!("{}", hint_message(shell_inactive_hint()));
     } else {
         print_shell_integration_hint(repo);
     }
+    Ok(())
 }
 
 /// Compute the shell warning reason for display in messages.
@@ -198,18 +205,23 @@ pub(crate) fn print_shell_activation_hint(repo: &Repository) {
 /// falling back to $SHELL / PSModulePath) has integration configured, not just
 /// any shell. This prevents misleading "restart" advice when e.g. bash has
 /// integration but the user is running fish.
-pub(crate) fn compute_shell_warning_reason() -> String {
+pub(crate) fn compute_shell_warning_reason() -> anyhow::Result<String> {
     if super::retired_shell_wrapper_active() {
-        return "shell wrapper is out of date".to_string();
+        return Ok("shell wrapper is out of date".to_string());
     }
 
     // Check if the CURRENT shell has integration configured, not just ANY shell
-    let is_configured = current_shell_is_configured();
+    let is_configured = current_shell_is_configured()?;
     let explicit_path = crate::was_invoked_with_explicit_path();
     let invoked = crate::invocation_path();
     let wraps = crate::binary_name();
 
-    compute_shell_warning_reason_inner(is_configured, explicit_path, &invoked, &wraps)
+    Ok(compute_shell_warning_reason_inner(
+        is_configured,
+        explicit_path,
+        &invoked,
+        &wraps,
+    ))
 }
 
 /// Inner logic for computing shell warning reason.
@@ -479,7 +491,7 @@ pub fn prompt_shell_integration(
         return Ok(false);
     };
 
-    if current_shell_is_configured() {
+    if current_shell_is_configured()? {
         // Shell integration is configured but not active for this invocation
         if !crate::was_invoked_with_explicit_path() {
             // Invoked via PATH but wrapper isn't active — a restart usually fixes it
@@ -492,7 +504,7 @@ pub fn prompt_shell_integration(
     // Scan ALL shells (same as `wt config shell install`)
     // Only includes shells where config files already exist
     let mut scan = scan_shell_configs(None, true, binary_name)
-        .map_err(|e| anyhow::anyhow!("Failed to scan shell configs: {e}"))?;
+        .map_err(|e| e.context("Failed to scan shell configs"))?;
 
     // No config files exist - show install hint
     if scan.configured.is_empty() {
@@ -540,7 +552,7 @@ pub fn prompt_shell_integration(
     // Apply the exact plan confirmed above; deriving another preview here would
     // authorize filesystem changes made while the prompt was waiting.
     let install_result = apply_confirmed_shell_config(scan, None, binary_name)
-        .map_err(|e| anyhow::anyhow!("Failed to configure shell integration: {e}"))?;
+        .map_err(|e| e.context("Failed to configure shell integration"))?;
 
     print_shell_install_result(&install_result);
 

@@ -172,7 +172,7 @@ fn choose_pr_forge(repo: &Repository) -> anyhow::Result<ForgeKind> {
         return Ok(ForgeKind::GitHub);
     };
 
-    if remote_ref::gitea::is_authed_for(&host) && !remote_ref::github::is_authed_for(&host) {
+    if remote_ref::gitea::is_authed_for(&host)? && !remote_ref::github::is_authed_for(&host) {
         Ok(ForgeKind::Gitea)
     } else {
         Ok(ForgeKind::GitHub)
@@ -1959,13 +1959,18 @@ impl SwitchPipeline<'_> {
         // --execute, show hints only — don't interrupt with a prompt. Skip when
         // change_dir is false (the user opted out of cd, so shell integration
         // is irrelevant) and on the picker path (no `binary_name`).
-        // Best-effort: don't fail the switch if the offer fails.
+        // Best-effort: don't fail the switch if the offer fails, but stop on
+        // cancellation.
         if let Some(binary_name) = shell_integration_binary
             && change_dir
             && !is_shell_integration_active()
         {
             let skip_prompt = execute.is_some();
-            let _ = prompt_shell_integration(repo, config, binary_name, skip_prompt);
+            if let Err(err) = prompt_shell_integration(repo, config, binary_name, skip_prompt)
+                && err.interrupt_signal().is_some()
+            {
+                return Err(err);
+            }
         }
 
         // Build template vars for base/target context (used by both hooks and

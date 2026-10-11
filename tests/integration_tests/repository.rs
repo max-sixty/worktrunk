@@ -354,8 +354,75 @@ fn test_project_identifier_ssh_protocol_with_port() {
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     let id = repository.project_identifier().unwrap();
-    // Port is stripped — irrelevant to project identity
-    assert_eq!(id, "gitlab.example.com/team/project");
+    // An explicit SSH port names a different server, so it is part of the identity
+    assert_eq!(id, "gitlab.example.com:2222/team/project");
+}
+
+/// The project identifier of a repository whose `origin` is `url`.
+fn project_identifier_for_remote(url: &str) -> String {
+    let mut repo = TestRepo::with_initial_commit();
+    repo.setup_remote("main");
+    repo.git_command()
+        .args(["remote", "set-url", "origin", url])
+        .run()
+        .unwrap();
+    Repository::at(repo.root_path().to_path_buf())
+        .unwrap()
+        .project_identifier()
+        .unwrap()
+}
+
+/// Distinct IPv6 hosts once both truncated to `[2001/owner/repo`, sharing
+/// saved approvals and `[projects]` settings.
+#[test]
+fn test_project_identifier_ipv6_hosts_are_distinct() {
+    let first = project_identifier_for_remote("ssh://git@[2001:db8::1]/owner/repo.git");
+    let second = project_identifier_for_remote("ssh://git@[2001:db8::2]/owner/repo.git");
+    assert_eq!(first, "[2001:db8::1]/owner/repo");
+    assert_eq!(second, "[2001:db8::2]/owner/repo");
+}
+
+/// The identifier selects both saved approvals and `[projects]` settings: an
+/// entry keyed on the port-less identifier an SSH port remote used to share
+/// does not carry over, while the ordinary SSH and HTTPS forms of one project
+/// still share one entry.
+#[test]
+fn test_project_identifier_selects_approvals_and_project_settings() {
+    use worktrunk::config::{Approvals, UserConfig};
+
+    let ported =
+        project_identifier_for_remote("ssh://git@gitlab.example.com:2222/team/project.git");
+    let default_port =
+        project_identifier_for_remote("ssh://git@gitlab.example.com:22/team/project.git");
+    let https = project_identifier_for_remote("https://gitlab.example.com/team/project.git");
+    assert_eq!(default_port, "gitlab.example.com/team/project");
+    assert_eq!(https, default_port);
+
+    let approvals: Approvals = toml::from_str(
+        r#"
+[projects."gitlab.example.com/team/project"]
+approved-commands = ["npm install"]
+"#,
+    )
+    .unwrap();
+    assert!(approvals.is_command_approved(&https, "npm install"));
+    assert!(approvals.is_command_approved(&default_port, "npm install"));
+    assert!(!approvals.is_command_approved(&ported, "npm install"));
+
+    let config: UserConfig = toml::from_str(
+        r#"
+worktree-path = "global"
+
+[projects."gitlab.example.com/team/project"]
+worktree-path = "default-port"
+
+[projects."gitlab.example.com:2222/team/project"]
+worktree-path = "port-2222"
+"#,
+    )
+    .unwrap();
+    assert_eq!(config.worktree_path_for_project(&https), "default-port");
+    assert_eq!(config.worktree_path_for_project(&ported), "port-2222");
 }
 
 #[test]

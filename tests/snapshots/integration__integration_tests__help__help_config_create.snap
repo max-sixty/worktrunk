@@ -312,7 +312,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# User config can include a `[projects]` table for project-specific settings — worktree layout, setting overrides, anything else — separate from the project config (https://worktrunk.dev/config/#project-configuration) shared with teammates.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Entries are keyed by project identifier — `<host>/<owner>/<repo>` derived from the primary remote URL (no `.git` suffix), or the canonical repo path when there is no remote. Run `wt config show` inside the repo to see the identifier for the current project; it appears in the `PROJECT CONFIG` section as `Identifier: …`.[0m
+[107m [0m [2m# Entries are keyed by project identifier — `<host>/<owner>/<repo>` derived from the primary remote URL (no `.git` suffix; an explicit port other than SSH's default 22 stays with the host, as in `gitlab.example.com:2222/team/project`), or the canonical repo path when there is no remote. Run `wt config show` inside the repo to see the identifier for the current project; it appears in the `PROJECT CONFIG` section as `Identifier: …`.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first. See how the layers rank (https://worktrunk.dev/config/#precedence).[0m
 [107m [0m [2m#[0m
@@ -338,7 +338,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Every matching entry applies, least- to most-specific, following the rule above: a more specific entry — `git.company.example/platform/*` over `git.company.example/*` — wins where both set the same setting, while hooks and aliases from every matching entry all run, least-specific first. A literal key is the most specific of all; specificity is the count of non-`*` characters in the key. End a host-wide key with `/*` — a bare `git.company.example*` also covers hosts whose names merely start
-[107m [0m with that string.[0m
+[107m [0m with that string. A remote on a non-default SSH port carries the port in its identifier, so its host-wide key is `git.company.example:2222/*`.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Entries in `approvals.toml` match the same way, so a hand-written pattern entry approves its commands for every repository it covers.[0m
 [107m [0m [2m#[0m

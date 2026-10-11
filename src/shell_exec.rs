@@ -1060,10 +1060,23 @@ fn run_with_timeout_impl(
         let output = match collect() {
             Ok(output) => output,
             Err(error) => {
+                // A child already ended by a native INT/TERM stays cancelled even
+                // when a descendant holding its pipes ran the readers to the
+                // deadline; reporting `TimedOut` would let callers fall back as
+                // if the command were merely slow. The probe leaves the leader
+                // unreaped for the teardown, and signalling its zombie cannot
+                // change the status the final `wait` then reports.
+                let interrupted = exited_by_native_interrupt(child.id());
                 kill_timed_out_tree(child.id());
                 let _ = child.kill();
-                let _ = child.wait();
-                return Err(error);
+                return match child.wait() {
+                    Ok(status) if interrupted => Ok(std::process::Output {
+                        status,
+                        stdout: Vec::new(),
+                        stderr: Vec::new(),
+                    }),
+                    _ => Err(error),
+                };
             }
         };
         let status = match wait_shared_child(&child, Some(deadline)) {
@@ -1083,6 +1096,51 @@ fn run_with_timeout_impl(
             stderr: output.1,
         })
     })
+}
+
+/// Whether SIGINT/SIGTERM already ended `pid`, read with `WNOWAIT` so the
+/// child stays unreaped and keeps pinning its pgid for the teardown.
+#[cfg(target_os = "linux")]
+fn exited_by_native_interrupt(pid: u32) -> bool {
+    use nix::sys::signal::Signal;
+    use nix::sys::wait::{Id, WaitPidFlag, WaitStatus, waitid};
+    matches!(
+        waitid(
+            Id::Pid(nix::unistd::Pid::from_raw(pid as i32)),
+            WaitPidFlag::WEXITED | WaitPidFlag::WNOWAIT | WaitPidFlag::WNOHANG,
+        ),
+        Ok(WaitStatus::Signaled(_, Signal::SIGINT | Signal::SIGTERM, _))
+    )
+}
+
+/// Darwin's `waitid` with the same flags; nix doesn't wrap it there. Darwin
+/// leaves `siginfo` untouched for a running child, hence the zeroed buffer,
+/// and can report a stop through `WEXITED`, hence matching `CLD_KILLED` only.
+#[cfg(target_vendor = "apple")]
+#[allow(unsafe_code)]
+fn exited_by_native_interrupt(pid: u32) -> bool {
+    use nix::libc;
+    // SAFETY: `siginfo_t` is plain data; all-zero is a valid value.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    // SAFETY: `info` is a valid, exclusively borrowed `siginfo_t`.
+    let ret = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            pid as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOWAIT | libc::WNOHANG,
+        )
+    };
+    ret == 0
+        && info.si_signo == libc::SIGCHLD
+        && info.si_code == libc::CLD_KILLED
+        && matches!(info.si_status, libc::SIGINT | libc::SIGTERM)
+}
+
+/// No unreaped status probe here: a deadline-bound cancellation stays `TimedOut`.
+#[cfg(all(unix, not(target_os = "linux"), not(target_vendor = "apple")))]
+fn exited_by_native_interrupt(_pid: u32) -> bool {
+    false
 }
 
 /// Tear down the process tree of a child that outlived its timeout.
@@ -3161,6 +3219,26 @@ print(*counts)
             elapsed < Duration::from_secs(10),
             "timeout waited on the grandchild: {elapsed:?}"
         );
+    }
+
+    /// A child that INT/TERM already ended keeps that status when a descendant
+    /// holds its pipes past the deadline, instead of reading as `TimedOut`.
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_timeout_keeps_native_interrupt_with_pipe_holding_descendant() {
+        use signal_hook::consts::{SIGINT, SIGTERM};
+        use std::os::unix::process::ExitStatusExt;
+        for (name, signal) in [("INT", SIGINT), ("TERM", SIGTERM)] {
+            let start = std::time::Instant::now();
+            let output = Cmd::new("sh")
+                .args(["-c", &format!("sleep 30 & kill -{name} $$")])
+                // Long enough that `kill` lands first even under suite load.
+                .timeout(Duration::from_secs(2))
+                .run()
+                .unwrap();
+            assert_eq!(output.status.signal(), Some(signal));
+            assert!(start.elapsed() < Duration::from_secs(20));
+        }
     }
 
     #[test]

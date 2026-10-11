@@ -27,7 +27,9 @@ use worktrunk::styling::{
 };
 
 use crate::cli::{SwitchFormat, version_str};
-use crate::commands::configure_shell::{ConfigAction, ConfigureResult, scan_shell_configs};
+use crate::commands::configure_shell::{
+    ConfigAction, ConfigureResult, ShellConfigError, scan_shell_configs,
+};
 use crate::commands::list::ci_status::CiToolsStatus;
 use crate::help_pager::show_help_in_pager;
 use crate::llm::test_commit_generation;
@@ -583,7 +585,7 @@ fn render_diagnostics(out: &mut String, repo: Option<&Repository>) -> anyhow::Re
     // falls through to the hint and the remaining checks still run.
     match repo.and_then(|repo| Some((repo, repo.ci_platform(None)?))) {
         Some((_, ForgeKind::GitHub)) => {
-            let ci_tools = CiToolsStatus::detect(None);
+            let ci_tools = CiToolsStatus::detect(None)?;
             render_ci_tool_status(
                 out,
                 "gh",
@@ -593,7 +595,7 @@ fn render_diagnostics(out: &mut String, repo: Option<&Repository>) -> anyhow::Re
             );
         }
         Some((_, ForgeKind::GitLab)) => {
-            let ci_tools = CiToolsStatus::detect(None);
+            let ci_tools = CiToolsStatus::detect(None)?;
             render_ci_tool_status(
                 out,
                 "glab",
@@ -603,7 +605,7 @@ fn render_diagnostics(out: &mut String, repo: Option<&Repository>) -> anyhow::Re
             );
         }
         Some((_, ForgeKind::Gitea)) => {
-            let ci_tools = CiToolsStatus::detect(None);
+            let ci_tools = CiToolsStatus::detect(None)?;
             render_ci_tool_status(
                 out,
                 "tea",
@@ -613,7 +615,7 @@ fn render_diagnostics(out: &mut String, repo: Option<&Repository>) -> anyhow::Re
             );
         }
         Some((repo, ForgeKind::AzureDevOps)) => {
-            let ci_tools = CiToolsStatus::detect(None);
+            let ci_tools = CiToolsStatus::detect(None)?;
             render_ci_tool_status(
                 out,
                 "az",
@@ -1364,7 +1366,8 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
     let cmd = crate::binary_name();
     let scan_result = match scan_shell_configs(None, true, &cmd) {
         Ok(r) => r,
-        Err(e) => {
+        Err(e @ ShellConfigError::Interrupted(_)) => return Err(e.into()),
+        Err(ShellConfigError::Failed(e)) => {
             writeln!(
                 out,
                 "{}",
@@ -1374,7 +1377,9 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         }
     };
 
-    // Get detection details to show matched lines inline
+    // Get detection details to show matched lines inline. The PowerShell
+    // profile query is answered once per process, so a cancelled one already
+    // ended the scan above and can't surface here.
     let detection_results = scan_for_detection_details(&cmd).unwrap_or_default();
 
     // Check for legacy fish conf.d path (deprecated location from before #566)

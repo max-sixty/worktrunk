@@ -359,7 +359,7 @@ Aliases defined here apply to all projects. For project-specific aliases, use th
 
 User config can include a [2m[projects][0m table for project-specific settings — worktree layout, setting overrides, anything else — separate from the project config shared with teammates.
 
-Entries are keyed by project identifier — [2m<host>/<owner>/<repo>[0m derived from the primary remote URL (no [2m.git[0m suffix), or the canonical repo path when there is no remote. Run [2mwt config show[0m inside the repo to see the identifier for the current project; it appears in the [2mPROJECT CONFIG[0m section as [2mIdentifier: …[0m.
+Entries are keyed by project identifier — [2m<host>/<owner>/<repo>[0m derived from the primary remote URL (no [2m.git[0m suffix; an explicit port other than SSH's default 22 stays with the host, as in [2mgitlab.example.com:2222/team/project[0m), or the canonical repo path when there is no remote. Run [2mwt config show[0m inside the repo to see the identifier for the current project; it appears in the [2mPROJECT CONFIG[0m section as [2mIdentifier: …[0m.
 
 Scalar values (like [2mworktree-path[0m) replace the global value; everything else (hooks, aliases, etc.) appends, global first. See how the layers rank.
 
@@ -385,7 +385,7 @@ A key containing [2m*[0m matches any run of characters, [2m/[0m included, so
 [107m [0m [2mworktree-path = [0m[2m[32m".worktrees/{{ branch | sanitize }}"[0m
 
 Every matching entry applies, least- to most-specific, following the rule above: a more specific entry — [2mgit.company.example/platform/*[0m over [2mgit.company.example/*[0m — wins where both set the same setting, while hooks and aliases from every matching entry all run, least-specific first. A literal key is the most specific of all; specificity is the count of non-[2m*[0m characters in the key. End a host-wide key with [2m/*[0m — a bare [2mgit.company.example*[0m also covers hosts whose names merely start with that 
-string.
+string. A remote on a non-default SSH port carries the port in its identifier, so its host-wide key is [2mgit.company.example:2222/*[0m.
 
 Entries in [2mapprovals.toml[0m match the same way, so a hand-written pattern entry approves its commands for every repository it covers.
 

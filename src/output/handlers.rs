@@ -605,7 +605,7 @@ fn build_switch_output_context(
     result: &SwitchResult,
     branch_info: &SwitchBranchInfo,
     change_dir: bool,
-) -> SwitchOutputContext {
+) -> anyhow::Result<SwitchOutputContext> {
     let path = super::to_logical_path(result.path());
     let path_display = format_path_for_display(&path);
     let branch = branch_info
@@ -620,28 +620,29 @@ fn build_switch_output_context(
     } else if is_git_subcommand {
         Some("ran git wt; running through git prevents cd".to_string())
     } else {
-        Some(compute_shell_warning_reason())
+        Some(compute_shell_warning_reason()?)
     };
     let user_wont_be_in_worktree = !change_dir || shell_warning_reason.is_some();
 
-    SwitchOutputContext {
+    Ok(SwitchOutputContext {
         path,
         path_display,
         branch,
         shell_warning_reason,
         user_wont_be_in_worktree,
         is_git_subcommand,
-    }
+    })
 }
 
-fn print_switch_directory_hint(branch: &str, is_git_subcommand: bool) {
+fn print_switch_directory_hint(branch: &str, is_git_subcommand: bool) -> anyhow::Result<()> {
     if is_git_subcommand {
         eprintln!("{}", hint_message(git_subcommand_warning()));
     } else if super::retired_shell_wrapper_active() {
         super::print_outdated_shell_wrapper_hint_once();
-    } else if should_show_explicit_path_hint() {
+    } else if should_show_explicit_path_hint()? {
         eprintln!("{}", hint_message(explicit_path_hint(branch)));
     }
+    Ok(())
 }
 
 fn handle_switch_already_at_output(ctx: &SwitchOutputContext) -> Option<PathBuf> {
@@ -656,7 +657,7 @@ fn handle_switch_already_at_output(ctx: &SwitchOutputContext) -> Option<PathBuf>
     None
 }
 
-fn handle_switch_existing_output(ctx: &SwitchOutputContext) -> Option<PathBuf> {
+fn handle_switch_existing_output(ctx: &SwitchOutputContext) -> anyhow::Result<Option<PathBuf>> {
     if let Some(reason) = &ctx.shell_warning_reason {
         eprintln!(
             "{}",
@@ -666,7 +667,7 @@ fn handle_switch_existing_output(ctx: &SwitchOutputContext) -> Option<PathBuf> {
                 ctx.path_display
             ))
         );
-        print_switch_directory_hint(&ctx.branch, ctx.is_git_subcommand);
+        print_switch_directory_hint(&ctx.branch, ctx.is_git_subcommand)?;
     } else if ctx.user_wont_be_in_worktree {
         eprintln!(
             "{}",
@@ -690,7 +691,7 @@ fn handle_switch_existing_output(ctx: &SwitchOutputContext) -> Option<PathBuf> {
         );
     }
 
-    ctx.user_wont_be_in_worktree.then(|| ctx.path.clone())
+    Ok(ctx.user_wont_be_in_worktree.then(|| ctx.path.clone()))
 }
 
 fn maybe_print_worktree_path_hint(created_branch: bool) {
@@ -723,7 +724,7 @@ fn handle_switch_created_output(
     created_branch: bool,
     base_branch: Option<&str>,
     from_remote: Option<&str>,
-) -> Option<PathBuf> {
+) -> anyhow::Result<Option<PathBuf>> {
     eprintln!(
         "{}",
         success_message(format_switch_message(
@@ -743,10 +744,10 @@ fn handle_switch_created_output(
             "{}",
             warning_message(cformat!("Cannot change directory — {reason}"))
         );
-        print_switch_directory_hint(&ctx.branch, ctx.is_git_subcommand);
+        print_switch_directory_hint(&ctx.branch, ctx.is_git_subcommand)?;
     }
 
-    ctx.user_wont_be_in_worktree.then(|| ctx.path.clone())
+    Ok(ctx.user_wont_be_in_worktree.then(|| ctx.path.clone()))
 }
 
 struct BranchDeletionDisplay {
@@ -1014,7 +1015,7 @@ fn print_switch_message_if_changed(
         eprintln!("{}", hint_message(git_subcommand_warning()));
     } else {
         // Shell integration not active - compute specific reason
-        let reason = compute_shell_warning_reason();
+        let reason = compute_shell_warning_reason()?;
         eprintln!(
             "{}",
             warning_message(cformat!(
@@ -1024,10 +1025,10 @@ fn print_switch_message_if_changed(
         // Show appropriate hint based on invocation mode
         if super::retired_shell_wrapper_active() {
             super::print_outdated_shell_wrapper_hint_once();
-        } else if should_show_explicit_path_hint() {
+        } else if should_show_explicit_path_hint()? {
             eprintln!("{}", hint_message(explicit_path_hint(&dest_branch)));
         } else {
-            print_shell_activation_hint(&repo);
+            print_shell_activation_hint(&repo)?;
         }
     }
     Ok(())
@@ -1139,11 +1140,11 @@ pub fn handle_switch_output(
 
     // Translate to the user's logical (symlink-preserved) path for display messages.
     // The cd directive (above) handles its own translation internally.
-    let ctx = build_switch_output_context(result, branch_info, change_dir);
+    let ctx = build_switch_output_context(result, branch_info, change_dir)?;
 
     let display_path_for_hooks = match result {
         SwitchResult::AlreadyAt(_) => handle_switch_already_at_output(&ctx),
-        SwitchResult::Existing { .. } => handle_switch_existing_output(&ctx),
+        SwitchResult::Existing { .. } => handle_switch_existing_output(&ctx)?,
         SwitchResult::Created {
             created_branch,
             base_branch,
@@ -1154,7 +1155,7 @@ pub fn handle_switch_output(
             *created_branch,
             base_branch.as_deref(),
             from_remote.as_deref(),
-        ),
+        )?,
     };
 
     // The program runs in `destination`, which is the worktree root only when

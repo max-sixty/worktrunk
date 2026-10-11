@@ -4,10 +4,10 @@ expression: "String::from_utf8_lossy(&output.stdout)"
 ---
 [
   {
-    "branch": "feature",
-    "branch_checked_out_at": null,
-    "branch_outcome": "deleted",
     "kind": "worktree",
-    "path": "<PATH>"
+    "branch": "feature",
+    "path": "<PATH>",
+    "branch_outcome": "deleted",
+    "branch_checked_out_at": null
   }
 ]

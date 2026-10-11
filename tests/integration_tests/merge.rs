@@ -5771,11 +5771,11 @@ fn test_merge_json(repo: TestRepo) {
     assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
     {
       "branch": "feature",
+      "target": "main",
       "committed": false,
-      "rebased": false,
-      "removed": true,
       "squashed": false,
-      "target": "main"
+      "rebased": false,
+      "removed": true
     }
     "#);
 }
