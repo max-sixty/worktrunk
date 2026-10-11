@@ -2584,15 +2584,7 @@ Aliases defined here are shared with teammates. For personal aliases, use the [u
 
 # Shell Integration
 
-Worktrunk needs shell integration to change directories when switching worktrees. Install with:
-
-```console
-$ wt config shell install
-```
-
-For manual setup, see `wt config shell init --help`.
-
-Without shell integration, `wt switch` prints the target directory but cannot `cd` into it.
+See [`wt config shell`](#wt-config-shell) for setup, activation, and current-shell diagnostics.
 
 ### First-run prompts
 
@@ -2665,6 +2657,7 @@ $ wt --config-set 'projects."github.com/owner/repo".worktree-path = "/tmp/scratc
 ```
 
 Hooks, aliases and `step.copy-ignored.exclude` accumulate rather than replace, so an env-set hook and a project's hook both run.
+<!-- subdoc: shell -->
 <!-- subdoc: show -->
 <!-- subdoc: update -->
 <!-- subdoc: approvals -->
