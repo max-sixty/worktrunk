@@ -2047,6 +2047,7 @@ fn branch_name_matches_git_check_ref_format() {
         "main",
         "feature/auth",
         "release/1.2/rc",
+        "HEAD",
         "-x",
         "@",
         "nowhere",

@@ -1210,7 +1210,7 @@ The single highest-priority state describing the branch's relation to the defaul
 
 ### integration reasons
 
-`default_branch.integration.reason` records which check matched. Checks run cheapest-first and the first match wins. The reason itself is JSON-only: the table shows `"same_commit"` as `_` (or `–` with uncommitted changes) and every other reason as `⊂` when the working tree is clean:
+`default_branch.integration.reason` records which check matched. Checks run cheapest-first and the first match wins. See [Default branch](#default-branch) for symbols.
 
 | Value | Meaning |
 |-------|---------|
@@ -1400,7 +1400,7 @@ Unix only; on Windows `--reap` is rejected.
 
 ## JSON output
 
-`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal, plus `detached_worktree` — a detached worktree left at the branch's configured path.
+`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal. Branch-only results also include `detached_worktree`: the path of a detached worktree left behind, or `null`.
 
 `branch_outcome` names what happened to the branch, so a caller can tell a deletion the removal declined from one it was never asked to make:
 
@@ -1497,7 +1497,7 @@ $ wt merge --no-commit --no-rebase
 `wt merge` runs these steps:
 
 1. **Commit** — Pre-commit hooks run, then uncommitted changes are committed. Post-commit hooks run in the background. This step is skipped when squashing (the default) — changes are staged during the squash step instead. With `--no-squash`, this is the only commit step.
-2. **Squash** — Combines all commits since target into one (like GitHub's "Squash and merge"). Use `--stage` to control what gets staged: `all` (default), `tracked`, or `none`. Working-tree changes swept into the squash are backed up first to `refs/wt-backup/<branch>`. With `--no-squash`, individual commits are preserved.
+2. **Squash** — Combines all commits since target into one (like GitHub's "Squash and merge"). Pre-commit hooks run before staging; post-commit hooks run in the background after committing. Use `--stage` to control what gets staged: `all` (default), `tracked`, or `none`. Working-tree changes swept into the squash are backed up first to `refs/wt-backup/<branch>`; see [`wt step squash`](/step/#wt-step-squash) for recovery. With `--no-squash`, individual commits are preserved.
 3. **Rebase** — Rebases onto target, skipping when nothing needs replaying ([`wt step rebase`](/step/#wt-step-rebase) gives the conditions). A conflict stops the merge with the rebase left open in the worktree, to resolve or abort. With `--no-rebase`, the graph produced by earlier commit/squash steps is preserved and the target must be able to fast-forward to its tip.
 4. **Pre-merge hooks** — Hooks run after rebase, before merge. Failures abort. See [`wt hook`](/hook/).
 5. **Merge** — Fast-forward merge to the target branch ([`wt step push`](/step/#wt-step-push)). With `--no-ff`, a merge commit is created instead — semi-linear history after the default rebase, while explicit `--no-rebase` preserves the graph produced by earlier steps before adding the merge commit. Non-fast-forward merges are rejected.
@@ -1686,7 +1686,7 @@ A string is a single command:
 pre-start = "npm install"
 ```
 
-A table is multiple commands that run concurrently:
+A table names commands. With multiple keys, they run concurrently:
 
 ```toml
 # .config/wt.toml
@@ -1869,17 +1869,13 @@ setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path 
 
 ## Interactive hooks
 
-A hook running in the foreground inherits wt's stdin, so it can ask before continuing:
+Hooks can prompt when run serially in the foreground, as in this `pre-start` hook:
 
 ```toml
 # .config/wt.toml
 [pre-start]
 trust = "gum confirm 'trust this worktree?' && mise trust"
 ```
-
-That covers `pre-*` hooks and any type under `wt hook <type> --foreground`, except where the hook is a concurrent group — a table with two or more keys, whose children would race for the terminal, so each reads EOF instead. A detached `post-*` hook reads EOF too, having no terminal at all. Nothing is ever piped in — a hook reads its context through template variables, whatever form it runs in.
-
-Foreground steps run in order and share one stdin, so a step that drains it to EOF — a `cat` or a `read` loop — leaves nothing for the steps behind it when that stdin is a pipe or a file. Under a terminal each step can prompt in turn. Steps accumulate across config files, so a user `[pre-start]` and a project `[pre-start]` form one pipeline.
 
 Logic that templates can't express belongs in a script, with the values it needs passed as arguments:
 
@@ -2607,7 +2603,6 @@ On first run without shell integration, Worktrunk offers to install it. On first
 ## Environment variables
 
 All user config options can be overridden with environment variables using the `WORKTRUNK_` prefix.
-Invalid environment overrides are ignored with a warning; other valid overrides still apply.
 
 ### Naming convention
 
@@ -2637,7 +2632,6 @@ $ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 | `WORKTRUNK_CONFIG_PATH` | Override user config file location |
 | `WORKTRUNK_SYSTEM_CONFIG_PATH` | Override system config file location |
 | `WORKTRUNK_PROJECT_CONFIG_PATH` | Override project config file location (defaults to `.config/wt.toml`); relative paths resolve from the worktree root |
-| `XDG_CONFIG_DIRS` | Colon-separated system config directories (default: `/etc/xdg`) |
 | `WORKTRUNK_MAX_CONCURRENT_COMMANDS` | Max parallel git commands (default: 32). Lower if hitting file descriptor limits. |
 | `WORKTRUNK_VERBOSE` | Verbosity level (`0`/`1`/`2`), like `-v`/`-vv` but applied everywhere — including shell completion, which no flag can reach |
 | `RUST_LOG` | Logging directive (e.g. `worktrunk=debug`); overrides the verbosity baseline for what reaches stderr |

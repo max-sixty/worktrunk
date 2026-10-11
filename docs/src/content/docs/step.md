@@ -203,6 +203,12 @@ See [LLM-generated commit messages](/llm-commits/) for configuration and prompt 
 
 The squash commit is made on a detached HEAD, as `git rebase` does, so git's own commit hooks run and see no current branch.
 
+### Recovering staged changes
+
+Before squashing staged changes, Worktrunk saves them to `refs/wt-backup/<branch>`. Changes left unstaged are not included in the backup.
+
+The output prints a command to recover the saved changes in a new worktree, including after `wt merge` removes the original.
+
 ### Options
 
 #### Staging
@@ -819,7 +825,7 @@ In `wt list`, candidates show `_` (same commit) or `⊂` (content integrated). R
 
 Locked worktrees, worktrees with uncommitted changes, and the main worktree are always skipped. The current worktree is removed last, triggering cd to the primary worktree. Pre-remove and post-remove hooks run for each removal; a candidate whose hooks include an unapproved project command is skipped with `(approval required)` (pre-approve with `wt config approvals add`, or pass `--yes`).
 
-Removals and their hooks may run concurrently across worktrees. Each worktree's pre-remove hooks finish before its removal begins. Hooks must coordinate writes to shared resources and avoid writing into other worktrees being pruned.
+Prune removes worktrees concurrently, so hooks that write shared resources must coordinate those writes.
 
 ### Min-age guard
 

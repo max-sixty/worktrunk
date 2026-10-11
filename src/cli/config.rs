@@ -1198,7 +1198,7 @@ wt list
 ## Use cases
 
 - **Work status** — `🚧` WIP, `✅` ready for review, `🔥` urgent
-- **Agent tracking** — The agent plugins ([Claude Code](/claude-code/), Codex, OpenCode, Pi, oh-my-pi) set markers automatically
+- **Agent tracking** — [Agent plugins](/claude-code/) set markers automatically
 - **Notes** — Any short text: `"blocked"`, `"needs tests"`
 
 ## Storage

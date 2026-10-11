@@ -472,79 +472,6 @@ fn test_config_show_absent_system_config_is_a_user_config_hint(repo: TestRepo, t
     );
 }
 
-#[rstest]
-fn test_system_config_found_via_xdg_config_dirs(repo: TestRepo) {
-    // Create system config in a custom XDG directory
-    let xdg_dir = tempfile::tempdir().unwrap();
-    let config_dir = xdg_dir.path().join("worktrunk");
-    fs::create_dir_all(&config_dir).unwrap();
-    fs::write(
-        config_dir.join("config.toml"),
-        r#"worktree-path = "/xdg-org/{{ repo }}/{{ branch | sanitize }}"
-"#,
-    )
-    .unwrap();
-
-    // Use XDG_CONFIG_DIRS instead of WORKTRUNK_SYSTEM_CONFIG_PATH
-    let mut cmd = wt_command();
-    repo.configure_wt_cmd(&mut cmd);
-    cmd.env_remove("WORKTRUNK_SYSTEM_CONFIG_PATH");
-    cmd.env("XDG_CONFIG_DIRS", xdg_dir.path());
-    cmd.arg("list")
-        .arg("--format=json")
-        .current_dir(repo.root_path());
-
-    let output = cmd.output().unwrap();
-    assert!(output.status.success());
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    let worktrees = json["items"].as_array().unwrap();
-
-    for wt in worktrees {
-        if wt["is_primary"].as_bool() == Some(false) {
-            let path = wt["path"].as_str().unwrap();
-            assert!(
-                path.contains("/xdg-org/"),
-                "Expected XDG_CONFIG_DIRS system config, got: {path}"
-            );
-        }
-    }
-}
-
-#[rstest]
-fn test_system_config_xdg_dirs_set_but_no_config_found(repo: TestRepo) {
-    // When XDG_CONFIG_DIRS is set but contains no worktrunk config,
-    // system config should be None (no fallback to platform defaults)
-    let empty_xdg_dir = tempfile::tempdir().unwrap();
-
-    let mut cmd = wt_command();
-    repo.configure_wt_cmd(&mut cmd);
-    cmd.env_remove("WORKTRUNK_SYSTEM_CONFIG_PATH");
-    cmd.env("XDG_CONFIG_DIRS", empty_xdg_dir.path());
-    cmd.arg("list")
-        .arg("--format=json")
-        .current_dir(repo.root_path());
-
-    let output = cmd.output().unwrap();
-    assert!(output.status.success());
-
-    // Without system config, worktree paths should use the default template
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    let worktrees = json["items"].as_array().unwrap();
-
-    for wt in worktrees {
-        if wt["is_primary"].as_bool() == Some(false) {
-            let path = wt["path"].as_str().unwrap();
-            assert!(
-                !path.contains("/xdg-org/"),
-                "Should not use XDG system config path, got: {path}"
-            );
-        }
-    }
-}
-
 /// Test that `config show` displays empty system config with a hint
 #[rstest]
 fn test_config_show_empty_system_config(mut repo: TestRepo, temp_home: TempDir) {
@@ -957,7 +884,13 @@ fn test_config_show_fish_with_completions(mut repo: TestRepo, temp_home: TempDir
 
 /// Test that config show displays fish shell without completions configured
 #[rstest]
-fn test_config_show_fish_without_completions(mut repo: TestRepo, temp_home: TempDir) {
+#[case(false)]
+#[case(true)]
+fn test_config_show_fish_without_completions(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+    #[case] completion_directory: bool,
+) {
     // Setup mock gh/glab for deterministic BINARIES output
     repo.setup_mock_ci_tools_unauthenticated();
 
@@ -976,7 +909,11 @@ fn test_config_show_fish_without_completions(mut repo: TestRepo, temp_home: Temp
     let wrapper_content = init.generate_fish_wrapper().unwrap();
     fs::write(&fish_config, format!("{}\n", wrapper_content)).unwrap();
 
-    // Do NOT create fish completions file - completions not configured
+    // A missing completion file and a directory at its path must both leave
+    // the installed wrapper visible, with completions not configured.
+    if completion_directory {
+        fs::create_dir_all(temp_home.path().join(".config/fish/completions/wt.fish")).unwrap();
+    }
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
@@ -985,7 +922,7 @@ fn test_config_show_fish_without_completions(mut repo: TestRepo, temp_home: Temp
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
 
-        assert_cmd_snapshot!(cmd);
+        assert_cmd_snapshot!("config_show_fish_without_completions", cmd);
     });
 }
 

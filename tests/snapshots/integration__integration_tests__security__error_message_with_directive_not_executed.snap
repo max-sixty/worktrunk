@@ -60,6 +60,6 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mNo branch named [1m__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked6[22m[39m
-[2m↳[22m [2mTo list branches, run [4mwt list --branches --remotes[24m[22m
+[31m✗[39m [31mNo branch or worktree named [1m__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked6[22m[39m
+[2m↳[22m [2mTo see branches and worktree paths, run [4mwt list --branches[24m[22m
 [0m

@@ -176,7 +176,7 @@ pub use integration::{BranchDiffSpec, IntegrationTargets, select_comparison_base
 pub use ref_snapshot::RefSnapshot;
 pub(super) use working_tree::path_to_logging_context;
 use working_tree::registration_worktree_path;
-pub use working_tree::{InProgressOperation, TempIndex, WorkingTree};
+pub use working_tree::{InProgressOperation, SafetyBackup, TempIndex, WorkingTree};
 pub use worktrees::{StaleWorktreeWork, duplicated_branches};
 
 // ============================================================================
@@ -645,9 +645,8 @@ pub fn base_path() -> &'static PathBuf {
 ///   config directory) are already absolute.
 /// - `WORKTRUNK_PROJECT_CONFIG_PATH` resolves from the worktree root, its
 ///   documented base, because the project config is per-worktree.
-/// - `WORKTRUNK_BIN` and `XDG_CONFIG_DIRS` are never opened by wt: the first is
-///   expanded by the generated shell wrapper, and the XDG spec already requires
-///   the second to be absolute.
+/// - `WORKTRUNK_BIN` is never opened by wt: the generated shell wrapper
+///   expands it.
 pub fn resolve_input_path(path: impl AsRef<Path>) -> PathBuf {
     let path = crate::path::expand_tilde(path.as_ref());
     match BASE_PATH.get() {

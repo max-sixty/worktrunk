@@ -1,3 +1,5 @@
+#[cfg(unix)]
+use crate::common::temp_home;
 use crate::common::{
     BareRepoTest, SLEEP_FOR_ABSENCE_CHECK, TestRepo, TestRepoBase, configure_directive_file,
     directive_file, make_snapshot_cmd, repo, repo_with_remote, setup_snapshot_settings,
@@ -22,6 +24,104 @@ fn test_remove_from_worktree(mut repo: TestRepo) {
         &[],
         Some(&worktree_path)
     ));
+}
+
+/// Merge and remove must advise activating the current shell's installed
+/// integration, not reinstalling it or restarting a different login shell.
+#[cfg(unix)]
+#[rstest]
+#[case("remove", "zsh", "remove_installed_shell_inactive")]
+#[case("merge", "zsh", "merge_installed_shell_inactive")]
+#[case("remove", "fish", "remove_current_shell_not_installed")]
+#[case("merge", "fish", "merge_current_shell_not_installed")]
+fn test_removal_shell_activation_advice(
+    mut repo: TestRepo,
+    #[case] command: &str,
+    #[case] current_shell: &str,
+    #[case] snapshot: &str,
+) {
+    use std::os::unix::process::CommandExt;
+
+    repo.configure_shell_integration(); // Installs zsh integration only.
+    let worktree_path = repo.add_worktree("feature");
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let args = if command == "remove" {
+            ["--foreground", "--yes"]
+        } else {
+            ["--yes", "--no-squash"]
+        };
+        let mut cmd = make_snapshot_cmd(&repo, command, &args, Some(&worktree_path));
+        cmd.arg0("wt"); // Invoke through PATH, without the wrapper's cd directive.
+        cmd.env("SHELL", "/bin/zsh");
+        cmd.env("WORKTRUNK_TEST_PARENT_SHELL", current_shell);
+        assert_cmd_snapshot!(snapshot, cmd);
+    });
+}
+
+/// Installation advice must use the installer's wrapper-aware state: a
+/// legacy fish wrapper needs migration, while current fish/Nushell wrappers
+/// need activation. Exercise the real installer and removal output together.
+#[cfg(unix)]
+#[rstest]
+#[case("fish", true, "remove", "remove_legacy_fish_needs_install")]
+#[case("fish", false, "remove", "remove_current_fish_needs_activation")]
+#[case("nu", false, "remove", "remove_current_nushell_needs_activation")]
+#[case("fish", false, "switch", "switch_current_fish_needs_activation")]
+fn test_removal_wrapper_installation_advice(
+    mut repo: TestRepo,
+    temp_home: tempfile::TempDir,
+    #[case] shell: &str,
+    #[case] legacy: bool,
+    #[case] command: &str,
+    #[case] snapshot: &str,
+) {
+    use crate::common::{set_temp_home_env, setup_snapshot_settings_with_home};
+    use std::os::unix::process::CommandExt;
+
+    let home = crate::common::canonical_temp_home(&temp_home);
+    let autoload = home.join(".local/share/nushell/vendor/autoload");
+    if legacy {
+        let path = home.join(".config/fish/conf.d/wt.fish");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, worktrunk::shell::Shell::Fish.config_line("wt")).unwrap();
+    } else {
+        let mut install = repo.wt_command();
+        set_temp_home_env(&mut install, &home);
+        install.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &autoload);
+        let output = install
+            .args(["config", "shell", "install", shell, "--yes"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    // Completion availability must not determine whether the shell wrapper
+    // is installed. A directory at the completion-file path is unreadable as
+    // a file, while the installed fish wrapper remains valid.
+    if shell == "fish" && !legacy {
+        let completion = home.join(".config/fish/completions/wt.fish");
+        fs::remove_file(&completion).unwrap();
+        fs::create_dir(&completion).unwrap();
+    }
+    let worktree = repo.add_worktree("feature");
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let args: &[&str] = if command == "remove" {
+            &["--foreground", "--yes"]
+        } else {
+            &["main"]
+        };
+        let mut cmd = make_snapshot_cmd(&repo, command, args, Some(&worktree));
+        set_temp_home_env(&mut cmd, &home);
+        cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &autoload);
+        cmd.env("WORKTRUNK_TEST_PARENT_SHELL", shell);
+        cmd.arg0("wt");
+        assert_cmd_snapshot!(snapshot, cmd);
+    });
 }
 
 // `--reap` (experimental) with no processes running under the worktree: the
@@ -1394,6 +1494,90 @@ fn test_remove_refuses_dirty_target_when_git_dir_names_invoking_worktree(mut rep
         "modified",
         "uncommitted changes must survive",
     );
+}
+
+/// Stash advice includes untracked files, including alongside tracked edits.
+#[rstest]
+#[case::untracked_only(false)]
+#[case::mixed(true)]
+fn test_remove_stash_advice_preserves_untracked(mut repo: TestRepo, #[case] mixed: bool) {
+    let worktree = repo.add_worktree("stash-advice");
+    fs::write(worktree.join("draft.txt"), "untracked draft\n").unwrap();
+    if mixed {
+        fs::write(worktree.join("tracked.txt"), "original\n").unwrap();
+        repo.run_git_in(&worktree, &["add", "tracked.txt"]);
+        repo.run_git_in(&worktree, &["commit", "-m", "tracked file"]);
+        fs::write(worktree.join("tracked.txt"), "modified\n").unwrap();
+    }
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "stash-advice"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(!output.status.success());
+    assert!(stderr.contains("git stash -u"), "{stderr}");
+    repo.run_git_in(&worktree, &["stash", "-u"]);
+    assert!(!worktree.join("draft.txt").exists());
+    assert_eq!(
+        repo.git_output(&["show", "stash^3:draft.txt"]),
+        "untracked draft"
+    );
+    repo.run_git_in(&worktree, &["stash", "pop"]);
+    assert_eq!(
+        fs::read_to_string(worktree.join("draft.txt")).unwrap(),
+        "untracked draft\n"
+    );
+    if mixed {
+        assert_eq!(
+            fs::read_to_string(worktree.join("tracked.txt")).unwrap(),
+            "modified\n"
+        );
+    }
+}
+
+/// Force-discard disclosure observes changes made by an approved pre-remove
+/// hook, and runs only after that hook succeeds.
+#[rstest]
+#[case::remove("printf data > hook-only.txt", true)]
+#[case::abort("printf data > hook-only.txt; exit 1", false)]
+fn test_force_discard_warning_after_pre_remove(
+    mut repo: TestRepo,
+    #[case] hook: &str,
+    #[case] succeeds: bool,
+) {
+    repo.write_project_config(&format!("pre-remove = '{hook}'"));
+    repo.commit("hook");
+    let worktree = repo.add_worktree("force-hook");
+    let output = repo
+        .wt_command()
+        .args(["remove", "force-hook", "--force", "--foreground", "--yes"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert_eq!(output.status.success(), succeeds, "{stderr}");
+    if succeeds {
+        assert!(
+            stderr.contains("Discarding uncommitted changes (--force)"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("?? hook-only.txt"), "{stderr}");
+        assert!(!worktree.exists());
+    } else {
+        assert!(
+            !stderr.contains("Discarding uncommitted changes"),
+            "{stderr}"
+        );
+        assert_eq!(
+            fs::read_to_string(worktree.join("hook-only.txt")).unwrap(),
+            "data"
+        );
+    }
 }
 
 /// --force allows removal of dirty worktrees (issue #658)
@@ -5657,4 +5841,228 @@ fn test_remove_stale_entry_spares_absent_sibling(mut repo: TestRepo) {
         !listed.contains("branch refs/heads/victim"),
         "the stale entry should have been pruned\n{listed}"
     );
+}
+
+/// An unreadable index prevents normal removal, but disclosure must not veto
+/// explicitly forced removal that Git itself permits. Neighboring data and
+/// the retained branch remain intact.
+#[rstest]
+fn test_force_remove_with_corrupt_index_reports_unreadable_status(mut repo: TestRepo) {
+    let mut target = None;
+    let mut target_index = None;
+    for branch in ["corrupt-index", "git-force-control"] {
+        let worktree = repo.add_worktree(branch);
+        fs::write(worktree.join("untracked.txt"), "keep until forced\n").unwrap();
+        let output = repo
+            .git_command()
+            .args(["rev-parse", "--absolute-git-dir"])
+            .current_dir(&worktree)
+            .run()
+            .unwrap();
+        assert!(output.status.success());
+        let index = PathBuf::from(String::from_utf8(output.stdout).unwrap().trim()).join("index");
+        fs::write(&index, "bad").unwrap();
+        let status = repo
+            .git_command()
+            .args(["status", "--porcelain"])
+            .current_dir(&worktree)
+            .run()
+            .unwrap();
+        assert_eq!(status.status.code(), Some(128));
+        if branch == "git-force-control" {
+            let removal = repo
+                .git_command()
+                .args(["worktree", "remove", "--force"])
+                .arg(worktree.to_string_lossy())
+                .run()
+                .unwrap();
+            assert!(
+                removal.status.success(),
+                "{}",
+                String::from_utf8_lossy(&removal.stderr)
+            );
+            assert!(!worktree.exists());
+        } else {
+            target = Some(worktree);
+            target_index = Some(index);
+        }
+    }
+    let worktree = target.unwrap();
+    let index = target_index.unwrap();
+    let branch_head = repo.git_output(&["rev-parse", "refs/heads/corrupt-index"]);
+    let sentinel = repo.root_path().join("main-only.txt");
+    fs::write(&sentinel, "main worktree data\n").unwrap();
+    let refusal = repo
+        .wt_command()
+        .args([
+            "remove",
+            "corrupt-index",
+            "--foreground",
+            "--no-delete-branch",
+        ])
+        .output()
+        .unwrap();
+    assert!(!refusal.status.success());
+    assert_eq!(fs::read(&index).unwrap(), b"bad");
+    assert_eq!(
+        fs::read_to_string(worktree.join("untracked.txt")).unwrap(),
+        "keep until forced\n"
+    );
+    let removal = repo
+        .wt_command()
+        .args([
+            "remove",
+            "corrupt-index",
+            "--foreground",
+            "--no-delete-branch",
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        removal.status.success(),
+        "{}",
+        String::from_utf8_lossy(&removal.stderr)
+    );
+    assert!(!worktree.exists());
+    assert!(!index.exists());
+    assert_eq!(
+        repo.git_output(&["rev-parse", "refs/heads/corrupt-index"]),
+        branch_head
+    );
+    assert_eq!(
+        fs::read_to_string(&sentinel).unwrap(),
+        "main worktree data\n"
+    );
+    setup_snapshot_settings(&repo).bind(|| {
+        assert_snapshot!(
+            "force_remove_corrupt_index",
+            String::from_utf8_lossy(&removal.stderr)
+        );
+    });
+}
+
+/// An interrupted status probe must cancel force removal before data is staged
+/// for deletion, and before the next worktree in a removal batch is touched.
+#[cfg(unix)]
+#[rstest]
+#[case::foreground_sigint(true, false, 2)]
+#[case::background_sigint(false, false, 2)]
+#[case::foreground_sigterm(true, false, 15)]
+#[case::background_sigterm(false, false, 15)]
+#[case::detached_foreground_sigint(true, true, 2)]
+#[case::detached_foreground_sigterm(true, true, 15)]
+fn test_force_remove_interrupted_status_preserves_worktrees(
+    mut repo: TestRepo,
+    #[case] foreground: bool,
+    #[case] detached: bool,
+    #[case] signal: i32,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::ExitStatusExt;
+
+    let worktree = repo.add_worktree("interrupted-status");
+    let later_worktree = repo.add_worktree("later-worktree");
+    fs::write(worktree.join("untracked.txt"), "preserve this data\n").unwrap();
+    fs::write(
+        later_worktree.join("untracked.txt"),
+        "preserve later data\n",
+    )
+    .unwrap();
+    let branch_head = repo.git_output(&["rev-parse", "refs/heads/interrupted-status"]);
+    if detached {
+        repo.detach_head_in_worktree("interrupted-status");
+        repo.run_git(&["branch", "-d", "interrupted-status"]);
+        let symbolic_head = repo
+            .git_command()
+            .args(["symbolic-ref", "--quiet", "HEAD"])
+            .current_dir(&worktree)
+            .run()
+            .unwrap();
+        assert_eq!(symbolic_head.status.code(), Some(1));
+        assert_eq!(
+            repo.git_command()
+                .args([
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    "refs/heads/interrupted-status"
+                ])
+                .run()
+                .unwrap()
+                .status
+                .code(),
+            Some(1)
+        );
+    }
+    let worktrees_before = repo.git_output(&["worktree", "list", "--porcelain"]);
+    let staged_path = crate::common::resolve_git_common_dir(repo.root_path())
+        .join("wt/trash")
+        .join(format!("interrupted-status-{}", crate::common::TEST_EPOCH));
+    assert!(!staged_path.exists());
+    let monitor = repo.root_path().join(".git/interrupt-status");
+    fs::write(
+        &monitor,
+        format!("#!/bin/sh\nkill -{signal} \"$PPID\"\nexit 0\n"),
+    )
+    .unwrap();
+    fs::set_permissions(&monitor, fs::Permissions::from_mode(0o755)).unwrap();
+    repo.run_git(&["config", "core.fsmonitor", monitor.to_str().unwrap()]);
+
+    // Git invokes a real fsmonitor hook during status; the hook interrupts
+    // only its own parent Git process, never the test or Worktrunk process.
+    let status = repo
+        .git_command()
+        .args(["status", "--porcelain"])
+        .current_dir(&worktree)
+        .run()
+        .unwrap();
+    assert_eq!(status.status.signal(), Some(signal));
+
+    let mut command = repo.wt_command();
+    let target = if detached {
+        worktree.to_str().unwrap()
+    } else {
+        "interrupted-status"
+    };
+    command.args([
+        "remove",
+        target,
+        "later-worktree",
+        "--no-delete-branch",
+        "--force",
+    ]);
+    if foreground {
+        command.arg("--foreground");
+    }
+    let removal = command.output().unwrap();
+    assert_eq!(
+        removal.status.signal(),
+        Some(signal),
+        "{}",
+        String::from_utf8_lossy(&removal.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("untracked.txt")).unwrap(),
+        "preserve this data\n"
+    );
+    assert!(worktree.join(".git").is_file());
+    assert!(later_worktree.join(".git").is_file());
+    assert!(!staged_path.exists());
+    assert_eq!(
+        fs::read_to_string(later_worktree.join("untracked.txt")).unwrap(),
+        "preserve later data\n"
+    );
+    assert_eq!(
+        repo.git_output(&["-C", worktree.to_str().unwrap(), "rev-parse", "HEAD"]),
+        branch_head
+    );
+    assert_eq!(
+        repo.git_output(&["worktree", "list", "--porcelain"]),
+        worktrees_before
+    );
+    let stderr = String::from_utf8_lossy(&removal.stderr);
+    assert!(!stderr.contains("Discarding"));
+    assert!(!stderr.contains("discarding"));
+    assert!(!stderr.contains("Removing later-worktree"));
 }

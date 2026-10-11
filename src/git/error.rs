@@ -458,9 +458,15 @@ pub enum GitError {
         /// suggesting both `pr:N` and `mr:N`.
         pr_mr_platform: Option<RefType>,
     },
-    /// Reference (branch, tag, commit) not found - used when any commit-ish is accepted
+    /// A requested new branch name rejected by Git.
+    InvalidBranchName {
+        name: String,
+    },
+    /// Reference not found where any commit-ish is accepted.
     ReferenceNotFound {
         reference: String,
+        /// The argument that supplied the reference, when it was an option.
+        flag: Option<&'static str>,
     },
     /// Persisted `worktrunk.default-branch` points at a branch that no longer
     /// resolves locally. Surfaced when a command would use the default branch
@@ -479,6 +485,7 @@ pub enum GitError {
     },
 
     // Worktree errors
+    InteractivePickerRequiresTerminal,
     NotInWorktree {
         /// The action that requires being in a worktree
         action: Option<String>,
@@ -815,8 +822,14 @@ impl GitError {
                 cformat!("No branch named <bold>{branch}</>")
             }
 
-            GitError::ReferenceNotFound { reference } => {
-                cformat!("No branch, tag, or commit named <bold>{reference}</>")
+            GitError::InvalidBranchName { name } => {
+                cformat!("Invalid branch name <bold>{name}</>")
+            }
+            GitError::ReferenceNotFound { reference, flag } => {
+                let context = flag
+                    .map(|flag| cformat!(" (<bold>{flag}</>)"))
+                    .unwrap_or_default();
+                cformat!("No branch, tag, or commit named <bold>{reference}</>{context}")
             }
 
             GitError::StaleDefaultBranch { branch } => {
@@ -827,6 +840,9 @@ impl GitError {
                 cformat!("Default branch <bold>{branch}</> has no commits yet")
             }
 
+            GitError::InteractivePickerRequiresTerminal => {
+                "Interactive picker requires an interactive terminal".to_string()
+            }
             GitError::NotInWorktree { action } => match action {
                 Some(action) => format!("Cannot {action}: not in a worktree"),
                 None => "Not in a worktree".to_string(),
@@ -1081,15 +1097,18 @@ impl GitError {
                 ..
             } => {
                 let title = self.title();
+                let keep = if dirty_files.iter().any(|line| line.starts_with("?? ")) {
+                    cformat!("Commit or run <underline>git stash -u</> in the dirty worktree first")
+                } else {
+                    "Commit or stash changes first".to_string()
+                };
                 let hint = if *force_hint {
                     // Construct full command: "wt remove [branch] --force"
                     let args: Vec<&str> = branch.as_deref().into_iter().collect();
                     let cmd = suggest_command("remove", &args, &["--force"]);
-                    cformat!(
-                        "Commit or stash changes first, or to lose uncommitted changes, run <underline>{cmd}</>"
-                    )
+                    cformat!("{keep}, or to lose uncommitted changes, run <underline>{cmd}</>")
                 } else {
-                    "Commit or stash changes first".to_string()
+                    keep
                 };
                 write!(f, "{}", error_message(&title))?;
                 if !dirty_files.is_empty() {
@@ -1151,7 +1170,7 @@ impl GitError {
                 write!(f, "{}\n{}", error_message(&title), hint_message(hint))
             }
 
-            GitError::ReferenceNotFound { .. } => {
+            GitError::InvalidBranchName { .. } | GitError::ReferenceNotFound { .. } => {
                 let title = self.title();
                 write!(f, "{}", error_message(&title))
             }
@@ -1180,6 +1199,17 @@ impl GitError {
                 )
             }
 
+            GitError::InteractivePickerRequiresTerminal => {
+                let command = "wt switch <branch>";
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(self.title()),
+                    hint_message(cformat!(
+                        "To switch to a branch, run <underline>{command}</>"
+                    ))
+                )
+            }
             GitError::NotInWorktree { .. } => {
                 let title = self.title();
                 write!(
@@ -2748,7 +2778,7 @@ mod tests {
         [31m✗[39m [31mCannot remove worktree after merge: [1mfeature-auth[22m has uncommitted changes[39m
         [107m [0m  M auth.rs
         [107m [0m ?? .DS_Store
-        [2m↳[22m [2mCommit or stash changes first[22m
+        [2m↳[22m [2mCommit or run [4mgit stash -u[24m in the dirty worktree first[22m
         ");
     }
 
