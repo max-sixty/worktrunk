@@ -239,6 +239,9 @@ which = "8.0.2"
 dunce = "1.0"
 termimad = { version = "0.35.1", optional = true }
 urlencoding = "2.1"
+# Git transport URL syntax (scheme, SCP, userinfo, IPv6, ports) for
+# `GitRemoteUrl`; Worktrunk keeps only the namespace/repo and forge policy.
+gix-url = "0.40"
 regex = "1.12.3"
 ignore = "0.4"
 reflink-copy = "0.1"
