@@ -681,6 +681,15 @@ mod tests {
             ErrorKind::NotFound
         );
         assert!(dest.symlink_metadata().is_err());
+
+        // A copy that fails after the destination exists removes it. On Unix
+        // a directory opens as a file, so the read is what fails.
+        #[cfg(unix)]
+        {
+            let dest = temp.path().join("partial");
+            assert!(copy_to_new_file(temp.path(), &dest).is_err());
+            assert!(dest.symlink_metadata().is_err());
+        }
     }
 
     #[test]
