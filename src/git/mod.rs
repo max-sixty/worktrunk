@@ -51,7 +51,7 @@ mod test;
 // Heavy operations protected:
 // - git rev-list --count (accesses commit-graph via mmap)
 // - git diff-tree --shortstat (accesses pack files and indexes via mmap)
-use crate::path::canonicalize_with_parents;
+use crate::path::{canonicalize_with_parents, format_path_for_display};
 use crate::sync::Semaphore;
 use std::sync::LazyLock;
 static HEAVY_OPS_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(4));
@@ -819,6 +819,10 @@ pub struct WorktreeInfo {
     pub path: PathBuf,
     pub head: String,
     pub branch: Option<String>,
+    /// Inventory remains usable when a detached worktree's branch cannot be
+    /// determined. Destructive consumers must require that identity first.
+    #[serde(skip)]
+    pub branch_identity_error: Option<String>,
     pub bare: bool,
     pub detached: bool,
     pub locked: Option<String>,
@@ -836,6 +840,17 @@ pub fn path_dir_name(path: &std::path::Path) -> &str {
 }
 
 impl WorktreeInfo {
+    /// Refuse treating an unreadable rebase identity as a branchless checkout.
+    pub fn require_branch_identity(&self) -> anyhow::Result<()> {
+        if let Some(error) = &self.branch_identity_error {
+            anyhow::bail!(
+                "Cannot determine worktree branch @ {}: {error}",
+                format_path_for_display(&self.path)
+            );
+        }
+        Ok(())
+    }
+
     /// Canonical identity of this inventory entry. The registered path remains
     /// unchanged on [`Self::path`] for display and Git operations.
     pub fn id(&self) -> WorktreeId {
@@ -972,8 +987,11 @@ fn rebase_branch(git_dir: &Path) -> anyhow::Result<Option<String>> {
 /// holds the rebase state, even if the checkout is missing, moved or has a
 /// broken gitfile. The main worktree uses the common directory. Resolving
 /// identity through this one registration scan avoids upward discovery into
-/// an enclosing repository. Invalid or unreadable state fails the inventory
-/// before it can authorize deleting a branch.
+/// an enclosing repository. Invalid or unreadable state is recorded on the
+/// entry so inventory and switching remain available. Branch deletion and
+/// selected worktree removal require that identity; unknown is never evidence
+/// that a checkout is branchless. Registry containment/ownership reads remain
+/// strict because an unknown location cannot prove a removal tree safe.
 pub(crate) fn finalize_worktrees(
     repo: &Repository,
     worktrees: &mut [WorktreeInfo],
@@ -984,7 +1002,7 @@ pub(crate) fn finalize_worktrees(
     {
         return Ok(());
     }
-    let registrations = repo.worktree_registrations()?;
+    let registrations = repo.worktree_registrations();
     let main = if repo.is_bare()? {
         None
     } else {
@@ -995,15 +1013,23 @@ pub(crate) fn finalize_worktrees(
         .filter(|wt| wt.detached && wt.branch.is_none())
     {
         let path = canonicalize_with_parents(&wt.path);
-        let git_dir = if main.as_deref() == Some(path.as_path()) {
-            Some(repo.git_common_dir())
+        let branch = if main.as_deref() == Some(path.as_path()) {
+            rebase_branch(repo.git_common_dir())
         } else {
-            registrations
-                .get(&path)
-                .map(|registration| registration.git_dir.as_path())
+            match &registrations {
+                Ok(registrations) => match registrations.get(&path) {
+                    Some(registration) => rebase_branch(&registration.git_dir),
+                    None => Err(anyhow::anyhow!(
+                        "Worktree registration not found @ {}",
+                        format_path_for_display(&wt.path)
+                    )),
+                },
+                Err(error) => Err(anyhow::anyhow!("{error:#}")),
+            }
         };
-        if let Some(git_dir) = git_dir {
-            wt.branch = rebase_branch(git_dir)?;
+        match branch {
+            Ok(branch) => wt.branch = branch,
+            Err(error) => wt.branch_identity_error = Some(format!("{error:#}")),
         }
     }
     Ok(())
@@ -1168,6 +1194,7 @@ mod tests {
             path: PathBuf::from("/repos/myrepo.feature"),
             head: "abc123".into(),
             branch: Some("feature".into()),
+            branch_identity_error: None,
             bare: false,
             detached: false,
             locked: None,
@@ -1196,6 +1223,7 @@ mod tests {
             path: PathBuf::from("/repo.feature"),
             head: "abc123".into(),
             branch: Some("feature".into()),
+            branch_identity_error: None,
             bare: false,
             detached: false,
             locked: None,
@@ -1468,6 +1496,7 @@ mod tests {
             path: PathBuf::from("/repo.detached"),
             head: "def456".into(),
             branch: None, // Detached HEAD
+            branch_identity_error: None,
             bare: false,
             detached: true,
             locked: None,

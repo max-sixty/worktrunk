@@ -182,12 +182,11 @@ fn finish_worktree_after_merge(
             // the likeliest way to meet a `--force` duplicate — the branch is
             // integrated, so nothing else would stop the delete, and deleting it
             // strands the duplicate at a null OID.
+            let worktrees = repo.list_worktrees()?;
             let branch_checked_out_at =
-                live_sibling_checkout(repo.list_worktrees()?, current_branch, &worktree_root).map(
-                    |sibling| {
-                        SharedBranchCheckout::new(&sibling.path, &BranchDeletionMode::SafeDelete)
-                    },
-                );
+                live_sibling_checkout(worktrees, current_branch, &worktree_root).map(|sibling| {
+                    SharedBranchCheckout::new(&sibling.path, &BranchDeletionMode::SafeDelete)
+                });
 
             // A retained branch has no deletion to justify, so the integration
             // check is skipped rather than computed and discarded — same shape as
@@ -225,6 +224,9 @@ fn finish_worktree_after_merge(
                 removed_commit: feature_commit.clone(),
                 branch_checked_out_at,
             };
+            if remove_result.will_attempt_branch_deletion() {
+                repo.require_branch_deletion_topology(worktrees)?;
+            }
             // The fate is dropped: merge's own reporting (`removed` in the JSON
             // blob, the removal messages) doesn't itemize the branch, and the
             // handler has already narrated any retention.

@@ -6,9 +6,9 @@ rem
 rem Codex uses the session shell. The manifest starts with `set WT_HOOK=; &`:
 rem cmd sets an unused environment variable, then & runs this absolute path;
 rem PowerShell sets an unused variable, then ; ends that statement and & calls
-rem this path. Both builtins are silent. Avoid a bare cmd launcher: cmd would
-rem search the project directory first. Direct batch execution uses the system
-rem interpreter (MS14-019). The session shell still owns its startup behavior.
+rem this path. Both builtins are silent. Avoid a bare cmd launcher, whose lookup
+rem depends on the session shell and PATH. Direct batch execution uses the
+rem system interpreter (MS14-019). The session shell owns its startup behavior.
 rem
 rem Always exit 0: markers are best-effort, and cmd's `|| exit /b 0` cannot live
 rem in the cross-shell command string. Diagnostics still go to stderr.

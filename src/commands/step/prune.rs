@@ -455,6 +455,9 @@ fn check_one(
         }
         _ => None,
     };
+    if let Some(wt) = stale_detached {
+        wt.require_branch_identity()?;
+    }
     let plan = if stale_detached.is_some() {
         None
     } else {
@@ -628,7 +631,9 @@ fn gather_check_items(
             seen_branches.insert(branch.clone());
         }
 
-        if wt.locked.is_some() {
+        // Unknown operation identity never makes an automatic prune candidate.
+        // Branch-deleting plans still require the complete topology below.
+        if wt.branch_identity_error.is_some() || wt.locked.is_some() {
             continue;
         }
 

@@ -156,6 +156,249 @@ fn test_remove_refuses_incomplete_rebase_state(repo: TestRepo, #[case] replaceme
     assert!(continued.status.success(), "{continued:?}");
 }
 
+/// Inventory tolerates unknown sibling identity; destructive operations still
+/// require enough state to prove that they cannot orphan it.
+#[rstest]
+#[case::incomplete_rebase(false)]
+#[case::missing_registration(true)]
+fn test_incomplete_sibling_state_preserves_inventory_commands(
+    mut repo: TestRepo,
+    #[case] missing_registration: bool,
+) {
+    let detached = repo.add_worktree("detached-sibling");
+    repo.run_git_in(&detached, &["checkout", "--detach"]);
+    let registration = registration_dir(&detached);
+    if missing_registration {
+        let broken = repo.add_worktree("broken-sibling");
+        let registration = registration_dir(&broken);
+        fs::remove_file(registration.join("gitdir")).unwrap();
+        // A later commit must not launch maintenance that repairs the fixture
+        // by deleting the damaged registration before Worktrunk can inspect it.
+        assert_eq!(
+            repo.git_output(&["config", "--type=bool", "--get", "maintenance.auto"]),
+            "false"
+        );
+        repo.run_git(&[
+            "commit",
+            "--allow-empty",
+            "-m",
+            "after partial registration",
+        ]);
+        assert!(registration.is_dir());
+        assert!(broken.is_dir());
+        assert_branch_exists(
+            &repo,
+            "broken-sibling",
+            true,
+            "commit after damaged registration",
+        );
+    } else {
+        fs::create_dir(registration.join("rebase-merge")).unwrap();
+    }
+    for args in [
+        vec!["list", "--format=json"],
+        vec!["list", "statusline", "--format=claude-code"],
+        vec!["switch", "--create", "available", "--yes"],
+    ] {
+        let output = repo.wt_command().args(args).output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+    }
+    let inventory = worktrunk::git::Repository::at(repo.root_path()).unwrap();
+    let sibling = inventory
+        .list_worktrees()
+        .unwrap()
+        .iter()
+        .find(|wt| worktrunk::path::paths_match(&wt.path, &detached))
+        .unwrap();
+    assert!(sibling.branch_identity_error.is_some());
+    assert!(sibling.branch.is_none());
+
+    // With a known registry, unrelated directory removal remains available
+    // when no branch deletion is requested. An unreadable registry cannot
+    // prove containment, so its removal refusal is intentional.
+    let output = repo
+        .wt_command()
+        .args(["remove", "available", "--no-delete-branch", "--yes"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.success(), !missing_registration, "{output:?}");
+    repo.run_git(&["branch", "candidate", "main"]);
+    for force in [false, true] {
+        let mut command = repo.wt_command();
+        command.args(["remove", "candidate", "--yes"]);
+        if force {
+            command.arg("-D");
+        }
+        let output = command.output().unwrap();
+        assert!(!output.status.success(), "{output:?}");
+        let retained = repo
+            .git_command()
+            .args(["show-ref", "--verify", "refs/heads/candidate"])
+            .run()
+            .unwrap();
+        assert!(retained.status.success(), "{output:?}");
+        assert!(detached.is_dir());
+    }
+    let output = repo
+        .wt_command()
+        .args([
+            "_delete-branch-if-safe",
+            "--branch=candidate",
+            "--target=main",
+            "--force-delete",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    let retained = repo
+        .git_command()
+        .args(["show-ref", "--verify", "refs/heads/candidate"])
+        .run()
+        .unwrap();
+    assert!(retained.status.success(), "{output:?}");
+    // The same unknown entry cannot be removed by path as an ordinary
+    // detached checkout, even when discarding its own work is authorized.
+    let output = repo
+        .wt_command()
+        .args(["remove", detached.to_str().unwrap(), "--yes", "-D"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert!(detached.is_dir());
+}
+
+/// A known topology is a planning precondition when a removal will delete a
+/// branch, so dry runs and execution agree before any directory is removed.
+#[rstest]
+#[case::prune_dry("prune-dry")]
+#[case::prune_live("prune-live")]
+#[case::remove_safe("remove-safe")]
+#[case::remove_force("remove-force")]
+#[case::remove_keep("remove-keep")]
+#[case::remove_unmerged("remove-unmerged")]
+#[case::merge("merge")]
+#[case::merge_keep("merge-keep")]
+fn test_unknown_sibling_blocks_planned_branch_deletion(
+    #[case] operation: &str,
+    #[values(false, true)] sibling_integrated: bool,
+) {
+    let mut repo = TestRepo::with_initial_commit();
+    let candidate = if operation.starts_with("merge") || operation == "remove-unmerged" {
+        repo.add_worktree_with_commit("candidate", "feature.txt", "content", "feature commit")
+    } else {
+        repo.add_worktree("candidate")
+    };
+    let detached = repo.home_path().join("unknown-sibling");
+    repo.run_git(&["worktree", "add", "--detach", detached.to_str().unwrap()]);
+    if !sibling_integrated {
+        fs::write(
+            detached.join("sibling-only.txt"),
+            "unmerged sibling content",
+        )
+        .unwrap();
+        repo.run_git_in(&detached, &["add", "--", "sibling-only.txt"]);
+        repo.run_git_in(&detached, &["commit", "-m", "unknown tip"]);
+    }
+    let sibling_head = repo.git_output(&["-C", detached.to_str().unwrap(), "rev-parse", "HEAD"]);
+    let repository = worktrunk::git::Repository::at(repo.root_path()).unwrap();
+    let (_, reason) = repository
+        .integration_reason(&repository.capture_refs().unwrap(), &sibling_head, "main")
+        .unwrap();
+    assert_eq!(reason.is_some(), sibling_integrated);
+    fs::create_dir(registration_dir(&detached).join("rebase-merge")).unwrap();
+
+    let args = match operation {
+        "prune-dry" => vec!["step", "prune", "--dry-run", "--min-age=0s"],
+        "prune-live" => vec!["step", "prune", "--min-age=0s", "--yes"],
+        "remove-safe" | "remove-unmerged" => vec!["remove", "candidate", "--yes"],
+        "remove-force" => vec!["remove", "candidate", "-D", "--yes"],
+        "remove-keep" => vec!["remove", "candidate", "--no-delete-branch", "--yes"],
+        "merge" => vec!["merge", "main", "--yes"],
+        "merge-keep" => vec!["merge", "main", "--no-remove", "--yes"],
+        _ => unreachable!(),
+    };
+    let mut command = repo.wt_command();
+    command.args(args);
+    if operation.starts_with("merge") {
+        command.current_dir(&candidate);
+    }
+    let output = command.output().unwrap();
+    let permits_removal = matches!(operation, "remove-keep" | "remove-unmerged");
+    let succeeds = permits_removal || operation == "merge-keep";
+    assert_eq!(output.status.success(), succeeds, "{operation}: {output:?}");
+    if permits_removal {
+        crate::common::wait_for(
+            "candidate directory removed without branch deletion",
+            || !candidate.exists(),
+        );
+    } else {
+        assert!(candidate.is_dir(), "{operation}: {output:?}");
+    }
+    assert_branch_exists(&repo, "candidate", true, operation);
+    assert!(detached.is_dir(), "{operation}: {output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !succeeds {
+        assert!(
+            stderr.contains("Cannot determine worktree branch"),
+            "{operation}: {output:?}"
+        );
+        assert!(
+            !stderr.contains("would be removed"),
+            "{operation}: {output:?}"
+        );
+        assert!(
+            !stderr.contains("Removing candidate worktree"),
+            "{operation}: {output:?}"
+        );
+    }
+    if operation.starts_with("merge") {
+        assert_eq!(
+            fs::read_to_string(repo.root_path().join("feature.txt")).unwrap(),
+            "content"
+        );
+    }
+}
+
+/// An unknown detached entry is ineligible for automatic pruning regardless
+/// of whether its current commit happens to be integrated.
+#[rstest]
+fn test_prune_skips_unknown_identity_without_deletion_candidates(
+    #[values(false, true)] sibling_integrated: bool,
+    #[values(false, true)] dry_run: bool,
+) {
+    let repo = TestRepo::with_initial_commit();
+    let detached = repo.home_path().join("unknown-sibling");
+    repo.run_git(&["worktree", "add", "--detach", detached.to_str().unwrap()]);
+    if !sibling_integrated {
+        fs::write(
+            detached.join("sibling-only.txt"),
+            "unmerged sibling content",
+        )
+        .unwrap();
+        repo.run_git_in(&detached, &["add", "--", "sibling-only.txt"]);
+        repo.run_git_in(&detached, &["commit", "-m", "unknown tip"]);
+    }
+    let sibling_head = repo.git_output(&["-C", detached.to_str().unwrap(), "rev-parse", "HEAD"]);
+    let repository = worktrunk::git::Repository::at(repo.root_path()).unwrap();
+    let (_, reason) = repository
+        .integration_reason(&repository.capture_refs().unwrap(), &sibling_head, "main")
+        .unwrap();
+    assert_eq!(reason.is_some(), sibling_integrated);
+    fs::create_dir(registration_dir(&detached).join("rebase-merge")).unwrap();
+    let mut command = repo.wt_command();
+    command.args(["step", "prune", "--min-age=0s", "--yes"]);
+    if dry_run {
+        command.arg("--dry-run");
+    }
+    let output = command.output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(detached.is_dir());
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("would be removed"),
+        "{output:?}"
+    );
+}
+
 #[rstest]
 fn test_list_and_switch_after_moving_main_with_detached_worktree(repo: TestRepo) {
     let detached = repo.home_path().join("detached");
@@ -232,7 +475,9 @@ fn test_remove_retains_nested_rebase_with_empty_git_directory(mut repo: TestRepo
             .unwrap()
             .iter()
             .any(|item| item["branch"] == "rebasing"
-                && item["worktree"]["path"] == nested.to_str().unwrap()),
+                && item["worktree"]["path"]
+                    .as_str()
+                    .is_some_and(|path| Path::new(path) == nested)),
         "{data}"
     );
     for force in [false, true] {
@@ -1610,10 +1855,10 @@ exec {real_git} -c core.fsmonitor=false "$@"
             .env("GIT_WORK_TREE", repo.root_path())
             .env("WORKTRUNK_TEST_REMOVAL_SCAN_LOG", &log);
         if let Some(environment) = environment {
-            command
-                .env("GIT_CONFIG_COUNT", "1")
-                .env("GIT_CONFIG_KEY_0", "core.fsmonitor")
-                .env("GIT_CONFIG_VALUE_0", environment);
+            command.env(
+                "GIT_CONFIG_PARAMETERS",
+                format!("'core.fsmonitor={environment}'"),
+            );
         }
         let output = command.output().unwrap();
         assert_eq!(
@@ -5271,7 +5516,7 @@ fn test_detached_delete_child_dispatch(#[case] checked_out: bool) {
 }
 
 /// The rename-failure fallback honors `-D`: an unmerged branch is force-deleted
-/// in the legacy `git worktree remove && git branch -D` command.
+/// through the same guarded Rust child after legacy worktree removal.
 #[rstest]
 fn test_remove_background_fallback_force_delete_branch(mut repo: TestRepo) {
     repo.commit("initial");

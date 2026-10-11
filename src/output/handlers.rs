@@ -299,19 +299,23 @@ fn execute_instant_removal_or_fallback(
         // integrated, append a Rust child that rechecks the expected SHA,
         // integration and live topology through the canonical deletion API.
         // The same captured child snapshot supplies the final CAS.
-        // Force-delete keeps the unconditional `git branch -D` shell tail.
+        // Force-delete uses the same Rust child and fresh topology guard,
+        // skipping integration and the planned-SHA comparison.
         let (command, fate) = match (branch_name, deletion_mode) {
-            (Some(branch), BranchDeletionMode::ForceDelete) => (
-                build_remove_command(
-                    worktree_path,
-                    Some(branch),
-                    force_worktree,
-                    changed_directory,
-                ),
-                BranchFate::Deferred,
-            ),
+            (Some(branch), BranchDeletionMode::ForceDelete) => {
+                let tail = build_branch_delete_tail(repo, branch, target_branch, true)?;
+                (
+                    build_remove_command_with_tail(
+                        worktree_path,
+                        force_worktree,
+                        changed_directory,
+                        tail.as_deref(),
+                    ),
+                    BranchFate::Deferred,
+                )
+            }
             (Some(branch), BranchDeletionMode::SafeDelete) => {
-                let cas_tail = build_cas_branch_delete_tail(repo, branch, target_branch)?;
+                let cas_tail = build_branch_delete_tail(repo, branch, target_branch, false)?;
                 // No tail means the foreground integration check declined (or
                 // found it absent): the detached process won't touch the branch,
                 // so its survival is known here, not deferred — and when the
@@ -346,7 +350,7 @@ fn execute_instant_removal_or_fallback(
                 )
             }
             _ => (
-                build_remove_command(worktree_path, None, force_worktree, changed_directory),
+                build_remove_command(worktree_path, force_worktree, changed_directory),
                 BranchFate::NotAttempted,
             ),
         };
@@ -453,25 +457,29 @@ fn warn_if_branch_retained(
     }
 }
 
-/// Compute the safe-delete branch-deletion shell tail for the Detached
-/// fallback path.
+/// Build the Rust branch-deletion child for the detached removal fallback.
 ///
-/// The foreground integration check selects a candidate and expected SHA.
-/// After worktree removal succeeds, the same executable captures fresh refs,
-/// retains a changed tip, and uses the shared Rust topology guard and CAS.
+/// Safe deletion selects an integrated candidate and expected SHA; force skips
+/// those checks. Both use the canonical fresh topology guard in the child.
 /// Neither paths nor worktree records are parsed by the shell.
-fn build_cas_branch_delete_tail(
+fn build_branch_delete_tail(
     repo: &Repository,
     branch: &str,
     target_branch: Option<&str>,
+    force_delete: bool,
 ) -> anyhow::Result<Option<String>> {
     use shell_escape::unix::escape;
 
     let target = target_branch.unwrap_or("HEAD");
-    let snapshot = repo.capture_refs()?;
-    let (_effective_target, reason) = repo.integration_reason(&snapshot, branch, target)?;
-    let Some(branch_info) = snapshot.local_branch(branch).filter(|_| reason.is_some()) else {
-        return Ok(None);
+    let deletion_mode = if force_delete {
+        "--force-delete".to_string()
+    } else {
+        let snapshot = repo.capture_refs()?;
+        let (_effective_target, reason) = repo.integration_reason(&snapshot, branch, target)?;
+        let Some(branch_info) = snapshot.local_branch(branch).filter(|_| reason.is_some()) else {
+            return Ok(None);
+        };
+        escape(format!("--expected-sha={}", branch_info.commit_sha).into()).into_owned()
     };
     let executable = std::env::current_exe().context("Failed to locate Worktrunk executable")?;
     let executable = worktrunk::path::to_posix_path(
@@ -482,21 +490,31 @@ fn build_cas_branch_delete_tail(
     let executable = escape(executable.into());
     let branch = escape(format!("--branch={branch}").into());
     let target = escape(format!("--target={target}").into());
-    let expected_sha = escape(format!("--expected-sha={}", branch_info.commit_sha).into());
     Ok(Some(format!(
-        "{executable} _delete-branch-if-safe {branch} {target} {expected_sha}"
+        "{executable} _delete-branch-if-safe {branch} {target} {deletion_mode}"
     )))
 }
 
 /// Complete the detached tail using the same deletion mechanism as foreground
-/// removal. A ref that changed since planning is retained before integration.
+/// removal. Safe deletion retains a changed ref; force still requires known
+/// worktree identities before invoking Git's checkout-protected deletion.
 pub(crate) fn delete_branch_from_detached_fallback(
     branch: &str,
     target: &str,
-    expected_sha: &str,
+    expected_sha: Option<&str>,
+    force_delete: bool,
 ) -> anyhow::Result<()> {
     let repo = Repository::current()?;
-    let result = delete_planned_branch(&repo, branch, target, expected_sha)?;
+    let result = if force_delete {
+        execute_branch_deletion(&repo, branch, target, true)?
+    } else {
+        delete_planned_branch(
+            &repo,
+            branch,
+            target,
+            expected_sha.context("Missing expected branch revision")?,
+        )?
+    };
     warn_if_branch_retained(branch, &Ok(result), false);
     Ok(())
 }
@@ -529,8 +547,7 @@ fn build_remove_command_with_tail(
     changed_directory: bool,
     tail: Option<&str>,
 ) -> anyhow::Result<String> {
-    let remove_command =
-        build_remove_command(worktree_path, None, force_worktree, changed_directory)?;
+    let remove_command = build_remove_command(worktree_path, force_worktree, changed_directory)?;
     Ok(match tail {
         Some(tail) => format!("{remove_command} && {tail}"),
         None => remove_command,
@@ -1390,8 +1407,8 @@ fn handle_branch_only_output(
 
     let check_target = target_branch.unwrap_or("HEAD");
 
-    // Force-delete bypasses CAS entirely — `git branch -D` is the user's
-    // explicit override. For safe-delete with a pre-computed integration
+    // Force-delete skips integration and CAS, but still requires fresh known
+    // worktree identities. For safe-delete with a pre-computed integration
     // reason, re-run the deletion against fresh refs
     // (`execute_branch_deletion`): the atomic CAS catches any tip movement
     // since planning, rather than trusting the planner's stale view of the ref.
@@ -1413,15 +1430,8 @@ fn handle_branch_only_output(
         handle_branch_deletion_result(result, branch_name, None)?
     } else if deletion_mode.is_force() {
         let repo = worktrunk::git::Repository::current()?;
-        let result = repo.run_command(&["branch", "-D", "--", branch_name]);
-        handle_branch_deletion_result(
-            result.map(|_| BranchDeletionResult {
-                outcome: BranchDeletionOutcome::ForceDeleted,
-                integration_target: check_target.to_string(),
-            }),
-            branch_name,
-            None,
-        )?
+        let result = execute_branch_deletion(&repo, branch_name, check_target, true);
+        handle_branch_deletion_result(result, branch_name, None)?
     } else {
         BranchDeletionDisplay {
             result: BranchDeletionResult {
@@ -2525,7 +2535,7 @@ mod tests {
         test.create_branch("feature");
         let repo = Repository::at(test.root_path()).unwrap();
         let expected_sha = test.git_output(&["rev-parse", "feature"]);
-        let tail = build_cas_branch_delete_tail(&repo, "feature", Some("main"))
+        let tail = build_branch_delete_tail(&repo, "feature", Some("main"), false)
             .unwrap()
             .unwrap();
         assert!(tail.contains("_delete-branch-if-safe"));

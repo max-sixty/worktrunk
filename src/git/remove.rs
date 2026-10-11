@@ -562,6 +562,9 @@ fn require_removal_allowed(
     expected_registration: Option<&Path>,
 ) -> anyhow::Result<PathBuf> {
     let git_dir = worktree.ensure_holds_this_worktree()?;
+    // Read the selected checkout's operation state freshly at each ownership
+    // gate; a malformed rebase cannot become a removable detached checkout.
+    super::rebase_branch(&git_dir)?;
     if expected_registration.is_some_and(|expected| !crate::path::paths_match(expected, &git_dir)) {
         anyhow::bail!(
             "Worktree registration changed during removal @ {}",
@@ -731,6 +734,9 @@ pub fn delete_branch_if_safe(
     // Force-delete: skip integration check entirely (matches compute_integration_reason
     // behavior for the Worktree path). The user explicitly chose -D.
     if force_delete {
+        // Git's checkout guard cannot identify a branch from malformed rebase
+        // state. Require known fresh identities before its forced mutation too.
+        let _ = fresh_branch_checkout(repo, branch_name)?;
         repo.run_command(&["branch", "-D", "--", branch_name])?;
         return Ok(BranchDeletionResult {
             outcome: BranchDeletionOutcome::ForceDeleted,
@@ -780,8 +786,9 @@ pub fn delete_branch_if_safe(
 /// continues to retain the branch conservatively.
 fn fresh_branch_checkout(repo: &Repository, branch_name: &str) -> anyhow::Result<Option<PathBuf>> {
     let fresh_repo = Repository::at(repo.discovery_path())?;
-    Ok(fresh_repo
-        .list_worktrees()?
+    let worktrees = fresh_repo.list_worktrees()?;
+    fresh_repo.require_branch_deletion_topology(worktrees)?;
+    Ok(worktrees
         .iter()
         .find(|worktree| branch_checkout_requires_retention(worktree, branch_name))
         .map(|worktree| worktree.path.clone()))
@@ -1212,6 +1219,7 @@ mod tests {
             path: PathBuf::from("/missing/feature"),
             head: "0123456789abcdef".to_string(),
             branch: Some("feature".to_string()),
+            branch_identity_error: None,
             bare: false,
             detached: false,
             locked: Some("detachable media".to_string()),

@@ -754,18 +754,20 @@ pub fn scrub_git_discovery_env_vars(cmd: &mut std::process::Command) {
 /// The hermetic git-config floor for test processes: the deny pair points
 /// global and system config at a path that does not exist (git reads a
 /// missing config file as empty), and `GIT_CONFIG_COUNT` with its numbered
-/// keys and values — git's environment spelling of `-c` — supplies the two
+/// keys and values — git's environment spelling of `-c` — supplies the
 /// settings the suite needs in the denied config's place. What each entry is
 /// for, and why `-c` precedence keeps this list short: `tests/AGENTS.md` →
 /// Git Config Isolation.
-pub const HERMETIC_TEST_GIT_ENV: [(&str, &str); 7] = [
+pub const HERMETIC_TEST_GIT_ENV: [(&str, &str); 9] = [
     ("GIT_CONFIG_GLOBAL", "/nonexistent/wt/gitconfig"),
     ("GIT_CONFIG_SYSTEM", "/nonexistent/wt/gitconfig"),
-    ("GIT_CONFIG_COUNT", "2"),
+    ("GIT_CONFIG_COUNT", "3"),
     ("GIT_CONFIG_KEY_0", "user.useConfigOnly"),
     ("GIT_CONFIG_VALUE_0", "true"),
     ("GIT_CONFIG_KEY_1", "rerere.enabled"),
     ("GIT_CONFIG_VALUE_1", "false"),
+    ("GIT_CONFIG_KEY_2", "maintenance.auto"),
+    ("GIT_CONFIG_VALUE_2", "false"),
 ];
 
 /// When latched, every child spawned through [`Cmd`] gets

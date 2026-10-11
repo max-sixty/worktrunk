@@ -37,7 +37,7 @@ Test child environment layers live in src/testing/mod.rs: STATIC_TEST_ENV_VARS, 
 
 ## Git Config Isolation
 
-No suite Git process may read the developer's global or system config. shell_exec::HERMETIC_TEST_GIT_ENV and the test command helpers apply the same deny floor, including in-process Git through the harness latch. Never mutate the test process environment. A test that changes fixture-construction Git behavior must rebuild the cached standard fixture or bump STANDARD_FIXTURE_VERSION before trusting local results. The detailed mechanism is in src/testing/mod.rs and src/shell_exec.rs.
+No suite Git process may read the developer's global or system config. shell_exec::HERMETIC_TEST_GIT_ENV and the test command helpers apply the same deny floor, including in-process Git through the harness latch. The floor disables automatic maintenance so later commits cannot prune damaged registrations a test is inspecting. Never mutate the test process environment. A test that changes fixture-construction Git behavior must rebuild the cached standard fixture or bump STANDARD_FIXTURE_VERSION before trusting local results. The detailed mechanism is in src/testing/mod.rs and src/shell_exec.rs.
 
 ## Config Isolation for In-Process Unit Tests
 

@@ -28,6 +28,21 @@ pub(crate) struct WorktreeRegistration {
 }
 
 impl Repository {
+    /// Require complete worktree topology before planning or executing a
+    /// branch deletion. Git may omit partial registrations, and an unknown
+    /// operation identity may name any branch. Inventory remains available;
+    /// callers that intend deletion require this additional proof.
+    pub fn require_branch_deletion_topology(
+        &self,
+        worktrees: &[WorktreeInfo],
+    ) -> anyhow::Result<()> {
+        self.worktree_registrations()?;
+        for worktree in worktrees {
+            worktree.require_branch_identity()?;
+        }
+        Ok(())
+    }
+
     /// List all worktrees for this repository.
     ///
     /// Returns a list of worktrees with bare entries filtered out.
@@ -387,6 +402,9 @@ impl Repository {
         let (registration, recorded) = self
             .registration_at(path)?
             .with_context(|| format!("No worktree registered @ {display}"))?;
+        // Re-read operation identity at unregister time, including explicit
+        // force: unknown rebase state is not a disposable branchless entry.
+        crate::git::rebase_branch(&registration)?;
         if !definitely_absent(&registration.join("locked"))? {
             anyhow::bail!("Worktree @ {display} is locked");
         }

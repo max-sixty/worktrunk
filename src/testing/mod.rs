@@ -174,7 +174,7 @@ use tempfile::TempDir;
 
 /// Bump when [`build_standard_fixture`] changes, so stale templates under
 /// `target/` are abandoned rather than reused.
-const STANDARD_FIXTURE_VERSION: u32 = 1;
+const STANDARD_FIXTURE_VERSION: u32 = 2;
 
 /// Bump when the main-only transformation in
 /// [`build_standard_main_only_fixture`] changes. Its cache key also includes
@@ -1021,7 +1021,7 @@ pub fn configure_cli_command(cmd: &mut Command) {
 /// consume it, so the three spellings cannot drift.
 ///
 /// The identity is here rather than in the hermetic floor because the floor
-/// carries only the denial and the two `-c` settings; identity already has
+/// carries only the denial and the `-c` settings; identity already has
 /// this per-command home, and a second copy in the floor could only drift
 /// from it. A harness-built `git` needs one because it commits into repos it
 /// has just created, before `LOCAL_TEST_CONFIG` reaches their local config.
@@ -3829,8 +3829,12 @@ mod tests {
 
         // The vector must be complete on its own — every member present,
         // the numbered settings as much as the deny pair.
-        for (var, _) in shell_exec::HERMETIC_TEST_GIT_ENV {
+        for (var, value) in shell_exec::HERMETIC_TEST_GIT_ENV {
             assert!(keys.contains(&var), "{var} missing: {keys:?}");
+            assert!(
+                vars.iter()
+                    .any(|(key, actual)| key == var && actual == value)
+            );
         }
     }
 
@@ -3944,10 +3948,27 @@ mod tests {
             .lines()
             .filter_map(|line| line.strip_prefix("command\t"))
             .collect();
-        insta::assert_snapshot!(from_env.join("\n"), @r"
+        insta::assert_snapshot!(from_env.join("\n"), @"
         user.useconfigonly=true
         rerere.enabled=false
+        maintenance.auto=false
         ");
+
+        // The same floor reaches harness-built Cmd and standard Command
+        // children, not just the in-process production spawn above.
+        assert_eq!(
+            repo.git_output(&["config", "--type=bool", "--get", "maintenance.auto"]),
+            "false"
+        );
+        let mut direct = Command::new("git");
+        configure_git_cmd(&mut direct);
+        let direct = direct
+            .current_dir(repo.path())
+            .args(["config", "--type=bool", "--get", "maintenance.auto"])
+            .output()
+            .unwrap();
+        assert!(direct.status.success(), "{direct:?}");
+        assert_eq!(String::from_utf8(direct.stdout).unwrap().trim(), "false");
 
         // Nothing outside the fixture contributes. The only scopes a resolved
         // setting may carry are `command` (the environment floor above) and

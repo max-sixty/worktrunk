@@ -431,6 +431,25 @@ impl RemovalPlan {
         }
     }
 
+    /// Whether the current force/integration verdict predicts a deletion.
+    /// `deletes_branch` carries policy; this additionally needs a reason for
+    /// safe deletion. Execution still rechecks integration and topology.
+    pub fn will_attempt_branch_deletion(&self) -> bool {
+        self.deletes_branch()
+            && match self {
+                Self::Worktree {
+                    deletion_mode,
+                    integration_reason,
+                    ..
+                }
+                | Self::BranchOnly {
+                    deletion_mode,
+                    integration_reason,
+                    ..
+                } => deletion_mode.is_force() || integration_reason.is_some(),
+            }
+    }
+
     /// Convert to a JSON value for structured output.
     ///
     /// `fate` is what execution reported back, and `branch_outcome` names it

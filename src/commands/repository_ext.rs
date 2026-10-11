@@ -197,6 +197,7 @@ impl RepositoryCliExt for Repository {
                     .ok_or_else(|| {
                         anyhow::anyhow!("Worktree not found at {}", lookup_path.display())
                     })?;
+                wt.require_branch_identity()?;
                 // Lock guard first, before the missing-directory fallback. A
                 // lock means "don't remove this", and a temporarily-absent
                 // directory (removable media, a network mount, a dropped VPN)
@@ -328,7 +329,7 @@ impl RepositoryCliExt for Repository {
                     target,
                     deletion_mode,
                 );
-                return Ok(RemovalPlan::BranchOnly {
+                let plan = RemovalPlan::BranchOnly {
                     branch_name: branch,
                     deletion_mode,
                     prune_entry: pruned_from,
@@ -337,7 +338,11 @@ impl RepositoryCliExt for Repository {
                     integration_reason,
                     branch_checked_out_at: None,
                     detached_worktree: None,
-                });
+                };
+                if plan.will_attempt_branch_deletion() {
+                    self.require_branch_deletion_topology(worktrees)?;
+                }
+                return Ok(plan);
             }
             Resolved::Worktree {
                 path,
@@ -441,7 +446,7 @@ impl RepositoryCliExt for Repository {
         // selected and frozen into the `ApprovedHookPlan` at the gate
         // (`remove.rs`'s `approve_remove`), anchored at this worktree's path,
         // so the executor needs no config — it runs only the frozen plan.
-        Ok(RemovalPlan::Worktree {
+        let plan = RemovalPlan::Worktree {
             main_path,
             worktree_path,
             changed_directory,
@@ -452,7 +457,11 @@ impl RepositoryCliExt for Repository {
             force_worktree,
             removed_commit,
             branch_checked_out_at,
-        })
+        };
+        if plan.will_attempt_branch_deletion() {
+            self.require_branch_deletion_topology(worktrees)?;
+        }
+        Ok(plan)
     }
 
     fn ensure_no_target_conflicts(

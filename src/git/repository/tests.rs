@@ -113,6 +113,7 @@ fn test_finalize_worktree_with_branch() {
         path: PathBuf::from("/path/to/worktree"),
         head: "abcd1234".to_string(),
         branch: Some("feature".to_string()),
+        branch_identity_error: None,
         bare: false,
         detached: false,
         locked: None,
@@ -134,6 +135,7 @@ fn test_finalize_worktree_detached_with_branch() {
         path: PathBuf::from("/path/to/worktree"),
         head: "abcd1234".to_string(),
         branch: Some("feature".to_string()),
+        branch_identity_error: None,
         bare: false,
         detached: true,
         locked: None,
@@ -156,6 +158,7 @@ fn test_finalize_worktree_detached_no_branch() {
         path: PathBuf::from("/nonexistent/path"),
         head: "abcd1234".to_string(),
         branch: None,
+        branch_identity_error: None,
         bare: false,
         detached: true,
         locked: None,
@@ -168,6 +171,148 @@ fn test_finalize_worktree_detached_no_branch() {
     finalize_worktrees(&repo, &mut worktrees).unwrap();
     let [finalized] = worktrees;
     assert_eq!(finalized.branch, None);
+}
+
+#[test]
+fn test_finalize_rebase_errors_are_unknown_inventory_identities() {
+    // Contrast actual incomplete/read-error states with Git am's explicit
+    // applying marker. All use the canonical state reader, never a lenient
+    // inventory parser beside the destructive guard.
+    for state in [
+        "missing-head",
+        "empty-head",
+        "unreadable-head",
+        "missing-applying",
+        "invalid-applying",
+        "unreadable-applying",
+        "also-rebasing",
+        "genuine-am",
+    ] {
+        let mut test = TestRepo::with_initial_commit();
+        let linked = test.add_worktree("feature");
+        test.run_git_in(&linked, &["checkout", "--detach"]);
+        let git_dir = Repository::git_dir_at(&linked).unwrap().unwrap();
+        let backend = if state.ends_with("head") {
+            "rebase-merge"
+        } else {
+            "rebase-apply"
+        };
+        let operation = git_dir.join(backend);
+        std::fs::create_dir(&operation).unwrap();
+        match state {
+            "empty-head" => std::fs::write(operation.join("head-name"), b"").unwrap(),
+            "unreadable-head" => std::fs::create_dir(operation.join("head-name")).unwrap(),
+            "invalid-applying" => std::fs::write(operation.join("applying"), b"invalid").unwrap(),
+            "unreadable-applying" => std::fs::create_dir(operation.join("applying")).unwrap(),
+            "also-rebasing" | "genuine-am" => {
+                std::fs::write(operation.join("applying"), b"").unwrap();
+                if state == "also-rebasing" {
+                    std::fs::write(operation.join("rebasing"), b"").unwrap();
+                }
+            }
+            _ => {}
+        }
+        let repo = Repository::at(test.root_path()).unwrap();
+        let wt = repo
+            .list_worktrees()
+            .unwrap()
+            .iter()
+            .find(|wt| wt.path == linked)
+            .unwrap();
+        assert_eq!(wt.branch, None, "{state}");
+        assert_eq!(
+            wt.branch_identity_error.is_some(),
+            state != "genuine-am",
+            "{state}"
+        );
+        assert_eq!(
+            wt.require_branch_identity().is_err(),
+            state != "genuine-am",
+            "{state}"
+        );
+        if state != "genuine-am" {
+            for force in [false, true] {
+                let result = crate::git::delete_branch_if_safe(
+                    &repo,
+                    &repo.capture_refs().unwrap(),
+                    "feature",
+                    "main",
+                    force,
+                );
+                assert!(result.is_err(), "{state}");
+                assert!(repo.branch("feature").exists_locally().unwrap(), "{state}");
+            }
+            // Restoring the producer must release the guard even though this
+            // Repository already cached an unknown inventory entry.
+            std::fs::remove_dir_all(&operation).unwrap();
+            let deleted = crate::git::delete_branch_if_safe(
+                &repo,
+                &repo.capture_refs().unwrap(),
+                "feature",
+                "main",
+                false,
+            )
+            .unwrap();
+            assert!(
+                matches!(
+                    deleted.outcome,
+                    crate::git::BranchDeletionOutcome::Integrated(_)
+                ),
+                "{state}"
+            );
+            assert!(
+                repo.run_command(&["show-ref", "--verify", "refs/heads/feature"])
+                    .is_err(),
+                "{state}"
+            );
+        }
+    }
+}
+
+#[test]
+fn branch_deletion_refuses_a_registration_omitted_from_inventory() {
+    let mut test = TestRepo::with_initial_commit();
+    let linked = test.add_worktree("feature");
+    let registration = Repository::git_dir_at(&linked).unwrap().unwrap();
+    let backlink = registration.join("gitdir");
+    let contents = std::fs::read(&backlink).unwrap();
+    std::fs::remove_file(&backlink).unwrap();
+    let repo = Repository::at(test.root_path()).unwrap();
+    let listed = repo.list_worktrees().unwrap();
+    assert!(listed.iter().all(|wt| !wt.detached));
+    assert!(
+        listed
+            .iter()
+            .all(|wt| wt.branch.as_deref() != Some("feature"))
+    );
+    for force in [false, true] {
+        assert!(
+            crate::git::delete_branch_if_safe(
+                &repo,
+                &repo.capture_refs().unwrap(),
+                "feature",
+                "main",
+                force,
+            )
+            .is_err()
+        );
+        assert!(repo.branch("feature").exists_locally().unwrap());
+    }
+    // The old cached inventory omits this registration. Restoring its producer
+    // must still retain the live checkout on the deletion-time fresh read.
+    std::fs::write(backlink, contents).unwrap();
+    let retained = crate::git::delete_branch_if_safe(
+        &repo,
+        &repo.capture_refs().unwrap(),
+        "feature",
+        "main",
+        false,
+    )
+    .unwrap();
+    assert!(
+        matches!(retained.outcome, crate::git::BranchDeletionOutcome::RetainedCheckedOut { path } if path == linked)
+    );
+    assert!(repo.branch("feature").exists_locally().unwrap());
 }
 
 #[test]
@@ -2779,6 +2924,57 @@ fn prune_worktree_entry_repeats_git_prune_test() {
         err.to_string().contains("No worktree registered"),
         "got: {err}"
     );
+}
+
+/// A stale registration's operation identity is rechecked at the unregister
+/// boundary. Even force cannot discard metadata Git cannot identify; after the
+/// malformed operation state is removed, the same entry can be pruned.
+#[test]
+fn prune_worktree_entry_preserves_unknown_operation_identity() {
+    use crate::git::{Repository, WorktreePruneMode};
+    use crate::testing::TestRepo;
+
+    for mode in [WorktreePruneMode::Stale, WorktreePruneMode::Force] {
+        let mut test = TestRepo::with_initial_commit();
+        let worktree = test.add_worktree("detached-stale");
+        test.run_git_in(&worktree, &["checkout", "--detach"]);
+        let repository = Repository::at(test.root_path()).unwrap();
+        let registration = repository.worktree_at(&worktree).git_dir().unwrap();
+        let registration_files: Vec<_> = ["HEAD", "commondir", "gitdir", "index"]
+            .into_iter()
+            .map(|name| (name, std::fs::read(registration.join(name)).unwrap()))
+            .collect();
+        let operation = registration.join("rebase-merge");
+        std::fs::create_dir(&operation).unwrap();
+        let todo = b"pick 0123456789abcdef\n";
+        std::fs::write(operation.join("todo"), todo).unwrap();
+        // The rebase directory exists, but its branch identity is unknown.
+        std::fs::remove_dir_all(&worktree).unwrap();
+
+        let error = repository
+            .prune_worktree_entry(&worktree, mode)
+            .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("head-name"),
+            "mode {mode:?}: {error:#}"
+        );
+        assert!(registration.is_dir(), "mode {mode:?}");
+        for (name, bytes) in &registration_files {
+            assert_eq!(
+                std::fs::read(registration.join(name)).unwrap(),
+                *bytes,
+                "mode {mode:?}: {name}"
+            );
+        }
+        assert_eq!(std::fs::read(operation.join("todo")).unwrap(), todo);
+        assert!(!operation.join("head-name").exists());
+
+        // Once the unidentifiable state is gone, pruning this stale entry is
+        // safe in either mode.
+        std::fs::remove_dir_all(&operation).unwrap();
+        repository.prune_worktree_entry(&worktree, mode).unwrap();
+        assert!(!registration.exists(), "mode {mode:?}");
+    }
 }
 
 /// A `.git` that can't be statted is not taken for an absent one: the entry

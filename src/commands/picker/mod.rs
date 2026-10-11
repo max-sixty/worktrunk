@@ -1137,14 +1137,7 @@ fn removal_failure_subject(result: &RemovalPlan) -> (String, &'static str) {
 fn removal_will_remove_target(result: &RemovalPlan) -> bool {
     match result {
         RemovalPlan::Worktree { .. } => true,
-        RemovalPlan::BranchOnly {
-            deletion_mode,
-            integration_reason,
-            ..
-        } => {
-            !deletion_mode.should_keep()
-                && (deletion_mode.is_force() || integration_reason.is_some())
-        }
+        RemovalPlan::BranchOnly { .. } => result.will_attempt_branch_deletion(),
     }
 }
 

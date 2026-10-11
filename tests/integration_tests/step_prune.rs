@@ -642,11 +642,8 @@ fn test_prune_stale_worktree(mut repo: TestRepo) {
 /// Extract the `worktree <path>` line for the entry whose path ends with
 /// `dir_name` from `git worktree list --porcelain` output.
 ///
-/// Returns git's own path string verbatim — the exact form `wt` emits in its
-/// JSON `path` field, since `WorktreeInfo::path` is `PathBuf::from(this)`.
-/// Deriving the expected value this way avoids the Windows mismatch where
-/// `std::fs::canonicalize` yields a `\\?\` verbatim, backslash-separated path
-/// while git reports a forward-slash one.
+/// Returns Git's own spelling for checking that its registration disappears.
+/// Worktrunk's JSON uses native separators, which differ on Windows.
 fn porcelain_worktree_path<'a>(porcelain: &'a str, dir_name: &str) -> &'a str {
     porcelain
         .lines()
@@ -684,8 +681,8 @@ fn test_prune_stale_detached_worktree(repo: TestRepo) {
         list_before.contains("prunable"),
         "Git should report stale detached worktree metadata before prune"
     );
-    // Use git's own path string for the expectation — `wt`'s JSON `path` is
-    // `PathBuf::from` of exactly this, with no re-canonicalization.
+    // Preserve Git's spelling for the post-prune registration check. JSON uses
+    // the fixture's native path spelling, even after the directory disappears.
     let wt_path_str = porcelain_worktree_path(&list_before, "repo.stale-detached");
 
     let output = repo
@@ -713,7 +710,7 @@ fn test_prune_stale_detached_worktree(repo: TestRepo) {
     );
     assert!(items[0]["branch"].is_null());
     assert_eq!(items[0]["kind"].as_str(), Some("stale_worktree"));
-    assert_eq!(items[0]["path"].as_str(), Some(wt_path_str));
+    assert_eq!(items[0]["path"].as_str(), wt_path.to_str());
 
     let list_after = repo.git_output(&["worktree", "list", "--porcelain"]);
     assert!(

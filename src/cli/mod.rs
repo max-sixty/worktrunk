@@ -2685,15 +2685,21 @@ Hooks, aliases and `step.copy-ignored.exclude` accumulate rather than replace, s
         action: ConfigCommand,
     },
 
-    /// Complete a detached safe branch deletion after worktree removal.
+    /// Complete a detached branch deletion after worktree removal.
     #[command(name = "_delete-branch-if-safe", hide = true)]
     InternalDeleteBranchIfSafe {
         #[arg(long, value_parser = non_empty_branch)]
         branch: String,
         #[arg(long)]
         target: String,
+        #[arg(
+            long,
+            required_unless_present = "force_delete",
+            conflicts_with = "force_delete"
+        )]
+        expected_sha: Option<String>,
         #[arg(long)]
-        expected_sha: String,
+        force_delete: bool,
     },
 
     /// Run a custom `wt-<name>` command found on PATH.

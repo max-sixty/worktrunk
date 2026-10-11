@@ -241,6 +241,7 @@ fn snapshot_parse_worktree_list_missing_head() {
         branch: Some(
             "main",
         ),
+        branch_identity_error: None,
         bare: false,
         detached: false,
         locked: None,
@@ -259,6 +260,7 @@ fn snapshot_parse_worktree_list_locked_with_empty_reason() {
         branch: Some(
             "main",
         ),
+        branch_identity_error: None,
         bare: false,
         detached: false,
         locked: Some(
@@ -281,6 +283,7 @@ fn snapshot_parse_worktree_list_locked_with_reason() {
         branch: Some(
             "main",
         ),
+        branch_identity_error: None,
         bare: false,
         detached: false,
         locked: Some(
@@ -301,6 +304,7 @@ fn snapshot_parse_worktree_list_prunable_empty() {
         branch: Some(
             "main",
         ),
+        branch_identity_error: None,
         bare: false,
         detached: false,
         locked: None,
@@ -319,6 +323,7 @@ fn snapshot_parse_worktree_list_fields_before_worktree() {
         path: "repo",
         head: "def456",
         branch: None,
+        branch_identity_error: None,
         bare: false,
         detached: false,
         locked: None,
@@ -335,6 +340,7 @@ fn snapshot_parse_worktree_list_bare_repository() {
         path: "repo",
         head: "",
         branch: None,
+        branch_identity_error: None,
         bare: true,
         detached: false,
         locked: None,
@@ -351,6 +357,7 @@ fn snapshot_parse_worktree_list_detached_head() {
         path: "repo",
         head: "abc123",
         branch: None,
+        branch_identity_error: None,
         bare: false,
         detached: true,
         locked: None,
@@ -370,6 +377,7 @@ fn snapshot_parse_worktree_list_branch_with_refs_prefix() {
         branch: Some(
             "feature/nested/branch",
         ),
+        branch_identity_error: None,
         bare: false,
         detached: false,
         locked: None,
@@ -388,6 +396,7 @@ fn snapshot_parse_worktree_list_branch_without_refs_prefix() {
         branch: Some(
             "main",
         ),
+        branch_identity_error: None,
         bare: false,
         detached: false,
         locked: None,
@@ -404,6 +413,7 @@ fn snapshot_parse_worktree_list_unknown_attributes() {
         path: "repo",
         head: "abc123",
         branch: None,
+        branch_identity_error: None,
         bare: false,
         detached: false,
         locked: None,

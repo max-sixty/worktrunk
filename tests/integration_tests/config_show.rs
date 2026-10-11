@@ -6057,7 +6057,9 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
     let path_dir = repo.root_path().join("path-dir");
     fs::create_dir_all(&path_dir).unwrap();
     fs::copy(crate::common::wt_bin(), path_dir.join("git-wt.exe")).unwrap();
-    let with_worktrunk = pinned_windows_path(&[path_dir]);
+    // Include the project directory explicitly so PowerShell's application
+    // lookup can select the decoy; it does not search the current directory.
+    let with_worktrunk = pinned_windows_path(&[repo.root_path().to_path_buf(), path_dir]);
     let without_worktrunk = pinned_windows_path(&[]);
 
     let call_log = TempDir::new().unwrap();
@@ -6113,11 +6115,15 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
             .to_owned()
     };
 
-    // Prove that the old bare-cmd hop selects a project-local executable.
-    // Keep that decoy in place while exercising every shipped hook below.
+    // Prove the decoy is reachable through the old bare-cmd hop in PowerShell.
+    // cmd can resolve its own name to the system interpreter, so a native cmd
+    // control cannot establish that this decoy would have run. Keep the decoy
+    // on PATH while exercising every shipped hook below.
     let system_cmd = std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap())
         .join("System32")
         .join("cmd.exe");
+    let windows_powershell =
+        which::which("powershell.exe").expect("Windows PowerShell must be installed");
     // cmd parses its own argv[0], which must use native separators even though
     // CreateProcess accepts a forward slash in the executable path.
     let output = run_line(&system_cmd, "ver", &with_worktrunk);
@@ -6130,11 +6136,11 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
         r#"cmd /d /c call "{}\hooks\wt.cmd" config state marker set 🤖"#,
         plugin_root.display()
     );
-    let output = run_line(&system_cmd, &old_command, &with_worktrunk);
+    let output = run_line(&windows_powershell, &old_command, &with_worktrunk);
     assert!(
         output.status.success(),
         "{}",
-        describe(&system_cmd, &output)
+        describe(&windows_powershell, &output)
     );
     let expected_calls = vec![format!(
         "/d /c call {}\\hooks\\wt.cmd config state marker set 🤖",
@@ -6143,13 +6149,14 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
     assert_eq!(
         mock_calls(call_log.path(), "cmd"),
         expected_calls,
-        "the vulnerable command must select the project decoy; {}",
-        describe(&system_cmd, &output)
+        "the PowerShell PATH control must select the project decoy; {}",
+        describe(&windows_powershell, &output)
     );
+    assert!(marker().is_empty(), "the decoy must not set a real marker");
 
     for shell in [
         system_cmd,
-        which::which("powershell.exe").expect("Windows PowerShell must be installed"),
+        windows_powershell,
         which::which("pwsh.exe").expect("shell-integration-tests requires PowerShell 7 on PATH"),
     ] {
         let shell = shell.as_path();
@@ -8072,10 +8079,11 @@ fn test_config_show_migration_diff_ignores_external_diff(repo: TestRepo) {
     let output = repo
         .wt_command()
         .args(["config", "show"])
-        // Appended to the hermetic test git config (keys 0 and 1).
-        .env("GIT_CONFIG_COUNT", "3")
-        .env("GIT_CONFIG_KEY_2", "diff.external")
-        .env("GIT_CONFIG_VALUE_2", "wt-nonexistent-external-diff")
+        // Compose with the hermetic numbered config without replacing it.
+        .env(
+            "GIT_CONFIG_PARAMETERS",
+            "'diff.external=wt-nonexistent-external-diff'",
+        )
         .output()
         .unwrap();
 
@@ -8098,9 +8106,10 @@ fn test_config_show_reports_failed_migration_diff(repo: TestRepo) {
         .args(["config", "show"])
         // An unparsable `diff.*` value fails git after option parsing, which
         // `--no-ext-diff` cannot prevent.
-        .env("GIT_CONFIG_COUNT", "3")
-        .env("GIT_CONFIG_KEY_2", "diff.algorithm")
-        .env("GIT_CONFIG_VALUE_2", "wt-nonexistent-diff-algorithm")
+        .env(
+            "GIT_CONFIG_PARAMETERS",
+            "'diff.algorithm=wt-nonexistent-diff-algorithm'",
+        )
         .output()
         .unwrap();
 
