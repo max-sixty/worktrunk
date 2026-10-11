@@ -1274,6 +1274,10 @@ fn test_copy_ignored_error_includes_path_directory(mut repo: TestRepo) {
     let dest_sub = feature_path.join("target").join("sub");
     fs::create_dir_all(&dest_sub).unwrap();
     fs::set_permissions(&dest_sub, fs::Permissions::from_mode(0o555)).unwrap();
+    if !worktrunk::testing::permissions_restrict_writes(&dest_sub) {
+        fs::set_permissions(&dest_sub, fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
 
     // Copy should fail at staging in the read-only destination directory.
     let output = repo
@@ -1317,6 +1321,10 @@ fn test_copy_ignored_error_includes_path_file(mut repo: TestRepo) {
     // Make the destination worktree root read-only so staging fails with
     // PermissionDenied before any file is copied.
     fs::set_permissions(&feature_path, fs::Permissions::from_mode(0o555)).unwrap();
+    if !worktrunk::testing::permissions_restrict_writes(&feature_path) {
+        fs::set_permissions(&feature_path, fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
 
     let output = repo
         .wt_command()
@@ -1369,6 +1377,10 @@ fn test_copy_ignored_error_nested_file_parent_creation(mut repo: TestRepo) {
 
     // Make feature worktree root read-only so create_dir_all("cache/") fails
     fs::set_permissions(&feature_path, fs::Permissions::from_mode(0o555)).unwrap();
+    if !worktrunk::testing::permissions_restrict_writes(&feature_path) {
+        fs::set_permissions(&feature_path, fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
 
     let output = repo
         .wt_command()

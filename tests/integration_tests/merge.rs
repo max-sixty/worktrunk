@@ -5046,6 +5046,12 @@ fn test_step_squash_reports_how_to_reattach_head(repo_with_multi_commit_feature:
     let feature_wt = &repo.worktrees["feature"];
     let feature_dir = feature_wt.to_str().unwrap();
 
+    // Check applicability independently of the hook under test.
+    let probe = worktrunk::testing::test_tempdir();
+    fs::set_permissions(probe.path(), fs::Permissions::from_mode(0o555)).unwrap();
+    let restricted = worktrunk::testing::permissions_restrict_writes(probe.path());
+    fs::set_permissions(probe.path(), fs::Permissions::from_mode(0o755)).unwrap();
+
     // The hook seals the worktree's git directory before rejecting the commit,
     // so the reattach that follows can't write HEAD either.
     let hook = repo.root_path().join(".git/hooks/pre-commit");
@@ -5070,7 +5076,7 @@ fn test_step_squash_reports_how_to_reattach_head(repo_with_multi_commit_feature:
 
     let git_dir =
         PathBuf::from(repo.git_output(&["-C", feature_dir, "rev-parse", "--absolute-git-dir"]));
-    let sealed = fs::write(git_dir.join("write-probe"), "x").is_err();
+    let sealed = fs::metadata(&git_dir).unwrap().permissions().mode() & 0o222 == 0;
     fs::set_permissions(&git_dir, fs::Permissions::from_mode(0o755)).unwrap();
     repo.run_git(&[
         "-C",
@@ -5079,15 +5085,19 @@ fn test_step_squash_reports_how_to_reattach_head(repo_with_multi_commit_feature:
         "HEAD",
         "refs/heads/feature",
     ]);
-    if !sealed {
-        // Running with privileges that ignore the read-only directory, so the
-        // reattach succeeded and there is no message to assert.
+    assert!(sealed, "the pre-commit hook must seal the git directory");
+    assert!(
+        !output.status.success(),
+        "the pre-commit hook must refuse the commit"
+    );
+    if !restricted {
+        // Privileges allow reattaching HEAD, so no recovery hint is needed.
         return;
     }
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !output.status.success() && stderr.contains("git symbolic-ref HEAD refs/heads/feature"),
+        stderr.contains("git symbolic-ref HEAD refs/heads/feature"),
         "a failed reattach must say how to put HEAD back: {stderr}"
     );
 }

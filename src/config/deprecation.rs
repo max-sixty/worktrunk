@@ -4756,15 +4756,10 @@ approved-commands = ["npm install"]
         perms.set_mode(0o555);
         std::fs::set_permissions(temp_dir.path(), perms).unwrap();
 
-        // Root ignores directory permissions, so the write would succeed and
-        // the assertion below would spuriously fail (Claude Code web, Docker).
-        // Probe and skip when not actually restricted — matching the pattern
-        // in tests/integration_tests/approval_save.rs.
-        if std::fs::write(temp_dir.path().join("__probe"), "").is_ok() {
+        if !crate::testing::permissions_restrict_writes(temp_dir.path()) {
             let mut perms = std::fs::metadata(temp_dir.path()).unwrap().permissions();
             perms.set_mode(0o755);
             std::fs::set_permissions(temp_dir.path(), perms).unwrap();
-            std::eprintln!("Skipping permission test - running with elevated privileges");
             return;
         }
 

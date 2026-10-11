@@ -499,6 +499,82 @@ mod tests {
     }
 
     #[test]
+    fn test_move_entry_failure_keeps_source_and_destination() {
+        use path_slash::PathExt;
+
+        let tmp = worktrunk::testing::test_tempdir();
+        let src = tmp.path().join("source file");
+        let blocker = tmp.path().join("existing file");
+        fs::write(&src, b"source data").unwrap();
+        fs::write(&blocker, b"existing data").unwrap();
+        let blocked_parent = blocker.join("destination");
+
+        let error = move_entry(&src, &blocked_parent, false).unwrap_err();
+        assert!(error.downcast_ref::<std::io::Error>().is_some());
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "creating parent directory for '{}'",
+                blocked_parent.to_slash_lossy()
+            )
+        );
+        assert_eq!(fs::read(&src).unwrap(), b"source data");
+        assert_eq!(fs::read(&blocker).unwrap(), b"existing data");
+
+        let occupied = tmp.path().join("existing directory");
+        fs::create_dir(&occupied).unwrap();
+        fs::write(occupied.join("protected"), b"existing data").unwrap();
+        let error = move_entry(&src, &occupied, false).unwrap_err();
+        assert!(error.downcast_ref::<std::io::Error>().is_some());
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "moving '{}' to '{}'",
+                src.to_slash_lossy(),
+                occupied.to_slash_lossy()
+            )
+        );
+        assert_eq!(fs::read(&src).unwrap(), b"source data");
+        assert_eq!(
+            fs::read(occupied.join("protected")).unwrap(),
+            b"existing data"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_copy_and_remove_keeps_copies_when_cleanup_is_denied() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = worktrunk::testing::test_tempdir();
+        let src = tmp.path().join("source directory");
+        let dest = tmp.path().join("destination directory");
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("data"), b"source data").unwrap();
+        fs::set_permissions(&src, fs::Permissions::from_mode(0o555)).unwrap();
+
+        if !worktrunk::testing::permissions_restrict_writes(&src) {
+            fs::set_permissions(&src, fs::Permissions::from_mode(0o755)).unwrap();
+            return;
+        }
+
+        let result = copy_and_remove(&src, &dest, true);
+
+        fs::set_permissions(&src, fs::Permissions::from_mode(0o755)).unwrap();
+        if dest.exists() {
+            fs::set_permissions(&dest, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let error = result.unwrap_err();
+        assert!(error.downcast_ref::<std::io::Error>().is_some());
+        assert_eq!(
+            error.to_string(),
+            format!("removing source directory '{}'", src.display())
+        );
+        assert_eq!(fs::read(src.join("data")).unwrap(), b"source data");
+        assert_eq!(fs::read(dest.join("data")).unwrap(), b"source data");
+    }
+
+    #[test]
     fn test_copy_and_remove_file() {
         let tmp = tempfile::tempdir().unwrap();
         let src = tmp.path().join("source.txt");

@@ -4620,12 +4620,8 @@ fn test_remove_foreground_succeeds_with_stuck_directory(mut repo: TestRepo) {
     fs::write(stuck_dir.join("file.txt"), "content").unwrap();
     fs::set_permissions(&stuck_dir, Permissions::from_mode(0o555)).unwrap();
 
-    // Check if permissions actually restrict us (skip if running as root)
-    let test_file = stuck_dir.join("test_write");
-    if fs::write(&test_file, "test").is_ok() {
-        let _ = fs::remove_file(&test_file);
+    if !worktrunk::testing::permissions_restrict_writes(&stuck_dir) {
         fs::set_permissions(&stuck_dir, Permissions::from_mode(0o755)).unwrap();
-        eprintln!("Skipping - running with elevated privileges");
         return;
     }
 
@@ -4674,12 +4670,8 @@ fn test_remove_foreground_succeeds_with_stuck_directory_detached(mut repo: TestR
     fs::write(stuck_dir.join("file.txt"), "content").unwrap();
     fs::set_permissions(&stuck_dir, Permissions::from_mode(0o555)).unwrap();
 
-    // Skip if running as root
-    let test_file = stuck_dir.join("test_write");
-    if fs::write(&test_file, "test").is_ok() {
-        let _ = fs::remove_file(&test_file);
+    if !worktrunk::testing::permissions_restrict_writes(&stuck_dir) {
         fs::set_permissions(&stuck_dir, Permissions::from_mode(0o755)).unwrap();
-        eprintln!("Skipping - running with elevated privileges");
         return;
     }
 

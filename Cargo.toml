@@ -241,7 +241,8 @@ termimad = { version = "0.35.1", optional = true }
 urlencoding = "2.1"
 regex = "1.12.3"
 ignore = "0.4"
-reflink-copy = "0.1"
+# Reflink permission preservation requires 0.1.30.
+reflink-copy = "0.1.30"
 # Exclusive rename for --clobber backups and Windows copy publication.
 renamore = "0.3"
 dashmap = "6.2.1"

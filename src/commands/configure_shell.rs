@@ -2255,13 +2255,10 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         fs::set_permissions(path, fs::Permissions::from_mode(0o500)).unwrap();
-        let probe = path.join("__probe");
-        if fs::write(&probe, "").is_err() {
+        if worktrunk::testing::permissions_restrict_writes(path) {
             true
         } else {
-            fs::remove_file(probe).unwrap();
             fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
-            std::eprintln!("Skipping - running with elevated privileges");
             false
         }
     }

@@ -1895,13 +1895,8 @@ fn test_prune_surfaces_failing_metadata_prune(mut repo: TestRepo) {
         std::fs::set_permissions(&registration, std::fs::Permissions::from_mode(mode)).unwrap()
     };
     set_mode(0o555);
-    // Skip if running as root: euid 0 ignores DAC mode bits, so the deletion
-    // would succeed. Probe with a write the mode should refuse.
-    let probe = registration.join("probe");
-    if std::fs::write(&probe, "").is_ok() {
-        let _ = std::fs::remove_file(&probe);
+    if !worktrunk::testing::permissions_restrict_writes(&registration) {
         set_mode(0o755);
-        eprintln!("Skipping - running with elevated privileges");
         return;
     }
 

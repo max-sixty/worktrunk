@@ -853,6 +853,25 @@ pub fn test_tempdir() -> TempDir {
     TempDir::new_in(test_temp_root()).expect("create test temp dir")
 }
 
+/// Whether directory permissions deny file creation to this process.
+///
+/// Permission-failure tests are inapplicable when privileges bypass the mode
+/// bits. Probe the already-restricted fixture rather than inferring privileges
+/// from a user name. Unexpected I/O failures remain test failures.
+#[cfg(unix)]
+pub fn permissions_restrict_writes(directory: &Path) -> bool {
+    match tempfile::NamedTempFile::new_in(directory) {
+        Ok(_) => {
+            crate::styling::eprintln!(
+                "Skipping permission-denial assertions: directory writes are permitted"
+            );
+            false
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => true,
+        Err(error) => panic!("probing directory write permissions: {error}"),
+    }
+}
+
 /// A single fixed empty directory used as the default `current_dir` for
 /// [`wt_command`], created on first use and shared by every test process.
 ///

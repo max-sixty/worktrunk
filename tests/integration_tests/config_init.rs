@@ -165,12 +165,8 @@ fn test_config_create_project_write_failure_names_the_path(repo: TestRepo) {
     // can't be created.
     fs::set_permissions(&config_dir, Permissions::from_mode(0o555)).unwrap();
 
-    // Skip when running as root — permissions don't restrict.
-    let probe = config_dir.join("__probe");
-    if fs::write(&probe, "").is_ok() {
-        let _ = fs::remove_file(&probe);
+    if !worktrunk::testing::permissions_restrict_writes(&config_dir) {
         fs::set_permissions(&config_dir, Permissions::from_mode(0o755)).unwrap();
-        eprintln!("Skipping - running with elevated privileges");
         return;
     }
 

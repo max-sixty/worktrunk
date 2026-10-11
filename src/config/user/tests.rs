@@ -3083,7 +3083,10 @@ fn test_with_locked_mutation_propagates_write_error() {
     }
     let _guard = RestorePerms(&config_dir);
 
-    if !permissions_restrict_reads(dir.path()) {
+    std::fs::set_permissions(&config_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let restricted = crate::testing::permissions_restrict_writes(&config_dir);
+    std::fs::set_permissions(&config_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    if !restricted {
         return;
     }
 

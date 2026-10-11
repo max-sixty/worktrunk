@@ -247,12 +247,6 @@ impl PreparedLeaf {
         } else {
             let fallback = reflink_copy::reflink_or_copy(src, &path)
                 .with_context(|| format!("copying {}", format_path_for_display(src)))?;
-            // Linux clones do not preserve execute bits, unlike clonefile on
-            // APFS and the dependency's regular-copy fallback.
-            #[cfg(all(unix, not(target_os = "macos")))]
-            fs::set_permissions(&path, metadata.permissions()).with_context(|| {
-                format!("setting permissions on {}", format_path_for_display(dest))
-            })?;
             if let Some(stamp) = stamp {
                 set_modified(&path, stamp);
             }
@@ -913,6 +907,47 @@ mod tests {
         );
         assert_eq!(fs::read_link(&source_link).unwrap(), source_file);
         assert_eq!(fs::read(&blocker).unwrap(), b"existing data");
+    }
+
+    /// Failed publication keeps the source and an occupied destination directory.
+    #[test]
+    fn test_copy_publication_failure_keeps_directory() {
+        use path_slash::PathExt;
+
+        for recursive in [false, true] {
+            let dir = crate::testing::test_tempdir();
+            let src = dir.path().join("source tree");
+            let dest = dir.path().join("destination tree");
+            let src_file = src.join("blocked file");
+            let occupied = dest.join("blocked file");
+            fs::create_dir(&src).unwrap();
+            fs::create_dir_all(&occupied).unwrap();
+            fs::write(&src_file, b"source data").unwrap();
+            fs::write(occupied.join("protected"), b"existing data").unwrap();
+
+            let error = if recursive {
+                copy_dir_recursive(&src, &dest, None, true, None, &Progress::disabled())
+                    .unwrap_err()
+            } else {
+                copy_leaf(&src_file, &occupied, None, true, None).unwrap_err()
+            };
+
+            assert!(error.downcast_ref::<std::io::Error>().is_some());
+            assert_eq!(
+                error.to_string(),
+                format!("publishing copied file @ '{}'", occupied.to_slash_lossy())
+            );
+            assert_eq!(fs::read(&src_file).unwrap(), b"source data");
+            assert_eq!(
+                fs::read(occupied.join("protected")).unwrap(),
+                b"existing data"
+            );
+            let names: Vec<_> = fs::read_dir(&dest)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect();
+            assert_eq!(names, ["blocked file"]);
+        }
     }
 
     /// A destination failure is an error, while a failed forced copy leaves

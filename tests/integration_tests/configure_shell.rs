@@ -668,12 +668,8 @@ fn test_configure_shell_fish_legacy_remove_failure_warns(repo: TestRepo, temp_ho
     // Read-only parent dir → remove of contained file fails with EACCES.
     fs::set_permissions(&conf_d, Permissions::from_mode(0o555)).unwrap();
 
-    // Skip when running as root — permissions don't restrict.
-    let probe = conf_d.join("__probe");
-    if fs::write(&probe, "").is_ok() {
-        let _ = fs::remove_file(&probe);
+    if !worktrunk::testing::permissions_restrict_writes(&conf_d) {
         fs::set_permissions(&conf_d, Permissions::from_mode(0o755)).unwrap();
-        eprintln!("Skipping - running with elevated privileges");
         return;
     }
 
