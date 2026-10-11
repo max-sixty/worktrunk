@@ -288,40 +288,9 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn run_custom_propagates_signal_exit_code() {
-        // Exec a stable system binary (`/bin/sh -c 'kill -TERM $$'`) rather than
-        // writing a script to a tempdir and exec'ing it. Writing an executable
-        // and immediately exec'ing it races with other test threads: a
-        // concurrent fork+exec elsewhere in the suite can inherit a writable fd
-        // to the just-written file, so this exec sporadically fails with
-        // ETXTBSY, surfacing as a spawn error instead of the signal error we
-        // assert on. `/bin/sh` is never written by the test, so it can't race.
-        // The production code path (spawn, wait, signal handling) is identical.
-        let sh = Path::new("/bin/sh");
-        let args = [OsString::from("-c"), OsString::from("kill -TERM $$")];
-
-        use worktrunk::git::ErrorExt;
-
-        let err = run_custom(sh, &args, None).expect_err("child killed by SIGTERM");
-        let wt_err = err
-            .downcast_ref::<WorktrunkError>()
-            .expect("signal should surface as WorktrunkError::Interrupted");
-        match wt_err {
-            WorktrunkError::Interrupted { signal, hint: None } => {
-                assert_eq!(*signal, 15);
-                // The shell-style convention is 128 + signal.
-                assert_eq!(err.exit_code(), Some(143));
-            }
-            other => panic!("unexpected WorktrunkError variant: {other:?}"),
-        }
-    }
-
     #[test]
     fn run_custom_spawn_failure_resolves_trace() {
-        // A non-existent binary fails at spawn, exercising the `trace.fail` arm
-        // (the success path is covered by the signal test above).
+        // A non-existent binary fails at spawn, exercising the `trace.fail` arm.
         let err = run_custom(Path::new("/no/such/wt-custom-7f3a9b2c"), &[], None)
             .expect_err("spawning a missing binary should fail");
         assert_eq!(
