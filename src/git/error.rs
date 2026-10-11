@@ -2634,9 +2634,16 @@ mod tests {
             command_name: None,
             error: anyhow::anyhow!("setup failed"),
         };
+        #[cfg(feature = "syntax-highlighting")]
         assert_snapshot!(err.render(), @"
         [31m✗[39m [31m[1mpre-start user hook[22m failed[39m
         [107m [0m [2m[0m[2m[34mecho[0m[2m test[0m
+        [107m [0m setup failed
+        ");
+        #[cfg(not(feature = "syntax-highlighting"))]
+        assert_snapshot!(err.render(), @"
+        [31m✗[39m [31m[1mpre-start user hook[22m failed[39m
+        [107m [0m echo test
         [107m [0m setup failed
         ");
 
