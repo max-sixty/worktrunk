@@ -1,15 +1,17 @@
 @echo off
-rem Windows counterpart of the `bash "$PLUGIN_ROOT/hooks/wt.sh"` that the Unix
-rem hook commands lead with: it finds Git Bash by path, then runs wt.sh through
-rem it, so every integration resolves the worktrunk binary through that one
-rem script.
-rem
-rem Codex runs hook commands through `cmd.exe /C` on Windows, where a bare
-rem `bash` resolves through PATH to System32\bash.exe -- the WSL launcher, not
-rem Git Bash -- and in a sandboxed session refuses to start at all (#4007). Only
-rem the bare name is the problem, so this resolves bash.exe the way find_git_bash
-rem does in src/shell_exec.rs and changes nothing else.
+rem Windows hook entrypoint: find Git Bash by installation path, avoiding the
+rem System32\bash.exe WSL launcher (#4007), then run the shared wt.sh.
 rem Usage: wt.cmd [args...]
+rem
+rem Codex uses the session shell, so commandWindows must parse in cmd and both
+rem PowerShell editions (#4239). `cmd /d /c call "${PLUGIN_ROOT}\hooks\wt.cmd"`
+rem starts with a command rather than a PowerShell string expression. `call`
+rem avoids cmd's initial-quote stripping; /d disables AutoRun for this cmd hop.
+rem The outer cmd, if Codex uses one, still runs its own AutoRun. A cmd-session
+rem lookup of the bare `cmd` can also resolve an executable in the project cwd.
+rem
+rem Always exit 0: markers are best-effort, and cmd's `|| exit /b 0` cannot live
+rem in the cross-shell command string. Diagnostics still go to stderr.
 rem
 rem Every branch here is a bare `goto` or `call`: `if <cond> <cmd1> & <cmd2>`
 rem runs cmd2 unconditionally, and `if <cond> <cmd1> || <cmd2>` tests the `if`
@@ -40,7 +42,7 @@ if not defined BASH call :accept "%LOCALAPPDATA%\Programs\Git\bin\bash.exe"
 if not defined BASH goto :missing
 
 "%BASH%" "%~dp0wt.sh" %*
-exit /b %ERRORLEVEL%
+exit /b 0
 
 rem %1 is a Git install's cmd\, bin\, or mingw64\bin\ directory, with the
 rem trailing separator `%~dpI` leaves on; the last sits a level deeper, so the
@@ -61,4 +63,4 @@ goto :eof
 
 :missing
 echo worktrunk: Git for Windows is required but bash.exe was not found. Install from https://git-scm.com/download/win 1>&2
-exit /b 1
+exit /b 0

@@ -27,7 +27,9 @@
 //!    bug (issue #3322: `wt config show` suspending on a pager write)
 //! 5. **Worktrees** — Raw `git worktree list --porcelain` output
 //! 6. **Config** — User and project config contents
-//! 7. **Verbose log** — Debug log output, truncated to ~50KB if large
+//! 7. **Trace log** — `trace.log` contents, truncated to the last ~50KB
+//! 8. **Raw subprocess output** — Path to `subprocess.log`, which holds the full
+//!    captured stdout/stderr (the report links it rather than inlining it)
 //!
 //! # Privacy
 //!
@@ -289,7 +291,8 @@ impl DiagnosticReport {
 
     /// Write the diagnostic report to a file.
     ///
-    /// Called from `write_if_verbose()` when verbose >= 2.
+    /// Called from `write_diagnostic()`, which `write_if_verbose()` runs when
+    /// verbose >= 2.
     /// Returns the path if successful, None if write failed.
     pub fn write_diagnostic_file(&self, repo: &Repository) -> Option<PathBuf> {
         let log_dir = repo.wt_logs_dir();
