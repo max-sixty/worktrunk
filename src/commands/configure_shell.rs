@@ -355,7 +355,7 @@ pub fn handle_configure_shell(
     skip_confirmation: bool,
     dry_run: bool,
     cmd: String,
-) -> Result<ScanResult, String> {
+) -> Result<ScanResult, ShellConfigError> {
     shell::validate_shell_command_name(&cmd)?;
 
     // First, do a dry-run to see what would be changed
@@ -408,7 +408,7 @@ pub fn handle_configure_shell(
             prompt,
         )?
     {
-        return Err("Cancelled by user".to_string());
+        return Err("Cancelled by user".to_string().into());
     }
 
     apply_confirmed_shell_config(preview, shell_filter, &cmd)
@@ -429,7 +429,7 @@ pub(crate) fn apply_confirmed_shell_config(
     mut preview: ScanResult,
     shell_filter: Option<Shell>,
     cmd: &str,
-) -> Result<ScanResult, String> {
+) -> Result<ScanResult, ShellConfigError> {
     if !install_changes_needed(&preview) {
         preview.legacy_cleanups = collect_legacy_cleanups(&preview.configured, cmd, false);
         return Ok(preview);
@@ -513,15 +513,47 @@ fn should_auto_configure_powershell() -> bool {
     }
 }
 
-/// Stop with the cancellation a shell scan observed, before a consumer that
-/// treats scan failures as "not configured" or a hint goes on to its next step.
-/// The scan's string errors can't carry the interruption themselves.
-pub(crate) fn require_scan_not_cancelled() -> anyhow::Result<()> {
-    match shell::powershell_query_interruption() {
-        Some(signal) => {
-            Err(worktrunk::git::WorktrunkError::Interrupted { signal, hint: None }.into())
+/// Why a shell config scan or edit failed. A cancelled PowerShell profile
+/// query stays typed, so a consumer that treats ordinary failures as "not
+/// configured" still stops the command instead of moving on to its next step.
+#[derive(Debug)]
+pub enum ShellConfigError {
+    /// The profile query was cancelled by this signal.
+    Interrupted(i32),
+    Failed(String),
+}
+
+impl ShellConfigError {
+    fn config_paths(shell: Shell, error: std::io::Error) -> Self {
+        match shell::profile_query_interruption(&error) {
+            Some(signal) => Self::Interrupted(signal),
+            None => Self::Failed(format!("Failed to get config paths for {shell}: {error}")),
         }
-        None => Ok(()),
+    }
+
+    /// Prefix an ordinary failure with `context`; a cancellation stays typed.
+    pub(crate) fn context(self, context: &str) -> anyhow::Error {
+        match self {
+            Self::Failed(message) => anyhow::anyhow!("{context}: {message}"),
+            interrupted => interrupted.into(),
+        }
+    }
+}
+
+impl From<String> for ShellConfigError {
+    fn from(message: String) -> Self {
+        Self::Failed(message)
+    }
+}
+
+impl From<ShellConfigError> for anyhow::Error {
+    fn from(error: ShellConfigError) -> Self {
+        match error {
+            ShellConfigError::Interrupted(signal) => {
+                worktrunk::git::WorktrunkError::Interrupted { signal, hint: None }.into()
+            }
+            ShellConfigError::Failed(message) => anyhow::anyhow!(message),
+        }
     }
 }
 
@@ -531,7 +563,7 @@ pub fn scan_shell_configs(
     shell_filter: Option<Shell>,
     dry_run: bool,
     cmd: &str,
-) -> Result<ScanResult, String> {
+) -> Result<ScanResult, ShellConfigError> {
     shell::validate_shell_command_name(cmd)?;
 
     // Iterate every supported shell. Shells the user doesn't have are filtered
@@ -557,7 +589,7 @@ pub fn scan_shell_configs(
     for shell in shells {
         let paths = shell
             .config_paths(cmd)
-            .map_err(|e| format!("Failed to get config paths for {shell}: {e}"))?;
+            .map_err(|e| ShellConfigError::config_paths(shell, e))?;
 
         // Find the first existing config file
         let target_path = paths.iter().find(|p| p.exists());
@@ -615,7 +647,7 @@ pub fn scan_shell_configs(
                     Err(e) => {
                         // For non-critical errors, we could continue with other shells
                         // but for now we'll fail fast
-                        return Err(format!("Failed to configure {shell}: {e}"));
+                        return Err(format!("Failed to configure {shell}: {e}").into());
                     }
                 }
             }
@@ -1280,7 +1312,7 @@ pub fn handle_unconfigure_shell(
     shell_filter: Option<Shell>,
     skip_confirmation: bool,
     dry_run: bool,
-) -> Result<UninstallScanResult, String> {
+) -> Result<UninstallScanResult, ShellConfigError> {
     let preview = scan_for_uninstall(shell_filter)?;
 
     // If nothing to do, return early
@@ -1306,12 +1338,12 @@ pub fn handle_unconfigure_shell(
     if !skip_confirmation
         && !prompt_for_uninstall_confirmation(&preview.results, &preview.completion_results)?
     {
-        return Err("Cancelled by user".to_string());
+        return Err("Cancelled by user".to_string().into());
     }
 
     // User confirmed (or --yes flag was used), so apply exactly the paths and
     // rc-line multiplicities represented by the preview above.
-    preview.apply()
+    Ok(preview.apply()?)
 }
 
 /// Uninstall scans the shell-owned directories and removes every worktrunk-managed
@@ -1323,7 +1355,9 @@ pub fn handle_unconfigure_shell(
 /// completion header for `completions/`). For Bash/Zsh/PowerShell (line-based),
 /// it scans the rc/profile files and uses `is_shell_integration_line_for_uninstall_any_cmd`.
 /// No `--cmd` is needed because the marker is the content, not the file name.
-fn scan_for_uninstall(shell_filter: Option<Shell>) -> Result<UninstallScanResult, String> {
+fn scan_for_uninstall(
+    shell_filter: Option<Shell>,
+) -> Result<UninstallScanResult, ShellConfigError> {
     // For uninstall, scan every shell (Shell::all includes PowerShell) to clean
     // up any existing profiles.
     let default_shells = Shell::all();
@@ -1405,7 +1439,7 @@ fn scan_for_uninstall(shell_filter: Option<Shell>) -> Result<UninstallScanResult
 
             Shell::Bash | Shell::Zsh | Shell::PowerShell => {
                 let paths = shell::line_based_config_paths(shell, &home)
-                    .map_err(|e| format!("Failed to get config paths for {shell}: {e}"))?;
+                    .map_err(|e| ShellConfigError::config_paths(shell, e))?;
                 let mut found = false;
 
                 for path in &paths {

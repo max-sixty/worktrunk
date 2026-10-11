@@ -1959,17 +1959,19 @@ impl SwitchPipeline<'_> {
         // --execute, show hints only — don't interrupt with a prompt. Skip when
         // change_dir is false (the user opted out of cd, so shell integration
         // is irrelevant) and on the picker path (no `binary_name`).
-        // Best-effort: don't fail the switch if the offer fails.
+        // Best-effort: don't fail the switch if the offer fails, but stop on
+        // cancellation.
         if let Some(binary_name) = shell_integration_binary
             && change_dir
             && !is_shell_integration_active()
         {
             let skip_prompt = execute.is_some();
-            let _ = prompt_shell_integration(repo, config, binary_name, skip_prompt);
+            if let Err(err) = prompt_shell_integration(repo, config, binary_name, skip_prompt)
+                && err.interrupt_signal().is_some()
+            {
+                return Err(err);
+            }
         }
-        // The output hints and the offer above scan shell configs and treat a
-        // failure as "not configured"; a cancelled scan stops before hooks.
-        crate::commands::configure_shell::require_scan_not_cancelled()?;
 
         // Build template vars for base/target context (used by both hooks and
         // --execute). "base" is the source worktree the user switched from (all

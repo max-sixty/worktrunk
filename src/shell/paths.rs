@@ -267,21 +267,44 @@ fn queried_powershell_profile() -> std::io::Result<Option<PathBuf>> {
         .map_err(|signal| {
             std::io::Error::new(
                 std::io::ErrorKind::Interrupted,
-                format!("PowerShell profile query interrupted by signal {signal}"),
+                ProfileQueryInterrupted(signal),
             )
         })
 }
 
-/// The signal that cancelled this process's PowerShell profile query, if it
-/// ran and was cancelled. Shell-scan errors reach most consumers as strings,
-/// so one that would fall back on a failed scan checks this first.
-pub fn powershell_query_interruption() -> Option<i32> {
+/// The payload of the `io::Error` the profile path helpers return when the
+/// PowerShell profile query was cancelled, naming the signal.
+#[cfg(unix)]
+#[derive(Debug)]
+struct ProfileQueryInterrupted(i32);
+
+#[cfg(unix)]
+impl std::fmt::Display for ProfileQueryInterrupted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "PowerShell profile query interrupted by signal {}",
+            self.0
+        )
+    }
+}
+
+#[cfg(unix)]
+impl std::error::Error for ProfileQueryInterrupted {}
+
+/// The signal that cancelled the PowerShell profile query, when `error` is
+/// that cancellation rather than an ordinary path failure.
+pub fn profile_query_interruption(error: &std::io::Error) -> Option<i32> {
     #[cfg(unix)]
     {
-        POWERSHELL_PROFILE.get()?.as_ref().err().copied()
+        error
+            .get_ref()?
+            .downcast_ref::<ProfileQueryInterrupted>()
+            .map(|interrupted| interrupted.0)
     }
     #[cfg(not(unix))]
     {
+        let _ = error;
         None
     }
 }

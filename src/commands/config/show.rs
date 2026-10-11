@@ -28,7 +28,7 @@ use worktrunk::styling::{
 
 use crate::cli::{SwitchFormat, version_str};
 use crate::commands::configure_shell::{
-    ConfigAction, ConfigureResult, require_scan_not_cancelled, scan_shell_configs,
+    ConfigAction, ConfigureResult, ShellConfigError, scan_shell_configs,
 };
 use crate::commands::list::ci_status::CiToolsStatus;
 use crate::help_pager::show_help_in_pager;
@@ -1364,11 +1364,10 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
     // active/inactive warning so the warning text can distinguish "installed but
     // not loaded" (▲ not active) from "never installed" (▲ not configured).
     let cmd = crate::binary_name();
-    let scan_result = scan_shell_configs(None, true, &cmd);
-    require_scan_not_cancelled()?;
-    let scan_result = match scan_result {
+    let scan_result = match scan_shell_configs(None, true, &cmd) {
         Ok(r) => r,
-        Err(e) => {
+        Err(e @ ShellConfigError::Interrupted(_)) => return Err(e.into()),
+        Err(ShellConfigError::Failed(e)) => {
             writeln!(
                 out,
                 "{}",
@@ -1378,7 +1377,9 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         }
     };
 
-    // Get detection details to show matched lines inline
+    // Get detection details to show matched lines inline. The PowerShell
+    // profile query is answered once per process, so a cancelled one already
+    // ended the scan above and can't surface here.
     let detection_results = scan_for_detection_details(&cmd).unwrap_or_default();
 
     // Check for legacy fish conf.d path (deprecated location from before #566)
