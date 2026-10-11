@@ -91,7 +91,7 @@ fn classify_copy(fallback: Option<u64>) -> DataCopy {
 /// `cp --reflink=auto` copies the file anyway. A genuine permission problem on
 /// the source or destination fails the retry with the same error. The crate
 /// removes a destination it created before returning the error, so the retry
-/// re-creates it with [`copy_to_new_file`] rather than `fs::copy`, which would
+/// goes through [`copy_to_new_file`] rather than `fs::copy`, which would
 /// overwrite a file another process put there in between.
 fn reflink_or_copy(src: &Path, dest: &Path) -> io::Result<Option<u64>> {
     fall_back_on_rejected_reflink(reflink_copy::reflink_or_copy(src, dest), || {
@@ -99,24 +99,49 @@ fn reflink_or_copy(src: &Path, dest: &Path) -> io::Result<Option<u64>> {
     })
 }
 
-/// Byte-copy `src` to a destination this call creates, failing with
-/// `AlreadyExists` if anything is already at `dest`, and give it the source's
-/// permissions. A copy that fails partway removes the file it created, so a
-/// re-run doesn't skip a truncated copy as already present.
+/// Byte-copy `src` to `dest` without ever replacing something already there,
+/// failing with `AlreadyExists` if `dest` is occupied, and give it the source's
+/// permissions.
+///
+/// The bytes go to a temp file beside `dest`, which is then persisted with a
+/// no-clobber rename, so `dest` only ever appears complete. A failed copy
+/// cleans up only that temp file — never `dest`, which another process may
+/// have created meanwhile — and a cleanup that fails is reported rather than
+/// leaving a stray file behind silently.
 fn copy_to_new_file(src: &Path, dest: &Path) -> io::Result<u64> {
     let mut reader = fs::File::open(src)?;
     let permissions = reader.metadata()?.permissions();
-    let mut writer = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(dest)?;
-    let copied = io::copy(&mut reader, &mut writer)
-        .and_then(|bytes| writer.set_permissions(permissions).map(|()| bytes));
-    if copied.is_err() {
-        drop(writer);
-        let _ = fs::remove_file(dest);
+    // A bare filename's parent is `Some("")`, which no directory call accepts.
+    let dir = dest
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut temp = tempfile::Builder::new()
+        .prefix(".wt-tmp.")
+        .suffix(".tmp")
+        .tempfile_in(dir)?;
+    let copied = io::copy(&mut reader, &mut temp)
+        .and_then(|bytes| temp.as_file().set_permissions(permissions).map(|()| bytes));
+    match copied {
+        Ok(bytes) => match temp.persist_noclobber(dest) {
+            Ok(_) => Ok(bytes),
+            Err(e) => Err(discard_temp(e.file, e.error)),
+        },
+        Err(e) => Err(discard_temp(temp, e)),
     }
-    copied
+}
+
+/// Remove a temp file after `err`, returning `err` — or, if the removal itself
+/// fails, an error naming the file left behind.
+fn discard_temp(temp: tempfile::NamedTempFile, err: io::Error) -> io::Error {
+    let path = temp.path().to_path_buf();
+    match temp.close() {
+        Ok(()) => err,
+        Err(cleanup) => io::Error::other(format!(
+            "{err}; also failed to remove temporary file {}: {cleanup}",
+            path.display()
+        )),
+    }
 }
 
 /// The decision half of [`reflink_or_copy`], split out because no CI
@@ -650,6 +675,8 @@ mod tests {
         });
         assert_eq!(result.unwrap_err().kind(), ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&dest).unwrap(), "racer");
+        // The no-clobber persist removed its temp file.
+        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 2);
     }
 
     #[test]
@@ -682,13 +709,56 @@ mod tests {
         );
         assert!(dest.symlink_metadata().is_err());
 
-        // A copy that fails after the destination exists removes it. On Unix
-        // a directory opens as a file, so the read is what fails.
+        // A copy that fails partway leaves nothing at the destination and no
+        // temp file. On Unix a directory opens as a file, so the read is what
+        // fails.
         #[cfg(unix)]
         {
-            let dest = temp.path().join("partial");
-            assert!(copy_to_new_file(temp.path(), &dest).is_err());
-            assert!(dest.symlink_metadata().is_err());
+            let src_dir = temp.path().join("dir");
+            fs::create_dir(&src_dir).unwrap();
+            let out = tempfile::tempdir().unwrap();
+            let dest = out.path().join("partial");
+            assert!(copy_to_new_file(&src_dir, &dest).is_err());
+            assert_eq!(fs::read_dir(out.path()).unwrap().count(), 0);
+        }
+    }
+
+    /// Cleanup after a failed copy only touches the temp file it created, so a
+    /// file another process puts at the destination during the copy survives.
+    #[cfg(unix)]
+    #[test]
+    fn test_failed_copy_cleanup_leaves_racing_destination() {
+        let temp = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let dest = out.path().join("dest");
+        fs::write(&dest, "racer").unwrap();
+
+        assert!(copy_to_new_file(temp.path(), &dest).is_err());
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "racer");
+        assert_eq!(fs::read_dir(out.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn test_discard_temp_reports_cleanup_failure() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let temp = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
+        let err = discard_temp(temp, io::Error::from(ErrorKind::AlreadyExists));
+        assert_eq!(err.kind(), ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+
+        // The temp file is already gone, so removing it fails. Unix only:
+        // Windows can't reliably delete a file another handle holds open.
+        #[cfg(unix)]
+        {
+            let temp = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
+            fs::remove_file(temp.path()).unwrap();
+            let err = discard_temp(temp, io::Error::from(ErrorKind::AlreadyExists));
+            assert!(
+                err.to_string()
+                    .contains("also failed to remove temporary file"),
+                "{err}"
+            );
         }
     }
 
