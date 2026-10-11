@@ -1514,6 +1514,18 @@ fn test_copy_ignored_preserves_directory_permissions(mut repo: TestRepo) {
     );
     // Check permissions BEFORE restoring for cleanup
     let dest_readonly_mode = fs::metadata(&dest_readonly).unwrap().permissions().mode() & 0o777;
+    let dest_names: Vec<_> = fs::read_dir(&dest_readonly)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    // A repeated no-force copy must not need staging space inside the
+    // already complete, now read-only destination.
+    let repeated = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
     // Restore for cleanup
     fs::set_permissions(&readonly_dir, fs::Permissions::from_mode(0o755)).unwrap();
     if dest_readonly.exists() {
@@ -1522,6 +1534,12 @@ fn test_copy_ignored_preserves_directory_permissions(mut repo: TestRepo) {
     assert_eq!(
         dest_readonly_mode, 0o555,
         "Read-only directory permissions should be preserved (expected 0555, got {dest_readonly_mode:04o})"
+    );
+    assert_eq!(dest_names, ["data"], "staging must be removed before chmod");
+    assert!(
+        repeated.status.success(),
+        "idempotent copy into read-only directory: {}",
+        String::from_utf8_lossy(&repeated.stderr)
     );
 }
 

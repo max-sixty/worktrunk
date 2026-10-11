@@ -4467,7 +4467,7 @@ fn test_switch_pr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
 /// A 404 is the one GitHub failure worded by us rather than forwarded from
 /// `gh`, because it answers about an owner/repo we chose — so the message has to
 /// name where that choice came from. With `gh repo set-default` configured, that
-/// is the default, and the remedy is to check it rather than the remotes.
+/// is the default, and the hint names the command that changes it.
 #[rstest]
 fn test_switch_pr_not_found_gh_default(#[from(repo_with_remote)] repo: TestRepo) {
     set_github_remote_url(&repo);
