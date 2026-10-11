@@ -8,7 +8,7 @@ use worktrunk::git::{HookType, Repository};
 use worktrunk::path::{format_path_for_display, sanitize_for_filename};
 use worktrunk::utils::epoch_now;
 
-use crate::commands::hook_filter::HookSource;
+use worktrunk::config::HookSource;
 
 // ==================== Hook Log Specification ====================
 
@@ -493,7 +493,7 @@ pub fn sweep_stale_trash(repo: &Repository) {
         "",
         &HookLog::Shared(InternalOp::TrashSweep),
     ) {
-        tracing::debug!(error = %e, "Failed to spawn stale trash sweep: {e}");
+        tracing::debug!(error = %format!("{e:#}"), "Failed to spawn stale trash sweep");
     }
 }
 

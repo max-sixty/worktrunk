@@ -598,13 +598,7 @@ Aliases defined here are shared with teammates. For personal aliases, use the us
 
 [32mSHELL INTEGRATION[0m
 
-Worktrunk needs shell integration to change directories when switching worktrees. Install with:
-
-[107m [0m [2m[0m[2m[34mwt[0m[2m config shell install[0m
-
-For manual setup, see [2mwt config shell init --help[0m.
-
-Without shell integration, [2mwt switch[0m prints the target directory but cannot [2mcd[0m into it.
+See [2mwt config shell[0m for setup, activation, and current-shell diagnostics.
 
 [32mFirst-run prompts[0m
 

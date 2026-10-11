@@ -20,7 +20,9 @@
 //! Ctrl-C reaches the native job through the kernel; a caught key preserves
 //! each child's normal status. PID-targeted SIGTERM reaches owned direct children.
 //!
-//! All direct children complete before the caller receives results in input order.
+//! Every admitted child runs to completion. Spawn failures occupy the same
+//! per-command outcome slots as child exits; the pipeline owns identity and
+//! failure policy. Cancellation alone stops admission and drains owned children.
 
 use shared_child::SharedChild;
 #[cfg(not(unix))]
@@ -74,7 +76,8 @@ pub struct ConcurrentCommand<'a> {
 
 /// Run every command concurrently and return each per-child result in input
 /// order. `Err(WorktrunkError::ChildProcessExited { .. })` signals a non-zero
-/// exit; other errors come from spawn/IO failures.
+/// exit; a spawn failure occupies that command's result slot. Outer errors
+/// come from executor setup, output collection, or cancellation.
 ///
 /// When the `WORKTRUNK_TEST_SERIAL_CONCURRENT` env var is set, commands run
 /// sequentially in input order — same prefix-line output path, just one child
@@ -96,63 +99,50 @@ pub fn run_concurrent_commands(
     #[cfg(unix)]
     let signals = ForegroundSignals::install()?;
 
-    // Spawn each child and record its start time for commands.jsonl. If any
-    // spawn fails partway, kill and reap every child we already spawned —
-    // otherwise they'd outlive wt as unreaped orphans with nobody draining
-    // their pipes (and `Child::drop` does not kill the process on Unix).
-    let mut children: Vec<SpawnedChild> = Vec::with_capacity(cmds.len());
-    for (i, cmd) in cmds.iter().enumerate() {
+    let mut children = Vec::with_capacity(cmds.len());
+    let mut outcomes = (0..cmds.len()).map(|_| Ok(())).collect::<Vec<_>>();
+    for (index, cmd) in cmds.iter().enumerate() {
         match spawn_child(
             shell,
-            i,
+            index,
             cmd,
             #[cfg(unix)]
             &signals,
         ) {
-            Ok(spawned) => children.push(spawned),
-            Err(e) => {
+            Ok(spawned) => children.push((index, spawned)),
+            Err(error) => {
                 #[cfg(unix)]
-                if e.interrupt_signal().is_some() {
-                    // Keep admitted children's cleanup and the original
-                    // startup cancellation through the normal drain path.
-                    return drain_children(children, cmds, 0, prefix_width, signals);
+                if error.interrupt_signal().is_some() {
+                    // Drain admitted children through the normal cancellation owner.
+                    drain_children(children, cmds, prefix_width, signals)?;
+                    return Err(error);
                 }
-                abort_spawned_children(children);
-                return Err(e);
+                outcomes[index] = Err(error);
             }
         }
     }
 
-    drain_children(
+    for (index, outcome) in drain_children(
         children,
         cmds,
-        0,
         prefix_width,
         #[cfg(unix)]
         signals,
-    )
-}
-
-/// Reap owned children when the group cannot finish spawning. Resolve their
-/// traces even though their normal outcome collectors will never run.
-fn abort_spawned_children(children: Vec<SpawnedChild>) {
-    for mut spawned in children {
-        let _ = spawned.child.kill();
-        let _ = spawned.child.wait();
-        spawned.trace.complete(false);
+    )? {
+        outcomes[index] = outcome;
     }
+    Ok(outcomes)
 }
 
 /// Wait independently of output EOF. Cancellation releases remaining pipes
 /// after all direct waits; ordinary exits preserve descendant output to EOF.
 #[cfg(unix)]
 fn drain_children(
-    mut children: Vec<SpawnedChild>,
+    mut children: Vec<(usize, SpawnedChild)>,
     cmds: &[ConcurrentCommand<'_>],
-    offset: usize,
     prefix_width: usize,
     signals: ForegroundSignals,
-) -> anyhow::Result<Vec<anyhow::Result<()>>> {
+) -> anyhow::Result<Vec<(usize, anyhow::Result<()>)>> {
     use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
     use std::io::ErrorKind;
     use std::os::fd::AsFd;
@@ -164,8 +154,8 @@ fn drain_children(
         control.set_nonblocking(true)?;
         wake.set_nonblocking(true)?;
         let mut pipes = Vec::with_capacity(children.len() * 2);
-        for (index, child) in children.iter().enumerate() {
-            let prefix = render_prefix(index + offset, cmds[index].label, prefix_width);
+        for (index, child) in &children {
+            let prefix = render_prefix(*index, cmds[*index].label, prefix_width);
             if let Some(stdout) = child.child.take_stdout() {
                 pipes.push(OutputPipe::new(prefix.clone(), stdout)?);
             }
@@ -178,7 +168,7 @@ fn drain_children(
     let (control, wake, mut pipes) = match setup {
         Ok(prepared) => prepared,
         Err(error) => {
-            for child in &mut children {
+            for (_, child) in &mut children {
                 let _ = child.child.kill();
                 let _ = child.child.wait();
                 child.trace.fail(&error);
@@ -186,7 +176,10 @@ fn drain_children(
             return Err(error).context("Failed to prepare concurrent command output");
         }
     };
-    let processes: Vec<_> = children.iter().map(|child| child.child.clone()).collect();
+    let processes: Vec<_> = children
+        .iter()
+        .map(|(_, child)| child.child.clone())
+        .collect();
     let (tx, rx) = mpsc::channel();
     let notify = WakeSender {
         tx,
@@ -202,8 +195,9 @@ fn drain_children(
     thread::scope(|scope| {
         // Observe every exit independently: a later child's interruption must
         // cancel the operation while an earlier child is still cleaning up.
-        for (index, (child, cmd)) in children.into_iter().zip(cmds).enumerate() {
+        for (index, child) in children {
             let notify = notify.clone();
+            let cmd = &cmds[index];
             scope.spawn(move || notify.send(index, collect_outcome(child, cmd)));
         }
         loop {
@@ -289,7 +283,7 @@ fn drain_children(
         return Err(WorktrunkError::Interrupted { signal, hint: None }.into());
     }
     outcomes.sort_unstable_by_key(|(index, _)| *index);
-    Ok(outcomes.into_iter().map(|(_, outcome)| outcome).collect())
+    Ok(outcomes)
 }
 
 #[cfg(unix)]
@@ -394,25 +388,19 @@ impl OutputPipe {
 /// Platforms without Unix poll retain blocking readers and direct-child waits.
 #[cfg(not(unix))]
 fn drain_children(
-    children: Vec<SpawnedChild>,
+    children: Vec<(usize, SpawnedChild)>,
     cmds: &[ConcurrentCommand<'_>],
-    offset: usize,
     prefix_width: usize,
-) -> anyhow::Result<Vec<anyhow::Result<()>>> {
+) -> anyhow::Result<Vec<(usize, anyhow::Result<()>)>> {
     let (tx, rx) = mpsc::channel::<Event>();
     let mut readers = Vec::new();
-    for (index, child) in children.iter().enumerate() {
-        let label = cmds[index].label.to_string();
+    for (index, child) in &children {
+        let label = cmds[*index].label.to_string();
         if let Some(stdout) = child.child.take_stdout() {
-            readers.push(spawn_reader(
-                index + offset,
-                label.clone(),
-                stdout,
-                tx.clone(),
-            ));
+            readers.push(spawn_reader(*index, label.clone(), stdout, tx.clone()));
         }
         if let Some(stderr) = child.child.take_stderr() {
-            readers.push(spawn_reader(index + offset, label, stderr, tx.clone()));
+            readers.push(spawn_reader(*index, label, stderr, tx.clone()));
         }
     }
     drop(tx);
@@ -421,8 +409,7 @@ fn drain_children(
         let waiter = scope.spawn(move || {
             children
                 .into_iter()
-                .zip(cmds)
-                .map(|(child, cmd)| collect_outcome(child, cmd))
+                .map(|(index, child)| (index, collect_outcome(child, &cmds[index])))
                 .collect()
         });
         for event in rx {
@@ -461,21 +448,32 @@ fn run_serial_with_prefix(
     for (index, cmd) in cmds.iter().enumerate() {
         #[cfg(unix)]
         let signals = ForegroundSignals::install()?;
-        let spawned = spawn_child(
+        match spawn_child(
             shell,
             index,
             cmd,
             #[cfg(unix)]
             &signals,
-        )?;
-        outcomes.extend(drain_children(
-            vec![spawned],
-            std::slice::from_ref(cmd),
-            index,
-            prefix_width,
-            #[cfg(unix)]
-            signals,
-        )?);
+        ) {
+            Ok(spawned) => {
+                for (_, outcome) in drain_children(
+                    vec![(index, spawned)],
+                    cmds,
+                    prefix_width,
+                    #[cfg(unix)]
+                    signals,
+                )? {
+                    outcomes.push(outcome);
+                }
+            }
+            Err(error) => {
+                #[cfg(unix)]
+                if error.interrupt_signal().is_some() {
+                    return Err(error);
+                }
+                outcomes.push(Err(error));
+            }
+        }
     }
     Ok(outcomes)
 }
@@ -537,9 +535,8 @@ fn spawn_child(
     let child = match spawned {
         Ok(child) => Arc::new(child),
         Err(e) => {
-            trace.fail(&e);
-            return Err(e)
-                .with_context(|| format!("failed to spawn concurrent command '{}'", cmd.label));
+            trace.fail(e.as_ref());
+            return Err(e);
         }
     };
 
@@ -652,6 +649,77 @@ fn render_prefix(index: usize, label: &str, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn test_real_concurrent_process_failure_descriptions() {
+        use worktrunk::git::ErrorExt;
+        for (script, description, code) in [
+            ("exit 7", "exit code 7", 7),
+            ("kill -9 $$", "killed by signal 9", 137),
+        ] {
+            let cwd = tempfile::tempdir().unwrap();
+            let directives = DirectivePassthrough::default();
+            let mut outcomes = run_concurrent_commands(&[ConcurrentCommand {
+                label: "check",
+                expanded: script,
+                working_dir: cwd.path(),
+                log_label: None,
+                directives: &directives,
+                scrub_git_discovery: false,
+            }])
+            .unwrap();
+            let error = outcomes.pop().unwrap().unwrap_err();
+            assert_eq!(error.to_string(), description);
+            assert_eq!(error.exit_code(), Some(code));
+        }
+    }
+
+    #[test]
+    fn test_concurrent_spawn_failure_retains_member_outcomes_and_io_source() {
+        let cwd = tempfile::tempdir().unwrap();
+        let missing = cwd.path().join("missing");
+        let directives = DirectivePassthrough::default();
+        let specs =
+            [cwd.path(), missing.as_path(), cwd.path()].map(|working_dir| ConcurrentCommand {
+                label: "check",
+                expanded: "printf completed > completed",
+                working_dir,
+                log_label: None,
+                directives: &directives,
+                scrub_git_discovery: false,
+            });
+        insta::allow_duplicates! {
+            for serial in [false, true] {
+                let outcomes = if serial {
+                    run_serial_with_prefix(ShellConfig::get().unwrap(), &specs, "check".len())
+                } else {
+                    run_concurrent_commands(&specs)
+                }
+                .unwrap();
+                assert_eq!(outcomes.len(), 3);
+                let mut outcomes = outcomes.into_iter();
+                outcomes.next().unwrap().unwrap();
+                let error = outcomes.next().unwrap().unwrap_err();
+                outcomes.next().unwrap().unwrap();
+                assert_eq!(
+                    std::fs::read_to_string(cwd.path().join("completed")).unwrap(),
+                    "completed"
+                );
+                #[cfg(unix)]
+                {
+                    use worktrunk::git::ErrorExt;
+                    let path = worktrunk::path::format_path_for_display(&missing);
+                    let detail = error.display_message().replace(&path, "_MISSING_");
+                    insta::assert_snapshot!(detail, @"Failed to execute sh @ _MISSING_: No such file or directory (os error 2)");
+                }
+                let preserved = error.downcast_ref::<std::io::Error>().unwrap();
+                let native = error.root_cause().downcast_ref::<std::io::Error>().unwrap();
+                assert!(native.raw_os_error().is_some());
+                assert_eq!(preserved.kind(), native.kind());
+            }
+        }
+    }
 
     #[test]
     fn test_empty_cmds_returns_empty() {

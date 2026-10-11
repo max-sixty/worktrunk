@@ -87,8 +87,8 @@ use super::hook_announcement::{SourcedStep, format_pipeline_summary};
 use crate::commands::process::{HookLog, spawn_detached_exec};
 use crate::output::DirectivePassthrough;
 
-// Re-export for backward compatibility with existing imports
-pub use super::hook_filter::{HookSource, ParsedFilter};
+use super::hook_filter::ParsedFilter;
+use worktrunk::config::HookSource;
 
 /// Prepare hook steps from both user and project configs, preserving pipeline
 /// structure, and verify any name filter matched at least one command.
@@ -255,11 +255,11 @@ fn no_matching_commands_error(
         if !parsed_filters.iter().any(|f| f.matches_source(source)) {
             continue;
         }
-        available.extend(
-            config
-                .commands()
-                .filter_map(|c| c.name.as_ref().map(|n| format!("{source}:{n}"))),
-        );
+        available.extend(config.commands().filter_map(|c| {
+            c.name
+                .as_deref()
+                .map(|name| source.command_label(Some(name)))
+        }));
     }
 
     worktrunk::git::GitError::HookCommandNotFound {
@@ -667,12 +667,15 @@ pub(crate) fn sourced_steps_to_foreground(
         .map(|sourced| {
             let directives = DirectivePassthrough::inherit_from_env();
             let (redirect_stdout_to_stderr, error_wrapper) = match kind {
-                PipelineKind::Hook { hook_type, .. } => (true, hook_error_wrapper(*hook_type)),
+                PipelineKind::Hook { hook_type, .. } => {
+                    (true, hook_error_wrapper(*hook_type, sourced.source, false))
+                }
                 PipelineKind::Alias { name } => (false, alias_error_wrapper(name.clone())),
             };
             ForegroundStep {
                 step: sourced.step,
                 announce: kind.clone(),
+                source: sourced.source,
                 redirect_stdout_to_stderr,
                 error_wrapper,
                 directives,
