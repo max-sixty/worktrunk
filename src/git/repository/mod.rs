@@ -2010,16 +2010,16 @@ impl Repository {
         self.run_command_bytes_bounded(args, None)
     }
 
-    /// [`run_command`](Self::run_command) with `stdin` fed to the child — for
-    /// git commands that read their arguments from standard input
-    /// (`rev-list --stdin`), which keeps an arbitrarily long list off the argv.
-    pub(super) fn run_command_with_stdin(
+    /// [`run_command_bytes`](Self::run_command_bytes) with `stdin` fed to the
+    /// child — for git commands that read their arguments from standard input
+    /// (`rev-list --stdin`, `diff-tree --stdin`), which keeps an arbitrarily
+    /// long list off the argv.
+    pub(super) fn run_command_bytes_with_stdin(
         &self,
         args: &[&str],
         stdin: Vec<u8>,
-    ) -> anyhow::Result<String> {
-        let stdout = self.run_command_bytes_inner(args, None, Some(stdin))?;
-        Ok(String::from_utf8_lossy(&stdout).into_owned())
+    ) -> anyhow::Result<Vec<u8>> {
+        self.run_command_bytes_inner(args, None, Some(stdin))
     }
 
     fn run_command_bytes_bounded(

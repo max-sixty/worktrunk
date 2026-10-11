@@ -142,8 +142,8 @@ pub(super) struct PatchIdScan {
 /// work.
 ///
 /// [`Repository::is_squash_merged_via_patch_id`] runs
-/// `git rev-list --reverse {merge-base}..{target} -- <one branch path> | git
-/// diff-tree --stdin -p | git patch-id`. The path-limited `rev-list` builds no
+/// `git rev-list --reverse {merge-base}..{target} -- <one branch path>`, then
+/// diffs the candidates it lists. The path-limited `rev-list` builds no
 /// patches, but it still diffs every commit's tree against its parent's, so
 /// its cost grows with the range: on git.git, with no commit-graph, one path
 /// takes 0.3–1.2 s over 10,000 commits and 1.4–5 s over 73,000, the spread
@@ -172,8 +172,9 @@ const PATCH_ID_SCAN_MAX_RANGE: usize = 10_000;
 /// changed, and any one of them is a sound filter. One path rather than all of
 /// them keeps the walk's cost from growing with the branch's file count (a
 /// commit touching any of 2,000 paths is a far larger set, and far slower to
-/// find, than one touching a single path). Each candidate then becomes one
-/// `diff-tree -p` patch, which is the cost this cap bounds.
+/// find, than one touching a single path). Each candidate then costs a raw
+/// tree diff, and each one its blob ids can't decide a `diff-tree -p` patch
+/// (see [`RawChange`]); this cap bounds both.
 ///
 /// Past the cap, the oldest candidates are the ones worth diffing. A squash
 /// merge lands on the target soon after the branch forks, and updating the
@@ -184,7 +185,7 @@ const PATCH_ID_SCAN_MAX_RANGE: usize = 10_000;
 /// The count carries across checks; see [`PatchIdScan`].
 ///
 /// `500` is conservative because count is only a rough proxy for cost — the
-/// per-commit work scales with `changed_files × changed_lines`, so a few
+/// per-patch work scales with `changed_files × changed_lines`, so a few
 /// hundred lockfile-bump or large-refactor squashes can be slower than a few
 /// thousand tiny commits. Working back from "keep one check under a few
 /// seconds" on a heavy monorepo (~50-100 KB patches), 500 holds. On a typical
@@ -212,6 +213,93 @@ pub(super) const PATCH_ID_SCAN_MAX_CANDIDATES: usize = 500;
 pub(in crate::git) enum MergeTreeOutcome {
     Clean { tree: String },
     Conflict,
+}
+
+/// One changed path in `git diff-tree -r -z --raw --no-abbrev` output: the
+/// `:<old mode> <new mode> <old oid> <new oid> <status>` field and the path.
+///
+/// Raw output diffs trees only, never blob contents, so it decides most
+/// patch-id candidates without building their patches. `git patch-id` hashes
+/// every line of a file's patch header except `index` — including each
+/// file's `diff --git` line and its mode lines — so:
+///
+/// - A commit whose changed paths aren't exactly the branch's can't share its
+///   patch-id, however small the extra change (even a mode flip or an empty
+///   file).
+/// - A commit whose every change equals the branch's — same paths, modes and
+///   blob ids — produces the branch's patch byte for byte, so it matches.
+///
+/// Anything else (the same paths changed from different blobs, as when the
+/// target edited the file elsewhere before the squash) needs real patch-ids.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RawChange<'a> {
+    meta: &'a [u8],
+    path: &'a [u8],
+}
+
+impl RawChange<'_> {
+    fn is_added(&self) -> bool {
+        self.meta.ends_with(b" A")
+    }
+}
+
+/// Parse `git diff-tree -r -z --raw` output into each commit's changes,
+/// sorted by path. With `--stdin`, each commit's changes follow a field
+/// holding its id; a plain two-tree diff has none, so its changes come back
+/// under an empty id.
+fn parse_raw_diff(output: &[u8]) -> Vec<(&[u8], Vec<RawChange<'_>>)> {
+    let mut commits: Vec<(&[u8], Vec<RawChange<'_>>)> = Vec::new();
+    let mut fields = output.split(|&b| b == b'\0');
+    while let Some(field) = fields.next() {
+        if field.starts_with(b":") {
+            // The path is the next field, taken as is: it may start with
+            // whitespace or a colon.
+            let Some(path) = fields.next() else { break };
+            if commits.is_empty() {
+                commits.push((b"", Vec::new()));
+            }
+            if let Some((_, changes)) = commits.last_mut() {
+                changes.push(RawChange { meta: field, path });
+            }
+        } else {
+            let id = field.trim_ascii();
+            if !id.is_empty() {
+                commits.push((id, Vec::new()));
+            }
+        }
+    }
+    for (_, changes) in &mut commits {
+        changes.sort_by(|a, b| a.path.cmp(b.path));
+    }
+    commits
+}
+
+/// How raw diffs settle the patch-id candidates; see [`RawChange`].
+#[derive(Debug, PartialEq, Eq)]
+enum RawVerdict<'a> {
+    /// A candidate makes exactly the branch's change.
+    Match,
+    /// The candidates whose patch-ids could still match, oldest first.
+    Undecided(Vec<&'a [u8]>),
+}
+
+fn classify_candidates<'a>(
+    branch: &[RawChange<'_>],
+    candidates: &[(&'a [u8], Vec<RawChange<'_>>)],
+) -> RawVerdict<'a> {
+    let mut undecided = Vec::new();
+    for (commit, changes) in candidates {
+        let same_paths = changes.len() == branch.len()
+            && changes.iter().zip(branch).all(|(c, b)| c.path == b.path);
+        if !same_paths {
+            continue;
+        }
+        if changes.as_slice() == branch {
+            return RawVerdict::Match;
+        }
+        undecided.push(*commit);
+    }
+    RawVerdict::Undecided(undecided)
 }
 
 impl Repository {
@@ -471,7 +559,8 @@ impl Repository {
     /// merge-base. Otherwise only target commits that touch one path the
     /// branch changed can match, so only those are diffed, oldest first and at
     /// most [`PATCH_ID_SCAN_MAX_CANDIDATES`] of them, resuming from a cached
-    /// [`PatchIdScan`].
+    /// [`PatchIdScan`]. A raw tree diff settles most candidates by blob id;
+    /// only the rest go through `git patch-id` (see [`RawChange`]).
     ///
     /// Returns `Ok(true)` if a matching squash-merge commit is found on the target,
     /// `Ok(false)` otherwise (including past either cap, or when patch-id
@@ -524,29 +613,27 @@ impl Repository {
             .map(|scan| (scan.scanned_target, scan.candidates))
             .unwrap_or_else(|| (merge_base.clone(), 0));
 
-        // The paths the branch changed, with their status. `diff-tree`
-        // without `-M`, like the branch-side patch below, so a rename lists
-        // both its old and its new path — exactly the paths that patch
-        // covers. NUL-separated and kept as raw bytes so any filename
-        // survives: `run_command`'s lossy UTF-8 decode would turn a non-UTF-8
-        // name into U+FFFD, a pathspec that matches nothing.
-        let name_status = self.run_command_bytes(&PlumbingDiff::Tree.args(&[
+        // The paths the branch changed, with their modes and blob ids.
+        // `diff-tree` without `-M`, like the patches below, so a rename lists
+        // both its old and its new path — exactly the paths a patch covers.
+        // NUL-separated and kept as raw bytes so any filename survives:
+        // `run_command`'s lossy UTF-8 decode would turn a non-UTF-8 name into
+        // U+FFFD, a pathspec that matches nothing.
+        let branch_raw = self.run_command_bytes(&PlumbingDiff::Tree.args(&[
             "-r",
             "-z",
-            "--name-status",
+            "--raw",
+            "--no-abbrev",
             &merge_base,
             branch,
             "--",
         ]))?;
-        let fields: Vec<&[u8]> = name_status
-            .split(|&b| b == b'\0')
-            .filter(|f| !f.is_empty())
-            .collect();
-        let changes: Vec<(&[u8], &[u8])> = fields
-            .chunks_exact(2)
-            .map(|pair| (pair[0], pair[1]))
-            .collect();
-        if changes.is_empty() {
+        let branch_changes = parse_raw_diff(&branch_raw)
+            .into_iter()
+            .next()
+            .map(|(_, changes)| changes)
+            .unwrap_or_default();
+        if branch_changes.is_empty() {
             return Ok(false);
         }
 
@@ -557,11 +644,11 @@ impl Repository {
         // containing a line break can't be written on one line of `rev-list
         // --stdin`, so it is never the filter; a branch whose every path has
         // one falls back to every commit in the range.
-        let filter_path = changes
+        let filter_path = branch_changes
             .iter()
-            .filter(|(_, path)| !path.iter().any(|b| matches!(b, b'\n' | b'\r')))
-            .min_by_key(|(status, _)| *status != b"A")
-            .map(|&(_, path)| path);
+            .filter(|change| !change.path.iter().any(|b| matches!(b, b'\n' | b'\r')))
+            .min_by_key(|change| !change.is_added())
+            .map(|change| change.path);
 
         // Candidates: target commits since the merge-base that touch that
         // path. `rev-list --stdin` reads the range, then the path after a
@@ -579,7 +666,7 @@ impl Repository {
             rev_list_input.extend_from_slice(path);
             rev_list_input.push(b'\n');
         }
-        let candidates = self.run_command_with_stdin(
+        let candidates = self.run_command_bytes_with_stdin(
             &[
                 "--literal-pathspecs",
                 "rev-list",
@@ -590,13 +677,15 @@ impl Repository {
             ],
             rev_list_input,
         )?;
+        let candidates = String::from_utf8_lossy(&candidates);
 
-        // Bound the patch-id work to the oldest candidates. Every candidate
-        // becomes one `diff-tree -p` patch, so a hot file re-touched by
-        // thousands of target commits would turn one integration check into
-        // seconds of work. The cut happens here, not with `--max-count`,
-        // which git applies before `--reverse` and so would keep the newest.
-        // Why the oldest: see [`PATCH_ID_SCAN_MAX_CANDIDATES`].
+        // Bound the diffing to the oldest candidates. Every candidate costs a
+        // raw tree diff and possibly a `diff-tree -p` patch, so a hot file
+        // re-touched by thousands of target commits would turn one
+        // integration check into seconds of work. The cut happens here, not
+        // with `--max-count`, which git applies before `--reverse` and so
+        // would keep the newest. Why the oldest: see
+        // [`PATCH_ID_SCAN_MAX_CANDIDATES`].
         let budget = PATCH_ID_SCAN_MAX_CANDIDATES - scanned;
         let target_commits: String = candidates.split_inclusive('\n').take(budget).collect();
         let candidate_count = candidates.lines().count();
@@ -616,40 +705,62 @@ impl Repository {
 
         // No new target commit touches the filter path, so nothing new can
         // match: the common case for an unmerged branch that added a file,
-        // and for a resumed scan whose target moved on other files. Skip the
-        // branch-side diff and the patch-id pipeline.
+        // and for a resumed scan whose target moved on other files.
         if candidate_count == 0 {
             super::sha_cache::put_patch_id_scan(self, branch, &merge_base, &scan);
             return Ok(false);
         }
 
-        // Compute the squashed patch-id (combined diff of all branch changes).
-        let branch_pids = self.patch_ids_from(
-            &PlumbingDiff::Tree.args(&["--patch", &merge_base, branch, "--"]),
-            None,
+        // Each candidate's whole change, as raw entries: tree diffs only, no
+        // blob reads. No pathspec here, or a commit that also touched other
+        // files would look like the branch's change.
+        let candidates_raw = self.run_command_bytes_with_stdin(
+            &PlumbingDiff::Tree.args(&["--stdin", "-r", "-z", "--raw", "--no-abbrev"]),
+            target_commits.into_bytes(),
         )?;
-        let Some(branch_pid) = branch_pids.split_whitespace().next() else {
+        let undecided = match classify_candidates(&branch_changes, &parse_raw_diff(&candidates_raw))
+        {
+            RawVerdict::Match => {
+                scan.matched = true;
+                super::sha_cache::put_patch_id_scan(self, branch, &merge_base, &scan);
+                return Ok(true);
+            }
+            RawVerdict::Undecided(undecided) => undecided,
+        };
+        if undecided.is_empty() {
+            super::sha_cache::put_patch_id_scan(self, branch, &merge_base, &scan);
+            return Ok(false);
+        }
+
+        // Patch-ids for the branch and the undecided candidates in one pass.
+        // The first stdin line, `<branch> <merge-base>`, names the merge-base
+        // as the branch's parent, so `diff-tree` emits the branch's combined
+        // diff under the branch's id. Every patch comes from `git diff-tree`
+        // — plumbing — never `git log -p` (porcelain): `git patch-id
+        // --verbatim` hashes context lines, and `log -p` honors
+        // `diff.context` / `diff.algorithm` from the user's git config while
+        // `diff-tree` ignores them, so a mismatched pair never agrees on a
+        // byte-identical change. No pathspec, as above.
+        let mut stdin = format!("{branch} {merge_base}\n").into_bytes();
+        for commit in undecided {
+            stdin.extend_from_slice(commit);
+            stdin.push(b'\n');
+        }
+        let pids = self.patch_ids_from(
+            &PlumbingDiff::Tree.args(&["--stdin", "--patch"]),
+            Some(stdin),
+        )?;
+        let pids: Vec<(&str, &str)> = pids
+            .lines()
+            .filter_map(|line| line.split_once(' '))
+            .collect();
+        let Some(&(branch_pid, _)) = pids.iter().find(|&&(_, commit)| commit == branch) else {
             return Ok(false);
         };
 
-        // Get all target commits' patch-ids in one pass. The diffs are
-        // generated by `git diff-tree` — plumbing, like the branch side —
-        // never `git log -p` (porcelain). Both sides must use the same
-        // generator: `git patch-id --verbatim` hashes context lines, and
-        // `log -p` honors `diff.context` / `diff.algorithm` from the user's
-        // git config while `diff-tree` ignores them, so a mismatched pair
-        // never agrees on a byte-identical change. `diff-tree --stdin` reads
-        // the commit list on stdin and emits one diff per commit. No pathspec
-        // here: each candidate's patch must cover its whole change, or a
-        // commit that also touched other files would falsely match.
-        let target_pids = self.patch_ids_from(
-            &PlumbingDiff::Tree.args(&["--stdin", "--patch"]),
-            Some(target_commits.into_bytes()),
-        )?;
-
-        scan.matched = target_pids
-            .lines()
-            .any(|line| line.split_whitespace().next() == Some(branch_pid));
+        scan.matched = pids
+            .iter()
+            .any(|&(pid, commit)| commit != branch && pid == branch_pid);
         super::sha_cache::put_patch_id_scan(self, branch, &merge_base, &scan);
         Ok(scan.matched)
     }
@@ -1777,6 +1888,126 @@ mod patch_id_tests {
         );
     }
 
+    /// A 60-line file, the base of the two tests below. A one-line change
+    /// at line 30 leaves lines 1 and 60 outside its hunk's context.
+    fn sixty_lines() -> String {
+        (1..=60).map(|i| format!("l{i}\n")).collect()
+    }
+
+    /// Commit `content` as `file` on the current branch.
+    fn commit_file(test: &TestRepo, content: &str, message: &str) {
+        std::fs::write(test.path().join("file"), content).unwrap();
+        test.run_git(&["commit", "-am", message]);
+    }
+
+    /// `feature` changes line 30 of the base. `target` then gets `edit`, a
+    /// squash of `squash` applied on top of `edit`, and a follow-up on line
+    /// 30 so `merge-tree` conflicts.
+    fn build_squash_after_edit(test: &TestRepo, edit: &str, squash: &str) {
+        let base = sixty_lines();
+        std::fs::write(test.path().join("file"), &base).unwrap();
+        test.run_git(&["add", "file"]);
+        test.run_git(&["commit", "-m", "base"]);
+        test.run_git(&["checkout", "-b", "feature"]);
+        commit_file(test, &base.replace("l30\n", "FEATURE\n"), "feature");
+        test.run_git(&["checkout", "-b", "target", "main"]);
+        let edited = base.replace("l1\n", &format!("{edit}\n"));
+        commit_file(test, &edited, "edit elsewhere");
+        let squashed = edited.replace("l30\n", &format!("{squash}\n"));
+        commit_file(test, &squashed, "squash");
+        commit_file(test, &squashed.replace(squash, "PADDED"), "follow-up");
+    }
+
+    /// The target edited the file before the squash landed, so the squash
+    /// changes the same path from a different blob than the branch did. Blob
+    /// ids can't settle that; the patch-ids still match, since the edit lies
+    /// outside the hunk.
+    #[test]
+    fn detects_squash_onto_a_file_edited_since_the_fork() {
+        let test = TestRepo::new();
+        build_squash_after_edit(&test, "EDITED", "FEATURE");
+
+        assert!(
+            is_squash_merged(&test),
+            "a squash whose blobs differ from the branch's must fall back to patch-ids"
+        );
+    }
+
+    /// The same paths changed from different blobs, but not the branch's
+    /// change: the patch-id fallback must still say no.
+    #[test]
+    fn rejects_different_change_to_the_same_paths() {
+        let test = TestRepo::new();
+        build_squash_after_edit(&test, "EDITED", "SOMETHING ELSE");
+
+        assert!(
+            !is_squash_merged(&test),
+            "a different change to the branch's paths must not match"
+        );
+    }
+
+    #[test]
+    fn parses_raw_diff_with_and_without_commit_ids() {
+        let meta = ":100644 100644 aaaa bbbb M";
+        let two_trees = format!("{meta}\0z\0{meta}\0 a\0");
+        let parsed = parse_raw_diff(two_trees.as_bytes());
+        assert_eq!(parsed.len(), 1);
+        let (id, changes) = &parsed[0];
+        assert!(id.is_empty());
+        // Sorted by path, and a path keeps its leading space.
+        let paths: Vec<&[u8]> = changes.iter().map(|c| c.path).collect();
+        assert_eq!(paths, [&b" a"[..], b"z"]);
+
+        let stdin = format!("c1\0{meta}\0f\0c2\0:000000 100644 0000 cccc A\0g\0");
+        let parsed = parse_raw_diff(stdin.as_bytes());
+        let ids: Vec<&[u8]> = parsed.iter().map(|(id, _)| *id).collect();
+        assert_eq!(ids, [&b"c1"[..], b"c2"]);
+        assert!(!parsed[0].1[0].is_added());
+        assert!(parsed[1].1[0].is_added());
+    }
+
+    #[test]
+    fn classifies_candidates_by_raw_changes() {
+        let change = |meta: &'static str, path: &'static str| RawChange {
+            meta: meta.as_bytes(),
+            path: path.as_bytes(),
+        };
+        let branch = [
+            change(":100644 100644 a1 b1 M", "f"),
+            change(":000000 100644 0 b2 A", "g"),
+        ];
+        let other_blob = vec![
+            change(":100644 100644 a9 b9 M", "f"),
+            change(":000000 100644 0 b2 A", "g"),
+        ];
+        let extra_path = vec![
+            change(":100644 100644 a1 b1 M", "f"),
+            change(":000000 100644 0 b2 A", "g"),
+            change(":100644 100755 c c M", "h"),
+        ];
+        let missing_path = vec![change(":100644 100644 a1 b1 M", "f")];
+        let exact = vec![
+            change(":100644 100644 a1 b1 M", "f"),
+            change(":000000 100644 0 b2 A", "g"),
+        ];
+
+        let candidates = [
+            (&b"other-blob"[..], other_blob),
+            (&b"extra-path"[..], extra_path),
+            (&b"missing-path"[..], missing_path),
+        ];
+        assert_eq!(
+            classify_candidates(&branch, &candidates),
+            RawVerdict::Undecided(vec![&b"other-blob"[..]])
+        );
+
+        let candidates = [
+            (&b"other"[..], candidates[0].1.clone()),
+            (&b"exact"[..], exact),
+        ];
+        assert_eq!(classify_candidates(&branch, &candidates), RawVerdict::Match);
+    }
+
     /// Squash-merge detection must not depend on the user's `diff.*` git
     /// config. `git patch-id --verbatim` hashes context lines, so the two
     /// sides of the comparison must generate their diffs identically. Both
@@ -1818,13 +2049,19 @@ mod patch_id_tests {
         std::fs::write(&path, &changed).unwrap();
         test.run_git(&["commit", "-am", "feature change"]);
 
-        // target (main): a squash-merge of feature, then a follow-up commit
-        // re-touching the same line. The follow-up makes `merge-tree`
-        // conflict — the only path that reaches the patch-id fallback.
+        // target (main): an edit far from line 30, a squash-merge of
+        // feature, then a follow-up commit re-touching the same line. The
+        // edit gives the squash a different pre-image blob than the branch,
+        // so its blob ids can't settle it and patch-ids must. The follow-up
+        // makes `merge-tree` conflict — the only path that reaches the
+        // patch-id fallback.
         test.run_git(&["checkout", "main"]);
-        std::fs::write(&path, &changed).unwrap();
+        std::fs::write(&path, base.replace("l60\n", "EDITED\n")).unwrap();
+        test.run_git(&["commit", "-am", "edit far from line 30"]);
+        let squashed = changed.replace("l60\n", "EDITED\n");
+        std::fs::write(&path, &squashed).unwrap();
         test.run_git(&["commit", "-am", "squash-merge feature"]);
-        std::fs::write(&path, changed.replace("FEATURE\n", "PADDED\n")).unwrap();
+        std::fs::write(&path, squashed.replace("FEATURE\n", "PADDED\n")).unwrap();
         test.run_git(&["commit", "-am", "follow-up on same line"]);
 
         let snapshot = repo.capture_refs().unwrap();
