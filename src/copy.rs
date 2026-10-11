@@ -91,11 +91,32 @@ fn classify_copy(fallback: Option<u64>) -> DataCopy {
 /// `cp --reflink=auto` copies the file anyway. A genuine permission problem on
 /// the source or destination fails the retry with the same error. The crate
 /// removes a destination it created before returning the error, so the retry
-/// starts clean.
+/// re-creates it with [`copy_to_new_file`] rather than `fs::copy`, which would
+/// overwrite a file another process put there in between.
 fn reflink_or_copy(src: &Path, dest: &Path) -> io::Result<Option<u64>> {
     fall_back_on_rejected_reflink(reflink_copy::reflink_or_copy(src, dest), || {
-        fs::copy(src, dest)
+        copy_to_new_file(src, dest)
     })
+}
+
+/// Byte-copy `src` to a destination this call creates, failing with
+/// `AlreadyExists` if anything is already at `dest`, and give it the source's
+/// permissions. A copy that fails partway removes the file it created, so a
+/// re-run doesn't skip a truncated copy as already present.
+fn copy_to_new_file(src: &Path, dest: &Path) -> io::Result<u64> {
+    let mut reader = fs::File::open(src)?;
+    let permissions = reader.metadata()?.permissions();
+    let mut writer = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dest)?;
+    let copied = io::copy(&mut reader, &mut writer)
+        .and_then(|bytes| writer.set_permissions(permissions).map(|()| bytes));
+    if copied.is_err() {
+        drop(writer);
+        let _ = fs::remove_file(dest);
+    }
+    copied
 }
 
 /// The decision half of [`reflink_or_copy`], split out because no CI
@@ -609,6 +630,57 @@ mod tests {
                 .kind(),
             ErrorKind::AlreadyExists
         );
+    }
+
+    #[test]
+    fn test_rejected_reflink_fallback_does_not_overwrite_racing_destination() {
+        // The crate removes the destination it created before returning
+        // `PermissionDenied`; a file another process puts there before the
+        // byte copy must survive, and the `AlreadyExists` it causes is what
+        // `copy_leaf` skips on.
+        let temp = tempfile::tempdir().unwrap();
+        let src = temp.path().join("src");
+        let dest = temp.path().join("dest");
+        fs::write(&src, "source").unwrap();
+
+        let rejected = Err(io::Error::from(ErrorKind::PermissionDenied));
+        let result = fall_back_on_rejected_reflink(rejected, || {
+            fs::write(&dest, "racer").unwrap();
+            copy_to_new_file(&src, &dest)
+        });
+        assert_eq!(result.unwrap_err().kind(), ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "racer");
+    }
+
+    #[test]
+    fn test_copy_to_new_file_copies_contents_and_mode() {
+        let temp = tempfile::tempdir().unwrap();
+        let src = temp.path().join("script.sh");
+        let dest = temp.path().join("copy.sh");
+        fs::write(&src, "#!/bin/sh\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&src, fs::Permissions::from_mode(0o751)).unwrap();
+        }
+
+        assert_eq!(copy_to_new_file(&src, &dest).unwrap(), 10);
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "#!/bin/sh\n");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&dest).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o751);
+        }
+
+        // A missing source creates nothing.
+        let missing = temp.path().join("missing");
+        let dest = temp.path().join("never");
+        assert_eq!(
+            copy_to_new_file(&missing, &dest).unwrap_err().kind(),
+            ErrorKind::NotFound
+        );
+        assert!(dest.symlink_metadata().is_err());
     }
 
     #[test]
