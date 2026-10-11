@@ -1871,9 +1871,9 @@ fn test_prune_fallback_config_race_canary(mut repo: TestRepo) {
 /// the failure rather than pretending the candidate was removed: the scan
 /// records the prune in the plan (`prune_entry`), execution runs it before
 /// the branch deletion, and its error fails the run — the branch survives and
-/// the entry stays registered. A read-only registration directory is the
-/// deterministic trigger: its files can't be unlinked. Unix-only, since the
-/// trigger is a permission bit.
+/// the entry stays registered. A read-only registry directory is the
+/// deterministic trigger: its registration cannot be moved out. Unix-only,
+/// since the trigger is a permission bit.
 #[cfg(unix)]
 #[rstest]
 fn test_prune_surfaces_failing_metadata_prune(mut repo: TestRepo) {
@@ -1891,13 +1891,13 @@ fn test_prune_surfaces_failing_metadata_prune(mut repo: TestRepo) {
         .join(".git/worktrees")
         .join(wt_path.file_name().unwrap());
     assert!(registration.is_dir(), "{} missing", registration.display());
-    let set_mode = |mode| {
-        std::fs::set_permissions(&registration, std::fs::Permissions::from_mode(mode)).unwrap()
-    };
+    let registry = registration.parent().unwrap();
+    let set_mode =
+        |mode| std::fs::set_permissions(registry, std::fs::Permissions::from_mode(mode)).unwrap();
     set_mode(0o555);
-    // Skip if running as root: euid 0 ignores DAC mode bits, so the deletion
+    // Skip if running as root: euid 0 ignores DAC mode bits, so the rename
     // would succeed. Probe with a write the mode should refuse.
-    let probe = registration.join("probe");
+    let probe = registry.join("probe");
     if std::fs::write(&probe, "").is_ok() {
         let _ = std::fs::remove_file(&probe);
         set_mode(0o755);
@@ -2330,6 +2330,8 @@ fn test_prune_stages_concurrently_without_packed_ref_contention(
 #[rstest]
 fn test_prune_pre_remove_hooks_run_concurrently(mut repo: TestRepo) {
     use path_slash::PathExt as _;
+    use std::io::Write;
+    use std::process::Stdio;
 
     repo.commit("initial");
     let worktrees: Vec<_> = ["parallel-a", "parallel-b"]
@@ -2350,25 +2352,162 @@ while [ ! -f {0}/started-parallel-a ] || [ ! -f {0}/started-parallel-b ]; do
   fi
   sleep 0.05
 done
+cat > {0}/stdin-{{{{ branch }}}}
 [ -e .git ] || exit 1
 touch {0}/completed-{{{{ branch }}}}
 """"#,
         barriers.to_slash_lossy()
     ));
-    let output = repo
+    let mut child = repo
         .wt_command()
         .env("RAYON_NUM_THREADS", "2")
         .args(["step", "prune", "--yes", "--min-age=0s"])
-        .output()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"parent input must stay unread\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stderr}");
     let branches = repo.git_output(&["branch", "--format=%(refname:short)"]);
     for (name, path) in worktrees {
         assert!(barriers.join(format!("completed-{name}")).exists());
+        assert_eq!(
+            std::fs::read_to_string(barriers.join(format!("stdin-{name}"))).unwrap(),
+            "",
+            "parallel removals must not compete for parent stdin"
+        );
         assert!(!path.exists());
         assert!(!branches.lines().any(|branch| branch == name));
     }
+}
+
+/// Exclusive removals own input: foreground cleanup serializes with the other
+/// candidates, and the current worktree is deferred until the fan-out finishes.
+#[rstest]
+#[case::foreground(true)]
+#[case::current_worktree(false)]
+fn test_prune_exclusive_pre_remove_hooks_inherit_stdin(
+    mut repo: TestRepo,
+    #[case] foreground: bool,
+) {
+    use path_slash::PathExt as _;
+    use std::io::Write;
+    use std::process::Stdio;
+
+    repo.commit("initial");
+    let worktree = repo.add_worktree("exclusive");
+    let input_marker = repo.home_path().join("hook-input.txt");
+    repo.write_test_config(&format!(
+        "pre-remove = 'cat > {}'",
+        input_marker.to_slash_lossy()
+    ));
+    let mut command = repo.wt_command();
+    command.args(["step", "prune", "--yes", "--min-age=0s"]);
+    if foreground {
+        command.arg("--foreground");
+    } else {
+        command.current_dir(&worktree);
+    }
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"exclusive hook input\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(input_marker).unwrap(),
+        "exclusive hook input\n"
+    );
+    crate::common::assert_worktree_removed(&worktree);
+}
+
+/// Closed stdin must not change foreground job membership or cancellation:
+/// SIGTERM sent only to wt must reach its owned direct hook process.
+#[cfg(unix)]
+#[rstest]
+fn test_prune_parallel_hook_external_sigterm_reaches_child(mut repo: TestRepo) {
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+    use path_slash::PathExt as _;
+    use std::os::unix::process::{CommandExt, ExitStatusExt};
+    use std::process::Stdio;
+
+    repo.commit("initial");
+    let worktree = repo.add_worktree("waiting");
+    let started = repo.home_path().join("hook-pgid.txt");
+    let interrupted = repo.home_path().join("hook-interrupted.txt");
+    repo.write_test_config(&format!(
+        r#"pre-remove = """
+trap 'kill "$wait_pid"; wait "$wait_pid"; printf interrupted > {1}; exit 143' TERM
+sleep 30 &
+wait_pid=$!
+ps -o pgid= -p $$ > {0}
+wait "$wait_pid"
+""""#,
+        started.to_slash_lossy(),
+        interrupted.to_slash_lossy()
+    ));
+    let mut command = repo.wt_command();
+    command
+        .args(["step", "prune", "--yes", "--min-age=0s"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0);
+    let mut child = command.spawn().unwrap();
+    crate::common::wait_for("pre-remove hook process group", || {
+        std::fs::read_to_string(&started)
+            .is_ok_and(|contents| contents.trim().parse::<i32>().is_ok())
+    });
+    let hook_pgid: u32 = std::fs::read_to_string(&started)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert_eq!(
+        hook_pgid,
+        child.id(),
+        "closed-input hook must share wt's foreground process group"
+    );
+    kill(Pid::from_raw(child.id() as i32), Signal::SIGTERM).unwrap();
+    let status = child.wait().unwrap();
+    assert!(
+        status.signal() == Some(15) || status.code() == Some(143),
+        "{status:?}"
+    );
+    assert_eq!(std::fs::read_to_string(interrupted).unwrap(), "interrupted");
+    assert!(
+        worktree.join(".git").is_file(),
+        "interrupted pre-remove must preserve its worktree"
+    );
+    assert!(
+        repo.git_command()
+            .args(["show-ref", "--verify", "refs/heads/waiting"])
+            .run()
+            .unwrap()
+            .status
+            .success()
+    );
 }
 
 #[cfg(unix)]
@@ -3129,14 +3268,16 @@ fn test_prune_removal_failure_aborts_remaining_queue(repo: TestRepo) {
         .args(["step", "prune", "--yes", "--min-age=0s"])
         .output()
         .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
 
     assert!(
         !output.status.success(),
         "a failed removal must fail the run:\n{stderr}"
     );
     assert!(
-        stderr.contains("removing branch abort-a"),
+        stderr.contains("Failed to delete branch abort-a"),
         "the error should carry the failing candidate's context:\n{stderr}"
     );
     assert!(
@@ -3388,4 +3529,47 @@ fn test_prune_retains_branch_checked_out_in_another_worktree(mut repo: TestRepo)
         stderr.contains("Pruned 1 worktree") && !stderr.contains("Pruned 1 branch"),
         "summary must count the pruned entry, not the retained branch:\n{stderr}",
     );
+}
+
+/// An unavailable payload-trash directory must not veto stale unregister or
+/// branch-only cleanup. The staging blocker and another live worktree survive.
+#[rstest]
+#[case::remove(false)]
+#[case::prune(true)]
+fn test_stale_cleanup_with_blocked_payload_trash(mut repo: TestRepo, #[case] prune: bool) {
+    repo.commit("initial");
+    let stale = repo.add_worktree("stale-trash-blocked");
+    let repository = worktrunk::git::Repository::at(repo.root_path()).unwrap();
+    let registration = repository.worktree_at(&stale).git_dir().unwrap();
+    let bystander = repo.add_worktree_with_commit(
+        "live-bystander",
+        "unique.txt",
+        "keep live work",
+        "bystander",
+    );
+    std::fs::remove_dir_all(&stale).unwrap();
+    let trash = repository.wt_trash_dir();
+    std::fs::create_dir_all(trash.parent().unwrap()).unwrap();
+    std::fs::write(&trash, "keep blocker").unwrap();
+    let mut command = repo.wt_command();
+    if prune {
+        command.args(["step", "prune", "--foreground", "--yes", "--min-age=0s"]);
+    } else {
+        command.args(["remove", "stale-trash-blocked", "--foreground", "--yes"]);
+    }
+    let output = command.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!registration.exists());
+    assert_eq!(std::fs::read_to_string(&trash).unwrap(), "keep blocker");
+    assert_eq!(
+        std::fs::read_to_string(bystander.join("unique.txt")).unwrap(),
+        "keep live work"
+    );
+    let branches = repo.git_output(&["branch", "--format=%(refname:short)"]);
+    assert!(!branches.lines().any(|b| b == "stale-trash-blocked"));
+    assert!(branches.lines().any(|b| b == "live-bystander"));
 }

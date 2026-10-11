@@ -334,11 +334,15 @@ pub enum RemovalPlan {
         /// back from a prunable worktree. Planning never mutates — execution
         /// performs the prune
         /// ([`prune_worktree_entry`](worktrunk::git::Repository::prune_worktree_entry)),
-        /// which repeats git's prune test first, so a worktree reconnected at
-        /// this path between planning and execution refuses rather than
-        /// losing its registration. Whatever remains of the directory stays.
+        /// which rechecks staleness, locks and retained work before deletion.
+        /// A worktree reconnected or holding new work after planning refuses
+        /// removal rather than losing its registration. Whatever remains of
+        /// the directory stays.
         /// `None` when the branch has no worktree entry at all.
         prune_entry: Option<PathBuf>,
+        /// Explicit permission to discard staged or in-progress work in a stale
+        /// registration. Never overrides a lock or a reconnected worktree.
+        force_worktree: bool,
         /// Integration target for display. May be the effective target (e.g.,
         /// `origin/main` when upstream is ahead) or the local default branch.
         /// `None` when no default branch is configured.
@@ -493,6 +497,7 @@ mod tests {
             branch_name: "solo".to_string(),
             deletion_mode: BranchDeletionMode::default(),
             prune_entry: None,
+            force_worktree: false,
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
@@ -689,6 +694,7 @@ mod tests {
             branch_name: "stale-branch".to_string(),
             deletion_mode: BranchDeletionMode::Keep,
             prune_entry: None,
+            force_worktree: false,
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
@@ -722,6 +728,7 @@ mod tests {
             branch_name: "pruned-branch".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
             prune_entry: Some(PathBuf::from("/stale")),
+            force_worktree: false,
             target_branch: Some("main".to_string()),
             integration_reason: None,
             branch_checked_out_at: None,

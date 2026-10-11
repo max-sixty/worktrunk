@@ -44,15 +44,32 @@ exit /b %ERRORLEVEL%
 
 rem %1 is a Git install's cmd\, bin\, or mingw64\bin\ directory, with the
 rem trailing separator `%~dpI` leaves on; the last sits a level deeper, so the
-rem install root is tried one level further up when the first two miss.
+rem install root is tried one level further up for a known nested runtime.
 rem Git\bin\bash.exe first, as find_git_bash does: it is the wrapper that
 rem sets up the MSYS environment for a caller outside Git Bash, which is what
 rem puts `uname` and friends within reach of wt.sh.
 :derive
 call :accept "%~1..\bin\bash.exe"
 if not defined BASH call :accept "%~1..\usr\bin\bash.exe"
-if not defined BASH call :accept "%~1..\..\bin\bash.exe"
-if not defined BASH call :accept "%~1..\..\usr\bin\bash.exe"
+if not defined BASH for %%I in ("%~1.") do call :derive_deeper "%%~fI"
+goto :eof
+
+rem Only usr\bin and mingw32/64\bin sit below the Git install root.
+rem Shallow cmd or bin lookups must never climb outside that installation.
+:derive_deeper
+if /i not "%~nx1"=="bin" goto :eof
+for %%I in ("%~1\..") do call :derive_runtime "%%~fI"
+goto :eof
+
+:derive_runtime
+if /i "%~nx1"=="usr" call :derive_root "%~1"
+if /i "%~nx1"=="mingw32" call :derive_root "%~1"
+if /i "%~nx1"=="mingw64" call :derive_root "%~1"
+goto :eof
+
+:derive_root
+call :accept "%~1\..\bin\bash.exe"
+if not defined BASH call :accept "%~1\..\usr\bin\bash.exe"
 goto :eof
 
 :accept

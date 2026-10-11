@@ -161,6 +161,7 @@ mod branch;
 mod branches;
 mod config;
 mod diff;
+mod disposal;
 mod integration;
 mod ref_snapshot;
 mod remotes;
@@ -172,12 +173,13 @@ mod worktrees;
 pub use branch::Branch;
 pub use branch::is_valid_branch_name;
 pub use diff::{CommitMessageDetail, PreparedDiff};
+pub use disposal::DisposalEntry;
 pub use integration::{BranchDiffSpec, IntegrationTargets, select_comparison_base};
 pub use ref_snapshot::RefSnapshot;
 pub(super) use working_tree::path_to_logging_context;
 use working_tree::registration_worktree_path;
-pub use working_tree::{InProgressOperation, SafetyBackup, TempIndex, WorkingTree};
-pub use worktrees::{StaleWorktreeWork, duplicated_branches};
+pub use working_tree::{CleanCheckMode, InProgressOperation, SafetyBackup, TempIndex, WorkingTree};
+pub use worktrees::{StaleWorktreeWork, WorktreePruneMode, duplicated_branches};
 
 // ============================================================================
 // Repository Cache
@@ -1568,7 +1570,8 @@ impl Repository {
     /// Get the worktrunk data directory inside the git directory.
     ///
     /// Returns `<git-common-dir>/wt/` (typically `.git/wt/`).
-    /// All worktrunk-managed state lives under this single directory.
+    /// Logs, caches, retained checkouts and payload trash live here. Temporary
+    /// metadata disposal also uses the Git common directory.
     pub fn wt_dir(&self) -> PathBuf {
         self.git_common_dir().join("wt")
     }
@@ -1886,6 +1889,7 @@ impl Repository {
         // The one production git spawn that bypasses `Cmd` (see the daemon
         // rationale above), so it re-applies the test floor by hand.
         crate::shell_exec::apply_hermetic_test_env(&mut cmd);
+        crate::shell_exec::scrub_git_discovery_env_vars(&mut cmd);
         crate::shell_exec::scrub_directive_env_vars(&mut cmd);
         // Trace the daemon launch so it's attributed in the timeline rather than
         // appearing as a gap on the switch hot path. Wait without captured

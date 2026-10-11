@@ -877,12 +877,12 @@ Drop the regenerable caches:
 $ wt config state cache clear
 ```
 
-Show all stored state:
+Show repository state:
 ```console
 $ wt config state get
 ```
 
-Clear all stored state:
+Clear repository state:
 ```console
 $ wt config state clear
 ```
@@ -909,8 +909,8 @@ $ wt config state clear
 // notice and are absent from `--help`.
 #[derive(Subcommand)]
 pub enum StateCommand {
-    /// Get all stored state
-    #[command(after_long_help = r#"Shows all stored state including:
+    /// Get repository state
+    #[command(after_long_help = r#"Shows repository state:
 
 - **Default branch**: Cached result of querying remote for default branch
 - **Previous branch**: Previous branch for `wt switch -`
@@ -921,7 +921,7 @@ pub enum StateCommand {
 - **Git commands cache**: Cached merge-tree, ancestry, diff-stat, and `wt switch` preview results
 - **Hints**: One-time hints that have been shown
 - **Log files**: Operation and debug logs
-- **Trash**: Staged worktree directories awaiting background deletion
+- **Trash**: Removed worktrees and their Git metadata awaiting deletion
 
 Every category that `wt config state clear` sweeps is shown here.
 
@@ -932,8 +932,8 @@ CI cache entries show status, age, and the commit SHA they were fetched for."#)]
         format: super::OutputFormat,
     },
 
-    /// Clear all stored state
-    #[command(after_long_help = r#"Clears all stored state:
+    /// Clear repository state
+    #[command(after_long_help = r#"Clears repository state:
 
 - Default branch cache
 - Previous branch
@@ -942,7 +942,9 @@ CI cache entries show status, age, and the commit SHA they were fetched for."#)]
 - All caches (CI status, summaries, git commands)
 - All hints
 - All log files
-- Stale trash from worktree removal (`.git/wt/trash/`)
+- Trash from worktree removal
+
+Keeps squash backups and worktrees retained after failed removal.
 
 Prompts for confirmation before clearing, since this removes hand-authored
 markers and vars. Pass `--yes` to skip the prompt.

@@ -55,8 +55,8 @@ use worktrunk::trace::Span;
 
 use crate::commands::command_approval::approve_alias_commands;
 use crate::commands::command_executor::{
-    CommandContext, FailureStrategy, PipelineKind, PreparedCommand, build_hook_context,
-    execute_pipeline_foreground, map_config_steps,
+    CommandContext, FailureStrategy, ForegroundStdin, PipelineKind, PreparedCommand,
+    build_hook_context, execute_pipeline_foreground, map_config_steps,
 };
 use crate::commands::hook_announcement::{
     SourcedStep, format_pipeline_summary_from_names, step_names_from_config,
@@ -734,7 +734,11 @@ fn run_alias(
                 sourced_steps.push(SourcedStep { step, source });
             }
         }
-        sourced_steps_to_foreground(sourced_steps, &PipelineKind::Alias { name: alias_name })
+        sourced_steps_to_foreground(
+            sourced_steps,
+            &PipelineKind::Alias { name: alias_name },
+            ForegroundStdin::Inherit,
+        )
     };
 
     execute_pipeline_foreground(&foreground_steps, repo, &wt_path, FailureStrategy::FailFast)

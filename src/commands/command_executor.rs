@@ -120,9 +120,21 @@ impl PipelineKind {
     }
 }
 
+/// Whether a foreground pipeline owns the caller's input.
+///
+/// An exclusive pipeline inherits stdin for interactive input. A pipeline
+/// running alongside another input consumer must read EOF instead. Foreground
+/// process-group membership is independent of this input allocation.
+#[derive(Clone, Copy, Debug)]
+pub enum ForegroundStdin {
+    Inherit,
+    Closed,
+}
+
 /// A pipeline step ready for foreground execution, with rendering / error policy.
 pub struct ForegroundStep {
     pub step: PreparedStep,
+    pub stdin: ForegroundStdin,
     /// Which pipeline this step belongs to. Drives how each command is
     /// announced before execution: hooks render a per-command "Running …"
     /// line plus the bash gutter; aliases stay silent (the caller emits one
@@ -171,6 +183,7 @@ pub struct CommandContext<'a> {
     pub branch: Option<&'a str>,
     pub worktree_path: &'a Path,
     pub yes: bool,
+    pub stdin: ForegroundStdin,
 }
 
 impl<'a> CommandContext<'a> {
@@ -187,7 +200,14 @@ impl<'a> CommandContext<'a> {
             branch,
             worktree_path,
             yes,
+            stdin: ForegroundStdin::Inherit,
         }
+    }
+
+    /// Set input ownership when the caller runs this pipeline concurrently.
+    pub fn with_stdin(mut self, stdin: ForegroundStdin) -> Self {
+        self.stdin = stdin;
+        self
     }
 
     /// Get the project identifier for per-project config lookup.
@@ -575,17 +595,13 @@ fn run_one_command(
     };
     announce_command(cmd, &fg_step.announce, &command_str);
 
-    // Foreground steps inherit the parent's stdin so an interactive child keeps
-    // its controlling terminal — a `pre-*` hook can prompt (e.g. `gum confirm`
-    // before `mise trust`), and an alias body's `wt switch` picker keeps the
-    // tty. Nothing is ever piped in: template variables are how a hook reads
-    // its context, whatever form it runs in.
     let log_label = fg_step.announce.log_label(cmd);
     let result = execute_shell_command(
         wt_path,
         &command_str,
         log_label.as_deref(),
         directives.clone(),
+        fg_step.stdin,
         fg_step.redirect_stdout_to_stderr,
         fg_step.announce.is_hook(),
     );

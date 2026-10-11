@@ -676,7 +676,7 @@ $ wt switch --create temp --no-hooks       # Skip hooks
 
 ### Custom path [experimental]
 
-`--path` places one worktree outside the `worktree-path` template, keeping the branch name intact:
+`--path` overrides the `worktree-path` template for one worktree:
 
 ```console
 $ wt switch --create feature/JIRA-1234 --path ../dark-mode
@@ -684,7 +684,7 @@ $ wt switch ../dark-mode                   # Switch by path...
 $ wt switch feature/JIRA-1234              # ...or by branch
 ```
 
-Worktrunk finds the worktree from git's own records, so commands reach it by branch or path as usual. [`wt list`](/list/#worktree) marks it `⚐`, since it isn't at the path its branch implies, and [`wt step relocate`](/step/#wt-step-relocate) offers to move it back to the template path.
+[`wt list`](/list/#worktree) marks it `⚐`, since it isn't at the path its branch implies, and [`wt step relocate`](/step/#wt-step-relocate) offers to move it back to the template path.
 
 ## Naming a worktree
 
@@ -1400,7 +1400,7 @@ Unix only; on Windows `--reap` is rejected.
 
 ## JSON output
 
-`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal. Branch-only results also include `detached_worktree`: the path of a detached worktree left behind, or `null`.
+`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal. Branch-only results also include `detached_worktree`: the path of a detached worktree at the branch's template path, left untouched by the removal, or `null`.
 
 `branch_outcome` names what happened to the branch, so a caller can tell a deletion the removal declined from one it was never asked to make:
 
@@ -1497,7 +1497,7 @@ $ wt merge --no-commit --no-rebase
 `wt merge` runs these steps:
 
 1. **Commit** — Pre-commit hooks run, then uncommitted changes are committed. Post-commit hooks run in the background. This step is skipped when squashing (the default) — changes are staged during the squash step instead. With `--no-squash`, this is the only commit step.
-2. **Squash** — Combines all commits since target into one (like GitHub's "Squash and merge"). Pre-commit hooks run before staging; post-commit hooks run in the background after committing. Use `--stage` to control what gets staged: `all` (default), `tracked`, or `none`. Working-tree changes swept into the squash are backed up first to `refs/wt-backup/<branch>`; see [`wt step squash`](/step/#wt-step-squash) for recovery. With `--no-squash`, individual commits are preserved.
+2. **Squash** — Combines all commits since target into one (like GitHub's "Squash and merge"). Pre-commit hooks run before staging; post-commit hooks run in the background after committing. Use `--stage` to control what gets staged: `all` (default), `tracked`, or `none`. Working-tree changes swept into the squash are backed up first to `refs/wt-backup/<branch>`; see [`wt step squash`](/step/#wt-step-squash--recovering-staged-changes) for recovery. With `--no-squash`, individual commits are preserved.
 3. **Rebase** — Rebases onto target, skipping when nothing needs replaying ([`wt step rebase`](/step/#wt-step-rebase) gives the conditions). A conflict stops the merge with the rebase left open in the worktree, to resolve or abort. With `--no-rebase`, the graph produced by earlier commit/squash steps is preserved and the target must be able to fast-forward to its tip.
 4. **Pre-merge hooks** — Hooks run after rebase, before merge. Failures abort. See [`wt hook`](/hook/).
 5. **Merge** — Fast-forward merge to the target branch ([`wt step push`](/step/#wt-step-push)). With `--no-ff`, a merge commit is created instead — semi-linear history after the default rebase, while explicit `--no-rebase` preserves the graph produced by earlier steps before adding the merge commit. Non-fast-forward merges are rejected.
@@ -1798,6 +1798,24 @@ Variables use dot access and the `default` filter for missing keys. JSON object/
 dev = "ENV={{ vars.env | default('development') }} npm start -- --port {{ vars.config.port | default('3000') }}"
 ```
 
+<!-- anchor: json-context -->
+
+Logic that templates can't express belongs in a script, with the values it needs passed as arguments:
+
+```toml
+# .config/wt.toml
+[post-start]
+setup = "python3 scripts/post-start-setup.py {{ branch }} {{ repo }}"
+```
+
+```python
+# scripts/post-start-setup.py
+import subprocess, sys
+branch, repo = sys.argv[1], sys.argv[2]
+if branch.startswith('feature/') and 'backend' in repo:
+    subprocess.run(['make', 'seed-db'])
+```
+
 ## Worktrunk filters
 
 Templates support Jinja2 filters for transforming values:
@@ -1869,28 +1887,12 @@ setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path 
 
 ## Interactive hooks
 
-Hooks can prompt when run serially in the foreground, as in this `pre-start` hook:
+Foreground hooks can prompt when their commands run one at a time:
 
 ```toml
 # .config/wt.toml
 [pre-start]
 trust = "gum confirm 'trust this worktree?' && mise trust"
-```
-
-Logic that templates can't express belongs in a script, with the values it needs passed as arguments:
-
-```toml
-# .config/wt.toml
-[post-start]
-setup = "python3 scripts/post-start-setup.py {{ branch }} {{ repo }}"
-```
-
-```python
-# scripts/post-start-setup.py
-import subprocess, sys
-branch, repo = sys.argv[1], sys.argv[2]
-if branch.startswith('feature/') and 'backend' in repo:
-    subprocess.run(['make', 'seed-db'])
 ```
 
 ## Copying untracked files
@@ -2119,7 +2121,7 @@ command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haik
 
 ### Codex
 
-Create `~/.codex/worktrunk-commit-instructions.txt` containing just `.` (no newline). Accepting Worktrunk's first-run Codex setup creates the file for you.
+Create `~/.codex/worktrunk-commit-instructions.txt` containing just `.` (no newline) to replace Codex's default instructions. Accepting Worktrunk's first-run Codex setup creates the file for you.
 
 ```toml
 [commit.generation]

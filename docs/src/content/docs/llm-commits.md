@@ -30,7 +30,7 @@ command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haik
 
 ### Codex
 
-Create `~/.codex/worktrunk-commit-instructions.txt` containing just `.` (no newline). Accepting Worktrunk's first-run Codex setup creates the file for you.
+Create `~/.codex/worktrunk-commit-instructions.txt` containing just `.` (no newline) to replace Codex's default instructions. Accepting Worktrunk's first-run Codex setup creates the file for you.
 
 ```toml
 # ~/.config/worktrunk/config.toml

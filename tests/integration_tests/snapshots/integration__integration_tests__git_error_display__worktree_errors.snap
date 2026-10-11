@@ -2,6 +2,12 @@
 source: tests/integration_tests/git_error_display.rs
 expression: render_cases(cases)
 ---
+## failed unregister preserves the moved checkout
+
+[31m✗[39m [31mWorktree removal stopped; files preserved @ [1m'/tmp/repo/.git/wt/retained/feature with spaces-123'[22m[39m
+[107m [0m could not remove worktree metadata: Permission denied
+[2m↳[22m [2mTo reconnect, run [4mgit -C '/tmp/repo with spaces/.git' worktree repair '/tmp/repo/.git/wt/retained/feature with spaces-123'[24m[22m
+
 ## removal failed
 
 [31m✗[39m [31mFailed to remove worktree for [1mfeature-x[22m @ [1m/tmp/repo.feature-x[22m[39m
@@ -13,6 +19,13 @@ expression: render_cases(cases)
 [31m✗[39m [31mFailed to remove worktree for [1mfeature-x[22m @ [1m/tmp/repo.feature-x[22m[39m
 [107m [0m error: failed to delete '/tmp/repo.feature-x': Directory not empty
 [2m↳[22m [2mRemaining in directory: [4m.vite/, node_modules/, target/[24m[22m
+[2m↳[22m [2mA background process may be writing files; try [4mwt remove[24m (without --foreground)[22m
+
+## git removal leaves directory contents
+
+[31m✗[39m [31mFailed to remove worktree for [1mfeature-x[22m @ [1m/tmp/repo.feature-x[22m[39m
+[107m [0m error: failed to delete '/tmp/repo.feature-x': Directory not empty
+[2m↳[22m [2mRemaining in directory: [4mtarget/[24m[22m
 [2m↳[22m [2mA background process may be writing files; try [4mwt remove[24m (without --foreground)[22m
 
 ## removal left one entry
@@ -68,6 +81,11 @@ expression: render_cases(cases)
 [2m↳[22m [2mTo discard the stale worktree, run [4mwt remove -f stale-branch[24m; to restore it, recreate its directory, then run [4mgit worktree repair '/tmp/my repo.stale-branch'[24m[22m
 [31m✗[39m [31mWorktree for [1mstale-branch[22m is stale with a bisect in progress[39m
 [2m↳[22m [2mTo discard the stale worktree, run [4mwt remove -f stale-branch[24m; to restore it, recreate its directory, then run [4mgit worktree repair '/tmp/my repo.stale-branch'[24m[22m
+
+## detached stale worktree holding staged changes offers repair, not unsupported discard
+
+[31m✗[39m [31mDetached worktree @ '/tmp/my repo.detached' is stale but holds staged changes[39m
+[2m↳[22m [2mTo restore it, recreate its directory, then run [4mgit worktree repair '/tmp/my repo.detached'[24m[22m
 
 ## no worktree at a leftover directory
 

@@ -1,0 +1,9 @@
+---
+source: src/commands/picker/mod.rs
+expression: diagnostic
+---
+[31m✗[39m [31mWorktree removal stopped; files preserved @ [1m[RETAINED][22m[39m
+[107m [0m Failed to unregister
+[107m [0m [REGISTRATION]:
+[107m [0m Permission denied (os error 13)
+[2m↳[22m [2mTo reconnect, run [4mgit -C [GIT_DIR] worktree repair [RETAINED][24m[22m

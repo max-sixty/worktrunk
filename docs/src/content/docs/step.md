@@ -205,9 +205,11 @@ The squash commit is made on a detached HEAD, as `git rebase` does, so git's own
 
 ### Recovering staged changes
 
-Before squashing staged changes, Worktrunk saves them to `refs/wt-backup/<branch>`. Changes left unstaged are not included in the backup.
+Working-tree changes staged for a squash are backed up to `refs/wt-backup/<branch>`; unstaged changes aren't included. Recover the latest backup of branch `feature` in a new worktree:
 
-The output prints a command to recover the saved changes in a new worktree, including after `wt merge` removes the original.
+```console
+$ wt switch --create recovery --base refs/wt-backup/feature --no-hooks
+```
 
 ### Options
 
@@ -829,7 +831,7 @@ Prune removes worktrees concurrently, so hooks that write shared resources must 
 
 ### Min-age guard
 
-Candidates younger than `--min-age` (default: 1 day) are skipped. A worktree's age comes from its creation time. For branches without a reflog, Git maintenance or branch deletion can restart the age guard, even on older branches. This prevents removing a worktree just created from the default branch: it looks "merged" because its branch points at the same commit.
+Candidates younger than `--min-age` (default: 1 day) are skipped. This protects worktrees just created from the default branch, whose branches already look merged. Worktree age starts at creation; branches without worktrees use their oldest reflog entry, or their last ref write if no reflog exists.
 
 ```console
 $ wt step prune --min-age=0s     # no age guard

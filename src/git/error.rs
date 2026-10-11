@@ -501,11 +501,24 @@ pub enum GitError {
     /// A stale worktree whose registration holds what unregistering it would
     /// destroy — see [`Repository::stale_worktree_work`](super::Repository::stale_worktree_work).
     StaleWorktreeHoldsWork {
-        branch: String,
+        /// The real branch, or `None` for a detached stale registration.
+        branch: Option<String>,
         path: PathBuf,
         /// Whether the directory remains, so repair needs no recreating first.
         directory_remains: bool,
         work: StaleWorktreeWork,
+    },
+    /// Removal moved the checkout aside but could not safely unregister it.
+    WorktreeRemovalPreserved {
+        path: PathBuf,
+        git_common_dir: PathBuf,
+        error: anyhow::Error,
+    },
+    /// Branch deletion failed, possibly after its checkout was removed.
+    BranchDeletionFailed {
+        branch: String,
+        removed_worktree: Option<PathBuf>,
+        error: anyhow::Error,
     },
     RemoteOnlyBranch {
         branch: String,
@@ -730,7 +743,9 @@ pub enum GitError {
 impl std::error::Error for GitError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::WorktreeRemovalFailed { error, .. } => Some(error.as_ref()),
+            Self::WorktreeRemovalFailed { error, .. }
+            | Self::WorktreeRemovalPreserved { error, .. }
+            | Self::BranchDeletionFailed { error, .. } => Some(error.as_ref()),
             _ => None,
         }
     }
@@ -852,15 +867,40 @@ impl GitError {
                 cformat!("Worktree for <bold>{branch}</> is stale; its directory or .git is gone")
             }
 
-            GitError::StaleWorktreeHoldsWork { branch, work, .. } => match work {
-                StaleWorktreeWork::StagedChanges => {
-                    cformat!("Worktree for <bold>{branch}</> is stale but holds staged changes")
+            GitError::StaleWorktreeHoldsWork {
+                branch, path, work, ..
+            } => {
+                let worktree = match branch {
+                    Some(branch) => cformat!("Worktree for <bold>{branch}</>"),
+                    None => cformat!("Detached worktree @ {}", format_path_for_display(path)),
+                };
+                match work {
+                    StaleWorktreeWork::StagedChanges => {
+                        format!("{worktree} is stale but holds staged changes")
+                    }
+                    StaleWorktreeWork::Operation(operation) => format!(
+                        "{worktree} is stale with a {} in progress",
+                        operation_noun(*operation)
+                    ),
                 }
-                StaleWorktreeWork::Operation(operation) => cformat!(
-                    "Worktree for <bold>{branch}</> is stale with a {} in progress",
-                    operation_noun(*operation)
+            }
+
+            GitError::BranchDeletionFailed {
+                branch,
+                removed_worktree,
+                ..
+            } => match removed_worktree {
+                Some(path) => cformat!(
+                    "Worktree removed @ <bold>{}</>; failed to delete branch <bold>{branch}</>",
+                    format_path_for_display(path)
                 ),
+                None => cformat!("Failed to delete branch <bold>{branch}</>"),
             },
+
+            GitError::WorktreeRemovalPreserved { path, .. } => cformat!(
+                "Worktree removal stopped; files preserved @ <bold>{}</>",
+                format_path_for_display(path)
+            ),
 
             GitError::RemoteOnlyBranch { branch, remote } => {
                 cformat!("Branch <bold>{branch}</> exists only on remote ({remote}/{branch})")
@@ -1236,6 +1276,24 @@ impl GitError {
                 write!(f, "{}\n{}", error_message(&title), hint_message(hint))
             }
 
+            GitError::WorktreeRemovalPreserved {
+                path,
+                git_common_dir,
+                error,
+            } => {
+                let command = format!(
+                    "git -C {} worktree repair {}",
+                    escape(git_common_dir.to_string_lossy()),
+                    escape(path.to_string_lossy()),
+                );
+                write!(
+                    f,
+                    "{}\n{}",
+                    format_error_block(error_message(self.title()), &format!("{error:#}")),
+                    hint_message(cformat!("To reconnect, run <underline>{command}</>"))
+                )
+            }
+
             GitError::StaleWorktreeHoldsWork {
                 branch,
                 path,
@@ -1243,7 +1301,6 @@ impl GitError {
                 ..
             } => {
                 let title = self.title();
-                let discard = suggest_command("remove", &[branch], &["-f"]);
                 let path_display = format_path_for_display(path);
                 let restore = if *directory_remains {
                     cformat!("run <underline>git worktree repair {path_display}</>")
@@ -1252,14 +1309,18 @@ impl GitError {
                         "recreate its directory, then run <underline>git worktree repair {path_display}</>"
                     )
                 };
-                write!(
-                    f,
-                    "{}\n{}",
-                    error_message(&title),
-                    hint_message(cformat!(
-                        "To discard the stale worktree, run <underline>{discard}</>; to restore it, {restore}"
-                    ))
-                )
+                let hint = match branch {
+                    Some(branch) => {
+                        let discard = suggest_command("remove", &[branch], &["-f"]);
+                        cformat!(
+                            "To discard the stale worktree, run <underline>{discard}</>; to restore it, {restore}"
+                        )
+                    }
+                    // `wt remove` deliberately refuses stale detached entries,
+                    // so its force flag cannot discard this registration.
+                    None => format!("To restore it, {restore}"),
+                };
+                write!(f, "{}\n{}", error_message(&title), hint_message(hint))
             }
 
             GitError::RemoteOnlyBranch { branch, .. } => {
@@ -1367,11 +1428,29 @@ impl GitError {
                 )
             }
 
+            GitError::BranchDeletionFailed { error, .. } => {
+                let title = self.title();
+                write!(
+                    f,
+                    "{}",
+                    format_error_block(error_message(&title), &error.display_message())
+                )
+            }
+
             GitError::WorktreeRemovalFailed {
                 error,
                 remaining_entries,
                 ..
             } => {
+                // A classified failure owns its diagnostic and recovery hint.
+                // In particular, the original path may now hold another
+                // checkout: listing it must not obscure the preserved path.
+                if let Some(classified) = error
+                    .chain()
+                    .find_map(|cause| cause.downcast_ref::<GitError>())
+                {
+                    return write!(f, "{}", classified.render());
+                }
                 let error = error.display_message();
                 let title = self.title();
                 write!(f, "{}", format_error_block(error_message(&title), &error))?;
@@ -1963,23 +2042,25 @@ impl ErrorExt for anyhow::Error {
         // `ChildProcessExited { signal }`. An error that already classified
         // as `Interrupted` stays one, so loops that re-check errors bubbling
         // through them can't demote it.
-        match self.downcast_ref::<WorktrunkError>() {
-            Some(WorktrunkError::ChildProcessExited {
-                signal: Some(sig @ (SIGINT | SIGTERM)),
-                ..
-            }) => return Some(*sig),
-            Some(WorktrunkError::Interrupted {
-                signal: sig @ (SIGINT | SIGTERM),
-                ..
-            }) => return Some(*sig),
-            _ => {}
-        }
-        #[cfg(unix)]
-        if let Some(error) = self.downcast_ref::<crate::shell_exec::StreamCommandError>()
-            && let Some(signal @ (SIGINT | SIGTERM)) =
-                std::os::unix::process::ExitStatusExt::signal(&error.status)
-        {
-            return Some(signal);
+        for cause in self.chain() {
+            match cause.downcast_ref::<WorktrunkError>() {
+                Some(WorktrunkError::ChildProcessExited {
+                    signal: Some(sig @ (SIGINT | SIGTERM)),
+                    ..
+                }) => return Some(*sig),
+                Some(WorktrunkError::Interrupted {
+                    signal: sig @ (SIGINT | SIGTERM),
+                    ..
+                }) => return Some(*sig),
+                _ => {}
+            }
+            #[cfg(unix)]
+            if let Some(error) = cause.downcast_ref::<crate::shell_exec::StreamCommandError>()
+                && let Some(signal @ (SIGINT | SIGTERM)) =
+                    std::os::unix::process::ExitStatusExt::signal(&error.status)
+            {
+                return Some(signal);
+            }
         }
         // Capture mode carries the same raw status behind context layers.
         // INT/TERM cancel the operation; crashes and other signals stay on
@@ -2334,6 +2415,22 @@ mod tests {
             }
             .into();
             assert_eq!(streamed.interrupt_signal(), expected, "stream signal {sig}");
+            for error in [
+                streamed,
+                WorktrunkError::Interrupted {
+                    signal: sig,
+                    hint: None,
+                }
+                .into(),
+            ] {
+                let wrapped: anyhow::Error = GitError::BranchDeletionFailed {
+                    branch: "feature".into(),
+                    removed_worktree: Some(std::path::PathBuf::from("/tmp/feature")),
+                    error,
+                }
+                .into();
+                assert_eq!(wrapped.interrupt_signal(), expected, "wrapped signal {sig}");
+            }
         }
     }
 

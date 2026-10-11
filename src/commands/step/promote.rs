@@ -364,8 +364,18 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     let main_working_tree = repo.worktree_at(main_path);
     let target_working_tree = repo.worktree_at(target_path);
 
-    main_working_tree.ensure_clean("promote", Some(&main_branch), false)?;
-    target_working_tree.ensure_clean("promote", Some(&target_branch), false)?;
+    main_working_tree.ensure_clean(
+        "promote",
+        Some(&main_branch),
+        false,
+        worktrunk::git::CleanCheckMode::ConfiguredFsmonitor,
+    )?;
+    target_working_tree.ensure_clean(
+        "promote",
+        Some(&target_branch),
+        false,
+        worktrunk::git::CleanCheckMode::ConfiguredFsmonitor,
+    )?;
 
     // Check if we're restoring canonical state (promoting default branch back to main worktree)
     // Only lookup default_branch if needed for messaging (already resolved if no-arg from main)

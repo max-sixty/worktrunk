@@ -397,7 +397,7 @@ pub fn execute_planned_hook(
         hook_type,
         display_path: display_path.map(Path::to_path_buf),
     };
-    let foreground = sourced_steps_to_foreground(sourced, &kind);
+    let foreground = sourced_steps_to_foreground(sourced, &kind, ctx.stdin);
     execute_pipeline_foreground(&foreground, ctx.repo, ctx.worktree_path, failure_strategy)
         .map_err(add_hook_skip_hint)
 }

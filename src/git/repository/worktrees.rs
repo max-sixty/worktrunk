@@ -240,22 +240,29 @@ impl Repository {
     ///
     /// # Concurrent calls
     ///
-    /// This deletion and [`Repository::remove_worktree`]'s `git worktree
-    /// remove` serialize with each other for the same repository. Naming one
-    /// entry bounds what a call *deletes*, not what others *read*: `git
-    /// worktree remove` and `git worktree list` enumerate *every* entry under
-    /// `.git/worktrees/` and read each one's files, so one overlapping this
-    /// deletion can read the entry mid-deletion and fail (`failed to read
-    /// …/commondir` / `Invalid path …/.git/worktrees/<id>`). That is Git's own
-    /// TOCTOU between the enumerator's `readdir` and its `open`. The
-    /// repository-scoped write lock closes the in-process window;
-    /// [`Repository::list_worktrees`] takes the matching read side. A `git
-    /// worktree list` in an *unrelated* process — outside wt's lock — remains
-    /// exposed; wt's serialization only covers its own removals.
+    /// This unregister and [`Repository::remove_worktree`]'s `git worktree
+    /// remove` serialize with each other for the same repository. Both Git
+    /// removal and listing enumerate every entry under `.git/worktrees/`.
+    /// A call that enumerates before the atomic move but opens the entry after
+    /// it can fail (`failed to read …/commondir` / `Invalid path …/worktrees/<id>`).
+    /// The repository-scoped write lock closes that in-process window;
+    /// [`Repository::list_worktrees`] takes its matching read side. An unrelated
+    /// Git process remains exposed to the readdir/open race, but never sees an
+    /// admin directory being partially deleted in place.
     ///
     /// Git also `rmdir`s `.git/worktrees` once its last entry goes. This
     /// leaves the empty directory, which git reads as no linked worktrees.
-    pub fn prune_worktree_entry(&self, path: &Path) -> anyhow::Result<()> {
+    ///
+    /// Unless explicitly forced, recheck the index under that same lock just
+    /// before unregistering. Also retain operation state for an already-stale
+    /// entry; an authorized live removal may discard its clean operation state.
+    /// Planning can precede approved hooks that put new work in the entry.
+    ///
+    /// Unregistering atomically moves the complete admin directory outside
+    /// Git's registry before deleting it. A failed move leaves it intact for
+    /// repair; failed cleanup after the move leaves only garbage outside the
+    /// registry, which the trash janitor can sweep later.
+    pub fn prune_worktree_entry(&self, path: &Path, mode: WorktreePruneMode) -> anyhow::Result<()> {
         let display = format_path_for_display(path);
         let _registry = self.worktree_registry_write();
         let (registration, recorded) = self.registration_at(path)?;
@@ -265,12 +272,57 @@ impl Repository {
         if !definitely_absent(&recorded.join(".git"))? {
             anyhow::bail!("Worktree @ {display} is no longer stale; its .git exists");
         }
-        std::fs::remove_dir_all(&registration).with_context(|| {
+        if let Some(work) = match mode {
+            WorktreePruneMode::Stale => self.stale_worktree_work_at(path, &registration)?,
+            WorktreePruneMode::RemovedLive => self
+                .worktree_index_has_staged_changes(path, &registration)?
+                .then_some(StaleWorktreeWork::StagedChanges),
+            WorktreePruneMode::Force => None,
+        } {
+            let head = std::fs::read_to_string(registration.join("HEAD"))
+                .with_context(|| format!("Failed to read HEAD for stale worktree @ {display}"))?;
+            let branch = head
+                .trim()
+                .strip_prefix("ref: refs/heads/")
+                .map(str::to_owned);
+            return Err(GitError::StaleWorktreeHoldsWork {
+                branch,
+                path: path.to_path_buf(),
+                directory_remains: path.is_dir(),
+                work,
+            }
+            .into());
+        }
+        // Rename is the unregister commit: a failure leaves every registration
+        // file available for repair. Recursive deletion before that commit can
+        // fail after deleting HEAD/commondir while leaving an undeletable index.
+        // Payload staging under wt/trash is optional. Metadata disposal must
+        // still work when wt or trash is unavailable, so reserve its temporary
+        // parent directly in the Git common directory.
+        let garbage = tempfile::Builder::new()
+            .prefix(Self::UNREGISTERED_WORKTREE_PREFIX)
+            .suffix(&format!("-{}", crate::utils::epoch_now()))
+            .tempdir_in(self.git_common_dir())
+            .with_context(|| {
+                format!(
+                    "Failed to prepare metadata disposal in {}",
+                    format_path_for_display(self.git_common_dir())
+                )
+            })?;
+        // The uniquely created parent owns this absent child. A concurrent
+        // janitor sweep before the move only makes it fail, preserving metadata.
+        std::fs::rename(&registration, garbage.path().join("registration")).with_context(|| {
             format!(
-                "Failed to delete {}",
+                "Failed to unregister {}",
                 format_path_for_display(&registration)
             )
-        })
+        })?;
+        // Removal has committed. Failed cleanup leaves only disposable metadata
+        // in the disposal namespace, where the janitor can try again later.
+        if let Err(error) = garbage.close() {
+            tracing::debug!(%error, "Failed to clean unregistered worktree metadata");
+        }
+        Ok(())
     }
 
     /// What unregistering the stale worktree at `path` would destroy that
@@ -282,18 +334,42 @@ impl Repository {
     /// or bisect state go with it. While the registration survives, `git
     /// worktree repair <path>` reconnects the directory — recreated first, if
     /// it went too — and all of that comes back; afterwards staged files
-    /// survive only as dangling blobs. So the stale-removal paths ask this
-    /// first and keep an entry that holds either, which is where they are
-    /// more careful than `git worktree prune`. Files in a directory that
-    /// remains stay on disk either way, and a registration with no index has
-    /// nothing staged.
+    /// survive only as dangling blobs. Planning asks this first, and the
+    /// unregister primitive repeats it under its registry write lock unless
+    /// explicitly forced. Both keep an entry that holds either, which is
+    /// where they are more careful than `git worktree prune`. Files in a
+    /// directory that remains stay on disk either way, and a registration with
+    /// no index has nothing staged.
     pub fn stale_worktree_work(&self, path: &Path) -> anyhow::Result<Option<StaleWorktreeWork>> {
         let (registration, _) = self.registration_at(path)?;
-        if let Some(operation) = operation_in_progress_at(&registration) {
+        self.stale_worktree_work_at(path, &registration)
+    }
+
+    /// Read exactly the registration selected by the caller. The deletion
+    /// primitive keeps its registry write guard through this check and deletion.
+    fn stale_worktree_work_at(
+        &self,
+        path: &Path,
+        registration: &Path,
+    ) -> anyhow::Result<Option<StaleWorktreeWork>> {
+        if let Some(operation) = operation_in_progress_at(registration) {
             return Ok(Some(StaleWorktreeWork::Operation(operation)));
         }
+        Ok(self
+            .worktree_index_has_staged_changes(path, registration)?
+            .then_some(StaleWorktreeWork::StagedChanges))
+    }
+
+    /// Read the index directly, including when a paused operation exists or
+    /// the checkout has moved. Both live staging and metadata deletion use
+    /// this query so operation state cannot hide newly staged work.
+    pub(crate) fn worktree_index_has_staged_changes(
+        &self,
+        path: &Path,
+        registration: &Path,
+    ) -> anyhow::Result<bool> {
         if definitely_absent(&registration.join("index"))? {
-            return Ok(None);
+            return Ok(false);
         }
         // The registration is a git dir in its own right, so its index is read
         // against its `HEAD` without the working tree git can no longer find.
@@ -325,7 +401,7 @@ impl Repository {
         let base = self.index_base_for(born.then_some(head))?;
         // `--quiet` exits 1 when the index differs from the base.
         let (unchanged, _) = git(&PlumbingDiff::Index.args(&["--cached", "--quiet", &base, "--"]))?;
-        Ok((!unchanged).then_some(StaleWorktreeWork::StagedChanges))
+        Ok(!unchanged)
     }
 
     /// The registration `<common>/worktrees/<id>` whose `gitdir` names the
@@ -410,6 +486,7 @@ impl Repository {
                 "remove worktree with submodules",
                 None,
                 /* force_hint */ true,
+                super::CleanCheckMode::ConfiguredFsmonitor,
             )?;
             tracing::debug!("Using --force for worktree removal due to initialized submodules");
         }
@@ -737,6 +814,35 @@ impl Repository {
     pub fn home_path(&self) -> anyhow::Result<PathBuf> {
         self.primary_worktree()?
             .map_or_else(|| self.repo_path().map(|p| p.to_path_buf()), Ok)
+    }
+}
+
+/// Authorization for unregistering one worktree. Locks and reconnected
+/// checkouts are protected in every mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorktreePruneMode {
+    /// A pre-existing stale registration: preserve staged work and operations.
+    Stale,
+    /// A live worktree passed its removal gates and was moved aside. Clean
+    /// operation state may be discarded, but newly staged work is retained.
+    RemovedLive,
+    /// Explicit force authorizes discarding staged work and operation state.
+    Force,
+}
+
+impl WorktreePruneMode {
+    /// Authorization for a registration that was stale before removal began.
+    pub fn stale(force: bool) -> Self {
+        if force { Self::Force } else { Self::Stale }
+    }
+
+    /// Authorization after a live worktree passes its removal gates.
+    pub fn removed_live(force: bool) -> Self {
+        if force {
+            Self::Force
+        } else {
+            Self::RemovedLive
+        }
     }
 }
 

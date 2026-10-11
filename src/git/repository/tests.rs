@@ -2399,14 +2399,23 @@ fn prune_worktree_entry_repeats_git_prune_test() {
             .collect::<Vec<_>>()
     };
 
-    let err = repo.prune_worktree_entry(&live).unwrap_err();
-    assert!(err.to_string().contains("no longer stale"), "got: {err}");
-    let err = repo.prune_worktree_entry(&locked).unwrap_err();
-    assert!(err.to_string().contains("is locked"), "got: {err}");
+    for mode in [
+        crate::git::WorktreePruneMode::Stale,
+        crate::git::WorktreePruneMode::RemovedLive,
+        crate::git::WorktreePruneMode::Force,
+    ] {
+        let err = repo.prune_worktree_entry(&live, mode).unwrap_err();
+        assert!(err.to_string().contains("no longer stale"), "got: {err}");
+        let err = repo.prune_worktree_entry(&locked, mode).unwrap_err();
+        assert!(err.to_string().contains("is locked"), "got: {err}");
+    }
 
-    repo.prune_worktree_entry(&absent).unwrap();
-    repo.prune_worktree_entry(&dotgit_gone).unwrap();
-    repo.prune_worktree_entry(&now_a_file).unwrap();
+    repo.prune_worktree_entry(&absent, crate::git::WorktreePruneMode::stale(false))
+        .unwrap();
+    repo.prune_worktree_entry(&dotgit_gone, crate::git::WorktreePruneMode::stale(false))
+        .unwrap();
+    repo.prune_worktree_entry(&now_a_file, crate::git::WorktreePruneMode::stale(false))
+        .unwrap();
     let names = registered();
     for (path, kept) in [
         (&live, true),
@@ -2424,7 +2433,9 @@ fn prune_worktree_entry_repeats_git_prune_test() {
     }
     assert!(dotgit_gone.join("leftover.txt").is_file());
 
-    let err = repo.prune_worktree_entry(&absent).unwrap_err();
+    let err = repo
+        .prune_worktree_entry(&absent, crate::git::WorktreePruneMode::stale(false))
+        .unwrap_err();
     assert!(
         err.to_string().contains("No worktree registered"),
         "got: {err}"
@@ -2463,7 +2474,8 @@ fn prune_worktree_entry_keeps_an_entry_it_cannot_check() {
         crate::styling::eprintln!("Skipping - running with elevated privileges");
         return;
     }
-    let result = repo.prune_worktree_entry(&worktree_path);
+    let result =
+        repo.prune_worktree_entry(&worktree_path, crate::git::WorktreePruneMode::stale(false));
     set_mode(0o755);
 
     let err = result.unwrap_err();
@@ -2560,7 +2572,7 @@ fn stale_worktree_work_reads_the_registration() {
 /// The deletion waits for in-process registry readers: `git worktree list`
 /// reads every entry's files, so one overlapping the deletion could read the
 /// entry half-deleted and fail. A held read guard keeps the entry intact; its
-/// release lets the prune through.
+/// release lets a clean prune through, but retains work added while waiting.
 #[test]
 fn prune_worktree_entry_waits_for_registry_readers() {
     use std::time::{Duration, Instant};
@@ -2568,33 +2580,64 @@ fn prune_worktree_entry_waits_for_registry_readers() {
     use crate::git::Repository;
     use crate::testing::TestRepo;
 
-    let mut test = TestRepo::with_initial_commit();
-    let worktree_path = test.add_worktree("feature");
-    std::fs::remove_dir_all(&worktree_path).unwrap();
-    let registration = test
-        .root_path()
-        .join(".git/worktrees")
-        .join(worktree_path.file_name().unwrap());
-    assert!(registration.is_dir());
-    let repo = Repository::at(test.root_path()).unwrap();
-    let worker_repo = repo.clone();
+    for (new_work, detached) in [(false, false), (true, false), (true, true)] {
+        let mut test = TestRepo::with_initial_commit();
+        let worktree_path = test.add_worktree("feature");
+        if detached {
+            test.detach_head_in_worktree("feature");
+        }
+        std::fs::remove_dir_all(&worktree_path).unwrap();
+        let registration = test
+            .root_path()
+            .join(".git/worktrees")
+            .join(worktree_path.file_name().unwrap());
+        assert!(registration.is_dir());
+        let repo = Repository::at(test.root_path()).unwrap();
+        let worker_repo = repo.clone();
+        let worker_path = worktree_path.clone();
 
-    let reader = repo.worktree_registry_read();
-    let worker = std::thread::spawn(move || worker_repo.prune_worktree_entry(&worktree_path));
-    let deadline = Instant::now() + Duration::from_millis(200);
-    while registration.exists() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(10));
+        let reader = repo.worktree_registry_read();
+        let worker = std::thread::spawn(move || {
+            worker_repo
+                .prune_worktree_entry(&worker_path, crate::git::WorktreePruneMode::stale(false))
+        });
+        let deadline = Instant::now() + Duration::from_millis(200);
+        while registration.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let survived_reader = registration.exists();
+        if new_work {
+            // The writer has not passed the registry lock yet. New operation state
+            // must therefore be checked after the lock is acquired, not before it.
+            std::fs::write(
+                registration.join("MERGE_HEAD"),
+                test.git_output(&["rev-parse", "HEAD"]).trim(),
+            )
+            .unwrap();
+        }
+        drop(reader);
+        let result = worker.join().expect("prune thread should not panic");
+
+        assert!(
+            survived_reader,
+            "the prune ran under a held registry read guard"
+        );
+        if new_work {
+            let error = result.unwrap_err();
+            let Some(crate::git::GitError::StaleWorktreeHoldsWork { branch, .. }) =
+                error.downcast_ref::<crate::git::GitError>()
+            else {
+                panic!("unexpected error: {error:#}");
+            };
+            assert_eq!(branch.as_deref(), (!detached).then_some("feature"));
+            assert!(registration.join("MERGE_HEAD").is_file());
+            repo.prune_worktree_entry(&worktree_path, crate::git::WorktreePruneMode::stale(true))
+                .unwrap();
+        } else {
+            result.unwrap();
+        }
+        assert!(!registration.exists());
     }
-    let survived_reader = registration.exists();
-    drop(reader);
-    let result = worker.join().expect("prune thread should not panic");
-
-    assert!(
-        survived_reader,
-        "the prune ran under a held registry read guard"
-    );
-    result.unwrap();
-    assert!(!registration.exists());
 }
 
 /// The ownership gate accepts a worktree that holds its own registration, in

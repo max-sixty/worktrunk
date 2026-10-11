@@ -44,7 +44,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-wt config state get - Get all stored state
+wt config state get - Get repository state
 
 Usage: [1m[36mwt config state get[0m [36m[OPTIONS][0m
 
@@ -74,7 +74,7 @@ Usage: [1m[36mwt config state get[0m [36m[OPTIONS][0m
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
-Shows all stored state including:
+Shows repository state:
 
 - [1mDefault branch[0m: Cached result of querying remote for default branch
 - [1mPrevious branch[0m: Previous branch for [2mwt switch -[0m
@@ -85,7 +85,7 @@ Shows all stored state including:
 - [1mGit commands cache[0m: Cached merge-tree, ancestry, diff-stat, and [2mwt switch[0m preview results
 - [1mHints[0m: One-time hints that have been shown
 - [1mLog files[0m: Operation and debug logs
-- [1mTrash[0m: Staged worktree directories awaiting background deletion
+- [1mTrash[0m: Removed worktrees and their Git metadata awaiting deletion
 
 Every category that [2mwt config state clear[0m sweeps is shown here.
 

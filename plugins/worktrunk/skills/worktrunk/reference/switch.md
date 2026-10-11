@@ -40,7 +40,7 @@ $ wt switch --create temp --no-hooks       # Skip hooks
 
 ### Custom path [experimental]
 
-`--path` places one worktree outside the `worktree-path` template, keeping the branch name intact:
+`--path` overrides the `worktree-path` template for one worktree:
 
 ```console
 $ wt switch --create feature/JIRA-1234 --path ../dark-mode
@@ -48,7 +48,7 @@ $ wt switch ../dark-mode                   # Switch by path...
 $ wt switch feature/JIRA-1234              # ...or by branch
 ```
 
-Worktrunk finds the worktree from git's own records, so commands reach it by branch or path as usual. [`wt list`](https://worktrunk.dev/list/#worktree) marks it `⚐`, since it isn't at the path its branch implies, and [`wt step relocate`](https://worktrunk.dev/step/#wt-step-relocate) offers to move it back to the template path.
+[`wt list`](https://worktrunk.dev/list/#worktree) marks it `⚐`, since it isn't at the path its branch implies, and [`wt step relocate`](https://worktrunk.dev/step/#wt-step-relocate) offers to move it back to the template path.
 
 ## Naming a worktree
 

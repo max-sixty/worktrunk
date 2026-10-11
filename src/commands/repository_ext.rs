@@ -244,7 +244,7 @@ impl RepositoryCliExt for Repository {
                     };
                     if !force_worktree && let Some(work) = self.stale_worktree_work(&wt.path)? {
                         return Err(GitError::StaleWorktreeHoldsWork {
-                            branch,
+                            branch: Some(branch),
                             path: wt.path.clone(),
                             directory_remains: wt.path.is_dir(),
                             work,
@@ -310,6 +310,7 @@ impl RepositoryCliExt for Repository {
                         branch_name: branch,
                         deletion_mode: BranchDeletionMode::Keep,
                         prune_entry: pruned_from,
+                        force_worktree,
                         target_branch: None,
                         integration_reason: None,
                         branch_checked_out_at: shared,
@@ -329,6 +330,7 @@ impl RepositoryCliExt for Repository {
                     branch_name: branch,
                     deletion_mode,
                     prune_entry: pruned_from,
+                    force_worktree,
                     target_branch,
                     integration_reason,
                     branch_checked_out_at: None,
@@ -360,7 +362,12 @@ impl RepositoryCliExt for Repository {
         target_wt.ensure_holds_this_worktree()?;
 
         if !force_worktree {
-            target_wt.ensure_clean("remove worktree", branch_name.as_deref(), true)?;
+            target_wt.ensure_clean(
+                "remove worktree",
+                branch_name.as_deref(),
+                true,
+                worktrunk::git::CleanCheckMode::ConfiguredFsmonitor,
+            )?;
         }
 
         // main_path: where post-remove hooks run from and background removal

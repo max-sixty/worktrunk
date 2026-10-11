@@ -21,6 +21,7 @@
 //! runs, so post-merge hooks see the right SHA even after the worktree is
 //! gone.
 
+use crate::commands::command_executor::ForegroundStdin;
 use std::path::Path;
 
 use worktrunk::HookType;
@@ -141,7 +142,12 @@ pub fn finish_after_merge(
         check_not_default_branch(repo, current_branch, &BranchDeletionMode::SafeDelete)?;
 
         let current_wt = repo.current_worktree();
-        current_wt.ensure_clean("remove worktree after merge", Some(current_branch), false)?;
+        current_wt.ensure_clean(
+            "remove worktree after merge",
+            Some(current_branch),
+            false,
+            worktrunk::git::CleanCheckMode::ConfiguredFsmonitor,
+        )?;
 
         let worktree_root = current_wt.root()?;
 
@@ -197,6 +203,7 @@ pub fn finish_after_merge(
         handle_remove_output(
             &remove_result,
             RemovalExecution::Background(BackgroundFallbackMode::Detached),
+            ForegroundStdin::Inherit,
             plan,
             false,
             announcer,

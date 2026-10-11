@@ -47,6 +47,7 @@ use super::super::hook_plan::{ApprovedHookPlan, HookPlan, HookPlanBuilder};
 use super::super::hooks::HookAnnouncer;
 use super::super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::super::worktree::{BranchFate, RemovalPlan};
+use crate::commands::command_executor::ForegroundStdin;
 use crate::output::{BackgroundFallbackMode, RemovalExecution, handle_remove_output};
 
 /// Stop queued removals and retain cancellation independently of which error
@@ -336,7 +337,8 @@ fn try_remove(
             .path
             .as_deref()
             .context("stale detached candidate has no worktree path")?;
-        ctx.repo.prune_worktree_entry(path)?;
+        ctx.repo
+            .prune_worktree_entry(path, worktrunk::git::WorktreePruneMode::stale(false))?;
         // A stale detached entry has no branch to delete.
         return Ok(Some(BranchFate::NotAttempted));
     }
@@ -351,7 +353,12 @@ fn try_remove(
     } else {
         RemovalExecution::Background(BackgroundFallbackMode::SynchronousForNonCurrent)
     };
-    let fate = handle_remove_output(&plan, execution, ctx.hook_plan, true, &mut announcer)?;
+    let stdin = if needs_write {
+        ForegroundStdin::Inherit
+    } else {
+        ForegroundStdin::Closed
+    };
+    let fate = handle_remove_output(&plan, execution, stdin, ctx.hook_plan, true, &mut announcer)?;
     announcer.flush()?;
     let branch_deleted = fate.deleted();
     // A branch-only candidate that kept its branch removed nothing at all —

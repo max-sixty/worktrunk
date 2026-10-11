@@ -185,6 +185,24 @@ Variables use dot access and the `default` filter for missing keys. JSON object/
 dev = "ENV={{ vars.env | default('development') }} npm start -- --port {{ vars.config.port | default('3000') }}"
 ```
 
+<!-- anchor: json-context -->
+
+Logic that templates can't express belongs in a script, with the values it needs passed as arguments:
+
+```toml
+# .config/wt.toml
+[post-start]
+setup = "python3 scripts/post-start-setup.py {{ branch }} {{ repo }}"
+```
+
+```python
+# scripts/post-start-setup.py
+import subprocess, sys
+branch, repo = sys.argv[1], sys.argv[2]
+if branch.startswith('feature/') and 'backend' in repo:
+    subprocess.run(['make', 'seed-db'])
+```
+
 ## Worktrunk filters
 
 Templates support Jinja2 filters for transforming values:
@@ -256,28 +274,12 @@ setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path 
 
 ## Interactive hooks
 
-Hooks can prompt when run serially in the foreground, as in this `pre-start` hook:
+Foreground hooks can prompt when their commands run one at a time:
 
 ```toml
 # .config/wt.toml
 [pre-start]
 trust = "gum confirm 'trust this worktree?' && mise trust"
-```
-
-Logic that templates can't express belongs in a script, with the values it needs passed as arguments:
-
-```toml
-# .config/wt.toml
-[post-start]
-setup = "python3 scripts/post-start-setup.py {{ branch }} {{ repo }}"
-```
-
-```python
-# scripts/post-start-setup.py
-import subprocess, sys
-branch, repo = sys.argv[1], sys.argv[2]
-if branch.startswith('feature/') and 'backend' in repo:
-    subprocess.run(['make', 'seed-db'])
 ```
 
 ## Copying untracked files

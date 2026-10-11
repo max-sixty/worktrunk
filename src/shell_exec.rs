@@ -561,12 +561,30 @@ fn find_git_bash() -> Option<PathBuf> {
 /// session. bash.exe is at `Git/bin/bash.exe` or `Git/usr/bin/bash.exe`.
 #[cfg(any(windows, test))]
 fn git_bash_beside_git(git_path: &Path) -> Option<PathBuf> {
-    git_path.ancestors().skip(2).take(2).find_map(|root| {
-        [root.join("bin"), root.join("usr").join("bin")]
-            .into_iter()
-            .map(|dir| dir.join("bash.exe"))
-            .find(|bash_path| bash_path.exists())
-    })
+    let git_dir = git_path.parent()?;
+    let root = git_dir.parent()?;
+    // Only known nested runtime layouts justify another ascent. A shallow
+    // Git/cmd or Git/bin install must not select a sibling ../bin/bash.exe.
+    let nested_runtime = git_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("bin"))
+        && root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| {
+                ["usr", "mingw32", "mingw64"]
+                    .iter()
+                    .any(|runtime| name.eq_ignore_ascii_case(runtime))
+            });
+    std::iter::once(root)
+        .chain(root.parent().filter(|_| nested_runtime))
+        .find_map(|root| {
+            [root.join("bin"), root.join("usr").join("bin")]
+                .into_iter()
+                .map(|dir| dir.join("bash.exe"))
+                .find(|bash_path| bash_path.exists())
+        })
 }
 
 /// Environment variable naming the directive file for `cd` path changes.
@@ -2952,14 +2970,19 @@ print(*counts)
     fn test_git_bash_beside_git_install_layouts() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("Git");
-        for sub in ["bin", "usr/bin", "cmd", "mingw64/bin"] {
+        for sub in ["bin", "usr/bin", "cmd", "mingw32/bin", "mingw64/bin"] {
             std::fs::create_dir_all(root.join(sub)).unwrap();
         }
         let bin_bash = root.join("bin").join("bash.exe");
         std::fs::write(&bin_bash, "").unwrap();
         std::fs::write(root.join("usr").join("bin").join("bash.exe"), "").unwrap();
 
-        for git in ["cmd/git.exe", "bin/git.exe", "mingw64/bin/git.exe"] {
+        for git in [
+            "cmd/git.exe",
+            "bin/git.exe",
+            "mingw32/bin/git.exe",
+            "mingw64/bin/git.exe",
+        ] {
             assert_eq!(
                 git_bash_beside_git(&root.join(git)),
                 Some(bin_bash.clone()),
@@ -2977,6 +3000,22 @@ print(*counts)
             git_bash_beside_git(&root.join("mingw64/bin/git.exe")),
             Some(root.join("usr").join("bin").join("bash.exe"))
         );
+
+        // A missing Git Bash does not authorize searching outside this install.
+        // In particular shallow cmd/bin layouts must stop at Git, even if its
+        // parent has an unrelated (or attacker-controlled) bin/bash.exe.
+        std::fs::remove_file(root.join("usr/bin/bash.exe")).unwrap();
+        std::fs::create_dir(dir.path().join("bin")).unwrap();
+        std::fs::write(dir.path().join("bin/bash.exe"), "outside install").unwrap();
+        for git in [
+            "cmd/git.exe",
+            "bin/git.exe",
+            "usr/bin/git.exe",
+            "mingw32/bin/git.exe",
+            "mingw64/bin/git.exe",
+        ] {
+            assert_eq!(git_bash_beside_git(&root.join(git)), None, "{git}");
+        }
     }
 
     #[test]

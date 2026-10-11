@@ -136,8 +136,8 @@ struct PermissionRequest {
     tool_input: serde_json::Value,
 }
 
-/// Handle `wt config plugins claude hook`, the command behind every hook in
-/// the plugin's `hooks/hooks.json`.
+/// Handle `wt config plugins claude hook`, the unified Claude lifecycle
+/// dispatcher. The shipped plugin manifest uses direct hook commands.
 ///
 /// Claude Code pipes each hook's payload to stdin; `hook_event_name` picks the
 /// action. Keeping the logic here rather than in the hook commands leaves each

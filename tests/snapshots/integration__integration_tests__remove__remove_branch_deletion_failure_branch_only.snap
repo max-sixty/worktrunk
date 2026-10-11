@@ -1,0 +1,8 @@
+---
+source: tests/integration_tests/remove.rs
+expression: stderr
+---
+[31m✗[39m [31mFailed to delete branch [1mfeature[22m[39m
+[107m [0m error: cannot lock ref 'refs/heads/feature': Unable to create _REPO_/.git/refs/heads/feature.lock: File exists.
+[107m [0m 
+[107m [0m Another git process seems to be running in this repository, or the lock file may be stale

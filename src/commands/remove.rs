@@ -4,15 +4,14 @@
 //! Target failures are reported independently; later targets still run and
 //! the batch exits unsuccessfully. An interrupt cancels the batch immediately.
 
+use crate::commands::command_executor::ForegroundStdin;
 use std::collections::HashSet;
 use std::path::Path;
 
 use anyhow::Context;
 use worktrunk::HookType;
 use worktrunk::config::UserConfig;
-use worktrunk::git::{
-    BranchDeletionMode, ErrorExt, GitError, Repository, ResolvedWorktree, WorktrunkError,
-};
+use worktrunk::git::{BranchDeletionMode, ErrorExt, GitError, Repository, ResolvedWorktree};
 use worktrunk::styling::{eprintln, info_message};
 
 use crate::cli::{RemoveArgs, SwitchFormat};
@@ -484,6 +483,7 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                 let fate = handle_remove_output(
                     &result,
                     removal_execution(args.foreground),
+                    ForegroundStdin::Inherit,
                     &plan,
                     false,
                     &mut announcer,
@@ -546,6 +546,7 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                     let fate = handle_remove_output(
                         result,
                         removal_execution(args.foreground),
+                        ForegroundStdin::Inherit,
                         &plan,
                         false,
                         &mut announcer,
@@ -563,8 +564,10 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                             }
                         }
                         Err(e) => {
-                            if let Some(signal) = e.interrupt_signal() {
-                                return Err(WorktrunkError::Interrupted { signal, hint: None }.into());
+                            if e.interrupt_signal().is_some() {
+                                // Cancellation stops admission; the original
+                                // error still owns any checkout-recovery hint.
+                                return Err(e);
                             }
                             crate::print_command_error(&e);
                             failed = true;

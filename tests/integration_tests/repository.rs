@@ -1347,3 +1347,219 @@ fn test_branch_diff_stats_scoped_to_sparse_checkout() {
     assert_eq!(full_stats.added, 4, "full: inside/ + outside/ additions");
     assert_eq!(full_stats.deleted, 2, "full: inside/ + outside/ deletions");
 }
+
+// =============================================================================
+// Atomic worktree unregister
+// =============================================================================
+
+/// A failed unregister must preserve the complete registration, so moving the
+/// retained checkout back through `git worktree repair` really reconnects it.
+#[cfg(unix)]
+#[test]
+fn test_unregister_failure_preserves_repairable_registration() {
+    use std::os::unix::fs::PermissionsExt;
+    use worktrunk::git::WorktreePruneMode;
+
+    struct RestorePermissions(std::path::PathBuf, fs::Permissions);
+    impl Drop for RestorePermissions {
+        fn drop(&mut self) {
+            let _ = fs::set_permissions(&self.0, self.1.clone());
+        }
+    }
+
+    for mode in [WorktreePruneMode::Stale, WorktreePruneMode::RemovedLive] {
+        let mut repo = TestRepo::with_initial_commit();
+        let worktree = repo.add_worktree("atomic-unregister");
+        let repository = Repository::at(repo.root_path()).unwrap();
+        let registration = repository.worktree_at(&worktree).git_dir().unwrap();
+        assert!(registration.join("HEAD").is_file());
+        let originals: Vec<_> = ["HEAD", "commondir", "gitdir", "index"]
+            .into_iter()
+            .map(|name| (name, fs::read(registration.join(name)).unwrap()))
+            .collect();
+        let retained = worktree.with_extension("retained");
+        fs::rename(&worktree, &retained).unwrap();
+        let registry = registration.parent().unwrap();
+        let restore = RestorePermissions(
+            registry.to_path_buf(),
+            fs::metadata(registry).unwrap().permissions(),
+        );
+        fs::set_permissions(registry, fs::Permissions::from_mode(0o555)).unwrap();
+        let result = repository.prune_worktree_entry(&worktree, mode);
+        drop(restore);
+        assert!(
+            result.is_err(),
+            "unregister must refuse the unwritable registry"
+        );
+        for (name, bytes) in originals {
+            assert_eq!(fs::read(registration.join(name)).unwrap(), bytes, "{name}");
+        }
+        repo.run_git(&["worktree", "repair", retained.to_str().unwrap()]);
+        let status = repo
+            .git_command()
+            .current_dir(&retained)
+            .args(["status", "--porcelain"])
+            .run()
+            .unwrap();
+        assert!(
+            status.status.success(),
+            "{}",
+            String::from_utf8_lossy(&status.stderr)
+        );
+        assert!(status.stdout.is_empty());
+        // After the failure, an ordinary retry must still unregister this
+        // same entry while the main repository remains usable.
+        fs::rename(&retained, &worktree).unwrap();
+        repo.run_git(&["worktree", "repair", worktree.to_str().unwrap()]);
+        fs::remove_file(worktree.join(".git")).unwrap();
+        repository.prune_worktree_entry(&worktree, mode).unwrap();
+        assert!(!registration.exists());
+        assert!(unregistered_metadata_paths(&repository).is_empty());
+        assert!(
+            repo.git_output(&["worktree", "list", "--porcelain"])
+                .contains(repo.root_path().to_str().unwrap())
+        );
+    }
+}
+
+/// An immutable index makes recursive deletion fail after other admin files
+/// have gone. That is cleanup after the unregister commit, never a failed
+/// removal with a misleading repair hint.
+#[cfg(target_os = "macos")]
+#[test]
+fn test_unregister_commits_before_partial_metadata_cleanup() {
+    use worktrunk::git::WorktreePruneMode;
+    use worktrunk::shell_exec::Cmd;
+
+    struct ImmutableCleanup(std::path::PathBuf);
+    impl Drop for ImmutableCleanup {
+        fn drop(&mut self) {
+            let _ = Cmd::new("chflags")
+                .args(["-R", "nouchg"])
+                .arg(self.0.to_str().unwrap())
+                .run();
+        }
+    }
+
+    for mode in [WorktreePruneMode::Stale, WorktreePruneMode::RemovedLive] {
+        let mut repo = TestRepo::with_initial_commit();
+        let worktree = repo.add_worktree("immutable-index");
+        let repository = Repository::at(repo.root_path()).unwrap();
+        let registration = repository.worktree_at(&worktree).git_dir().unwrap();
+        let index = fs::read(registration.join("index")).unwrap();
+        let cleanup = ImmutableCleanup(repo.root_path().join(".git"));
+        let immutable = Cmd::new("chflags")
+            .arg("uchg")
+            .arg(registration.join("index").to_str().unwrap())
+            .run()
+            .unwrap();
+        assert!(
+            immutable.status.success(),
+            "{}",
+            String::from_utf8_lossy(&immutable.stderr)
+        );
+        fs::remove_file(worktree.join(".git")).unwrap();
+        repository.prune_worktree_entry(&worktree, mode).unwrap();
+        assert!(
+            !registration.exists(),
+            "unregister committed before cleanup"
+        );
+        let garbage = unregistered_metadata_paths(&repository);
+        assert_eq!(
+            garbage.len(),
+            1,
+            "failed cleanup stays in owned disposal namespace"
+        );
+        let garbage_registration = garbage[0].join("registration");
+        assert_eq!(fs::read(garbage_registration.join("index")).unwrap(), index);
+        assert!(
+            !garbage_registration.join("HEAD").exists(),
+            "fixture exercises partial recursive cleanup"
+        );
+        assert!(
+            !repo
+                .git_output(&["worktree", "list", "--porcelain"])
+                .contains(worktree.to_str().unwrap())
+        );
+        let inspection = repo
+            .wt_command()
+            .args(["config", "state", "get", "--format=json"])
+            .output()
+            .unwrap();
+        assert!(
+            inspection.status.success(),
+            "{}",
+            String::from_utf8_lossy(&inspection.stderr)
+        );
+        let state: serde_json::Value = serde_json::from_slice(&inspection.stdout).unwrap();
+        assert_eq!(state["trash"].as_array().unwrap().len(), 1);
+        let failed_cleanup = repo
+            .wt_command()
+            .args(["config", "state", "clear", "--yes"])
+            .output()
+            .unwrap();
+        assert!(
+            !failed_cleanup.status.success(),
+            "immutable disposal must surface cleanup failure"
+        );
+        assert!(garbage_registration.join("index").exists());
+        drop(cleanup);
+        let cleared = repo
+            .wt_command()
+            .args(["config", "state", "clear", "--yes"])
+            .output()
+            .unwrap();
+        assert!(
+            cleared.status.success(),
+            "{}",
+            String::from_utf8_lossy(&cleared.stderr)
+        );
+        assert!(!garbage[0].exists());
+    }
+}
+
+#[cfg(unix)]
+fn unregistered_metadata_paths(repository: &Repository) -> Vec<std::path::PathBuf> {
+    fs::read_dir(repository.git_common_dir())
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with(Repository::UNREGISTERED_WORKTREE_PREFIX)
+        })
+        .collect()
+}
+
+/// Metadata disposal is independent of optional payload staging. A file at
+/// either staging home must survive while both stale and moved-live entries
+/// can still be unregistered.
+#[test]
+fn test_unregister_with_blocked_payload_staging() {
+    use worktrunk::git::WorktreePruneMode;
+    for blocker in ["wt", "wt/trash"] {
+        for mode in [WorktreePruneMode::Stale, WorktreePruneMode::RemovedLive] {
+            let mut repo = TestRepo::with_initial_commit();
+            let worktree = repo.add_worktree("blocked-staging");
+            let repository = Repository::at(repo.root_path()).unwrap();
+            let registration = repository.worktree_at(&worktree).git_dir().unwrap();
+            fs::remove_file(worktree.join(".git")).unwrap();
+            let blocker = repository.git_common_dir().join(blocker);
+            fs::create_dir_all(blocker.parent().unwrap()).unwrap();
+            fs::write(&blocker, "keep staging blocker").unwrap();
+            repository.prune_worktree_entry(&worktree, mode).unwrap();
+            assert!(!registration.exists());
+            assert_eq!(
+                fs::read_to_string(&blocker).unwrap(),
+                "keep staging blocker"
+            );
+            assert!(
+                !repo
+                    .git_output(&["worktree", "list", "--porcelain"])
+                    .contains(worktree.to_str().unwrap())
+            );
+        }
+    }
+}
