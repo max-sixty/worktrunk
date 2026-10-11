@@ -2145,7 +2145,7 @@ command = "codex exec -m gpt-6-luna -c model_reasoning_effort='none' -c project_
 
 ```toml
 [commit.generation]
-command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"
+command = "opencode run -m anthropic/claude-haiku-5-5 --variant fast"
 ```
 
 ### llm

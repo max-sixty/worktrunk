@@ -199,7 +199,7 @@ Create [2m~/.codex/worktrunk-commit-instructions.txt[0m containing just [2m.
 [32mOpenCode[0m
 
 [107m [0m [2m[36m[commit.generation][0m
-[107m [0m [2mcommand = [0m[2m[32m"opencode run -m anthropic/claude-haiku-4.5 --variant fast"[0m
+[107m [0m [2mcommand = [0m[2m[32m"opencode run -m anthropic/claude-haiku-5-5 --variant fast"[0m
 
 [32mllm[0m
 

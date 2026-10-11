@@ -152,7 +152,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# ### OpenCode[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [commit.generation][0m
-[107m [0m [2m# command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"[0m
+[107m [0m [2m# command = "opencode run -m anthropic/claude-haiku-5-5 --variant fast"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### llm[0m
 [107m [0m [2m#[0m
