@@ -311,12 +311,12 @@ fn handle_step_command(
             format,
             ..
         } => {
+            let repo = Repository::current()?;
             let result = if no_ff {
-                let repo = Repository::current()?;
                 let current_branch = repo.require_current_branch("step push --no-ff")?;
-                handle_no_ff_merge(target.as_deref(), None, &current_branch)?
+                handle_no_ff_merge(&repo, target.as_deref(), None, &current_branch)?
             } else {
-                handle_push(target.as_deref(), PushKind::Standalone, None)?
+                handle_push(&repo, target.as_deref(), PushKind::Standalone, None)?
             };
             if format == SwitchFormat::Json {
                 let PushResult {
@@ -341,7 +341,7 @@ fn handle_step_command(
             Ok(())
         }
         StepCommand::Rebase { target, format } => {
-            let result = handle_rebase(target.as_deref())?;
+            let result = handle_rebase(&Repository::current()?, target.as_deref())?;
             if format == SwitchFormat::Json {
                 let output = match &result {
                     RebaseResult::Rebased {
@@ -899,6 +899,7 @@ fn handle_merge_command(args: MergeArgs, yes: bool) -> anyhow::Result<()> {
     }
     handle_merge(MergeOptions {
         target: args.target.as_deref(),
+        branch: args.branch.as_deref(),
         flags: MergeFlagOverrides::from_cli(&args),
         yes,
         stage: args.stage,
