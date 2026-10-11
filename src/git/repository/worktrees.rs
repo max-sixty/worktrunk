@@ -62,10 +62,8 @@ impl Repository {
                 // repo_path(), which resolves both layouts from the signals git does
                 // record.
                 //
-                // We fix this here rather than at each call site because list_worktrees()
-                // is the single point where worktree paths enter the system — all consumers
-                // (worktree_for_branch, resolve_worktree, etc.) depend on paths being
-                // working directories. If git fixes this upstream, the condition stops
+                // Correct the shared listing here: branch lookup and selector consumers
+                // depend on these paths naming working directories. If git fixes this upstream, the condition stops
                 // triggering.
                 if let Some(first) = worktrees.first_mut()
                     && canonicalize(&first.path).ok().as_deref() == Some(self.git_common_dir())
@@ -77,6 +75,120 @@ impl Repository {
                 Ok(worktrees)
             })
             .map(Vec::as_slice)
+    }
+
+    /// Find a live registered checkout inside `path`, using fresh backlinks.
+    ///
+    /// This removal guard bypasses the cached listing and registry lock: an
+    /// unrelated teardown must not prevent concurrent staging. Unregistering
+    /// moves entire registrations atomically, so only a definitely vanished
+    /// registration can excuse a missing backlink. Partial or unreadable
+    /// registrations fail closed. Missing checkout directories are skipped;
+    /// symlinks and relative backlinks resolve to their actual location.
+    pub fn nested_worktree(&self, path: &Path) -> anyhow::Result<Option<PathBuf>> {
+        let root = canonicalize(path).context("Failed to resolve worktree for removal")?;
+        let mut paths = Vec::new();
+        if !self.is_bare()? {
+            let main = self.repo_path()?;
+            if main.try_exists()?
+                && Self::git_dir_at(main)?.as_deref() != Some(self.git_common_dir())
+            {
+                anyhow::bail!(
+                    "Cannot determine the main worktree location; run git worktree repair from the main worktree"
+                );
+            }
+            paths.push(main.to_path_buf());
+        }
+        let registrations = self.git_common_dir().join("worktrees");
+        match std::fs::read_dir(&registrations) {
+            Ok(entries) => {
+                for entry in entries {
+                    let entry = entry?;
+                    let registration = entry.path();
+                    match entry.file_type() {
+                        Ok(kind) if kind.is_file() => continue,
+                        Ok(_) => {}
+                        Err(error) if vanished_registration(&registration, &error) => continue,
+                        Err(error) => {
+                            return Err(error).context("Failed to inspect worktree registration");
+                        }
+                    }
+                    match registration_worktree_path(&registration) {
+                        Ok(path) => paths.push(path),
+                        Err(error) if vanished_registration(&registration, &error) => {}
+                        Err(error) => {
+                            return Err(error).with_context(|| {
+                                format!(
+                                    "Failed to read worktree registration @ {}",
+                                    format_path_for_display(&registration)
+                                )
+                            });
+                        }
+                    }
+                }
+            }
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    && matches!(std::fs::symlink_metadata(&registrations),
+                        Err(missing) if missing.kind() == std::io::ErrorKind::NotFound) => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "Failed to read worktree registry @ {}",
+                        format_path_for_display(&registrations)
+                    )
+                });
+            }
+        }
+        for path in paths {
+            let resolved = match canonicalize(&path) {
+                Ok(path) => path,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "Failed to resolve worktree @ {}",
+                            format_path_for_display(&path)
+                        )
+                    });
+                }
+            };
+            if resolved != root && resolved.starts_with(&root) {
+                return Ok(Some(resolved));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Refuse removing initialized gitlinks or stored submodule repositories.
+    /// A clean superproject can still reference sole, unpushed objects, even
+    /// after deinitialization. Return every Git directory deletion reaches,
+    /// including old-form repositories in nested checkouts, for force disclosure.
+    pub fn require_no_submodule_storage(&self, path: &Path) -> anyhow::Result<()> {
+        let (registration, _) = self.registration_at(path)?;
+        let root = canonicalize(path)?;
+        let stored = registration_submodule_repositories(&registration, Some(&root))?;
+        let initialized = self
+            .worktree_at(path)
+            .initialized_submodule_repositories()?;
+        if !stored.present && initialized.is_none() {
+            return Ok(());
+        }
+        let mut repositories = stored.repositories;
+        for directory in initialized.into_iter().flatten() {
+            if (directory.starts_with(&root) || directory.starts_with(&registration))
+                && !repositories
+                    .iter()
+                    .any(|parent| directory.starts_with(parent))
+            {
+                repositories.push(directory);
+            }
+        }
+        Err(GitError::SubmoduleRepositories {
+            path: path.to_path_buf(),
+            repositories,
+        }
+        .into())
     }
 
     /// Find the worktree path for a given branch, if one exists.
@@ -229,10 +341,11 @@ impl Repository {
     /// worktree that is merely absent right now — an unmounted volume, a
     /// dropped network mount, a half-finished `mv` — is indistinguishable from
     /// a deleted one, so removing worktree A would also unregister bystander
-    /// B. B's committed work survives (refs and objects are shared) and its
+    /// B. B's superproject commits survive (refs and objects are shared) and its
     /// files stay on disk, but its admin dir does not: the index, `ORIG_HEAD`,
     /// the per-worktree reflog, `refs/worktree/*` and `refs/bisect/*`, and any
-    /// in-progress rebase or merge all go with it. `git worktree repair`
+    /// in-progress rebase or merge all go with it, as do submodule repositories
+    /// stored there. `git worktree repair`
     /// cannot rebuild them — it relinks an admin dir, it does not recreate
     /// one. A detached entry loses more: its `HEAD` was the only ref holding
     /// commits made there, which the next `git gc` may then delete. Naming
@@ -254,8 +367,9 @@ impl Repository {
     /// leaves the empty directory, which git reads as no linked worktrees.
     ///
     /// Unless explicitly forced, recheck the index under that same lock just
-    /// before unregistering. Also retain operation state for an already-stale
-    /// entry; an authorized live removal may discard its clean operation state.
+    /// before unregistering. Submodule repositories are preserved too. Retain
+    /// operation state for an already-stale entry; an authorized live removal
+    /// may discard its clean operation state.
     /// Planning can precede approved hooks that put new work in the entry.
     ///
     /// Unregistering atomically moves the complete admin directory outside
@@ -274,10 +388,23 @@ impl Repository {
         }
         if let Some(work) = match mode {
             WorktreePruneMode::Stale => self.stale_worktree_work_at(path, &registration)?,
-            WorktreePruneMode::RemovedLive => self
-                .worktree_index_has_staged_changes(path, &registration)?
-                .then_some(StaleWorktreeWork::StagedChanges),
-            WorktreePruneMode::Force => None,
+            WorktreePruneMode::RemovedLive => {
+                if registration_submodule_repositories(&registration, None)?.present {
+                    Some(StaleWorktreeWork::SubmoduleRepositories)
+                } else {
+                    self.worktree_index_has_staged_changes(path, &registration)?
+                        .then_some(StaleWorktreeWork::StagedChanges)
+                }
+            }
+            WorktreePruneMode::Force => {
+                for directory in
+                    registration_submodule_repositories(&registration, None)?.repositories
+                {
+                    crate::git::remove::warn_submodule_repository_discard(&directory);
+                }
+                None
+            }
+            WorktreePruneMode::RemovedLiveForce => None,
         } {
             let head = std::fs::read_to_string(registration.join("HEAD"))
                 .with_context(|| format!("Failed to read HEAD for stale worktree @ {display}"))?;
@@ -326,17 +453,18 @@ impl Repository {
     }
 
     /// What unregistering the stale worktree at `path` would destroy that
-    /// nothing else holds: staged changes in its index, or a git operation
-    /// partway through. `None` when its registration holds neither.
+    /// nothing else holds: submodule repositories, staged changes in its index,
+    /// or a git operation partway through. `None` when it holds none of these.
     ///
     /// [`prune_worktree_entry`](Self::prune_worktree_entry) deletes the
     /// registration, and the index and any rebase, merge, cherry-pick, revert
-    /// or bisect state go with it. While the registration survives, `git
-    /// worktree repair <path>` reconnects the directory — recreated first, if
+    /// or bisect state and submodule repositories go with it. While the
+    /// registration survives, `git worktree repair <path>` reconnects the
+    /// directory — recreated first, if
     /// it went too — and all of that comes back; afterwards staged files
     /// survive only as dangling blobs. Planning asks this first, and the
     /// unregister primitive repeats it under its registry write lock unless
-    /// explicitly forced. Both keep an entry that holds either, which is
+    /// explicitly forced. Both keep an entry that holds any of these, which is
     /// where they are more careful than `git worktree prune`. Files in a
     /// directory that remains stay on disk either way, and a registration with
     /// no index has nothing staged.
@@ -352,6 +480,9 @@ impl Repository {
         path: &Path,
         registration: &Path,
     ) -> anyhow::Result<Option<StaleWorktreeWork>> {
+        if registration_submodule_repositories(registration, None)?.present {
+            return Ok(Some(StaleWorktreeWork::SubmoduleRepositories));
+        }
         if let Some(operation) = operation_in_progress_at(registration) {
             return Ok(Some(StaleWorktreeWork::Operation(operation)));
         }
@@ -416,7 +547,7 @@ impl Repository {
             .filter_map(Result::ok)
             .map(|entry| entry.path())
             .find_map(|registration| {
-                let recorded = registration_worktree_path(&registration)?;
+                let recorded = registration_worktree_path(&registration).ok()?;
                 paths_match(&recorded, path).then_some((registration, recorded))
             })
             .with_context(|| format!("No worktree registered @ {}", format_path_for_display(path)))
@@ -428,29 +559,8 @@ impl Repository {
     /// allowing removal even when the worktree contains untracked files
     /// (like build artifacts such as `.vite/` or `node_modules/`).
     ///
-    /// When the worktree contains initialized submodules, git refuses removal
-    /// even for clean worktrees. This method detects that case up front and
-    /// adds `--force`, which is safe because the caller has already validated
-    /// worktree cleanliness via `ensure_clean()`.
-    ///
-    /// # Why git requires `--force` for submodules
-    ///
-    /// Git's `--force` flag on `worktree remove` bypasses two unrelated
-    /// protections under one flag: dirty working tree checks AND the
-    /// submodule structural check. We separate these concerns — our
-    /// `ensure_clean()` handles dirty state, and `--force`
-    /// handles the submodule restriction.
-    ///
-    /// # TOCTOU note
-    ///
-    /// Git checks for submodules *before* checking for dirty files, so when
-    /// we synthesize `--force` for a submodule worktree, git's own dirty
-    /// check is bypassed. To keep failing closed on a file modified after the
-    /// caller's `ensure_clean()`, this method re-runs `ensure_clean()` itself
-    /// immediately before the synthesized-force removal — restoring the
-    /// backstop git would otherwise have provided. (For an explicit
-    /// user-requested `force`, the user opted into destructive removal, so no
-    /// re-check.)
+    /// Only explicit force bypasses Git's submodule protection: cleanliness
+    /// cannot prove that registration-local module repositories are disposable.
     pub fn remove_worktree(&self, path: &std::path::Path, force: bool) -> anyhow::Result<()> {
         let path_str = path.to_str().ok_or_else(|| {
             anyhow::Error::from(GitError::Other {
@@ -460,35 +570,15 @@ impl Repository {
                 ),
             })
         })?;
-        let use_force = if force {
-            true
-        } else {
-            self.worktree_at(path).has_initialized_submodules()?
-        };
         let mut args = vec!["worktree", "remove"];
-        if use_force {
+        if force {
             args.push("--force");
         }
         args.push(path_str);
 
-        // The synthesized-force cleanliness check and destructive command are
-        // one critical section. If this waited for another registry teardown
-        // after the check, a concurrent writer could dirty the worktree before
-        // `--force` bypassed Git's own dirty gate.
         let _registry = self.worktree_registry_write();
-        if use_force && !force {
-            // Synthesized force (submodule worktree, not user-requested).
-            // `--force` will suppress git's dirty check, so re-validate
-            // cleanliness ourselves right before the destructive command —
-            // a file modified since the caller's check must still fail
-            // closed rather than be silently destroyed.
-            self.worktree_at(path).ensure_clean(
-                "remove worktree with submodules",
-                None,
-                /* force_hint */ true,
-                super::CleanCheckMode::ConfiguredFsmonitor,
-            )?;
-            tracing::debug!("Using --force for worktree removal due to initialized submodules");
+        if !force {
+            self.require_no_submodule_storage(path)?;
         }
 
         self.run_command(&args)?;
@@ -821,13 +911,19 @@ impl Repository {
 /// checkouts are protected in every mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorktreePruneMode {
-    /// A pre-existing stale registration: preserve staged work and operations.
+    /// A pre-existing stale registration: preserve staged work, operations and
+    /// submodule repositories.
     Stale,
     /// A live worktree passed its removal gates and was moved aside. Clean
-    /// operation state may be discarded, but newly staged work is retained.
+    /// operation state may be discarded, but staged work and submodule
+    /// repositories are retained.
     RemovedLive,
-    /// Explicit force authorizes discarding staged work and operation state.
+    /// Explicit force for a stale registration: disclose submodule repository
+    /// deletion and discard staged work and operation state.
     Force,
+    /// Explicit live removal already disclosed dirt and submodule repository
+    /// deletion before staging the checkout.
+    RemovedLiveForce,
 }
 
 impl WorktreePruneMode {
@@ -839,7 +935,7 @@ impl WorktreePruneMode {
     /// Authorization after a live worktree passes its removal gates.
     pub fn removed_live(force: bool) -> Self {
         if force {
-            Self::Force
+            Self::RemovedLiveForce
         } else {
             Self::RemovedLive
         }
@@ -850,10 +946,84 @@ impl WorktreePruneMode {
 /// destroy — see [`Repository::stale_worktree_work`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StaleWorktreeWork {
+    /// Submodule repositories can hold objects absent from every remote.
+    SubmoduleRepositories,
     /// The index differs from `HEAD`.
     StagedChanges,
     /// A git operation is partway through.
     Operation(InProgressOperation),
+}
+
+/// The entire registration is deleted at unregister, including module object
+/// stores. Empty module containers hold no repositories; every other entry is
+/// preserved unless explicitly forced, and inspection errors fail closed.
+#[derive(Default)]
+struct RegistrationSubmodules {
+    present: bool,
+    repositories: Vec<PathBuf>,
+}
+
+fn registration_submodule_repositories(
+    registration: &Path,
+    checkout: Option<&Path>,
+) -> anyhow::Result<RegistrationSubmodules> {
+    let modules = registration.join("modules");
+    let metadata = match std::fs::symlink_metadata(&modules) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(RegistrationSubmodules::default());
+        }
+        Err(error) => return Err(error).context("Failed to inspect submodule repositories"),
+    };
+    if metadata.is_dir()
+        && std::fs::read_dir(&modules)
+            .with_context(|| {
+                format!(
+                    "Failed to read submodule repositories @ {}",
+                    format_path_for_display(&modules)
+                )
+            })?
+            .next()
+            .transpose()?
+            .is_none()
+    {
+        return Ok(RegistrationSubmodules::default());
+    }
+    let registration_root = if std::fs::symlink_metadata(registration)?
+        .file_type()
+        .is_symlink()
+    {
+        None
+    } else {
+        Some(canonicalize(registration)?)
+    };
+    let mut repositories = Vec::new();
+    match canonicalize(&modules) {
+        Ok(directory) => {
+            if registration_root
+                .as_ref()
+                .is_some_and(|root| directory.starts_with(root))
+                || checkout.is_some_and(|root| directory.starts_with(root))
+            {
+                repositories.push(directory);
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error).context("Failed to resolve submodule repositories"),
+    }
+    Ok(RegistrationSubmodules {
+        present: true,
+        repositories,
+    })
+}
+
+/// A missing field excuses a concurrent unregister only when the entire
+/// registration has vanished. Surviving partial entries and broken symlinks
+/// must still fail closed.
+fn vanished_registration(registration: &Path, error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::NotFound
+        && matches!(std::fs::symlink_metadata(registration),
+            Err(missing) if missing.kind() == std::io::ErrorKind::NotFound)
 }
 
 /// Whether nothing is at `path`: `NotFound`, or `NotADirectory` where a parent

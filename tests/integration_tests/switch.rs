@@ -700,12 +700,13 @@ fn test_switch_existing_with_shell_integration_configured(mut repo: TestRepo) {
 fn test_switch_existing_as_git_subcommand(mut repo: TestRepo) {
     // Create a worktree first
     repo.add_worktree("git-subcommand-test");
+    let git_exec_path = repo.git_output(&["--exec-path"]);
 
-    // Switch with GIT_EXEC_PATH set (simulating `git wt switch ...`)
+    // Git exports its real helper directory when invoking `git wt switch ...`.
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["git-subcommand-test"], None);
-        cmd.env("GIT_EXEC_PATH", "/usr/lib/git-core");
+        cmd.env("GIT_EXEC_PATH", git_exec_path);
         assert_cmd_snapshot!("switch_as_git_subcommand", cmd);
     });
 }

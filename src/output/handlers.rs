@@ -2120,18 +2120,48 @@ fn handle_removed_worktree_output(
     // and git operations after removal need a valid working directory.
     let repo = worktrunk::git::Repository::at(ctx.main_path)?;
 
-    if ctx
+    let ran_hooks = ctx
         .hook_plan
-        .has_hooks_for(ctx.worktree_path, &[worktrunk::HookType::PreRemove])
-    {
+        .has_hooks_for(ctx.worktree_path, &[worktrunk::HookType::PreRemove]);
+    if ran_hooks {
         execute_pre_remove_hooks_if_needed(&repo, &ctx)?;
     }
 
-    // No re-validation after `pre-remove` hooks: the pre-rename `ensure_clean`
-    // in the removal core catches a hook-dirtied worktree, and the branch
-    // deletion re-decides against fresh refs (`delete_branch_if_safe`'s CAS)
-    // — one mechanism per guarantee. `ctx.integration_reason` /
-    // `ctx.target_branch` carry the planning-time verdict for display.
+    // Refuse late hook-created nesting before publishing a shell directory
+    // change. The shared removal core repeats this at staging for every caller.
+    let worktree = repo.worktree_at(ctx.worktree_path);
+    worktree.ensure_holds_this_worktree()?;
+    if !ctx.force_worktree
+        && let Err(error) = repo.require_no_submodule_storage(ctx.worktree_path)
+    {
+        // Before suggesting force for hook-created submodules, disclose dirt
+        // the same flag would discard. Other removals need only staging's scan.
+        if ran_hooks
+            && matches!(
+                error.downcast_ref::<GitError>(),
+                Some(GitError::SubmoduleRepositories { .. })
+            )
+        {
+            worktree.ensure_clean(
+                "remove worktree",
+                ctx.branch_name,
+                true,
+                worktrunk::git::CleanCheckMode::ConfiguredFsmonitor,
+            )?;
+        }
+        return Err(error);
+    }
+    if let Some(nested) = repo.nested_worktree(ctx.worktree_path)? {
+        return Err(GitError::NestedWorktree {
+            path: ctx.worktree_path.to_path_buf(),
+            nested_path: nested,
+        }
+        .into());
+    }
+
+    // The pre-rename `ensure_clean` catches a hook-dirtied worktree, and the
+    // branch deletion re-decides against fresh refs (`delete_branch_if_safe`'s
+    // CAS). The planning-time integration verdict is only for display.
 
     // TUI (picker) path: the removal runs in a background thread while skim
     // owns the terminal, so no messages, no spinner, no `cd` directive (the

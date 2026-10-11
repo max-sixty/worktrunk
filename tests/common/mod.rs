@@ -636,6 +636,7 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
     // Windows: etcetera uses APPDATA for config_dir()
     settings.add_redaction(".env.APPDATA", "[TEST_CONFIG_HOME]");
     settings.add_redaction(".env.PATH", "[PATH]");
+    settings.add_redaction(".env.GIT_EXEC_PATH", "[GIT_EXEC_PATH]");
     settings.add_redaction(".env.PWD", "[PWD]");
     // Mock commands directory (temp path for mock gh/glab binaries)
     settings.add_redaction(".env.WORKTRUNK_TEST_MOCK_CONFIG_DIR", "[TEST_MOCK_CONFIG]");

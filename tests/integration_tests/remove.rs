@@ -328,12 +328,13 @@ fn test_remove_internal_mode(mut repo: TestRepo) {
 #[rstest]
 fn test_remove_as_git_subcommand(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-git-subcmd");
+    let git_exec_path = repo.git_output(&["--exec-path"]);
 
-    // Remove with GIT_EXEC_PATH set (simulating `git wt remove ...`)
+    // Git exports its real helper directory when invoking `git wt remove ...`.
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "remove", &[], Some(&worktree_path));
-        cmd.env("GIT_EXEC_PATH", "/usr/lib/git-core");
+        cmd.env("GIT_EXEC_PATH", git_exec_path);
         assert_cmd_snapshot!("remove_as_git_subcommand", cmd);
     });
 }
@@ -5081,15 +5082,14 @@ fn test_remove_foreground_succeeds_with_stuck_directory_detached(mut repo: TestR
     assert!(!worktree_path.exists(), "Worktree directory should be gone");
 }
 
-/// Worktrees with initialized git submodules should be removable.
-///
-/// Git refuses `git worktree remove` when submodules are initialized,
-/// requiring `--force`. This test verifies that `wt remove --foreground`
-/// handles this automatically (retries with `--force`).
+/// Uninitialized submodules need no force; initialized repositories require
+/// explicit permission to discard their local history, just as Git does.
 ///
 /// Regression test for <https://github.com/max-sixty/worktrunk/issues/1194>.
 #[rstest]
-fn test_remove_foreground_with_submodules(mut repo: TestRepo) {
+#[case(false)]
+#[case(true)]
+fn test_remove_foreground_with_submodules(mut repo: TestRepo, #[case] initialized: bool) {
     // Create a local repo to use as a submodule source
     let sub_source = repo.root_path().parent().unwrap().join("sub-source");
     std::fs::create_dir_all(&sub_source).unwrap();
@@ -5118,38 +5118,26 @@ fn test_remove_foreground_with_submodules(mut repo: TestRepo) {
     );
     repo.run_git(&["commit", "-m", "add submodule"]);
 
-    // Create a worktree and initialize submodules in it
     let worktree_path = repo.add_worktree("feature-submod");
-    let output = repo
-        .git_command()
-        .current_dir(&worktree_path)
-        .args([
-            "-c",
-            "protocol.file.allow=always",
-            "submodule",
-            "update",
-            "--init",
-        ])
-        .run()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "Failed to init submodule: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    // Verify the submodule is actually initialized
-    assert!(
-        worktree_path.join("submod").join("sub.txt").exists(),
-        "Submodule should be initialized"
-    );
-
-    // Remove the worktree in foreground mode — should succeed despite submodules
-    let output = repo
-        .wt_command()
-        .args(["remove", "--foreground", "feature-submod"])
-        .output()
-        .unwrap();
+    if initialized {
+        repo.run_git_in(
+            &worktree_path,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "update",
+                "--init",
+            ],
+        );
+        assert!(worktree_path.join("submod/sub.txt").exists());
+    }
+    let mut command = repo.wt_command();
+    command.args(["remove", "--foreground", "feature-submod"]);
+    if initialized {
+        command.arg("--force");
+    }
+    let output = command.output().unwrap();
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -5162,11 +5150,8 @@ fn test_remove_foreground_with_submodules(mut repo: TestRepo) {
     );
 }
 
-/// Regression: `Repository::remove_worktree(path, force=false)` synthesizes
-/// `git worktree remove --force` for submodule worktrees, which suppresses
-/// git's own dirty-file check. The method must re-validate cleanliness
-/// itself right before the synthesized-force command so a file dirtied after
-/// the caller's planning-time check is not silently destroyed.
+/// The direct Git fallback must preserve submodule repositories and dirt
+/// without silently synthesizing a force removal.
 #[rstest]
 fn test_remove_worktree_submodule_dirty_fails_closed(mut repo: TestRepo) {
     use worktrunk::git::Repository;
@@ -5230,8 +5215,7 @@ fn test_remove_worktree_submodule_dirty_fails_closed(mut repo: TestRepo) {
 
     assert!(
         result.is_err(),
-        "remove_worktree must fail closed when a submodule worktree is dirty \
-         (synthesized --force would otherwise destroy the change)"
+        "remove_worktree must preserve submodule repositories and dirty files"
     );
     assert!(
         worktree_path.exists(),
@@ -5246,8 +5230,7 @@ fn test_remove_worktree_submodule_dirty_fails_closed(mut repo: TestRepo) {
 
 /// `submodule.<name>.ignore=all` is a display preference, not permission to
 /// delete modifications inside an initialized submodule. This is especially
-/// important because Worktrunk must internally force Git's worktree removal
-/// when initialized submodules are present.
+/// important when the superproject otherwise appears clean.
 #[rstest]
 fn test_remove_refuses_dirty_submodule_hidden_by_user_config(mut repo: TestRepo) {
     let sub_source = repo.root_path().parent().unwrap().join("sub-source-hidden");
@@ -6704,16 +6687,49 @@ fn test_remove_cleans_worktree_when_staging_home_is_blocked(
     }
 }
 
-/// An unreadable index prevents normal removal, but disclosure must not veto
-/// explicitly forced removal that Git itself permits. Neighboring data and
-/// the retained branch remain intact.
+/// Force cannot inventory repositories through a corrupt index. Preserve its
+/// original bytes and the sole embedded history instead of inferring absence.
 #[rstest]
-fn test_force_remove_with_corrupt_index_reports_unreadable_status(mut repo: TestRepo) {
+fn test_force_remove_preserves_repositories_with_corrupt_index(mut repo: TestRepo) {
     let mut target = None;
     let mut target_index = None;
+    let mut embedded_commit = None;
     for branch in ["corrupt-index", "git-force-control"] {
         let worktree = repo.add_worktree(branch);
         fs::write(worktree.join("untracked.txt"), "keep until forced\n").unwrap();
+        let embedded = worktree.join("embedded");
+        repo.run_git_in(
+            &worktree,
+            &["clone", repo.root_path().to_str().unwrap(), "embedded"],
+        );
+        repo.run_git_in(
+            &embedded,
+            &[
+                "commit",
+                "--allow-empty",
+                "-m",
+                &format!("Sole {branch} history"),
+            ],
+        );
+        let output = repo
+            .git_command()
+            .current_dir(&embedded)
+            .args(["rev-parse", "HEAD"])
+            .run()
+            .unwrap();
+        assert!(output.status.success());
+        let sha = String::from_utf8(output.stdout).unwrap().trim().to_owned();
+        let source = repo
+            .git_command()
+            .args(["cat-file", "-t", &sha])
+            .run()
+            .unwrap();
+        assert!(
+            !source.status.success(),
+            "embedded history must be absent from source"
+        );
+        repo.run_git_in(&worktree, &["add", "embedded"]);
+        repo.run_git_in(&worktree, &["commit", "-m", "Record embedded repository"]);
         let output = repo
             .git_command()
             .args(["rev-parse", "--absolute-git-dir"])
@@ -6746,6 +6762,7 @@ fn test_force_remove_with_corrupt_index_reports_unreadable_status(mut repo: Test
         } else {
             target = Some(worktree);
             target_index = Some(index);
+            embedded_commit = Some(sha);
         }
     }
     let worktree = target.unwrap();
@@ -6781,12 +6798,28 @@ fn test_force_remove_with_corrupt_index_reports_unreadable_status(mut repo: Test
         .output()
         .unwrap();
     assert!(
-        removal.status.success(),
+        !removal.status.success(),
         "{}",
         String::from_utf8_lossy(&removal.stderr)
     );
-    assert!(!worktree.exists());
-    assert!(!index.exists());
+    assert!(worktree.exists());
+    assert_eq!(fs::read(&index).unwrap(), b"bad");
+    assert_eq!(
+        fs::read_to_string(worktree.join("untracked.txt")).unwrap(),
+        "keep until forced\n"
+    );
+    let sha = embedded_commit.unwrap();
+    let history = repo
+        .git_command()
+        .current_dir(worktree.join("embedded"))
+        .args(["cat-file", "-t", &sha])
+        .run()
+        .unwrap();
+    assert!(
+        history.status.success(),
+        "sole history must survive: {history:?}"
+    );
+    assert!(String::from_utf8_lossy(&removal.stderr).contains("index file smaller than expected"));
     assert_eq!(
         repo.git_output(&["rev-parse", "refs/heads/corrupt-index"]),
         branch_head
@@ -7009,4 +7042,864 @@ fn test_remove_branch_deletion_failure_context(
             context
         );
     });
+}
+
+/// The shared removal paths preserve ignored nested checkouts, including one
+/// created by an approved hook. Force only waives the outer checkout's dirt.
+#[rstest]
+#[case::foreground("remove", true, false, false)]
+#[case::background_force("remove", false, false, true)]
+#[case::foreground_hook("remove", true, true, false)]
+#[case::background_hook_force("remove", false, true, true)]
+#[case::prune("prune", false, false, false)]
+#[case::prune_hook("prune", false, true, false)]
+fn test_remove_preserves_nested_worktree(
+    mut repo: TestRepo,
+    #[case] command: &str,
+    #[case] foreground: bool,
+    #[case] late: bool,
+    #[case] force: bool,
+) {
+    let root = repo.root_path().to_path_buf();
+    repo.commit_in_worktree(
+        &root,
+        ".gitignore",
+        ".worktrees/\n",
+        "Ignore nested checkouts",
+    );
+    let outer = repo.add_worktree("outer");
+    let removable = (command == "prune" && !late).then(|| repo.add_worktree("removable"));
+    let inner = outer.join(".worktrees/inner");
+    let index = if late {
+        repo.write_test_config(r#"pre-remove = "git worktree add --detach .worktrees/inner && printf 'independent staged work' > .worktrees/inner/staged.txt && git -C .worktrees/inner add staged.txt && printf 'independent untracked work' > .worktrees/inner/untracked.txt"
+"#);
+        None
+    } else {
+        repo.add_worktree_at_path("inner", &inner);
+        fs::write(inner.join("staged.txt"), "independent staged work").unwrap();
+        repo.run_git_in(&inner, &["add", "staged.txt"]);
+        fs::write(inner.join("untracked.txt"), "independent untracked work").unwrap();
+        Some(fs::read(registration_dir(&inner).join("index")).unwrap())
+    };
+    let status = repo
+        .git_command()
+        .current_dir(&outer)
+        .args(["status", "--porcelain"])
+        .run()
+        .unwrap();
+    assert!(status.status.success());
+    assert!(
+        status.stdout.is_empty(),
+        "ignored checkout must not dirty its parent"
+    );
+    let mut cmd = repo.wt_command();
+    if command == "prune" {
+        cmd.args(["step", "prune", "--min-age=0s"]);
+    } else {
+        cmd.args(["remove", "outer"]);
+        if foreground {
+            cmd.arg("--foreground");
+        }
+        if force {
+            cmd.arg("--force");
+        }
+    }
+    cmd.arg("--yes");
+    if !late && command == "remove" {
+        cmd.arg("--no-hooks");
+    }
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if command == "remove" || late {
+        assert!(stderr.contains("contains worktree"), "{stderr}");
+        assert!(
+            !output.status.success(),
+            "nested checkout must block outer removal: {output:?}"
+        );
+    } else {
+        assert!(output.status.success(), "{output:?}");
+    }
+    if let Some(removable) = removable {
+        assert!(
+            !removable.exists(),
+            "prune must remove an eligible sibling: {output:?}"
+        );
+    }
+    assert_eq!(
+        fs::read_to_string(inner.join("untracked.txt")).unwrap(),
+        "independent untracked work"
+    );
+    assert_eq!(
+        fs::read_to_string(inner.join("staged.txt")).unwrap(),
+        "independent staged work"
+    );
+    if let Some(index) = index {
+        assert_eq!(
+            fs::read(registration_dir(&inner).join("index")).unwrap(),
+            index
+        );
+    }
+    let staged = repo
+        .git_command()
+        .current_dir(&inner)
+        .args(["diff", "--cached", "--name-only"])
+        .run()
+        .unwrap();
+    assert!(staged.status.success());
+    assert_eq!(
+        String::from_utf8(staged.stdout).unwrap().trim(),
+        "staged.txt"
+    );
+    assert!(outer.join(".git").exists());
+}
+
+/// Daemon shutdown is an external mutation boundary too: nesting created there
+/// must be checked after shutdown, including under an explicit force removal.
+#[cfg(unix)]
+#[rstest]
+#[case(false)]
+#[case(true)]
+fn test_remove_preserves_nested_worktree_created_during_fsmonitor_stop(
+    mut repo: TestRepo,
+    #[case] force: bool,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    let root = repo.root_path().to_path_buf();
+    repo.commit_in_worktree(
+        &root,
+        ".gitignore",
+        ".worktrees/\n",
+        "Ignore nested checkouts",
+    );
+    let outer = repo.add_worktree("outer");
+    let wrapper = repo.home_path().join("git-wrapper");
+    fs::create_dir(&wrapper).unwrap();
+    let real_git = which::which("git").unwrap();
+    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
+    let shim = wrapper.join("git");
+    fs::write(
+        &shim,
+        format!(
+            r#"#!/bin/sh
+if [ "$1 $2" = 'fsmonitor--daemon stop' ]; then
+    {real_git} worktree add --detach .worktrees/late || exit 1
+    printf precious > .worktrees/late/precious.txt
+    exit 0
+fi
+if [ "$1" = fsmonitor--daemon ]; then exit 0; fi
+exec {real_git} "$@"
+"#
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = std::env::join_paths(
+        std::iter::once(wrapper).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.args(["remove", "outer", "--foreground", "--no-hooks", "--yes"])
+        .env("PATH", path);
+    if force {
+        cmd.arg("--force");
+    }
+    let output = cmd.output().unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("contains worktree"),
+        "{output:?}"
+    );
+    let inner = outer.join(".worktrees/late");
+    assert_eq!(
+        fs::read_to_string(inner.join("precious.txt")).unwrap(),
+        "precious"
+    );
+    assert!(registration_dir(&inner).join("HEAD").exists());
+    assert!(outer.join(".git").exists());
+}
+
+/// Clean superproject history can reference a commit held only by a submodule
+/// repository. Neither deinitializing it nor losing the outer .git makes that
+/// object store disposable. Explicit force opts into Git's destructive behavior.
+#[rstest]
+#[case::initialized("initialized")]
+#[case::deinitialized("deinitialized")]
+#[case::old_form("old-form")]
+#[case::stale("stale")]
+#[case::stale_force("stale-force")]
+#[case::hook_created("hook-created")]
+#[case::dirty("dirty")]
+#[case::hook_dirty("hook-dirty")]
+#[case::explicit_force("force")]
+#[case::old_form_force("old-form-force")]
+fn test_remove_preserves_sole_submodule_history(mut repo: TestRepo, #[case] case: &str) {
+    let source = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("sub-source-history");
+    fs::create_dir(&source).unwrap();
+    repo.run_git_in(&source, &["init", "-b", "main"]);
+    fs::write(source.join("sub.txt"), "original").unwrap();
+    repo.run_git_in(&source, &["add", "sub.txt"]);
+    repo.run_git_in(
+        &source,
+        &["commit", "--allow-empty", "-m", "Original submodule"],
+    );
+    repo.run_git(&[
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        source.to_str().unwrap(),
+        "sub",
+    ]);
+    repo.run_git(&["commit", "-am", "Add submodule"]);
+    let outer = repo.add_worktree("outer");
+    let late = case.starts_with("hook-");
+    let force = case.ends_with("force");
+    let stale = case.starts_with("stale");
+    let old_form = case.starts_with("old-form");
+    let dirty = matches!(case, "dirty" | "hook-dirty" | "force" | "old-form-force");
+    if late {
+        let mut hook = "git -c protocol.file.allow=always submodule update --init && git -C sub commit --allow-empty -m sole-local-history && git add sub && git commit -m record-submodule-history".to_owned();
+        if dirty {
+            hook.push_str(" && printf changed > sub/sub.txt && printf precious > notes.txt");
+        }
+        repo.write_test_config(&format!(
+            "pre-remove = {}\n",
+            serde_json::to_string(&hook).unwrap()
+        ));
+    } else {
+        if old_form {
+            repo.run_git_in(&outer, &["clone", source.to_str().unwrap(), "sub"]);
+        } else {
+            repo.run_git_in(
+                &outer,
+                &[
+                    "-c",
+                    "protocol.file.allow=always",
+                    "submodule",
+                    "update",
+                    "--init",
+                ],
+            );
+        }
+        repo.run_git_in(
+            &outer.join("sub"),
+            &["commit", "--allow-empty", "-m", "sole-local-history"],
+        );
+        repo.run_git_in(&outer, &["add", "sub"]);
+        repo.run_git_in(&outer, &["commit", "-m", "Record submodule history"]);
+    }
+    let registration = registration_dir(&outer);
+    let module_dir = if old_form {
+        assert!(!registration.join("modules").exists());
+        outer.join("sub/.git")
+    } else {
+        registration.join("modules/sub")
+    };
+    let sha_before = (!late).then(|| {
+        let output = repo
+            .git_command()
+            .current_dir(outer.join("sub"))
+            .args(["rev-parse", "HEAD"])
+            .run()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    });
+    if case == "deinitialized" {
+        repo.run_git_in(&outer, &["submodule", "deinit", "--all"]);
+    }
+    let clean = repo
+        .git_command()
+        .current_dir(&outer)
+        .args(["status", "--porcelain", "--ignore-submodules=none"])
+        .run()
+        .unwrap();
+    assert!(
+        clean.status.success() && clean.stdout.is_empty(),
+        "{clean:?}"
+    );
+    let index = fs::read(registration.join("index")).unwrap();
+    if dirty && !late {
+        fs::write(outer.join("sub/sub.txt"), "changed").unwrap();
+        fs::write(outer.join("notes.txt"), "precious").unwrap();
+    }
+    if stale {
+        fs::remove_file(outer.join(".git")).unwrap();
+    }
+    if force {
+        let remote = repo
+            .git_command()
+            .current_dir(&source)
+            .args(["cat-file", "-t", sha_before.as_deref().unwrap()])
+            .run()
+            .unwrap();
+        assert!(
+            !remote.status.success(),
+            "discarded commit must exist only in the local submodule repository"
+        );
+    }
+    let discarded_path = if force {
+        let storage = if old_form {
+            module_dir.clone()
+        } else {
+            registration.join("modules")
+        };
+        let storage = fs::canonicalize(storage).unwrap();
+        let home = fs::canonicalize(repo.home_path()).unwrap();
+        Some(format!(
+            "~/{}",
+            storage.strip_prefix(home).unwrap().to_slash_lossy()
+        ))
+    } else {
+        None
+    };
+    let mut command = repo.wt_command();
+    command.args(["remove", "outer", "--foreground", "--yes"]);
+    if force {
+        command.arg("--force");
+    }
+    let output = command.output().unwrap();
+    if force {
+        assert!(output.status.success(), "{output:?}");
+        let diagnostic = String::from_utf8_lossy(&output.stderr)
+            .ansi_strip()
+            .into_owned();
+        if dirty {
+            assert!(
+                diagnostic.contains("Discarding uncommitted changes (--force)")
+                    && diagnostic.contains("notes.txt"),
+                "{diagnostic}"
+            );
+        }
+        let storage = discarded_path.unwrap();
+        assert!(
+            diagnostic.contains(&format!(
+                "Discarding submodule repositories @ {storage} (--force)"
+            )),
+            "{diagnostic}"
+        );
+        assert_eq!(
+            diagnostic
+                .matches("Discarding submodule repositories")
+                .count(),
+            1
+        );
+        assert_eq!(outer.exists(), stale);
+        assert!(!module_dir.exists());
+    } else {
+        assert!(!output.status.success(), "{output:?}");
+        let diagnostic = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !diagnostic.contains("Discarding submodule repositories"),
+            "{diagnostic}"
+        );
+        if dirty {
+            assert!(diagnostic.contains("uncommitted changes"), "{diagnostic}");
+            assert!(diagnostic.contains("notes.txt"), "{diagnostic}");
+            assert!(
+                !diagnostic.contains("holds submodule repositories"),
+                "{diagnostic}"
+            );
+            assert_eq!(
+                fs::read_to_string(outer.join("notes.txt")).unwrap(),
+                "precious"
+            );
+            assert_eq!(
+                fs::read_to_string(outer.join("sub/sub.txt")).unwrap(),
+                "changed"
+            );
+        } else {
+            assert!(diagnostic.contains("submodule"), "{diagnostic}");
+        }
+        assert!(registration.join("HEAD").exists());
+        if !late {
+            assert_eq!(fs::read(registration.join("index")).unwrap(), index);
+        }
+        let sha = sha_before.unwrap_or_else(|| {
+            let output = repo
+                .git_command()
+                .args([
+                    "--git-dir",
+                    module_dir.to_str().unwrap(),
+                    "rev-parse",
+                    "HEAD",
+                ])
+                .run()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        });
+        let object = repo
+            .git_command()
+            .args([
+                "--git-dir",
+                module_dir.to_str().unwrap(),
+                "cat-file",
+                "-t",
+                &sha,
+            ])
+            .run()
+            .unwrap();
+        assert!(
+            object.status.success(),
+            "sole submodule commit must survive: {object:?}"
+        );
+        assert_eq!(String::from_utf8(object.stdout).unwrap().trim(), "commit");
+        let remote = repo
+            .git_command()
+            .current_dir(&source)
+            .args(["cat-file", "-t", &sha])
+            .run()
+            .unwrap();
+        assert!(
+            !remote.status.success(),
+            "fixture commit must be absent from source"
+        );
+    }
+}
+
+/// Index gitlinks define submodules even without `.gitmodules`. Each store
+/// removal reaches must be disclosed; external stores survive force.
+#[rstest]
+#[case::embedded("embedded", false)]
+#[case::embedded_force("embedded", true)]
+#[case::mixed("mixed", false)]
+#[case::mixed_force("mixed", true)]
+#[case::external("external", false)]
+#[case::external_force("external", true)]
+#[case::nested_external("nested-external", false)]
+#[case::nested_external_force("nested-external", true)]
+#[cfg_attr(unix, case::symlink_external("symlink", false))]
+#[cfg_attr(unix, case::symlink_external_force("symlink", true))]
+fn test_remove_inventory_of_indexed_submodule_repositories(
+    mut repo: TestRepo,
+    #[case] scenario: &str,
+    #[case] force: bool,
+) {
+    let source = repo.home_path().join("inventory-source");
+    fs::create_dir(&source).unwrap();
+    repo.run_git_in(&source, &["init", "-b", "main"]);
+    repo.run_git_in(&source, &["commit", "--allow-empty", "-m", "Original"]);
+    let outer = repo.add_worktree("inventory");
+    let registration = repo
+        .git_command()
+        .current_dir(&outer)
+        .args(["rev-parse", "--absolute-git-dir"])
+        .run()
+        .unwrap();
+    assert!(registration.status.success());
+    let registration = PathBuf::from(String::from_utf8(registration.stdout).unwrap().trim());
+    let head = |checkout: &Path| {
+        let output = repo
+            .git_command()
+            .current_dir(checkout)
+            .args(["rev-parse", "HEAD"])
+            .run()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    let mut owned = Vec::new();
+    let mut histories = Vec::new();
+    if scenario == "mixed" {
+        repo.run_git_in(
+            &outer,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                source.to_str().unwrap(),
+                "modern",
+            ],
+        );
+        let modern = outer.join("modern");
+        repo.run_git_in(
+            &modern,
+            &["commit", "--allow-empty", "-m", "Sole modern history"],
+        );
+        histories.push((registration.join("modules/modern"), head(&modern), true));
+        owned.push(registration.join("modules"));
+    }
+    let embedded = outer.join("embedded");
+    let external = repo.home_path().join("external-store");
+    let is_external = matches!(scenario, "external" | "nested-external" | "symlink");
+    if is_external {
+        repo.run_git_in(
+            &outer,
+            &[
+                "clone",
+                "--separate-git-dir",
+                external.to_str().unwrap(),
+                source.to_str().unwrap(),
+                "embedded",
+            ],
+        );
+        #[cfg(unix)]
+        if scenario == "symlink" {
+            fs::remove_file(embedded.join(".git")).unwrap();
+            std::os::unix::fs::symlink(&external, embedded.join(".git")).unwrap();
+        }
+    } else {
+        repo.run_git_in(&outer, &["clone", source.to_str().unwrap(), "embedded"]);
+        owned.push(embedded.join(".git"));
+    }
+    if scenario == "nested-external" {
+        repo.run_git_in(&embedded, &["clone", source.to_str().unwrap(), "nested"]);
+        let nested = embedded.join("nested");
+        repo.run_git_in(
+            &nested,
+            &["commit", "--allow-empty", "-m", "Sole nested history"],
+        );
+        histories.push((nested.join(".git"), head(&nested), true));
+        owned.push(nested.join(".git"));
+        repo.run_git_in(&embedded, &["add", "nested"]);
+    }
+    repo.run_git_in(
+        &embedded,
+        &["commit", "--allow-empty", "-m", "Sole embedded history"],
+    );
+    histories.push((
+        if is_external {
+            external.clone()
+        } else {
+            embedded.join(".git")
+        },
+        head(&embedded),
+        !is_external,
+    ));
+    repo.run_git_in(&outer, &["add", "."]);
+    repo.run_git_in(&outer, &["commit", "-m", "Record indexed repositories"]);
+    let clean = repo
+        .git_command()
+        .current_dir(&outer)
+        .args(["status", "--porcelain"])
+        .run()
+        .unwrap();
+    assert!(
+        clean.status.success() && clean.stdout.is_empty(),
+        "{clean:?}"
+    );
+    let index = fs::read(registration.join("index")).unwrap();
+    for (_, sha, _) in &histories {
+        let original = repo
+            .git_command()
+            .current_dir(&source)
+            .args(["cat-file", "-t", sha])
+            .run()
+            .unwrap();
+        assert!(
+            !original.status.success(),
+            "local history must be absent from source"
+        );
+    }
+    let home = fs::canonicalize(repo.home_path()).unwrap();
+    let expected_paths: Vec<_> = owned
+        .iter()
+        .map(|path| {
+            let path = fs::canonicalize(path).unwrap();
+            format!("~/{}", path.strip_prefix(&home).unwrap().to_slash_lossy())
+        })
+        .collect();
+    let mut command = repo.wt_command();
+    command.args(["remove", "inventory", "--foreground", "--yes"]);
+    if force {
+        command.arg("--force");
+    }
+    let output = command.output().unwrap();
+    let diagnostic = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert_eq!(output.status.success(), force, "{diagnostic}");
+    if force {
+        assert!(!outer.exists());
+        assert_eq!(
+            diagnostic
+                .matches("Discarding submodule repositories @ ")
+                .count(),
+            owned.len(),
+            "{diagnostic}"
+        );
+        for path in expected_paths {
+            assert!(
+                diagnostic.contains(&format!(
+                    "Discarding submodule repositories @ {path} (--force)"
+                )),
+                "{diagnostic}"
+            );
+        }
+    } else {
+        assert!(
+            diagnostic.contains("Cannot remove worktree @"),
+            "{diagnostic}"
+        );
+        assert!(
+            diagnostic.contains("submodule repositories"),
+            "{diagnostic}"
+        );
+        assert!(!diagnostic.contains("no submodule mapping"), "{diagnostic}");
+        assert!(
+            !diagnostic.contains("Discarding submodule repositories"),
+            "{diagnostic}"
+        );
+        assert_eq!(fs::read(registration.join("index")).unwrap(), index);
+    }
+    for (directory, sha, discarded) in histories {
+        if force && discarded {
+            assert!(!directory.exists(), "{}", directory.display());
+        } else {
+            let object = repo
+                .git_command()
+                .args([
+                    "--git-dir",
+                    directory.to_str().unwrap(),
+                    "cat-file",
+                    "-t",
+                    &sha,
+                ])
+                .run()
+                .unwrap();
+            assert!(object.status.success(), "history must survive: {object:?}");
+        }
+    }
+}
+
+/// NUL-delimited index paths remain native paths, including conflict-stage
+/// duplicates. A lossy path would inspect the different repository beside it.
+#[cfg(unix)]
+#[rstest]
+#[case::delimiters(false)]
+#[cfg_attr(target_os = "linux", case::native_bytes(true))]
+fn test_remove_indexed_submodule_native_paths(mut repo: TestRepo, #[case] invalid: bool) {
+    use std::io::Write;
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    use std::process::{Command, Stdio};
+
+    let outer = repo.add_worktree("native-index");
+    let name = std::ffi::OsString::from_vec(if invalid {
+        b"embedded-\xff".to_vec()
+    } else {
+        b"embedded\tline\n".to_vec()
+    });
+    let embedded = outer.join(&name);
+    let external = repo.home_path().join("native-external");
+    let mut clone = Command::new("git");
+    repo.configure_git_cmd(&mut clone);
+    let output = clone
+        .current_dir(&outer)
+        .args(["clone", "--separate-git-dir"])
+        .arg(&external)
+        .arg(repo.root_path())
+        .arg(&embedded)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    repo.run_git_in(
+        &embedded,
+        &["commit", "--allow-empty", "-m", "Sole history"],
+    );
+    let sha = repo
+        .git_command()
+        .current_dir(&external)
+        .args(["rev-parse", "HEAD"])
+        .run()
+        .unwrap();
+    assert!(sha.status.success(), "{sha:?}");
+    let sha = String::from_utf8(sha.stdout).unwrap().trim().to_owned();
+    if invalid {
+        let mut clone = Command::new("git");
+        repo.configure_git_cmd(&mut clone);
+        let output = clone
+            .current_dir(&outer)
+            .arg("clone")
+            .arg(repo.root_path())
+            .arg(outer.join(name.to_string_lossy().as_ref()))
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+    }
+    let mut index = Command::new("git");
+    repo.configure_git_cmd(&mut index);
+    let mut index = index
+        .current_dir(&outer)
+        .args(["update-index", "-z", "--index-info"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut entries = Vec::new();
+    for stage in [1, 2] {
+        entries.extend_from_slice(format!("160000 {sha} {stage}\t").as_bytes());
+        entries.extend_from_slice(name.as_bytes());
+        entries.push(0);
+    }
+    index.stdin.take().unwrap().write_all(&entries).unwrap();
+    let output = index.wait_with_output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let output = repo
+        .git_command()
+        .current_dir(&outer)
+        .args(["ls-files", "--unmerged", "-z"])
+        .run()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout.iter().filter(|byte| **byte == 0).count(), 2);
+    let output = repo
+        .wt_command()
+        .args(["remove", "native-index", "--force", "--foreground", "--yes"])
+        .output()
+        .unwrap();
+    let diagnostic = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(output.status.success(), "{diagnostic}");
+    assert!(
+        !diagnostic.contains("Discarding submodule repositories"),
+        "{diagnostic}"
+    );
+    assert!(!outer.exists());
+    let object = repo
+        .git_command()
+        .current_dir(&external)
+        .args(["cat-file", "-t", &sha])
+        .run()
+        .unwrap();
+    assert!(
+        object.status.success(),
+        "external history must survive: {object:?}"
+    );
+}
+
+/// An own marker never authorizes discovery of the containing worktree.
+/// Force can unlink missing stores; a readable corrupt index remains an error.
+#[rstest]
+#[case::dangling("dangling", false)]
+#[case::dangling_force("dangling", true)]
+#[case::empty("empty", false)]
+#[case::empty_force("empty", true)]
+#[case::corrupt("corrupt", false)]
+#[case::corrupt_force("corrupt", true)]
+fn test_remove_submodule_own_git_entry(
+    mut repo: TestRepo,
+    #[case] scenario: &str,
+    #[case] force: bool,
+) {
+    use worktrunk::git::{GitError, Repository};
+
+    let outer = repo.add_worktree("own-entry");
+    let child = outer.join("embedded");
+    let store = repo.home_path().join("missing-store");
+    if scenario == "dangling" {
+        repo.run_git_in(
+            &outer,
+            &[
+                "clone",
+                "--separate-git-dir",
+                store.to_str().unwrap(),
+                repo.root_path().to_str().unwrap(),
+                "embedded",
+            ],
+        );
+    } else {
+        repo.run_git_in(
+            &outer,
+            &["clone", repo.root_path().to_str().unwrap(), "embedded"],
+        );
+    }
+    repo.run_git_in(&outer, &["add", "embedded"]);
+    repo.run_git_in(&outer, &["commit", "-m", "Record gitlink"]);
+    let api = Repository::at(repo.root_path()).unwrap();
+    let registration = api.worktree_at(&outer).git_dir().unwrap();
+    let index = fs::read(registration.join("index")).unwrap();
+    match scenario {
+        "dangling" => fs::remove_dir_all(&store).unwrap(),
+        "empty" => {
+            fs::remove_dir_all(child.join(".git")).unwrap();
+            fs::create_dir(child.join(".git")).unwrap();
+        }
+        "corrupt" => fs::write(child.join(".git/index"), "invalid index").unwrap(),
+        _ => unreachable!(),
+    }
+    let error = api.require_no_submodule_storage(&outer).unwrap_err();
+    if scenario == "corrupt" {
+        assert!(
+            !matches!(
+                error.downcast_ref::<GitError>(),
+                Some(GitError::SubmoduleRepositories { .. })
+            ),
+            "{error:#}"
+        );
+    } else {
+        let Some(GitError::SubmoduleRepositories { repositories, .. }) =
+            error.downcast_ref::<GitError>()
+        else {
+            panic!("{error:#}")
+        };
+        let expected = if scenario == "empty" {
+            vec![fs::canonicalize(child.join(".git")).unwrap()]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(repositories, &expected);
+    }
+    let expected_disclosure = (scenario == "empty").then(|| {
+        let home = fs::canonicalize(repo.home_path()).unwrap();
+        let directory = fs::canonicalize(child.join(".git")).unwrap();
+        format!(
+            "~/{}",
+            directory.strip_prefix(home).unwrap().to_slash_lossy()
+        )
+    });
+    let mut command = repo.wt_command();
+    command.args(["remove", "own-entry", "--foreground", "--yes"]);
+    if force {
+        command.arg("--force");
+    }
+    let output = command.output().unwrap();
+    let diagnostic = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    let removed = force && scenario != "corrupt";
+    assert_eq!(output.status.success(), removed, "{diagnostic}");
+    assert_eq!(outer.exists(), !removed);
+    if removed && scenario == "empty" {
+        let path = expected_disclosure.unwrap();
+        assert!(
+            diagnostic.contains(&format!(
+                "Discarding submodule repositories @ {path} (--force)"
+            )),
+            "{diagnostic}"
+        );
+        assert_eq!(
+            diagnostic
+                .matches("Discarding submodule repositories @ ")
+                .count(),
+            1,
+            "{diagnostic}"
+        );
+    } else {
+        assert!(
+            !diagnostic.contains("Discarding submodule repositories"),
+            "{diagnostic}"
+        );
+    }
+    if !removed {
+        assert_eq!(fs::read(registration.join("index")).unwrap(), index);
+        if scenario != "corrupt" {
+            let native = repo
+                .git_command()
+                .args(["worktree", "remove", "--force", outer.to_str().unwrap()])
+                .run()
+                .unwrap();
+            assert!(
+                native.status.success(),
+                "native force must accept fixture: {native:?}"
+            );
+        }
+    }
 }

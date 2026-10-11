@@ -586,6 +586,16 @@ pub enum GitError {
         remaining_entries: Option<Vec<String>>,
     },
     CannotRemoveMainWorktree,
+    NestedWorktree {
+        path: PathBuf,
+        nested_path: PathBuf,
+    },
+    SubmoduleRepositories {
+        path: PathBuf,
+        /// Git directories removal would discard. Empty when submodule
+        /// repositories are present but stored outside the removed tree.
+        repositories: Vec<PathBuf>,
+    },
     CannotRemoveDefaultBranch {
         branch: String,
     },
@@ -900,6 +910,9 @@ impl GitError {
                     StaleWorktreeWork::StagedChanges => {
                         format!("{worktree} is stale but holds staged changes")
                     }
+                    StaleWorktreeWork::SubmoduleRepositories => {
+                        format!("{worktree} is stale but holds submodule repositories")
+                    }
                     StaleWorktreeWork::Operation(operation) => format!(
                         "{worktree} is stale with a {} in progress",
                         operation_noun(*operation)
@@ -975,6 +988,28 @@ impl GitError {
             }
 
             GitError::CannotRemoveMainWorktree => "The main worktree cannot be removed".to_string(),
+
+            GitError::NestedWorktree { path, nested_path } => cformat!(
+                "Cannot remove worktree @ <bold>{}</>; contains worktree @ <bold>{}</>",
+                format_path_for_display(path),
+                format_path_for_display(nested_path),
+            ),
+
+            GitError::SubmoduleRepositories { path, repositories } if !repositories.is_empty() => {
+                let repositories = repositories
+                    .iter()
+                    .map(|path| format_path_for_display(path))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                cformat!(
+                    "Cannot remove worktree @ <bold>{}</>; holds submodule repositories @ <bold>{repositories}</>",
+                    format_path_for_display(path),
+                )
+            }
+            GitError::SubmoduleRepositories { path, .. } => cformat!(
+                "Cannot remove worktree @ <bold>{}</>; contains submodule repositories",
+                format_path_for_display(path),
+            ),
 
             GitError::CannotRemoveDefaultBranch { branch } => {
                 cformat!("Cannot remove the default branch <bold>{branch}</>")
@@ -1515,6 +1550,19 @@ impl GitError {
                 let title = self.title();
                 write!(f, "{}", error_message(&title))
             }
+
+            GitError::NestedWorktree { .. } => {
+                write!(f, "{}", error_message(self.title()))
+            }
+
+            GitError::SubmoduleRepositories { .. } => write!(
+                f,
+                "{}\n{}",
+                error_message(self.title()),
+                hint_message(cformat!(
+                    "Use <underline>--force</> to remove anyway; it can discard submodule repositories and uncommitted changes"
+                ))
+            ),
 
             GitError::CannotRemoveDefaultBranch { branch } => {
                 let title = self.title();
@@ -2735,9 +2783,16 @@ mod tests {
             command_name: None,
             error: anyhow::anyhow!("setup failed"),
         };
+        #[cfg(feature = "syntax-highlighting")]
         assert_snapshot!(err.render(), @"
         [31m✗[39m [31m[1mpre-start user hook[22m failed[39m
         [107m [0m [2m[0m[2m[34mecho[0m[2m test[0m
+        [107m [0m setup failed
+        ");
+        #[cfg(not(feature = "syntax-highlighting"))]
+        assert_snapshot!(err.render(), @"
+        [31m✗[39m [31m[1mpre-start user hook[22m failed[39m
+        [107m [0m echo test
         [107m [0m setup failed
         ");
 
@@ -2869,6 +2924,15 @@ mod tests {
         [107m [0m fatal: could not create leading directories
         [2m↳[22m [2mBranch [4mfeature/auth[24m was created before the failure, with no worktree; to delete it, run [4mgit branch -d -- feature/auth[24m; to use it, run [4mwt switch feature/auth[24m[22m
         ");
+    }
+
+    #[test]
+    fn snapshot_nested_worktree() {
+        let err = GitError::NestedWorktree {
+            path: PathBuf::from("/tmp/repo.outer"),
+            nested_path: PathBuf::from("/tmp/repo.outer/.worktrees/inner"),
+        };
+        assert_snapshot!(err.render(), @"[31m✗[39m [31mCannot remove worktree @ [1m/tmp/repo.outer[22m; contains worktree @ [1m/tmp/repo.outer/.worktrees/inner[22m[39m");
     }
 
     #[test]

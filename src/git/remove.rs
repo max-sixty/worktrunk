@@ -25,10 +25,13 @@
 //!
 //! 1. **Lock and clean checks**. A `git worktree lock` is refused
 //!    unconditionally (matching `git worktree remove`; `--force` does not
-//!    override it). The dirty-worktree gate is skipped with
-//!    [`RemoveOptions::force_worktree`], which reports the current uncommitted
-//!    paths, or why they could not be read, before deletion instead. Why the
-//!    dirty gate precedes the stop below: [`stage_worktree_removal`], "Why this order".
+//!    override it). Nested checkouts registered in the same repository are
+//!    always preserved. Explicit force permits discarding the selected
+//!    checkout's dirt and submodule repositories. [`RemoveOptions::force_worktree`]
+//!    replaces the dirty gate with disclosure of uncommitted paths (or why they
+//!    could not be read) and submodule repositories before deletion. See
+//!    [`stage_worktree_removal`], "Why this order", for why the dirty gate precedes
+//!    the stop below.
 //! 2. **fsmonitor daemon stopped** (best effort). [`stop_fsmonitor_daemon`]
 //!    runs against the target worktree before its path disappears: it sends
 //!    the graceful `git fsmonitor--daemon stop` IPC request, then verifies the
@@ -102,6 +105,7 @@ use crate::git::{
     CleanCheckMode, ErrorExt, GitError, IntegrationReason, Repository, WorktreeInfo,
     WorktreePruneMode, path_dir_name,
 };
+use crate::path::format_path_for_display;
 use crate::shell_exec::Cmd;
 use crate::styling::{eprintln, format_with_gutter, warning_message};
 use crate::utils::epoch_now;
@@ -324,8 +328,8 @@ pub struct RemoveOptions {
     /// Only consulted when `deletion_mode` is [`BranchDeletionMode::SafeDelete`].
     /// `None` falls back to `HEAD`.
     pub target_branch: Option<String>,
-    /// Skip the clean check and pass `--force` to the `git worktree remove`
-    /// fallback.
+    /// Permit discarding dirt and submodule repositories; pass `--force` to
+    /// the `git worktree remove` fallback.
     ///
     /// Ownership and locks are checked regardless. Staging preserves the
     /// directory under `<git-common-dir>/wt/retained/` until unregistering
@@ -440,8 +444,8 @@ pub fn remove_worktree_with_cleanup(
 /// status` in the directory, so against a foreign occupant it reports *that*
 /// repository's dirt as this worktree's and offers `--force` as the remedy — a
 /// hint leading straight to the deletion the check refuses. And `--force` is
-/// the user waiving their own uncommitted changes, never a claim about who
-/// owns the directory, so it cannot be allowed to skip it; git's own
+/// the user waiving the selected checkout's dirt and submodule repositories,
+/// never a claim about who owns the directory, so it cannot skip this check. Git's own
 /// validation is likewise unconditional. The lock check sits with ownership:
 /// `--force` does not override `git worktree lock`, and the check reads the
 /// `locked` file rather than `list_worktrees()`, whose `RepoCache` entry
@@ -506,18 +510,48 @@ pub fn stage_worktree_removal(
 
     // Shutdown can overlap writers. Rescan after it without restarting the
     // daemon: an index-only check would miss unstaged and untracked files.
+    // Refuse replacements before either query can inspect another repository.
+    require_removal_allowed(&worktree, branch, Some(&git_dir))?;
     if !force_worktree {
-        // A replacement must be refused as an ownership change, rather than
-        // reporting its dirt and suggesting --force against the wrong tree.
-        require_removal_allowed(&worktree, branch, Some(&git_dir))?;
         worktree.ensure_clean("remove worktree", branch, true, CleanCheckMode::FullScan)?;
+        repo.require_no_submodule_storage(worktree_path)?;
+    } else if let Err(error) = repo.require_no_submodule_storage(worktree_path) {
+        match error.downcast_ref::<GitError>() {
+            Some(GitError::SubmoduleRepositories { repositories, .. }) => {
+                for directory in repositories {
+                    warn_submodule_repository_discard(directory);
+                }
+            }
+            _ => return Err(error),
+        }
     }
 
-    // No external command runs between this final owner/lock check and the
-    // rename. A same-repository replacement must not retarget the old removal.
+    // Hooks, daemon shutdown or status can create an ignored checkout. Read
+    // fresh registrations after those commands without waiting for unrelated
+    // teardown. Force never waives another registration in this repository.
+    if let Some(nested) = repo.nested_worktree(worktree_path)? {
+        return Err(GitError::NestedWorktree {
+            path: worktree_path.to_path_buf(),
+            nested_path: nested,
+        }
+        .into());
+    }
+    // No external command runs between these final topology/owner/lock checks
+    // and rename. A replacement must not retarget the old removal.
     require_removal_allowed(&worktree, branch, Some(&git_dir))?;
 
     rename_into_trash(repo, worktree_path, &git_dir, force_worktree)
+}
+
+/// Live staging and forced stale unregister share the same discard disclosure.
+pub(crate) fn warn_submodule_repository_discard(path: &Path) {
+    eprintln!(
+        "{}",
+        warning_message(format!(
+            "Discarding submodule repositories @ {} (--force)",
+            format_path_for_display(path)
+        ))
+    );
 }
 
 /// The owner and lock gates are unconditional, including explicit force.
@@ -563,6 +597,7 @@ fn require_removal_allowed(
 /// Removal of this live worktree has already been authorized by that gate.
 /// Like `git worktree remove`, it includes clean in-progress operation state.
 /// Already-stale registrations retain operation state as well as staged work.
+/// Both live and stale removals preserve submodule repositories unless forced.
 /// Live removal still checks its index again before unregistering: a paused
 /// operation must not hide staged work added after the live-removal gate.
 fn rename_into_trash(

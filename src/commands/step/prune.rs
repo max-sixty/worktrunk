@@ -33,7 +33,7 @@ use rayon::prelude::*;
 use worktrunk::HookType;
 use worktrunk::config::{Approvals, ProjectConfig, UserConfig};
 use worktrunk::git::{
-    BranchDeletionMode, IntegrationReason, RefSnapshot, Repository, WorktreeInfo,
+    BranchDeletionMode, GitError, IntegrationReason, RefSnapshot, Repository, WorktreeInfo,
 };
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
@@ -448,7 +448,7 @@ fn check_one(
     // stale-entry fallback needs a branch to fall back to — and needs no plan:
     // `try_remove` prunes the entry directly. It still gets that fallback's
     // check: an entry whose registration holds staged changes or an operation
-    // partway through stays, and so does one the check fails on.
+    // partway through stays; a failed check aborts the scan.
     let stale_detached = match &item.source {
         CheckSource::Prunable { wt_idx } if worktrees[*wt_idx].branch.is_none() => {
             Some(&worktrees[*wt_idx])
@@ -458,17 +458,15 @@ fn check_one(
     let plan = if stale_detached.is_some() {
         None
     } else {
-        match &item.source {
-            CheckSource::Orphan => repo
-                .prepare_worktree_removal(
-                    RemoveTarget::BranchOnly(item.integration_ref.clone()),
-                    BranchDeletionMode::SafeDelete,
-                    false,
-                    current_path,
-                    Some(worktrees),
-                    Some(snapshot),
-                )
-                .ok(),
+        let result = match &item.source {
+            CheckSource::Orphan => repo.prepare_worktree_removal(
+                RemoveTarget::BranchOnly(item.integration_ref.clone()),
+                BranchDeletionMode::SafeDelete,
+                false,
+                current_path,
+                Some(worktrees),
+                Some(snapshot),
+            ),
             CheckSource::Linked { wt_idx } | CheckSource::Prunable { wt_idx } => {
                 let wt = &worktrees[*wt_idx];
                 repo.prepare_worktree_removal(
@@ -486,12 +484,35 @@ fn check_one(
                     Some(worktrees),
                     Some(snapshot),
                 )
-                .ok()
             }
+        };
+        match result {
+            Ok(plan) => Some(plan),
+            // Ordinary safety refusals make a worktree ineligible. A failed
+            // registration read or Git command instead fails the scan, so it
+            // cannot be reported as "No merged worktrees to remove".
+            Err(error)
+                if matches!(
+                    error.downcast_ref::<GitError>(),
+                    Some(
+                        GitError::CannotRemoveMainWorktree
+                            | GitError::CannotRemoveDefaultBranch { .. }
+                            | GitError::WorktreeLocked { .. }
+                            | GitError::UncommittedChanges { .. }
+                            | GitError::NestedWorktree { .. }
+                            | GitError::SubmoduleRepositories { .. }
+                            | GitError::WorktreePathNotOurs { .. }
+                            | GitError::StaleWorktreeHoldsWork { .. }
+                    )
+                ) =>
+            {
+                None
+            }
+            Err(error) => return Err(error),
         }
     };
     let removable = match stale_detached {
-        Some(wt) => matches!(repo.stale_worktree_work(&wt.path), Ok(None)),
+        Some(wt) => repo.stale_worktree_work(&wt.path)?.is_none(),
         None => plan.is_some(),
     };
     let deletes_branch = plan.as_ref().is_some_and(RemovalPlan::deletes_branch);

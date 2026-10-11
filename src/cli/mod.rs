@@ -541,9 +541,8 @@ pub(crate) struct RemoveArgs {
 
     /// Force worktree removal
     ///
-    /// Remove a dirty worktree, including staged, modified, and untracked
-    /// files. Without this flag, removal fails if the worktree has any
-    /// uncommitted changes.
+    /// Discard uncommitted changes and allow removal of submodule repositories.
+    /// This can discard the submodules' local Git history.
     #[arg(short, long)]
     pub(crate) force: bool,
 
@@ -556,6 +555,10 @@ pub(crate) struct RemoveArgs {
 
 #[derive(Args)]
 pub(crate) struct MergeArgs {
+    /// Branch to merge from (defaults to current worktree)
+    #[arg(short, long, add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
+    pub(crate) branch: Option<String>,
+
     /// Target branch
     ///
     /// Defaults to default branch.
@@ -1363,7 +1366,7 @@ Worktrunk has two force flags for different situations:
 
 | Flag | Scope | When to use |
 |------|-------|-------------|
-| `--force` (`-f`) | Worktree | Worktree has uncommitted changes |
+| `--force` (`-f`) | Worktree | Worktree has uncommitted changes or submodule repositories |
 | `--force-delete` (`-D`) | Branch | Branch has unmerged commits |
 
 ```console
@@ -1429,11 +1432,11 @@ Detached worktrees have no branch name. Pass the worktree path instead: `wt remo
 "#)]
     Remove(RemoveArgs),
 
-    /// Merge current branch into the target branch
+    /// Merge a branch into the target branch
     ///
     /// Squash & rebase, fast-forward the target branch, remove the worktree.
     #[command(
-        after_long_help = r#"Unlike `git merge`, this merges the current branch into the target branch — not the target into current. Similar to clicking "Merge pull request" on GitHub, but locally. The target defaults to the default branch.
+        after_long_help = r#"Unlike `git merge`, this merges the source branch into the target branch — not the target into current. Similar to clicking "Merge pull request" on GitHub, but locally. The source defaults to the current branch; the target defaults to the default branch.
 
 <!-- demo: wt-merge.gif 1600x900 | Creating a worktree, committing in it, and merging it away -->
 ## Examples
@@ -1461,6 +1464,15 @@ Merge to a different branch:
 ```console
 $ wt merge develop
 ```
+
+Merge another worktree's branch without leaving the current worktree:
+
+```console
+$ wt merge --branch feature/auth
+$ wt merge develop --branch feature/auth
+```
+
+The source branch must be checked out. Its project configuration selects the hooks. Cleanup removes the source worktree without moving your shell; rebase conflicts stay there.
 
 Keep the worktree after merging:
 
@@ -1502,7 +1514,7 @@ $ wt merge --no-commit --no-rebase
 4. **Pre-merge hooks** — Hooks run after rebase, before merge. Failures abort. See [`wt hook`](/hook/).
 5. **Merge** — Fast-forward merge to the target branch ([`wt step push`](/step/#wt-step-push)). With `--no-ff`, a merge commit is created instead — semi-linear history after the default rebase, while explicit `--no-rebase` preserves the graph produced by earlier steps before adding the merge commit. Non-fast-forward merges are rejected.
 6. **Pre-remove hooks** — Hooks run before removing worktree. Failures abort.
-7. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. When already on the target branch, in the primary worktree, or locked, the worktree is preserved.
+7. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. Cleanup also keeps primary or locked worktrees, those already on the target branch, and those holding submodule repositories or another worktree of the same repository.
 8. **Post-remove + post-merge hooks** — Run in background after cleanup.
 
 Use `--no-commit` to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless `--no-rebase` is passed. Combining both flags preserves the exact source graph and requires the target to be its ancestor. Useful after preparing commits manually with `wt step commit`. Requires a clean working tree.

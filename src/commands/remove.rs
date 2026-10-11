@@ -50,14 +50,9 @@ impl RemovePlans {
     }
 
     fn record_error(&mut self, e: anyhow::Error) {
-        // The remove command collects per-target errors and surfaces each
-        // individually (partial-success path). Render the typed
-        // diagnostic block when present so locked/dirty/etc. errors
-        // carry their hint, falling back to the short label otherwise.
-        let rendered = e.render_diagnostic().unwrap_or_else(|| e.to_string());
-        if !rendered.is_empty() {
-            eprintln!("{rendered}");
-        }
+        // Use the command renderer for both typed refusals and filesystem
+        // failures, preserving their source causes in this partial-success path.
+        crate::print_command_error(&e);
         self.errors.push(e);
     }
 }

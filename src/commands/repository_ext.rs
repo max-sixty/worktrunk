@@ -82,6 +82,7 @@ pub trait RepositoryCliExt {
         &self,
         target_worktree: Option<&PathBuf>,
         target_branch: &str,
+        source_sha: &str,
     ) -> anyhow::Result<()>;
 
     /// Check if HEAD is a linear extension of the target branch.
@@ -361,6 +362,14 @@ impl RepositoryCliExt for Repository {
         // caught there.
         target_wt.ensure_holds_this_worktree()?;
 
+        if let Some(nested) = self.nested_worktree(&worktree_path)? {
+            return Err(GitError::NestedWorktree {
+                path: worktree_path.clone(),
+                nested_path: nested,
+            }
+            .into());
+        }
+
         if !force_worktree {
             target_wt.ensure_clean(
                 "remove worktree",
@@ -368,6 +377,7 @@ impl RepositoryCliExt for Repository {
                 true,
                 worktrunk::git::CleanCheckMode::ConfiguredFsmonitor,
             )?;
+            self.require_no_submodule_storage(&worktree_path)?;
         }
 
         // main_path: where post-remove hooks run from and background removal
@@ -448,6 +458,7 @@ impl RepositoryCliExt for Repository {
         &self,
         target_worktree: Option<&PathBuf>,
         target_branch: &str,
+        source_sha: &str,
     ) -> anyhow::Result<()> {
         let Some(wt_path) = target_worktree else {
             return Ok(());
@@ -465,7 +476,7 @@ impl RepositoryCliExt for Repository {
             return Ok(());
         }
 
-        let push_files = self.changed_files(target_branch, "HEAD")?;
+        let push_files = self.changed_files(target_branch, source_sha)?;
         let wt_files = parse_porcelain_z(&wt_status_output);
 
         let overlapping: Vec<String> = push_files
@@ -487,8 +498,12 @@ impl RepositoryCliExt for Repository {
     }
 
     fn is_rebased_onto(&self, target: &str) -> anyhow::Result<bool> {
+        let head = self
+            .current_worktree()
+            .run_command(&["rev-parse", "HEAD"])?;
+        let head = head.trim();
         // Orphan branches have no common ancestor, so they can't be "rebased onto" target
-        let Some(merge_base) = self.merge_base("HEAD", target)? else {
+        let Some(merge_base) = self.merge_base(head, target)? else {
             return Ok(false);
         };
         // `merge_base` peels an annotated tag to the commit it points at; a bare
@@ -516,7 +531,7 @@ impl RepositoryCliExt for Repository {
                 "rev-list",
                 "--merges",
                 "--end-of-options",
-                &format!("{}..HEAD", target),
+                &format!("{target}..{head}"),
             ])?
             .trim()
             .to_string();

@@ -821,16 +821,13 @@ impl AltXRemover {
                 // (drained to stderr on exit) instead of swallowing it, so alt-x
                 // isn't a silent dead keypress. Nothing was removed, so the row
                 // stays under the (un-reset) cursor.
-                if let Some(diagnostic) = e.render_diagnostic() {
-                    stash_diagnostic(&self.stashed_warnings, diagnostic);
-                }
+                stash_diagnostic(&self.stashed_warnings, removal_error_diagnostic(&e));
                 // Flash the terse headline in the header too, so the *why* lands
                 // at alt-x time and not only when the stash drains on exit. Unlike
                 // the keep paths (by-design retains → info ○), this arm is a genuine
-                // rejection — error (✗), matching the `render_diagnostic` error this
-                // path stashes. `to_string()` is the typed error's short single-line
-                // label (ANSI-stripped); take its first line so a multi-line chain
-                // can't smear the header.
+                // rejection — error (✗), matching the diagnostic this path
+                // stashes. Use the outer message's first line so a multi-line
+                // chain can't smear the header.
                 let headline = e.to_string();
                 let headline = headline.lines().next().unwrap_or(&headline);
                 self.flash_header(error_message(headline).to_string());
@@ -4279,6 +4276,177 @@ pub mod tests {
         );
     }
 
+    /// Ignored nested checkouts must survive alt-x, including one created by an
+    /// approved pre-remove hook after planning. Their index can contain data
+    /// that differs from the working file and must remain usable after refusal.
+    #[test]
+    fn test_apply_preserves_ignored_nested_worktree() {
+        use ansi_str::AnsiStr;
+
+        insta::allow_duplicates! {
+            for created_by_hook in [false, true] {
+                let mut test = worktrunk::testing::TestRepo::with_initial_commit();
+                fs::write(test.path().join(".gitignore"), ".worktrees/\n").unwrap();
+                test.run_git(&["add", ".gitignore"]);
+                test.run_git(&["commit", "-m", "ignore nested checkout directory"]);
+                let outer = test.add_worktree("feature");
+                let inner = outer.join(".worktrees/inner");
+                let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+                let mut approvals = Approvals::default();
+                let approvals_dir = worktrunk::testing::test_tempdir();
+
+                let original_index = if created_by_hook {
+                    let command = "git worktree add --detach .worktrees/inner && printf staged > .worktrees/inner/staged.txt && git -C .worktrees/inner add staged.txt && printf unstaged > .worktrees/inner/staged.txt && printf precious > .worktrees/inner/untracked.txt";
+                    fs::create_dir_all(test.path().join(".config")).unwrap();
+                    fs::write(
+                        test.path().join(".config/wt.toml"),
+                        format!("pre-remove = {command:?}\n"),
+                    )
+                    .unwrap();
+                    approvals
+                        .approve_commands(
+                            repo.project_identifier().unwrap(),
+                            vec![command.to_string()],
+                            &approvals_dir.path().join("approvals.toml"),
+                        )
+                        .unwrap();
+                    assert!(!inner.exists(), "the hook must create the nested checkout");
+                    None
+                } else {
+                    test.run_git(&["worktree", "add", "--detach", inner.to_str().unwrap()]);
+                    fs::write(inner.join("staged.txt"), "staged").unwrap();
+                    test.run_git_in(&inner, &["add", "staged.txt"]);
+                    fs::write(inner.join("staged.txt"), "unstaged").unwrap();
+                    fs::write(inner.join("untracked.txt"), "precious").unwrap();
+                    let registration = repo.worktree_at(&inner).git_dir().unwrap();
+                    Some(fs::read(registration.join("index")).unwrap())
+                };
+                assert_eq!(
+                    repo.worktree_at(&outer)
+                        .run_command(&["status", "--porcelain"])
+                        .unwrap(),
+                    "",
+                    "the ignored nested checkout must not make the outer worktree dirty"
+                );
+
+                let item = branched_picker_item("feature", &outer);
+                let token = item.output().to_string();
+                let items = Arc::new(Mutex::new(vec![item]));
+                let mut remover = test_remover(Arc::clone(&items), repo.clone());
+                remover.approvals = Arc::new(approvals);
+                if !created_by_hook {
+                    let error = remover
+                        .prepare_removal(RemoveTarget::WorktreePath(outer.clone()))
+                        .map(|_| ())
+                        .expect_err("planning must reject the existing nested checkout");
+                    assert!(matches!(
+                        error.downcast_ref::<worktrunk::git::GitError>(),
+                        Some(worktrunk::git::GitError::NestedWorktree { path, nested_path })
+                            if path == &outer && nested_path == &inner
+                    ));
+                }
+                let effect = remover.apply(token.clone());
+                if created_by_hook {
+                    assert!(matches!(effect, RemovalEffect::Dropped));
+                } else {
+                    assert!(matches!(effect, RemovalEffect::Kept));
+                }
+                super::finish_removals(&remover.removal_threads, std::io::sink()).unwrap();
+
+                assert_eq!(items.lock().unwrap().len(), 1);
+                assert_eq!(items.lock().unwrap()[0].output().as_ref(), token);
+                assert!(outer.exists(), "the outer checkout must remain in place");
+                assert!(repo.branch("feature").exists_locally().unwrap());
+                let fresh_repo = worktrunk::git::Repository::at(test.path()).unwrap();
+                assert!(
+                    fresh_repo
+                        .list_worktrees()
+                        .unwrap()
+                        .iter()
+                        .any(|worktree| worktree.path == inner),
+                    "the nested worktree registration must survive"
+                );
+                let nested = fresh_repo.worktree_at(&inner);
+                let registration = nested.git_dir().unwrap();
+                if let Some(original_index) = original_index {
+                    assert_eq!(
+                        fs::read(registration.join("index")).unwrap(),
+                        original_index
+                    );
+                }
+                assert_eq!(
+                    nested.run_command(&["show", ":staged.txt"]).unwrap(),
+                    "staged"
+                );
+                assert_eq!(
+                    fs::read_to_string(inner.join("staged.txt")).unwrap(),
+                    "unstaged"
+                );
+                assert_eq!(
+                    fs::read_to_string(inner.join("untracked.txt")).unwrap(),
+                    "precious"
+                );
+                assert_eq!(
+                    nested.run_command(&["status", "--porcelain"]).unwrap(),
+                    "AM staged.txt\n?? untracked.txt\n"
+                );
+
+                let warnings = remover.stashed_warnings.lock().unwrap();
+                assert_eq!(
+                    warnings.len(),
+                    1,
+                    "the refusal must explain the nested checkout"
+                );
+                let diagnostic = warnings[0]
+                    .ansi_strip()
+                    .replace(inner.to_str().unwrap(), "[INNER]")
+                    .replace(outer.to_str().unwrap(), "[OUTER]");
+                insta::assert_snapshot!(diagnostic, @"✗ Cannot remove worktree @ [OUTER]; contains worktree @ [INNER]");
+            }
+        }
+    }
+
+    /// A topology read failure must explain why alt-x kept the row, even when
+    /// the filesystem error has no typed Git diagnostic.
+    #[test]
+    fn test_apply_reports_unreadable_worktree_registration() {
+        use ansi_str::AnsiStr;
+        use worktrunk::git::ErrorExt;
+
+        let mut test = worktrunk::testing::TestRepo::with_initial_commit();
+        let path = test.add_worktree("feature");
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let registration = repo.git_common_dir().join("worktrees/broken");
+        fs::create_dir_all(registration.join("gitdir")).unwrap();
+
+        let item = branched_picker_item("feature", &path);
+        let token = item.output().to_string();
+        let items = Arc::new(Mutex::new(vec![item]));
+        let remover = test_remover(Arc::clone(&items), repo.clone());
+        let error = remover
+            .prepare_removal(RemoveTarget::WorktreePath(path.clone()))
+            .map(|_| ())
+            .expect_err("unreadable registration must block removal");
+        assert!(error.render_diagnostic().is_none());
+        assert!(error.root_cause().is::<std::io::Error>());
+
+        assert!(matches!(remover.apply(token.clone()), RemovalEffect::Kept));
+        assert!(remover.removal_threads.lock().unwrap().is_empty());
+        assert_eq!(items.lock().unwrap().len(), 1);
+        assert_eq!(items.lock().unwrap()[0].output().as_ref(), token);
+        assert!(path.exists());
+        assert!(repo.branch("feature").exists_locally().unwrap());
+        assert!(registration.join("gitdir").is_dir());
+
+        let warnings = remover.stashed_warnings.lock().unwrap();
+        assert_eq!(warnings.len(), 1);
+        let diagnostic = warnings[0]
+            .ansi_strip()
+            .replace(registration.to_str().unwrap(), "[REGISTRATION]")
+            .replace(&error.root_cause().to_string(), "[IO_ERROR]");
+        insta::assert_snapshot!(diagnostic, @"✗ Failed to read worktree registration @ [REGISTRATION]: [IO_ERROR]");
+    }
+
     /// A registration cleanup failure after staging leaves no checkout at the
     /// original path. Both drop and morph must retain the recovery diagnostic,
     /// even though neither can restore the original worktree row.
@@ -4496,8 +4664,11 @@ pub mod tests {
         let warnings = remover.stashed_warnings.lock().unwrap();
         assert_eq!(warnings.len(), 1);
         let diagnostic = warnings[0]
+            .replace(
+                &worktrunk::path::format_path_for_display(&path),
+                "[WORKTREE]",
+            )
             .replace('\\', "/")
-            .replace(&path.display().to_string().replace('\\', "/"), "[WORKTREE]")
             .replace(
                 &repo
                     .git_common_dir()

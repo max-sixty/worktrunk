@@ -1028,6 +1028,89 @@ fn prime_worktree_path_caches_matches_subprocess() {
     }
 }
 
+/// Git's own gitfile identity must survive whitespace and native bytes;
+/// resolving a trimmed or replacement-character neighbor is a different repo.
+#[cfg(unix)]
+#[test]
+fn git_dir_at_preserves_native_gitfile_target() {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    let test = TestRepo::with_initial_commit();
+    let names = [
+        b"store\twith\nwhitespace  ".as_slice(),
+        #[cfg(target_os = "linux")]
+        b"store-\xff  ".as_slice(),
+    ];
+    for (index, name) in names.into_iter().enumerate() {
+        let target = test
+            .root_path()
+            .parent()
+            .unwrap()
+            .join(std::ffi::OsString::from_vec(name.to_vec()));
+        let neighbor = PathBuf::from(target.to_string_lossy().trim_end());
+        let child = test
+            .root_path()
+            .parent()
+            .unwrap()
+            .join(format!("gitfile-{index}"));
+        let output = test
+            .git_command()
+            .arg("clone")
+            .arg(test.root_path().to_str().unwrap())
+            .arg(child.to_str().unwrap())
+            .run()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        // Move native paths through the filesystem rather than Cmd's UTF-8 arguments.
+        std::fs::rename(child.join(".git"), &target).unwrap();
+        std::fs::create_dir(&neighbor).unwrap();
+        let output = test
+            .git_command()
+            .current_dir(&neighbor)
+            .args(["init", "--bare"])
+            .run()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert_ne!(
+            dunce::canonicalize(&target).unwrap(),
+            dunce::canonicalize(&neighbor).unwrap()
+        );
+        // CRLF is a Git terminator; the trailing spaces belong to the path.
+        let mut content = b"gitdir: ".to_vec();
+        content.extend_from_slice(target.as_os_str().as_bytes());
+        content.extend_from_slice(b"\r\n");
+        std::fs::write(child.join(".git"), content).unwrap();
+        assert_eq!(
+            Repository::git_dir_at(&child).unwrap(),
+            Some(dunce::canonicalize(&target).unwrap())
+        );
+        let output = test
+            .git_command()
+            .current_dir(&child)
+            .args(["rev-parse", "--absolute-git-dir"])
+            .run()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "Git must accept the real gitfile: {output:?}"
+        );
+        let mut expected = dunce::canonicalize(target)
+            .unwrap()
+            .into_os_string()
+            .into_vec();
+        expected.push(b'\n');
+        assert_eq!(output.stdout, expected);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn git_dir_at_propagates_own_entry_io_failure() {
+    let directory = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(".git", directory.path().join(".git")).unwrap();
+    assert!(Repository::git_dir_at(directory.path()).is_err());
+}
+
 #[test]
 fn commit_details_many_fails_loudly_on_unknown_sha() {
     // `git log --no-walk` refuses the whole batch on a single bad ref. The
@@ -2403,6 +2486,7 @@ fn prune_worktree_entry_repeats_git_prune_test() {
         crate::git::WorktreePruneMode::Stale,
         crate::git::WorktreePruneMode::RemovedLive,
         crate::git::WorktreePruneMode::Force,
+        crate::git::WorktreePruneMode::RemovedLiveForce,
     ] {
         let err = repo.prune_worktree_entry(&live, mode).unwrap_err();
         assert!(err.to_string().contains("no longer stale"), "got: {err}");
@@ -2924,4 +3008,325 @@ fn repo_path_follows_a_relative_separate_git_dir_backlink() {
         work_tree,
         "a relative backlink must resolve against the store, not the cwd"
     );
+}
+
+#[test]
+fn nested_worktree_reads_fresh_topology() {
+    let mut test = TestRepo::with_initial_commit();
+    let source = test.add_worktree("source");
+    let repo = Repository::at(test.root_path()).unwrap();
+    // Warm the cache before adding another checkout: the guard must read
+    // topology after planning, independently of that cache.
+    repo.list_worktrees().unwrap();
+    let late = test.add_worktree_at_path("late", &source.join("late"));
+    assert_eq!(repo.nested_worktree(&source).unwrap(), Some(late));
+}
+
+#[cfg(unix)]
+#[test]
+fn nested_worktree_resolves_symlinked_parent() {
+    let mut test = TestRepo::with_initial_commit();
+    let source = test.add_worktree("source");
+    let nested = test.add_worktree_at_path("nested", &source.join("nested"));
+    let alias = test.root_path().parent().unwrap().join("source-alias");
+    std::os::unix::fs::symlink(&source, &alias).unwrap();
+    let repo = Repository::at(test.root_path()).unwrap();
+    assert_eq!(repo.nested_worktree(&alias).unwrap(), Some(nested));
+}
+
+#[test]
+fn nested_worktree_skips_missing_checkout() {
+    let mut test = TestRepo::with_initial_commit();
+    let source = test.add_worktree("source");
+    let nested = test.add_worktree_at_path("nested", &source.join("nested"));
+    std::fs::rename(&nested, test.root_path().parent().unwrap().join("saved")).unwrap();
+    let repo = Repository::at(test.root_path()).unwrap();
+    assert_eq!(repo.nested_worktree(&source).unwrap(), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn nested_worktree_refuses_unresolvable_checkout() {
+    let mut test = TestRepo::with_initial_commit();
+    let source = test.add_worktree("source");
+    let nested = test.add_worktree_at_path("nested", &source.join("nested"));
+    let saved = test.root_path().parent().unwrap().join("saved");
+    std::fs::rename(&nested, &saved).unwrap();
+    // A symlink loop is an actual resolution error, not evidence that the
+    // registered checkout is absent. Refuse cleanup rather than skip it.
+    std::os::unix::fs::symlink(&nested, &nested).unwrap();
+    let repo = Repository::at(test.root_path()).unwrap();
+    let err = repo.nested_worktree(&source).unwrap_err();
+    assert!(
+        err.to_string().contains("Failed to resolve worktree @"),
+        "{err:?}"
+    );
+    assert!(saved.join(".git").exists());
+}
+
+#[test]
+fn nested_worktree_refuses_incomplete_registration() {
+    let cases: [Option<&[u8]>; 4] = [
+        None,
+        Some(b""),
+        Some(b"not-a-gitdir-backlink"),
+        Some(b"\xff"),
+    ];
+    for contents in cases {
+        let mut test = TestRepo::with_initial_commit();
+        let outer = test.add_worktree("outer");
+        let inner = test.add_worktree_at_path("inner", &outer.join("inner"));
+        let repo = Repository::at(test.root_path()).unwrap();
+        let registration = repo.worktree_at(&inner).git_dir().unwrap();
+        let backlink = registration.join("gitdir");
+        let saved = std::fs::read(&backlink).unwrap();
+        std::fs::remove_file(&backlink).unwrap();
+        if let Some(contents) = contents {
+            std::fs::write(&backlink, contents).unwrap();
+        }
+        let error = repo.nested_worktree(&outer).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to read worktree registration"),
+            "{error:?}"
+        );
+        std::fs::write(&backlink, saved).unwrap();
+        assert_eq!(repo.nested_worktree(&outer).unwrap(), Some(inner));
+    }
+}
+
+#[test]
+fn nested_worktree_refuses_unreadable_registration() {
+    let mut test = TestRepo::with_initial_commit();
+    let outer = test.add_worktree("outer");
+    let inner = test.add_worktree_at_path("inner", &outer.join("inner"));
+    let repo = Repository::at(test.root_path()).unwrap();
+    let backlink = repo.worktree_at(&inner).git_dir().unwrap().join("gitdir");
+    let saved = std::fs::read(&backlink).unwrap();
+    std::fs::remove_file(&backlink).unwrap();
+    std::fs::create_dir(&backlink).unwrap();
+    let error = repo.nested_worktree(&outer).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("Failed to read worktree registration"),
+        "{error:?}"
+    );
+    std::fs::remove_dir(&backlink).unwrap();
+    std::fs::write(backlink, saved).unwrap();
+}
+
+#[test]
+fn nested_worktree_uses_git_generated_relative_backlinks() {
+    let mut test = TestRepo::with_initial_commit();
+    test.run_git(&["config", "worktree.useRelativePaths", "true"]);
+    let outer = test.add_worktree("outer");
+    let inner = test.add_worktree_at_path("inner", &outer.join("inner"));
+    let repo = Repository::at(test.root_path()).unwrap();
+    let backlink =
+        std::fs::read_to_string(repo.worktree_at(&inner).git_dir().unwrap().join("gitdir"))
+            .unwrap();
+    assert_eq!(
+        std::path::Path::new(backlink.trim()).is_relative(),
+        repo.config_bool("extensions.relativeWorktrees").unwrap()
+    );
+    assert_eq!(repo.nested_worktree(&outer).unwrap(), Some(inner));
+}
+
+#[test]
+fn nested_worktree_in_bare_repository() {
+    let seed = TestRepo::with_initial_commit();
+    let mut test = TestRepo::bare();
+    test.run_git(&[
+        "fetch",
+        seed.root_path().to_str().unwrap(),
+        "main:refs/heads/main",
+    ]);
+    let outer = test.add_worktree("outer");
+    let inner = test.add_worktree_at_path("inner", &outer.join("inner"));
+    let repo = Repository::at(&outer).unwrap();
+    assert_eq!(repo.nested_worktree(&outer).unwrap(), Some(inner));
+}
+
+#[cfg(unix)]
+#[test]
+fn nested_worktree_refuses_broken_registration_symlink() {
+    let mut test = TestRepo::with_initial_commit();
+    let outer = test.add_worktree("outer");
+    let registry = test.root_path().join(".git/worktrees");
+    std::os::unix::fs::symlink(registry.join("missing"), registry.join("broken")).unwrap();
+    let repo = Repository::at(test.root_path()).unwrap();
+    let error = repo.nested_worktree(&outer).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("Failed to read worktree registration"),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn nested_worktree_finds_main_with_separate_git_dir() {
+    let (_tmp, _store, main) = build_separate_git_dir_layout();
+    let outer = main.parent().unwrap().join("outer");
+    let git = || crate::testing::configure_git_env(crate::shell_exec::Cmd::new("git"));
+    let added = git()
+        .current_dir(&main)
+        .args(["worktree", "add", "-b", "outer", outer.to_str().unwrap()])
+        .run()
+        .unwrap();
+    assert!(added.status.success(), "{added:?}");
+    let nested_main = outer.join("main");
+    std::fs::rename(main, &nested_main).unwrap();
+    let repair = git()
+        .current_dir(&nested_main)
+        .args(["worktree", "repair"])
+        .run()
+        .unwrap();
+    assert!(repair.status.success(), "{repair:?}");
+    let repo = Repository::at(&outer).unwrap();
+    assert_eq!(repo.nested_worktree(&outer).unwrap(), Some(nested_main));
+}
+
+#[test]
+fn nested_worktree_refuses_unknown_main_with_separate_git_dir() {
+    let (_tmp, store, main) = build_separate_git_dir_layout();
+    let outer = main.parent().unwrap().join("outer");
+    let added = crate::testing::configure_git_env(crate::shell_exec::Cmd::new("git"))
+        .current_dir(&main)
+        .args(["worktree", "add", "-b", "outer", outer.to_str().unwrap()])
+        .run()
+        .unwrap();
+    assert!(added.status.success(), "{added:?}");
+    std::fs::remove_file(store.join("gitdir")).unwrap();
+    let repo = Repository::at(&outer).unwrap();
+    assert!(
+        repo.nested_worktree(&outer)
+            .unwrap_err()
+            .to_string()
+            .contains("Cannot determine the main worktree location")
+    );
+}
+
+#[test]
+fn nested_worktree_in_submodule_repository() {
+    let source = TestRepo::with_initial_commit();
+    let host = TestRepo::with_initial_commit();
+    host.run_git(&[
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        source.root_path().to_str().unwrap(),
+        "sub",
+    ]);
+    let main = host.root_path().join("sub");
+    let outer = main.join(".worktrees/outer");
+    let inner = outer.join("inner");
+    for (branch, path) in [("outer", &outer), ("inner", &inner)] {
+        let output = host
+            .git_command()
+            .current_dir(&main)
+            .args(["worktree", "add", "-b", branch, path.to_str().unwrap()])
+            .run()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+    }
+    let repo = Repository::at(&outer).unwrap();
+    assert_eq!(repo.nested_worktree(&outer).unwrap(), Some(inner));
+}
+
+/// Atomic unregister may overlap fresh topology reads. Neither partial metadata
+/// failures nor the registry teardown lock may obstruct an unrelated guard.
+#[test]
+fn nested_worktree_reads_during_atomic_unregister() {
+    let mut test = TestRepo::with_initial_commit();
+    let outer = test.add_worktree("outer");
+    let mut stale = Vec::new();
+    for index in 0..8 {
+        let path = test.add_worktree(&format!("stale-{index}"));
+        std::fs::remove_dir_all(&path).unwrap();
+        stale.push(path);
+    }
+    let repo = Repository::at(test.root_path()).unwrap();
+    let worker_repo = repo.clone();
+    let worker = std::thread::spawn(move || {
+        for path in stale {
+            worker_repo
+                .prune_worktree_entry(&path, crate::git::WorktreePruneMode::Stale)
+                .unwrap();
+        }
+    });
+    for _ in 0..32 {
+        assert_eq!(repo.nested_worktree(&outer).unwrap(), None);
+    }
+    worker.join().unwrap();
+    assert_eq!(repo.nested_worktree(&outer).unwrap(), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn nested_worktree_refuses_broken_registry_symlink() {
+    let mut test = TestRepo::with_initial_commit();
+    let outer = test.add_worktree("outer");
+    let registry = test.root_path().join(".git/worktrees");
+    let saved = test.root_path().join(".git/saved-worktrees");
+    std::fs::rename(&registry, &saved).unwrap();
+    std::os::unix::fs::symlink(test.root_path().join(".git/missing"), &registry).unwrap();
+    let repo = Repository::at(test.root_path()).unwrap();
+    let error = repo.nested_worktree(&outer).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("Failed to read worktree registry"),
+        "{error:?}"
+    );
+    std::fs::remove_file(&registry).unwrap();
+    std::fs::rename(saved, registry).unwrap();
+}
+
+#[test]
+fn nested_worktree_skips_regular_registry_files() {
+    let mut test = TestRepo::with_initial_commit();
+    let outer = test.add_worktree("outer");
+    let repo = Repository::at(test.root_path()).unwrap();
+    let stray = repo.git_common_dir().join("worktrees/leftover-note");
+    std::fs::write(&stray, "unrelated file").unwrap();
+    assert_eq!(repo.nested_worktree(&outer).unwrap(), None);
+    assert_eq!(std::fs::read_to_string(stray).unwrap(), "unrelated file");
+}
+
+/// Final unregister rechecks module storage after planning, even for a live
+/// removal whose checkout has already moved. Inspection failures keep metadata.
+#[test]
+fn prune_worktree_entry_preserves_submodule_storage() {
+    use crate::git::{StaleWorktreeWork, WorktreePruneMode};
+    for mode in [WorktreePruneMode::Stale, WorktreePruneMode::RemovedLive] {
+        let mut test = TestRepo::with_initial_commit();
+        let outer = test.add_worktree("outer");
+        let repo = Repository::at(test.root_path()).unwrap();
+        let registration = repo.worktree_at(&outer).git_dir().unwrap();
+        let modules = registration.join("modules");
+        std::fs::create_dir(&modules).unwrap();
+        // An empty container has no repository to preserve.
+        assert!(repo.require_no_submodule_storage(&outer).is_ok());
+        test.run_git(&["init", "--bare", modules.join("sub").to_str().unwrap()]);
+        std::fs::remove_file(outer.join(".git")).unwrap();
+        assert_eq!(
+            repo.stale_worktree_work(&outer).unwrap(),
+            Some(StaleWorktreeWork::SubmoduleRepositories)
+        );
+        let index = std::fs::read(registration.join("index")).unwrap();
+        let error = repo.prune_worktree_entry(&outer, mode).unwrap_err();
+        assert!(
+            error.to_string().contains("submodule repositories"),
+            "{error:#}"
+        );
+        assert_eq!(std::fs::read(registration.join("index")).unwrap(), index);
+        assert!(modules.join("sub/objects").is_dir());
+        repo.prune_worktree_entry(&outer, WorktreePruneMode::Force)
+            .unwrap();
+        assert!(!registration.exists());
+    }
 }

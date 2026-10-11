@@ -24,7 +24,7 @@ info:
     GIT_CONFIG_SYSTEM: /nonexistent/wt/gitconfig
     GIT_CONFIG_VALUE_0: "true"
     GIT_CONFIG_VALUE_1: "false"
-    GIT_EXEC_PATH: /usr/lib/git-core
+    GIT_EXEC_PATH: "[GIT_EXEC_PATH]"
     GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C

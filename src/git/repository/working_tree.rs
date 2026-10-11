@@ -121,18 +121,6 @@ fn temporary_path_exclusion(worktree_root: &Path, temporary_path: &Path) -> Opti
         .map(|relative| format!(":(top,exclude,literal){}", relative.to_slash_lossy()))
 }
 
-/// Parse `git submodule status` output and detect whether any submodule is initialized.
-///
-/// Status lines start with a one-character state marker:
-/// - `-` = not initialized
-/// - ` ` / `+` / `U` = initialized variants
-fn has_initialized_submodules_from_status(status: &str) -> bool {
-    status.lines().any(|line| match line.chars().next() {
-        Some('-') | None => false,
-        Some(_) => true,
-    })
-}
-
 /// A git operation a worktree is partway through, detected from the state files
 /// git writes under its git dir (`MERGE_HEAD`, `rebase-merge/`, `BISECT_LOG`, …).
 ///
@@ -198,15 +186,29 @@ fn sequencer_operation(git_dir: &Path) -> Option<InProgressOperation> {
 /// no longer exist — the case the caller is usually asking about, and the path it
 /// then shows the user. Normalizing rewrites spellings only, so it cannot make
 /// two directories compare equal.
-pub(super) fn registration_worktree_path(registration: &Path) -> Option<PathBuf> {
-    let content = std::fs::read_to_string(registration.join("gitdir")).ok()?;
+pub(super) fn registration_worktree_path(registration: &Path) -> std::io::Result<PathBuf> {
+    let content = std::fs::read_to_string(registration.join("gitdir"))?;
     let recorded = PathBuf::from(content.trim());
+    if recorded.file_name() != Some(std::ffi::OsStr::new(".git")) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Invalid worktree gitdir backlink",
+        ));
+    }
     let absolute = if recorded.is_relative() {
         registration.join(recorded)
     } else {
         recorded
     };
-    absolute.parent().map(canonicalize_with_parents)
+    absolute
+        .parent()
+        .map(canonicalize_with_parents)
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Invalid worktree gitdir backlink",
+            )
+        })
 }
 
 /// The git operation the worktree whose git dir is `git_dir` is partway
@@ -943,7 +945,8 @@ impl<'a> WorkingTree<'a> {
         // A git dir that can't be resolved at all is the strongest form of "not
         // this worktree": nothing there answers for it. Treating that as a
         // refusal keeps the failure closed.
-        let git_dir = Repository::git_dir_at(&self.path);
+        let git_dir = Repository::git_dir_at(&self.path)
+            .with_context(|| format!("Failed to read Git entry @ {}", self.path.display()))?;
         if git_dir.as_deref() == Some(common_dir) {
             return Ok(common_dir.to_path_buf());
         }
@@ -955,7 +958,9 @@ impl<'a> WorkingTree<'a> {
         let registrations = common_dir.join("worktrees");
         let registration =
             git_dir.filter(|git_dir| git_dir.parent() == Some(registrations.as_path()));
-        let occupant_registered_at = registration.as_deref().and_then(registration_worktree_path);
+        let occupant_registered_at = registration
+            .as_deref()
+            .and_then(|path| registration_worktree_path(path).ok());
         if let Some(registration) = registration
             && occupant_registered_at
                 .as_deref()
@@ -1185,13 +1190,76 @@ impl<'a> WorkingTree<'a> {
         }
     }
 
-    /// Check whether this worktree has initialized submodules.
-    ///
-    /// Uses `git submodule status --recursive` and parses its stable single-character
-    /// status prefix instead of relying on human-readable git error messages.
-    pub fn has_initialized_submodules(&self) -> anyhow::Result<bool> {
-        let output = self.run_command(&["submodule", "status", "--recursive"])?;
-        Ok(has_initialized_submodules_from_status(&output))
+    /// Own Git directories of initialized index gitlinks, including embedded
+    /// repositories without `.gitmodules`. `Some` also records dangling markers.
+    /// Recurse through physical checkouts inside this worktree, never through
+    /// parent repository discovery or symlinked checkouts outside the tree.
+    pub(super) fn initialized_submodule_repositories(
+        &self,
+    ) -> anyhow::Result<Option<Vec<PathBuf>>> {
+        let root = canonicalize(&self.path)?;
+        let git_dir = Repository::git_dir_at(&root)?.context("Worktree has no Git directory")?;
+        let mut pending = vec![(root.clone(), git_dir)];
+        let mut visited = HashSet::new();
+        let mut repositories = HashSet::new();
+        let mut initialized = false;
+        while let Some((checkout, git_dir)) = pending.pop() {
+            if !visited.insert(checkout.clone()) {
+                continue;
+            }
+            match std::fs::metadata(git_dir.join("index")) {
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error).context("Failed to inspect submodule index"),
+            }
+            let args = ["ls-files", "--stage", "-z"];
+            let output = self
+                .repo
+                .worktree_at(&checkout)
+                .git_command(&args)
+                .env("GIT_DIR", &git_dir)
+                .run()?;
+            if !output.status.success() {
+                return Err(CommandError::from_failed_output("git", &args, &output).into());
+            }
+            let mut gitlinks = HashSet::new();
+            for entry in output.stdout.split(|byte| *byte == 0) {
+                if !entry.starts_with(b"160000 ") {
+                    continue;
+                }
+                let separator = entry
+                    .iter()
+                    .position(|byte| *byte == b'\t')
+                    .context("Invalid gitlink entry from git ls-files --stage")?;
+                let path = super::git_path_from_bytes(&entry[separator + 1..])?;
+                if !gitlinks.insert(path.clone()) {
+                    continue;
+                }
+                let child = checkout.join(path);
+                let marker = child.join(".git");
+                match std::fs::symlink_metadata(&marker) {
+                    Ok(_) => initialized = true,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(error) => {
+                        return Err(error)
+                            .with_context(|| format!("Failed to inspect {}", marker.display()));
+                    }
+                }
+                let Some(git_dir) = Repository::git_dir_at(&child)
+                    .with_context(|| format!("Failed to read {}", marker.display()))?
+                else {
+                    continue;
+                };
+                repositories.insert(git_dir.clone());
+                let child = canonicalize(child)?;
+                if child.starts_with(&root) {
+                    pending.push((child, git_dir));
+                }
+            }
+        }
+        let mut repositories: Vec<_> = repositories.into_iter().collect();
+        repositories.sort();
+        Ok(initialized.then_some(repositories))
     }
 
     /// Back up the index, as a squash is about to commit it, to `refs/wt-backup/<branch>`.
@@ -1478,7 +1546,6 @@ fn run_checked(command: Cmd, args: &[String]) -> anyhow::Result<std::process::Ou
 
 #[cfg(test)]
 mod tests {
-    use super::has_initialized_submodules_from_status;
     use crate::git::{LineDiff, Repository};
     use crate::shell_exec::Cmd;
     use crate::testing::TestRepo;
@@ -1632,32 +1699,6 @@ mod tests {
                 .unwrap(),
             "dirty submodule contents cannot be staged in the parent repository"
         );
-    }
-
-    #[test]
-    fn submodule_status_empty_is_not_initialized() {
-        assert!(!has_initialized_submodules_from_status(""));
-    }
-
-    #[test]
-    fn submodule_status_dash_is_not_initialized() {
-        assert!(!has_initialized_submodules_from_status(
-            "-9c8b8ff2fe89b8f1c5b8e17cb60f0d0df47f71e0 submod"
-        ));
-    }
-
-    #[test]
-    fn submodule_status_space_is_initialized() {
-        assert!(has_initialized_submodules_from_status(
-            " 9c8b8ff2fe89b8f1c5b8e17cb60f0d0df47f71e0 submod (heads/main)"
-        ));
-    }
-
-    #[test]
-    fn submodule_status_plus_is_initialized() {
-        assert!(has_initialized_submodules_from_status(
-            "+9c8b8ff2fe89b8f1c5b8e17cb60f0d0df47f71e0 submod (heads/main)"
-        ));
     }
 
     #[test]

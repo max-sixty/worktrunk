@@ -6,6 +6,8 @@
 
 - **Interactive hooks**: foreground hooks can prompt when their commands run one at a time. On Unix, Ctrl-Z/fg suspend and resume foreground commands normally. (Breaking: hooks no longer receive JSON on stdin; pass context through template arguments. `wt step for-each` keeps JSON.) [Docs](https://worktrunk.dev/hook/#interactive-hooks) ([#3129](https://github.com/max-sixty/worktrunk/pull/3129), [#4400](https://github.com/max-sixty/worktrunk/pull/4400), thanks @endigma for requesting and @user753 and @willparsons for reporting)
 
+- **Merge another worktree’s branch**: `wt merge --branch feature/auth` runs the merge pipeline in that branch’s existing worktree, using its configuration, while your shell stays put. [Docs](https://worktrunk.dev/merge/) ([#4360](https://github.com/max-sixty/worktrunk/pull/4360), thanks @liuyinchu for implementing)
+
 - **Nushell integration requires 0.113 or newer** (Breaking). [Docs](https://worktrunk.dev/config/#wt-config-shell-init--manual-setup) ([#4400](https://github.com/max-sixty/worktrunk/pull/4400))
 
 - **Choose a worktree directory independently of its branch**: experimental `wt switch --create feature/JIRA-1234 --path ../dark-mode` overrides the path template for one worktree. Switch by branch or path as usual; `wt step relocate` can return it to the template location. [Docs](https://worktrunk.dev/switch/#custom-path) ([#4317](https://github.com/max-sixty/worktrunk/pull/4317), thanks @christowiz for requesting in [#1982](https://github.com/max-sixty/worktrunk/issues/1982))
@@ -13,6 +15,8 @@
 - **System config uses one platform path** (Breaking): `XDG_CONFIG_DIRS` is no longer searched, and macOS no longer falls back to `/etc/xdg`. Use `WORKTRUNK_SYSTEM_CONFIG_PATH` to override the location. [Docs](https://worktrunk.dev/config/#configuration-files) ([#4169](https://github.com/max-sixty/worktrunk/pull/4169))
 
 - **Prune runs pre-remove hooks concurrently across worktrees** (Breaking): hooks writing shared resources must coordinate those writes. `wt step prune --foreground` serializes worktree removals. [Docs](https://worktrunk.dev/step/#wt-step-prune) ([#4337](https://github.com/max-sixty/worktrunk/pull/4337))
+
+- **Worktrees with local submodule repositories** (Breaking): removal now requires explicit `--force`, which can discard submodule Git history. `wt merge` completes and keeps the source worktree. [Docs](https://worktrunk.dev/remove/#force-flags) ([#4393](https://github.com/max-sixty/worktrunk/pull/4393))
 
 - **Config views and shell integration advice**: `wt config show` lists installation and authentication advice on their own lines; config and approvals parse errors name the source file. Merge and removal suggest restarting the shell when integration is installed but inactive. ([#4351](https://github.com/max-sixty/worktrunk/pull/4351), [#4343](https://github.com/max-sixty/worktrunk/pull/4343))
 
@@ -36,7 +40,7 @@
 
 - **Removing several targets when one fails**: a failing hook or removal now reports the failure and continues with later targets, returning exit status 1 if any failed. An unhandled interrupt or SIGTERM cancels the remaining targets. ([#4357](https://github.com/max-sixty/worktrunk/pull/4357))
 
-- **Concurrent pruning and stale registrations**: pruning reports lock failures instead of treating them as success. Cleanup preserves staged changes and unfinished Git operations in missing worktrees unless forced. If Git metadata cleanup fails during removal, Worktrunk keeps the checkout for recovery. ([#4337](https://github.com/max-sixty/worktrunk/pull/4337), [#4361](https://github.com/max-sixty/worktrunk/pull/4361), [#4393](https://github.com/max-sixty/worktrunk/pull/4393))
+- **Worktree removal safeguards**: removal preserves nested worktrees of the same repository. Pruning reports cleanup errors and preserves staged changes and unfinished Git operations in missing worktrees unless forced. If unregistering fails, the checkout is retained for recovery. ([#4337](https://github.com/max-sixty/worktrunk/pull/4337), [#4361](https://github.com/max-sixty/worktrunk/pull/4361), [#4393](https://github.com/max-sixty/worktrunk/pull/4393))
 
 - **List and picker output**: clipped tables disclose how many rows are shown; JSON status symbols follow terminal order; the irregular-worktree flag becomes an outline `⚐`. Selected picker rows keep readable text after ANSI resets. ([#4333](https://github.com/max-sixty/worktrunk/pull/4333), [#4335](https://github.com/max-sixty/worktrunk/pull/4335), [#4334](https://github.com/max-sixty/worktrunk/pull/4334), [#4408](https://github.com/max-sixty/worktrunk/pull/4408), thanks @willparsons for reporting)
 
@@ -55,6 +59,8 @@
 - **The bare-repository recipe fetches tracking refs**: it configures the fetch refspec and remote HEAD, so worktrees created from that layout can see remote branches. [Docs](https://worktrunk.dev/tips-patterns/#bare-repository-layout) ([#4323](https://github.com/max-sixty/worktrunk/pull/4323), thanks @gitNetw0rk for reporting in [#4322](https://github.com/max-sixty/worktrunk/issues/4322))
 
 - **Config, shell and list help**: config state examples use supported subcommands and include post-remove logs; JSON help no longer claims dirty or stale branches are skipped. Shell setup and current-session checks live under `wt config shell --help`, including manual PowerShell setup. [Docs](https://worktrunk.dev/config/#wt-config-shell) ([#4363](https://github.com/max-sixty/worktrunk/pull/4363), [#4359](https://github.com/max-sixty/worktrunk/pull/4359), [#4344](https://github.com/max-sixty/worktrunk/pull/4344))
+
+- **Desktop documentation links**: section headings stay visible below the navigation bar. ([#4393](https://github.com/max-sixty/worktrunk/pull/4393))
 
 ### Internal
 

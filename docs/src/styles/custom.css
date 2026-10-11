@@ -722,6 +722,11 @@ figure.demo img {
     --sl-mobile-toc-height: 3rem;
   }
 
+  html[data-has-toc] {
+    /* Starlight's desktop offset omits the compact TOC restored here. */
+    scroll-padding-top: calc(1.5rem + var(--sl-nav-height) + var(--sl-mobile-toc-height));
+  }
+
   [data-has-toc] .lg\:sl-flex:has(> .right-sidebar-container) {
     flex-wrap: wrap;
   }

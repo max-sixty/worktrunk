@@ -70,7 +70,7 @@ Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...[0m
   [1m[36m-f[0m, [1m[36m--force[0m
           Force worktree removal[0m
           
-          Remove a dirty worktree, including staged, modified, and untracked files. Without this flag, removal fails if the worktree has any uncommitted changes.[0m
+          Discard uncommitted changes and allow removal of submodule repositories. This can discard the submodules' local Git history.[0m
 
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
@@ -150,10 +150,10 @@ Branches matching these conditions and with empty working trees are dimmed in [
 
 Worktrunk has two force flags for different situations:
 
-        Flag          Scope             When to use            
- ─────────────────── ──────── ──────────────────────────────── 
- [2m--force[0m ([2m-f[0m)        Worktree Worktree has uncommitted changes 
- [2m--force-delete[0m ([2m-D[0m) Branch   Branch has unmerged commits      
+        Flag          Scope                          When to use                         
+ ─────────────────── ──────── ────────────────────────────────────────────────────────── 
+ [2m--force[0m ([2m-f[0m)        Worktree Worktree has uncommitted changes or submodule repositories 
+ [2m--force-delete[0m ([2m-D[0m) Branch   Branch has unmerged commits                                
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m--force[0m[2m       # Remove dirty worktree[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m-D[0m[2m            # Delete unmerged branch[0m

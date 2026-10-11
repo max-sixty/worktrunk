@@ -121,11 +121,12 @@ fn test_merge_with_directory_named_like_target(merge_scenario: (TestRepo, PathBu
 #[rstest]
 fn test_merge_as_git_subcommand(merge_scenario: (TestRepo, PathBuf)) {
     let (repo, feature_wt) = merge_scenario;
+    let git_exec_path = repo.git_output(&["--exec-path"]);
 
-    // Merge with GIT_EXEC_PATH set (simulating `git wt merge ...`)
+    // Git exports its real helper directory when invoking `git wt merge ...`.
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(&repo, "merge", &["main"], Some(&feature_wt));
-        cmd.env("GIT_EXEC_PATH", "/usr/lib/git-core");
+        cmd.env("GIT_EXEC_PATH", git_exec_path);
         cmd
     });
 }

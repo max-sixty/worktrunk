@@ -59,7 +59,7 @@ Worktrunk has two force flags for different situations:
 
 | Flag | Scope | When to use |
 |------|-------|-------------|
-| `--force` (`-f`) | Worktree | Worktree has uncommitted changes |
+| `--force` (`-f`) | Worktree | Worktree has uncommitted changes or submodule repositories |
 | `--force-delete` (`-D`) | Branch | Branch has unmerged commits |
 
 ```console
@@ -151,8 +151,8 @@ Options:
   -f, --force
           Force worktree removal
 
-          Remove a dirty worktree, including staged, modified, and untracked files. Without this
-          flag, removal fails if the worktree has any uncommitted changes.
+          Discard uncommitted changes and allow removal of submodule repositories. This can discard
+          the submodules' local Git history.
 
   -h, --help
           Print help (see a summary with '-h')
