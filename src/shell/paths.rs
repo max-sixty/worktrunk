@@ -523,9 +523,9 @@ mod tests {
     #[test]
     fn test_powershell_profile_from() {
         let sh = |script: &str| {
-            std::process::Command::new("/bin/sh")
+            crate::shell_exec::Cmd::new("/bin/sh")
                 .args(["-c", script])
-                .output()
+                .run()
         };
         assert_eq!(
             powershell_profile_from(&sh("echo /custom/powershell/profile.ps1"), None),
@@ -535,7 +535,7 @@ mod tests {
             powershell_profile_from(&sh("echo /custom/profile.ps1; exit 1"), None),
             Ok(None)
         );
-        let missing = std::process::Command::new("/nonexistent/pwsh-xxxxxxxx").output();
+        let missing = crate::shell_exec::Cmd::new("/nonexistent/pwsh-xxxxxxxx").run();
         assert_eq!(powershell_profile_from(&missing, None), Ok(None));
         assert_eq!(powershell_profile_from(&sh("kill -INT $$"), None), Err(2));
         assert_eq!(powershell_profile_from(&sh("kill -TERM $$"), None), Err(15));

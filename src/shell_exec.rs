@@ -1060,9 +1060,27 @@ fn run_with_timeout_impl(
         let output = match collect() {
             Ok(output) => output,
             Err(error) => {
+                // A child already ended by a native INT/TERM stays cancelled even
+                // when a descendant holding its pipes ran the readers to the
+                // deadline; reporting `TimedOut` would let callers fall back as
+                // if the command were merely slow. Reading that status reaps the
+                // leader, so its pgid is pinned only by surviving members — the
+                // exposure `terminate_process_group` describes for tether.
+                let exited = child.try_wait().ok().flatten();
                 kill_timed_out_tree(child.id());
                 let _ = child.kill();
                 let _ = child.wait();
+                if let Some(status) = exited.filter(|status| {
+                    use signal_hook::consts::{SIGINT, SIGTERM};
+                    use std::os::unix::process::ExitStatusExt;
+                    matches!(status.signal(), Some(SIGINT | SIGTERM))
+                }) {
+                    return Ok(std::process::Output {
+                        status,
+                        stdout: Vec::new(),
+                        stderr: Vec::new(),
+                    });
+                }
                 return Err(error);
             }
         };
@@ -1097,6 +1115,9 @@ fn run_with_timeout_impl(
 /// and an expired direct wait leaves the child unreaped. An exited child stays
 /// a zombie reserving its pid until the caller's own `wait()`. It cannot name a different
 /// process group by the time the signal lands.
+///
+/// The one exception is a leader a native INT/TERM already ended, which the
+/// caller reaps to read that status; its surviving members still pin the pgid.
 ///
 /// The same unreaped zombie means the escalation's liveness probe reads the
 /// group as alive for the entire grace, so its final SIGKILL fires even when
@@ -3161,6 +3182,26 @@ print(*counts)
             elapsed < Duration::from_secs(10),
             "timeout waited on the grandchild: {elapsed:?}"
         );
+    }
+
+    /// A child that INT/TERM already ended keeps that status when a descendant
+    /// holds its pipes past the deadline, instead of reading as `TimedOut`.
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_timeout_keeps_native_interrupt_with_pipe_holding_descendant() {
+        use signal_hook::consts::{SIGINT, SIGTERM};
+        use std::os::unix::process::ExitStatusExt;
+        for (name, signal) in [("INT", SIGINT), ("TERM", SIGTERM)] {
+            let start = std::time::Instant::now();
+            let output = Cmd::new("sh")
+                .args(["-c", &format!("sleep 30 & kill -{name} $$")])
+                // Long enough that `kill` lands first even under suite load.
+                .timeout(Duration::from_secs(2))
+                .run()
+                .unwrap();
+            assert_eq!(output.status.signal(), Some(signal));
+            assert!(start.elapsed() < Duration::from_secs(20));
+        }
     }
 
     #[test]

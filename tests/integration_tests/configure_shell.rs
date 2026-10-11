@@ -1944,6 +1944,55 @@ fn test_powershell_profile_query_cancellation_stops_install(
     );
 }
 
+/// A `pwsh` killed by INT/TERM while a descendant still holds its output
+/// pipes cancels install too, rather than reading as a timeout past the probe
+/// deadline and falling back to the conventional profile.
+#[cfg(unix)]
+#[rstest]
+#[case::sigint("INT", 130)]
+#[case::sigterm("TERM", 143)]
+fn test_powershell_profile_query_signal_with_pipe_holding_descendant(
+    repo: TestRepo,
+    temp_home: TempDir,
+    #[case] signal: &str,
+    #[case] exit_code: i32,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    let home = canonical_temp_home(&temp_home);
+    let mock_bin = temp_home.path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    let pwsh = mock_bin.join("pwsh");
+    fs::write(&pwsh, format!("#!/bin/sh\nsleep 60 &\nkill -{signal} $$\n")).unwrap();
+    fs::set_permissions(&pwsh, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths = vec![mock_bin];
+    paths.extend(std::env::split_paths(&path));
+    cmd.env("PATH", std::env::join_paths(paths).unwrap());
+    // Expire the probe before the descendant releases the pipes, yet late
+    // enough that the mock's `kill` lands first even under suite load.
+    cmd.env("WORKTRUNK_TEST_PROBE_TIMEOUT_MS", "5000");
+    cmd.env("WORKTRUNK_TEST_POWERSHELL_ENV", "1");
+    cmd.args(["config", "shell", "install", "powershell", "--yes"])
+        .current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+
+    assert_eq!(
+        crate::common::shell_exit_code(&output.status),
+        Some(exit_code),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !home
+            .join(".config/powershell/Microsoft.PowerShell_profile.ps1")
+            .exists()
+    );
+}
+
 #[rstest]
 fn test_uninstall_scan_removes_custom_cmd_nushell_file(repo: TestRepo, temp_home: TempDir) {
     let home = canonical_temp_home(&temp_home);
