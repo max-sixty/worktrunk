@@ -525,14 +525,16 @@ mod tests {
             command.args([
                 "--exact",
                 "signal_forwarder::tests::operation_cancellation_survives_scope_retirement_and_resets",
-            ]).env(CHILD_ENV, "1");
-            assert!(
-                crate::shell_exec::spawn(&mut command)
-                    .unwrap()
-                    .wait()
-                    .unwrap()
-                    .success()
-            );
+            ]).env(CHILD_ENV, "1").stdout(std::process::Stdio::piped());
+            let output = crate::shell_exec::spawn(&mut command)
+                .unwrap()
+                .wait_with_output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(output.status.success(), "{stdout}");
+            // `--exact` matching nothing also exits 0; require that the child
+            // actually ran this test.
+            assert!(stdout.contains(" 1 passed;"), "{stdout}");
             return;
         }
 
