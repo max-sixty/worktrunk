@@ -1704,6 +1704,54 @@ fn test_config_show_full_tea_login_discovery(
     );
 }
 
+/// Each forge's diagnostics use the shared probe while rendering only the
+/// CLI selected by the repository's remote.
+#[rstest]
+#[case::github("github.com", "gh", "glab")]
+#[case::gitlab("gitlab.com", "glab", "gh")]
+fn test_config_show_full_forge_diagnostics(
+    mut repo: TestRepo,
+    #[case] host: &str,
+    #[case] selected_cli: &str,
+    #[case] other_cli: &str,
+) {
+    use crate::common::mock_commands::MockConfig;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    let mock_bin = repo.mock_bin_path().unwrap();
+    MockConfig::new("tea")
+        .version("tea version development (mock)")
+        .command("logins list --output", MockResponse::output("[]"))
+        .command("_default", MockResponse::exit(1))
+        .write(mock_bin);
+    MockConfig::new("az")
+        .command("_default", MockResponse::exit(1))
+        .write(mock_bin);
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        &format!("https://{host}/example/repo.git"),
+    ]);
+    let output = repo
+        .wt_command()
+        .args(["config", "show", "--full"])
+        .env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let plain = stdout.ansi_strip();
+    assert!(
+        plain.contains(&format!("{selected_cli} installed but not authenticated")),
+        "{plain}"
+    );
+    assert!(
+        !plain.contains(&format!("{other_cli} installed")),
+        "{plain}"
+    );
+}
+
 /// Diagnostics stop after a tea login probe is natively interrupted, before
 /// starting the next tool's probe.
 #[cfg(unix)]
