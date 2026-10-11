@@ -6161,7 +6161,12 @@ fn test_switch_pr_self_hosted_tea_authed_dispatches_to_gitea(
 /// GitHub. The mock `gh api` succeeds, so the PR is checked out and the
 /// user never sees a wrapped error.
 #[rstest]
-fn test_switch_pr_self_hosted_defaults_to_github(#[from(repo_with_remote)] mut repo: TestRepo) {
+#[case::unrelated_tea_login(true)]
+#[cfg_attr(unix, case::tea_not_installed(false))]
+fn test_switch_pr_self_hosted_defaults_to_github(
+    #[from(repo_with_remote)] mut repo: TestRepo,
+    #[case] tea_installed: bool,
+) {
     repo.add_worktree("feature-auth");
     repo.run_git(&["push", "origin", "feature-auth"]);
 
@@ -6204,25 +6209,37 @@ fn test_switch_pr_self_hosted_defaults_to_github(#[from(repo_with_remote)] mut r
         "html_url": "https://forge.example.com/owner/test-repo/pull/101"
     }"#;
     let mock_bin = setup_mock_gh_for_pr(&repo, gh_response);
-    // A login on another Gitea host must not claim this remote.
-    MockConfig::new("tea")
-        .command(
-            "logins list --output",
-            MockResponse::output(r#"[{"url":"https://different-forge.example.com","ssh_host":"different-ssh.example.com"}]"#),
-        )
-        .command("_default", MockResponse::exit(1))
-        .write(&mock_bin);
+    if tea_installed {
+        // A login on another Gitea host must not claim this remote.
+        MockConfig::new("tea")
+            .command(
+                "logins list --output",
+                MockResponse::output(r#"[{"url":"https://different-forge.example.com","ssh_host":"different-ssh.example.com"}]"#),
+            )
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(which::which("git").unwrap(), mock_bin.join("git")).unwrap();
     let call_log = tempfile::tempdir().unwrap();
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
+        if !tea_installed {
+            // Exclude any real tea on the host; the mock gh and git suffice.
+            cmd.env("PATH", &mock_bin);
+        }
         cmd.env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path());
         assert_cmd_snapshot!("switch_pr_self_hosted_defaults_to_github", cmd);
     });
-    let calls = fs::read_to_string(call_log.path().join("tea.calls")).unwrap();
-    assert_eq!(calls.trim(), "logins list --output json");
+    if tea_installed {
+        let calls = fs::read_to_string(call_log.path().join("tea.calls")).unwrap();
+        assert_eq!(calls.trim(), "logins list --output json");
+    } else {
+        assert!(!call_log.path().join("tea.calls").exists());
+    }
 }
 
 /// A configured SSH hostname can differ from the web hostname. tea's login
