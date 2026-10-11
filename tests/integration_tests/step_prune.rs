@@ -2655,7 +2655,7 @@ elif branch == 'b':
         .into_owned();
     assert!(stderr.contains("a: important refusal"), "{stderr}");
     assert!(
-        stderr.contains("pre-remove command failed: one: exit status: 3"),
+        stderr.contains("pre-remove user:one failed (exit code 3)"),
         "{stderr}"
     );
     assert!(
@@ -2755,10 +2755,7 @@ elif branch == 'a':
         .ansi_strip()
         .into_owned();
     assert!(stderr.contains("a: important refusal"), "{stderr}");
-    assert!(
-        stderr.contains("pre-remove command failed: exit status: 3"),
-        "{stderr}"
-    );
+    assert!(stderr.contains("failed (exit code 3)"), "{stderr}");
     assert!(
         stderr.contains("To skip pre-remove hooks, re-run with --no-hooks"),
         "{stderr}"

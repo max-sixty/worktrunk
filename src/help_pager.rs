@@ -102,7 +102,8 @@ fn pipe_through_pager(pager_cmd: &str, help_text: &str) -> Result<bool> {
             }
             match error.downcast_ref::<WorktrunkError>() {
                 Some(WorktrunkError::ChildProcessExited {
-                    signal: Some(_), ..
+                    physical_signal: Some(_),
+                    ..
                 }) => Err(error).with_context(|| format!("Help pager `{pager_cmd}` failed")),
                 Some(WorktrunkError::ChildProcessExited { code, .. })
                     if !matches!(*code, 126 | 127) =>
@@ -185,7 +186,7 @@ mod tests {
         assert!(matches!(
             error.downcast_ref::<worktrunk::git::WorktrunkError>(),
             Some(worktrunk::git::WorktrunkError::ChildProcessExited {
-                signal: Some(9),
+                physical_signal: Some(9),
                 ..
             })
         ));

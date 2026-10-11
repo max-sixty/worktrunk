@@ -140,9 +140,9 @@ mod tests {
 
     fn child_exit(code: i32, signal: Option<i32>) -> anyhow::Error {
         WorktrunkError::ChildProcessExited {
+            cancellation: None,
             code,
-            message: "rebase failed".to_string(),
-            signal,
+            physical_signal: signal,
         }
         .into()
     }

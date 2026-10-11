@@ -218,7 +218,7 @@ pub use expansion::{
     validate_list_column_template, validate_template, validate_template_syntax, vars_available_in,
     vars_map_to_value,
 };
-pub use hooks::HooksConfig;
+pub use hooks::{HookSource, HooksConfig};
 pub use project::{
     ProjectCiConfig, ProjectCommitConfig, ProjectCommitGenerationConfig, ProjectConfig,
     ProjectForgeConfig, ProjectListConfig, valid_project_config_keys,

@@ -103,7 +103,8 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
         Ok(child) => child,
         Err(e) => {
             trace.fail(&e);
-            tracing::debug!(error = %e, "Failed to spawn pager: {}", e);
+            let error = anyhow::Error::new(e);
+            tracing::debug!(error = %format!("{error:#}"), "Failed to spawn pager");
             return text.to_string();
         }
     };

@@ -485,8 +485,7 @@ sys.exit(code)
         // Verbose trace records retain the physical child status. A separate
         // user-facing failure for cancellation would be misleading.
         assert!(
-            !shell.output.contains("✗ terminated by signal")
-                && !shell.output.contains("✗ exit status:"),
+            !shell.output.contains("✗ killed by signal") && !shell.output.contains("✗ exit code"),
             "{}",
             shell.output
         );

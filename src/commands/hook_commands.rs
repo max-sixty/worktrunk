@@ -28,10 +28,10 @@ use super::command_executor::{
     CommandContext, FailureStrategy, PreparedStep, prepare_steps, render_template_preview,
 };
 use super::context::CommandEnv;
-use super::hook_filter::HookSource;
 use super::hooks::{HookAnnouncer, prepare_and_check, run_hooks_foreground};
 use super::project_config::command_label;
 use super::template_vars::TemplateVars;
+use worktrunk::config::HookSource;
 
 fn run_post_hook(
     ctx: &CommandContext,
