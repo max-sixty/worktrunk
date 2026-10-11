@@ -154,6 +154,29 @@ fn test_configure_shell_rejects_unsafe_cmd_without_modifying_rc(
     assert_eq!(fs::read_to_string(&zshrc_path).unwrap(), original);
 }
 
+/// An rc path that can't be read as a file fails installation with the read
+/// error and leaves the path untouched.
+#[rstest]
+fn test_configure_shell_bashrc_directory_fails(repo: TestRepo, temp_home: TempDir) {
+    let bashrc = temp_home.path().join(".bashrc");
+    fs::create_dir(&bashrc).unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.args(["config", "shell", "install", "bash", "--yes"])
+        .current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("Failed to configure bash: Failed to read"),
+        "{stderr}"
+    );
+    assert!(bashrc.is_dir());
+}
+
 #[rstest]
 fn test_configure_shell_already_exists(repo: TestRepo, temp_home: TempDir) {
     // Create a fake .zshrc file with the line already present

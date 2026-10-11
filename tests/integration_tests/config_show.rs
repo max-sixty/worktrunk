@@ -4812,6 +4812,42 @@ fn test_config_show_full_continues_after_failed_powershell_query(
     assert!(!mock_calls(call_log.path(), "gh").is_empty());
 }
 
+/// An ordinary shell scan failure — an rc path that can't be read as a file —
+/// reports the shell status as undetermined and carries on to the forge
+/// diagnostics.
+#[cfg(unix)]
+#[rstest]
+fn test_config_show_full_continues_after_failed_shell_scan(mut repo: TestRepo, temp_home: TempDir) {
+    use crate::common::mock_commands::mock_calls;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/example/repo.git",
+    ]);
+    fs::create_dir(temp_home.path().join(".bashrc")).unwrap();
+
+    let call_log = TempDir::new().unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
+        .args(["config", "show", "--full"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let output = cmd.output().unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(
+        format!("{stdout}{stderr}").contains("Could not determine shell status"),
+        "{stdout}{stderr}"
+    );
+    assert!(!mock_calls(call_log.path(), "gh").is_empty());
+}
+
 /// Run `wt config plugins <tool> <action>` and accept the prompt, returning the
 /// argv of every `<tool>` the run spawned — argv\[0\] excluded, as `mock_calls`
 /// records it.

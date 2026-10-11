@@ -1762,6 +1762,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_shell_config_error_config_paths_ordinary_failure() {
+        let error = ShellConfigError::config_paths(Shell::Bash, std::io::Error::other("no home"));
+        assert!(
+            matches!(&error, ShellConfigError::Failed(message)
+                if message == "Failed to get config paths for bash: no home"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
     fn test_config_action_description() {
         assert_eq!(ConfigAction::Added.description(), "Added");
         assert_eq!(

@@ -590,6 +590,26 @@ mod tests {
         );
     }
 
+    /// Only the cancelled query's own error reads as an interruption; an
+    /// ordinary `Interrupted` io error stays an ordinary failure.
+    #[cfg(unix)]
+    #[test]
+    fn test_profile_query_interruption() {
+        for signal in [2, 15] {
+            let cancelled = std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                ProfileQueryInterrupted(signal),
+            );
+            assert_eq!(profile_query_interruption(&cancelled), Some(signal));
+            assert_eq!(
+                cancelled.to_string(),
+                format!("PowerShell profile query interrupted by signal {signal}")
+            );
+        }
+        let ordinary = std::io::Error::from(std::io::ErrorKind::Interrupted);
+        assert_eq!(profile_query_interruption(&ordinary), None);
+    }
+
     #[test]
     fn test_nushell_vendor_autoload_dir_prefers_queried() {
         let home = PathBuf::from("/home/user");
