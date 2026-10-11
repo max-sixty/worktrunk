@@ -1392,7 +1392,8 @@ fn scan_for_uninstall(shell_filter: Option<Shell>) -> Result<UninstallScanResult
             }
 
             Shell::Bash | Shell::Zsh | Shell::PowerShell => {
-                let paths = shell::line_based_config_paths(shell, &home);
+                let paths = shell::line_based_config_paths(shell, &home)
+                    .map_err(|e| format!("Failed to get config paths for {shell}: {e}"))?;
                 let mut found = false;
 
                 for path in &paths {
@@ -1932,8 +1933,16 @@ mod tests {
         // Fish and Nushell are configured via wrapper files, not line-based rc
         // edits, so the line-based path list is empty for them.
         let home = Path::new("/home/user");
-        assert!(shell::line_based_config_paths(Shell::Fish, home).is_empty());
-        assert!(shell::line_based_config_paths(Shell::Nushell, home).is_empty());
+        assert!(
+            shell::line_based_config_paths(Shell::Fish, home)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            shell::line_based_config_paths(Shell::Nushell, home)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
