@@ -1029,6 +1029,9 @@ fn print_switch_message_if_changed(
         } else {
             print_shell_activation_hint(&repo);
         }
+        // Those hints treat a failed shell scan as "not configured"; a
+        // cancelled one stops here, before the announced hooks spawn.
+        crate::commands::configure_shell::require_scan_not_cancelled()?;
     }
     Ok(())
 }

@@ -225,6 +225,10 @@ fn powershell_profile_from(
         .and_then(|output| parse_powershell_profile(&String::from_utf8_lossy(&output.stdout))))
 }
 
+/// The profile query's answer, or the signal that cancelled it.
+#[cfg(unix)]
+static POWERSHELL_PROFILE: OnceLock<Result<Option<PathBuf>, i32>> = OnceLock::new();
+
 /// The current-user, current-host profile (`$PROFILE.CurrentUserCurrentHost`)
 /// the installed `pwsh` loads, queried at most once per process so install,
 /// uninstall and detection all act on the same answer.
@@ -236,8 +240,7 @@ fn powershell_profile_from(
 /// SIGTERM to wt is latched by the command operation and read back here.
 #[cfg(unix)]
 fn queried_powershell_profile() -> std::io::Result<Option<PathBuf>> {
-    static CACHE: OnceLock<Result<Option<PathBuf>, i32>> = OnceLock::new();
-    CACHE
+    POWERSHELL_PROFILE
         .get_or_init(|| {
             let output = crate::shell_exec::Cmd::new("pwsh")
                 .args([
@@ -267,6 +270,20 @@ fn queried_powershell_profile() -> std::io::Result<Option<PathBuf>> {
                 format!("PowerShell profile query interrupted by signal {signal}"),
             )
         })
+}
+
+/// The signal that cancelled this process's PowerShell profile query, if it
+/// ran and was cancelled. Shell-scan errors reach most consumers as strings,
+/// so one that would fall back on a failed scan checks this first.
+pub fn powershell_query_interruption() -> Option<i32> {
+    #[cfg(unix)]
+    {
+        POWERSHELL_PROFILE.get()?.as_ref().err().copied()
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
 }
 
 /// Get PowerShell profile paths in order of preference.

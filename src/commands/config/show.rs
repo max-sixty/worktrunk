@@ -27,7 +27,9 @@ use worktrunk::styling::{
 };
 
 use crate::cli::{SwitchFormat, version_str};
-use crate::commands::configure_shell::{ConfigAction, ConfigureResult, scan_shell_configs};
+use crate::commands::configure_shell::{
+    ConfigAction, ConfigureResult, require_scan_not_cancelled, scan_shell_configs,
+};
 use crate::commands::list::ci_status::CiToolsStatus;
 use crate::help_pager::show_help_in_pager;
 use crate::llm::test_commit_generation;
@@ -1362,7 +1364,9 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
     // active/inactive warning so the warning text can distinguish "installed but
     // not loaded" (▲ not active) from "never installed" (▲ not configured).
     let cmd = crate::binary_name();
-    let scan_result = match scan_shell_configs(None, true, &cmd) {
+    let scan_result = scan_shell_configs(None, true, &cmd);
+    require_scan_not_cancelled()?;
+    let scan_result = match scan_result {
         Ok(r) => r,
         Err(e) => {
             writeln!(

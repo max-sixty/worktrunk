@@ -513,6 +513,18 @@ fn should_auto_configure_powershell() -> bool {
     }
 }
 
+/// Stop with the cancellation a shell scan observed, before a consumer that
+/// treats scan failures as "not configured" or a hint goes on to its next step.
+/// The scan's string errors can't carry the interruption themselves.
+pub(crate) fn require_scan_not_cancelled() -> anyhow::Result<()> {
+    match shell::powershell_query_interruption() {
+        Some(signal) => {
+            Err(worktrunk::git::WorktrunkError::Interrupted { signal, hint: None }.into())
+        }
+        None => Ok(()),
+    }
+}
+
 /// Read or apply shell integration files. Completion planning belongs to the
 /// installation flow so a completion error cannot hide integration status.
 pub fn scan_shell_configs(

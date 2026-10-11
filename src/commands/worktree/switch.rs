@@ -1967,6 +1967,9 @@ impl SwitchPipeline<'_> {
             let skip_prompt = execute.is_some();
             let _ = prompt_shell_integration(repo, config, binary_name, skip_prompt);
         }
+        // The output hints and the offer above scan shell configs and treat a
+        // failure as "not configured"; a cancelled scan stops before hooks.
+        crate::commands::configure_shell::require_scan_not_cancelled()?;
 
         // Build template vars for base/target context (used by both hooks and
         // --execute). "base" is the source worktree the user switched from (all

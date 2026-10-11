@@ -84,7 +84,8 @@ use worktrunk::styling::{
 
 use crate::commands::configure_shell::{
     ConfigAction, UninstallScanResult, apply_confirmed_shell_config, collect_legacy_cleanups,
-    format_matched_lines, preview_shell_completions, prompt_for_install, scan_shell_configs,
+    format_matched_lines, preview_shell_completions, prompt_for_install,
+    require_scan_not_cancelled, scan_shell_configs,
 };
 
 /// Git config key tracking how many times the shell-integration install hint
@@ -491,8 +492,9 @@ pub fn prompt_shell_integration(
 
     // Scan ALL shells (same as `wt config shell install`)
     // Only includes shells where config files already exist
-    let mut scan = scan_shell_configs(None, true, binary_name)
-        .map_err(|e| anyhow::anyhow!("Failed to scan shell configs: {e}"))?;
+    let scan = scan_shell_configs(None, true, binary_name);
+    require_scan_not_cancelled()?;
+    let mut scan = scan.map_err(|e| anyhow::anyhow!("Failed to scan shell configs: {e}"))?;
 
     // No config files exist - show install hint
     if scan.configured.is_empty() {

@@ -4729,6 +4729,89 @@ fn test_plugins_codex_install_plugin_add_fails(mut repo: TestRepo, temp_home: Te
     });
 }
 
+/// A PowerShell profile query that INT/TERM cancels stops `config show --full`
+/// at the shell section, before the forge diagnostics probe `gh`.
+#[cfg(unix)]
+#[rstest]
+#[case::sigint("INT", 130)]
+#[case::sigterm("TERM", 143)]
+fn test_config_show_full_stops_after_cancelled_powershell_query(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+    #[case] signal: &str,
+    #[case] exit_code: i32,
+) {
+    use crate::common::mock_commands::mock_calls;
+    use std::os::unix::fs::PermissionsExt;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/example/repo.git",
+    ]);
+    let pwsh = repo.mock_bin_path().unwrap().join("pwsh");
+    fs::write(&pwsh, format!("#!/bin/sh\nkill -{signal} $$\n")).unwrap();
+    fs::set_permissions(&pwsh, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let call_log = TempDir::new().unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
+        .args(["config", "show", "--full"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let output = cmd.output().unwrap();
+
+    assert_eq!(
+        crate::common::shell_exit_code(&output.status),
+        Some(exit_code),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(mock_calls(call_log.path(), "gh"), Vec::<String>::new());
+}
+
+/// A `pwsh` that fails without being cancelled leaves `config show --full` on
+/// its ordinary path, through to the forge diagnostics.
+#[cfg(unix)]
+#[rstest]
+fn test_config_show_full_continues_after_failed_powershell_query(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    use crate::common::mock_commands::mock_calls;
+    use std::os::unix::fs::PermissionsExt;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/example/repo.git",
+    ]);
+    let pwsh = repo.mock_bin_path().unwrap().join("pwsh");
+    fs::write(&pwsh, "#!/bin/sh\nexit 130\n").unwrap();
+    fs::set_permissions(&pwsh, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let call_log = TempDir::new().unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
+        .args(["config", "show", "--full"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let output = cmd.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!mock_calls(call_log.path(), "gh").is_empty());
+}
+
 /// Run `wt config plugins <tool> <action>` and accept the prompt, returning the
 /// argv of every `<tool>` the run spawned — argv\[0\] excluded, as `mock_calls`
 /// records it.
