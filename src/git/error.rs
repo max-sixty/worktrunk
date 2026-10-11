@@ -2634,10 +2634,11 @@ mod tests {
             command_name: None,
             error: anyhow::anyhow!("setup failed"),
         };
-        assert_snapshot!(err.render(), @"
-        [31m✗[39m [31m[1mpre-start user hook[22m failed[39m
-        [107m [0m [2m[0m[2m[34mecho[0m[2m test[0m
-        [107m [0m setup failed
+        // Shell decoration varies by feature; this snapshot covers error composition.
+        assert_snapshot!(ansi_str::AnsiStr::ansi_strip(&err.render()), @"
+        ✗ pre-start user hook failed
+          echo test
+          setup failed
         ");
 
         // Silent errors produce empty output
