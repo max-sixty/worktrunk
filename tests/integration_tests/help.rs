@@ -303,10 +303,7 @@ fn test_help_without_detectable_width() {
 /// Tests --help-description outputs the meta description for docs frontmatter.
 #[rstest]
 #[case("switch", "Switch to a worktree; create if needed.")]
-#[case(
-    "merge",
-    "Merge current branch into the target branch. Squash & rebase"
-)]
+#[case("merge", "Merge a branch into the target branch. Squash & rebase")]
 #[case("hook", "Run configured hooks.")]
 fn test_help_description(#[case] cmd: &str, #[case] expected_prefix: &str) {
     let output = wt_command()

@@ -39,6 +39,7 @@ pub mod list_config;
 pub mod list_layout;
 pub mod list_progressive;
 pub mod merge;
+pub mod merge_source;
 pub mod nushell_default_config_dir;
 pub mod output_system_guard;
 pub mod packaged_assets;

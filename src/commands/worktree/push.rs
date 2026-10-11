@@ -112,9 +112,11 @@ struct MergeContext {
 
 impl MergeContext {
     /// Resolve target, verify fast-forward, check conflicts, count commits, capture stats.
-    fn prepare(target: Option<&str>, operations: Option<MergeOperations>) -> anyhow::Result<Self> {
-        let repo = Repository::current()?;
-
+    fn prepare(
+        repo: &Repository,
+        target: Option<&str>,
+        operations: Option<MergeOperations>,
+    ) -> anyhow::Result<Self> {
         // Refuse before reading ancestry: mid-rebase HEAD is detached partway
         // through the replay, and it *is* a linear extension of the target, so
         // the fast-forward check below passes and the push carries the target
@@ -161,7 +163,11 @@ impl MergeContext {
         // Fast-forward check (target must be ancestor of HEAD).
         // target_tip is already a SHA; resolve HEAD to one too so the
         // ancestry probe hits the SHA-keyed cache directly.
-        let head_sha = repo.run_command(&["rev-parse", "HEAD"])?.trim().to_string();
+        let head_sha = repo
+            .current_worktree()
+            .run_command(&["rev-parse", "HEAD"])?
+            .trim()
+            .to_string();
         if !repo.is_ancestor_by_sha(&target_tip, &head_sha)? {
             let commits_formatted = repo
                 .run_command(&[
@@ -169,7 +175,7 @@ impl MergeContext {
                     "--color=always",
                     "--graph",
                     "--oneline",
-                    &format!("HEAD..{}", target_tip),
+                    &format!("{head_sha}..{target_tip}"),
                 ])?
                 .trim()
                 .to_string();
@@ -185,7 +191,7 @@ impl MergeContext {
         // Refuse when uncommitted changes in the target worktree overlap the
         // push range. Non-overlapping changes stay in place: the two-tree
         // merge in `advance_target` carries them through untouched.
-        repo.ensure_no_target_conflicts(target_worktree_path.as_ref(), &target_branch)?;
+        repo.ensure_no_target_conflicts(target_worktree_path.as_ref(), &target_branch, &head_sha)?;
 
         // TODO(#3519 follow-up): when `target_branch` was behind its upstream
         // (see `Repository::span_upstream`), this count mixes the carried
@@ -194,18 +200,18 @@ impl MergeContext {
         // overstates what the branch itself contributed. Splitting them needs
         // a carried-count threaded through `MergeContext`; deferred as
         // cosmetic.
-        let commit_count = repo.count_commits(&target_branch, "HEAD")?;
+        let commit_count = repo.count_commits(&target_branch, &head_sha)?;
 
         let stats_summary = if commit_count > 0 {
             repo.current_worktree()
-                .prepare_commit_diff(&target_branch, "HEAD")
+                .prepare_commit_diff(&target_branch, &head_sha)
                 .stats_summary()
         } else {
             Vec::new()
         };
 
         Ok(Self {
-            repo,
+            repo: repo.clone(),
             target_branch,
             target_worktree_path,
             target_tip,
@@ -255,12 +261,12 @@ impl MergeContext {
             "--graph",
             "--oneline",
             "--end-of-options",
-            &format!("{}..HEAD", self.target_branch),
+            &format!("{}..{}", self.target_branch, self.head_sha),
         ])?;
         eprintln!("{}", format_with_gutter(&log_output, None));
 
         // Diff statistics
-        crate::commands::show_diffstat(&self.repo, &self.target_branch, "HEAD")?;
+        crate::commands::show_diffstat(&self.repo, &self.target_branch, &self.head_sha)?;
 
         Ok(())
     }
@@ -485,11 +491,12 @@ fn advance_target(
 /// two-tree merge carries them in place, and [`MergeContext::prepare`] already
 /// refused any that overlap the push range.
 pub fn handle_push(
+    repo: &Repository,
     target: Option<&str>,
     kind: PushKind,
     operations: Option<MergeOperations>,
 ) -> anyhow::Result<PushResult> {
-    let ctx = MergeContext::prepare(target, operations)?;
+    let ctx = MergeContext::prepare(repo, target, operations)?;
 
     ctx.show_progress(kind.verb_progressive(), "", operations)?;
 
@@ -534,11 +541,12 @@ pub fn handle_push(
 /// The source may be rebased or may retain an explicitly preserved
 /// merge-shaped graph.
 pub fn handle_no_ff_merge(
+    repo: &Repository,
     target: Option<&str>,
     operations: Option<MergeOperations>,
     feature_branch: &str,
 ) -> anyhow::Result<PushResult> {
-    let ctx = MergeContext::prepare(target, operations)?;
+    let ctx = MergeContext::prepare(repo, target, operations)?;
 
     ctx.show_progress("Merging", " (--no-ff)", operations)?;
 

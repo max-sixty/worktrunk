@@ -81,6 +81,28 @@ pub fn handle_squash(
     let _ = crate::output::prompt_commit_generation(&mut config);
 
     let env = CommandEnv::for_action(config)?;
+    handle_squash_in(
+        &env,
+        target,
+        yes,
+        hooks,
+        stage,
+        announcer,
+        pre_approved_guidance,
+    )
+}
+
+/// Run the squash in the caller's already-selected environment. Reusing it
+/// keeps the source worktree and the approved project-config cache consistent.
+pub fn handle_squash_in(
+    env: &CommandEnv,
+    target: Option<&str>,
+    yes: bool,
+    hooks: HookGate,
+    stage: Option<StageMode>,
+    announcer: &mut HookAnnouncer<'_>,
+    pre_approved_guidance: PreApprovedGuidance,
+) -> anyhow::Result<SquashResult> {
     let repo = &env.repo;
     // Rewriting history under a half-finished operation is never what the user
     // meant, and mid-rebase HEAD is detached — so this runs ahead of the branch
@@ -306,6 +328,7 @@ pub fn handle_squash(
         .unwrap_or("repo");
 
     let commit_message = crate::llm::SquashInputs {
+        worktree: &wt,
         target_branch: &span_target,
         merge_base: &merge_base,
         commit_details: &commit_details,
@@ -538,6 +561,7 @@ fn preview_squash(
     let staging_index = temp_index.as_ref();
 
     let inputs = crate::llm::SquashInputs {
+        worktree: &wt,
         target_branch: &span_target,
         merge_base: &merge_base,
         commit_details: &commit_details,
