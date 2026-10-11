@@ -242,9 +242,7 @@ urlencoding = "2.1"
 regex = "1.12.3"
 ignore = "0.4"
 reflink-copy = "0.1"
-# Atomic, no-overwrite rename (renameat2 / renamex_np / MoveFileExW) for
-# `--clobber` backups — closes the check-then-rename TOCTOU. Keeps the FFI
-# (and its `unsafe`) out of this crate.
+# Exclusive rename for --clobber backups and Windows copy publication.
 renamore = "0.3"
 dashmap = "6.2.1"
 fs2 = "0.4.3"
@@ -384,7 +382,7 @@ harness = false
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage)"] }
-# Native signal inspection and coverage flushing permit scoped runtime calls.
+# Native calls permit scoped exceptions with a documented safety contract.
 unsafe_code = "deny"
 
 # The profile that 'dist' will build with
