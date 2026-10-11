@@ -1721,6 +1721,104 @@ fn test_config_show_full_gitea_remote(mut repo: TestRepo, temp_home: TempDir) {
     });
 }
 
+/// tea owns login discovery; Worktrunk reads only its structured, local-only
+/// command output. The mock replaces the external tea CLI, not our process
+/// wiring or diagnostics logic.
+#[rstest]
+#[case::login(r#"[{"name":"local","url":"https://forge.example.test","ssh_host":"","user":"alice","default":"true"}]"#, 0, true)]
+#[case::empty("[]", 0, false)]
+#[case::invalid_json("not JSON", 0, false)]
+#[case::invalid_shape(r#"[{"name":"missing-url"}]"#, 0, false)]
+#[case::failed("[]", 1, false)]
+fn test_config_show_full_tea_login_discovery(
+    mut repo: TestRepo,
+    #[case] logins: &str,
+    #[case] exit_code: i32,
+    #[case] authenticated: bool,
+) {
+    use crate::common::mock_commands::MockConfig;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    MockConfig::new("tea")
+        .version("tea version development (mock)")
+        .command(
+            "logins list --output",
+            MockResponse::output(logins).with_exit_code(exit_code),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(repo.mock_bin_path().unwrap());
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/example/repo.git",
+    ]);
+    let call_log = tempfile::tempdir().unwrap();
+    let output = repo
+        .wt_command()
+        .args(["config", "show", "--full"])
+        .env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let plain = stdout.ansi_strip();
+    let status = if authenticated {
+        "tea installed & authenticated"
+    } else {
+        "tea installed but not authenticated"
+    };
+    assert!(plain.contains(status), "{plain}");
+    let calls = fs::read_to_string(call_log.path().join("tea.calls")).unwrap();
+    assert_eq!(
+        calls.lines().collect::<Vec<_>>(),
+        ["--version", "logins list --output json"]
+    );
+}
+
+/// Diagnostics stop after a tea login probe is natively interrupted, before
+/// starting the next tool's probe.
+#[cfg(unix)]
+#[rstest]
+fn test_config_show_full_tea_login_native_interruption(mut repo: TestRepo) {
+    use crate::common::mock_commands::MockConfig;
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::ExitStatusExt;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    let mock_bin = repo.mock_bin_path().unwrap();
+    let tea = mock_bin.join("tea");
+    fs::write(
+        &tea,
+        r#"#!/bin/sh
+if [ "$1" = --version ]; then exit 0; fi
+kill -INT $$
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&tea, fs::Permissions::from_mode(0o755)).unwrap();
+    MockConfig::new("az")
+        .command("_default", MockResponse::exit(1))
+        .write(mock_bin);
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/example/repo.git",
+    ]);
+    let call_log = tempfile::tempdir().unwrap();
+    let output = repo
+        .wt_command()
+        .args(["config", "show", "--full"])
+        .env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.signal(), Some(2), "{output:?}");
+    assert!(!call_log.path().join("az.calls").exists());
+}
+
 /// `wt config show --full` against an Azure DevOps remote reports the `az` CLI
 /// row plus the `azure-devops` extension, which the whole `az repos` command
 /// group ships in: without it CI status stays blank however well `az` is
@@ -6614,12 +6712,13 @@ fn test_plugins_claude_install_statusline_foreign_command(repo: TestRepo, temp_h
 
 #[rstest]
 fn test_plugins_claude_install_statusline_preserves_existing(repo: TestRepo, temp_home: TempDir) {
-    // Write existing settings with other keys
+    // Deliberately unsorted keys at both levels: installing the statusline
+    // must preserve the user's ordering as well as their values.
     let claude_dir = temp_home.path().join(".claude");
     fs::create_dir_all(&claude_dir).unwrap();
     fs::write(
         claude_dir.join("settings.json"),
-        r#"{"existingKey":"existingValue"}"#,
+        r#"{"zebra":true,"existingKey":{"zulu":1,"alpha":2},"alpha":"last"}"#,
     )
     .unwrap();
 
@@ -6633,15 +6732,22 @@ fn test_plugins_claude_install_statusline_preserves_existing(repo: TestRepo, tem
 
         assert_cmd_snapshot!(cmd);
 
-        // Verify existing keys are preserved
         let settings_path = temp_home.path().join(".claude/settings.json");
         let content = fs::read_to_string(&settings_path).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
-        assert_eq!(parsed["existingKey"], "existingValue");
-        assert_eq!(
-            parsed["statusLine"]["command"],
-            "wt list statusline --format=claude-code"
-        );
+        insta::assert_snapshot!(content, @r#"
+        {
+          "zebra": true,
+          "existingKey": {
+            "zulu": 1,
+            "alpha": 2
+          },
+          "alpha": "last",
+          "statusLine": {
+            "type": "command",
+            "command": "wt list statusline --format=claude-code"
+          }
+        }
+        "#);
     });
 }
 

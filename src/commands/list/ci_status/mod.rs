@@ -238,7 +238,7 @@ impl CiToolsStatus {
     /// If `gitlab_host` is provided, checks glab auth status against that specific
     /// host instead of the default. This is important for self-hosted GitLab instances
     /// where the default host (gitlab.com) may be unreachable.
-    pub fn detect(gitlab_host: Option<&str>) -> Self {
+    pub fn detect(gitlab_host: Option<&str>) -> anyhow::Result<Self> {
         let gh_installed = tool_available("gh", &["--version"]);
         let gh_authenticated = gh_installed && tool_available("gh", &["auth", "status"]);
         let glab_installed = tool_available("glab", &["--version"]);
@@ -249,15 +249,14 @@ impl CiToolsStatus {
                 tool_available("glab", &["auth", "status"])
             };
         let tea_installed = tool_available("tea", &["--version"]);
-        // `tea` stores logins in its config file; reading it (rather than
-        // invoking `tea`) avoids the OAuth-refresh side effect a `tea` lookup
-        // can trigger. See `git::remote_ref::gitea`.
-        let tea_authenticated = tea_installed && worktrunk::git::remote_ref::gitea::has_any_login();
+        // The shared tea login probe reads local config through `logins list`.
+        let tea_authenticated =
+            tea_installed && worktrunk::git::remote_ref::gitea::has_any_login()?;
         let az_installed = tool_available("az", &["--version"]);
         // `az account show` exits non-zero when logged out — works whether or not
         // the azure-devops extension is installed.
         let az_authenticated = az_installed && tool_available("az", &["account", "show"]);
-        Self {
+        Ok(Self {
             gh_installed,
             gh_authenticated,
             glab_installed,
@@ -266,7 +265,7 @@ impl CiToolsStatus {
             tea_authenticated,
             az_installed,
             az_authenticated,
-        }
+        })
     }
 }
 

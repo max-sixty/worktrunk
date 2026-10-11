@@ -583,7 +583,7 @@ fn render_diagnostics(out: &mut String, repo: Option<&Repository>) -> anyhow::Re
     // falls through to the hint and the remaining checks still run.
     match repo.and_then(|repo| Some((repo, repo.ci_platform(None)?))) {
         Some((_, ForgeKind::GitHub)) => {
-            let ci_tools = CiToolsStatus::detect(None);
+            let ci_tools = CiToolsStatus::detect(None)?;
             render_ci_tool_status(
                 out,
                 "gh",
@@ -593,7 +593,7 @@ fn render_diagnostics(out: &mut String, repo: Option<&Repository>) -> anyhow::Re
             );
         }
         Some((_, ForgeKind::GitLab)) => {
-            let ci_tools = CiToolsStatus::detect(None);
+            let ci_tools = CiToolsStatus::detect(None)?;
             render_ci_tool_status(
                 out,
                 "glab",
@@ -603,7 +603,7 @@ fn render_diagnostics(out: &mut String, repo: Option<&Repository>) -> anyhow::Re
             );
         }
         Some((_, ForgeKind::Gitea)) => {
-            let ci_tools = CiToolsStatus::detect(None);
+            let ci_tools = CiToolsStatus::detect(None)?;
             render_ci_tool_status(
                 out,
                 "tea",
@@ -613,7 +613,7 @@ fn render_diagnostics(out: &mut String, repo: Option<&Repository>) -> anyhow::Re
             );
         }
         Some((repo, ForgeKind::AzureDevOps)) => {
-            let ci_tools = CiToolsStatus::detect(None);
+            let ci_tools = CiToolsStatus::detect(None)?;
             render_ci_tool_status(
                 out,
                 "az",

@@ -172,7 +172,7 @@ fn choose_pr_forge(repo: &Repository) -> anyhow::Result<ForgeKind> {
         return Ok(ForgeKind::GitHub);
     };
 
-    if remote_ref::gitea::is_authed_for(&host) && !remote_ref::github::is_authed_for(&host) {
+    if remote_ref::gitea::is_authed_for(&host)? && !remote_ref::github::is_authed_for(&host) {
         Ok(ForgeKind::Gitea)
     } else {
         Ok(ForgeKind::GitHub)

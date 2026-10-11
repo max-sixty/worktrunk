@@ -2189,6 +2189,7 @@ impl TestRepo {
             .expect("call setup_mock_ci_tools_unauthenticated() first");
         MockConfig::new("tea")
             .version("tea version development (mock)")
+            .command("logins list --output", MockResponse::output("[]"))
             .write(mock_bin);
     }
 

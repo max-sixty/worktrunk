@@ -5,9 +5,9 @@ expression: "String::from_utf8_lossy(&output.stdout)"
 [
   {
     "branch": "current-merged",
-    "branch_deleted": true,
-    "kind": "current",
     "path": "<PATH>",
+    "kind": "current",
+    "branch_deleted": true,
     "reason": "same commit as",
     "target": "main"
   }
