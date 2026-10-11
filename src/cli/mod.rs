@@ -763,6 +763,8 @@ The comparison base is the merge-base with the default branch, or with its upstr
 pager = "delta --paging=never --width=$COLUMNS"
 ```
 
+**Starting list-only:** Set `preview = false` under `[switch.picker]` to open the picker with the preview hidden; `Alt-p` still shows it.
+
 ## Pull requests and merge requests
 
 The `pr:<number>` / `mr:<number>` shortcut and the PR/MR's web URL both resolve to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref (`refs/pull/N/head` or `refs/merge-requests/N/head`) and configures `pushRemote` to the fork URL.
@@ -2298,6 +2300,7 @@ cd = true          # Change directory after switching (--no-cd to skip)
 
 [switch.picker]
 pager = "delta --paging=never"   # Example: override git's core.pager for diff preview
+preview = true                   # Show the preview panel on open (Alt-p toggles)
 ```
 
 ### Step

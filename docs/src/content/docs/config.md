@@ -318,6 +318,7 @@ cd = true          # Change directory after switching (--no-cd to skip)
 
 [switch.picker]
 pager = "delta --paging=never"   # Example: override git's core.pager for diff preview
+preview = true                   # Show the preview panel on open (Alt-p toggles)
 ```
 
 ### Step
