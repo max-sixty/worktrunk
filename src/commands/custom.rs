@@ -299,6 +299,28 @@ mod tests {
         // ETXTBSY, surfacing as a spawn error instead of the signal error we
         // assert on. `/bin/sh` is never written by the test, so it can't race.
         // The production code path (spawn, wait, signal handling) is identical.
+        const CHILD_ENV: &str = "WORKTRUNK_RUN_CUSTOM_SIGNAL_TEST_CHILD";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            // A SIGTERM child exit cancels every live foreground scope in the
+            // process, so a concurrent test's spawn would see it as an
+            // interruption. Run this test alone in its own process.
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "commands::custom::tests::run_custom_propagates_signal_exit_code",
+                ])
+                .env(CHILD_ENV, "1");
+            assert!(
+                worktrunk::shell_exec::spawn(&mut command)
+                    .unwrap()
+                    .wait()
+                    .unwrap()
+                    .success()
+            );
+            return;
+        }
+
         let sh = Path::new("/bin/sh");
         let args = [OsString::from("-c"), OsString::from("kill -TERM $$")];
 
