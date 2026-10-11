@@ -337,7 +337,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Every matching entry applies, least- to most-specific, following the rule above: a more specific entry — `git.company.example/platform/*` over `git.company.example/*` — wins where both set the same setting, while hooks and aliases from every matching entry all run, least-specific first. A literal key is the most specific of all; specificity is the count of non-`*` characters in the key. End a host-wide key with `/*` — a bare `git.company.example*` also covers hosts whose names merely start
-[107m [0m with that string.[0m
+[107m [0m with that string. A remote on a non-default SSH port carries the port in its identifier, so its host-wide key is `git.company.example:2222/*`.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Entries in `approvals.toml` match the same way, so a hand-written pattern entry approves its commands for every repository it covers.[0m
 [107m [0m [2m#[0m

@@ -374,7 +374,7 @@ forge.platform = "gitlab"
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 ```
 
-Every matching entry applies, least- to most-specific, following the rule above: a more specific entry — `git.company.example/platform/*` over `git.company.example/*` — wins where both set the same setting, while hooks and aliases from every matching entry all run, least-specific first. A literal key is the most specific of all; specificity is the count of non-`*` characters in the key. End a host-wide key with `/*` — a bare `git.company.example*` also covers hosts whose names merely start with that string.
+Every matching entry applies, least- to most-specific, following the rule above: a more specific entry — `git.company.example/platform/*` over `git.company.example/*` — wins where both set the same setting, while hooks and aliases from every matching entry all run, least-specific first. A literal key is the most specific of all; specificity is the count of non-`*` characters in the key. End a host-wide key with `/*` — a bare `git.company.example*` also covers hosts whose names merely start with that string. A remote on a non-default SSH port carries the port in its identifier, so its host-wide key is `git.company.example:2222/*`.
 
 Entries in `approvals.toml` match the same way, so a hand-written pattern entry approves its commands for every repository it covers.
 
