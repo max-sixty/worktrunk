@@ -543,34 +543,15 @@ impl AltXRemover {
                 }
             },
         );
-        if let Err(error) = spawned {
-            let error = anyhow::Error::new(error).context("Failed to start worktree removal");
-            let diagnostic = removal_error_diagnostic(&error);
-            if let Some((item, pos)) = removed {
-                restore_failed_removal(
-                    &self.items,
-                    &self.header_flash,
-                    &self.render_tx,
-                    &self.stashed_warnings,
-                    DroppedRow {
-                        item,
-                        pos,
-                        label: removal_label,
-                        noun: removal_noun,
-                    },
-                    Some(&diagnostic),
-                );
-            } else {
-                stash_failed_removal(
-                    &self.stashed_warnings,
-                    &self.header_flash,
-                    &self.render_tx,
-                    diagnostic,
-                );
-            }
-            return RemovalEffect::Kept;
-        }
-        RemovalEffect::Dropped
+        self.finish_removal_spawn(
+            spawned,
+            RemovalRowChange::Dropped(removed.map(|(item, pos)| DroppedRow {
+                item,
+                pos,
+                label: removal_label,
+                noun: removal_noun,
+            })),
+        )
     }
 
     /// Flash a one-line message in the header for a beat (see the free
@@ -749,20 +730,49 @@ impl AltXRemover {
                 }
             },
         );
-        if let Err(error) = spawned {
-            let error = anyhow::Error::new(error).context("Failed to start worktree removal");
-            let diagnostic = removal_error_diagnostic(&error);
-            revert_morph(
+        self.finish_removal_spawn(spawned, RemovalRowChange::Morphed(revert))
+    }
+
+    /// Complete the handoff of an optimistic row change to its removal worker.
+    /// If no worker started, the target is untouched: undo the row change and
+    /// retain the spawn diagnostic, including when no row was found to restore.
+    fn finish_removal_spawn(
+        &self,
+        spawned: std::io::Result<()>,
+        row_change: RemovalRowChange,
+    ) -> RemovalEffect {
+        let Err(error) = spawned else {
+            return match row_change {
+                RemovalRowChange::Dropped(_) => RemovalEffect::Dropped,
+                RemovalRowChange::Morphed(_) => RemovalEffect::Morphed,
+            };
+        };
+        let error = anyhow::Error::new(error).context("Failed to start worktree removal");
+        let diagnostic = removal_error_diagnostic(&error);
+        match row_change {
+            RemovalRowChange::Dropped(Some(dropped)) => restore_failed_removal(
+                &self.items,
+                &self.header_flash,
+                &self.render_tx,
+                &self.stashed_warnings,
+                dropped,
+                Some(&diagnostic),
+            ),
+            RemovalRowChange::Dropped(None) => stash_failed_removal(
+                &self.stashed_warnings,
+                &self.header_flash,
+                &self.render_tx,
+                diagnostic,
+            ),
+            RemovalRowChange::Morphed(revert) => revert_morph(
                 revert,
                 &self.header_flash,
                 &self.stashed_warnings,
                 &self.render_tx,
                 Some(&diagnostic),
-            );
-            return RemovalEffect::Kept;
+            ),
         }
-
-        RemovalEffect::Morphed
+        RemovalEffect::Kept
     }
 
     /// Run the `alt-x` removal dispatch for the selected row.
@@ -1270,6 +1280,13 @@ struct DroppedRow {
     pos: usize,
     label: String,
     noun: &'static str,
+}
+
+/// The optimistic row mutation to keep after a successful spawn or undo if
+/// the removal worker could not start.
+enum RemovalRowChange {
+    Dropped(Option<DroppedRow>),
+    Morphed(MorphRevert),
 }
 
 /// Put a row back after its background removal didn't happen, closing the alt-x
@@ -3899,6 +3916,151 @@ pub mod tests {
         );
     }
 
+    /// A spawn error means no worker started: restore the dropped row's slot,
+    /// or keep reporting the cause when the row was already absent.
+    #[test]
+    fn test_removal_spawn_failure_restores_dropped_row_or_reports_missing_row() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        for had_row in [true, false] {
+            let items = Arc::new(Mutex::new(vec![
+                branch_only_picker_item("before"),
+                branch_only_picker_item("after"),
+            ]));
+            let remover = test_remover(Arc::clone(&items), repo.clone());
+            let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+            remover.render_tx.set(tx).unwrap();
+            let dropped = had_row.then(|| super::DroppedRow {
+                item: branch_only_picker_item("feature"),
+                pos: 1,
+                label: "feature".to_string(),
+                noun: "branch",
+            });
+
+            let effect = remover.finish_removal_spawn(
+                Err(std::io::Error::other("thread limit reached")),
+                super::RemovalRowChange::Dropped(dropped),
+            );
+
+            assert!(matches!(effect, RemovalEffect::Kept));
+            let outputs: Vec<_> = items
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|row| row.output().into_owned())
+                .collect();
+            let expected = if had_row {
+                vec!["before", "feature", "after"]
+            } else {
+                vec!["before", "after"]
+            };
+            assert_eq!(outputs, expected);
+            let diagnostic =
+                super::error_message("Failed to start worktree removal: thread limit reached")
+                    .to_string();
+            assert_eq!(
+                remover.stashed_warnings.lock().unwrap().as_slice(),
+                std::slice::from_ref(&diagnostic)
+            );
+            let flash = remover.header_flash.current().unwrap();
+            if had_row {
+                assert!(flash.contains("Kept") && flash.contains("feature"));
+            } else {
+                assert_eq!(flash, diagnostic);
+            }
+            assert!(matches!(rx.try_recv(), Ok(skim::prelude::Event::Render)));
+            if had_row {
+                assert!(matches!(rx.try_recv(), Ok(skim::prelude::Event::Action(_))));
+            }
+            assert!(matches!(
+                rx.try_recv(),
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+            ));
+            assert!(remover.removal_threads.lock().unwrap().is_empty());
+        }
+    }
+
+    /// A spawn failure must restore every part of a morph, including the row's
+    /// worktree token, preview availability, and shortcut lookup.
+    #[test]
+    fn test_removal_spawn_failure_reverts_morphed_row() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let items = Arc::new(Mutex::new(Vec::new()));
+        let remover = test_remover(Arc::clone(&items), repo);
+        let (row, token, rendered, morphed) =
+            setup_morphable_row(&remover, "feature", &test.path().join("feature"));
+        items.lock().unwrap().push(Arc::clone(&row));
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        remover.render_tx.set(tx).unwrap();
+
+        // Supply the actual shared row state after its optimistic morph. The
+        // error is the spawn boundary's Result; no OS resource exhaustion is
+        // needed to exercise recovery when no removal worker exists.
+        let (local_content, original_local) = {
+            let table = remover.shortcut_table.lock().unwrap();
+            let handle = table.get(&token).unwrap().morph.as_ref().unwrap();
+            let local_content = Arc::clone(&handle.local_content);
+            let original = *local_content.lock().unwrap();
+            (local_content, original)
+        };
+        let revert = super::MorphRevert {
+            rendered: Arc::clone(&rendered),
+            original_rendered: rendered.lock().unwrap().clone(),
+            morphed: Arc::clone(&morphed),
+            local_content: Arc::clone(&local_content),
+            original_local,
+            shortcut_table: Arc::clone(&remover.shortcut_table),
+            branch_token: "feature".to_string(),
+            worktree_token: token.clone(),
+        };
+        *rendered.lock().unwrap() = "/ feature".to_string();
+        morphed.store(true, std::sync::atomic::Ordering::Relaxed);
+        *local_content.lock().unwrap() = LocalContent::from_item(&ListItem::new_branch(
+            "abc123".to_string(),
+            "feature".to_string(),
+        ));
+        {
+            let mut table = remover.shortcut_table.lock().unwrap();
+            let entry = table.remove(&token).unwrap();
+            table.insert("feature".to_string(), entry);
+        }
+        assert_eq!(row.output().as_ref(), "feature");
+        assert_ne!(*local_content.lock().unwrap(), original_local);
+
+        let effect = remover.finish_removal_spawn(
+            Err(std::io::Error::other("thread limit reached")),
+            super::RemovalRowChange::Morphed(revert),
+        );
+
+        assert!(matches!(effect, RemovalEffect::Kept));
+        assert!(Arc::ptr_eq(&items.lock().unwrap()[0], &row));
+        assert_eq!(row.output().as_ref(), token);
+        assert_eq!(*rendered.lock().unwrap(), "+ feature");
+        assert!(!morphed.load(std::sync::atomic::Ordering::Relaxed));
+        assert_eq!(*local_content.lock().unwrap(), original_local);
+        assert_eq!(
+            resolve_shortcut_branch(&remover.shortcut_table, &token).as_deref(),
+            Some("feature")
+        );
+        assert!(resolve_shortcut_branch(&remover.shortcut_table, "feature").is_none());
+        assert_eq!(
+            *remover.stashed_warnings.lock().unwrap(),
+            [
+                super::error_message("Failed to start worktree removal: thread limit reached")
+                    .to_string()
+            ]
+        );
+        let flash = remover.header_flash.current().unwrap();
+        assert!(flash.contains("Kept") && flash.contains("feature"));
+        assert!(matches!(rx.try_recv(), Ok(skim::prelude::Event::Render)));
+        assert!(matches!(
+            rx.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
+        assert!(remover.removal_threads.lock().unwrap().is_empty());
+    }
+
     /// `restore_failed_removal` puts a dropped row back at its original slot and
     /// stashes a `worktree kept` warning — the correction path that keeps the
     /// alt-x list from showing a removal that didn't happen.
@@ -4399,8 +4561,8 @@ pub mod tests {
                 );
                 let diagnostic = warnings[0]
                     .ansi_strip()
-                    .replace(inner.to_str().unwrap(), "[INNER]")
-                    .replace(outer.to_str().unwrap(), "[OUTER]");
+                    .replace(&worktrunk::path::format_path_for_display(&inner), "[INNER]")
+                    .replace(&worktrunk::path::format_path_for_display(&outer), "[OUTER]");
                 insta::assert_snapshot!(diagnostic, @"✗ Cannot remove worktree @ [OUTER]; contains worktree @ [INNER]");
             }
         }
@@ -4442,7 +4604,10 @@ pub mod tests {
         assert_eq!(warnings.len(), 1);
         let diagnostic = warnings[0]
             .ansi_strip()
-            .replace(registration.to_str().unwrap(), "[REGISTRATION]")
+            .replace(
+                &worktrunk::path::format_path_for_display(&registration),
+                "[REGISTRATION]",
+            )
             .replace(&error.root_cause().to_string(), "[IO_ERROR]");
         insta::assert_snapshot!(diagnostic, @"✗ Failed to read worktree registration @ [REGISTRATION]: [IO_ERROR]");
     }

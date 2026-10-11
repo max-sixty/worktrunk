@@ -522,7 +522,9 @@ fn repo_path_ignores_non_local_core_worktree() {
     // `parent(.git)` as the repo root — `rev-parse --show-toplevel` fails
     // from inside `.git` in that case and we fall through.
     let tmp = tempfile::tempdir().unwrap();
-    let git_dir = tmp.path().join(".git");
+    // Match Repository::at's canonical common-directory invariant.
+    let root = dunce::canonicalize(tmp.path()).unwrap();
+    let git_dir = root.join(".git");
     std::fs::create_dir(&git_dir).unwrap();
 
     let cache = RepoCache::default();
@@ -537,15 +539,15 @@ fn repo_path_ignores_non_local_core_worktree() {
     cache.all_config.set(RwLock::new(map)).unwrap();
 
     let repo = super::Repository {
-        discovery_path: tmp.path().to_path_buf(),
+        discovery_path: root.clone(),
         git_common_dir: git_dir.clone(),
         cache: Arc::new(cache),
         locks: Arc::new(super::RepositoryLocks::default()),
         temporary_object_store: None,
     };
 
-    // Should fall through to parent(git_common_dir), ignoring the bulk value.
-    assert_eq!(repo.repo_path().unwrap(), tmp.path());
+    // The verified conventional parent wins over the non-local bulk value.
+    assert_eq!(repo.repo_path().unwrap(), root);
 }
 
 #[test]
@@ -1109,6 +1111,76 @@ fn git_dir_at_propagates_own_entry_io_failure() {
     let directory = tempfile::tempdir().unwrap();
     std::os::unix::fs::symlink(".git", directory.path().join(".git")).unwrap();
     assert!(Repository::git_dir_at(directory.path()).is_err());
+}
+
+/// Unsupported own entries must not inherit a parent repository's identity.
+#[test]
+fn git_dir_at_refuses_malformed_gitfiles() {
+    let mut test = TestRepo::with_initial_commit();
+    let outer = test.add_worktree("malformed");
+    let repo = Repository::at(test.root_path()).unwrap();
+    let registration = repo.worktree_at(&outer).git_dir().unwrap();
+    let index = std::fs::read(registration.join("index")).unwrap();
+    let marker = outer.join(".git");
+    let original = std::fs::read(&marker).unwrap();
+    for contents in [b"not a gitfile".as_slice(), b"gitdir: \r\n".as_slice()] {
+        std::fs::write(&marker, contents).unwrap();
+        assert_eq!(Repository::git_dir_at(&outer).unwrap(), None);
+        let error = repo
+            .worktree_at(&outer)
+            .ensure_holds_this_worktree()
+            .unwrap_err();
+        assert!(
+            matches!(
+                error.downcast_ref::<crate::git::GitError>(),
+                Some(crate::git::GitError::WorktreePathNotOurs { .. })
+            ),
+            "{error:#}"
+        );
+        assert_eq!(std::fs::read(registration.join("index")).unwrap(), index);
+    }
+    std::fs::write(marker, original).unwrap();
+    assert_eq!(
+        repo.worktree_at(&outer)
+            .ensure_holds_this_worktree()
+            .unwrap(),
+        registration
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn git_dir_at_refuses_socket_and_unresolvable_target() {
+    let mut test = TestRepo::with_initial_commit();
+    let outer = test.add_worktree("own-entry-errors");
+    let repo = Repository::at(test.root_path()).unwrap();
+    let registration = repo.worktree_at(&outer).git_dir().unwrap();
+    let index = std::fs::read(registration.join("index")).unwrap();
+    let marker = outer.join(".git");
+    let original = std::fs::read(&marker).unwrap();
+    std::fs::remove_file(&marker).unwrap();
+    let socket = std::os::unix::net::UnixListener::bind(&marker).unwrap();
+    assert_eq!(Repository::git_dir_at(&outer).unwrap(), None);
+    assert!(
+        repo.worktree_at(&outer)
+            .ensure_holds_this_worktree()
+            .is_err()
+    );
+    drop(socket);
+    std::fs::remove_file(&marker).unwrap();
+    std::os::unix::fs::symlink("loop", outer.join("loop")).unwrap();
+    std::fs::write(&marker, "gitdir: loop\n").unwrap();
+    assert!(Repository::git_dir_at(&outer).is_err());
+    let error = repo
+        .worktree_at(&outer)
+        .ensure_holds_this_worktree()
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("Failed to read Git entry"),
+        "{error:#}"
+    );
+    assert_eq!(std::fs::read(registration.join("index")).unwrap(), index);
+    std::fs::write(marker, original).unwrap();
 }
 
 #[test]
@@ -2841,6 +2913,656 @@ fn worktree_path_not_ours_names_a_normalized_path() {
     );
 }
 
+/// Fresh separate-directory repositories identify their main from discovery,
+/// without requiring repair or accepting a linked checkout as the main.
+#[test]
+fn repo_path_discovers_fresh_separate_git_dir_main() {
+    let seed = TestRepo::with_initial_commit();
+    for initialization in ["init", "clone"] {
+        let directory = crate::testing::test_tempdir();
+        let store = directory.path().join("store");
+        let main = directory.path().join("main");
+        let outer = directory.path().join("outer");
+        let args = if initialization == "init" {
+            vec![
+                "init",
+                "-b",
+                "main",
+                "--separate-git-dir",
+                store.to_str().unwrap(),
+                main.to_str().unwrap(),
+            ]
+        } else {
+            vec![
+                "clone",
+                "--separate-git-dir",
+                store.to_str().unwrap(),
+                seed.root_path().to_str().unwrap(),
+                main.to_str().unwrap(),
+            ]
+        };
+        seed.run_git(&args);
+        std::fs::write(main.join("main.txt"), "main checkout contents").unwrap();
+        seed.run_git_in(&main, &["add", "main.txt"]);
+        seed.run_git_in(&main, &["commit", "-m", "main checkout"]);
+        seed.run_git_in(
+            &main,
+            &["worktree", "add", "-b", "outer", outer.to_str().unwrap()],
+        );
+        let discovery = main.join("subdirectory");
+        std::fs::create_dir(&discovery).unwrap();
+        assert!(
+            !store.join("gitdir").exists(),
+            "native init/clone must not have recorded a backlink"
+        );
+        let repo = Repository::at(&discovery).unwrap();
+        assert_eq!(
+            repo.repo_path().unwrap(),
+            dunce::canonicalize(&main).unwrap()
+        );
+        assert_eq!(
+            repo.list_worktrees().unwrap()[0].path,
+            dunce::canonicalize(&main).unwrap()
+        );
+        assert_eq!(
+            repo.primary_worktree().unwrap(),
+            Some(dunce::canonicalize(&main).unwrap())
+        );
+        assert!(!repo.worktree_at(&main).is_linked().unwrap());
+        assert_eq!(repo.nested_worktree(&outer).unwrap(), None);
+        let linked = Repository::at(&outer).unwrap();
+        assert!(
+            linked
+                .nested_worktree(&outer)
+                .unwrap_err()
+                .to_string()
+                .contains("Cannot determine the main worktree location")
+        );
+        let staged =
+            crate::git::remove::stage_worktree_removal(&repo, &outer, Some("outer"), false)
+                .unwrap()
+                .expect("clean linked checkout must stage normally");
+        assert!(!outer.exists());
+        assert!(!repo.git_common_dir().join("worktrees/outer").exists());
+        assert_eq!(
+            std::fs::read_to_string(staged.join("main.txt")).unwrap(),
+            "main checkout contents"
+        );
+        assert_eq!(
+            std::fs::read_to_string(main.join("main.txt")).unwrap(),
+            "main checkout contents"
+        );
+        assert!(main.join(".git").is_file());
+        assert!(
+            !store.join("gitdir").exists(),
+            "discovery must not write a repair backlink"
+        );
+    }
+}
+
+/// Git's one output newline must not consume newline or whitespace path bytes.
+#[cfg(unix)]
+#[test]
+fn repo_path_preserves_fresh_main_path_bytes() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let seed = TestRepo::with_initial_commit();
+    let names = [
+        b"main with space\n".as_slice(),
+        b"main with trailing whitespace\t  ".as_slice(),
+        #[cfg(target_os = "linux")]
+        b"main-\xff  ".as_slice(),
+    ];
+    for name in names {
+        let directory = crate::testing::test_tempdir();
+        let initial = directory.path().join("initial");
+        let main = directory
+            .path()
+            .join(std::ffi::OsString::from_vec(name.to_vec()));
+        let store = directory.path().join("store");
+        seed.run_git(&[
+            "clone",
+            "--separate-git-dir",
+            store.to_str().unwrap(),
+            seed.root_path().to_str().unwrap(),
+            initial.to_str().unwrap(),
+        ]);
+        std::fs::rename(&initial, &main).unwrap();
+        assert!(!store.join("gitdir").exists());
+        let subdirectory = main.join("subdirectory");
+        std::fs::create_dir(&subdirectory).unwrap();
+        for discovery in [&main, &subdirectory] {
+            Repository::prewarm_at(discovery);
+            let repo = Repository::at(discovery).unwrap();
+            let info = repo.current_worktree().prewarm_info().unwrap();
+            assert!(info.is_inside);
+            let expected = dunce::canonicalize(&main).unwrap();
+            assert_eq!(info.root.as_deref(), Some(expected.as_path()));
+            assert_eq!(repo.current_worktree().root().unwrap(), expected);
+            assert_eq!(repo.repo_path().unwrap(), expected);
+        }
+    }
+}
+
+/// A partial bare batch must not cache a newline-truncated neighboring store.
+/// Exact common-directory discovery also preserves trailing/native path bytes.
+#[cfg(unix)]
+#[test]
+fn prewarm_preserves_native_common_directory_paths() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let seed = TestRepo::with_initial_commit();
+    let names = [
+        b"bare\nstore".as_slice(),
+        b"bare\ntrue\nstore\nHEAD".as_slice(),
+        b"bare  ".as_slice(),
+        #[cfg(target_os = "linux")]
+        b"bare-\xff  ".as_slice(),
+    ];
+    for name in names {
+        let directory = crate::testing::test_tempdir();
+        let prefix = directory.path().join("bare");
+        let initial = directory.path().join("initial");
+        for target in [&prefix, &initial] {
+            seed.run_git(&[
+                "clone",
+                "--bare",
+                seed.root_path().to_str().unwrap(),
+                target.to_str().unwrap(),
+            ]);
+        }
+        let store = directory
+            .path()
+            .join(std::ffi::OsString::from_vec(name.to_vec()));
+        std::fs::rename(&initial, &store).unwrap();
+        let child = store.join("subdirectory");
+        std::fs::create_dir(&child).unwrap();
+        let expected = dunce::canonicalize(&store).unwrap();
+        assert_ne!(expected, dunce::canonicalize(&prefix).unwrap());
+        for discovery in [&store, &child] {
+            Repository::prewarm_at(discovery);
+            let repo = Repository::at(discovery).unwrap();
+            assert_eq!(repo.git_common_dir(), expected);
+            assert!(repo.is_bare().unwrap());
+            assert_eq!(repo.repo_path().unwrap(), expected);
+            assert_eq!(
+                repo.current_worktree().root().unwrap(),
+                dunce::canonicalize(discovery).unwrap()
+            );
+        }
+    }
+}
+
+/// Locally configured main roots (also used by submodules) obey the same
+/// native show-toplevel protocol: trailing whitespace is part of the path.
+#[cfg(unix)]
+#[test]
+fn repo_path_preserves_local_core_worktree_path_bytes() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let seed = TestRepo::with_initial_commit();
+    let directory = crate::testing::test_tempdir();
+    let main = directory.path().join("configured main\n\t  ");
+    let store = directory.path().join("store");
+    seed.run_git(&[
+        "clone",
+        "--separate-git-dir",
+        store.to_str().unwrap(),
+        seed.root_path().to_str().unwrap(),
+        main.to_str().unwrap(),
+    ]);
+    seed.run_git_in(&store, &["config", "core.worktree", main.to_str().unwrap()]);
+    let oracle = seed
+        .git_command()
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(&store)
+        .run()
+        .unwrap();
+    assert!(oracle.status.success());
+    let expected = dunce::canonicalize(&main).unwrap();
+    assert_eq!(
+        oracle.stdout.strip_suffix(b"\n").unwrap(),
+        expected.as_os_str().as_bytes()
+    );
+    let repo = Repository::at(&main).unwrap();
+    assert_eq!(repo.repo_path().unwrap(), expected);
+}
+
+/// Discovery of an unrepaired main still protects it when it lives inside the
+/// selected linked checkout, including explicit force removal.
+#[test]
+fn nested_worktree_protects_unrepaired_separate_git_dir_main() {
+    let seed = TestRepo::with_initial_commit();
+    let directory = crate::testing::test_tempdir();
+    let store = directory.path().join("store");
+    let main = directory.path().join("main");
+    let outer = directory.path().join("outer");
+    seed.run_git(&[
+        "clone",
+        "--separate-git-dir",
+        store.to_str().unwrap(),
+        seed.root_path().to_str().unwrap(),
+        main.to_str().unwrap(),
+    ]);
+    std::fs::write(main.join(".gitignore"), "main/\n").unwrap();
+    seed.run_git_in(&main, &["add", ".gitignore"]);
+    seed.run_git_in(&main, &["commit", "-m", "ignore nested main"]);
+    seed.run_git_in(
+        &main,
+        &["worktree", "add", "-b", "outer", outer.to_str().unwrap()],
+    );
+    // A removal plan can cache the main location before a hook moves it.
+    let cached_repo = Repository::at(&main).unwrap();
+    assert_eq!(
+        cached_repo.repo_path().unwrap(),
+        dunce::canonicalize(&main).unwrap()
+    );
+    let nested_main = outer.join("main");
+    std::fs::rename(&main, &nested_main).unwrap();
+    assert!(!store.join("gitdir").exists());
+    let error = cached_repo.nested_worktree(&outer).unwrap_err();
+    assert!(
+        error.to_string().contains("git worktree repair"),
+        "{error:#}"
+    );
+    let repo = Repository::at(&nested_main).unwrap();
+    assert_eq!(
+        repo.nested_worktree(&outer).unwrap(),
+        Some(dunce::canonicalize(&nested_main).unwrap())
+    );
+    let registration = repo.worktree_at(&outer).git_dir().unwrap();
+    let outer_index = std::fs::read(registration.join("index")).unwrap();
+    let main_index = std::fs::read(store.join("index")).unwrap();
+    for force in [false, true] {
+        let error =
+            crate::git::remove::stage_worktree_removal(&cached_repo, &outer, Some("outer"), force)
+                .unwrap_err();
+        assert!(
+            error.to_string().contains("git worktree repair"),
+            "{error:#}"
+        );
+        assert_eq!(
+            std::fs::read(registration.join("index")).unwrap(),
+            outer_index
+        );
+        assert_eq!(std::fs::read(store.join("index")).unwrap(), main_index);
+        let error = crate::git::remove::stage_worktree_removal(&repo, &outer, Some("outer"), force)
+            .unwrap_err();
+        assert!(
+            matches!(
+                error.downcast_ref::<crate::git::GitError>(),
+                Some(crate::git::GitError::NestedWorktree { .. })
+            ),
+            "{error:#}"
+        );
+        assert_eq!(
+            std::fs::read(registration.join("index")).unwrap(),
+            outer_index
+        );
+        assert_eq!(std::fs::read(store.join("index")).unwrap(), main_index);
+        assert!(nested_main.join(".git").is_file());
+        assert!(outer.join(".git").is_file());
+    }
+}
+
+/// An unrecorded main can share its Git directory with an apparent conventional
+/// parent. Its own gitfile still protects it inside an ignored removal tree.
+#[test]
+fn nested_worktree_protects_main_with_dot_git_separate_store() {
+    let seed = TestRepo::with_initial_commit();
+    let directory = crate::testing::test_tempdir();
+    let store = directory.path().join("x/.git");
+    let main = directory.path().join("work");
+    let outer = directory.path().join("outer");
+    std::fs::create_dir_all(store.parent().unwrap()).unwrap();
+    seed.run_git(&[
+        "clone",
+        "--separate-git-dir",
+        store.to_str().unwrap(),
+        seed.root_path().to_str().unwrap(),
+        main.to_str().unwrap(),
+    ]);
+    std::fs::write(main.join(".gitignore"), "nest/\n").unwrap();
+    seed.run_git_in(&main, &["add", ".gitignore"]);
+    seed.run_git_in(&main, &["commit", "-m", "ignore nested main"]);
+    seed.run_git_in(
+        &main,
+        &["worktree", "add", "-b", "outer", outer.to_str().unwrap()],
+    );
+    let discovered = Repository::at(&main).unwrap();
+    let canonical_main = dunce::canonicalize(&main).unwrap();
+    assert_eq!(discovered.repo_path().unwrap(), canonical_main);
+    assert_eq!(
+        discovered.primary_worktree().unwrap(),
+        Some(canonical_main.clone())
+    );
+    assert_eq!(discovered.list_worktrees().unwrap()[0].path, canonical_main);
+    std::fs::create_dir(main.join("subdirectory")).unwrap();
+    assert_eq!(
+        Repository::at(main.join("subdirectory"))
+            .unwrap()
+            .repo_path()
+            .unwrap(),
+        canonical_main
+    );
+    std::fs::write(main.join("notes.txt"), "sole main notes").unwrap();
+    let nested = outer.join("nest/work");
+    std::fs::create_dir(nested.parent().unwrap()).unwrap();
+    std::fs::rename(&main, &nested).unwrap();
+    assert!(!store.join("gitdir").exists());
+    // Linked discovery has no record of the actual main; inspect what removal
+    // would delete instead of trusting Git's conventional-parent listing.
+    let repo = Repository::at(&outer).unwrap();
+    let registration = repo.worktree_at(&outer).git_dir().unwrap();
+    let main_index = std::fs::read(store.join("index")).unwrap();
+    let outer_index = std::fs::read(registration.join("index")).unwrap();
+    assert_eq!(
+        repo.nested_worktree(&outer).unwrap(),
+        Some(dunce::canonicalize(&nested).unwrap())
+    );
+    for force in [false, true] {
+        let error = crate::git::remove::stage_worktree_removal(&repo, &outer, Some("outer"), force)
+            .unwrap_err();
+        assert!(
+            matches!(
+                error.downcast_ref::<crate::git::GitError>(),
+                Some(crate::git::GitError::NestedWorktree { .. })
+            ),
+            "{error:#}"
+        );
+        assert_eq!(std::fs::read(store.join("index")).unwrap(), main_index);
+        assert_eq!(
+            std::fs::read(registration.join("index")).unwrap(),
+            outer_index
+        );
+        assert_eq!(
+            std::fs::read_to_string(nested.join("notes.txt")).unwrap(),
+            "sole main notes"
+        );
+    }
+}
+
+/// Removal does not follow directory aliases, but unreadable own Git entries
+/// inside the actual removal tree must not become evidence of no checkout.
+#[cfg(unix)]
+#[test]
+fn nested_worktree_scan_uses_removal_tree_and_propagates_io_errors() {
+    let mut seed = TestRepo::with_initial_commit();
+    let outer = seed.add_worktree("outer");
+    let repo = Repository::at(seed.root_path()).unwrap();
+    std::fs::write(repo.git_common_dir().join("info/exclude"), ".ignored/\n").unwrap();
+    let ignored = outer.join(".ignored");
+    std::fs::create_dir(&ignored).unwrap();
+    std::os::unix::fs::symlink(seed.root_path(), ignored.join("main-alias")).unwrap();
+    assert_eq!(repo.nested_worktree(&outer).unwrap(), None);
+    let malformed = ignored.join("malformed");
+    std::fs::create_dir(&malformed).unwrap();
+    std::os::unix::fs::symlink(".git", malformed.join(".git")).unwrap();
+    let registration = repo.worktree_at(&outer).git_dir().unwrap();
+    let index = std::fs::read(registration.join("index")).unwrap();
+    let error = repo.nested_worktree(&outer).unwrap_err();
+    assert!(
+        error.to_string().contains("Failed to inspect Git entry @"),
+        "{error:#}"
+    );
+    assert!(
+        error
+            .to_string()
+            .contains(&crate::path::format_path_for_display(
+                &malformed.join(".git")
+            )),
+        "{error:#}"
+    );
+    for force in [false, true] {
+        let error = crate::git::remove::stage_worktree_removal(&repo, &outer, Some("outer"), force)
+            .unwrap_err();
+        assert!(
+            error.downcast_ref::<std::io::Error>().is_some(),
+            "{error:#}"
+        );
+        assert!(error.to_string().contains("Failed to inspect Git entry @"));
+        assert!(
+            error
+                .to_string()
+                .contains(&crate::path::format_path_for_display(
+                    &malformed.join(".git")
+                ))
+        );
+        assert_eq!(std::fs::read(registration.join("index")).unwrap(), index);
+        assert!(outer.join(".git").is_file());
+    }
+}
+
+/// Reconnecting a bare common store inside the selected linked checkout must
+/// not let force removal delete the only objects and registration index.
+#[test]
+fn nested_worktree_refuses_contained_common_git_storage() {
+    let seed = TestRepo::with_initial_commit();
+    std::fs::write(seed.root_path().join(".gitignore"), ".store/\n").unwrap();
+    seed.run_git(&["add", ".gitignore"]);
+    seed.run_git(&["commit", "-m", "ignore moved store"]);
+    let directory = crate::testing::test_tempdir();
+    let original = directory.path().join("bare.git");
+    let outer = directory.path().join("outer");
+    seed.run_git(&[
+        "clone",
+        "--bare",
+        seed.root_path().to_str().unwrap(),
+        original.to_str().unwrap(),
+    ]);
+    seed.run_git_in(
+        &original,
+        &["worktree", "add", "-b", "outer", outer.to_str().unwrap()],
+    );
+    std::fs::write(outer.join("only-history.txt"), "sole unpushed history").unwrap();
+    seed.run_git_in(&outer, &["add", "only-history.txt"]);
+    seed.run_git_in(&outer, &["commit", "-m", "sole history"]);
+    let head = String::from_utf8(
+        seed.git_command()
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&outer)
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let store = outer.join(".store");
+    std::fs::rename(&original, &store).unwrap();
+    std::fs::write(
+        outer.join(".git"),
+        format!("gitdir: {}\n", store.join("worktrees/outer").display()),
+    )
+    .unwrap();
+    let repo = Repository::at(&outer).unwrap();
+    assert!(repo.is_bare().unwrap());
+    let registration = repo.worktree_at(&outer).git_dir().unwrap();
+    let index = std::fs::read(registration.join("index")).unwrap();
+    let error = repo.nested_worktree(&outer).unwrap_err();
+    assert!(
+        error.to_string().contains("contains a Git directory"),
+        "{error:#}"
+    );
+    for force in [false, true] {
+        let error = crate::git::remove::stage_worktree_removal(&repo, &outer, Some("outer"), force)
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("contains a Git directory"),
+            "{error:#}"
+        );
+        assert_eq!(std::fs::read(registration.join("index")).unwrap(), index);
+        assert_eq!(
+            std::fs::read_to_string(outer.join("only-history.txt")).unwrap(),
+            "sole unpushed history"
+        );
+        seed.run_git_in(&outer, &["cat-file", "-e", head.trim()]);
+    }
+}
+
+/// A stale backlink must not hide the checkout's actual own registration
+/// after a manual move into the ignored removal tree.
+#[test]
+fn nested_worktree_protects_moved_linked_checkout() {
+    let mut seed = TestRepo::with_initial_commit();
+    std::fs::write(seed.root_path().join(".gitignore"), "nest/\n").unwrap();
+    seed.run_git(&["add", ".gitignore"]);
+    seed.run_git(&["commit", "-m", "ignore nested checkout"]);
+    let outer = seed.add_worktree("outer");
+    let inner = seed.add_worktree("inner");
+    std::fs::write(inner.join("staged.txt"), "staged content").unwrap();
+    seed.run_git_in(&inner, &["add", "staged.txt"]);
+    std::fs::write(inner.join("staged.txt"), "unstaged content").unwrap();
+    std::fs::write(inner.join("notes.txt"), "untracked notes").unwrap();
+    let repo = Repository::at(seed.root_path()).unwrap();
+    let inner_registration = repo.worktree_at(&inner).git_dir().unwrap();
+    let outer_registration = repo.worktree_at(&outer).git_dir().unwrap();
+    let inner_index = std::fs::read(inner_registration.join("index")).unwrap();
+    let outer_index = std::fs::read(outer_registration.join("index")).unwrap();
+    let nested = outer.join("nest/inner");
+    std::fs::create_dir(nested.parent().unwrap()).unwrap();
+    std::fs::rename(&inner, &nested).unwrap();
+    assert!(!inner.exists());
+    assert_eq!(
+        repo.nested_worktree(&outer).unwrap(),
+        Some(dunce::canonicalize(&nested).unwrap())
+    );
+    for force in [false, true] {
+        let error = crate::git::remove::stage_worktree_removal(&repo, &outer, Some("outer"), force)
+            .unwrap_err();
+        assert!(
+            matches!(
+                error.downcast_ref::<crate::git::GitError>(),
+                Some(crate::git::GitError::NestedWorktree { .. })
+            ),
+            "{error:#}"
+        );
+        assert_eq!(
+            std::fs::read(inner_registration.join("index")).unwrap(),
+            inner_index
+        );
+        assert_eq!(
+            std::fs::read(outer_registration.join("index")).unwrap(),
+            outer_index
+        );
+        assert_eq!(
+            std::fs::read_to_string(nested.join("staged.txt")).unwrap(),
+            "unstaged content"
+        );
+        assert_eq!(
+            std::fs::read_to_string(nested.join("notes.txt")).unwrap(),
+            "untracked notes"
+        );
+    }
+}
+
+/// A registration alias may point anywhere, but outer removal must preserve
+/// sibling metadata when the resolved store lies inside the removal tree.
+#[cfg(unix)]
+#[test]
+fn nested_worktree_preserves_contained_registration_storage() {
+    for contained in [false, true] {
+        let mut seed = TestRepo::with_initial_commit();
+        std::fs::write(seed.root_path().join(".gitignore"), ".storage/\n").unwrap();
+        seed.run_git(&["add", ".gitignore"]);
+        seed.run_git(&["commit", "-m", "ignore registration storage"]);
+        let outer = seed.add_worktree("outer");
+        let inner = seed.add_worktree("inner");
+        std::fs::write(inner.join("staged.txt"), "staged contents").unwrap();
+        seed.run_git_in(&inner, &["add", "staged.txt"]);
+        std::fs::write(inner.join("staged.txt"), "unstaged contents").unwrap();
+        std::fs::write(inner.join("notes.txt"), "untracked notes").unwrap();
+        let repo = Repository::at(seed.root_path()).unwrap();
+        let registration = repo.worktree_at(&inner).git_dir().unwrap();
+        let outer_registration = repo.worktree_at(&outer).git_dir().unwrap();
+        let storage = if contained {
+            outer.join(".storage/inner-registration")
+        } else {
+            seed.root_path().join("external-registration")
+        };
+        std::fs::create_dir_all(storage.parent().unwrap()).unwrap();
+        std::fs::rename(&registration, &storage).unwrap();
+        std::fs::write(
+            storage.join("commondir"),
+            format!("{}\n", repo.git_common_dir().display()),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(&storage, &registration).unwrap();
+        let status = |path: &std::path::Path| {
+            let output = seed
+                .git_command()
+                .args(["--no-optional-locks", "status", "--porcelain"])
+                .current_dir(path)
+                .run()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            output.stdout
+        };
+        assert!(status(&outer).is_empty());
+        assert_eq!(status(&inner), b"AM staged.txt\n?? notes.txt\n");
+        let staged = seed
+            .git_command()
+            .args(["show", ":staged.txt"])
+            .current_dir(&inner)
+            .run()
+            .unwrap();
+        assert!(staged.status.success());
+        assert_eq!(staged.stdout, b"staged contents");
+        let metadata: Vec<_> = ["HEAD", "index", "commondir", "gitdir"]
+            .into_iter()
+            .map(|name| (name, std::fs::read(storage.join(name)).unwrap()))
+            .collect();
+        let outer_index = std::fs::read(outer_registration.join("index")).unwrap();
+        let force_modes: &[bool] = if contained { &[false, true] } else { &[false] };
+        for &force in force_modes {
+            let removal =
+                crate::git::remove::stage_worktree_removal(&repo, &outer, Some("outer"), force);
+            if contained {
+                let error = removal.unwrap_err();
+                assert!(
+                    error.to_string().contains("contains a Git directory"),
+                    "{error:#}"
+                );
+                assert!(outer.join(".git").is_file());
+                assert_eq!(
+                    std::fs::read(outer_registration.join("index")).unwrap(),
+                    outer_index
+                );
+            } else {
+                assert!(removal.unwrap().is_some());
+                assert!(!outer.exists());
+            }
+            for (name, bytes) in &metadata {
+                assert_eq!(std::fs::read(storage.join(name)).unwrap(), *bytes, "{name}");
+            }
+            assert!(registration.is_symlink());
+            assert_eq!(
+                std::fs::read_to_string(inner.join("staged.txt")).unwrap(),
+                "unstaged contents"
+            );
+            assert_eq!(
+                std::fs::read_to_string(inner.join("notes.txt")).unwrap(),
+                "untracked notes"
+            );
+            let staged = seed
+                .git_command()
+                .args(["show", ":staged.txt"])
+                .current_dir(&inner)
+                .run()
+                .unwrap();
+            assert!(staged.status.success());
+            assert_eq!(staged.stdout, b"staged contents");
+            assert_eq!(status(&inner), b"AM staged.txt\n?? notes.txt\n");
+            assert_eq!(
+                Repository::at(&inner).unwrap().git_common_dir(),
+                repo.git_common_dir()
+            );
+        }
+    }
+}
+
 /// Build a `git init --separate-git-dir` layout: the work tree's `.git` is a
 /// *file* pointing at a store directory outside it. Returns the tempdir, the
 /// store (which is the repository's git common dir) and the work tree.
@@ -2848,7 +3570,7 @@ fn worktree_path_not_ours_names_a_normalized_path() {
 /// `git worktree repair` runs last so the store carries git's `gitdir`
 /// backlink. Neither `git init --separate-git-dir` nor `git clone
 /// --separate-git-dir` writes one, so an unrepaired repository of this shape
-/// records its work tree nowhere.
+/// has no recorded backlink; discovery from its main still identifies it.
 ///
 /// `relative_backlink` sets `worktree.useRelativePaths` before the repair, so
 /// git writes the backlink as a path relative to the store rather than an
@@ -2959,8 +3681,8 @@ fn list_worktrees_names_the_work_tree_of_a_separate_git_dir_repo() {
 fn repo_path_declines_a_stale_separate_git_dir_backlink() {
     // The backlink is one-way, so `repo_path` confirms it: a work tree that
     // has moved away leaves a `gitdir` file naming a path that no longer
-    // points back. Falling through to `parent(git_common_dir)` returns the
-    // pre-#4235 answer rather than a path that doesn't hold this repository.
+    // points back. Store-only discovery cannot recover the moved main, so
+    // the canonical resolver must report that it cannot identify it.
     use super::{Repository, canonicalize};
 
     let (_tmp, store, work_tree) = build_separate_git_dir_layout();
@@ -2976,10 +3698,16 @@ fn repo_path_declines_a_stale_separate_git_dir_backlink() {
     assert!(out.status.success(), "git init failed");
 
     let repo = Repository::at(&store).unwrap();
+    assert!(
+        repo.repo_path()
+            .unwrap_err()
+            .to_string()
+            .contains("Cannot determine the main worktree location")
+    );
+    let discovered = Repository::at(&moved).unwrap();
     assert_eq!(
-        canonicalize(repo.repo_path().unwrap()).unwrap(),
-        canonicalize(store.parent().unwrap()).unwrap(),
-        "a backlink whose work tree no longer points back must not be used"
+        discovered.repo_path().unwrap(),
+        canonicalize(&moved).unwrap()
     );
 }
 
@@ -3020,6 +3748,21 @@ fn nested_worktree_reads_fresh_topology() {
     repo.list_worktrees().unwrap();
     let late = test.add_worktree_at_path("late", &source.join("late"));
     assert_eq!(repo.nested_worktree(&source).unwrap(), Some(late));
+}
+
+#[test]
+fn nested_worktree_accepts_missing_registry() {
+    let test = TestRepo::with_initial_commit();
+    let repo = Repository::at(test.root_path()).unwrap();
+    assert!(!repo.git_common_dir().join("worktrees").exists());
+    let index = std::fs::read(repo.git_common_dir().join("index")).unwrap();
+    let empty = test.root_path().join("empty");
+    std::fs::create_dir(&empty).unwrap();
+    assert_eq!(repo.nested_worktree(&empty).unwrap(), None);
+    assert_eq!(
+        std::fs::read(repo.git_common_dir().join("index")).unwrap(),
+        index
+    );
 }
 
 #[cfg(unix)]
@@ -3329,4 +4072,239 @@ fn prune_worktree_entry_preserves_submodule_storage() {
             .unwrap();
         assert!(!registration.exists());
     }
+}
+
+/// An unreadable indexed repository must never become force-discard consent.
+#[cfg(unix)]
+#[test]
+fn submodule_inventory_preserves_data_on_inspection_errors() {
+    for broken in ["index", "marker"] {
+        let mut test = TestRepo::with_initial_commit();
+        let outer = test.add_worktree("outer");
+        let child = outer.join("child");
+        test.run_git(&[
+            "clone",
+            test.root_path().to_str().unwrap(),
+            child.to_str().unwrap(),
+        ]);
+        test.run_git_in(
+            &child,
+            &["commit", "--allow-empty", "-m", "sole child history"],
+        );
+        test.run_git_in(&outer, &["add", "child"]);
+        let repo = Repository::at(test.root_path()).unwrap();
+        let registration = repo.worktree_at(&outer).git_dir().unwrap();
+        let outer_index = std::fs::read(registration.join("index")).unwrap();
+        let child_index = std::fs::read(child.join(".git/index")).unwrap();
+        let history = std::fs::read(child.join(".git/refs/heads/main")).unwrap();
+        let (saved, expected) = if broken == "index" {
+            let saved = child.join(".git/saved-index");
+            std::fs::rename(child.join(".git/index"), &saved).unwrap();
+            std::os::unix::fs::symlink("index", child.join(".git/index")).unwrap();
+            (saved, "Failed to inspect submodule index")
+        } else {
+            let saved = outer.join("saved-child");
+            std::fs::rename(&child, &saved).unwrap();
+            std::os::unix::fs::symlink("child", &child).unwrap();
+            (saved, "Failed to inspect")
+        };
+        let error = repo.require_no_submodule_storage(&outer).unwrap_err();
+        assert!(
+            format!("{error:#}").contains(expected),
+            "{broken}: {error:#}"
+        );
+        assert!(
+            error.downcast_ref::<crate::git::GitError>().is_none(),
+            "An I/O error must not be a force-waivable refusal: {error:#}"
+        );
+        assert_eq!(
+            std::fs::read(registration.join("index")).unwrap(),
+            outer_index
+        );
+        if broken == "index" {
+            std::fs::remove_file(child.join(".git/index")).unwrap();
+            std::fs::rename(saved, child.join(".git/index")).unwrap();
+        } else {
+            std::fs::remove_file(&child).unwrap();
+            std::fs::rename(saved, &child).unwrap();
+        }
+        assert_eq!(
+            std::fs::read(child.join(".git/index")).unwrap(),
+            child_index
+        );
+        assert_eq!(
+            std::fs::read(child.join(".git/refs/heads/main")).unwrap(),
+            history
+        );
+    }
+}
+
+/// A nested gitlink alias must inventory its own repository only once.
+#[cfg(unix)]
+#[test]
+fn submodule_inventory_terminates_on_checkout_cycle() {
+    let mut test = TestRepo::with_initial_commit();
+    let outer = test.add_worktree("outer");
+    let child = outer.join("embedded");
+    test.run_git(&[
+        "clone",
+        test.root_path().to_str().unwrap(),
+        child.to_str().unwrap(),
+    ]);
+    let head = test.git_output(&["rev-parse", "HEAD"]);
+    test.run_git_in(
+        &child,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "160000",
+            &head,
+            "self",
+        ],
+    );
+    std::os::unix::fs::symlink(".", child.join("self")).unwrap();
+    test.run_git_in(&outer, &["add", "embedded"]);
+    let repo = Repository::at(test.root_path()).unwrap();
+    let registration = repo.worktree_at(&outer).git_dir().unwrap();
+    let index = std::fs::read(registration.join("index")).unwrap();
+    let child_git_dir = dunce::canonicalize(child.join(".git")).unwrap();
+    let child_index = std::fs::read(child_git_dir.join("index")).unwrap();
+    assert_eq!(
+        repo.worktree_at(&outer)
+            .initialized_submodule_repositories()
+            .unwrap(),
+        Some(vec![child_git_dir.clone()])
+    );
+    let error = repo.require_no_submodule_storage(&outer).unwrap_err();
+    assert!(
+        matches!(
+            error.downcast_ref::<crate::git::GitError>(),
+            Some(crate::git::GitError::SubmoduleRepositories { repositories, .. })
+                if repositories.as_slice() == std::slice::from_ref(&child_git_dir)
+        ),
+        "{error:#}"
+    );
+    assert_eq!(std::fs::read(registration.join("index")).unwrap(), index);
+    assert_eq!(
+        std::fs::read(child_git_dir.join("index")).unwrap(),
+        child_index
+    );
+    test.run_git_in(&child, &["cat-file", "-e", "HEAD^{commit}"]);
+}
+
+/// Only stores that deletion reaches belong in its discard inventory.
+#[cfg(unix)]
+#[test]
+fn submodule_inventory_distinguishes_owned_dangling_and_unresolvable_stores() {
+    use crate::git::{GitError, WorktreePruneMode};
+    for target in ["checkout", "dangling", "loop"] {
+        let mut test = TestRepo::with_initial_commit();
+        let outer = test.add_worktree("outer");
+        let repo = Repository::at(test.root_path()).unwrap();
+        let registration = repo.worktree_at(&outer).git_dir().unwrap();
+        let index = std::fs::read(registration.join("index")).unwrap();
+        let store = outer.join("store");
+        if target == "checkout" {
+            test.run_git(&[
+                "clone",
+                "--bare",
+                test.root_path().to_str().unwrap(),
+                store.to_str().unwrap(),
+            ]);
+            std::os::unix::fs::symlink(&store, registration.join("modules")).unwrap();
+        } else {
+            std::os::unix::fs::symlink(
+                if target == "loop" {
+                    "modules"
+                } else {
+                    "missing"
+                },
+                registration.join("modules"),
+            )
+            .unwrap();
+        }
+        let error = repo.require_no_submodule_storage(&outer).unwrap_err();
+        if target == "loop" {
+            assert!(
+                error
+                    .to_string()
+                    .contains("Failed to resolve submodule repositories"),
+                "{error:#}"
+            );
+        } else {
+            let Some(GitError::SubmoduleRepositories { repositories, .. }) =
+                error.downcast_ref::<GitError>()
+            else {
+                panic!("{error:#}")
+            };
+            let expected = if target == "checkout" {
+                vec![dunce::canonicalize(&store).unwrap()]
+            } else {
+                vec![]
+            };
+            assert_eq!(*repositories, expected);
+        }
+        std::fs::remove_file(outer.join(".git")).unwrap();
+        assert!(
+            repo.prune_worktree_entry(&outer, WorktreePruneMode::Stale)
+                .is_err()
+        );
+        assert_eq!(std::fs::read(registration.join("index")).unwrap(), index);
+        let forced = repo.prune_worktree_entry(&outer, WorktreePruneMode::Force);
+        if target == "loop" {
+            assert!(
+                forced
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Failed to resolve submodule repositories")
+            );
+            assert_eq!(std::fs::read(registration.join("index")).unwrap(), index);
+        } else {
+            forced.unwrap();
+            assert!(!registration.exists());
+            if target == "checkout" {
+                assert!(store.join("objects").is_dir());
+                test.run_git_in(&store, &["cat-file", "-e", "HEAD^{commit}"]);
+            }
+        }
+    }
+}
+
+/// Unregistering a registration alias unlinks the alias, preserving its target.
+#[cfg(unix)]
+#[test]
+fn submodule_inventory_preserves_aliased_registration_target() {
+    use crate::git::{GitError, WorktreePruneMode};
+    let mut test = TestRepo::with_initial_commit();
+    let outer = test.add_worktree("outer");
+    let repo = Repository::at(test.root_path()).unwrap();
+    let registration = repo.worktree_at(&outer).git_dir().unwrap();
+    let saved = repo.git_common_dir().join("saved-registration");
+    std::fs::rename(&registration, &saved).unwrap();
+    std::fs::write(
+        saved.join("commondir"),
+        repo.git_common_dir().to_str().unwrap(),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(&saved, &registration).unwrap();
+    let store = saved.join("modules/sub");
+    test.run_git(&[
+        "clone",
+        "--bare",
+        test.root_path().to_str().unwrap(),
+        store.to_str().unwrap(),
+    ]);
+    let index = std::fs::read(saved.join("index")).unwrap();
+    let error = repo.require_no_submodule_storage(&outer).unwrap_err();
+    assert!(
+        matches!(error.downcast_ref::<GitError>(), Some(GitError::SubmoduleRepositories { repositories, .. }) if repositories.is_empty()),
+        "{error:#}"
+    );
+    std::fs::remove_file(outer.join(".git")).unwrap();
+    repo.prune_worktree_entry(&outer, WorktreePruneMode::Force)
+        .unwrap();
+    assert!(!registration.exists());
+    assert_eq!(std::fs::read(saved.join("index")).unwrap(), index);
+    test.run_git_in(&store, &["cat-file", "-e", "HEAD^{commit}"]);
 }

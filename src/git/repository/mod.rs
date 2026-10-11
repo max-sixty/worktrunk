@@ -538,8 +538,9 @@ struct RepositoryLocks {
 /// keyed by the canonicalized path used as the cache key (same convention as
 /// [`Repository::worktree_at`] / [`WorkingTree`]).
 ///
-/// **Invariant:** `WORKTREE_ROOTS.contains_key(path)` ⇔ `path` is inside a git
-/// work tree. The fallback path `WorkingTree::root` returns when `rev-parse
+/// Cached values are confirmed worktree roots. Ambiguous batch paths remain
+/// uncached for exact single-selector discovery. The fallback path
+/// `WorkingTree::root` returns when `rev-parse
 /// --show-toplevel` fails (deleted CWD, bare repo root, non-repo dir) is
 /// **not** persisted, which keeps the membership check usable as a
 /// "is-inside-worktree" signal — see [`WorkingTree::prewarm_info`]'s fast path.
@@ -826,6 +827,15 @@ impl Drop for TemporaryObjectStore {
             .observation_object_directories
             .remove(&self.registered_path);
     }
+}
+
+/// A line-delimited discovery batch can only cache an unambiguous root.
+/// Verify it encloses discovery and has its own Git entry, rather than caching
+/// a truncated newline path or a discovery-directory fallback as a root.
+fn worktree_root_from_batch(raw: &[u8], discovery: &Path) -> Option<PathBuf> {
+    let root = canonicalize(git_path_from_bytes(raw).ok()?).ok()?;
+    (discovery.starts_with(&root) && Repository::git_dir_at(&root).ok().flatten().is_some())
+        .then_some(root)
 }
 
 impl Repository {
@@ -1149,17 +1159,28 @@ impl Repository {
             return;
         };
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut lines = stdout.lines();
-
-        // Line 1: --git-common-dir. Cache even on non-zero exit — git emits
-        // this line before bailing out of `--show-toplevel` in a bare repo.
-        let Some(common_raw) = lines.next() else {
+        // Only the complete worktree batch and bare-repo partial batch have
+        // unambiguous selector boundaries. Embedded path newlines can imitate
+        // extra fields, especially when the bare batch stops after its boolean.
+        let Some(bytes) = output.stdout.strip_suffix(b"\n") else {
             return;
         };
-        let common_path = PathBuf::from(common_raw.trim());
+        let fields: Vec<_> = bytes.split(|byte| *byte == b'\n').collect();
+        let bare_batch = fields.len() == 2 && fields[1] == b"false";
+        let worktree_batch = fields.len() == 5
+            && fields[1] == b"true"
+            && (output.status.success() || fields[4] == b"HEAD");
+        if !bare_batch && !worktree_batch {
+            return;
+        }
+        let mut fields = fields.into_iter();
+
+        // Common-dir precedes selectors that can fail in bare or unborn repos.
+        let Some(common_path) = fields.next().and_then(|raw| git_path_from_bytes(raw).ok()) else {
+            return;
+        };
         let common_absolute = if common_path.is_relative() {
-            discovery_path.join(&common_path)
+            discovery_path.join(common_path)
         } else {
             common_path
         };
@@ -1167,57 +1188,35 @@ impl Repository {
             return;
         };
         GIT_COMMON_DIR_CACHE.insert(discovery_path.to_path_buf(), common_resolved);
-
-        // Per-worktree maps key on the canonicalized form of `discovery_path`,
-        // matching what `worktree_at` derives. Use the same fallback as
-        // `worktree_at` so the keys line up (canonicalize when the path
-        // exists, raw otherwise).
         let worktree_key =
             canonicalize(discovery_path).unwrap_or_else(|_| discovery_path.to_path_buf());
-
-        // Line 2: --is-inside-work-tree. "false" or missing → leave the
-        // per-worktree maps untouched. The membership invariant on
-        // `WORKTREE_ROOTS` ("contains_key ⇔ inside a worktree") forbids
-        // recording a sentinel here; `WorkingTree::root` and `prewarm_info`
-        // would misclassify the path as inside a worktree on the next call.
-        let is_inside = lines.next().is_some_and(|s| s.trim() == "true");
-        if !is_inside {
+        if fields.next() != Some(b"true".as_slice()) {
             return;
         }
 
-        // Line 3: --show-toplevel. Always emits when is_inside=true; mirror
-        // `prewarm_info`'s `self.path` fallback when canonicalize fails.
-        let raw_toplevel = lines.next().unwrap_or("").trim();
-        let canonical_root =
-            canonicalize(PathBuf::from(raw_toplevel)).unwrap_or_else(|_| worktree_key.clone());
-        WORKTREE_ROOTS
-            .entry(worktree_key.clone())
-            .or_insert(canonical_root);
-
-        // Line 4: --git-dir. Resolve relative-to-discovery and canonicalize;
-        // only land it when canonicalize succeeds, matching `prewarm_info`.
-        if let Some(git_dir) = lines.next().and_then(|raw| {
-            let path = PathBuf::from(raw.trim());
+        if let Some(root) = fields
+            .next()
+            .and_then(|raw| worktree_root_from_batch(raw, &worktree_key))
+        {
+            WORKTREE_ROOTS.entry(worktree_key.clone()).or_insert(root);
+        }
+        if let Some(git_dir) = fields.next().and_then(|raw| {
+            let path = git_path_from_bytes(raw).ok()?;
             let absolute = if path.is_relative() {
-                discovery_path.join(&path)
+                discovery_path.join(path)
             } else {
                 path
             };
-            canonicalize(&absolute).ok()
+            canonicalize(absolute).ok()
         }) {
             GIT_DIRS.entry(worktree_key.clone()).or_insert(git_dir);
         }
-
-        // Line 5: --symbolic-full-name HEAD. Only trustworthy when the whole
-        // batch succeeded — on unborn HEAD this lands as the literal string
-        // "HEAD" (indistinguishable from detached HEAD without exit status).
-        // On unborn HEAD we leave `CURRENT_BRANCHES` empty so the
-        // `symbolic-ref --short HEAD` fallback in `WorkingTree::branch`
-        // resolves the unborn branch name.
+        // An unborn HEAD prints a fallback despite the failed batch; leave
+        // its branch unresolved so the canonical branch accessor can ask Git.
         if output.status.success()
-            && let Some(raw) = lines.next()
+            && let Some(raw) = fields.next().and_then(|raw| std::str::from_utf8(raw).ok())
         {
-            let branch = raw.trim().strip_prefix("refs/heads/").map(str::to_owned);
+            let branch = raw.strip_prefix("refs/heads/").map(str::to_owned);
             CURRENT_BRANCHES.entry(worktree_key).or_insert(branch);
         }
     }
@@ -1395,8 +1394,11 @@ impl Repository {
             );
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let path = PathBuf::from(stdout.trim());
+        let bytes = output
+            .stdout
+            .strip_suffix(b"\n")
+            .context("Invalid git common-directory output")?;
+        let path = git_path_from_bytes(bytes)?;
         // Always canonicalize to resolve symlinks (e.g., /var -> /private/var on macOS)
         let absolute_path = if path.is_relative() {
             discovery_path.join(&path)
@@ -1631,8 +1633,8 @@ impl Repository {
     /// |----------------------------|----------------------------|-------------------------------|
     /// | Bare `.git`                | `core.bare = true`         | `git_common_dir` is the repo  |
     /// | Submodule `.git/modules/X` | `core.worktree` set by git | `rev-parse --show-toplevel`   |
-    /// | Separate git dir           | `<common>/gitdir` backlink | `parent(backlink)`            |
-    /// | Normal `.git`              | none of the above          | `parent(git_common_dir)`      |
+    /// | Separate git dir           | backlink or main discovery | verified main worktree        |
+    /// | Normal `.git`              | verified own `.git`        | `parent(git_common_dir)`      |
     ///
     /// Submodules need `core.worktree` because their git data lives in the
     /// parent's `.git/modules/` — the `parent(.git)` rule would point at
@@ -1650,14 +1652,14 @@ impl Repository {
     ///
     /// A repository whose git directory lives outside its work tree
     /// (`--separate-git-dir`) has neither signal, and `parent(git_common_dir)`
-    /// names the store's parent rather than the work tree. The backlink git
-    /// writes there covers it where it exists; see
-    /// `separate_git_dir_work_tree` for when that is.
+    /// names the store's parent rather than the work tree. A verified backlink
+    /// or discovery from the main worktree resolves it; discovery from a linked
+    /// worktree alone cannot identify an unrecorded main.
     ///
     /// # Errors
     ///
-    /// Returns an error if the bulk config read fails (e.g., git timeout). This
-    /// surfaces the failure early rather than caching a potentially wrong path.
+    /// Returns an error if the bulk config read fails or the main worktree
+    /// cannot be identified, rather than caching a guessed path.
     pub fn repo_path(&self) -> anyhow::Result<&Path> {
         self.cache
             .repo_path
@@ -1677,57 +1679,47 @@ impl Repository {
                         .context(path_to_logging_context(&self.git_common_dir))
                         .run()
                     && out.status.success()
+                    && let Some(bytes) = out.stdout.strip_suffix(b"\n")
                 {
-                    return Ok(PathBuf::from(String::from_utf8_lossy(&out.stdout).trim()));
+                    return Ok(git_path_from_bytes(bytes)?);
                 }
 
-                if let Some(work_tree) = self.separate_git_dir_work_tree() {
-                    return Ok(work_tree);
-                }
-
-                Ok(self
-                    .git_common_dir
-                    .parent()
-                    .expect("Git directory has no parent")
-                    .to_path_buf())
+                self.resolve_main_worktree().context(
+                    "Cannot determine the main worktree location; run git worktree repair from the main worktree",
+                )
             })
             .map(|p| p.as_path())
     }
 
-    /// The work tree a `--separate-git-dir` repository records in its `gitdir`
-    /// backlink, if it has one.
+    /// Resolve the main from its reciprocal backlink, discovery in that main
+    /// worktree, or conventional `.git` parent. Git init/clone with a separate
+    /// Git directory do not write the backlink; `git worktree repair` does.
+    /// Linked-worktree discovery cannot identify an unrecorded main.
     ///
-    /// When the git directory lives outside the work tree, the work tree's
-    /// `.git` is a *file* pointing at the store and `parent(git_common_dir)`
-    /// names the store's parent — the wrong answer, and the one
-    /// `git worktree list` gives too, since git derives its main-worktree
-    /// entry by stripping a trailing `/.git` that isn't there (see the
-    /// submodule correction in [`Self::list_worktrees`], which this layout
-    /// trips the same way).
-    ///
-    /// Git's own record of the other direction is `<git-common-dir>/gitdir`,
-    /// holding the path of the work tree's `.git` file — the same format as a
-    /// linked worktree's `.git/worktrees/<name>/gitdir`, down to the relative
-    /// form git writes under `worktree.useRelativePaths`, so
-    /// [`registration_worktree_path`] reads it. Only
-    /// `git worktree repair` writes it; `git init --separate-git-dir` and
-    /// `git clone --separate-git-dir` leave the store with no backlink, so a
-    /// repository that has never been repaired records its work tree nowhere
-    /// and still falls through to `parent(git_common_dir)`. Running
-    /// `git worktree repair` from the work tree is what materializes it.
-    ///
-    /// The backlink is one-way, so it is confirmed rather than trusted:
-    /// [`Self::git_dir_at`] reads the `.git` entry sitting at the work tree it
-    /// names, and only a work tree that points back at this common dir is
-    /// accepted. A backlink left behind by a work tree that has since moved,
-    /// been deleted, or been re-pointed at another repository resolves to
-    /// something else and falls through to `parent(git_common_dir)` — the
-    /// same answer as before, rather than a path that no longer holds this
-    /// repository. That round trip is also why a normal repository or a
-    /// submodule can't misfire here on a stray `gitdir` file.
-    fn separate_git_dir_work_tree(&self) -> Option<PathBuf> {
-        let work_tree = registration_worktree_path(&self.git_common_dir).ok()?;
-        (Self::git_dir_at(&work_tree).ok()?? == self.git_common_dir).then_some(work_tree)
+    /// Every candidate's own `.git` must resolve to this common directory.
+    /// Direct discovery in the main needs no subprocess. It takes precedence
+    /// over the conventional parent: a separate store can itself be named `.git`.
+    fn resolve_main_worktree(&self) -> Option<PathBuf> {
+        if let Ok(work_tree) = registration_worktree_path(&self.git_common_dir)
+            && Self::git_dir_at(&work_tree).ok().flatten().as_ref() == Some(&self.git_common_dir)
+        {
+            return Some(work_tree);
+        }
+        if Self::git_dir_at(&self.discovery_path)
+            .ok()
+            .flatten()
+            .as_ref()
+            == Some(&self.git_common_dir)
+        {
+            return canonicalize(&self.discovery_path).ok();
+        }
+        if let Ok(work_tree) = self.current_worktree().root()
+            && Self::git_dir_at(&work_tree).ok().flatten().as_ref() == Some(&self.git_common_dir)
+        {
+            return Some(work_tree);
+        }
+        let parent = self.git_common_dir.parent()?;
+        (Self::git_dir_at(parent).ok()?? == self.git_common_dir).then(|| parent.to_path_buf())
     }
 
     /// Access the bulk git config map, populating on first call.

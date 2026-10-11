@@ -25,8 +25,8 @@
 //!
 //! 1. **Lock and clean checks**. A `git worktree lock` is refused
 //!    unconditionally (matching `git worktree remove`; `--force` does not
-//!    override it). Nested checkouts registered in the same repository are
-//!    always preserved. Explicit force permits discarding the selected
+//!    override it). Nested checkouts and Git storage in the same repository
+//!    are always preserved. Explicit force permits discarding the selected
 //!    checkout's dirt and submodule repositories. [`RemoveOptions::force_worktree`]
 //!    replaces the dirty gate with disclosure of uncommitted paths (or why they
 //!    could not be read) and submodule repositories before deletion. See
@@ -606,6 +606,12 @@ fn rename_into_trash(
     git_dir: &Path,
     force_worktree: bool,
 ) -> anyhow::Result<Option<PathBuf>> {
+    // A sibling foreground task can cancel the operation during filesystem
+    // inspection. Admit this mutation only after the final topology scan.
+    #[cfg(unix)]
+    if let Some(signal) = crate::signal_forwarder::operation_interrupt_signal() {
+        return Err(crate::git::WorktrunkError::Interrupted { signal, hint: None }.into());
+    }
     // Nothing enters swept trash until its metadata was safely unregistered.
     // A failure must leave both payload and registration recoverable, even if
     // another process has already occupied the original checkout path.
@@ -934,6 +940,52 @@ mod tests {
             std::fs::read_to_string(destination.join("payload")).unwrap(),
             "keep"
         );
+    }
+
+    /// A sibling foreground lease can latch TERM while the final topology scan
+    /// runs. Filesystem staging must honor that cancellation before its rename.
+    #[cfg(unix)]
+    #[test]
+    fn rename_refuses_cancelled_operation() {
+        const CHILD_ENV: &str = "WORKTRUNK_TEST_REMOVE_CANCELLED_STAGING_CHILD";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "git::remove::tests::rename_refuses_cancelled_operation",
+                ])
+                .env(CHILD_ENV, "1");
+            assert!(
+                crate::shell_exec::spawn(&mut command)
+                    .unwrap()
+                    .wait()
+                    .unwrap()
+                    .success()
+            );
+            return;
+        }
+        let mut test = TestRepo::with_initial_commit();
+        let worktree = test.add_worktree("feature");
+        let repo = Repository::at(test.root_path()).unwrap();
+        let registration = repo.worktree_at(&worktree).git_dir().unwrap();
+        let index = std::fs::read(registration.join("index")).unwrap();
+        let operation = crate::signal_forwarder::CommandOperation::start().unwrap();
+        let foreground = crate::signal_forwarder::ForegroundSignals::install().unwrap();
+        signal_hook::low_level::raise(signal_hook::consts::SIGTERM).unwrap();
+        assert_eq!(
+            operation.interrupt_signal(),
+            Some(signal_hook::consts::SIGTERM)
+        );
+        for force in [false, true] {
+            let error = rename_into_trash(&repo, &worktree, &registration, force).unwrap_err();
+            assert_eq!(error.interrupt_signal(), Some(signal_hook::consts::SIGTERM));
+            assert!(worktree.join(".git").is_file());
+            assert_eq!(std::fs::read(registration.join("index")).unwrap(), index);
+            assert!(!repo.wt_dir().join("retained").exists());
+        }
+        drop(foreground);
+        drop(operation);
     }
 
     /// A `git worktree lock` must stop the rename even when the caller skipped

@@ -18,6 +18,8 @@
 
 - **Worktrees with local submodule repositories** (Breaking): removal now requires explicit `--force`, which can discard submodule Git history. `wt merge` completes and keeps the source worktree. [Docs](https://worktrunk.dev/remove/#force-flags) ([#4393](https://github.com/max-sixty/worktrunk/pull/4393))
 
+- **Repositories using `--separate-git-dir`** (Breaking): new worktree paths use the main checkout rather than the Git directory’s parent. Commands from a linked worktree fail if main cannot be identified; `git worktree repair` from main records its location. ([#4393](https://github.com/max-sixty/worktrunk/pull/4393))
+
 - **Config views and shell integration advice**: `wt config show` lists installation and authentication advice on their own lines; config and approvals parse errors name the source file. Merge and removal suggest restarting the shell when integration is installed but inactive. ([#4351](https://github.com/max-sixty/worktrunk/pull/4351), [#4343](https://github.com/max-sixty/worktrunk/pull/4343))
 
 - **Hook failure diagnostics**: failures name the hook and its source; commands that cannot start report the program, working directory and OS error. A concurrent hook that cannot start no longer stops its siblings. ([#4352](https://github.com/max-sixty/worktrunk/pull/4352))

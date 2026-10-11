@@ -2127,8 +2127,8 @@ fn handle_removed_worktree_output(
         execute_pre_remove_hooks_if_needed(&repo, &ctx)?;
     }
 
-    // Refuse late hook-created nesting before publishing a shell directory
-    // change. The shared removal core repeats this at staging for every caller.
+    // A hook may replace the checkout or add submodule storage; recheck that
+    // identity before asking Git about its contents or suggesting force.
     let worktree = repo.worktree_at(ctx.worktree_path);
     worktree.ensure_holds_this_worktree()?;
     if !ctx.force_worktree
@@ -2151,13 +2151,6 @@ fn handle_removed_worktree_output(
         }
         return Err(error);
     }
-    if let Some(nested) = repo.nested_worktree(ctx.worktree_path)? {
-        return Err(GitError::NestedWorktree {
-            path: ctx.worktree_path.to_path_buf(),
-            nested_path: nested,
-        }
-        .into());
-    }
 
     // The pre-rename `ensure_clean` catches a hook-dirtied worktree, and the
     // branch deletion re-decides against fresh refs (`delete_branch_if_safe`'s
@@ -2169,6 +2162,18 @@ fn handle_removed_worktree_output(
     // foreground path, minus the chrome.
     if matches!(ctx.execution, RemovalExecution::Silent) {
         return remove_removed_worktree_silently(&repo, &ctx, announcer);
+    }
+
+    // The final staging guard protects deletion for every caller. This extra
+    // fresh check only protects publishing a shell directory change.
+    if ctx.changed_directory
+        && let Some(nested) = repo.nested_worktree(ctx.worktree_path)?
+    {
+        return Err(GitError::NestedWorktree {
+            path: ctx.worktree_path.to_path_buf(),
+            nested_path: nested,
+        }
+        .into());
     }
 
     prepare_remove_directory_change(ctx.main_path, ctx.worktree_path, ctx.changed_directory)?;

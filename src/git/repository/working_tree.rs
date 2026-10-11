@@ -267,9 +267,10 @@ pub(super) fn operation_in_progress_at(git_dir: &Path) -> Option<InProgressOpera
 /// after the move. [`WorkingTree::head_sha`] always reads fresh.
 ///
 /// When `is_inside` is false every other field is `None` — nothing else ran.
-/// When `is_inside` is true, `root` lands unconditionally and `git_dir` lands
-/// unless canonicalization failed. `current_branch` is only populated when
-/// the whole batch succeeded; on unborn HEAD it stays `None` and the
+/// When `is_inside` is true, `root` lands unconditionally, using exact root
+/// discovery when batch paths are ambiguous. Other fields remain unresolved
+/// for ambiguous batches. `current_branch` is only populated when the whole
+/// batch succeeded; on unborn HEAD it stays `None` and the
 /// per-accessor fallback paths handle the symbolic-ref lookup.
 #[derive(Debug, Clone, Default)]
 #[must_use]
@@ -279,7 +280,7 @@ pub struct WorkingTreeGitInfo {
     /// Canonicalized top-level directory. Always `Some` when `is_inside`.
     pub root: Option<PathBuf>,
     /// Canonicalized git directory (may differ from common dir in linked
-    /// worktrees). `Some` when `is_inside` and canonicalization succeeded.
+    /// worktrees). Unresolved when batch paths are ambiguous or canonicalization fails.
     pub git_dir: Option<PathBuf>,
     /// Current branch: outer `Some(Some(name))` on a branch, `Some(None)`
     /// detached. `None` when HEAD was unresolvable (unborn branch) or outside
@@ -479,60 +480,66 @@ impl<'a> WorkingTree<'a> {
             "--symbolic-full-name",
             "HEAD",
         ])?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut lines = stdout.lines();
-
-        let is_inside = lines.next().is_some_and(|s| s.trim() == "true");
+        let Some(bytes) = output.stdout.strip_suffix(b"\n") else {
+            return Ok(WorkingTreeGitInfo::default());
+        };
+        let fields: Vec<_> = bytes.split(|byte| *byte == b'\n').collect();
+        let is_inside = fields.first() == Some(&b"true".as_slice());
         if !is_inside {
             return Ok(WorkingTreeGitInfo::default());
         }
-
-        // `root` and `git_dir` are safe to cache whenever their lines landed,
-        // because any failure in the batch is from HEAD — which comes after.
-        // `--show-toplevel` always emits a line when `is_inside=true`; if
-        // canonicalize of that line fails (e.g., pathological filesystem
-        // state), fall back to `self.path` which is already canonicalized by
-        // `worktree_at` and guaranteed inside the work tree.
-        let raw_toplevel = lines.next().unwrap_or("").trim();
-        let canonical = canonicalize(PathBuf::from(raw_toplevel)).unwrap_or(self.path.clone());
-        super::WORKTREE_ROOTS
-            .entry(self.path.clone())
-            .or_insert_with(|| canonical.clone());
-        let root = Some(canonical);
-
-        let git_dir = lines.next().and_then(|raw| {
-            let path = PathBuf::from(raw.trim());
+        if fields.len() > 4 {
+            // Embedded path newlines make selector boundaries ambiguous. Resolve
+            // the root through its exact accessor, leaving other fields uncached.
+            return Ok(WorkingTreeGitInfo {
+                is_inside,
+                root: Some(self.root()?),
+                ..WorkingTreeGitInfo::default()
+            });
+        }
+        let mut fields = fields.into_iter().skip(1);
+        let root = if let Some(root) = fields
+            .next()
+            .and_then(|raw| super::worktree_root_from_batch(raw, &self.path))
+        {
+            super::WORKTREE_ROOTS
+                .entry(self.path.clone())
+                .or_insert_with(|| root.clone());
+            root
+        } else {
+            self.root()?
+        };
+        let git_dir = fields.next().and_then(|raw| {
+            let path = super::git_path_from_bytes(raw).ok()?;
             let absolute = if path.is_relative() {
-                self.path.join(&path)
+                self.path.join(path)
             } else {
                 path
             };
-            let resolved = canonicalize(&absolute).ok()?;
+            let resolved = canonicalize(absolute).ok()?;
             super::GIT_DIRS
                 .entry(self.path.clone())
                 .or_insert_with(|| resolved.clone());
             Some(resolved)
         });
-
-        // The `--symbolic-full-name HEAD` line is only trustworthy when the
-        // batch succeeded. On unborn HEAD the line lands but is the literal
-        // "HEAD" fallback — we can't tell that from detached HEAD without the
-        // exit status.
         let current_branch = if output.status.success() {
-            lines.next().map(|raw| {
-                let branch = raw.trim().strip_prefix("refs/heads/").map(str::to_owned);
-                super::CURRENT_BRANCHES
-                    .entry(self.path.clone())
-                    .or_insert_with(|| branch.clone());
-                branch
-            })
+            fields
+                .next()
+                .and_then(|raw| std::str::from_utf8(raw).ok())
+                .map(|raw| {
+                    let branch = raw.strip_prefix("refs/heads/").map(str::to_owned);
+                    super::CURRENT_BRANCHES
+                        .entry(self.path.clone())
+                        .or_insert_with(|| branch.clone());
+                    branch
+                })
         } else {
             None
         };
 
         Ok(WorkingTreeGitInfo {
             is_inside: true,
-            root,
+            root: Some(root),
             git_dir,
             current_branch,
         })
@@ -683,9 +690,12 @@ impl<'a> WorkingTree<'a> {
         match super::WORKTREE_ROOTS.entry(self.path.clone()) {
             Entry::Occupied(e) => Ok(e.get().clone()),
             Entry::Vacant(e) => match self
-                .run_command(&["rev-parse", "--show-toplevel"])
+                .run_command_bytes(&["rev-parse", "--show-toplevel"])
                 .ok()
-                .map(|s| PathBuf::from(s.trim()))
+                .and_then(|bytes| {
+                    // Only Git's final protocol newline is outside the path.
+                    super::git_path_from_bytes(bytes.strip_suffix(b"\n")?).ok()
+                })
                 .and_then(|p| canonicalize(&p).ok())
             {
                 Some(root) => Ok(e.insert(root).clone()),

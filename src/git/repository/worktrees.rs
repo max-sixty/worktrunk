@@ -46,27 +46,11 @@ impl Repository {
                 let mut worktrees: Vec<_> =
                     raw_worktrees.into_iter().filter(|wt| !wt.bare).collect();
 
-                // Main-worktree path correction.
-                //
-                // Git's `get_main_worktree()` computes the main worktree path by stripping
-                // a trailing `/.git` from the common dir. Two layouts have no such suffix,
-                // so git leaves the path unchanged and reports the git data directory as
-                // the "main worktree": submodules, whose common dir is `.git/modules/sub`,
-                // and `--separate-git-dir` repositories, whose common dir is wherever the
-                // user put the store. Git consults neither `core.worktree` nor its own
-                // `gitdir` backlink in this code path.
-                //
-                // We detect this by checking whether the first worktree's path equals
-                // git_common_dir (which never holds for normal repos, where git_common_dir
-                // is `.git` inside the worktree). When matched, we correct it using
-                // repo_path(), which resolves both layouts from the signals git does
-                // record.
-                //
-                // Correct the shared listing here: branch lookup and selector consumers
-                // depend on these paths naming working directories. If git fixes this upstream, the condition stops
-                // triggering.
-                if let Some(first) = worktrees.first_mut()
-                    && canonicalize(&first.path).ok().as_deref() == Some(self.git_common_dir())
+                // Git infers the main from the common directory's name. A
+                // separate store (even one named `.git`) or submodule needs
+                // the canonical main identity instead. Bare repos have no main.
+                if !self.is_bare()?
+                    && let Some(first) = worktrees.first_mut()
                 {
                     first.path = self.repo_path()?.to_path_buf();
                 }
@@ -77,22 +61,36 @@ impl Repository {
             .map(Vec::as_slice)
     }
 
-    /// Find a live registered checkout inside `path`, using fresh backlinks.
+    /// Find a same-repository checkout inside `path`, using fresh state.
+    /// Refuse a removal tree containing the repository's own Git storage.
     ///
     /// This removal guard bypasses the cached listing and registry lock: an
     /// unrelated teardown must not prevent concurrent staging. Unregistering
     /// moves entire registrations atomically, so only a definitely vanished
     /// registration can excuse a missing backlink. Partial or unreadable
-    /// registrations fail closed. Missing checkout directories are skipped;
-    /// symlinks and relative backlinks resolve to their actual location.
+    /// registrations fail closed. Missing linked checkouts are skipped; the
+    /// main checkout must still have its own Git identity. Symlinks and relative
+    /// backlinks resolve to their actual location. The removal tree is also
+    /// inspected for unrecorded main checkouts, including ignored directories;
+    /// directory symlinks are not followed because removal only unlinks them.
     pub fn nested_worktree(&self, path: &Path) -> anyhow::Result<Option<PathBuf>> {
         let root = canonicalize(path).context("Failed to resolve worktree for removal")?;
+        let require_outside_removal = |git_dir: &Path| -> anyhow::Result<()> {
+            if git_dir.starts_with(&root) {
+                anyhow::bail!(
+                    "Cannot remove worktree @ {}; contains a Git directory @ {}",
+                    format_path_for_display(&root),
+                    format_path_for_display(git_dir),
+                );
+            }
+            Ok(())
+        };
+        require_outside_removal(self.git_common_dir())?;
         let mut paths = Vec::new();
+        let mut git_dirs = HashSet::from([self.git_common_dir().to_path_buf()]);
         if !self.is_bare()? {
             let main = self.repo_path()?;
-            if main.try_exists()?
-                && Self::git_dir_at(main)?.as_deref() != Some(self.git_common_dir())
-            {
+            if Self::git_dir_at(main)?.as_deref() != Some(self.git_common_dir()) {
                 anyhow::bail!(
                     "Cannot determine the main worktree location; run git worktree repair from the main worktree"
                 );
@@ -114,7 +112,22 @@ impl Repository {
                         }
                     }
                     match registration_worktree_path(&registration) {
-                        Ok(path) => paths.push(path),
+                        Ok(path) => {
+                            match canonicalize(&registration) {
+                                Ok(git_dir) => {
+                                    require_outside_removal(&git_dir)?;
+                                    git_dirs.insert(git_dir);
+                                }
+                                Err(error) if vanished_registration(&registration, &error) => {
+                                    continue;
+                                }
+                                Err(error) => {
+                                    return Err(error)
+                                        .context("Failed to resolve worktree registration");
+                                }
+                            }
+                            paths.push(path);
+                        }
                         Err(error) if vanished_registration(&registration, &error) => {}
                         Err(error) => {
                             return Err(error).with_context(|| {
@@ -155,6 +168,37 @@ impl Repository {
             };
             if resolved != root && resolved.starts_with(&root) {
                 return Ok(Some(resolved));
+            }
+        }
+        // A separate store named `.git` is indistinguishable from a normal
+        // main's store. Its unrecorded main or a moved linked checkout may be
+        // anywhere, so backlinks alone cannot rule out a same-repo checkout.
+        let walker = ignore::WalkBuilder::new(&root)
+            .standard_filters(false)
+            .follow_links(false)
+            .filter_entry(|entry| entry.file_type().is_some_and(|kind| kind.is_dir()))
+            .build();
+        for entry in walker {
+            let entry = entry.with_context(|| {
+                format!(
+                    "Failed to inspect worktree contents @ {} for nested checkouts",
+                    format_path_for_display(&root)
+                )
+            })?;
+            if entry.depth() == 0 {
+                continue;
+            }
+            let checkout = entry.into_path();
+            if Self::git_dir_at(&checkout)
+                .with_context(|| {
+                    format!(
+                        "Failed to inspect Git entry @ {}",
+                        format_path_for_display(&checkout.join(".git"))
+                    )
+                })?
+                .is_some_and(|git_dir| git_dirs.contains(&git_dir))
+            {
+                return Ok(Some(checkout));
             }
         }
         Ok(None)
