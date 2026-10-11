@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use anyhow::{Context, bail};
+use color_print::cformat;
 use serde::Deserialize;
 
 use super::{
@@ -132,17 +133,13 @@ pub(super) fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result
         if serde_json::from_slice::<GhApiErrorResponse>(&output.stdout)
             .is_ok_and(|error| error.status == "404")
         {
-            let hint = if source == "gh default" {
-                "Check that `gh repo set-default` points to the correct repository."
-            } else {
-                "If the PR is on a different repository, \
-                 run `gh repo set-default` to set the default \
-                 or configure a different primary remote."
-            };
+            let hint =
+                cformat!("To query a different repository, run <underline>gh repo set-default</>");
             return Err(cli_api_error(
                 ForgeKind::GitHub.ref_type(),
-                format!("PR #{pr_number} not found on {owner}/{repo_name} ({source}). {hint}"),
+                format!("PR #{pr_number} not found on {owner}/{repo_name} ({source})"),
                 &output,
+                Some(hint),
             ));
         }
 
@@ -150,6 +147,7 @@ pub(super) fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result
             ForgeKind::GitHub.ref_type(),
             format!("gh api failed for PR #{}", pr_number),
             &output,
+            None,
         ));
     }
 

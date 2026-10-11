@@ -168,6 +168,7 @@ pub(super) fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result
             ForgeKind::Gitea.ref_type(),
             format!("tea api failed for PR #{}", pr_number),
             &output,
+            None,
         ));
     }
 

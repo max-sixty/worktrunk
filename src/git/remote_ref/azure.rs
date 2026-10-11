@@ -267,6 +267,7 @@ pub(super) fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result
             ForgeKind::AzureDevOps.ref_type(),
             format!("az repos pr show failed for PR #{}", pr_number),
             &output,
+            None,
         ));
     }
 

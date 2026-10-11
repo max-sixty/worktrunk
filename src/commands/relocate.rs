@@ -451,12 +451,13 @@ impl<'a> RelocationExecutor<'a> {
                 eprintln!("{}", progress_message(cformat!("Backed up {src} → {dest}")));
             } else {
                 let blocked_path = format_path_for_display(expected_path);
-                let msg = cformat!("Skipping <bold>{branch}</> (target blocked: {blocked_path})");
+                let msg =
+                    cformat!("Skipping <bold>{branch}</> (path already exists @ {blocked_path})");
                 eprintln!("{}", warning_message(msg));
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
-                        "To backup blocking paths, use <underline>--clobber</>"
+                        "To back up blocking paths before relocating, use <underline>--clobber</>"
                     ))
                 );
                 blocked.insert(i);
@@ -531,7 +532,7 @@ impl<'a> RelocationExecutor<'a> {
                         let branch = self.pending[i].branch();
                         let blocked_path = format_path_for_display(&self.pending[i].expected_path);
                         let msg = cformat!(
-                            "Skipping <bold>{branch}</> (target occupied: {blocked_path})"
+                            "Skipping <bold>{branch}</> (path already exists @ {blocked_path})"
                         );
                         eprintln!("{}", warning_message(msg));
                         self.blocked.insert(i);
