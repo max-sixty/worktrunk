@@ -19,6 +19,7 @@ pub mod pty;
 #[cfg(feature = "shell-integration-tests")]
 pub mod shell;
 
+use path_slash::PathExt as _;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
@@ -690,6 +691,17 @@ fn canonical_home_dir() -> Option<PathBuf> {
     home::home_dir().and_then(|path| canonicalize(&path).ok())
 }
 
+/// Redact a known path in plain output and JSON string contents. Derive JSON
+/// escaping from serde rather than rewriting backslashes across the snapshot.
+fn add_literal_path_filter(settings: &mut insta::Settings, path: &str, placeholder: &str) {
+    let json = serde_json::to_string(path).unwrap();
+    let json_body = &json[1..json.len() - 1];
+    if json_body != path {
+        settings.add_filter(&regex::escape(json_body), placeholder);
+    }
+    settings.add_filter(&regex::escape(path), placeholder);
+}
+
 fn add_snapshot_path_prelude_filters(settings: &mut insta::Settings) {
     // Normalize project root path (for test fixtures)
     // This must come before repo path filter to avoid partial matches
@@ -701,10 +713,10 @@ fn add_snapshot_path_prelude_filters(settings: &mut insta::Settings) {
         // Raw (backslashes on Windows) and forward-slash forms. Worktrunk normalizes
         // paths for display (`invocation_path`, `to_slash_lossy`), so output can use
         // either form depending on the code path.
-        settings.add_filter(&regex::escape(root_str), "[PROJECT_ROOT]");
-        let root_str_normalized = root_str.replace('\\', "/");
+        add_literal_path_filter(settings, root_str, "[PROJECT_ROOT]");
+        let root_str_normalized = root.to_slash_lossy();
         if root_str_normalized != root_str {
-            settings.add_filter(&regex::escape(&root_str_normalized), "[PROJECT_ROOT]");
+            add_literal_path_filter(settings, &root_str_normalized, "[PROJECT_ROOT]");
         }
     }
 
@@ -727,9 +739,8 @@ fn add_snapshot_path_prelude_filters(settings: &mut insta::Settings) {
 
     // Deliberately no global `\\` → `/` normalization here: it corrupts
     // intentional backslashes (JSON `\u001b` ANSI escapes, shell line
-    // continuations) and worktrunk already emits forward-slash paths via
-    // `path_slash`. If a test produces a raw Windows path, add a specific
-    // filter for it in `add_repo_and_worktree_path_filters`.
+    // continuations) and literal backslashes in Unix filenames. Known native
+    // paths and their JSON representations are filtered explicitly.
 }
 
 fn add_repo_and_worktree_path_filters(
@@ -740,12 +751,12 @@ fn add_repo_and_worktree_path_filters(
     // Normalize paths (canonicalize for macOS /var -> /private/var symlink)
     let root_canonical = canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let root_str = root_canonical.to_str().unwrap();
-    let root_str_normalized = root_str.replace('\\', "/");
+    let root_str_normalized = root_canonical.to_slash_lossy();
     // Raw backslash form (Windows) + forward-slash form (all platforms) + Git Bash POSIX form.
     // The forward-slash form also handles Unix since `root_str_normalized == root_str` there.
-    settings.add_filter(&regex::escape(root_str), "_REPO_");
-    settings.add_filter(&regex::escape(&root_str_normalized), "_REPO_");
-    settings.add_filter(&regex::escape(&to_posix_path(root_str)), "_REPO_");
+    add_literal_path_filter(settings, root_str, "_REPO_");
+    add_literal_path_filter(settings, &root_str_normalized, "_REPO_");
+    add_literal_path_filter(settings, &to_posix_path(root_str), "_REPO_");
 
     // Filters rewrite snapshot *content* only; the structured `info` block
     // insta-cmd records is reachable solely via redactions. A test that
@@ -753,14 +764,14 @@ fn add_repo_and_worktree_path_filters(
     // otherwise bake the per-test temp path into the snapshot's `args:`
     // block. Mirror the body filters: root-prefixed args become `_REPO_…`.
     // No POSIX form here — args are built in-process from `root_path()`.
-    let arg_prefixes = [root_str.to_string(), root_str_normalized.clone()];
+    let arg_prefixes = [root_str.to_string(), root_str_normalized.into_owned()];
     settings.add_dynamic_redaction(".args[]", move |value, _path| {
         if let Some(arg) = value.as_str() {
             for prefix in &arg_prefixes {
                 if let Some(suffix) = arg.strip_prefix(prefix.as_str()) {
                     return insta::internals::Content::from(format!(
                         "_REPO_{}",
-                        suffix.replace('\\', "/")
+                        Path::new(suffix).to_slash_lossy()
                     ));
                 }
             }
@@ -780,8 +791,8 @@ fn add_repo_and_worktree_path_filters(
     if let Some(home) = home_dir.as_ref()
         && let Ok(relative) = root_canonical.strip_prefix(home)
     {
-        let tilde_path = format!("~/{}", relative.display()).replace('\\', "/");
-        settings.add_filter(&regex::escape(&tilde_path), "_REPO_");
+        let tilde_path = format!("~/{}", relative.to_slash_lossy());
+        add_literal_path_filter(settings, &tilde_path, "_REPO_");
         let tilde_worktree_pattern = format!(r"{}(\.[a-zA-Z0-9_-]+)", regex::escape(&tilde_path));
         settings.add_filter(&tilde_worktree_pattern, "_REPO_$1");
     }
@@ -790,17 +801,17 @@ fn add_repo_and_worktree_path_filters(
         let canonical = canonicalize(path).unwrap_or_else(|_| path.clone());
         let path_str = canonical.to_str().unwrap();
         let replacement = format!("_WORKTREE_{}_", name.to_uppercase().replace('-', "_"));
-        let path_str_normalized = path_str.replace('\\', "/");
+        let path_str_normalized = canonical.to_slash_lossy();
         // Raw backslash form (Windows), forward-slash form, and Git Bash POSIX form.
-        settings.add_filter(&regex::escape(path_str), &replacement);
-        settings.add_filter(&regex::escape(&path_str_normalized), &replacement);
-        settings.add_filter(&regex::escape(&to_posix_path(path_str)), &replacement);
+        add_literal_path_filter(settings, path_str, &replacement);
+        add_literal_path_filter(settings, &path_str_normalized, &replacement);
+        add_literal_path_filter(settings, &to_posix_path(path_str), &replacement);
 
         if let Some(home) = home_dir.as_ref()
             && let Ok(relative) = canonical.strip_prefix(home)
         {
-            let tilde_path = format!("~/{}", relative.display()).replace('\\', "/");
-            settings.add_filter(&regex::escape(&tilde_path), &replacement);
+            let tilde_path = format!("~/{}", relative.to_slash_lossy());
+            add_literal_path_filter(settings, &tilde_path, &replacement);
         }
     }
 
@@ -1438,6 +1449,30 @@ mod tests {
     use super::*;
     use insta::assert_snapshot;
     use rstest::rstest;
+
+    /// Known paths have both native and JSON spellings; unrelated JSON escapes
+    /// and backslashes must remain visible to the test that produced them.
+    #[test]
+    fn path_filters_redact_json_paths_without_rewriting_other_escapes() {
+        let mut settings = insta::Settings::clone_current();
+        add_literal_path_filter(&mut settings, r"D:\tmp\wt\.tmpfixture\repo", "_REPO_");
+        add_literal_path_filter(&mut settings, r#"/tmp/repo\with"quote"#, "_WORKTREE_");
+        settings.bind(|| {
+            assert_snapshot!(r##"
+raw windows: D:\tmp\wt\.tmpfixture\repo
+json windows: {"path":"D:\\tmp\\wt\\.tmpfixture\\repo"}
+raw unix: /tmp/repo\with"quote
+json unix: {"path":"/tmp/repo\\with\"quote"}
+unchanged: {"ansi":"\u001b[1m","path":"D:\\elsewhere\\keep","quote":"\""}
+"##, @r#"
+            raw windows: _REPO_
+            json windows: {"path":"_REPO_"}
+            raw unix: _WORKTREE_
+            json unix: {"path":"_WORKTREE_"}
+            unchanged: {"ansi":"\u001b[1m","path":"D:\\elsewhere\\keep","quote":"\""}
+            "#);
+        });
+    }
 
     /// A shell's own failed-`setpgid` diagnostic is host scheduling noise that
     /// lands in the middle of a PTY snapshot, while the job-control

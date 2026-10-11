@@ -148,7 +148,7 @@ use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
 // Import types from parent module
 use super::{
     CommandError, DefaultBranchName, ErrorExt, ForgeKind, GitError, GitItemId, LineDiff,
-    WorktreeInfo,
+    WorktreeInfo, git_path_from_bytes,
 };
 
 // Re-export types needed by submodules
@@ -331,7 +331,7 @@ pub(super) struct RepoCache {
     /// Excludes `<remote>/HEAD` symrefs. Same snapshot-at-scan-time contract
     /// as [`Self::local_branches`] applies to `commit_sha`.
     pub(super) remote_branches: OnceCell<Vec<RemoteBranch>>,
-    /// Worktree inventory: one `git worktree list --porcelain` scan, cached
+    /// Worktree inventory: one `git worktree list --porcelain -z` scan, cached
     /// for the lifetime of the repository. Populated lazily via
     /// [`Repository::list_worktrees`]. The picker warms this on the main
     /// thread (for its preview-window sizing estimate) so the background
@@ -687,19 +687,12 @@ pub fn normalize_selector(name: &str) -> &str {
     if trimmed.is_empty() { name } else { trimmed }
 }
 
-/// Decode a path from Git's native-byte protocols without loss on Unix.
-fn git_path_from_bytes(bytes: &[u8]) -> std::io::Result<PathBuf> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStringExt;
-        Ok(PathBuf::from(OsString::from_vec(bytes.to_vec())))
-    }
-    #[cfg(not(unix))]
-    {
-        std::str::from_utf8(bytes)
-            .map(PathBuf::from)
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
-    }
+/// A path is absent when it or a required parent directory does not exist.
+fn path_is_missing(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+    )
 }
 
 /// Quote one path for Git's C-style alternate-object-directory list.
@@ -1488,8 +1481,9 @@ impl Repository {
     /// Resolve a directory's own `.git` entry, without repository discovery.
     /// Directories and gitfiles resolve to canonical native paths; gitfiles
     /// preserve path whitespace and remove only Git's trailing CR/LF terminators.
-    /// Missing entries or targets and unsupported entry forms return `None`;
-    /// unexpected I/O errors propagate. Every call reads fresh filesystem state.
+    /// Missing entries, missing or non-directory targets, and unsupported entry
+    /// forms return `None`; unexpected I/O errors propagate. Every call reads
+    /// fresh filesystem state.
     ///
     /// Removal gates require a resolved entry and propagate read errors. Cache
     /// priming and separate-git-dir backlink confirmation deliberately decline
@@ -1498,7 +1492,7 @@ impl Repository {
         let dot_git = dir.join(".git");
         let metadata = match std::fs::metadata(&dot_git) {
             Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) if path_is_missing(&error) => return Ok(None),
             Err(error) => return Err(error),
         };
         let target = if metadata.is_dir() {
@@ -1523,9 +1517,14 @@ impl Repository {
         } else {
             return Ok(None);
         };
-        match canonicalize(target) {
-            Ok(path) => Ok(Some(path)),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        let path = match canonicalize(target) {
+            Ok(path) => path,
+            Err(error) if path_is_missing(&error) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        match std::fs::metadata(&path) {
+            Ok(metadata) => Ok(metadata.is_dir().then_some(path)),
+            Err(error) if path_is_missing(&error) => Ok(None),
             Err(error) => Err(error),
         }
     }

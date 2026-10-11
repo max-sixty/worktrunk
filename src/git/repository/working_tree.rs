@@ -187,8 +187,12 @@ fn sequencer_operation(git_dir: &Path) -> Option<InProgressOperation> {
 /// then shows the user. Normalizing rewrites spellings only, so it cannot make
 /// two directories compare equal.
 pub(super) fn registration_worktree_path(registration: &Path) -> std::io::Result<PathBuf> {
-    let content = std::fs::read_to_string(registration.join("gitdir"))?;
-    let recorded = PathBuf::from(content.trim());
+    let content = std::fs::read(registration.join("gitdir"))?;
+    let mut path = content.as_slice();
+    while matches!(path.last(), Some(b'\n' | b'\r')) {
+        path = &path[..path.len() - 1];
+    }
+    let recorded = super::git_path_from_bytes(path)?;
     if recorded.file_name() != Some(std::ffi::OsStr::new(".git")) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -713,53 +717,19 @@ impl<'a> WorkingTree<'a> {
         match super::GIT_DIRS.entry(self.path.clone()) {
             Entry::Occupied(e) => Ok(e.get().clone()),
             Entry::Vacant(e) => {
-                let stdout = self.run_command(&["rev-parse", "--git-dir"])?;
+                let stdout = self.run_command_bytes(&["rev-parse", "--git-dir"])?;
                 Ok(e.insert(self.resolve_git_dir(&stdout)?).clone())
             }
         }
     }
 
-    /// [`Self::git_dir`] for several worktrees, forking the uncached
-    /// `git rev-parse --git-dir` lookups concurrently through
-    /// [`Cmd::run_concurrently`]. Results are in input order.
-    pub fn git_dirs(worktrees: &[WorkingTree<'_>]) -> Vec<anyhow::Result<PathBuf>> {
-        const ARGS: [&str; 2] = ["rev-parse", "--git-dir"];
-        let cached: Vec<Option<PathBuf>> = worktrees
-            .iter()
-            .map(|wt| super::GIT_DIRS.get(&wt.path).map(|e| e.value().clone()))
-            .collect();
-        let cmds: Vec<Cmd> = worktrees
-            .iter()
-            .zip(&cached)
-            .filter(|(_, cached)| cached.is_none())
-            .map(|(wt, _)| wt.git_command(&ARGS))
-            .collect();
-        let mut fetched = Cmd::run_concurrently(&cmds).into_iter();
-        worktrees
-            .iter()
-            .zip(cached)
-            .map(|(wt, cached)| {
-                if let Some(git_dir) = cached {
-                    return Ok(git_dir);
-                }
-                let output = fetched
-                    .next()
-                    .context("run_concurrently returned fewer results than commands")??;
-                if !output.status.success() {
-                    return Err(CommandError::from_failed_output("git", &ARGS, &output).into());
-                }
-                let git_dir = wt.resolve_git_dir(&String::from_utf8_lossy(&output.stdout))?;
-                Ok(super::GIT_DIRS
-                    .entry(wt.path.clone())
-                    .or_insert(git_dir)
-                    .clone())
-            })
-            .collect()
-    }
-
     /// Canonicalize `git rev-parse --git-dir` output run in this worktree.
-    fn resolve_git_dir(&self, stdout: &str) -> anyhow::Result<PathBuf> {
-        let path = PathBuf::from(stdout.trim());
+    fn resolve_git_dir(&self, stdout: &[u8]) -> anyhow::Result<PathBuf> {
+        let path = super::git_path_from_bytes(
+            stdout
+                .strip_suffix(b"\n")
+                .context("Unterminated git rev-parse --git-dir output")?,
+        )?;
 
         // Always canonicalize to resolve symlinks (e.g., /var -> /private/var on macOS)
         let absolute_path = if path.is_relative() {
@@ -925,11 +895,10 @@ impl<'a> WorkingTree<'a> {
     /// deleted.
     ///
     /// So the test is git's own: the directory's `.git` must name *this
-    /// registration*, and that registration's `gitdir` file must name this
-    /// directory back (`registration_worktree_path`). Repository-level
-    /// ownership is the weaker half: a sibling worktree's git dir sits under
-    /// `<common>/worktrees/` too, so asking only which repository the occupant
-    /// answers to accepts one moved onto this path. The main worktree is the
+    /// registration*, and the shared registry scan must name this directory
+    /// back. Repository-level ownership is the weaker half: a sibling
+    /// worktree answers to the same repository too, so asking only that
+    /// accepts one moved onto this path. The main worktree is the
     /// same test where there is no registration to point back at: its git dir
     /// *is* the common dir, and that equality is the whole of it.
     ///
@@ -947,9 +916,9 @@ impl<'a> WorkingTree<'a> {
     /// worktree": prunable is the half git notices, this is the half it does
     /// not.
     ///
-    /// Returns the git dir that answers for this worktree: the common dir for
-    /// the main worktree, its registration under `<common>/worktrees/`
-    /// otherwise.
+    /// Returns the canonical Git directory that answers for this worktree,
+    /// so a caller can detect a registration alias retargeted between gates.
+    /// Mutation addresses remain lexical in `registration_at`.
     pub fn ensure_holds_this_worktree(&self) -> anyhow::Result<PathBuf> {
         let common_dir = self.repo.git_common_dir();
         // A git dir that can't be resolved at all is the strongest form of "not
@@ -961,22 +930,18 @@ impl<'a> WorkingTree<'a> {
             return Ok(common_dir.to_path_buf());
         }
 
-        // Where the occupant's own registration says it lives. `None` when there
-        // is no registration of ours to ask — the occupant answers to a
-        // different repository, or its registration here has lost its `gitdir`
-        // file.
-        let registrations = common_dir.join("worktrees");
-        let registration =
-            git_dir.filter(|git_dir| git_dir.parent() == Some(registrations.as_path()));
-        let occupant_registered_at = registration
-            .as_deref()
-            .and_then(|path| registration_worktree_path(path).ok());
-        if let Some(registration) = registration
-            && occupant_registered_at
-                .as_deref()
-                .is_some_and(|recorded| crate::path::paths_match(recorded, &self.path))
+        // The strict producer owns both backlink decoding and canonical Git
+        // identity, including registrations aliased outside the registry.
+        let occupant = self
+            .repo
+            .worktree_registrations()?
+            .into_iter()
+            .find(|(_, registration)| Some(&registration.git_dir) == git_dir.as_ref());
+        let occupant_registered_at = occupant.as_ref().map(|(recorded, _)| recorded.clone());
+        if let Some((recorded, registration)) = occupant
+            && crate::path::paths_match(&recorded, &self.path)
         {
-            return Ok(registration);
+            return Ok(registration.git_dir);
         }
 
         Err(GitError::WorktreePathNotOurs {
@@ -1247,14 +1212,10 @@ impl<'a> WorkingTree<'a> {
                 }
                 let child = checkout.join(path);
                 let marker = child.join(".git");
-                match std::fs::symlink_metadata(&marker) {
-                    Ok(_) => initialized = true,
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                    Err(error) => {
-                        return Err(error)
-                            .with_context(|| format!("Failed to inspect {}", marker.display()));
-                    }
+                if super::worktrees::definitely_absent(&marker)? {
+                    continue;
                 }
+                initialized = true;
                 let Some(git_dir) = Repository::git_dir_at(&child)
                     .with_context(|| format!("Failed to read {}", marker.display()))?
                 else {

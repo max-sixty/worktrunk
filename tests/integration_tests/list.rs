@@ -380,6 +380,116 @@ fn test_list_json_schema_2_envelope(mut repo: TestRepo) {
     });
 }
 
+/// Inspect raw JSON paths: snapshot redactions accept either separator and
+/// cannot establish consistent native spelling on Windows.
+#[test]
+fn test_list_json_paths_use_native_spelling_including_missing_checkout() {
+    let mut repo = TestRepo::with_initial_commit();
+    let linked = repo.add_worktree("linked");
+    let missing = repo.add_worktree("missing");
+    let moved = repo.root_path().parent().unwrap().join("moved-checkout");
+    std::fs::rename(&missing, &moved).unwrap();
+    assert!(!missing.exists());
+    assert!(moved.join(".git").is_file());
+    assert!(
+        repo.git_output(&["worktree", "list", "--porcelain"])
+            .contains("prunable")
+    );
+
+    for schema in [1, 2] {
+        repo.write_test_config(&format!("[list]\njson-schema = {schema}\n"));
+        let output = repo
+            .wt_command()
+            .args(["list", "--format=json"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let items = if schema == 1 {
+            json.as_array().unwrap()
+        } else {
+            json["items"].as_array().unwrap()
+        };
+        assert_eq!(items.len(), 3, "{items:#?}");
+        for (branch, expected) in [
+            ("main", repo.root_path()),
+            ("linked", linked.as_path()),
+            ("missing", missing.as_path()),
+        ] {
+            let item = items.iter().find(|item| item["branch"] == branch).unwrap();
+            let path = if schema == 1 {
+                &item["path"]
+            } else {
+                &item["worktree"]["path"]
+            };
+            assert_eq!(path.as_str().unwrap(), expected.to_str().unwrap());
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn test_list_and_remove_worktree_with_newline_path() {
+    let mut repo = TestRepo::with_initial_commit();
+    let prefix = repo.root_path().parent().unwrap().join("repo.prefix");
+    let worktree = repo.add_worktree_at_path(
+        "odd-path",
+        &repo
+            .root_path()
+            .parent()
+            .unwrap()
+            .join("repo.prefix\nline\tback\\slash "),
+    );
+    let missing = repo.add_worktree_at_path(
+        "odd-missing",
+        &repo
+            .root_path()
+            .parent()
+            .unwrap()
+            .join("repo.gone\ncheckout"),
+    );
+    std::fs::rename(
+        &missing,
+        repo.root_path().parent().unwrap().join("moved-missing"),
+    )
+    .unwrap();
+    assert!(!missing.exists());
+    std::fs::create_dir(&prefix).unwrap();
+    let unrelated = prefix.join("data.txt");
+    std::fs::write(&unrelated, "keep unrelated work\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let items = json["items"].as_array().unwrap();
+    for (branch, expected) in [("odd-path", &worktree), ("odd-missing", &missing)] {
+        let item = items.iter().find(|item| item["branch"] == branch).unwrap();
+        assert_eq!(
+            item["worktree"]["path"].as_str().unwrap(),
+            expected.to_str().unwrap()
+        );
+        if branch == "odd-missing" {
+            assert!(!item["worktree"]["prunable"].is_null());
+        }
+    }
+
+    let removed = repo
+        .wt_command()
+        .args(["remove", "odd-path", "--foreground", "--yes"])
+        .output()
+        .unwrap();
+    assert!(removed.status.success(), "{removed:?}");
+    assert!(!worktree.exists());
+    assert_eq!(
+        std::fs::read_to_string(unrelated).unwrap(),
+        "keep unrelated work\n"
+    );
+}
+
 /// `[list] json-schema` selects the output schema: unset emits schema 2,
 /// explicit schema 1 preserves the bare array, and invalid values warn before
 /// falling back to schema 2.

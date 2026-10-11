@@ -694,12 +694,12 @@ fn rename_into_reserved_directory(from: &Path, to: &Path) -> std::io::Result<()>
 /// snapshot, so the topology guard and CAS in [`delete_branch_if_safe`]
 /// re-decide against live state — also holds on the two paths that don't call
 /// it: the foreground removal captures its own fresh snapshot just before
-/// [`remove_worktree_with_cleanup`], and the detached fallback can't call
-/// Rust, so it gets the guarantee from a fresh porcelain topology read followed
-/// by an `update-ref -d <ref> <sha>` shell tail instead. A hook or concurrent
-/// process that advanced the branch after the integration check cannot lose
-/// that commit: the CAS rejects the deletion. Checkout protection is best
-/// effort, retaining any checkout observed by the fresh topology read.
+/// [`remove_worktree_with_cleanup`], and the detached fallback invokes a Rust
+/// child that checks the planned SHA before using its own fresh snapshot.
+/// A hook or concurrent process that advanced the branch after the integration
+/// check cannot lose that commit: the CAS rejects the deletion. Checkout
+/// protection is best effort, retaining any checkout observed by the fresh
+/// topology read.
 pub fn execute_branch_deletion(
     repo: &Repository,
     branch_name: &str,
@@ -772,7 +772,7 @@ pub fn delete_branch_if_safe(
 /// Removal planning intentionally caches `git worktree list`, but branch
 /// deletion happens after hooks and other concurrent actors may have changed
 /// topology. Constructing a new [`Repository`] is the cache boundary: its first
-/// `list_worktrees` call executes a fresh `git worktree list --porcelain`.
+/// `list_worktrees` call executes a fresh `git worktree list --porcelain -z`.
 ///
 /// Git still lists stale registrations whose directories are gone, marking
 /// them `prunable`; those have no live checkout to orphan and must not strand

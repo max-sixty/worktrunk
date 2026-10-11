@@ -22,15 +22,15 @@
 //! source's extents or wrote the bytes out, so a caller can report what the
 //! copy actually cost on disk. `reflink_or_copy` returns that for free: `None`
 //! when the platform's clone syscall succeeded, `Some(bytes)` when it fell
-//! through to `fs::copy`. The signal is exact per file but says only that a
+//! through to a byte copy. The signal is exact per file but says only that a
 //! clone did not happen, never why — an unsupported filesystem and a
 //! cross-device copy are indistinguishable here.
 //!
 //! A caller can pass a `stamp` to give every copied regular file the same
 //! modification time. Without one, a file keeps whatever time its copy left it:
-//! APFS clones and Windows' `CopyFileEx` carry the source's, while Linux's
-//! `FICLONE` and `fs::copy` fallback write the time of the copy — and since
-//! leaves copy in parallel, that time orders files by thread scheduling.
+//! APFS clones and Apple/Windows copies carry the source's, while Linux's
+//! `FICLONE` and `fs::copy` fallback write the time of the copy. Since leaves copy
+//! in parallel, that time orders files by thread scheduling.
 //! Build tools read that order: cargo marks a crate dirty when a dependency's
 //! output is newer than its own, so a `target/` copied that way recompiles a
 //! scattering of crates (#4248). Stamping with a time taken before the copy
@@ -83,79 +83,65 @@ fn classify_copy(fallback: Option<u64>) -> DataCopy {
     }
 }
 
-/// `reflink_copy::reflink_or_copy`, also falling back to a byte copy when the
-/// clone is rejected with `PermissionDenied`.
+/// Clone when supported, otherwise use the platform's full-file copy.
 ///
-/// The crate passes `PermissionDenied` straight through, but some filesystems
-/// answer `FICLONE` with `EPERM` rather than `EOPNOTSUPP` (#4433), where
-/// `cp --reflink=auto` copies the file anyway. A genuine permission problem on
-/// the source or destination fails the retry with the same error. The crate
-/// removes a destination it created before returning the error, so the retry
-/// goes through [`copy_to_new_file`] rather than `fs::copy`, which would
-/// overwrite a file another process put there in between.
+/// Some filesystems answer `FICLONE` with `EPERM` rather than `EOPNOTSUPP`
+/// (#4433); genuine permission problems still fail the copy. Every fallback
+/// goes through [`copy_to_new_file`], using the native API for file content
+/// such as Apple resource forks and Windows alternate data streams.
 fn reflink_or_copy(src: &Path, dest: &Path) -> io::Result<Option<u64>> {
-    fall_back_on_rejected_reflink(reflink_copy::reflink_or_copy(src, dest), || {
+    fall_back_on_rejected_reflink(reflink_copy::reflink(src, dest), || {
         copy_to_new_file(src, dest)
     })
 }
 
-/// Byte-copy `src` to `dest` without ever replacing something already there,
-/// failing with `AlreadyExists` if `dest` is occupied, and give it the source's
-/// permissions.
+/// Reserve an absent destination, then copy with the platform's native API.
 ///
-/// The bytes go to a temp file beside `dest`, which is then persisted with a
-/// no-clobber rename, so `dest` only ever appears complete. A failed copy
-/// cleans up only that temp file — never `dest`, which another process may
-/// have created meanwhile — and a cleanup that fails is reported rather than
-/// leaving a stray file behind silently.
+/// Reading the source first avoids creating a destination for a missing or
+/// unreadable file. `create_new` refuses an occupied destination, including a
+/// writer arriving after clone cleanup. Native copying keeps platform copy
+/// behavior, including resource forks and Windows streams, without requiring
+/// rename or hard-link support.
+///
+/// The reservation is closed before native copying reopens the pathname. A
+/// failed copy removes the incomplete destination; cleanup failures are reported.
+/// Like the clone crate's cleanup, copying and removal use the pathname: external
+/// unlink/replacement after reservation is outside this guarantee. The caller
+/// retains the source on failure.
 fn copy_to_new_file(src: &Path, dest: &Path) -> io::Result<u64> {
-    let mut reader = fs::File::open(src)?;
-    let permissions = reader.metadata()?.permissions();
-    // A bare filename's parent is `Some("")`, which no directory call accepts.
-    let dir = dest
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let mut temp = tempfile::Builder::new()
-        .prefix(".wt-tmp.")
-        .suffix(".tmp")
-        .tempfile_in(dir)?;
-    let copied = io::copy(&mut reader, &mut temp)
-        .and_then(|bytes| temp.as_file().set_permissions(permissions).map(|()| bytes));
-    match copied {
-        Ok(bytes) => match temp.persist_noclobber(dest) {
-            Ok(_) => Ok(bytes),
-            Err(e) => Err(discard_temp(e.file, e.error)),
-        },
-        Err(e) => Err(discard_temp(temp, e)),
+    let source = fs::File::open(src)?;
+    source.metadata()?;
+    drop(source);
+    let reservation = fs::File::options()
+        .write(true)
+        .create_new(true)
+        .open(dest)?;
+    drop(reservation);
+    match fs::copy(src, dest) {
+        Ok(bytes) => Ok(bytes),
+        Err(error) => Err(match fs::remove_file(dest) {
+            Ok(()) => error,
+            Err(cleanup) => io::Error::other(format!(
+                "{error}; also failed to remove incomplete copy {}: {cleanup}",
+                dest.display()
+            )),
+        }),
     }
 }
 
-/// Remove a temp file after `err`, returning `err` — or, if the removal itself
-/// fails, an error naming the file left behind.
-fn discard_temp(temp: tempfile::NamedTempFile, err: io::Error) -> io::Error {
-    let path = temp.path().to_path_buf();
-    match temp.close() {
-        Ok(()) => err,
-        Err(cleanup) => io::Error::other(format!(
-            "{err}; also failed to remove temporary file {}: {cleanup}",
-            path.display()
-        )),
-    }
-}
-
-/// The decision half of [`reflink_or_copy`], split out because no CI
-/// filesystem rejects a clone with `EPERM`.
+/// The decision half of [`reflink_or_copy`], split out so filesystem-specific
+/// clone errors can exercise the same byte-copy contract on every runner.
 fn fall_back_on_rejected_reflink(
-    result: io::Result<Option<u64>>,
+    result: io::Result<()>,
     copy: impl FnOnce() -> io::Result<u64>,
 ) -> io::Result<Option<u64>> {
     match result {
-        Err(e) if e.kind() == ErrorKind::PermissionDenied => {
+        Ok(()) => Ok(None),
+        Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::AlreadyExists) => Err(e),
+        Err(e) => {
             tracing::debug!("reflink rejected ({e}), falling back to a byte copy");
             copy().map(Some)
         }
-        result => result,
     }
 }
 
@@ -263,24 +249,6 @@ pub fn copy_leaf(
     } else {
         match reflink_or_copy(src, dest) {
             Ok(fallback) => {
-                // Preserve file permissions (especially the execute bit) —
-                // needed on Linux, skipped on macOS.
-                //
-                // On btrfs/XFS, reflink (FICLONE ioctl) clones data extents
-                // only — the destination gets umask-based permissions, losing
-                // execute bits. std::fs::copy's fallback preserves permissions
-                // via fchmod, creating an asymmetry in reflink_or_copy.
-                //
-                // On macOS/APFS, clonefile() already preserves the source's
-                // mode bits, so this chmod is redundant — skip it to save a
-                // syscall per file.
-                //
-                // Refs: ioctl_ficlonerange(2), LWN Articles/331808
-                #[cfg(all(unix, not(target_os = "macos")))]
-                {
-                    fs::set_permissions(dest, src_meta.permissions())
-                        .context("setting destination file permissions")?;
-                }
                 if let Some(stamp) = stamp {
                     set_modified(dest, stamp);
                 }
@@ -300,7 +268,11 @@ pub fn copy_leaf(
                 return Ok(None);
             }
             Err(e) => {
-                return Err(anyhow::Error::from(e).context(format!("copying {}", src.display())));
+                return Err(anyhow::Error::from(e).context(format!(
+                    "copying {} to {}",
+                    src.display(),
+                    dest.display()
+                )));
             }
         }
     };
@@ -628,138 +600,176 @@ mod tests {
     }
 
     #[test]
-    fn test_reflink_rejected_with_eperm_falls_back_to_copy() {
-        // Some filesystems reject FICLONE with EPERM rather than EOPNOTSUPP
-        // (#4433); `reflink_or_copy` returns that without trying `fs::copy`.
-        let rejected = Err(io::Error::from(ErrorKind::PermissionDenied));
-        let result = fall_back_on_rejected_reflink(rejected, || Ok(42));
-        assert_eq!(result.unwrap(), Some(42));
-
-        // A real permission problem fails the retry too, and is reported.
+    fn test_reflink_outcomes_preserve_failures_and_classification() {
+        // Genuine permission problems still fail the byte retry.
         let rejected = Err(io::Error::from(ErrorKind::PermissionDenied));
         let result = fall_back_on_rejected_reflink(rejected, || {
             Err(io::Error::from(ErrorKind::PermissionDenied))
         });
         assert_eq!(result.unwrap_err().kind(), ErrorKind::PermissionDenied);
 
-        // Other outcomes pass through without a retry.
         let retry = || -> io::Result<u64> { panic!("retried") };
-        assert_eq!(
-            fall_back_on_rejected_reflink(Ok(None), retry).unwrap(),
-            None
-        );
-        let exists = Err(io::Error::from(ErrorKind::AlreadyExists));
-        assert_eq!(
-            fall_back_on_rejected_reflink(exists, retry)
-                .unwrap_err()
-                .kind(),
-            ErrorKind::AlreadyExists
-        );
-    }
-
-    #[test]
-    fn test_rejected_reflink_fallback_does_not_overwrite_racing_destination() {
-        // The crate removes the destination it created before returning
-        // `PermissionDenied`; a file another process puts there before the
-        // byte copy must survive, and the `AlreadyExists` it causes is what
-        // `copy_leaf` skips on.
-        let temp = tempfile::tempdir().unwrap();
-        let src = temp.path().join("src");
-        let dest = temp.path().join("dest");
-        fs::write(&src, "source").unwrap();
-
-        let rejected = Err(io::Error::from(ErrorKind::PermissionDenied));
-        let result = fall_back_on_rejected_reflink(rejected, || {
-            fs::write(&dest, "racer").unwrap();
-            copy_to_new_file(&src, &dest)
-        });
-        assert_eq!(result.unwrap_err().kind(), ErrorKind::AlreadyExists);
-        assert_eq!(fs::read_to_string(&dest).unwrap(), "racer");
-        // The no-clobber persist removed its temp file.
-        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 2);
-    }
-
-    #[test]
-    fn test_copy_to_new_file_copies_contents_and_mode() {
-        let temp = tempfile::tempdir().unwrap();
-        let src = temp.path().join("script.sh");
-        let dest = temp.path().join("copy.sh");
-        fs::write(&src, "#!/bin/sh\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&src, fs::Permissions::from_mode(0o751)).unwrap();
-        }
-
-        assert_eq!(copy_to_new_file(&src, &dest).unwrap(), 10);
-        assert_eq!(fs::read_to_string(&dest).unwrap(), "#!/bin/sh\n");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = fs::metadata(&dest).unwrap().permissions().mode();
-            assert_eq!(mode & 0o777, 0o751);
-        }
-
-        // A missing source creates nothing.
-        let missing = temp.path().join("missing");
-        let dest = temp.path().join("never");
-        assert_eq!(
-            copy_to_new_file(&missing, &dest).unwrap_err().kind(),
-            ErrorKind::NotFound
-        );
-        assert!(dest.symlink_metadata().is_err());
-
-        // A copy that fails partway leaves nothing at the destination and no
-        // temp file. On Unix a directory opens as a file, so the read is what
-        // fails.
-        #[cfg(unix)]
-        {
-            let src_dir = temp.path().join("dir");
-            fs::create_dir(&src_dir).unwrap();
-            let out = tempfile::tempdir().unwrap();
-            let dest = out.path().join("partial");
-            assert!(copy_to_new_file(&src_dir, &dest).is_err());
-            assert_eq!(fs::read_dir(out.path()).unwrap().count(), 0);
-        }
-    }
-
-    /// Cleanup after a failed copy only touches the temp file it created, so a
-    /// file another process puts at the destination during the copy survives.
-    #[cfg(unix)]
-    #[test]
-    fn test_failed_copy_cleanup_leaves_racing_destination() {
-        let temp = tempfile::tempdir().unwrap();
-        let out = tempfile::tempdir().unwrap();
-        let dest = out.path().join("dest");
-        fs::write(&dest, "racer").unwrap();
-
-        assert!(copy_to_new_file(temp.path(), &dest).is_err());
-        assert_eq!(fs::read_to_string(&dest).unwrap(), "racer");
-        assert_eq!(fs::read_dir(out.path()).unwrap().count(), 1);
-    }
-
-    #[test]
-    fn test_discard_temp_reports_cleanup_failure() {
-        let dir = tempfile::tempdir().unwrap();
-
-        let temp = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
-        let err = discard_temp(temp, io::Error::from(ErrorKind::AlreadyExists));
-        assert_eq!(err.kind(), ErrorKind::AlreadyExists);
-        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
-
-        // The temp file is already gone, so removing it fails. Unix only:
-        // Windows can't reliably delete a file another handle holds open.
-        #[cfg(unix)]
-        {
-            let temp = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
-            fs::remove_file(temp.path()).unwrap();
-            let err = discard_temp(temp, io::Error::from(ErrorKind::AlreadyExists));
-            assert!(
-                err.to_string()
-                    .contains("also failed to remove temporary file"),
-                "{err}"
+        assert_eq!(fall_back_on_rejected_reflink(Ok(()), retry).unwrap(), None);
+        for kind in [ErrorKind::NotFound, ErrorKind::AlreadyExists] {
+            assert_eq!(
+                fall_back_on_rejected_reflink(Err(io::Error::from(kind)), retry)
+                    .unwrap_err()
+                    .kind(),
+                kind
             );
         }
+
+        // The public clone wrapper can map a vanished source to InvalidInput
+        // on non-Apple platforms. Its native copy must recover NotFound for
+        // copy_leaf's vanished-source policy.
+        let temp = tempfile::tempdir().unwrap();
+        let missing = temp.path().join("missing");
+        let dest = temp.path().join("dest");
+        assert_eq!(
+            reflink_or_copy(&missing, &dest).unwrap_err().kind(),
+            ErrorKind::NotFound
+        );
+        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn test_rejected_reflinks_share_native_copy() {
+        // Inject the filesystem-specific clone result; copying uses the same
+        // native API as production, including its permissions and error paths.
+        for kind in [
+            ErrorKind::PermissionDenied,
+            ErrorKind::Unsupported,
+            ErrorKind::CrossesDevices,
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let src = dir.path().join("src");
+            let dest = dir.path().join("dest");
+            let missing = dir.path().join("missing");
+            let absent_dest = dir.path().join("absent-dest");
+            fs::write(&src, "source").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&src, fs::Permissions::from_mode(0o751)).unwrap();
+            }
+            let result = fall_back_on_rejected_reflink(Err(io::Error::from(kind)), || {
+                copy_to_new_file(&src, &dest)
+            });
+            assert_eq!(result.unwrap(), Some(6));
+            assert_eq!(fs::read_to_string(&dest).unwrap(), "source");
+            let raced = dir.path().join("raced");
+            let result = fall_back_on_rejected_reflink(Err(io::Error::from(kind)), || {
+                fs::write(&raced, "racer").unwrap();
+                copy_to_new_file(&src, &raced)
+            });
+            assert_eq!(result.unwrap_err().kind(), ErrorKind::AlreadyExists);
+            assert_eq!(fs::read_to_string(&raced).unwrap(), "racer");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                assert_eq!(
+                    fs::metadata(&dest).unwrap().permissions().mode() & 0o777,
+                    0o751
+                );
+            }
+            let result = fall_back_on_rejected_reflink(Err(io::Error::from(kind)), || {
+                copy_to_new_file(&missing, &absent_dest)
+            });
+            assert_eq!(result.unwrap_err().kind(), ErrorKind::NotFound);
+            assert_eq!(fs::read_to_string(&src).unwrap(), "source");
+            assert!(!absent_dest.exists());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_native_copy_failure_cleans_only_its_destination() {
+        // A directory can be opened and stat'd, but the native file copy rejects
+        // it after reservation. Its failure must not leave a partial file or
+        // delete a destination which was already occupied.
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("source-directory");
+        let dest = dir.path().join("dest");
+        fs::create_dir(&src).unwrap();
+        assert_eq!(
+            copy_to_new_file(&src, &dest).unwrap_err().kind(),
+            ErrorKind::InvalidInput
+        );
+        assert!(!dest.exists());
+        assert!(src.is_dir());
+        fs::write(&dest, "existing content").unwrap();
+        assert_eq!(
+            copy_to_new_file(&src, &dest).unwrap_err().kind(),
+            ErrorKind::AlreadyExists
+        );
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "existing content");
+        assert!(src.is_dir());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_reflink_fallback_preserves_readonly_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        let dest = dir.path().join("dest");
+        fs::write(&src, "readonly content").unwrap();
+        let writable = fs::metadata(&src).unwrap().permissions();
+        let mut readonly = writable.clone();
+        readonly.set_readonly(true);
+        fs::set_permissions(&src, readonly).unwrap();
+        let result = fall_back_on_rejected_reflink(
+            Err(io::Error::from(ErrorKind::PermissionDenied)),
+            || copy_to_new_file(&src, &dest),
+        );
+        assert_eq!(result.unwrap(), Some(16));
+        assert!(fs::metadata(&dest).unwrap().permissions().readonly());
+        assert_eq!(
+            copy_to_new_file(&src, &dest).unwrap_err().kind(),
+            ErrorKind::AlreadyExists
+        );
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "readonly content");
+        fs::set_permissions(&src, writable.clone()).unwrap();
+        fs::set_permissions(&dest, writable).unwrap();
+    }
+
+    #[cfg(any(target_os = "macos", windows))]
+    #[test]
+    fn test_reflink_fallback_preserves_named_file_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        #[cfg(target_os = "macos")]
+        let named_content = |path: &Path| path.join("..namedfork/rsrc");
+        #[cfg(windows)]
+        let named_content = |path: &Path| {
+            let mut stream = path.as_os_str().to_owned();
+            stream.push(":worktrunk-content");
+            PathBuf::from(stream)
+        };
+        fs::write(&src, "main content").unwrap();
+        fs::write(named_content(&src), "named content").unwrap();
+        for (index, kind) in [
+            ErrorKind::PermissionDenied,
+            ErrorKind::Unsupported,
+            ErrorKind::CrossesDevices,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let dest = dir.path().join(format!("dest-{index}"));
+            let result = fall_back_on_rejected_reflink(Err(io::Error::from(kind)), || {
+                copy_to_new_file(&src, &dest)
+            });
+            assert_eq!(result.unwrap(), Some(12));
+            assert_eq!(fs::read_to_string(&dest).unwrap(), "main content");
+            assert_eq!(
+                fs::read_to_string(named_content(&dest)).unwrap(),
+                "named content"
+            );
+        }
+        assert_eq!(
+            fs::read_to_string(named_content(&src)).unwrap(),
+            "named content"
+        );
     }
 
     #[test]

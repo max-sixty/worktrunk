@@ -270,7 +270,8 @@ impl RepositoryCliExt for Repository {
         // Phase 2: Main-worktree guard (before default-branch check, since
         // -D can't override the main worktree restriction).
         if let Resolved::Worktree { ref path, .. } = resolved
-            && !self.worktree_at(path).is_linked()?
+            && !self.is_bare()?
+            && worktrunk::path::paths_match(path, self.repo_path()?)
         {
             return Err(GitError::CannotRemoveMainWorktree.into());
         }

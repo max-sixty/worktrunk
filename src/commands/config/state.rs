@@ -257,14 +257,22 @@ fn clear_trash(repo: &Repository) -> anyhow::Result<usize> {
         })?;
     }
     // An absent or non-empty payload-trash directory needs no further action.
-    match std::fs::remove_dir(repo.wt_trash_dir()) {
+    let trash = repo.wt_trash_dir();
+    match std::fs::remove_dir(&trash) {
         Ok(()) => {}
         Err(error)
             if matches!(
                 error.kind(),
                 std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
             ) => {}
-        Err(error) => return Err(error.into()),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "Failed to clear trash @ {}",
+                    format_path_for_display(&trash)
+                )
+            });
+        }
     }
     Ok(cleared)
 }
@@ -1881,6 +1889,12 @@ mod tests {
         assert_eq!(
             error.downcast_ref::<std::io::Error>().unwrap().kind(),
             std::io::ErrorKind::PermissionDenied
+        );
+        assert!(
+            error
+                .to_string()
+                .contains(&format_path_for_display(&repo.wt_trash_dir())),
+            "{error:#}"
         );
         assert!(repo.wt_trash_dir().is_dir());
         drop(restore);

@@ -1,6 +1,6 @@
 //! Worktree management operations for Repository.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
@@ -16,9 +16,16 @@ use super::{
     is_valid_branch_name, normalize_selector, resolve_input_path,
 };
 use crate::git::{CommandError, PlumbingDiff, WorktreeId, finalize_worktrees, is_bare_repo_dir};
-use crate::path::{format_path_for_display, paths_match};
+use crate::path::{canonicalize_with_parents, format_path_for_display, paths_match};
 use crate::shell_exec::Cmd;
 use crate::styling::{eprintln, format_with_gutter, hint_message, warning_message};
+
+/// A registry entry's lexical mutation address and canonical state location.
+/// Unregistering an alias removes only the entry, never its target Git storage.
+pub(crate) struct WorktreeRegistration {
+    pub(crate) path: PathBuf,
+    pub(crate) git_dir: PathBuf,
+}
 
 impl Repository {
     /// List all worktrees for this repository.
@@ -40,9 +47,9 @@ impl Repository {
             .get_or_try_init(|| {
                 let stdout = {
                     let _registry = self.worktree_registry_read();
-                    self.run_command(&["worktree", "list", "--porcelain"])?
+                    self.run_command_bytes(&["worktree", "list", "--porcelain", "-z"])?
                 };
-                let raw_worktrees = WorktreeInfo::parse_porcelain_list(&stdout)?;
+                let raw_worktrees = WorktreeInfo::parse_porcelain_list_z(&stdout)?;
                 let mut worktrees: Vec<_> =
                     raw_worktrees.into_iter().filter(|wt| !wt.bare).collect();
 
@@ -55,7 +62,7 @@ impl Repository {
                     first.path = self.repo_path()?.to_path_buf();
                 }
 
-                finalize_worktrees(self, &mut worktrees);
+                finalize_worktrees(self, &mut worktrees)?;
                 Ok(worktrees)
             })
             .map(Vec::as_slice)
@@ -97,61 +104,10 @@ impl Repository {
             }
             paths.push(main.to_path_buf());
         }
-        let registrations = self.git_common_dir().join("worktrees");
-        match std::fs::read_dir(&registrations) {
-            Ok(entries) => {
-                for entry in entries {
-                    let entry = entry?;
-                    let registration = entry.path();
-                    match entry.file_type() {
-                        Ok(kind) if kind.is_file() => continue,
-                        Ok(_) => {}
-                        Err(error) if vanished_registration(&registration, &error) => continue,
-                        Err(error) => {
-                            return Err(error).context("Failed to inspect worktree registration");
-                        }
-                    }
-                    match registration_worktree_path(&registration) {
-                        Ok(path) => {
-                            match canonicalize(&registration) {
-                                Ok(git_dir) => {
-                                    require_outside_removal(&git_dir)?;
-                                    git_dirs.insert(git_dir);
-                                }
-                                Err(error) if vanished_registration(&registration, &error) => {
-                                    continue;
-                                }
-                                Err(error) => {
-                                    return Err(error)
-                                        .context("Failed to resolve worktree registration");
-                                }
-                            }
-                            paths.push(path);
-                        }
-                        Err(error) if vanished_registration(&registration, &error) => {}
-                        Err(error) => {
-                            return Err(error).with_context(|| {
-                                format!(
-                                    "Failed to read worktree registration @ {}",
-                                    format_path_for_display(&registration)
-                                )
-                            });
-                        }
-                    }
-                }
-            }
-            Err(error)
-                if error.kind() == std::io::ErrorKind::NotFound
-                    && matches!(std::fs::symlink_metadata(&registrations),
-                        Err(missing) if missing.kind() == std::io::ErrorKind::NotFound) => {}
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!(
-                        "Failed to read worktree registry @ {}",
-                        format_path_for_display(&registrations)
-                    )
-                });
-            }
+        for (path, registration) in self.worktree_registrations()? {
+            require_outside_removal(&registration.git_dir)?;
+            git_dirs.insert(registration.git_dir);
+            paths.push(path);
         }
         for path in paths {
             let resolved = match canonicalize(&path) {
@@ -212,7 +168,9 @@ impl Repository {
     /// after deinitialization. Return every Git directory deletion reaches,
     /// including old-form repositories in nested checkouts, for force disclosure.
     pub fn require_no_submodule_storage(&self, path: &Path) -> anyhow::Result<()> {
-        let (registration, _) = self.registration_at(path)?;
+        let (registration, _) = self.registration_at(path)?.with_context(|| {
+            format!("No worktree registered @ {}", format_path_for_display(path))
+        })?;
         let root = canonicalize(path)?;
         let stored = registration_submodule_repositories(&registration, Some(&root))?;
         let initialized = self
@@ -426,7 +384,9 @@ impl Repository {
     pub fn prune_worktree_entry(&self, path: &Path, mode: WorktreePruneMode) -> anyhow::Result<()> {
         let display = format_path_for_display(path);
         let _registry = self.worktree_registry_write();
-        let (registration, recorded) = self.registration_at(path)?;
+        let (registration, recorded) = self
+            .registration_at(path)?
+            .with_context(|| format!("No worktree registered @ {display}"))?;
         if !definitely_absent(&registration.join("locked"))? {
             anyhow::bail!("Worktree @ {display} is locked");
         }
@@ -516,7 +476,9 @@ impl Repository {
     /// directory that remains stay on disk either way, and a registration with
     /// no index has nothing staged.
     pub fn stale_worktree_work(&self, path: &Path) -> anyhow::Result<Option<StaleWorktreeWork>> {
-        let (registration, _) = self.registration_at(path)?;
+        let (registration, _) = self.registration_at(path)?.with_context(|| {
+            format!("No worktree registered @ {}", format_path_for_display(path))
+        })?;
         self.stale_worktree_work_at(path, &registration)
     }
 
@@ -582,22 +544,96 @@ impl Repository {
         Ok(!unchanged)
     }
 
-    /// The registration `<common>/worktrees/<id>` whose `gitdir` names the
-    /// worktree at `path`, with the worktree path it records.
-    ///
-    /// Unreadable siblings (an entry another process is deleting) are not
-    /// this one, so they are passed over rather than failing the lookup.
-    pub(crate) fn registration_at(&self, path: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
+    /// Scan linked-worktree registrations once, mapping each normalized
+    /// checkout path to its registry entry and canonical Git directory.
+    /// Inventory finalization, removal containment and exact lookups share
+    /// this identity source. Mutation keeps the lexical entry address so
+    /// unregistering an alias preserves the target directory.
+    /// Only an observably vanished registration may be skipped. Surviving
+    /// partial/unreadable entries and duplicate checkout identities error.
+    pub(crate) fn worktree_registrations(
+        &self,
+    ) -> anyhow::Result<BTreeMap<PathBuf, WorktreeRegistration>> {
         let registrations = self.git_common_dir().join("worktrees");
-        std::fs::read_dir(&registrations)
-            .with_context(|| format!("Failed to read {}", format_path_for_display(&registrations)))?
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .find_map(|registration| {
-                let recorded = registration_worktree_path(&registration).ok()?;
-                paths_match(&recorded, path).then_some((registration, recorded))
-            })
-            .with_context(|| format!("No worktree registered @ {}", format_path_for_display(path)))
+        let entries = match std::fs::read_dir(&registrations) {
+            Ok(entries) => entries,
+            Err(error) if vanished_registration(&registrations, &error) => {
+                return Ok(BTreeMap::new());
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "Failed to read worktree registry @ {}",
+                        format_path_for_display(&registrations)
+                    )
+                });
+            }
+        };
+        let mut found = BTreeMap::new();
+        for entry in entries {
+            let entry = entry.with_context(|| {
+                format!(
+                    "Failed to read worktree registry @ {}",
+                    format_path_for_display(&registrations)
+                )
+            })?;
+            let registration = entry.path();
+            match entry.file_type() {
+                Ok(kind) if kind.is_file() => continue,
+                Ok(_) => {}
+                Err(error) if vanished_registration(&registration, &error) => continue,
+                Err(error) => {
+                    return Err(error).context("Failed to inspect worktree registration");
+                }
+            }
+            let recorded = match registration_worktree_path(&registration) {
+                Ok(recorded) => recorded,
+                Err(error) if vanished_registration(&registration, &error) => continue,
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "Failed to read worktree registration @ {}",
+                            format_path_for_display(&registration)
+                        )
+                    });
+                }
+            };
+            let git_dir = match canonicalize(&registration) {
+                Ok(git_dir) => git_dir,
+                Err(error) if vanished_registration(&registration, &error) => continue,
+                Err(error) => {
+                    return Err(error).context("Failed to resolve worktree registration");
+                }
+            };
+            if found
+                .insert(
+                    recorded.clone(),
+                    WorktreeRegistration {
+                        path: registration,
+                        git_dir,
+                    },
+                )
+                .is_some()
+            {
+                anyhow::bail!(
+                    "Multiple worktrees registered @ {}",
+                    format_path_for_display(&recorded)
+                );
+            }
+        }
+        Ok(found)
+    }
+
+    /// The lexical registration address whose backlink names `path`, with
+    /// its normalized checkout path. Absence comes only from the strict scan.
+    pub(crate) fn registration_at(
+        &self,
+        path: &Path,
+    ) -> anyhow::Result<Option<(PathBuf, PathBuf)>> {
+        Ok(self
+            .worktree_registrations()?
+            .remove_entry(&canonicalize_with_parents(path))
+            .map(|(recorded, registration)| (registration.path, recorded)))
     }
 
     /// Remove a worktree at the specified path.
@@ -1076,14 +1112,12 @@ fn vanished_registration(registration: &Path, error: &std::io::Error) -> bool {
 /// Whether nothing is at `path`: `NotFound`, or `NotADirectory` where a parent
 /// became a file. Any other error is returned, so a caller deciding whether to
 /// delete keeps what it could not check.
-fn definitely_absent(path: &Path) -> anyhow::Result<bool> {
+pub(super) fn definitely_absent(path: &Path) -> anyhow::Result<bool> {
     match std::fs::symlink_metadata(path) {
         Ok(_) => Ok(false),
-        Err(e) => match e.kind() {
-            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory => Ok(true),
-            _ => Err(anyhow::Error::new(e)
-                .context(format!("Failed to check {}", format_path_for_display(path)))),
-        },
+        Err(error) if super::path_is_missing(&error) => Ok(true),
+        Err(error) => Err(anyhow::Error::new(error)
+            .context(format!("Failed to check {}", format_path_for_display(path)))),
     }
 }
 

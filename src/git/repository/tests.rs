@@ -27,17 +27,9 @@ fn alternate_object_directory_uses_git_c_style_quoting() {
 
 #[test]
 fn test_parse_worktree_list() {
-    let output = "worktree /path/to/main
-HEAD abcd1234
-branch refs/heads/main
+    let output = "worktree /path/to/main\0HEAD abcd1234\0branch refs/heads/main\0\0worktree /path/to/feature\0HEAD efgh5678\0branch refs/heads/feature\0\0";
 
-worktree /path/to/feature
-HEAD efgh5678
-branch refs/heads/feature
-
-";
-
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let worktrees = WorktreeInfo::parse_porcelain_list_z(output.as_bytes()).unwrap();
     let [main_wt, feature_wt]: [WorktreeInfo; 2] = worktrees.try_into().unwrap();
 
     assert_eq!(main_wt.path, PathBuf::from("/path/to/main"));
@@ -51,15 +43,64 @@ branch refs/heads/feature
     assert_eq!(feature_wt.branch, Some("feature".to_string()));
 }
 
+#[cfg(unix)]
+#[test]
+fn worktree_inventory_preserves_native_paths_and_lock_reasons() {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    let mut test = TestRepo::with_initial_commit();
+    let reason = "keep this checkout\nwith its work";
+    let names = [
+        b"checkout\nline\tback\\slash ".as_slice(),
+        #[cfg(target_os = "linux")]
+        b"checkout-\xff ".as_slice(),
+    ];
+    for (index, name) in names.into_iter().enumerate() {
+        let branch = format!("native-{index}");
+        let original = test.add_worktree(&branch);
+        test.run_git(&[
+            "worktree",
+            "lock",
+            "--reason",
+            reason,
+            original.to_str().unwrap(),
+        ]);
+        let git_dir = Repository::git_dir_at(&original).unwrap().unwrap();
+        let checkout = test
+            .root_path()
+            .parent()
+            .unwrap()
+            .join(std::ffi::OsString::from_vec(name.to_vec()));
+        std::fs::rename(&original, &checkout).unwrap();
+        let mut backlink = checkout.join(".git").into_os_string().into_vec();
+        backlink.push(b'\n');
+        std::fs::write(git_dir.join("gitdir"), backlink).unwrap();
+        assert_eq!(
+            super::working_tree::registration_worktree_path(&git_dir).unwrap(),
+            checkout
+        );
+        assert_eq!(Repository::git_dir_at(&checkout).unwrap(), Some(git_dir));
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let worktrees = repo.list_worktrees().unwrap();
+        let wt = worktrees
+            .iter()
+            .find(|wt| wt.branch.as_deref() == Some(&branch))
+            .unwrap();
+        assert_eq!(
+            wt.path.as_os_str().as_bytes(),
+            checkout.as_os_str().as_bytes()
+        );
+        assert_eq!(wt.locked.as_deref(), Some(reason));
+        assert!(wt.path.join(".git").is_file());
+    }
+}
+
 #[test]
 fn test_parse_detached_worktree() {
-    let output = "worktree /path/to/detached
-HEAD abcd1234
-detached
+    let output = "worktree /path/to/detached\0HEAD abcd1234\0detached\0\0";
 
-";
-
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let worktrees = WorktreeInfo::parse_porcelain_list_z(output.as_bytes()).unwrap();
     let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
     assert!(wt.detached);
     assert_eq!(wt.branch, None);
@@ -81,7 +122,7 @@ fn test_finalize_worktree_with_branch() {
     let test = TestRepo::with_initial_commit();
     let repo = Repository::at(test.root_path()).unwrap();
     let mut worktrees = [wt];
-    finalize_worktrees(&repo, &mut worktrees);
+    finalize_worktrees(&repo, &mut worktrees).unwrap();
     let [finalized] = worktrees;
     assert_eq!(finalized.branch, Some("feature".to_string()));
 }
@@ -102,7 +143,7 @@ fn test_finalize_worktree_detached_with_branch() {
     let test = TestRepo::with_initial_commit();
     let repo = Repository::at(test.root_path()).unwrap();
     let mut worktrees = [wt];
-    finalize_worktrees(&repo, &mut worktrees);
+    finalize_worktrees(&repo, &mut worktrees).unwrap();
     let [finalized] = worktrees;
     assert_eq!(finalized.branch, Some("feature".to_string()));
 }
@@ -124,7 +165,7 @@ fn test_finalize_worktree_detached_no_branch() {
     let test = TestRepo::with_initial_commit();
     let repo = Repository::at(test.root_path()).unwrap();
     let mut worktrees = [wt];
-    finalize_worktrees(&repo, &mut worktrees);
+    finalize_worktrees(&repo, &mut worktrees).unwrap();
     let [finalized] = worktrees;
     assert_eq!(finalized.branch, None);
 }
@@ -158,6 +199,178 @@ fn test_finalize_worktree_linked_mid_rebase() {
         .clone();
     assert!(wt.detached, "precondition: the rebase detaches HEAD");
     assert_eq!(wt.branch.as_deref(), Some("feature"));
+}
+
+/// A missing locked checkout keeps its own rebase identity. Unlocking makes
+/// the same registration genuinely prunable and permits integrated deletion.
+#[test]
+fn test_finalize_missing_locked_rebase_retains_branch() {
+    use crate::git::{BranchDeletionOutcome, delete_branch_if_safe};
+
+    let mut test = TestRepo::with_initial_commit();
+    let linked = test.add_worktree("feature");
+    test.run_git_in(&linked, &["commit", "--allow-empty", "-m", "Feature"]);
+    test.run_git(&["merge", "--ff-only", "feature"]);
+    let paused = test
+        .git_command()
+        .current_dir(&linked)
+        .args(["rebase", "--exec", "false", "HEAD~1"])
+        .run()
+        .unwrap();
+    assert!(!paused.status.success(), "{paused:?}");
+    test.run_git(&[
+        "worktree",
+        "lock",
+        "--reason",
+        "detached media",
+        linked.to_str().unwrap(),
+    ]);
+    let linked = dunce::canonicalize(&linked).unwrap();
+    std::fs::remove_dir_all(&linked).unwrap();
+
+    let repo = Repository::at(test.root_path()).unwrap();
+    let wt = repo
+        .list_worktrees()
+        .unwrap()
+        .iter()
+        .find(|wt| wt.path == linked)
+        .unwrap();
+    assert!(wt.detached && wt.locked.is_some() && !wt.is_prunable());
+    assert_eq!(wt.branch.as_deref(), Some("feature"));
+    let result = delete_branch_if_safe(
+        &repo,
+        &repo.capture_refs().unwrap(),
+        "feature",
+        "main",
+        false,
+    )
+    .unwrap();
+    assert!(
+        matches!(result.outcome, BranchDeletionOutcome::RetainedCheckedOut { path } if path == linked)
+    );
+
+    test.run_git(&["worktree", "unlock", linked.to_str().unwrap()]);
+    let repo = Repository::at(test.root_path()).unwrap();
+    let wt = repo
+        .list_worktrees()
+        .unwrap()
+        .iter()
+        .find(|wt| wt.path == linked)
+        .unwrap();
+    assert!(wt.detached && wt.locked.is_none() && wt.is_prunable());
+    assert_eq!(wt.branch.as_deref(), Some("feature"));
+    let result = delete_branch_if_safe(
+        &repo,
+        &repo.capture_refs().unwrap(),
+        "feature",
+        "main",
+        false,
+    )
+    .unwrap();
+    assert!(matches!(
+        result.outcome,
+        BranchDeletionOutcome::Integrated(_)
+    ));
+}
+
+#[test]
+fn test_finalize_broken_gitfile_uses_its_own_registration() {
+    let mut test = TestRepo::with_initial_commit();
+    let linked = test.add_worktree("feature");
+    test.run_git_in(&linked, &["commit", "--allow-empty", "-m", "Feature"]);
+    test.run_git(&["merge", "--ff-only", "feature"]);
+    let paused = test
+        .git_command()
+        .current_dir(&linked)
+        .args(["rebase", "--exec", "false", "HEAD~1"])
+        .run()
+        .unwrap();
+    assert!(!paused.status.success(), "{paused:?}");
+    let gitfile = linked.join(".git");
+    let contents = std::fs::read(&gitfile).unwrap();
+    std::fs::write(&gitfile, b"gitdir: nonexistent-target\n").unwrap();
+    let repo = Repository::at(test.root_path()).unwrap();
+    let result = crate::git::delete_branch_if_safe(
+        &repo,
+        &repo.capture_refs().unwrap(),
+        "feature",
+        "main",
+        false,
+    );
+    assert!(matches!(
+        result.unwrap().outcome,
+        crate::git::BranchDeletionOutcome::RetainedCheckedOut { path } if path == linked
+    ));
+    assert!(
+        !test
+            .git_output(&["rev-parse", "--verify", "refs/heads/feature"])
+            .is_empty()
+    );
+    std::fs::write(gitfile, contents).unwrap();
+    let continued = test
+        .git_command()
+        .current_dir(&linked)
+        .args(["rebase", "--continue"])
+        .run()
+        .unwrap();
+    assert!(continued.status.success(), "{continued:?}");
+}
+
+#[test]
+fn test_finalize_genuine_detached_rebase() {
+    let test = TestRepo::with_initial_commit();
+    test.run_git(&["commit", "--allow-empty", "-m", "Advance"]);
+    test.run_git(&["checkout", "--detach"]);
+    let paused = test
+        .git_command()
+        .args(["rebase", "--exec", "false", "HEAD~1"])
+        .run()
+        .unwrap();
+    assert!(!paused.status.success(), "{paused:?}");
+    assert_eq!(
+        std::fs::read(test.root_path().join(".git/rebase-merge/head-name")).unwrap(),
+        b"detached HEAD\n"
+    );
+    let repo = Repository::at(test.root_path()).unwrap();
+    let wt = &repo.list_worktrees().unwrap()[0];
+    assert!(wt.detached);
+    assert_eq!(wt.branch, None);
+    test.run_git(&["rebase", "--continue"]);
+}
+
+#[test]
+fn test_finalize_detached_git_am_without_rebase_branch() {
+    let test = TestRepo::with_initial_commit();
+    std::fs::write(test.root_path().join("conflict.txt"), "base\n").unwrap();
+    test.commit("Base");
+    test.run_git(&["switch", "-c", "patch-source"]);
+    std::fs::write(test.root_path().join("conflict.txt"), "incoming\n").unwrap();
+    test.commit("Incoming");
+    let patch = test
+        .git_command()
+        .args(["format-patch", "-1", "--stdout"])
+        .run()
+        .unwrap();
+    assert!(patch.status.success(), "{patch:?}");
+    test.run_git(&["switch", "main"]);
+    std::fs::write(test.root_path().join("conflict.txt"), "local\n").unwrap();
+    test.commit("Local");
+    test.run_git(&["checkout", "--detach"]);
+    let paused = test
+        .git_command()
+        .arg("am")
+        .stdin_bytes(patch.stdout)
+        .run()
+        .unwrap();
+    assert!(!paused.status.success(), "{paused:?}");
+    let state = test.root_path().join(".git/rebase-apply");
+    assert!(state.join("applying").is_file());
+    assert!(!state.join("head-name").exists());
+    let repo = Repository::at(test.root_path()).unwrap();
+    let wt = &repo.list_worktrees().unwrap()[0];
+    assert!(wt.detached);
+    assert_eq!(wt.branch, None);
+    test.run_git(&["am", "--abort"]);
 }
 
 #[test]
@@ -210,27 +423,18 @@ fn test_finalize_worktree_stale_reads_its_own_rebase() {
 
 #[test]
 fn test_parse_locked_worktree() {
-    let output = "worktree /path/to/locked
-HEAD abcd1234
-branch refs/heads/main
-locked reason for lock
+    let output = "worktree /path/to/locked\0HEAD abcd1234\0branch refs/heads/main\0locked reason for lock\0\0";
 
-";
-
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let worktrees = WorktreeInfo::parse_porcelain_list_z(output.as_bytes()).unwrap();
     let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
     assert_eq!(wt.locked, Some("reason for lock".to_string()));
 }
 
 #[test]
 fn test_parse_bare_worktree() {
-    let output = "worktree /path/to/bare
-HEAD abcd1234
-bare
+    let output = "worktree /path/to/bare\0HEAD abcd1234\0bare\0\0";
 
-";
-
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let worktrees = WorktreeInfo::parse_porcelain_list_z(output.as_bytes()).unwrap();
     let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
     assert!(wt.bare);
 }
@@ -409,14 +613,9 @@ fn test_resolved_worktree_none_branch() {
 
 #[test]
 fn test_worktree_locked_empty_reason() {
-    let output = "worktree /path/to/locked
-HEAD abcd1234
-branch refs/heads/main
-locked
+    let output = "worktree /path/to/locked\0HEAD abcd1234\0branch refs/heads/main\0locked\0\0";
 
-";
-
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let worktrees = WorktreeInfo::parse_porcelain_list_z(output.as_bytes()).unwrap();
     let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
     // Empty lock reason should still be recorded
     assert_eq!(wt.locked, Some(String::new()));
@@ -424,14 +623,9 @@ locked
 
 #[test]
 fn test_worktree_prunable() {
-    let output = "worktree /path/to/prunable
-HEAD abcd1234
-detached
-prunable gitdir file points to non-existent location
+    let output = "worktree /path/to/prunable\0HEAD abcd1234\0detached\0prunable gitdir file points to non-existent location\0\0";
 
-";
-
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let worktrees = WorktreeInfo::parse_porcelain_list_z(output.as_bytes()).unwrap();
     let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
     assert!(wt.prunable.is_some());
     assert!(wt.prunable.as_ref().unwrap().contains("non-existent"));
@@ -439,25 +633,9 @@ prunable gitdir file points to non-existent location
 
 #[test]
 fn test_parse_multiple_worktrees() {
-    let output = "worktree /main
-HEAD 1111111111111111111111111111111111111111
-branch refs/heads/main
+    let output = "worktree /main\0HEAD 1111111111111111111111111111111111111111\0branch refs/heads/main\0\0worktree /feature-a\0HEAD 2222222222222222222222222222222222222222\0branch refs/heads/feature-a\0\0worktree /feature-b\0HEAD 3333333333333333333333333333333333333333\0branch refs/heads/feature-b\0\0worktree /detached\0HEAD 4444444444444444444444444444444444444444\0detached\0\0";
 
-worktree /feature-a
-HEAD 2222222222222222222222222222222222222222
-branch refs/heads/feature-a
-
-worktree /feature-b
-HEAD 3333333333333333333333333333333333333333
-branch refs/heads/feature-b
-
-worktree /detached
-HEAD 4444444444444444444444444444444444444444
-detached
-
-";
-
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let worktrees = WorktreeInfo::parse_porcelain_list_z(output.as_bytes()).unwrap();
     let [main_wt, feature_a, feature_b, detached_wt]: [WorktreeInfo; 4] =
         worktrees.try_into().unwrap();
     assert_eq!(main_wt.branch, Some("main".to_string()));
@@ -1135,7 +1313,16 @@ fn git_dir_at_refuses_malformed_gitfiles() {
     let index = std::fs::read(registration.join("index")).unwrap();
     let marker = outer.join(".git");
     let original = std::fs::read(&marker).unwrap();
-    for contents in [b"not a gitfile".as_slice(), b"gitdir: \r\n".as_slice()] {
+    let file = outer.join("regular-target");
+    std::fs::write(&file, "not a Git directory").unwrap();
+    assert_eq!(Repository::git_dir_at(&file).unwrap(), None);
+    for contents in [
+        b"not a gitfile".as_slice(),
+        b"gitdir: \r\n".as_slice(),
+        b"gitdir: regular-target\n".as_slice(),
+        b"gitdir: regular-target/nested\n".as_slice(),
+        b"gitdir: missing/nested\n".as_slice(),
+    ] {
         std::fs::write(&marker, contents).unwrap();
         assert_eq!(Repository::git_dir_at(&outer).unwrap(), None);
         let error = repo
@@ -2286,24 +2473,8 @@ fn test_worktree_paths_for_branch_detects_duplicates() {
     // Two worktrees on `feature` — the state `git worktree add --force`
     // produces. Porcelain retains every entry; only resolution collapses it.
     // The detached worktree has no branch to duplicate.
-    let output = "worktree /path/to/main
-HEAD abcd1234
-branch refs/heads/main
-
-worktree /path/to/feature
-HEAD efgh5678
-branch refs/heads/feature
-
-worktree /path/to/feature-dup
-HEAD efgh5678
-branch refs/heads/feature
-
-worktree /path/to/detached
-HEAD efgh5678
-detached
-
-";
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let output = "worktree /path/to/main\0HEAD abcd1234\0branch refs/heads/main\0\0worktree /path/to/feature\0HEAD efgh5678\0branch refs/heads/feature\0\0worktree /path/to/feature-dup\0HEAD efgh5678\0branch refs/heads/feature\0\0worktree /path/to/detached\0HEAD efgh5678\0detached\0\0";
+    let worktrees = WorktreeInfo::parse_porcelain_list_z(output.as_bytes()).unwrap();
 
     // The duplicated branch yields both paths, in git's listing order — the
     // first is what resolution uses, the rest are what the warning surfaces.
@@ -4138,7 +4309,7 @@ fn submodule_inventory_preserves_data_on_inspection_errors() {
             let saved = outer.join("saved-child");
             std::fs::rename(&child, &saved).unwrap();
             std::os::unix::fs::symlink("child", &child).unwrap();
-            (saved, "Failed to inspect")
+            (saved, "Failed to check")
         };
         let error = repo.require_no_submodule_storage(&outer).unwrap_err();
         assert!(
@@ -4339,4 +4510,116 @@ fn submodule_inventory_preserves_aliased_registration_target() {
     assert!(!registration.exists());
     assert_eq!(std::fs::read(saved.join("index")).unwrap(), index);
     test.run_git_in(&store, &["cat-file", "-e", "HEAD^{commit}"]);
+}
+
+/// Live ownership resolves the same alias that unregistering later unlinks;
+/// the target's index and submodule repository remain outside deletion reach.
+#[cfg(unix)]
+#[test]
+fn live_removal_preserves_aliased_registration_target() {
+    let mut test = TestRepo::with_initial_commit();
+    let outer = test.add_worktree("outer");
+    let keep = test.add_worktree("keep");
+    let repo = Repository::at(test.root_path()).unwrap();
+    let registration = repo.worktree_at(&outer).git_dir().unwrap();
+    let saved = repo.git_common_dir().join("saved-registration");
+    std::fs::rename(&registration, &saved).unwrap();
+    std::fs::write(
+        saved.join("commondir"),
+        repo.git_common_dir().as_os_str().as_encoded_bytes(),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(&saved, &registration).unwrap();
+    let store = saved.join("modules/sub");
+    test.run_git(&[
+        "clone",
+        "--bare",
+        test.root_path().to_str().unwrap(),
+        store.to_str().unwrap(),
+    ]);
+    let index = std::fs::read(saved.join("index")).unwrap();
+    assert_eq!(
+        repo.worktree_at(&outer)
+            .ensure_holds_this_worktree()
+            .unwrap(),
+        saved,
+    );
+    let refused = crate::git::remove::stage_worktree_removal(&repo, &outer, Some("outer"), false)
+        .unwrap_err();
+    assert!(
+        matches!(refused.downcast_ref::<crate::git::GitError>(),
+            Some(crate::git::GitError::SubmoduleRepositories { repositories, .. })
+                if repositories.is_empty()),
+        "{refused:#}"
+    );
+    assert!(outer.is_dir());
+    assert!(registration.is_symlink());
+    let staged = crate::git::remove::stage_worktree_removal(&repo, &outer, Some("outer"), true)
+        .unwrap()
+        .expect("the live alias passes ownership and can be safely unregistered");
+    assert!(staged.is_dir());
+    assert!(!outer.exists());
+    assert!(!registration.exists());
+    assert_eq!(std::fs::read(saved.join("index")).unwrap(), index);
+    assert!(keep.join(".git").is_file());
+    test.run_git_in(&store, &["cat-file", "-e", "HEAD^{commit}"]);
+}
+
+/// Re-reading one lexical alias must return its new physical identity, so the
+/// removal owner's captured-identity comparison can refuse a retargeted entry.
+#[cfg(unix)]
+#[test]
+fn ownership_gate_captures_alias_target_identity() {
+    let mut test = TestRepo::with_initial_commit();
+    let outer = test.add_worktree("outer");
+    let sibling = test.add_worktree("sibling");
+    let repo = Repository::at(test.root_path()).unwrap();
+    let registration = repo.worktree_at(&outer).git_dir().unwrap();
+    let sibling_registration = repo.worktree_at(&sibling).git_dir().unwrap();
+    let first = repo.git_common_dir().join("first-registration");
+    let second = repo.git_common_dir().join("second-registration");
+    for (original, saved) in [(&registration, &first), (&sibling_registration, &second)] {
+        std::fs::rename(original, saved).unwrap();
+        std::fs::write(
+            saved.join("commondir"),
+            repo.git_common_dir().as_os_str().as_encoded_bytes(),
+        )
+        .unwrap();
+    }
+    std::os::unix::fs::symlink(&first, &registration).unwrap();
+    let captured = repo
+        .worktree_at(&outer)
+        .ensure_holds_this_worktree()
+        .unwrap();
+    assert_eq!(captured, first);
+
+    std::fs::remove_file(&registration).unwrap();
+    std::os::unix::fs::symlink(&second, &registration).unwrap();
+    let refusal = repo
+        .worktree_at(&outer)
+        .ensure_holds_this_worktree()
+        .unwrap_err();
+    assert!(
+        matches!(refusal.downcast_ref::<crate::git::GitError>(),
+            Some(crate::git::GitError::WorktreePathNotOurs { occupant_registered_at: Some(path), .. })
+                if crate::path::paths_match(path, &sibling)),
+        "{refusal:#}"
+    );
+
+    // Even repairing the replacement's backlink cannot retarget a removal
+    // that already captured the first physical registration.
+    std::fs::write(
+        second.join("gitdir"),
+        outer.join(".git").as_os_str().as_encoded_bytes(),
+    )
+    .unwrap();
+    let current = repo
+        .worktree_at(&outer)
+        .ensure_holds_this_worktree()
+        .unwrap();
+    assert_eq!(current, second);
+    assert!(!crate::path::paths_match(&captured, &current));
+    assert!(first.join("index").is_file());
+    assert!(outer.is_dir());
+    assert!(sibling.is_dir());
 }

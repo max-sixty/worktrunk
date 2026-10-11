@@ -6115,8 +6115,17 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
 
     // Prove that the old bare-cmd hop selects a project-local executable.
     // Keep that decoy in place while exercising every shipped hook below.
-    let system_cmd =
-        std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/cmd.exe");
+    let system_cmd = std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+        .join("System32")
+        .join("cmd.exe");
+    // cmd parses its own argv[0], which must use native separators even though
+    // CreateProcess accepts a forward slash in the executable path.
+    let output = run_line(&system_cmd, "ver", &with_worktrunk);
+    assert!(
+        output.status.success(),
+        "the host command processor must start; {}",
+        describe(&system_cmd, &output)
+    );
     let old_command = format!(
         r#"cmd /d /c call "{}\hooks\wt.cmd" config state marker set 🤖"#,
         plugin_root.display()

@@ -13,6 +13,309 @@ use rstest::rstest;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// A detached main checkout retains the branch whose rebase is in progress,
+/// including when its separate Git directory ends in path whitespace.
+#[cfg(unix)]
+#[rstest]
+#[case::ordinary(b"store".as_slice())]
+#[case::whitespace(b"store\n\t ".as_slice())]
+#[cfg_attr(target_os = "linux", case::native_bytes(b"store-\xff ".as_slice()))]
+fn test_remove_retains_separate_git_dir_rebase(repo: TestRepo, #[case] store_name: &[u8]) {
+    use std::os::unix::ffi::OsStringExt;
+
+    let store = repo
+        .home_path()
+        .join(std::ffi::OsString::from_vec(store_name.to_vec()));
+    let (main, linked) = separate_git_dir_rebase(&repo, &store);
+    let output = repo
+        .wt_command()
+        .current_dir(&linked)
+        .args(["remove", "rebasing", "--yes"])
+        .output()
+        .unwrap();
+    let retained = repo
+        .git_command()
+        .current_dir(&main)
+        .args(["show-ref", "--verify", "refs/heads/rebasing"])
+        .run()
+        .unwrap();
+    assert!(
+        retained.status.success(),
+        "rebase branch deleted: {output:?}"
+    );
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("main worktree cannot be removed"),
+        "{output:?}"
+    );
+    let continued = repo
+        .git_command()
+        .current_dir(&main)
+        .args(["rebase", "--continue"])
+        .run()
+        .unwrap();
+    assert!(continued.status.success(), "{continued:?}");
+}
+
+/// Failed inspection of a detached checkout's rebase state cannot authorize
+/// deleting its branch, including with explicit force.
+#[rstest]
+fn test_remove_refuses_unreadable_rebase_state(repo: TestRepo) {
+    let store = repo.home_path().join("store");
+    let (main, linked) = separate_git_dir_rebase(&repo, &store);
+    let head_name = store.join("rebase-merge/head-name");
+    let contents = fs::read(&head_name).unwrap();
+    fs::remove_file(&head_name).unwrap();
+    fs::create_dir(&head_name).unwrap();
+    for force in [false, true] {
+        let mut command = repo.wt_command();
+        command
+            .current_dir(&linked)
+            .args(["remove", "rebasing", "--yes"]);
+        if force {
+            command.arg("-D");
+        }
+        let output = command.output().unwrap();
+        assert!(!output.status.success(), "{output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("head-name"),
+            "{output:?}"
+        );
+        let retained = repo
+            .git_command()
+            .current_dir(&main)
+            .args(["show-ref", "--verify", "refs/heads/rebasing"])
+            .run()
+            .unwrap();
+        assert!(
+            retained.status.success(),
+            "rebase branch deleted: {output:?}"
+        );
+    }
+    fs::remove_dir(&head_name).unwrap();
+    fs::write(&head_name, contents).unwrap();
+    let continued = repo
+        .git_command()
+        .current_dir(&main)
+        .args(["rebase", "--continue"])
+        .run()
+        .unwrap();
+    assert!(continued.status.success(), "{continued:?}");
+}
+
+/// An incomplete operation is not evidence that a detached checkout is
+/// branchless. Restore the state and prove the real rebase can still finish.
+#[rstest]
+#[case::missing(None)]
+#[case::empty(Some(b"".as_slice()))]
+#[case::invalid_ref(Some(b"refs/heads/\n".as_slice()))]
+#[case::wrong_namespace(Some(b"refs/tags/rebasing\n".as_slice()))]
+#[case::whitespace(Some(b" refs/heads/rebasing \n".as_slice()))]
+fn test_remove_refuses_incomplete_rebase_state(repo: TestRepo, #[case] replacement: Option<&[u8]>) {
+    let store = repo.home_path().join("store");
+    let (main, linked) = separate_git_dir_rebase(&repo, &store);
+    let head_name = store.join("rebase-merge/head-name");
+    let contents = fs::read(&head_name).unwrap();
+    if let Some(replacement) = replacement {
+        fs::write(&head_name, replacement).unwrap();
+    } else {
+        fs::remove_file(&head_name).unwrap();
+    }
+    for force in [false, true] {
+        let mut command = repo.wt_command();
+        command
+            .current_dir(&linked)
+            .args(["remove", "rebasing", "--yes"]);
+        if force {
+            command.arg("-D");
+        }
+        let output = command.output().unwrap();
+        assert!(!output.status.success(), "{output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("head-name"),
+            "{output:?}"
+        );
+        let retained = repo
+            .git_command()
+            .current_dir(&main)
+            .args(["show-ref", "--verify", "refs/heads/rebasing"])
+            .run()
+            .unwrap();
+        assert!(
+            retained.status.success(),
+            "rebase branch deleted: {output:?}"
+        );
+    }
+    fs::write(&head_name, contents).unwrap();
+    let continued = repo
+        .git_command()
+        .current_dir(&main)
+        .args(["rebase", "--continue"])
+        .run()
+        .unwrap();
+    assert!(continued.status.success(), "{continued:?}");
+}
+
+#[rstest]
+fn test_list_and_switch_after_moving_main_with_detached_worktree(repo: TestRepo) {
+    let detached = repo.home_path().join("detached");
+    let output = repo
+        .git_command()
+        .args(["worktree", "add", "--detach"])
+        .arg(detached.to_str().unwrap())
+        .run()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let detached = dunce::canonicalize(&detached).unwrap();
+    let moved = repo.home_path().join("moved-main");
+    fs::rename(repo.root_path(), &moved).unwrap();
+    let output = repo
+        .wt_command()
+        .current_dir(&moved)
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let data: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        data["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["branch"].is_null()
+                && item["worktree"]["path"] == detached.to_str().unwrap()),
+        "{data}"
+    );
+    let output = repo
+        .wt_command()
+        .current_dir(&moved)
+        .args(["switch", "--create", "other", "--yes"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let created = repo
+        .git_command()
+        .current_dir(&moved)
+        .args(["show-ref", "--verify", "refs/heads/other"])
+        .run()
+        .unwrap();
+    assert!(created.status.success(), "{created:?}");
+}
+
+#[rstest]
+fn test_remove_retains_nested_rebase_with_empty_git_directory(mut repo: TestRepo) {
+    let nested = repo.root_path().join(".wts/nested");
+    repo.add_worktree_at_path("rebasing", &nested);
+    repo.run_git_in(&nested, &["commit", "--allow-empty", "-m", "Advance"]);
+    repo.run_git(&["merge", "--ff-only", "rebasing"]);
+    let paused = repo
+        .git_command()
+        .current_dir(&nested)
+        .args(["rebase", "--exec", "false", "HEAD~1"])
+        .run()
+        .unwrap();
+    assert!(!paused.status.success(), "{paused:?}");
+    let gitfile = nested.join(".git");
+    let contents = fs::read(&gitfile).unwrap();
+    fs::remove_file(&gitfile).unwrap();
+    fs::create_dir(&gitfile).unwrap();
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let data: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        data["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["branch"] == "rebasing"
+                && item["worktree"]["path"] == nested.to_str().unwrap()),
+        "{data}"
+    );
+    for force in [false, true] {
+        let mut command = repo.wt_command();
+        command.args(["remove", "rebasing", "--yes"]);
+        if force {
+            command.arg("-D");
+        }
+        let output = command.output().unwrap();
+        assert!(!output.status.success(), "{output:?}");
+        assert!(
+            !String::from_utf8_lossy(&output.stderr).contains("main worktree cannot be removed"),
+            "linked checkout must not be classified as main: {output:?}"
+        );
+        let retained = repo
+            .git_command()
+            .args(["show-ref", "--verify", "refs/heads/rebasing"])
+            .run()
+            .unwrap();
+        assert!(
+            retained.status.success(),
+            "rebase branch deleted: {output:?}"
+        );
+        assert!(nested.is_dir(), "rebase checkout deleted: {output:?}");
+    }
+    fs::remove_dir(&gitfile).unwrap();
+    fs::write(&gitfile, contents).unwrap();
+    let continued = repo
+        .git_command()
+        .current_dir(&nested)
+        .args(["rebase", "--continue"])
+        .run()
+        .unwrap();
+    assert!(continued.status.success(), "{continued:?}");
+}
+
+fn separate_git_dir_rebase(repo: &TestRepo, store: &Path) -> (PathBuf, PathBuf) {
+    use std::process::Command;
+
+    let main = repo.home_path().join("separate-main");
+    let linked = repo.home_path().join("observer");
+    let mut clone = Command::new("git");
+    repo.configure_git_cmd(&mut clone);
+    let output = clone
+        .args(["clone", "--separate-git-dir"])
+        .arg(store)
+        .arg(repo.root_path())
+        .arg(&main)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    repo.run_git_in(
+        &main,
+        &["commit", "--allow-empty", "-m", "Rebase candidate"],
+    );
+    repo.run_git_in(&main, &["branch", "rebasing"]);
+    repo.run_git_in(&main, &["commit", "--allow-empty", "-m", "Target advances"]);
+    repo.run_git_in(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "observer",
+            linked.to_str().unwrap(),
+        ],
+    );
+    repo.run_git_in(&main, &["worktree", "repair"]);
+    repo.run_git_in(&main, &["switch", "rebasing"]);
+    let paused = repo
+        .git_command()
+        .current_dir(&main)
+        .args(["rebase", "--exec", "false", "HEAD~1"])
+        .run()
+        .unwrap();
+    assert!(!paused.status.success(), "{paused:?}");
+    assert_eq!(
+        fs::read(store.join("rebase-merge/head-name")).unwrap(),
+        b"refs/heads/rebasing\n"
+    );
+    (main, linked)
+}
+
 #[rstest]
 fn test_remove_from_worktree(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-wt");
@@ -4793,6 +5096,180 @@ fn block_staged_rename(repo: &TestRepo, worktree_path: &Path) -> PathBuf {
     staged_path
 }
 
+/// Mutate topology only after the detached Git removal, so the child must
+/// decide from fresh state rather than the foreground plan or shell text.
+#[cfg(unix)]
+#[rstest]
+#[case::newline_checkout("newline")]
+#[case::locked_prunable("locked")]
+#[case::stale_prunable("stale")]
+#[case::changed_integrated_sha("changed")]
+#[case::shell_active_branch("escaped")]
+#[case::topology_tool_failure("tool-error")]
+#[case::topology_parse_failure("parse-error")]
+fn test_remove_detached_fallback_uses_rust_deletion(#[case] case: &str) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut repo = TestRepo::with_initial_commit();
+    let branch = if case == "escaped" {
+        "feature;touch${IFS}PWNED"
+    } else {
+        "feature"
+    };
+    let removed = repo.add_worktree(branch);
+    let blocked = block_staged_rename(&repo, &removed);
+    let survivor = repo.home_path().join("checkout\nprunable injected");
+    let parked = repo.home_path().join("parked-checkout");
+    let proof = repo.home_path().join("detached-removal-ran");
+    let inventory = repo.home_path().join("locked-prunable-inventory");
+    let sha = repo.git_output(&["rev-parse", branch]);
+    fs::write(
+        &inventory,
+        format!(
+            "worktree {}\0HEAD {sha}\0branch refs/heads/main\0\0worktree {}\0HEAD {sha}\0branch refs/heads/{branch}\0locked portable media\0prunable missing checkout\0\0",
+            repo.root_path().display(),
+            survivor.display(),
+        ),
+    )
+    .unwrap();
+
+    let real_git = which::which("git").unwrap();
+    let quote = |value: &str| shell_escape::unix::escape(value.into()).into_owned();
+    let real_git = quote(real_git.to_str().unwrap());
+    let branch_argument = quote(branch);
+    let survivor_argument = quote(survivor.to_str().unwrap());
+    let parked_argument = quote(parked.to_str().unwrap());
+    let proof_argument = quote(proof.to_str().unwrap());
+    let inventory_argument = quote(inventory.to_str().unwrap());
+    let mutation = match case {
+        "newline" => {
+            format!("{real_git} worktree add {survivor_argument} {branch_argument} || exit 1")
+        }
+        "locked" => format!(
+            "{real_git} worktree add {survivor_argument} {branch_argument} && {real_git} worktree lock --reason 'portable media' {survivor_argument} && mv {survivor_argument} {parked_argument} || exit 1"
+        ),
+        "stale" => format!(
+            "{real_git} worktree add {survivor_argument} {branch_argument} && rm -rf -- {survivor_argument} || exit 1"
+        ),
+        "changed" => format!(
+            "new_tip=$({real_git} commit-tree 'HEAD^{{tree}}' -p HEAD -m 'Advance while detached') && {real_git} update-ref refs/heads/feature \"$new_tip\" && {real_git} update-ref refs/heads/main \"$new_tip\" || exit 1"
+        ),
+        _ => ":".to_owned(),
+    };
+    let topology = match case {
+        "locked" => format!("cat {inventory_argument}; exit $?"),
+        "tool-error" => "echo 'topology fixture failure' >&2; exit 23".to_owned(),
+        "parse-error" => "printf 'worktree\\0'; exit 0".to_owned(),
+        _ => ":".to_owned(),
+    };
+    let bin = repo.home_path().join("detached-child-git");
+    fs::create_dir(&bin).unwrap();
+    let shim = bin.join("git");
+    fs::write(
+        &shim,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = worktree ] && [ \"$2\" = list ] && [ -f {proof_argument} ]; then\n{topology}\nfi\nif [ \"$1\" = worktree ] && [ \"$2\" = remove ]; then\n{real_git} \"$@\" || exit $?\n{mutation}\nprintf done > {proof_argument}\nexit 0\nfi\nexec {real_git} \"$@\"\n"
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = std::env::join_paths(
+        std::iter::once(bin).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    let output = repo
+        .wt_command()
+        .args(["remove", removed.to_str().unwrap(), "--yes"])
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    crate::common::wait_for("detached Git removal and mutation", || proof.is_file());
+    assert!(!removed.exists());
+    let should_delete = matches!(case, "stale" | "escaped");
+    if should_delete {
+        crate::common::wait_for("Rust child deletes intended branch", || {
+            !repo
+                .git_command()
+                .args([
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    &format!("refs/heads/{branch}"),
+                ])
+                .run()
+                .unwrap()
+                .status
+                .success()
+        });
+    } else {
+        let logs = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/logs");
+        let log = logs
+            .join(worktrunk::path::sanitize_for_filename(branch))
+            .join("internal/remove.log");
+        crate::common::wait_for("Rust child reports retention or failure", || {
+            fs::read_to_string(&log).is_ok_and(|text| match case {
+                "tool-error" => text.contains("topology fixture failure"),
+                "parse-error" => text.contains("worktree record missing path"),
+                "changed" => text.contains("moved during deletion"),
+                _ => text.contains("checked out @"),
+            })
+        });
+        assert_branch_exists(&repo, branch, true, case);
+    }
+    if case == "newline" {
+        assert_not_orphaned(&repo, &survivor, case);
+    }
+    if case == "locked" {
+        assert!(parked.join(".git").is_file());
+        assert!(
+            repo.git_output(&["worktree", "list", "--porcelain"])
+                .contains("locked portable media")
+        );
+    }
+    if case == "changed" {
+        assert_ne!(repo.git_output(&["rev-parse", branch]), sha);
+        assert_eq!(
+            repo.git_output(&["rev-parse", branch]),
+            repo.git_output(&["rev-parse", "main"])
+        );
+    }
+    assert!(!repo.root_path().join("PWNED").exists());
+    assert_eq!(fs::read_to_string(blocked).unwrap(), "blocking file");
+}
+
+/// The detached child is the shipped CLI on every platform, and it honors
+/// live checkout ownership before deleting an otherwise integrated ref.
+#[rstest]
+#[case::unchecked(false)]
+#[case::checked_out(true)]
+fn test_detached_delete_child_dispatch(#[case] checked_out: bool) {
+    let mut repo = TestRepo::with_initial_commit();
+    let checkout = if checked_out {
+        Some(repo.add_worktree("feature"))
+    } else {
+        repo.run_git(&["branch", "feature"]);
+        None
+    };
+    let expected_sha = repo.git_output(&["rev-parse", "feature"]);
+    let output = repo
+        .wt_command()
+        .args([
+            "_delete-branch-if-safe",
+            "--branch=feature",
+            "--target=main",
+            &format!("--expected-sha={expected_sha}"),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_branch_exists(&repo, "feature", checked_out, "hidden child dispatch");
+    if let Some(checkout) = checkout {
+        assert_not_orphaned(&repo, &checkout, "hidden child dispatch");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("checked out @"));
+    }
+}
+
 /// The rename-failure fallback honors `-D`: an unmerged branch is force-deleted
 /// in the legacy `git worktree remove && git branch -D` command.
 #[rstest]
@@ -6784,6 +7261,7 @@ exec {real_git} -c core.fsmonitor=false "$@"
 fn test_remove_rechecks_ownership_and_lock_after_fsmonitor_stop(
     mut repo: TestRepo,
     #[case] mutation: &str,
+    #[values(false, true)] force: bool,
 ) {
     use std::os::unix::fs::PermissionsExt;
 
@@ -6826,56 +7304,57 @@ exec {real_git} -c core.fsmonitor=false "$@"
         std::iter::once(bin_dir).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
     )
     .unwrap();
-    for (branch, force) in [("normal-gate", false), ("forced-gate", true)] {
-        let worktree = repo.add_worktree(branch);
-        let registration = registration_dir(&worktree);
-        let parked = worktree.with_extension("parked");
-        let replacement = repo.add_worktree(&format!("{branch}-replacement"));
-        let replacement_registration = registration_dir(&replacement);
-        let proof = repo.home_path().join(format!("{branch}-mutation-proof"));
-        let mut command = repo.wt_command();
-        command
-            .args([
-                "remove",
-                branch,
-                "--foreground",
-                "--yes",
-                "--no-delete-branch",
-            ])
-            .env("PATH", &path)
-            .env("WORKTRUNK_TEST_REMOVAL_MUTATION", mutation)
-            .env("WORKTRUNK_TEST_REMOVAL_PARKED", &parked)
-            .env("WORKTRUNK_TEST_REMOVAL_REPLACEMENT", &replacement)
-            .env(
-                "WORKTRUNK_TEST_REMOVAL_REPLACEMENT_REGISTRATION",
-                &replacement_registration,
-            )
-            .env("WORKTRUNK_TEST_REMOVAL_PROOF", &proof);
-        if force {
-            command.arg("--force");
-        }
-        let output = command.output().unwrap();
-        assert!(
-            !output.status.success(),
-            "mutation {mutation}, force {force}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+    let branch = if force { "forced-gate" } else { "normal-gate" };
+    let worktree = repo.add_worktree(branch);
+    let registration = registration_dir(&worktree);
+    let parked = worktree.with_extension("parked");
+    let replacement = repo.add_worktree(&format!("{branch}-replacement"));
+    let replacement_registration = registration_dir(&replacement);
+    let proof = repo.home_path().join(format!("{branch}-mutation-proof"));
+    let mut command = repo.wt_command();
+    command
+        .args([
+            "remove",
+            branch,
+            "--foreground",
+            "--yes",
+            "--no-delete-branch",
+        ])
+        .env("PATH", &path)
+        .env("WORKTRUNK_TEST_REMOVAL_MUTATION", mutation)
+        .env("WORKTRUNK_TEST_REMOVAL_PARKED", &parked)
+        .env("WORKTRUNK_TEST_REMOVAL_REPLACEMENT", &replacement)
+        .env(
+            "WORKTRUNK_TEST_REMOVAL_REPLACEMENT_REGISTRATION",
+            &replacement_registration,
+        )
+        .env("WORKTRUNK_TEST_REMOVAL_PROOF", &proof);
+    if force {
+        command.arg("--force");
+    }
+    let output = command.output().unwrap();
+    assert!(
+        !output.status.success(),
+        "mutation {mutation}, force {force}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(&proof).unwrap_or_else(|error| {
+            panic!("mutation {mutation}, force {force} did not run: {error}; {output:?}")
+        }),
+        mutation,
+        "mutation must complete"
+    );
+    assert!(worktree.is_dir(), "target path must not be staged");
+    assert!(registration.is_dir(), "original registration must survive");
+    if mutation == "lock" {
+        assert!(registration.join("locked").is_file());
+    } else {
         assert_eq!(
-            fs::read_to_string(&proof).unwrap(),
-            mutation,
-            "mutation must complete"
+            fs::read_to_string(worktree.join("precious.txt")).unwrap(),
+            "replacement data"
         );
-        assert!(worktree.is_dir(), "target path must not be staged");
-        assert!(registration.is_dir(), "original registration must survive");
-        if mutation == "lock" {
-            assert!(registration.join("locked").is_file());
-        } else {
-            assert_eq!(
-                fs::read_to_string(worktree.join("precious.txt")).unwrap(),
-                "replacement data"
-            );
-            assert!(parked.join(".git").is_file(), "original checkout survives");
-        }
+        assert!(parked.join(".git").is_file(), "original checkout survives");
     }
 }
 
@@ -7698,6 +8177,70 @@ fn test_remove_preserves_sole_submodule_history(mut repo: TestRepo, #[case] case
             "fixture commit must be absent from source"
         );
     }
+}
+
+/// A file or broken gitfile replacing an indexed submodule needs explicit force.
+#[rstest]
+#[case::file("file")]
+#[case::gitfile_parent_file("parent-file")]
+#[case::gitfile_target_file("target-file")]
+fn test_remove_gitlink_without_repository_requires_force(
+    mut repo: TestRepo,
+    #[case] scenario: &str,
+) {
+    let outer = repo.add_worktree("file-gitlink");
+    let head = repo.git_output(&["rev-parse", "HEAD"]);
+    repo.run_git_in(
+        &outer,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{},sub", head.trim()),
+        ],
+    );
+    repo.run_git_in(&outer, &["commit", "-m", "Record gitlink"]);
+    let preserved = if scenario == "file" {
+        outer.join("sub")
+    } else {
+        fs::create_dir(outer.join("sub")).unwrap();
+        fs::write(
+            outer.join("sub/.git"),
+            if scenario == "parent-file" {
+                "gitdir: ../.git/modules/sub\n"
+            } else {
+                "gitdir: target\n"
+            },
+        )
+        .unwrap();
+        outer.join("sub/target")
+    };
+    fs::write(&preserved, "replacement content").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "file-gitlink", "--foreground", "--yes"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    if scenario == "file" {
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("uncommitted changes"),
+            "{output:?}"
+        );
+    }
+    assert_eq!(
+        fs::read_to_string(&preserved).unwrap(),
+        "replacement content"
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "file-gitlink", "--foreground", "--force", "--yes"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(!outer.exists());
 }
 
 /// Index gitlinks define submodules even without `.gitmodules`. Each store

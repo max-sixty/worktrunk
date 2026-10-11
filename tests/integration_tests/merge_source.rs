@@ -196,7 +196,7 @@ fn test_merge_source_selected_by_path_or_current_alias(mut repo: TestRepo, #[cas
     wait_for_worktree_removed(&source);
     let cd = fs::read_to_string(directive).unwrap();
     if current {
-        assert_eq!(cd.trim(), repo.root_path().to_slash_lossy());
+        assert_eq!(cd, format!("{}\n", repo.root_path().display()));
     } else {
         assert!(cd.is_empty());
     }
@@ -598,8 +598,8 @@ fn test_merge_source_current_bare_worktree_emits_directory_change(#[case] explic
     assert!(output.status.success(), "{output:?}");
     wait_for_worktree_removed(&source);
     assert_eq!(
-        fs::read_to_string(directive).unwrap().trim(),
-        main.to_slash_lossy()
+        fs::read_to_string(directive).unwrap(),
+        format!("{}\n", main.display())
     );
 }
 
