@@ -250,7 +250,7 @@ configuration (CLAUDE.md, settings)" doesn't hold for it. The `name` route can't
 cross repos anyway: the `WorktreeCreate` hook `cd`s to `$CLAUDE_PROJECT_DIR`,
 which stays the launch repo, so the worktree lands there.
 
-So with a repo argument, the skill has the agent read the new root file after
+So with a repo argument, the skill has the agent read the new root files after
 entry. That fixes the instructions only; the launch repo's root file stays in
 context, as does its auto-memory.
 
