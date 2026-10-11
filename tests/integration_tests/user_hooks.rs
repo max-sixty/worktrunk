@@ -1357,7 +1357,7 @@ broken = "echo {{ does_not_exist }} > should_not_exist.txt"
     // Same label the foreground path renders for this command (see the
     // foreground_pipeline_undefined_var_runs_earlier_steps snapshot).
     assert_snapshot!(log_content, @"
-    [31m✗[39m [31mFailed to expand user:broken: undefined value @ line 1[39m
+    [31m✗[39m [31mFailed to expand user:broken: undefined variable does_not_exist @ line 1[39m
     [107m [0m echo {{ does_not_exist }} > should_not_exist.txt
     [2m↳[22m [2mAvailable variables: [4margs[24m, [4mbase[24m, [4mbase_worktree_path[24m, [4mbranch[24m, [4mcommit[24m, [4mcwd[24m, [4mdefault_branch[24m, [4mhook_name[24m, [4mhook_type[24m, [4mprimary_worktree_path[24m, [4mremote[24m, [4mremote_url[24m, [4mrepo[24m, [4mrepo_path[24m, [4mshort_commit[24m, [4mtarget[24m, [4mtarget_worktree_path[24m, [4mupstream[24m, [4mworktree_name[24m, [4mworktree_path[24m[22m
     ");
@@ -1436,6 +1436,17 @@ fn test_foreground_pipeline_undefined_var_runs_earlier_steps(repo: TestRepo) {
         marker.exists(),
         "step 1 should have run before step 2's template error"
     );
+}
+
+#[rstest]
+fn test_hook_template_typo_names_variable(repo: TestRepo) {
+    repo.write_test_config("pre-merge = \"echo {{ brnch }}\"\n");
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["hook", "pre-merge", "--yes"]);
+        assert_cmd_snapshot!(cmd);
+    });
 }
 
 /// The other half of that contract: a *syntax* error anywhere in the pipeline
