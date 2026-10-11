@@ -55,6 +55,9 @@ use rayon::prelude::*;
 use crate::path::{canonicalize_with_parents, format_path_for_display};
 use crate::progress::{DataCopy, Progress};
 
+#[cfg(windows)]
+mod windows;
+
 /// Pins the reflink classification so snapshot tests can assert the summary
 /// line: `1` reports every copied file as reflinked, `0` as written in full.
 ///
@@ -193,7 +196,7 @@ fn copy_leaf_in(
 
 /// Owns a complete leaf until publication. The dependency's fallback uses a
 /// truncating copy, so it only receives a name inside this private directory;
-/// the final destination is touched solely by an atomic rename.
+/// the final destination is touched solely by atomic publication.
 struct PreparedLeaf {
     directory: Arc<tempfile::TempDir>,
     path: PathBuf,
@@ -215,7 +218,12 @@ impl PreparedLeaf {
         let directory = tempfile::Builder::new()
             .prefix(".wt-copy-")
             .tempdir_in(parent)
-            .with_context(|| format!("copying {}", format_path_for_display(src)))?;
+            .with_context(|| {
+                format!(
+                    "creating copy staging directory @ {}",
+                    format_path_for_display(parent)
+                )
+            })?;
         Self::new_in(src, dest, metadata, stamp, Arc::new(directory))
     }
 
@@ -259,13 +267,7 @@ impl PreparedLeaf {
     }
 
     fn persist(self, dest: &Path, force: bool) -> anyhow::Result<Option<(u64, DataCopy)>> {
-        let result = if force {
-            fs::rename(&self.path, dest)
-        } else {
-            // The fallback API checks then renames, which can overwrite a
-            // competing writer. Refuse filesystems without atomic support.
-            renamore::rename_exclusive(&self.path, dest)
-        };
+        let result = publish_leaf(&self.path, dest, force);
         drop(self.directory);
         match result {
             Ok(()) => Ok(Some((self.bytes, self.data))),
@@ -275,6 +277,22 @@ impl PreparedLeaf {
                 format_path_for_display(dest)
             ))),
         }
+    }
+}
+
+#[cfg(windows)]
+use windows::publish_leaf;
+
+#[cfg(not(windows))]
+fn publish_leaf(src: &Path, dest: &Path, force: bool) -> std::io::Result<()> {
+    if force {
+        fs::rename(src, dest)
+    } else {
+        // tempfile owns the atomic no-clobber guarantee, including its safe
+        // hard-link fallback on filesystems without exclusive rename support.
+        tempfile::TempPath::try_from_path(src)?
+            .persist_noclobber(dest)
+            .map_err(|error| error.error)
     }
 }
 
@@ -288,7 +306,7 @@ fn set_modified(path: &Path, stamp: SystemTime) {
     #[cfg(windows)]
     let file = {
         use std::os::windows::fs::OpenOptionsExt;
-        const FILE_WRITE_ATTRIBUTES: u32 = 0x0100;
+        use windows_sys::Win32::Storage::FileSystem::FILE_WRITE_ATTRIBUTES;
         fs::OpenOptions::new()
             .access_mode(FILE_WRITE_ATTRIBUTES)
             .open(path)
@@ -615,15 +633,31 @@ mod tests {
 
     #[test]
     fn test_copy_leaf_force_replaces_existing_destination() {
-        // The counterpart: with `force` the destination is removed and the
-        // source copied over it, reporting the source's byte count.
+        // Force publishes the complete source even over a read-only file.
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("src");
         let dest = dir.path().join("dest");
         fs::write(&src, b"source content").unwrap();
         fs::write(&dest, b"pre-existing content").unwrap();
+        let original_permissions = fs::metadata(&dest).unwrap().permissions();
+        let mut readonly = original_permissions.clone();
+        readonly.set_readonly(true);
+        fs::set_permissions(&dest, readonly).unwrap();
 
-        let result = copy_leaf(&src, &dest, None, true, None).unwrap();
+        // Preparation failure must preserve even a read-only destination.
+        let directory = dir.path().join("uncopyable directory");
+        fs::create_dir(&directory).unwrap();
+        let failed = copy_leaf(&directory, &dest, None, true, None);
+        let retained = fs::read(&dest).unwrap();
+        let retained_readonly = fs::metadata(&dest).unwrap().permissions().readonly();
+        let result = copy_leaf(&src, &dest, None, true, None);
+        // Restore before assertions so Windows can clean up on regression.
+        fs::set_permissions(&dest, original_permissions).unwrap();
+
+        assert!(failed.is_err());
+        assert_eq!(retained, b"pre-existing content");
+        assert!(retained_readonly);
+        let result = result.unwrap();
 
         // Only the byte half is asserted: whether the copy reflinked depends on
         // the filesystem under the temp dir, which varies across CI runners.
@@ -859,7 +893,7 @@ mod tests {
         assert!(copy_error.downcast_ref::<std::io::Error>().is_some());
         assert_eq!(
             copy_error.to_string(),
-            format!("copying '{}'", source_file.display())
+            format!("creating copy staging directory @ '{}'", blocker.display())
         );
         assert_eq!(fs::read(&source_file).unwrap(), b"source data");
 
@@ -869,7 +903,7 @@ mod tests {
         assert!(link_error.downcast_ref::<std::io::Error>().is_some());
         assert_eq!(
             link_error.to_string(),
-            format!("copying '{}'", source_link.display())
+            format!("creating copy staging directory @ '{}'", blocker.display())
         );
         assert_eq!(fs::read_link(&source_link).unwrap(), source_file);
         assert_eq!(fs::read(&blocker).unwrap(), b"existing data");
@@ -880,8 +914,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_copy_failure_keeps_existing_data() {
-        use std::os::unix::fs::PermissionsExt;
-
         let dir = crate::testing::test_tempdir();
         let src = dir.path().join("source file");
         fs::write(&src, b"source data").unwrap();
@@ -891,9 +923,9 @@ mod tests {
 
         let dest = dir.path().join("existing destination");
         fs::write(&dest, b"existing data").unwrap();
-        fs::set_permissions(&src, fs::Permissions::from_mode(0o000)).unwrap();
-        let result = copy_leaf(&src, &dest, None, true, None);
-        fs::set_permissions(&src, fs::Permissions::from_mode(0o600)).unwrap();
+        let uncopyable = dir.path().join("uncopyable directory");
+        fs::create_dir(&uncopyable).unwrap();
+        let result = copy_leaf(&uncopyable, &dest, None, true, None);
         assert!(result.is_err());
         assert_eq!(fs::read(&dest).unwrap(), b"existing data");
         assert_eq!(fs::read(&src).unwrap(), b"source data");
@@ -902,9 +934,7 @@ mod tests {
         fs::write(&protected, b"protected data").unwrap();
         let link = dir.path().join("existing link");
         std::os::unix::fs::symlink(&protected, &link).unwrap();
-        fs::set_permissions(&src, fs::Permissions::from_mode(0o000)).unwrap();
-        let result = copy_leaf(&src, &link, None, true, None);
-        fs::set_permissions(&src, fs::Permissions::from_mode(0o600)).unwrap();
+        let result = copy_leaf(&uncopyable, &link, None, true, None);
         assert!(result.is_err());
         assert_eq!(fs::read_link(&link).unwrap(), protected);
         assert_eq!(fs::read(&link).unwrap(), b"protected data");
@@ -915,6 +945,60 @@ mod tests {
                 .to_string_lossy()
                 .starts_with(".wt-copy-")
         }));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_copy_leaf_publishes_beyond_windows_max_path() {
+        let dir = crate::testing::test_tempdir();
+        let src = dir.path().join("source");
+        fs::write(&src, b"source data").unwrap();
+        let mut parent = dir.path().join("destination");
+        for _ in 0..8 {
+            parent.push("a directory with a long name");
+        }
+        fs::create_dir_all(&parent).unwrap();
+        let dest = parent.join("copied file");
+        assert!(dest.as_os_str().len() > 260);
+
+        assert!(copy_leaf(&src, &dest, None, false, None).unwrap().is_some());
+        assert_eq!(fs::read(&dest).unwrap(), b"source data");
+        assert!(fs::read_dir(&parent).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".wt-copy-")
+        }));
+    }
+
+    /// Losing publication preserves the later writer and cleans a read-only
+    /// prepared file on every platform, including Windows.
+    #[test]
+    fn test_prepared_readonly_copy_preserves_competing_file() {
+        let dir = crate::testing::test_tempdir();
+        let src = dir.path().join("source");
+        let dest = dir.path().join("destination");
+        fs::write(&src, b"source data").unwrap();
+        let original_permissions = fs::metadata(&src).unwrap().permissions();
+        let mut readonly = original_permissions.clone();
+        readonly.set_readonly(true);
+        fs::set_permissions(&src, readonly).unwrap();
+        let prepared =
+            PreparedLeaf::new(&src, &dest, &src.symlink_metadata().unwrap(), None).unwrap();
+        let staging = prepared.directory.path().to_path_buf();
+        fs::write(&dest, b"competing data").unwrap();
+
+        let result = prepared.persist(&dest, false);
+        fs::set_permissions(&src, original_permissions).unwrap();
+
+        assert!(result.unwrap().is_none());
+        assert_eq!(fs::read(&dest).unwrap(), b"competing data");
+        assert_eq!(fs::read(&src).unwrap(), b"source data");
+        assert!(
+            !staging.exists(),
+            "failed publication must clean readonly staging"
+        );
     }
 
     /// Preparation never grants permission to overwrite a later writer's

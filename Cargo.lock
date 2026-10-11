@@ -4736,6 +4736,7 @@ dependencies = [
  "vergen-gitcl",
  "vt100",
  "which",
+ "windows-sys 0.61.2",
  "wrap-ansi",
  "wt-perf",
 ]

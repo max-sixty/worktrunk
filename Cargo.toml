@@ -332,6 +332,11 @@ signal-hook = "0.4.1"
 # Safe FIONREAD snapshots bound cancellation drains even with continuous writers.
 rustix = "1.1.4"
 
+[target.'cfg(windows)'.dependencies]
+# Atomic copied-file replacement must retain attributes while replacing a
+# read-only destination; std's rename doesn't request that Windows flag.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Wdk_Storage_FileSystem"] }
+
 [build-dependencies]
 vergen-gitcl = { version = "10.0.0", features = ["build"] }
 
