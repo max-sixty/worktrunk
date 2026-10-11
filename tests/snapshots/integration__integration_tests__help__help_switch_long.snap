@@ -254,6 +254,8 @@ The comparison base is the merge-base with the default branch, or with its upstr
 [107m [0m [2m[36m[switch.picker][0m
 [107m [0m [2mpager = [0m[2m[32m"delta --paging=never --width=$COLUMNS"[0m
 
+[1mStarting list-only:[0m Set [2mpreview = false[0m under [2m[switch.picker][0m to open the picker with the preview hidden; [2mAlt-p[0m still shows it.
+
 [1m[32mPull requests and merge requests[0m
 
 The [2mpr:<number>[0m / [2mmr:<number>[0m shortcut and the PR/MR's web URL both resolve to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref ([2mrefs/pull/N/head[0m or [2mrefs/merge-requests/N/head[0m) and configures [2mpushRemote[0m to the fork URL.

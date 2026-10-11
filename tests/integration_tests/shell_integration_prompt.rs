@@ -296,6 +296,125 @@ fn test_process_tree_unsupported_shell_overrides_shell_env(repo: TestRepo) {
     );
 }
 
+/// A PowerShell profile query that INT/TERM cancels while `wt switch` computes
+/// its shell warning stops the command there: no further shell probes (the
+/// all-shell scan asks `nu` for its autoload dirs) and no later hints.
+#[cfg(unix)]
+#[rstest]
+#[case::sigint("INT", 130)]
+#[case::sigterm("TERM", 143)]
+fn test_switch_stops_after_cancelled_powershell_query(
+    mut repo: TestRepo,
+    #[case] signal: &str,
+    #[case] exit_code: i32,
+) {
+    use crate::common::mock_commands::{MockConfig, MockResponse, mock_calls};
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::CommandExt;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    let mock_bin = repo.mock_bin_path().unwrap();
+    let pwsh = mock_bin.join("pwsh");
+    fs::write(&pwsh, format!("#!/bin/sh\nkill -{signal} $$\n")).unwrap();
+    fs::set_permissions(&pwsh, fs::Permissions::from_mode(0o755)).unwrap();
+    MockConfig::new("nu")
+        .command("_default", MockResponse::output("[]\n"))
+        .write(mock_bin);
+
+    let call_log = tempfile::TempDir::new().unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.env("WORKTRUNK_TEST_PARENT_SHELL", "pwsh")
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
+        .arg0("wt")
+        .args(["switch", "--create", "feature"])
+        .stdin(std::process::Stdio::null());
+    let output = cmd.output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        crate::common::shell_exit_code(&output.status),
+        Some(exit_code),
+        "{stderr}"
+    );
+    assert_eq!(mock_calls(call_log.path(), "nu"), Vec::<String>::new());
+    assert!(
+        !stderr.contains("To customize worktree locations"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("Cannot change directory"), "{stderr}");
+}
+
+/// With a current shell other than PowerShell, the first profile query is the
+/// install offer's all-shell scan. Cancelling it stops the switch before the
+/// `--execute` program runs; a query that merely fails (a plain exit 130)
+/// falls back and the program runs.
+#[cfg(unix)]
+#[rstest]
+#[case::sigint("kill -INT $$", 130, false)]
+#[case::sigterm("kill -TERM $$", 143, false)]
+#[case::ordinary_failure("exit 130", 0, true)]
+fn test_switch_offer_after_powershell_query(
+    mut repo: TestRepo,
+    #[case] pwsh_body: &str,
+    #[case] exit_code: i32,
+    #[case] executed: bool,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::CommandExt;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    let pwsh = repo.mock_bin_path().unwrap().join("pwsh");
+    fs::write(&pwsh, format!("#!/bin/sh\n{pwsh_body}\n")).unwrap();
+    fs::set_permissions(&pwsh, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let marker = repo.root_path().join("executed");
+    let mut cmd = repo.wt_command();
+    cmd.env("WORKTRUNK_TEST_PARENT_SHELL", "zsh")
+        .arg0("wt")
+        .args(["switch", "--create", "feature", "--execute", "touch", "--"])
+        .arg(&marker)
+        .stdin(std::process::Stdio::null());
+    let output = cmd.output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        crate::common::shell_exit_code(&output.status),
+        Some(exit_code),
+        "{stderr}"
+    );
+    assert_eq!(marker.exists(), executed, "{stderr}");
+}
+
+/// An ordinary shell scan failure — an rc path that can't be read as a file —
+/// reads as "not configured": the switch completes and runs `--execute`.
+#[cfg(unix)]
+#[rstest]
+fn test_switch_continues_after_failed_shell_scan(repo: TestRepo) {
+    use crate::common::set_temp_home_env;
+    use std::os::unix::process::CommandExt;
+
+    let temp_home = tempfile::TempDir::new().unwrap();
+    fs::create_dir(temp_home.path().join(".bashrc")).unwrap();
+
+    let marker = repo.root_path().join("executed");
+    let mut cmd = repo.wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_TEST_PARENT_SHELL", "bash")
+        .arg0("wt")
+        .args(["switch", "--create", "feature", "--execute", "touch", "--"])
+        .arg(&marker)
+        .stdin(std::process::Stdio::null());
+    let output = cmd.output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("Cannot change directory — shell integration not installed"),
+        "{stderr}"
+    );
+    assert!(marker.exists(), "{stderr}");
+}
+
 // PTY-based tests for interactive scenarios
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 mod pty_tests {

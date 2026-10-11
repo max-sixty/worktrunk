@@ -310,14 +310,17 @@ mod tests {
                     "--exact",
                     "commands::custom::tests::run_custom_propagates_signal_exit_code",
                 ])
-                .env(CHILD_ENV, "1");
-            assert!(
-                worktrunk::shell_exec::spawn(&mut command)
-                    .unwrap()
-                    .wait()
-                    .unwrap()
-                    .success()
-            );
+                .env(CHILD_ENV, "1")
+                .stdout(std::process::Stdio::piped());
+            let output = worktrunk::shell_exec::spawn(&mut command)
+                .unwrap()
+                .wait_with_output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(output.status.success(), "{stdout}");
+            // `--exact` matching nothing also exits 0; require that the child
+            // actually ran this test.
+            assert!(stdout.contains(" 1 passed;"), "{stdout}");
             return;
         }
 

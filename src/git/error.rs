@@ -2776,6 +2776,19 @@ mod tests {
         };
         assert_snapshot!(err.render(), @"[31m✗[39m [31m[1mpre-merge user:lint[22m failed (exit code 1)[39m");
 
+        // Silent errors produce empty output
+        assert_eq!(format!("{}", WorktrunkError::CommandNotApproved), "");
+        assert_eq!(
+            format!("{}", WorktrunkError::AlreadyDisplayed { exit_code: 1 }),
+            ""
+        );
+    }
+
+    // An unnamed hook failure renders its template through `format_bash_with_gutter`,
+    // whose output is highlighted only with the feature on.
+    #[cfg(feature = "syntax-highlighting")]
+    #[test]
+    fn snapshot_unnamed_hook_failure_shows_template() {
         let err = WorktrunkError::HookCommandFailed {
             hook_type: HookType::PreCreate,
             source: HookSource::User,
@@ -2783,25 +2796,12 @@ mod tests {
             command_name: None,
             error: anyhow::anyhow!("setup failed"),
         };
-        #[cfg(feature = "syntax-highlighting")]
-        assert_snapshot!(err.render(), @"
-        [31m✗[39m [31m[1mpre-start user hook[22m failed[39m
-        [107m [0m [2m[0m[2m[34mecho[0m[2m test[0m
-        [107m [0m setup failed
+        // Shell decoration varies by feature; this snapshot covers error composition.
+        assert_snapshot!(ansi_str::AnsiStr::ansi_strip(&err.render()), @"
+        ✗ pre-start user hook failed
+          echo test
+          setup failed
         ");
-        #[cfg(not(feature = "syntax-highlighting"))]
-        assert_snapshot!(err.render(), @"
-        [31m✗[39m [31m[1mpre-start user hook[22m failed[39m
-        [107m [0m echo test
-        [107m [0m setup failed
-        ");
-
-        // Silent errors produce empty output
-        assert_eq!(format!("{}", WorktrunkError::CommandNotApproved), "");
-        assert_eq!(
-            format!("{}", WorktrunkError::AlreadyDisplayed { exit_code: 1 }),
-            ""
-        );
     }
 
     #[test]

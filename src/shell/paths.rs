@@ -191,30 +191,158 @@ pub fn nushell_autoload_candidates(home: &std::path::Path) -> Vec<PathBuf> {
     candidates
 }
 
+/// Parse the profile path `pwsh` prints: one absolute path, else `None`.
+#[cfg(unix)]
+fn parse_powershell_profile(stdout: &str) -> Option<PathBuf> {
+    let line = stdout.trim();
+    let path = PathBuf::from(line);
+    (!line.contains('\n') && path.is_absolute()).then_some(path)
+}
+
+/// Classify a profile query's outcome.
+///
+/// `Ok(None)` — use the conventional path — when the runtime is missing,
+/// fails, times out, or prints anything but one absolute path. `Err(signal)`
+/// when the query was cancelled: the child died of SIGINT/SIGTERM, or the
+/// command operation was cancelled while wt waited.
+#[cfg(unix)]
+fn powershell_profile_from(
+    output: &std::io::Result<std::process::Output>,
+    operation_signal: Option<i32>,
+) -> Result<Option<PathBuf>, i32> {
+    use signal_hook::consts::{SIGINT, SIGTERM};
+    use std::os::unix::process::ExitStatusExt;
+    let output = output.as_ref().ok();
+    if let Some(signal) = output
+        .and_then(|output| output.status.signal())
+        .filter(|signal| matches!(*signal, SIGINT | SIGTERM))
+        .or(operation_signal)
+    {
+        return Err(signal);
+    }
+    Ok(output
+        .filter(|output| output.status.success())
+        .and_then(|output| parse_powershell_profile(&String::from_utf8_lossy(&output.stdout))))
+}
+
+/// The profile query's answer, or the signal that cancelled it.
+#[cfg(unix)]
+static POWERSHELL_PROFILE: OnceLock<Result<Option<PathBuf>, i32>> = OnceLock::new();
+
+/// The current-user, current-host profile (`$PROFILE.CurrentUserCurrentHost`)
+/// the installed `pwsh` loads, queried at most once per process so install,
+/// uninstall and detection all act on the same answer.
+///
+/// `-NoProfile` keeps the query from running the profiles it names, and the
+/// telemetry and update-check opt-outs keep it off the network. Bounded by the
+/// shared local-probe timeout. A timed child runs in its own process group, so
+/// a terminal Ctrl-C reaches only wt, whose default disposition ends it;
+/// SIGTERM to wt is latched by the command operation and read back here.
+#[cfg(unix)]
+fn queried_powershell_profile() -> std::io::Result<Option<PathBuf>> {
+    POWERSHELL_PROFILE
+        .get_or_init(|| {
+            let output = crate::shell_exec::Cmd::new("pwsh")
+                .args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "$PROFILE.CurrentUserCurrentHost",
+                ])
+                .env("POWERSHELL_TELEMETRY_OPTOUT", "1")
+                .env("POWERSHELL_UPDATECHECK", "Off")
+                .timeout(crate::git::reap::probe_timeout())
+                .run();
+            let result = powershell_profile_from(
+                &output,
+                crate::signal_forwarder::operation_interrupt_signal(),
+            );
+            if let Err(signal) = result {
+                crate::signal_forwarder::cancel_foreground(signal);
+            }
+            result
+        })
+        .clone()
+        .map_err(|signal| {
+            std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                ProfileQueryInterrupted(signal),
+            )
+        })
+}
+
+/// The payload of the `io::Error` the profile path helpers return when the
+/// PowerShell profile query was cancelled, naming the signal.
+#[cfg(unix)]
+#[derive(Debug)]
+struct ProfileQueryInterrupted(i32);
+
+#[cfg(unix)]
+impl std::fmt::Display for ProfileQueryInterrupted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "PowerShell profile query interrupted by signal {}",
+            self.0
+        )
+    }
+}
+
+#[cfg(unix)]
+impl std::error::Error for ProfileQueryInterrupted {}
+
+/// The signal that cancelled the PowerShell profile query, when `error` is
+/// that cancellation rather than an ordinary path failure.
+pub fn profile_query_interruption(error: &std::io::Error) -> Option<i32> {
+    #[cfg(unix)]
+    {
+        error
+            .get_ref()?
+            .downcast_ref::<ProfileQueryInterrupted>()
+            .map(|interrupted| interrupted.0)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = error;
+        None
+    }
+}
+
 /// Get PowerShell profile paths in order of preference.
+///
 /// On Windows, returns both PowerShell Core (7+) and Windows PowerShell (5.1) paths.
-/// On Unix, uses the conventional ~/.config/powershell location.
-pub fn powershell_profile_paths(home: &std::path::Path) -> Vec<PathBuf> {
+/// On Unix, returns the current-user, current-host profile the installed `pwsh`
+/// reports — PowerShell honors `$XDG_CONFIG_HOME` — falling back to the
+/// conventional `~/.config/powershell` location when `pwsh` can't be queried.
+/// Errors only when the query was cancelled, so no caller writes a fallback
+/// profile after Ctrl-C.
+pub fn powershell_profile_paths(home: &std::path::Path) -> std::io::Result<Vec<PathBuf>> {
     #[cfg(windows)]
     {
         // Use platform-specific Documents path (handles non-English Windows)
         let docs = dirs::document_dir().unwrap_or_else(|| home.join("Documents"));
-        vec![
+        Ok(vec![
             // PowerShell Core 6+ (pwsh.exe) - preferred
             docs.join("PowerShell")
                 .join("Microsoft.PowerShell_profile.ps1"),
             // Windows PowerShell 5.1 (powershell.exe) - legacy but still common
             docs.join("WindowsPowerShell")
                 .join("Microsoft.PowerShell_profile.ps1"),
-        ]
+        ])
     }
     #[cfg(not(windows))]
     {
-        vec![
+        #[cfg(unix)]
+        let queried = queried_powershell_profile()?;
+        #[cfg(not(unix))]
+        let queried = None;
+        let profile = queried.unwrap_or_else(|| {
             home.join(".config")
                 .join("powershell")
-                .join("Microsoft.PowerShell_profile.ps1"),
-        ]
+                .join("Microsoft.PowerShell_profile.ps1")
+        });
+        Ok(vec![profile])
     }
 }
 
@@ -274,16 +402,19 @@ pub(super) fn zsh_config_dir(home: &std::path::Path) -> PathBuf {
 /// are independent of the binary name; Fish and Nushell use per-name wrapper
 /// files instead and have no line-based config. `config_paths` builds on this
 /// for the line-based shells, so install and uninstall cannot drift apart.
-pub fn line_based_config_paths(shell: super::Shell, home: &std::path::Path) -> Vec<PathBuf> {
-    match shell {
+pub fn line_based_config_paths(
+    shell: super::Shell,
+    home: &std::path::Path,
+) -> std::io::Result<Vec<PathBuf>> {
+    Ok(match shell {
         super::Shell::Bash => {
             // Use .bashrc - sourced by interactive shells (login shells should source .bashrc)
             vec![home.join(".bashrc")]
         }
         super::Shell::Zsh => vec![zsh_config_dir(home).join(".zshrc")],
-        super::Shell::PowerShell => powershell_profile_paths(home),
+        super::Shell::PowerShell => powershell_profile_paths(home)?,
         super::Shell::Fish | super::Shell::Nushell => Vec::new(),
-    }
+    })
 }
 
 /// Returns the config file paths for a shell.
@@ -295,7 +426,7 @@ pub(super) fn config_paths(shell: super::Shell, cmd: &str) -> Result<Vec<PathBuf
 
     Ok(match shell {
         super::Shell::Bash | super::Shell::Zsh | super::Shell::PowerShell => {
-            line_based_config_paths(shell, &home)
+            line_based_config_paths(shell, &home)?
         }
         super::Shell::Fish => {
             // For fish, we write to functions/ which is autoloaded on first use.
@@ -409,6 +540,74 @@ mod tests {
         // Empty / whitespace-only
         assert_eq!(parse_nu_path(""), None);
         assert_eq!(parse_nu_path("  \n"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_parse_powershell_profile() {
+        assert_eq!(
+            parse_powershell_profile("/x/powershell/Microsoft.PowerShell_profile.ps1\n"),
+            Some(PathBuf::from(
+                "/x/powershell/Microsoft.PowerShell_profile.ps1"
+            ))
+        );
+        assert_eq!(parse_powershell_profile(""), None);
+        assert_eq!(parse_powershell_profile("relative/profile.ps1"), None);
+        assert_eq!(parse_powershell_profile("/a.ps1\n/b.ps1\n"), None);
+    }
+
+    /// Stand-in runtimes via `/bin/sh -c`: the reported path is trusted, a
+    /// runtime that can't answer falls back, and SIGINT/SIGTERM — on the child
+    /// or latched by the operation — cancels instead of falling back.
+    #[cfg(unix)]
+    #[test]
+    fn test_powershell_profile_from() {
+        let sh = |script: &str| {
+            crate::shell_exec::Cmd::new("/bin/sh")
+                .args(["-c", script])
+                .run()
+        };
+        assert_eq!(
+            powershell_profile_from(&sh("echo /custom/powershell/profile.ps1"), None),
+            Ok(Some(PathBuf::from("/custom/powershell/profile.ps1")))
+        );
+        assert_eq!(
+            powershell_profile_from(&sh("echo /custom/profile.ps1; exit 1"), None),
+            Ok(None)
+        );
+        let missing = crate::shell_exec::Cmd::new("/nonexistent/pwsh-xxxxxxxx").run();
+        assert_eq!(powershell_profile_from(&missing, None), Ok(None));
+        assert_eq!(powershell_profile_from(&sh("kill -INT $$"), None), Err(2));
+        assert_eq!(powershell_profile_from(&sh("kill -TERM $$"), None), Err(15));
+        // A crash is a failed query, not a cancellation.
+        assert_eq!(
+            powershell_profile_from(&sh("kill -KILL $$"), None),
+            Ok(None)
+        );
+        assert_eq!(
+            powershell_profile_from(&sh("echo /custom/profile.ps1"), Some(15)),
+            Err(15)
+        );
+    }
+
+    /// Only the cancelled query's own error reads as an interruption; an
+    /// ordinary `Interrupted` io error stays an ordinary failure.
+    #[cfg(unix)]
+    #[test]
+    fn test_profile_query_interruption() {
+        for signal in [2, 15] {
+            let cancelled = std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                ProfileQueryInterrupted(signal),
+            );
+            assert_eq!(profile_query_interruption(&cancelled), Some(signal));
+            assert_eq!(
+                cancelled.to_string(),
+                format!("PowerShell profile query interrupted by signal {signal}")
+            );
+        }
+        let ordinary = std::io::Error::from(std::io::ErrorKind::Interrupted);
+        assert_eq!(profile_query_interruption(&ordinary), None);
     }
 
     #[test]

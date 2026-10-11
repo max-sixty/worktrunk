@@ -372,6 +372,7 @@ fn invalid_utf8_pager_is_not_executed(repo: TestRepo) {
 #[case::custom_caught_success(false, "caught-key", 0, 0)]
 #[case::custom_caught_130(false, "caught-key", 130, 130)]
 #[case::custom_raw_int(false, "raw-key", 0, 130)]
+#[case::custom_raw_term(false, "raw-term", 0, 143)]
 #[case::custom_caught_term(false, "caught-term", 0, 143)]
 #[case::pager_caught_success(true, "caught-key", 0, 0)]
 #[case::pager_caught_130(true, "caught-key", 130, 0)]

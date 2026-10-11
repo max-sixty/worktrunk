@@ -59,6 +59,43 @@ fn test_removal_shell_activation_advice(
     });
 }
 
+/// A PowerShell profile query that INT/TERM cancels while removal computes its
+/// change-directory warning stops the command before that warning or any
+/// activation hint.
+#[cfg(unix)]
+#[rstest]
+#[case::sigint("INT", 130)]
+#[case::sigterm("TERM", 143)]
+fn test_remove_stops_after_cancelled_powershell_query(
+    mut repo: TestRepo,
+    #[case] signal: &str,
+    #[case] exit_code: i32,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::CommandExt;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    let pwsh = repo.mock_bin_path().unwrap().join("pwsh");
+    fs::write(&pwsh, format!("#!/bin/sh\nkill -{signal} $$\n")).unwrap();
+    fs::set_permissions(&pwsh, fs::Permissions::from_mode(0o755)).unwrap();
+    let worktree_path = repo.add_worktree("feature");
+
+    let mut cmd = repo.wt_command();
+    cmd.env("WORKTRUNK_TEST_PARENT_SHELL", "pwsh")
+        .arg0("wt")
+        .args(["remove", "--foreground", "--yes"])
+        .current_dir(&worktree_path);
+    let output = cmd.output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        crate::common::shell_exit_code(&output.status),
+        Some(exit_code),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("cannot change directory"), "{stderr}");
+}
+
 /// Installation advice must use the installer's wrapper-aware state: a
 /// legacy fish wrapper needs migration, while current fish/Nushell wrappers
 /// need activation. Exercise the real installer and removal output together.

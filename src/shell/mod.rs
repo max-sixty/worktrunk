@@ -18,6 +18,7 @@ pub use detection::{
 };
 pub use paths::{
     fish_config_dir, home_dir_required, line_based_config_paths, nushell_autoload_candidates,
+    profile_query_interruption,
 };
 pub use utils::{
     AncestorShell, ZshStartupScope, ancestor_shell, current_shell, current_shell_name,

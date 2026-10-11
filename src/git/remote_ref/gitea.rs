@@ -32,14 +32,14 @@
 //! resolves its own context.
 
 use anyhow::{Context, bail};
-use etcetera::base_strategy::{BaseStrategy, Xdg};
 use serde::Deserialize;
 
 use super::{
     CliApiRequest, PlatformData, RemoteRefInfo, cli_api_error, extract_host_from_html_url,
     run_cli_api,
 };
-use crate::git::{ForgeKind, Repository};
+use crate::git::{CommandError, ErrorExt, ForgeKind, Repository, WorktrunkError};
+use crate::shell_exec::Cmd;
 
 /// Raw JSON response from `tea api repos/{owner}/{repo}/pulls/{number}`.
 #[derive(Debug, Deserialize)]
@@ -315,83 +315,60 @@ pub fn fork_remote_url(host: &str, owner: &str, repo: &str) -> String {
 
 /// Whether `tea` has a login configured for `host`.
 ///
-/// Used by the switch dispatcher to decide which forge CLI to try when the
-/// remote URL doesn't unambiguously identify the forge. Reads tea's config
-/// file directly — `$XDG_CONFIG_HOME/tea/config.yml` (default
-/// `~/.config/tea/config.yml`) with legacy fallback `~/.tea/tea.yml` — and
-/// returns true if any `logins[].url` parses to the same host. Pure local
-/// I/O; never invokes `tea` (which can trigger an OAuth refresh on lookup).
-pub fn is_authed_for(host: &str) -> bool {
-    read_tea_config().is_some_and(|content| config_has_login_for(&content, host))
+/// Used by the switch dispatcher for ambiguous forge hosts. Login discovery is
+/// local-only; the shared login probe below owns that contract.
+pub fn is_authed_for(host: &str) -> anyhow::Result<bool> {
+    Ok(load_logins()?.iter().any(|login| {
+        login.ssh_host.eq_ignore_ascii_case(host)
+            || extract_host_from_html_url(&login.url)
+                .is_ok_and(|login_host| login_host.eq_ignore_ascii_case(host))
+    }))
 }
 
-/// Pure parser: scan tea's `config.yml` content for a `logins[].url` whose
-/// host matches `target`. Extracted from `is_authed_for` so the YAML-shaped
-/// matching can be unit-tested without touching the filesystem or env vars.
-fn config_has_login_for(content: &str, target: &str) -> bool {
-    content.lines().any(|line| {
-        let trimmed = line.trim_start();
-        let Some(rest) = trimmed.strip_prefix("url:") else {
-            return false;
-        };
-        let value = rest.trim().trim_matches(|c: char| c == '"' || c == '\'');
-        let Some(without_scheme) = value
-            .strip_prefix("https://")
-            .or_else(|| value.strip_prefix("http://"))
-        else {
-            return false;
-        };
-        let host = without_scheme.split(['/', '?', '#']).next().unwrap_or("");
-        host.eq_ignore_ascii_case(target)
-    })
+/// Whether `tea` has any login configured, for host-agnostic diagnostics.
+pub fn has_any_login() -> anyhow::Result<bool> {
+    Ok(!load_logins()?.is_empty())
 }
 
-/// Whether `tea` has *any* login configured (host-agnostic).
+/// The login-list JSON carries display fields, with no authentication tokens.
+#[derive(Debug, Deserialize)]
+struct TeaLogin {
+    url: String,
+    ssh_host: String,
+}
+
+/// Ask tea to read its own local config, including its platform-specific paths
+/// and legacy fallback. Unlike API login lookup, `logins list` does not
+/// refresh OAuth tokens or contact the server. Both auth consumers use this
+/// command so config discovery and YAML parsing remain tea's responsibility.
 ///
-/// Used by `wt config show` diagnostics to report Gitea auth status when the
-/// caller has no specific host in hand. Like [`is_authed_for`], reads tea's
-/// config file directly rather than invoking `tea` (which can trigger an OAuth
-/// refresh on lookup).
-pub fn has_any_login() -> bool {
-    read_tea_config().is_some_and(|content| content_has_any_login(&content))
-}
-
-/// Pure parser: true if any line is a `url:` entry carrying an http(s) URL.
-/// Mirrors the line shape `config_has_login_for` matches, minus the host check.
-fn content_has_any_login(content: &str) -> bool {
-    content.lines().any(|line| {
-        let Some(rest) = line.trim_start().strip_prefix("url:") else {
-            return false;
-        };
-        let value = rest.trim().trim_matches(|c: char| c == '"' || c == '\'');
-        value.starts_with("https://") || value.starts_with("http://")
-    })
-}
-
-/// Read tea's config.yml, honoring `$XDG_CONFIG_HOME` and the legacy
-/// `~/.tea/tea.yml` fallback. Returns None if neither file is readable.
-///
-/// The base directory comes from etcetera's XDG strategy — the crate worktrunk
-/// already resolves its own config with — so the spec's exclusions apply: an
-/// exported-but-empty or relative value falls back to `~/.config` instead of
-/// resolving `tea/config.yml` against whatever directory `wt` was invoked
-/// from, which would leave the user's tea logins unread and silently drop the
-/// Gitea CI column from `wt list --full` and send `wt switch pr:<n>` to GitHub.
-///
-/// `Xdg` specifically, not `choose_base_strategy`: tea honors `$XDG_CONFIG_HOME`
-/// on every platform and this keeps that. Its *default* is
-/// `github.com/adrg/xdg`'s — `~/Library/Application Support` on macOS,
-/// `%LOCALAPPDATA%` on Windows, `~/.config` elsewhere — so only the Linux
-/// default is matched here; `choose_base_strategy` would pick
-/// `~/Library/Preferences` and `%APPDATA%`, matching tea on neither.
-fn read_tea_config() -> Option<String> {
-    let xdg = Xdg::new().ok()?;
-    [
-        xdg.config_dir().join("tea").join("config.yml"),
-        xdg.home_dir().join(".tea").join("tea.yml"),
-    ]
-    .into_iter()
-    .find_map(|path| std::fs::read_to_string(path).ok())
+/// An absent or failing CLI means no known login, matching the auth probes for
+/// other forges. Debug logging distinguishes failure from an empty login list.
+/// Native SIGINT/SIGTERM must propagate so callers stop subsequent probes.
+fn load_logins() -> anyhow::Result<Vec<TeaLogin>> {
+    let args = ["logins", "list", "--output", "json"];
+    let output = match Cmd::new("tea").args(args).run() {
+        Ok(output) => output,
+        Err(error) => {
+            log::debug!("Failed to run tea logins list: {error}");
+            return Ok(Vec::new());
+        }
+    };
+    if !output.status.success() {
+        let error: anyhow::Error = CommandError::from_failed_output("tea", &args, &output).into();
+        if let Some(signal) = error.interrupt_signal() {
+            return Err(WorktrunkError::Interrupted { signal, hint: None }.into());
+        }
+        log::debug!("tea logins list failed: {}", error.display_message());
+        return Ok(Vec::new());
+    }
+    match serde_json::from_slice(&output.stdout) {
+        Ok(logins) => Ok(logins),
+        Err(error) => {
+            log::debug!("Failed to parse tea logins list JSON: {error}");
+            Ok(Vec::new())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -604,49 +581,5 @@ mod tests {
             extract_source_branch_from_parts(&head.label, &head.ref_name),
             None
         );
-    }
-
-    #[test]
-    fn test_config_has_login_for_matches_known_hosts() {
-        // tea writes one entry per `tea login add`. Match by host extracted
-        // from the URL — case-insensitive, scheme-agnostic, ignores trailing
-        // path/query.
-        let yaml = r#"logins:
-  - name: gitea-com
-    url: https://gitea.com
-    default: true
-  - name: selfhosted
-    url: "https://forge.example.com/"
-  - name: with-path
-    url: http://other.test/api/v1
-"#;
-        assert!(config_has_login_for(yaml, "gitea.com"));
-        assert!(config_has_login_for(yaml, "GITEA.COM"));
-        assert!(config_has_login_for(yaml, "forge.example.com"));
-        assert!(config_has_login_for(yaml, "other.test"));
-        assert!(!config_has_login_for(yaml, "not-configured.test"));
-        // Empty config has no logins.
-        assert!(!config_has_login_for("", "gitea.com"));
-        // Stray `url:` outside a logins entry must not match — but the parser
-        // is line-based and intentionally permissive; document the trade-off
-        // by asserting the tea-shaped scheme-prefixed form is required.
-        assert!(!config_has_login_for("url: gitea.com\n", "gitea.com"));
-    }
-
-    #[test]
-    fn test_content_has_any_login() {
-        let yaml = r#"logins:
-  - name: gitea-com
-    url: https://gitea.com
-    default: true
-"#;
-        assert!(content_has_any_login(yaml));
-        assert!(content_has_any_login(
-            "    url: \"http://forge.example.com/\"\n"
-        ));
-        // No logins / no scheme-prefixed url.
-        assert!(!content_has_any_login(""));
-        assert!(!content_has_any_login("logins: []\n"));
-        assert!(!content_has_any_login("url: gitea.com\n"));
     }
 }

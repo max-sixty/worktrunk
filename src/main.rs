@@ -598,7 +598,7 @@ fn handle_config_shell_command(action: ConfigShellCommand, yes: bool) -> anyhow:
             // Auto-write to shell config files and completions
             let cmd = cmd.unwrap_or_else(binary_name);
             handle_configure_shell(shell, yes, dry_run, cmd)
-                .map_err(|e| anyhow::anyhow!("{}", e))
+                .map_err(anyhow::Error::from)
                 .and_then(|scan_result| {
                     // Exit with error if no shells configured
                     // Show skipped shells first so user knows what was tried
@@ -620,7 +620,7 @@ fn handle_config_shell_command(action: ConfigShellCommand, yes: bool) -> anyhow:
         ConfigShellCommand::Uninstall { shell, dry_run } => {
             let explicit_shell = shell.is_some();
             handle_unconfigure_shell(shell, yes, dry_run)
-                .map_err(|e| anyhow::anyhow!("{}", e))
+                .map_err(anyhow::Error::from)
                 .map(|result| {
                     if !dry_run {
                         crate::output::print_shell_uninstall_result(&result, explicit_shell);

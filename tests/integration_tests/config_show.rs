@@ -1648,6 +1648,152 @@ fn test_config_show_full_gitea_remote(mut repo: TestRepo, temp_home: TempDir) {
     });
 }
 
+/// tea owns login discovery; Worktrunk reads only its structured, local-only
+/// command output. The mock replaces the external tea CLI, not our process
+/// wiring or diagnostics logic.
+#[rstest]
+#[case::login(r#"[{"name":"local","url":"https://forge.example.test","ssh_host":"","user":"alice","default":"true"}]"#, 0, true)]
+#[case::empty("[]", 0, false)]
+#[case::invalid_json("not JSON", 0, false)]
+#[case::invalid_shape(r#"[{"name":"missing-url"}]"#, 0, false)]
+#[case::failed("[]", 1, false)]
+fn test_config_show_full_tea_login_discovery(
+    mut repo: TestRepo,
+    #[case] logins: &str,
+    #[case] exit_code: i32,
+    #[case] authenticated: bool,
+) {
+    use crate::common::mock_commands::MockConfig;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    MockConfig::new("tea")
+        .version("tea version development (mock)")
+        .command(
+            "logins list --output",
+            MockResponse::output(logins).with_exit_code(exit_code),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(repo.mock_bin_path().unwrap());
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/example/repo.git",
+    ]);
+    let call_log = tempfile::tempdir().unwrap();
+    let output = repo
+        .wt_command()
+        .args(["config", "show", "--full"])
+        .env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let plain = stdout.ansi_strip();
+    let status = if authenticated {
+        "tea installed & authenticated"
+    } else {
+        "tea installed but not authenticated"
+    };
+    assert!(plain.contains(status), "{plain}");
+    let calls = fs::read_to_string(call_log.path().join("tea.calls")).unwrap();
+    assert_eq!(
+        calls.lines().collect::<Vec<_>>(),
+        ["--version", "logins list --output json"]
+    );
+}
+
+/// Each forge's diagnostics use the shared probe while rendering only the
+/// CLI selected by the repository's remote.
+#[rstest]
+#[case::github("github.com", "gh", "glab")]
+#[case::gitlab("gitlab.com", "glab", "gh")]
+fn test_config_show_full_forge_diagnostics(
+    mut repo: TestRepo,
+    #[case] host: &str,
+    #[case] selected_cli: &str,
+    #[case] other_cli: &str,
+) {
+    use crate::common::mock_commands::MockConfig;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    let mock_bin = repo.mock_bin_path().unwrap();
+    MockConfig::new("tea")
+        .version("tea version development (mock)")
+        .command("logins list --output", MockResponse::output("[]"))
+        .command("_default", MockResponse::exit(1))
+        .write(mock_bin);
+    MockConfig::new("az")
+        .command("_default", MockResponse::exit(1))
+        .write(mock_bin);
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        &format!("https://{host}/example/repo.git"),
+    ]);
+    let output = repo
+        .wt_command()
+        .args(["config", "show", "--full"])
+        .env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let plain = stdout.ansi_strip();
+    assert!(
+        plain.contains(&format!("{selected_cli} installed but not authenticated")),
+        "{plain}"
+    );
+    assert!(
+        !plain.contains(&format!("{other_cli} installed")),
+        "{plain}"
+    );
+}
+
+/// Diagnostics stop after a tea login probe is natively interrupted, before
+/// starting the next tool's probe.
+#[cfg(unix)]
+#[rstest]
+fn test_config_show_full_tea_login_native_interruption(mut repo: TestRepo) {
+    use crate::common::mock_commands::MockConfig;
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::ExitStatusExt;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    let mock_bin = repo.mock_bin_path().unwrap();
+    let tea = mock_bin.join("tea");
+    fs::write(
+        &tea,
+        r#"#!/bin/sh
+if [ "$1" = --version ]; then exit 0; fi
+kill -INT $$
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&tea, fs::Permissions::from_mode(0o755)).unwrap();
+    MockConfig::new("az")
+        .command("_default", MockResponse::exit(1))
+        .write(mock_bin);
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/example/repo.git",
+    ]);
+    let call_log = tempfile::tempdir().unwrap();
+    let output = repo
+        .wt_command()
+        .args(["config", "show", "--full"])
+        .env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.signal(), Some(2), "{output:?}");
+    assert!(!call_log.path().join("az.calls").exists());
+}
+
 /// `wt config show --full` against an Azure DevOps remote reports the `az` CLI
 /// row plus the `azure-devops` extension, which the whole `az repos` command
 /// group ships in: without it CI status stays blank however well `az` is
@@ -4729,6 +4875,125 @@ fn test_plugins_codex_install_plugin_add_fails(mut repo: TestRepo, temp_home: Te
     });
 }
 
+/// A PowerShell profile query that INT/TERM cancels stops `config show --full`
+/// at the shell section, before the forge diagnostics probe `gh`.
+#[cfg(unix)]
+#[rstest]
+#[case::sigint("INT", 130)]
+#[case::sigterm("TERM", 143)]
+fn test_config_show_full_stops_after_cancelled_powershell_query(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+    #[case] signal: &str,
+    #[case] exit_code: i32,
+) {
+    use crate::common::mock_commands::mock_calls;
+    use std::os::unix::fs::PermissionsExt;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/example/repo.git",
+    ]);
+    let pwsh = repo.mock_bin_path().unwrap().join("pwsh");
+    fs::write(&pwsh, format!("#!/bin/sh\nkill -{signal} $$\n")).unwrap();
+    fs::set_permissions(&pwsh, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let call_log = TempDir::new().unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
+        .args(["config", "show", "--full"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let output = cmd.output().unwrap();
+
+    assert_eq!(
+        crate::common::shell_exit_code(&output.status),
+        Some(exit_code),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(mock_calls(call_log.path(), "gh"), Vec::<String>::new());
+}
+
+/// A `pwsh` that fails without being cancelled leaves `config show --full` on
+/// its ordinary path, through to the forge diagnostics.
+#[cfg(unix)]
+#[rstest]
+fn test_config_show_full_continues_after_failed_powershell_query(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    use crate::common::mock_commands::mock_calls;
+    use std::os::unix::fs::PermissionsExt;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/example/repo.git",
+    ]);
+    let pwsh = repo.mock_bin_path().unwrap().join("pwsh");
+    fs::write(&pwsh, "#!/bin/sh\nexit 130\n").unwrap();
+    fs::set_permissions(&pwsh, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let call_log = TempDir::new().unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
+        .args(["config", "show", "--full"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let output = cmd.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!mock_calls(call_log.path(), "gh").is_empty());
+}
+
+/// An ordinary shell scan failure — an rc path that can't be read as a file —
+/// reports the shell status as undetermined and carries on to the forge
+/// diagnostics.
+#[cfg(unix)]
+#[rstest]
+fn test_config_show_full_continues_after_failed_shell_scan(mut repo: TestRepo, temp_home: TempDir) {
+    use crate::common::mock_commands::mock_calls;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/example/repo.git",
+    ]);
+    fs::create_dir(temp_home.path().join(".bashrc")).unwrap();
+
+    let call_log = TempDir::new().unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
+        .args(["config", "show", "--full"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let output = cmd.output().unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(
+        format!("{stdout}{stderr}").contains("Could not determine shell status"),
+        "{stdout}{stderr}"
+    );
+    assert!(!mock_calls(call_log.path(), "gh").is_empty());
+}
+
 /// Run `wt config plugins <tool> <action>` and accept the prompt, returning the
 /// argv of every `<tool>` the run spawned — argv\[0\] excluded, as `mock_calls`
 /// records it.
@@ -5631,26 +5896,9 @@ fn test_plugin_layout_is_consolidated() {
     }
 }
 
-/// Codex resolves a hook `command` through the platform shell — `/bin/sh -lc`
-/// on Unix, `cmd.exe /C` on Windows (`default_shell_command` in
-/// `codex-rs/hooks/src/engine/command_runner.rs`). The Unix commands lead with
-/// `bash "$PLUGIN_ROOT/hooks/wt.sh"`, and under `cmd.exe` that bare `bash`
-/// resolves through the Windows PATH to `System32\bash.exe`, the WSL launcher —
-/// not Git Bash. In a sandboxed Codex session the launcher refuses to start
-/// (`Bash/Service/CreateInstance/E_ACCESSDENIED`), so every prompt, permission,
-/// stop, and session-end event raises a "Hook failed" banner (#4007).
-///
-/// Codex's fix for this is the per-handler `commandWindows` override, which
-/// *replaces* `command` on Windows (`command_windows.unwrap_or(command)` in
-/// `codex-rs/hooks/src/engine/discovery.rs`). Every Codex command hook must
-/// carry one, and it must name neither `bash` — the WSL launcher, under cmd.exe
-/// — nor bare `wt`, which belongs to Windows Terminal on Windows. It calls
-/// `hooks/wt.cmd`, which finds Git Bash *by path* and runs the same `wt.sh`.
-///
-/// Codex substitutes only the braced `${PLUGIN_ROOT}` form textually, before
-/// the shell runs; the unbraced `$PLUGIN_ROOT` survives to the shell and is
-/// expanded only by the Unix `/bin/sh`. `cmd.exe` would pass it through
-/// literally, so the Windows commands must brace it.
+/// Keep Windows-specific Codex commands present and shell-neutral on every platform.
+/// The invocation rationale lives in plugins/worktrunk/hooks/wt.cmd; the Windows
+/// shell-integration test below exercises the commands themselves.
 #[test]
 fn test_codex_hooks_carry_windows_commands() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -5682,35 +5930,30 @@ fn test_codex_hooks_carry_windows_commands() {
             .as_str()
             .expect("each Codex hook must define a command");
         let windows = hook["commandWindows"].as_str().unwrap_or_else(|| {
-            panic!(
-                "Codex hook has no `commandWindows`; on Windows its `command` runs under \
-                 cmd.exe, where bare `bash` resolves to the WSL launcher rather than Git \
-                 Bash and fails outright in a sandboxed session (#4007). command:\n{command}"
-            )
+            panic!("Codex hook must define commandWindows; command:\n{command}")
         });
         assert!(
             !windows.split_whitespace().any(|word| word == "bash"),
-            "`commandWindows` must not name bash — cmd.exe resolves that name to the WSL \
-             launcher (#4007); the shim finds Git Bash by path instead. commandWindows:\n{windows}"
+            "commandWindows must use the Git Bash shim, not bare bash:\n{windows}"
         );
         assert!(
             !windows
                 .split_whitespace()
                 .any(|word| word == "wt" || word == "wt.exe" || word.ends_with("\\wt.exe")),
-            "`commandWindows` must not invoke bare `wt` — that name resolves to Windows \
-             Terminal. commandWindows:\n{windows}"
+            "commandWindows must not invoke Windows Terminal as wt:\n{windows}"
         );
         assert!(
-            windows.contains(r"${PLUGIN_ROOT}\hooks\wt.cmd")
+            windows.starts_with(r#"cmd /d /c call "${PLUGIN_ROOT}\hooks\wt.cmd" "#)
                 && root.join("plugins/worktrunk/hooks/wt.cmd").is_file(),
-            "`commandWindows` must call the cmd.exe shim that ships beside wt.sh. \
-             commandWindows:\n{windows}"
+            "commandWindows must invoke the shipped shim through cmd /d /c call:\n{windows}"
+        );
+        assert!(
+            !windows.contains("||") && !windows.contains('&') && !windows.contains("exit /b"),
+            "commandWindows must leave cmd-only failure handling in the shim:\n{windows}"
         );
         assert!(
             windows.contains("${PLUGIN_ROOT}") && !windows.contains("$PLUGIN_ROOT/"),
-            "`commandWindows` must reference the plugin root as ${{PLUGIN_ROOT}}: Codex \
-             substitutes only the braced form textually, and cmd.exe would pass the \
-             unbraced one through literally. commandWindows:\n{windows}"
+            "commandWindows must use Codex's textual ${{PLUGIN_ROOT}} substitution:\n{windows}"
         );
         // The Unix side keeps the unbraced form the login shell expands.
         assert!(
@@ -5771,32 +6014,31 @@ fn msys_path(path: &std::path::Path) -> String {
     )
 }
 
-/// The structural guard above pins that a `commandWindows` exists and avoids
-/// `bash`; this one runs the real one the way Codex does and checks it lands the
-/// marker. Codex spawns `cmd.exe /C "<command>"` with the command line wrapped
-/// in quotes as a single raw argument (`build_command` in
-/// `codex-rs/hooks/src/engine/command_runner.rs`) after substituting the braced
-/// `${PLUGIN_ROOT}` textually (`codex-rs/hooks/src/engine/discovery.rs`), so
-/// this reproduces both steps rather than approximating them.
-///
-/// What that covers beyond the manifest text: cmd.exe's quote handling across
-/// the nested quoting around the shim path, the shim's `goto`-based search for
-/// Git Bash, `wt.sh` running under the bash it picks (which is what needs
-/// `Git\bin\bash.exe`, the wrapper that puts `uname` and friends on PATH for a
-/// caller outside Git Bash), the emoji argument surviving both hops intact, and
-/// the `|| exit /b 0` tail keeping a failed marker best-effort — a hook that
-/// exits nonzero is what raises the repeated "Hook failed" banner #4007 reports.
-#[cfg(windows)]
+/// Run the shipped hooks through Codex's cmd /C and PowerShell -Command shapes.
+/// Check marker updates, Unicode arguments, and best-effort failures from a plugin
+/// path containing spaces. PowerShell 7 is required by shell-integration-tests.
+#[cfg(all(windows, feature = "shell-integration-tests"))]
 #[rstest]
 fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
     use std::os::windows::process::CommandExt;
 
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let plugin_root = root.join("plugins/worktrunk");
     let codex: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(plugin_root.join(".codex-plugin/plugin.json")).unwrap(),
+        &fs::read_to_string(root.join("plugins/worktrunk/.codex-plugin/plugin.json")).unwrap(),
     )
     .unwrap();
+
+    // The shipped shim pair, under a plugin root with a space in it.
+    let plugin_root = repo.root_path().join("plug in");
+    fs::create_dir_all(plugin_root.join("hooks")).unwrap();
+    for name in ["wt.cmd", "wt.sh"] {
+        fs::copy(
+            root.join("plugins/worktrunk/hooks").join(name),
+            plugin_root.join("hooks").join(name),
+        )
+        .unwrap();
+    }
+
     let command_for = |event: &str| -> String {
         codex["hooks"]["hooks"][event][0]["hooks"][0]["commandWindows"]
             .as_str()
@@ -5811,20 +6053,26 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
     let with_worktrunk = pinned_windows_path(&[path_dir]);
     let without_worktrunk = pinned_windows_path(&[]);
 
-    let run_hook = |event: &str, path: &std::ffi::OsString| -> std::process::Output {
-        let mut cmd = std::process::Command::new("cmd.exe");
-        repo.configure_wt_cmd(&mut cmd);
-        cmd.arg("/C")
-            .raw_arg(format!("\"{}\"", command_for(event)))
-            .env("PATH", path)
-            .env_remove("WORKTRUNK_BIN")
-            .current_dir(repo.root_path())
-            .output()
-            .unwrap()
-    };
-    let describe = |output: &std::process::Output| {
+    let run_hook =
+        |shell: &std::path::Path, event: &str, path: &std::ffi::OsString| -> std::process::Output {
+            let line = command_for(event);
+            let mut cmd = std::process::Command::new(shell);
+            repo.configure_wt_cmd(&mut cmd);
+            if shell.file_name() == Some(std::ffi::OsStr::new("cmd.exe")) {
+                cmd.arg("/C").raw_arg(format!("\"{line}\""));
+            } else {
+                cmd.args(["-NoProfile", "-Command"]).arg(line);
+            }
+            cmd.env("PATH", path)
+                .env_remove("WORKTRUNK_BIN")
+                .current_dir(repo.root_path())
+                .output()
+                .unwrap()
+        };
+    let describe = |shell: &std::path::Path, output: &std::process::Output| {
         format!(
-            "got {}\nstdout:\n{}\nstderr:\n{}",
+            "under {}, got {}\nstdout:\n{}\nstderr:\n{}",
+            shell.display(),
             output.status,
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
@@ -5842,57 +6090,69 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
         )
     };
 
-    let output = run_hook("UserPromptSubmit", &with_worktrunk);
-    assert!(
-        output.status.success(),
-        "UserPromptSubmit hook must succeed; {}",
-        describe(&output)
-    );
-    assert!(
-        marker().contains('🤖'),
-        "UserPromptSubmit must store the working marker, not a mangled byte sequence; \
-         got {:?}",
-        marker()
-    );
+    for shell in [
+        which::which("cmd.exe").expect("cmd.exe must be installed"),
+        which::which("powershell.exe").expect("Windows PowerShell must be installed"),
+        which::which("pwsh.exe").expect("shell-integration-tests requires PowerShell 7 on PATH"),
+    ] {
+        let shell = shell.as_path();
 
-    let output = run_hook("Stop", &with_worktrunk);
-    assert!(
-        output.status.success(),
-        "Stop hook must succeed; {}",
-        describe(&output)
-    );
-    assert!(
-        marker().contains('💬'),
-        "Stop must replace the marker with the waiting one; got {:?}",
-        marker()
-    );
+        let output = run_hook(shell, "UserPromptSubmit", &with_worktrunk);
+        assert!(
+            output.status.success(),
+            "UserPromptSubmit hook must succeed; {}",
+            describe(shell, &output)
+        );
+        assert!(
+            marker().contains('🤖'),
+            "UserPromptSubmit must store the working marker, not a mangled byte sequence; \
+             got {:?} {}",
+            marker(),
+            describe(shell, &output)
+        );
 
-    let output = run_hook("SessionEnd", &with_worktrunk);
-    assert!(
-        output.status.success(),
-        "SessionEnd hook must succeed; {}",
-        describe(&output)
-    );
-    assert!(
-        marker().is_empty(),
-        "SessionEnd must clear the marker; got {:?}",
-        marker()
-    );
+        let output = run_hook(shell, "Stop", &with_worktrunk);
+        assert!(
+            output.status.success(),
+            "Stop hook must succeed; {}",
+            describe(shell, &output)
+        );
+        assert!(
+            marker().contains('💬'),
+            "Stop must replace the marker with the waiting one; got {:?} {}",
+            marker(),
+            describe(shell, &output)
+        );
 
-    // Worktrunk not installed: the marker is optional decoration, so the hook
-    // must stay silent rather than fail every prompt (#4007).
-    let output = run_hook("UserPromptSubmit", &without_worktrunk);
-    assert!(
-        output.status.success(),
-        "a hook that cannot find worktrunk must still exit 0 — a nonzero exit is what \
-         raises Codex's repeated \"Hook failed\" banner; {}",
-        describe(&output)
-    );
-    assert!(
-        marker().is_empty(),
-        "a failed hook must not invent a marker; got {:?}",
-        marker()
-    );
+        let output = run_hook(shell, "SessionEnd", &with_worktrunk);
+        assert!(
+            output.status.success(),
+            "SessionEnd hook must succeed; {}",
+            describe(shell, &output)
+        );
+        assert!(
+            marker().is_empty(),
+            "SessionEnd must clear the marker; got {:?} {}",
+            marker(),
+            describe(shell, &output)
+        );
+
+        // Worktrunk not installed: the marker is optional decoration, so the
+        // hook must stay silent rather than fail every prompt (#4007).
+        let output = run_hook(shell, "UserPromptSubmit", &without_worktrunk);
+        assert!(
+            output.status.success(),
+            "a hook that cannot find worktrunk must still exit 0 — a nonzero exit is what \
+             raises Codex's repeated \"Hook failed\" banner; {}",
+            describe(shell, &output)
+        );
+        assert!(
+            marker().is_empty(),
+            "a failed hook must not invent a marker; got {:?} {}",
+            marker(),
+            describe(shell, &output)
+        );
+    }
 }
 
 /// `wt.sh` assigns `WT` in each of its branches, but on Windows every branch can
@@ -5904,6 +6164,10 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
 /// `command -v "$WT"` check then accepts it and runs it, in place of the
 /// worktrunk the script exists to resolve. Windows Terminal is spelled `wt`,
 /// which is exactly the binary the branch above rejects by name.
+///
+/// The shim exits 0 either way — that is its hook contract (#4239) — so what
+/// separates "declined the inherited `WT`" from "ran it" is the output: no
+/// version line, and the resolution failure named on stderr.
 #[cfg(windows)]
 #[rstest]
 fn test_wt_sh_ignores_an_inherited_wt(repo: TestRepo) {
@@ -5929,12 +6193,12 @@ fn test_wt_sh_ignores_an_inherited_wt(repo: TestRepo) {
         .unwrap();
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !output.status.success() && !stdout.contains("wt "),
+        !stdout.contains("wt ") && stderr.contains("could not find 'wt' in PATH"),
         "wt.sh must clear WT and resolve worktrunk itself, not run an inherited one; \
-         got {}\nstdout:\n{stdout}\nstderr:\n{}",
+         got {}\nstdout:\n{stdout}\nstderr:\n{stderr}",
         output.status,
-        String::from_utf8_lossy(&output.stderr)
     );
 }
 
@@ -6541,12 +6805,13 @@ fn test_plugins_claude_install_statusline_foreign_command(repo: TestRepo, temp_h
 
 #[rstest]
 fn test_plugins_claude_install_statusline_preserves_existing(repo: TestRepo, temp_home: TempDir) {
-    // Write existing settings with other keys
+    // Deliberately unsorted keys at both levels: installing the statusline
+    // must preserve the user's ordering as well as their values.
     let claude_dir = temp_home.path().join(".claude");
     fs::create_dir_all(&claude_dir).unwrap();
     fs::write(
         claude_dir.join("settings.json"),
-        r#"{"existingKey":"existingValue"}"#,
+        r#"{"zebra":true,"existingKey":{"zulu":1,"alpha":2},"alpha":"last"}"#,
     )
     .unwrap();
 
@@ -6560,15 +6825,22 @@ fn test_plugins_claude_install_statusline_preserves_existing(repo: TestRepo, tem
 
         assert_cmd_snapshot!(cmd);
 
-        // Verify existing keys are preserved
         let settings_path = temp_home.path().join(".claude/settings.json");
         let content = fs::read_to_string(&settings_path).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
-        assert_eq!(parsed["existingKey"], "existingValue");
-        assert_eq!(
-            parsed["statusLine"]["command"],
-            "wt list statusline --format=claude-code"
-        );
+        insta::assert_snapshot!(content, @r#"
+        {
+          "zebra": true,
+          "existingKey": {
+            "zulu": 1,
+            "alpha": 2
+          },
+          "alpha": "last",
+          "statusLine": {
+            "type": "command",
+            "command": "wt list statusline --format=claude-code"
+          }
+        }
+        "#);
     });
 }
 
