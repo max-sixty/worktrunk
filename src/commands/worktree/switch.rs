@@ -14,8 +14,8 @@ use normalize_path::NormalizePath;
 use serde::Serialize;
 use worktrunk::HookType;
 use worktrunk::config::{
-    UserConfig, ValidationScope, VarScope, referenced_vars_for_templates, template_references_var,
-    validate_template,
+    HookSource, UserConfig, ValidationScope, VarScope, referenced_vars_for_templates,
+    template_references_var, validate_template,
 };
 use worktrunk::git::remote_ref::{self, RemoteRefInfo, parse_ref_url};
 use worktrunk::git::{
@@ -2244,7 +2244,10 @@ fn validate_switch_templates(
     for &hook_type in switch_post_hook_types(plan.is_create()) {
         let user_cfg = user_hooks.get(hook_type);
         let proj_cfg = project_config.as_ref().and_then(|c| c.hooks.get(hook_type));
-        for (source, cfg) in [("user", user_cfg), ("project", proj_cfg)] {
+        for (source, cfg) in [
+            (HookSource::User, user_cfg),
+            (HookSource::Project, proj_cfg),
+        ] {
             if let Some(cfg) = cfg {
                 for cmd in cfg.commands() {
                     // Skip full validation for templates referencing {{ vars.X }} —
@@ -2254,10 +2257,7 @@ fn validate_switch_templates(
                     if template_references_var(&cmd.template, "vars") {
                         continue;
                     }
-                    let name = match &cmd.name {
-                        Some(n) => format!("{source} {hook_type}:{n}"),
-                        None => format!("{source} {hook_type} hook"),
-                    };
+                    let name = source.hook_label(hook_type, cmd.name.as_deref());
                     validate_template(
                         &cmd.template,
                         ValidationScope::Hook(hook_type),
