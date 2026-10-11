@@ -173,11 +173,7 @@ impl Repository {
         // A separate store named `.git` is indistinguishable from a normal
         // main's store. Its unrecorded main or a moved linked checkout may be
         // anywhere, so backlinks alone cannot rule out a same-repo checkout.
-        let walker = ignore::WalkBuilder::new(&root)
-            .standard_filters(false)
-            .follow_links(false)
-            .filter_entry(|entry| entry.file_type().is_some_and(|kind| kind.is_dir()))
-            .build();
+        let walker = walkdir::WalkDir::new(&root).follow_links(false);
         for entry in walker {
             let entry = entry.with_context(|| {
                 format!(
@@ -185,20 +181,27 @@ impl Repository {
                     format_path_for_display(&root)
                 )
             })?;
-            if entry.depth() == 0 {
+            // Inspect only observed Git entries instead of statting `.git` in
+            // every directory. Case-insensitive filesystems also accept `.GIT`.
+            if entry.depth() <= 1
+                || !entry
+                    .file_name()
+                    .as_encoded_bytes()
+                    .eq_ignore_ascii_case(b".git")
+            {
                 continue;
             }
-            let checkout = entry.into_path();
-            if Self::git_dir_at(&checkout)
+            let checkout = entry.path().parent().context("Git entry has no parent")?;
+            if Self::git_dir_at(checkout)
                 .with_context(|| {
                     format!(
                         "Failed to inspect Git entry @ {}",
-                        format_path_for_display(&checkout.join(".git"))
+                        format_path_for_display(entry.path())
                     )
                 })?
                 .is_some_and(|git_dir| git_dirs.contains(&git_dir))
             {
-                return Ok(Some(checkout));
+                return Ok(Some(checkout.to_path_buf()));
             }
         }
         Ok(None)

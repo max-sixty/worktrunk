@@ -6020,6 +6020,7 @@ fn msys_path(path: &std::path::Path) -> String {
 #[cfg(all(windows, feature = "shell-integration-tests"))]
 #[rstest]
 fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
+    use crate::common::mock_commands::{MockConfig, mock_calls};
     use std::os::windows::process::CommandExt;
 
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -6059,6 +6060,11 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
     let with_worktrunk = pinned_windows_path(&[path_dir]);
     let without_worktrunk = pinned_windows_path(&[]);
 
+    let call_log = TempDir::new().unwrap();
+    MockConfig::new("cmd")
+        .command("/d /c call", MockResponse::exit(0))
+        .write(repo.root_path());
+
     let run_line =
         |shell: &std::path::Path, line: &str, path: &std::ffi::OsString| -> std::process::Output {
             let mut cmd = std::process::Command::new(shell);
@@ -6069,6 +6075,9 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
                 cmd.args(["-NoProfile", "-Command"]).arg(line);
             }
             cmd.env("PATH", path)
+                .env("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+                .env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", repo.root_path())
+                .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
                 .env_remove("WORKTRUNK_BIN")
                 .env_remove("NoDefaultCurrentDirectoryInExePath")
                 .current_dir(repo.root_path())
@@ -6106,12 +6115,6 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
 
     // Prove that the old bare-cmd hop selects a project-local executable.
     // Keep that decoy in place while exercising every shipped hook below.
-    let selected = repo.root_path().join("cmd-selected");
-    fs::write(
-        repo.root_path().join("cmd.cmd"),
-        "@echo off\r\necho selected> \"%~dp0cmd-selected\"\r\nexit /b 0\r\n",
-    )
-    .unwrap();
     let system_cmd =
         std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/cmd.exe");
     let old_command = format!(
@@ -6120,11 +6123,20 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
     );
     let output = run_line(&system_cmd, &old_command, &with_worktrunk);
     assert!(
-        output.status.success() && selected.is_file(),
+        output.status.success(),
+        "{}",
+        describe(&system_cmd, &output)
+    );
+    let expected_calls = vec![format!(
+        "/d /c call {}\\hooks\\wt.cmd config state marker set 🤖",
+        plugin_root.display()
+    )];
+    assert_eq!(
+        mock_calls(call_log.path(), "cmd"),
+        expected_calls,
         "the vulnerable command must select the project decoy; {}",
         describe(&system_cmd, &output)
     );
-    fs::remove_file(&selected).unwrap();
 
     for shell in [
         system_cmd,
@@ -6156,11 +6168,13 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
             );
             assert_eq!(marker(), expected, "{event}: {}", describe(shell, &output));
             assert!(
-                !selected.exists(),
+                mock_calls(call_log.path(), "cmd") == expected_calls,
                 "{event} must not execute the project-local cmd; {}",
                 describe(shell, &output)
             );
         }
+
+        assert_eq!(mock_calls(call_log.path(), "cmd"), expected_calls);
 
         // Worktrunk not installed: the marker is optional decoration, so the
         // hook must stay silent rather than fail every prompt (#4007).
@@ -6177,6 +6191,7 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
             marker(),
             describe(shell, &output)
         );
+        assert_eq!(mock_calls(call_log.path(), "cmd"), expected_calls);
     }
 }
 

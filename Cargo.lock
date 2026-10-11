@@ -4798,6 +4798,7 @@ dependencies = [
  "urlencoding",
  "vergen-gitcl",
  "vt100",
+ "walkdir",
  "which",
  "wrap-ansi",
  "wt-perf",

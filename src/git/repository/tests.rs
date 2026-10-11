@@ -3437,6 +3437,26 @@ fn nested_worktree_protects_moved_linked_checkout() {
         repo.nested_worktree(&outer).unwrap(),
         Some(dunce::canonicalize(&nested).unwrap())
     );
+    #[cfg(unix)]
+    {
+        let marker = seed.home_path().join("moved-checkout-gitfile");
+        std::fs::rename(nested.join(".git"), &marker).unwrap();
+        std::os::unix::fs::symlink(marker, nested.join(".git")).unwrap();
+        assert_eq!(
+            repo.nested_worktree(&outer).unwrap(),
+            Some(dunce::canonicalize(&nested).unwrap())
+        );
+    }
+    #[cfg(any(target_os = "macos", windows))]
+    {
+        std::fs::rename(nested.join(".git"), nested.join(".GIT")).unwrap();
+        let expected = nested
+            .join(".git")
+            .is_file()
+            .then(|| dunce::canonicalize(&nested).unwrap());
+        assert_eq!(repo.nested_worktree(&outer).unwrap(), expected);
+        std::fs::rename(nested.join(".GIT"), nested.join(".git")).unwrap();
+    }
     for force in [false, true] {
         let error = crate::git::remove::stage_worktree_removal(&repo, &outer, Some("outer"), force)
             .unwrap_err();

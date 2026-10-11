@@ -4984,11 +4984,11 @@ fn test_remove_sweeps_stale_trash_entries(mut repo: TestRepo) {
     );
 }
 
-/// Disposal must refuse a native path the cleanup shell cannot represent,
-/// without deleting the replacement-character neighbor instead.
+/// A non-UTF-8 disposal entry has no parsed age and must survive the janitor.
+/// Its distinct, representable neighbor remains eligible for normal cleanup.
 #[cfg(target_os = "linux")]
 #[rstest]
-fn test_remove_sweep_preserves_unrepresentable_paths(mut repo: TestRepo) {
+fn test_remove_sweep_skips_unrepresentable_paths(mut repo: TestRepo) {
     use std::os::unix::ffi::OsStringExt;
 
     let trash_dir = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/trash");
@@ -5009,35 +5009,29 @@ fn test_remove_sweep_preserves_unrepresentable_paths(mut repo: TestRepo) {
         fs::create_dir(path).unwrap();
         fs::write(path.join("marker"), contents).unwrap();
     }
-
-    repo.add_worktree("sweep-blocked");
-    let output = repo
-        .wt_command()
-        .args(["remove", "sweep-blocked"])
-        .output()
+    let inventory = worktrunk::git::Repository::at(repo.root_path())
+        .unwrap()
+        .disposal_entries()
         .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
-    for (path, contents) in [
-        (&native, "native"),
-        (&lossy, "neighbor"),
-        (&ordinary, "ordinary"),
+    for (path, staged_at) in [
+        (&native, None),
+        (&lossy, Some(timestamp)),
+        (&ordinary, Some(timestamp)),
     ] {
-        assert_eq!(fs::read_to_string(path.join("marker")).unwrap(), contents);
+        assert_eq!(
+            inventory
+                .iter()
+                .find(|entry| &entry.path == path)
+                .unwrap()
+                .staged_at,
+            staged_at
+        );
     }
 
-    // With the unrepresentable entry outside disposal, the same sweep can
-    // remove both ordinary targets. This controls against a sweep that never ran.
-    let saved = repo.home_path().join("saved-native-payload");
-    fs::rename(&native, &saved).unwrap();
-    repo.add_worktree("sweep-allowed");
+    repo.add_worktree("sweep-native");
     let output = repo
         .wt_command()
-        .args(["remove", "sweep-allowed"])
+        .args(["remove", "sweep-native"])
         .output()
         .unwrap();
     assert!(
@@ -5048,7 +5042,8 @@ fn test_remove_sweep_preserves_unrepresentable_paths(mut repo: TestRepo) {
     crate::common::wait_for("representable stale trash swept", || {
         !lossy.exists() && !ordinary.exists()
     });
-    assert_eq!(fs::read_to_string(saved.join("marker")).unwrap(), "native");
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
+    assert_eq!(fs::read_to_string(native.join("marker")).unwrap(), "native");
 }
 
 /// `wt remove -vv` resolves every fsmonitor daemon in ONE `lsof` spawn and
