@@ -363,7 +363,7 @@ mod tests {
     }
 
     #[test]
-    fn signal_exit_reports_named_signal_and_shell_exit_code() {
+    fn signal_exit_reports_signal_and_shell_exit_code() {
         let cases = [
             (
                 15,

@@ -25,7 +25,8 @@ test-results/
 # clawpatch state lives in .config/clawpatch/ (run with --state-dir
 # .config/clawpatch or CLAWPATCH_STATE_DIR=.config/clawpatch). Track only the
 # hand-authored threat models and tuned config; findings, the auto-mapped
-# feature, project.json, and per-run state are derived/transient and not.
+# feature, project.json, and per-run state are derived/transient and stay
+# untracked.
 /.clawpatch/
 /.config/clawpatch/*
 !/.config/clawpatch/config.json
