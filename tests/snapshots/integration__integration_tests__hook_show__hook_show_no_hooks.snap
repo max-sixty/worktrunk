@@ -58,9 +58,9 @@ success: true
 exit_code: 0
 ----- stdout -----
 [36mUSER HOOKS[39m @ [TEST_CONFIG]
-[2m↳[22m [2m(none configured)[22m
+[2m○[22m No hooks configured
 
 [36mPROJECT HOOKS[39m @ _REPO_/.config/wt.toml
-[2m↳[22m [2m(not found)[22m
+[2m○[22m Not found
 
 ----- stderr -----

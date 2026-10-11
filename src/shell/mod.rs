@@ -9,8 +9,6 @@ mod detection;
 mod paths;
 mod utils;
 
-use std::io::{BufRead, BufReader};
-
 use askama::Template;
 
 // Re-export public types and functions
@@ -205,44 +203,6 @@ impl Shell {
                 )
             }
         }
-    }
-
-    /// Check if this shell has integration configured.
-    ///
-    /// Used for accurate warning messages that need to know about the user's
-    /// current shell specifically (e.g., "installed but not active" vs "not
-    /// installed").
-    pub fn is_shell_configured(&self, cmd: &str) -> Result<bool, std::io::Error> {
-        let config_paths = self.config_paths(cmd)?;
-
-        // For fish, also check legacy conf.d location
-        let mut paths_to_check = config_paths;
-        if matches!(self, Shell::Fish)
-            && let Ok(legacy) = Shell::legacy_fish_conf_d_path(cmd)
-        {
-            paths_to_check.push(legacy);
-        }
-
-        for path in paths_to_check {
-            if !path.exists() {
-                continue;
-            }
-            if Self::file_has_integration(&path, cmd)? {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
-    /// Check if a file contains shell integration lines for the given command.
-    fn file_has_integration(path: &std::path::Path, cmd: &str) -> Result<bool, std::io::Error> {
-        let file = std::fs::File::open(path)?;
-        for line in BufReader::new(file).lines() {
-            if is_shell_integration_line(&line?, cmd) {
-                return Ok(true);
-            }
-        }
-        Ok(false)
     }
 }
 
@@ -665,35 +625,6 @@ mod tests {
             "{shell} config_line({prefix:?}) not detected:\n  {line}"
         );
     }
-
-    #[test]
-    fn test_file_has_integration() {
-        use std::io::Write;
-
-        let temp_dir = tempfile::tempdir().unwrap();
-        let bashrc = temp_dir.path().join(".bashrc");
-
-        // Write a valid integration line
-        let mut file = std::fs::File::create(&bashrc).unwrap();
-        writeln!(
-            file,
-            r#"if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init bash)"; fi"#
-        )
-        .unwrap();
-
-        // Test file_has_integration directly
-        assert!(Shell::file_has_integration(&bashrc, "wt").unwrap());
-        assert!(!Shell::file_has_integration(&bashrc, "git-wt").unwrap());
-
-        // Test with non-matching content
-        let empty_file = temp_dir.path().join(".zshrc");
-        std::fs::write(&empty_file, "# just a comment\n").unwrap();
-        assert!(!Shell::file_has_integration(&empty_file, "wt").unwrap());
-    }
-
-    // Note: is_shell_configured() is not unit-tested because it requires
-    // mutating HOME env var (unsafe). It's tested indirectly via integration
-    // tests that exercise the shell integration warning paths.
 
     // PowerShell config_line evaluation test is in tests/integration_tests/shell_powershell.rs
     // because it needs CARGO_BIN_EXE_wt which is only available in integration tests.

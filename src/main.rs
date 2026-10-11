@@ -311,12 +311,12 @@ fn handle_step_command(
             format,
             ..
         } => {
+            let repo = Repository::current()?;
             let result = if no_ff {
-                let repo = Repository::current()?;
                 let current_branch = repo.require_current_branch("step push --no-ff")?;
-                handle_no_ff_merge(target.as_deref(), None, &current_branch)?
+                handle_no_ff_merge(&repo, target.as_deref(), None, &current_branch)?
             } else {
-                handle_push(target.as_deref(), PushKind::Standalone, None)?
+                handle_push(&repo, target.as_deref(), PushKind::Standalone, None)?
             };
             if format == SwitchFormat::Json {
                 let PushResult {
@@ -341,7 +341,7 @@ fn handle_step_command(
             Ok(())
         }
         StepCommand::Rebase { target, format } => {
-            let result = handle_rebase(target.as_deref())?;
+            let result = handle_rebase(&Repository::current()?, target.as_deref())?;
             if format == SwitchFormat::Json {
                 let output = match &result {
                     RebaseResult::Rebased {
@@ -899,6 +899,7 @@ fn handle_merge_command(args: MergeArgs, yes: bool) -> anyhow::Result<()> {
     }
     handle_merge(MergeOptions {
         target: args.target.as_deref(),
+        branch: args.branch.as_deref(),
         flags: MergeFlagOverrides::from_cli(&args),
         yes,
         stage: args.stage,
@@ -1104,9 +1105,40 @@ fn handle_command_failure(error: anyhow::Error, verbose_level: u8, command_line:
     print_command_error(&error);
     print_cwd_removed_hint_if_needed();
 
-    // Preserve exit code from child processes (especially for signals like SIGINT)
-    let code = error.exit_code().unwrap_or(1);
+    // Cancellation governs exit independently of the error's diagnostic and
+    // recovery hints. A parallel sibling may have failed before cancellation.
+    let signal = error.interrupt_signal();
+    #[cfg(unix)]
+    let signal = worktrunk::signal_forwarder::operation_interrupt_signal().or(signal);
+    let code = signal
+        .map(|signal| 128 + signal)
+        .or_else(|| error.exit_code())
+        .unwrap_or(1);
     finish_command(verbose_level, command_line, Some(&error));
+    // Preserve the canonical OS signal through nested wt invocations. Converting
+    // it to an ordinary 128+signal exit makes Warn pipelines continue afterward.
+    #[cfg(unix)]
+    if let Some(signal) = signal {
+        match worktrunk::signal_forwarder::should_reraise(signal) {
+            Ok(true) => {
+                // Native signal death skips LLVM's atexit writer. Dump once
+                // before handing control back to the OS, only in coverage builds.
+                #[cfg(coverage)]
+                #[expect(unsafe_code, reason = "LLVM provides this no-argument profiling API")]
+                // SAFETY: cargo-llvm-cov links LLVM's profiling runtime. This
+                // no-argument API runs on the main thread, outside signal handlers.
+                unsafe {
+                    unsafe extern "C" {
+                        fn __llvm_profile_dump() -> std::ffi::c_int;
+                    }
+                    let _ = __llvm_profile_dump();
+                }
+                let _ = signal_hook::low_level::emulate_default_handler(signal);
+            }
+            Ok(false) => {}
+            Err(error) => eprintln!("{}", error_message(error.to_string())),
+        }
+    }
     process::exit(code);
 }
 
@@ -1233,7 +1265,20 @@ fn main() {
         return;
     };
 
+    // Cancellation belongs to this command, including work admitted by a
+    // parallel worker after another child's interruption was already observed.
+    // The guard leaves idle terminal defaults enabled between foreground waits.
+    #[cfg(unix)]
+    let operation = match worktrunk::signal_forwarder::CommandOperation::start() {
+        Ok(operation) => operation,
+        Err(error) => handle_command_failure(error.into(), verbose, &command_line),
+    };
     let result = dispatch_command(command, directory, yes);
+    #[cfg(unix)]
+    let result = result.and_then(|()| match operation.interrupt_signal() {
+        Some(signal) => Err(WorktrunkError::Interrupted { signal, hint: None }.into()),
+        None => Ok(()),
+    });
 
     match result {
         Ok(()) => finish_command(verbose, &command_line, None),
@@ -1267,7 +1312,7 @@ mod tests {
     fn renders_command_error_without_context() {
         let err: anyhow::Error = permission_denied_command_error().into();
         let out = format_command_error(&err);
-        assert!(out.contains("git worktree list failed (exit 128)"));
+        assert!(out.contains("git worktree list failed (exit code 128)"));
         assert!(out.contains("Permission denied"));
         assert!(out.contains("unknown error occurred while reading"));
     }
@@ -1338,8 +1383,8 @@ mod tests {
         assert!(out.contains("git fetch failed"));
     }
 
-    /// Codex P2: typed `GitError` wrappers (e.g., `WorktreeRemovalFailed`,
-    /// `PushFailed`) embed a stringified sub-error into their `error`
+    /// Typed `GitError` wrappers (e.g., `PushFailed`) embed a stringified
+    /// sub-error into their `error`
     /// field. With `display_message`, that field carries git's stderr
     /// rather than our `CommandError` summary.
     #[test]

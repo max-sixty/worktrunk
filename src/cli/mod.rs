@@ -556,6 +556,10 @@ pub(crate) struct RemoveArgs {
 
 #[derive(Args)]
 pub(crate) struct MergeArgs {
+    /// Branch to merge from (defaults to current worktree)
+    #[arg(short, long, add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
+    pub(crate) branch: Option<String>,
+
     /// Target branch
     ///
     /// Defaults to default branch.
@@ -1005,7 +1009,7 @@ These appear across all columns while the table is loading:
 
 | Symbol | Meaning |
 |--------|---------|
-| `·` | Data is loading, or collection timed out / branch too stale |
+| `·` | Data is loading, or collection timed out |
 
 ---
 
@@ -1053,9 +1057,9 @@ How "no value" reads:
 - **Absent** — nothing to report: not applicable (`worktree` on a branch-only
   row), not requested this run (the envelope's `collected` records what was),
   or determined-empty (no PR, no lock, not integrated).
-- **`null`** — requested but not determined: a task timed out, the branch was
-  too stale for the expensive checks, or a forge fetch failed. This is the
-  JSON form of the table's `·` placeholder.
+- **`null`** — requested but not determined: a task timed out, a check was
+  skipped, or a forge fetch failed. This is the JSON form of the table's `·`
+  placeholder.
 
 jq treats absent and `null` identically in path expressions, so filters need
 no null checks; `has()` distinguishes the two when it matters.
@@ -1138,7 +1142,7 @@ Independent facts; the table's priority-collapsed symbol is `display.state`.
 | `behind` | number/null | Commits behind the default branch (null for orphans) |
 | `diff` | object/null | Lines changed vs the default branch: `{added, deleted}` |
 | `orphan` | boolean/null | No common ancestor with the default branch |
-| `integration` | object/null | `{reason}` — which check found the content [integrated](/remove/#branch-cleanup) (see [integration reasons](#integration-reasons)); absent when determined not-integrated, null when a dirty tree skipped the checks |
+| `integration` | object/null | `{reason}` — which check found the content [integrated](/remove/#branch-cleanup) (see [integration reasons](#integration-reasons)); absent when determined not-integrated, null when undetermined (a check timed out or was skipped) |
 | `merge_conflicts` | boolean/null | Merging into the default branch would conflict, simulated locally with `git merge-tree` |
 
 ### upstream object
@@ -1210,7 +1214,7 @@ The single highest-priority state describing the branch's relation to the defaul
 
 ### integration reasons
 
-`default_branch.integration.reason` records which check matched. Checks run cheapest-first and the first match wins. JSON-only — every reason renders as the same `⊂`:
+`default_branch.integration.reason` records which check matched. Checks run cheapest-first and the first match wins. See [Default branch](#default-branch) for symbols.
 
 | Value | Meaning |
 |-------|---------|
@@ -1357,8 +1361,6 @@ The 'same commit' check uses the local default branch; for other checks, 'target
 
 Branches matching these conditions and with empty working trees are dimmed in `wt list` as safe to delete.
 
-If a detached worktree remains at the branch's configured path, removing the branch reports that directory and the command to remove it by path.
-
 ## Force flags
 
 Worktrunk has two force flags for different situations:
@@ -1402,7 +1404,7 @@ Unix only; on Windows `--reap` is rejected.
 
 ## JSON output
 
-`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal, plus `detached_worktree` — the directory left at that branch's path with a detached HEAD, which the branch no longer names and this removal therefore leaves alone.
+`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal. Branch-only results also include `detached_worktree`: the path of a detached worktree left behind, or `null`.
 
 `branch_outcome` names what happened to the branch, so a caller can tell a deletion the removal declined from one it was never asked to make:
 
@@ -1431,11 +1433,11 @@ Detached worktrees have no branch name. Pass the worktree path instead: `wt remo
 "#)]
     Remove(RemoveArgs),
 
-    /// Merge current branch into the target branch
+    /// Merge a branch into the target branch
     ///
     /// Squash & rebase, fast-forward the target branch, remove the worktree.
     #[command(
-        after_long_help = r#"Unlike `git merge`, this merges the current branch into the target branch — not the target into current. Similar to clicking "Merge pull request" on GitHub, but locally. The target defaults to the default branch.
+        after_long_help = r#"Unlike `git merge`, this merges the source branch into the target branch — not the target into current. Similar to clicking "Merge pull request" on GitHub, but locally. The source defaults to the current branch; the target defaults to the default branch.
 
 <!-- demo: wt-merge.gif 1600x900 | Creating a worktree, committing in it, and merging it away -->
 ## Examples
@@ -1463,6 +1465,15 @@ Merge to a different branch:
 ```console
 $ wt merge develop
 ```
+
+Merge another worktree's branch without leaving the current worktree:
+
+```console
+$ wt merge --branch feature/auth
+$ wt merge develop --branch feature/auth
+```
+
+The source branch must have a checked-out worktree. Commit, squash, rebase, and hooks use that worktree and its project configuration. Cleanup removes the source worktree; the invoking worktree stays in place. A rebase conflict is left in the source worktree to resolve or abort.
 
 Keep the worktree after merging:
 
@@ -1499,12 +1510,12 @@ $ wt merge --no-commit --no-rebase
 `wt merge` runs these steps:
 
 1. **Commit** — Pre-commit hooks run, then uncommitted changes are committed. Post-commit hooks run in the background. This step is skipped when squashing (the default) — changes are staged during the squash step instead. With `--no-squash`, this is the only commit step.
-2. **Squash** — Combines all commits since target into one (like GitHub's "Squash and merge"). Use `--stage` to control what gets staged: `all` (default), `tracked`, or `none`. Working-tree changes swept into the squash are backed up first to `refs/wt-backup/<branch>`. With `--no-squash`, individual commits are preserved.
+2. **Squash** — Combines all commits since target into one (like GitHub's "Squash and merge"). Pre-commit hooks run before staging; post-commit hooks run in the background after committing. Use `--stage` to control what gets staged: `all` (default), `tracked`, or `none`. Working-tree changes swept into the squash are backed up first to `refs/wt-backup/<branch>`; see [`wt step squash`](/step/#wt-step-squash) for recovery. With `--no-squash`, individual commits are preserved.
 3. **Rebase** — Rebases onto target, skipping when nothing needs replaying ([`wt step rebase`](/step/#wt-step-rebase) gives the conditions). A conflict stops the merge with the rebase left open in the worktree, to resolve or abort. With `--no-rebase`, the graph produced by earlier commit/squash steps is preserved and the target must be able to fast-forward to its tip.
 4. **Pre-merge hooks** — Hooks run after rebase, before merge. Failures abort. See [`wt hook`](/hook/).
 5. **Merge** — Fast-forward merge to the target branch ([`wt step push`](/step/#wt-step-push)). With `--no-ff`, a merge commit is created instead — semi-linear history after the default rebase, while explicit `--no-rebase` preserves the graph produced by earlier steps before adding the merge commit. Non-fast-forward merges are rejected.
 6. **Pre-remove hooks** — Hooks run before removing worktree. Failures abort.
-7. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. When already on the target branch, in the primary worktree, or locked, the worktree is preserved.
+7. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. When already on the target branch, in the primary worktree, locked, or containing another registered worktree, the worktree is preserved.
 8. **Post-remove + post-merge hooks** — Run in background after cleanup.
 
 Use `--no-commit` to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless `--no-rebase` is passed. Combining both flags preserves the exact source graph and requires the target to be its ancestor. Useful after preparing commits manually with `wt step commit`. Requires a clean working tree.
@@ -1688,7 +1699,7 @@ A string is a single command:
 pre-start = "npm install"
 ```
 
-A table is multiple commands that run concurrently:
+A table names commands. With multiple keys, they run concurrently:
 
 ```toml
 # .config/wt.toml
@@ -1869,21 +1880,29 @@ The `worktree_path_of_branch` function returns the filesystem path of a worktree
 setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path }}"
 ```
 
-## JSON context
+## Interactive hooks
 
-Hooks receive all template variables as JSON on stdin, enabling complex logic that templates can't express. Variables that are unset in a template are absent from the JSON too, so read the optional ones with a default — `branch` has none in a detached worktree:
+Hooks can prompt when run serially in the foreground, as in this `pre-start` hook:
 
 ```toml
 # .config/wt.toml
 [pre-start]
-setup = "python3 scripts/pre-start-setup.py"
+trust = "gum confirm 'trust this worktree?' && mise trust"
+```
+
+Logic that templates can't express belongs in a script, with the values it needs passed as arguments:
+
+```toml
+# .config/wt.toml
+[post-start]
+setup = "python3 scripts/post-start-setup.py {{ branch }} {{ repo }}"
 ```
 
 ```python
-# scripts/pre-start-setup.py
-import json, sys, subprocess
-ctx = json.load(sys.stdin)
-if ctx.get('branch', '').startswith('feature/') and 'backend' in ctx['repo']:
+# scripts/post-start-setup.py
+import subprocess, sys
+branch, repo = sys.argv[1], sys.argv[2]
+if branch.startswith('feature/') and 'backend' in repo:
     subprocess.run(['make', 'seed-db'])
 ```
 
@@ -2135,8 +2154,6 @@ command = "llm -m claude-haiku-4.5"
 ```
 
 ### aichat
-
-`--code` drops the `<think>` block aichat prints before the message when the model reasons.
 
 ```toml
 [commit.generation]
@@ -2580,15 +2597,7 @@ Aliases defined here are shared with teammates. For personal aliases, use the [u
 
 # Shell Integration
 
-Worktrunk needs shell integration to change directories when switching worktrees. Install with:
-
-```console
-$ wt config shell install
-```
-
-For manual setup, see `wt config shell init --help`.
-
-Without shell integration, `wt switch` prints the target directory but cannot `cd` into it.
+See [`wt config shell`](#wt-config-shell) for setup, activation, and current-shell diagnostics.
 
 ### First-run prompts
 
@@ -2628,7 +2637,6 @@ $ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 | `WORKTRUNK_CONFIG_PATH` | Override user config file location |
 | `WORKTRUNK_SYSTEM_CONFIG_PATH` | Override system config file location |
 | `WORKTRUNK_PROJECT_CONFIG_PATH` | Override project config file location (defaults to `.config/wt.toml`); relative paths resolve from the worktree root |
-| `XDG_CONFIG_DIRS` | Colon-separated system config directories (default: `/etc/xdg`) |
 | `WORKTRUNK_MAX_CONCURRENT_COMMANDS` | Max parallel git commands (default: 32). Lower if hitting file descriptor limits. |
 | `WORKTRUNK_VERBOSE` | Verbosity level (`0`/`1`/`2`), like `-v`/`-vv` but applied everywhere — including shell completion, which no flag can reach |
 | `RUST_LOG` | Logging directive (e.g. `worktrunk=debug`); overrides the verbosity baseline for what reaches stderr |
@@ -2662,6 +2670,7 @@ $ wt --config-set 'projects."github.com/owner/repo".worktree-path = "/tmp/scratc
 ```
 
 Hooks, aliases and `step.copy-ignored.exclude` accumulate rather than replace, so an env-set hook and a project's hook both run.
+<!-- subdoc: shell -->
 <!-- subdoc: show -->
 <!-- subdoc: update -->
 <!-- subdoc: approvals -->

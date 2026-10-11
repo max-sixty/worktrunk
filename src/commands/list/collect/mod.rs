@@ -579,8 +579,8 @@ pub struct CollectOptions {
     /// Built once during the pre-skeleton phase (or during single-item
     /// population) and shared (cheaply, behind `Arc`) into every task.
     /// Tasks resolve target ref names to commit SHAs through this snapshot,
-    /// then call the `_by_sha` variants of cached methods — bypassing the
-    /// ambient ref→SHA cache entirely. The full list path may include
+    /// then call the `_by_sha` variants of cached methods, so every task
+    /// reads the same point-in-time ref state. The full list path may include
     /// batched ahead/behind data; single-item callers intentionally use a
     /// plain ref snapshot and let per-row tasks fall back to per-pair
     /// queries. `None` when capture failed (degraded mode).

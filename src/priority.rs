@@ -49,8 +49,6 @@
 
 use std::ffi::OsStr;
 use std::process::Command;
-#[cfg(unix)]
-use std::process::Stdio;
 #[cfg(all(unix, not(target_os = "macos")))]
 use std::sync::LazyLock;
 
@@ -94,29 +92,19 @@ pub fn lower_current_process() {
     #[cfg(unix)]
     {
         let pid = std::process::id().to_string();
-        let quiet = |mut cmd: Command| {
-            let _ = cmd
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
+        let run = |program: &str, args: &[&str]| {
+            let _ = crate::shell_exec::Cmd::new(program)
+                .args(args.iter().copied())
+                .run();
         };
 
         #[cfg(target_os = "macos")]
-        {
-            let mut cmd = Command::new("/usr/sbin/taskpolicy");
-            cmd.args(["-b", "-p", &pid]);
-            quiet(cmd);
-        }
+        run("/usr/sbin/taskpolicy", &["-b", "-p", &pid]);
         #[cfg(not(target_os = "macos"))]
         {
-            let mut renice = Command::new("renice");
-            renice.args(["-n", "19", "-p", &pid]);
-            quiet(renice);
+            run("renice", &["-n", "19", "-p", &pid]);
             if *HAS_IONICE {
-                let mut ionice = Command::new("ionice");
-                ionice.args(["-c", "3", "-p", &pid]);
-                quiet(ionice);
+                run("ionice", &["-c", "3", "-p", &pid]);
             }
         }
     }

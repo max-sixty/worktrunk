@@ -84,8 +84,6 @@
 #
 # ### aichat
 #
-# `--code` drops the `<think>` block aichat prints before the message when the model reasons.
-#
 # [commit.generation]
 # command = "aichat -m claude:claude-haiku-4.5 --code"
 #

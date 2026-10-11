@@ -136,7 +136,9 @@ fn test_state_get_default_branch(repo: TestRepo) {
 
 #[rstest]
 fn test_state_get_default_branch_no_remote(repo: TestRepo) {
-    // Without remote, should infer from local branches
+    // Remove origin (fixture has it) so the branch is inferred from local branches
+    repo.run_git(&["remote", "remove", "origin"]);
+
     let output = wt_state_cmd(&repo, "default-branch", "get", &[])
         .output()
         .unwrap();
@@ -1392,9 +1394,7 @@ fn test_state_clear_logs_single_file(repo: TestRepo) {
 // ============================================================================
 
 fn wt_state_clear_all_cmd(repo: &TestRepo) -> std::process::Command {
-    let mut cmd = wt_command();
-    cmd.current_dir(repo.root_path());
-    cmd.env("CLICOLOR_FORCE", "1");
+    let mut cmd = repo.wt_command();
     // `clear` prompts before removing markers/vars; `--yes` skips it so these
     // tests exercise the clearing itself. The prompt path has its own tests.
     cmd.args(["config", "state", "clear", "--yes"]);
@@ -1546,9 +1546,7 @@ fn test_state_clear_all_nothing_to_clear(repo: TestRepo) {
 /// Run `wt config state clear` (no `--yes`) with the given stdin, so the
 /// confirmation prompt reads `input`.
 fn clear_all_with_stdin(repo: &TestRepo, input: &str) -> std::process::Output {
-    let mut cmd = wt_command();
-    cmd.current_dir(repo.root_path());
-    cmd.env("CLICOLOR_FORCE", "1");
+    let mut cmd = repo.wt_command();
     cmd.args(["config", "state", "clear"]);
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
@@ -1572,9 +1570,7 @@ fn test_state_clear_all_prompt_declines(repo: TestRepo) {
         .run()
         .unwrap();
 
-    let mut cmd = wt_command();
-    cmd.current_dir(repo.root_path());
-    cmd.env("CLICOLOR_FORCE", "1");
+    let mut cmd = repo.wt_command();
     cmd.args(["config", "state", "clear"]);
     cmd.stdin(Stdio::null());
     let output = cmd.output().unwrap();

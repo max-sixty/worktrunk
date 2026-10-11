@@ -1,0 +1,10 @@
+---
+source: tests/integration_tests/eval.rs
+expression: stderr
+---
+▲ Ignoring env var overrides: WORKTRUNK__LIST__BRANCHES=not-a-bool
+  invalid type: string "not-a-bool", expected a boolean
+  in `list.branches`
+✗ Failed to load config
+  invalid type: string "not-a-bool", expected a boolean
+  in `list.branches`

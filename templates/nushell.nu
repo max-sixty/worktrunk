@@ -1,4 +1,4 @@
-# worktrunk shell integration for nushell
+# worktrunk shell integration for nushell 0.113+
 
 # Tab completions: calls binary with COMPLETE=nu to get candidates.
 # Note: nushell's completion engine bypasses custom completers when the current
@@ -82,13 +82,17 @@ export def --env --wrapped {{ cmd }} [...args] {
         ($external | get 0.path)
     }
 
+    # Unquoted wrapped arguments can be glob values. Classify their text
+    # while preserving the original arguments for external execution.
+    let arg_text = ($args | each {|arg| $arg | into string })
+
     # `list` is the only command that benefits from streaming stdout (progressive
     # table rendering). It never emits directives, so we skip directive processing
     # and let the binary be the last expression — stdout flows through pipes.
     # Note: global flags before `list` (e.g. `wt -C /path list`) miss this check
     # and fall through to the buffered path. Output is still correct, just not
     # progressively rendered.
-    if (not ($args | is-empty)) and ($args | first) == "list" {
+    if (not ($arg_text | is-empty)) and ($arg_text | first) == "list" {
         # Direct passthrough: binary is the last expression of this branch,
         # which is the last expression of the function. Stdout streams to the
         # terminal and flows through nushell pipelines.
@@ -96,76 +100,57 @@ export def --env --wrapped {{ cmd }} [...args] {
     } else {
         let cd_file = (mktemp --tmpdir)
         let stdout_file = (mktemp --tmpdir)
-        let wt_args = ($args | take until {|arg| $arg == "--" })
-        # Before `-x`, `c`, `v`, and `y` are boolean flags clap may cluster with it.
-        let has_execute = ($wt_args | any {|arg| $arg == "--execute" or ($arg | str starts-with "--execute=") or ($arg =~ '^-[cvy]*x') })
+        try {
+            let wt_args = ($arg_text | take until {|arg| $arg == "--" })
+            # Before `-x`, `c`, `v`, and `y` are boolean flags clap may cluster with it.
+            let has_execute = ($wt_args | any {|arg| $arg == "--execute" or ($arg | str starts-with "--execute=") or ($arg =~ '^-[cvy]*x') })
 
-        # Capture stdout for pipeline passthrough unless wt will launch an
-        # interactive child, which must inherit the terminal.
-        # Nushell 0.98+ throws ShellError on non-zero exit (like bash `set -e`).
-        # `try` catches it so directive processing and temp file cleanup still run.
-        let exit_code = (try {
-            with-env { WORKTRUNK_DIRECTIVE_CD_FILE: $cd_file } {
-                if $has_execute {
-                    ^$worktrunk_bin ...$args
+            # Capture stdout for pipeline passthrough unless wt will launch an
+            # interactive child, which must inherit the terminal.
+            # Capture failure status without discarding buffered stdout.
+            # The outer `finally` applies directives and cleans up on Ctrl-C too.
+            let exit_code = (try {
+                with-env { WORKTRUNK_DIRECTIVE_CD_FILE: $cd_file } {
+                    if $has_execute {
+                        ^$worktrunk_bin ...$args
+                    } else {
+                        ^$worktrunk_bin ...$args o> $stdout_file
+                    }
+                }
+                0
+            } catch {
+                # Nushell reports signal deaths as negative signal numbers. Its
+                # `exit` builtin needs the corresponding shell status instead.
+                let code = $env.LAST_EXIT_CODE
+                if $code < 0 { 128 - $code } else { $code }
+            })
+
+            let output = if $has_execute { "" } else { open $stdout_file --raw }
+
+            # Return captured stdout or reproduce the external failure without
+            # a source trace. Nu itself also works on Windows, where sh is absent.
+            if $exit_code != 0 {
+                if ($output | is-not-empty) { print -n $output }
+                ^$nu.current-exe --no-config-file --no-std-lib -c $"exit ($exit_code)"
+            } else if ($output | is-not-empty) {
+                $output
+            }
+        } finally {
+            try {
+                # cd file holds a raw path — no shell parsing needed
+                if ($cd_file | path exists) and (open $cd_file --raw | str trim | is-not-empty) {
+                    let target_dir = open $cd_file --raw | str trim
+                    cd $target_dir
+                }
+            } finally {
+                # Bypass user rm aliases on Unix; Windows uses Nushell's builtin.
+                # Cleanup cannot replace the command's status.
+                if $nu.os-info.family == "windows" {
+                    try { rm -f $cd_file $stdout_file }
                 } else {
-                    ^$worktrunk_bin ...$args o> $stdout_file
+                    try { ^rm -f $cd_file $stdout_file }
                 }
             }
-            0
-        } catch {
-            $env.LAST_EXIT_CODE
-        })
-
-        # cd file holds a raw path — no shell parsing needed
-        if ($cd_file | path exists) and (open $cd_file --raw | str trim | is-not-empty) {
-            let target_dir = open $cd_file --raw | str trim
-            cd $target_dir
-        }
-
-        let output = if $has_execute { "" } else { open $stdout_file --raw }
-
-        # Clean up the temp files after their final reads.
-        #
-        # A bare `rm` here is shadowable by the user's own `alias rm = ...`:
-        # nushell resolves aliases at parse time, and `config.nu` runs before the
-        # vendor autoload dir this file lives in, so the alias is already in scope
-        # when this `def` is parsed. A `trash`-style alias then leaks the temp
-        # files, and an alias that exits non-zero raises a ShellError that aborts
-        # the wrapper before it can return `$output` — swallowing the command's
-        # stdout entirely.
-        #
-        # `^rm` bypasses aliases, but it's external-only, so Windows (where the
-        # nushell builtin is the only `rm`) keeps the builtin. `try` covers both
-        # branches so cleanup can never abort the wrapper. `hide rm` is not an
-        # option: it's a parse-time keyword that leaks out of this function into
-        # the user's session, silently unbinding their alias.
-        if $nu.os-info.family == "windows" {
-            try { rm -f $cd_file $stdout_file }
-        } else {
-            try { ^rm -f $cd_file $stdout_file }
-        }
-
-        # Return stdout or propagate failure as the function's last expression.
-        # Using a failing external command (not `error make`) so nushell treats it
-        # identically to the original non-zero exit — minimal display in scripts,
-        # no verbose source trace.
-        #
-        # nushell itself is the external command, not `sh`: `Shell::Nushell` isn't
-        # platform-gated, so this wrapper is installed on Windows whenever `nu` is
-        # on PATH, and there `sh` doesn't exist. A missing `sh` turns every failing
-        # `wt` command into a "Command `sh` not found" trace that prints the
-        # wrapper's own source and flattens the real exit code to 1 — the opposite
-        # of what this branch is for. `$nu.current-exe` is always present by
-        # construction, and using one path on every platform keeps the branch Unix
-        # CI exercises identical to the one Windows runs. `--no-std-lib` halves
-        # the startup this costs (~9 ms to ~4.5 ms on nu 0.115); `exit` is a core
-        # builtin, so propagation is unaffected.
-        if $exit_code != 0 {
-            if ($output | is-not-empty) { print -n $output }
-            ^$nu.current-exe --no-config-file --no-std-lib -c $"exit ($exit_code)"
-        } else if ($output | is-not-empty) {
-            $output
         }
     }
 }

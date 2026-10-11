@@ -180,12 +180,12 @@ Examples that page: `--help`, `wt config show`, `wt hook show`, `wt step {commit
 Build the whole output into a `String` first (don't stream), then:
 
 ```rust
-crate::help_pager::show_help_in_pager(&out, true);
+crate::help_pager::show_help_in_pager(&out, true)?;
 ```
 
-The helper is infallible from the caller's perspective — it falls back to
-plain stdout itself when no pager is configured, stdout isn't a TTY, or the
-pager fails.
+The helper falls back to plain stdout when paging is disabled or unavailable,
+stdout is not a TTY, or the pager cannot start. Propagate its result so native
+signal failures and cancellation reach command cleanup.
 
 ## Security
 
@@ -413,7 +413,7 @@ anyway, that message comes first:
 
 ```
 ▲ Auto-staging 1 untracked path:
-   ┃ notes.md
+  notes.md
 ◎ Generating commit message...
 ```
 
@@ -422,7 +422,7 @@ Not:
 ```
 ◎ Generating commit message...
 ▲ Auto-staging 1 untracked path:
-   ┃ notes.md
+  notes.md
 ```
 
 Warnings that result from the action itself (something failed during execution)
@@ -640,12 +640,12 @@ at the top of `wt step commit`, has nothing to separate from and starts flush.
 ```
 ❯ Configure claude for commit messages? [y/N/?] y
 ✓ Added to user config:
-   ┃ [commit.generation]
-   ┃ command = "..."
+  [commit.generation]
+  command = "..."
 ↳ View config: wt config show
 
 ▲ Auto-staging 1 untracked path:
-   ┃ a
+  a
 ◎ Generating commit message...
 ```
 
@@ -840,7 +840,10 @@ tab in the tab bar (`items::render_preview_tabs`).
   redirects) can be interpolated directly without escaping. Do NOT escape
   `<`/`>` in variables — it adds extra chars.
 - **YAGNI** — Most output needs no styling
-- **Graceful degradation** — Colors auto-adjust (NO_COLOR, TTY detection)
+- **Graceful degradation** — Styling follows the consumer (NO_COLOR, TTY
+  detection). Plain output preserves meaning through wording, spacing and
+  existing semantic symbols. Missing decoration alone does not justify new
+  markers; add text when information would otherwise be lost.
 - **Unicode-aware** — Width calculations respect symbols and CJK (via `StyledLine`)
 
 **StyledLine** for table rendering with proper width calculations:
@@ -906,7 +909,11 @@ worktree-path = ".worktrees/{{ branch | sanitize }}"
 ## Gutter Formatting
 
 Use gutter for **quoted content** (git output, commit messages, config to copy,
-hook commands being displayed):
+hook commands being displayed).
+
+The gutter is a background-colored blank column followed by a space. Plain
+output keeps the two-space indent. Gutter examples in this skill show that plain
+form.
 
 - `format_bash_with_gutter()` — shell commands (dimmed + syntax highlighting)
 - `format_with_gutter()` — other content
@@ -1024,7 +1031,7 @@ std::fs::read_to_string(&path).context("Failed to read config")?
 
 ```
 ✗ Commit generation command 'llm --model claude' failed
-   ┃ Error: [Errno 8] nodename nor servname provided
+  Error: [Errno 8] nodename nor servname provided
 
 // NOT: ✗ ... failed: LLM command failed: Error: [Errno 8]...
 ```
@@ -1042,9 +1049,9 @@ labeled blocks. Each block is a bash gutter (dim + syntax highlighting via
 then `source` or `result`):
 ```
 ○ name source
- ┃ template
+  template
 ○ name result
- ┃ result
+  result
 ```
 
 The two headers carry the input/output distinction, so both blocks share the

@@ -225,7 +225,7 @@ test('build preserves the public route contract', async () => {
   assert.ok(configToc, 'config page is missing its desktop table of contents');
   assert.equal(
     [...configToc.matchAll(/<a href="#[^"]+"/g)].length,
-    32,
+    36,
     'config table of contents should expose overview and structural section headings only',
   );
   for (const [id, title] of [
@@ -234,6 +234,10 @@ test('build preserves the public route contract', async () => {
     ['shell-integration', 'Shell Integration'],
     ['other', 'Other'],
     ['subcommands', 'Subcommands'],
+    ['wt-config-shell', 'wt config shell'],
+    ['wt-config-shell-init', 'wt config shell init'],
+    ['wt-config-shell-install', 'wt config shell install'],
+    ['wt-config-shell-uninstall', 'wt config shell uninstall'],
   ]) {
     assert.match(
       configToc,

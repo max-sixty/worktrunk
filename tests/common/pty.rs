@@ -230,8 +230,8 @@ fn find_cursor_request(data: &[u8]) -> Option<usize> {
 pub type SharedPtyWriter = Arc<Mutex<Box<dyn Write + Send>>>;
 
 /// Spawn a thread that drains the PTY master `reader` into the returned channel
-/// and answers the cursor-position report query (`ESC[6n`) skim emits while
-/// initializing the picker.
+/// and answers the cursor-position report query (`ESC[6n`) used by skim during
+/// picker initialization and Nushell's interactive prompt.
 ///
 /// skim 4.x runs the picker in partial-height mode, whose setup calls skim's
 /// `cursor_pos_from_tty()`: it writes `ESC[6n` to `/dev/tty` and blocks in
@@ -240,8 +240,9 @@ pub type SharedPtyWriter = Arc<Mutex<Box<dyn Write + Send>>>;
 /// without this reply skim fails init with "Cursor position detection timed out"
 /// and the picker never renders. The reply (`1;1`) is a safe constant — skim only
 /// uses it to place its inline viewport, which the TUI snapshot tests don't assert
-/// on. Sharing `writer` with the caller lets keystrokes and query replies both
-/// reach the master. The query is matched within a single read chunk; skim emits
+/// on. Nushell also waits for a reply before reading prompt input. Sharing
+/// `writer` keeps keystrokes and query replies from interleaving. The query is
+/// matched within a single read chunk; skim emits
 /// the 4-byte DSR as one small write, so it never spans chunks.
 pub fn spawn_pty_reader_answering_queries(
     reader: Box<dyn Read + Send>,

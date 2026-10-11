@@ -63,4 +63,4 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33m--base flag is only used with --create, ignoring[39m
-[2m○[22m Switched to worktree for [1mexisting[22m @ [1m_REPO_.existing[22m
+[2m○[22m Worktree for [1mexisting[22m @ [1m_REPO_.existing[22m (directory change disabled)

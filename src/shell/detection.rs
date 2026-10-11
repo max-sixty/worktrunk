@@ -65,16 +65,14 @@ use super::paths::{home_dir_required, powershell_profile_paths, zsh_config_dir};
 /// # Usage
 ///
 /// Used by:
-/// - `Shell::is_shell_configured()` - detect the "configured but not restarted"
-///   state behind the shell-integration warnings
 /// - `wt config show` - render the matched integration line, and report a line
 ///   that names the command but did not match as a possible false negative
 /// - `contains_shell_integration` - the install scan's idempotency check, which
 ///   decides whether an rc file already carries this shell's line. It runs
-///   under `scan_shell_configs`, so three commands read it: `wt config shell
+///   under the installation scanner, so these consumers read it: `wt config shell
 ///   install` skips the append when it answers yes, and `wt config show`'s
-///   per-shell rows and `wt switch`'s first-run integration offer read the same
-///   answer without writing
+///   per-shell rows, shell-integration warnings, and the first-run integration
+///   offer read the same answer without writing
 ///
 /// Not by uninstall, which reads
 /// [`is_shell_integration_line_for_uninstall_any_cmd`] instead: it asks only
@@ -83,7 +81,7 @@ use super::paths::{home_dir_required, powershell_profile_paths, zsh_config_dir};
 /// # Impact of False Negatives
 ///
 /// The messaging cases are benign, but they are not all gated the same way.
-/// `Shell::is_shell_configured()`'s callers ask only when shell integration is
+/// The shell-integration warnings ask only when shell integration is
 /// NOT active (i.e., user ran the binary directly without the shell wrapper);
 /// once the wrapper is active, `WORKTRUNK_DIRECTIVE_CD_FILE` is set and they
 /// stop asking.

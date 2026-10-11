@@ -2681,6 +2681,239 @@ fn test_merge_squash_with_working_tree_creates_backup(mut repo_with_main_worktre
         "Expected backup in reflog, but reflog was: {}",
         reflog
     );
+
+    wait_for_worktree_removed(&feature_wt);
+    let merged_head = repo.git_output(&["rev-parse", "main"]);
+    let backup = repo.git_output(&["rev-parse", "refs/wt-backup/feature"]);
+    let repository = worktrunk::git::Repository::at(repo.root_path()).unwrap();
+    let recovery_branch = format!("recovery/{}", repository.short_sha(&backup).unwrap());
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "--base",
+            &backup,
+            "--no-hooks",
+            &recovery_branch,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let recovered = repository
+        .worktree_for_branch(&recovery_branch)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(recovered.join("file1.txt")).unwrap(),
+        "updated content 1"
+    );
+    assert_eq!(repo.git_output(&["rev-parse", "main"]), merged_head);
+}
+
+/// The printed backup recovery command restores captured content and history
+/// in another worktree, preserving edits and staging made after the squash.
+#[rstest]
+fn test_squash_backup_recovery_preserves_live_changes(mut repo: TestRepo) {
+    fs::write(repo.root_path().join("tracked.txt"), "base\n").unwrap();
+    fs::write(repo.root_path().join("unstaged.txt"), "base\n").unwrap();
+    repo.commit("base files");
+    let branch = "feature/recovery";
+    let worktree = repo.add_worktree(branch);
+    fs::write(worktree.join("tracked.txt"), "first\n").unwrap();
+    repo.run_git_in(&worktree, &["add", "."]);
+    repo.run_git_in(&worktree, &["commit", "-m", "first"]);
+    fs::write(worktree.join("committed.txt"), "second\n").unwrap();
+    repo.run_git_in(&worktree, &["add", "."]);
+    repo.run_git_in(&worktree, &["commit", "-m", "second"]);
+    let old_head = repo.git_output(&["rev-parse", branch]);
+
+    fs::write(worktree.join("tracked.txt"), "staged snapshot\n").unwrap();
+    repo.run_git_in(&worktree, &["add", "tracked.txt"]);
+    fs::write(worktree.join("unstaged.txt"), "unstaged draft\n").unwrap();
+    fs::write(worktree.join("draft.txt"), "untracked draft\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "squash", "--stage=none", "--no-hooks"])
+        .current_dir(&worktree)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("refs/wt-backup/feature/recovery"),
+        "{stderr}"
+    );
+    let recovery = stderr
+        .lines()
+        .find_map(|line| line.strip_prefix("↳ To recover in a new worktree, run "))
+        .expect("a copyable backup recovery command");
+
+    // Running the advice from main must not move main to the old feature tip.
+    let main_before = repo.git_output(&["rev-parse", "main"]);
+    let feature_before = repo.git_output(&["rev-parse", branch]);
+    // A later backup can advance the named ref; the printed SHA still selects
+    // the original saved index and history.
+    repo.run_git(&[
+        "update-ref",
+        "refs/wt-backup/feature/recovery",
+        &main_before,
+    ]);
+    fs::write(worktree.join("tracked.txt"), "new staged edit\n").unwrap();
+    repo.run_git_in(&worktree, &["add", "tracked.txt"]);
+    let index_before = repo
+        .git_command()
+        .args(["write-tree"])
+        .current_dir(&worktree)
+        .run()
+        .unwrap()
+        .stdout;
+
+    let output = repo
+        .wt_command()
+        .args(recovery.strip_prefix("wt ").unwrap().split_whitespace())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let recovery_branch = recovery.split_whitespace().last().unwrap();
+    let recovered = worktrunk::git::Repository::at(repo.root_path())
+        .unwrap()
+        .worktree_for_branch(recovery_branch)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        repo.git_output(&["rev-parse", &format!("{recovery_branch}^")]),
+        old_head
+    );
+    assert_eq!(
+        fs::read_to_string(recovered.join("tracked.txt")).unwrap(),
+        "staged snapshot\n"
+    );
+    assert_eq!(
+        fs::read_to_string(recovered.join("unstaged.txt")).unwrap(),
+        "base\n"
+    );
+    assert!(!recovered.join("draft.txt").exists());
+    assert_eq!(repo.git_output(&["rev-parse", "main"]), main_before);
+    assert_eq!(repo.git_output(&["rev-parse", branch]), feature_before);
+    assert_eq!(
+        repo.git_command()
+            .args(["write-tree"])
+            .current_dir(&worktree)
+            .run()
+            .unwrap()
+            .stdout,
+        index_before
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("unstaged.txt")).unwrap(),
+        "unstaged draft\n"
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("tracked.txt")).unwrap(),
+        "new staged edit\n"
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("draft.txt")).unwrap(),
+        "untracked draft\n"
+    );
+
+    // Squash another staged edit on the same source, then follow its new
+    // recovery advice. An earlier recovery must not block the later snapshot.
+    let first_recovery_head = repo.git_output(&["rev-parse", recovery_branch]);
+    let output = repo
+        .wt_command()
+        .args(["step", "squash", "--stage=none", "--no-hooks"])
+        .current_dir(&worktree)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(output.status.success(), "{stderr}");
+    let second_recovery = stderr
+        .lines()
+        .find_map(|line| line.strip_prefix("↳ To recover in a new worktree, run "))
+        .expect("a copyable backup recovery command");
+    let second_recovery_branch = second_recovery.split_whitespace().last().unwrap();
+    let source_head = repo.git_output(&["rev-parse", branch]);
+    fs::write(worktree.join("tracked.txt"), "latest live edit\n").unwrap();
+    repo.run_git_in(&worktree, &["add", "tracked.txt"]);
+    let live_index = repo
+        .git_command()
+        .args(["write-tree"])
+        .current_dir(&worktree)
+        .run()
+        .unwrap()
+        .stdout;
+
+    let output = repo
+        .wt_command()
+        .args(
+            second_recovery
+                .strip_prefix("wt ")
+                .unwrap()
+                .split_whitespace(),
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_ne!(recovery_branch, second_recovery_branch);
+    let second_recovered = worktrunk::git::Repository::at(repo.root_path())
+        .unwrap()
+        .worktree_for_branch(second_recovery_branch)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(second_recovered.join("tracked.txt")).unwrap(),
+        "new staged edit\n"
+    );
+    assert_eq!(
+        fs::read_to_string(recovered.join("tracked.txt")).unwrap(),
+        "staged snapshot\n"
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", recovery_branch]),
+        first_recovery_head
+    );
+    assert_eq!(repo.git_output(&["rev-parse", "main"]), main_before);
+    assert_eq!(repo.git_output(&["rev-parse", branch]), source_head);
+    assert_eq!(
+        repo.git_command()
+            .args(["write-tree"])
+            .current_dir(&worktree)
+            .run()
+            .unwrap()
+            .stdout,
+        live_index
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("tracked.txt")).unwrap(),
+        "latest live edit\n"
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("unstaged.txt")).unwrap(),
+        "unstaged draft\n"
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("draft.txt")).unwrap(),
+        "untracked draft\n"
+    );
 }
 
 /// A staged submodule bump that `submodule.<name>.ignore = all` hides from

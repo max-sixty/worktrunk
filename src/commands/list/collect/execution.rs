@@ -12,9 +12,9 @@
 //! `refresh_status_symbols` resolves each gate independently, reading that
 //! gate's required fields on `ListItem` / `WorktreeData` as they become
 //! `Some`. Tasks that *will* run are written by the drain as their results
-//! arrive. Tasks that will *not* run (stale branches skip expensive tasks,
-//! unborn branches skip commit-dependent tasks, the column plan excludes them,
-//! branches with no worktree have no worktree-only tasks) have their fields
+//! arrive. Tasks that will *not* run (unborn branches skip commit-dependent
+//! tasks, the column plan excludes them, branches with no worktree have no
+//! worktree-only tasks) have their fields
 //! seeded here via [`seed_skipped_task_defaults`] with conservative defaults
 //! — otherwise the fields would stay `None` forever and their gate would
 //! never resolve.
@@ -126,7 +126,7 @@ impl ExpectedResults {
 ///
 /// `refresh_status_symbols` keeps gates at `None` while their inputs are
 /// unloaded, which renders as the `·` placeholder. For tasks that will
-/// *never* run (stale branch, a task no rendered column needs, unborn item missing
+/// *never* run (a task no rendered column needs, unborn item missing
 /// commit-dependent tasks, prunable worktree), seeding a conservative
 /// default up front lets the gate resolve normally instead of showing `·`
 /// forever.
@@ -276,7 +276,7 @@ pub(super) fn seed_prunable_item(item: &mut ListItem) {
 ///
 /// **Side effects on `item`:**
 /// - Seeds conservative sentinels on fields corresponding to tasks that will
-///   *not* run (stale/unborn/skipped). See module docstring.
+///   *not* run (unborn/skipped). See module docstring.
 ///
 /// **Side effects on `tx`:**
 /// - Sends an immediate `TaskResult::UrlStatus { url: Some, active: None }`
@@ -287,7 +287,7 @@ pub(super) fn seed_prunable_item(item: &mut ListItem) {
 ///   directly here would leave it stuck behind whatever task happens to
 ///   complete first.
 ///
-/// Task preconditions (stale branch, unborn branch, missing llm_command) are
+/// Task preconditions (unborn branch, missing llm_command) are
 /// enforced here — not in callers. This function is called from both
 /// `collect()` and `populate_item()`, so guards must live here to cover all
 /// entry points.

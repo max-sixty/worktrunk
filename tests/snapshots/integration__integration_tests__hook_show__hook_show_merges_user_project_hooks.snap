@@ -64,6 +64,6 @@ exit_code: 0
 [107m [0m [2m[0m[2m[34mecho[0m[2m per-project[0m
 
 [36mPROJECT HOOKS[39m @ _REPO_/.config/wt.toml
-[2m↳[22m [2m(not found)[22m
+[2m○[22m Not found
 
 ----- stderr -----

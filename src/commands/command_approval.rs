@@ -29,8 +29,9 @@ use worktrunk::styling::{
     stderr, warning_message,
 };
 
-use super::hook_filter::{HookSource, ParsedFilter};
+use super::hook_filter::ParsedFilter;
 use super::project_config::{ApprovableCommand, Phase, collect_commands_for_hooks};
+use worktrunk::config::HookSource;
 
 /// Batch approval helper used when multiple commands are queued for execution.
 /// Returns `Ok(true)` when execution may continue, `Ok(false)` when the user

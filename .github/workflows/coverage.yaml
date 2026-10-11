@@ -75,6 +75,8 @@ jobs:
     - name: Upload to codecov.io
       uses: codecov/codecov-action@v7.1.1
       with:
+        use_pypi: true
+        version: 11.3.1
         files: cobertura.xml
         # Soft-fail on fork PRs: secrets aren't available there, so we rely on
         # tokenless upload, which can hiccup. Keep hard-fail on the main repo.

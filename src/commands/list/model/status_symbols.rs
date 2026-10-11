@@ -130,10 +130,10 @@
 //! seeded, gate 3 resolves to `None` for unborn non-main items and the row
 //! still renders.
 //!
-//! **Exception — stale branches and `--skip-tasks`:** fields for
+//! **Exception — tasks the column plan skips:** fields for
 //! deliberately-skipped tasks are seeded at spawn time with conservative
-//! defaults. Stale branches can render a less-specific main-state symbol
-//! than fresh ones (e.g., `↕` instead of `⊂`).
+//! defaults. Items with skipped integration tasks can render a less-specific
+//! main-state symbol (e.g., `↕` instead of `⊂`).
 //!
 //! # Gate 4: Upstream divergence (position 5)
 //!

@@ -62,4 +62,4 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mNo branch, tag, or commit named [1mnonexistent-base[22m[39m
+[31m✗[39m [31mNo branch, tag, or commit named [1mnonexistent-base[22m ([1m--base[22m)[39m

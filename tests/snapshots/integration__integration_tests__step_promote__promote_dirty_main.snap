@@ -62,4 +62,4 @@ exit_code: 1
 ----- stderr -----
 [31m✗[39m [31mCannot promote: [1mmain[22m has uncommitted changes[39m
 [107m [0m ?? dirty.txt
-[2m↳[22m [2mCommit or stash changes first[22m
+[2m↳[22m [2mCommit or run [4mgit stash -u[24m in the dirty worktree first[22m

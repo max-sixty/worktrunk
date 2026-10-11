@@ -30,9 +30,12 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use worktrunk::git::WorktrunkError;
+#[cfg(not(unix))]
+use worktrunk::shell_exec::wait_shared_child;
 use worktrunk::shell_exec::{DIRECTIVE_EXEC_FILE_ENV_VAR, RETIRED_DIRECTIVE_FILE_ENV_VAR};
 use worktrunk::trace::CommandTrace;
 
@@ -131,7 +134,7 @@ fn unrecognized_subcommand_error(name: &str) -> clap::Error {
     build_invalid_subcommand_error(&mut cmd, name, suggestions)
 }
 
-/// Spawn the custom binary, inheriting stdio, and propagate its exit code.
+/// Run the custom binary in the native foreground job, preserving handled signals.
 fn run_custom(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> Result<()> {
     let mut cmd = Command::new(path);
     cmd.args(args);
@@ -143,17 +146,42 @@ fn run_custom(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> Res
         cmd.current_dir(dir);
     }
 
+    #[cfg(unix)]
+    let signals = worktrunk::signal_forwarder::ForegroundSignals::install()?;
     let mut trace = CommandTrace::new(None, &path.display().to_string());
-    let status = match cmd.status() {
-        Ok(status) => {
-            trace.complete(status.success());
-            status
-        }
-        Err(e) => {
-            trace.fail(&e);
-            return Err(e).with_context(|| format!("failed to execute {}", path.display()));
+    #[cfg(unix)]
+    let spawned = signals.spawn(&mut cmd);
+    #[cfg(not(unix))]
+    let spawned = worktrunk::shell_exec::spawn_shared_child(&mut cmd).map_err(anyhow::Error::from);
+    let child = match spawned {
+        Ok(child) => Arc::new(child),
+        Err(error) => {
+            trace.fail(error.as_ref());
+            return Err(error);
         }
     };
+    #[cfg(unix)]
+    let waited = signals
+        .wait(&child)
+        .map(|outcome| (outcome.status, outcome.cancellation));
+    #[cfg(not(unix))]
+    let waited = wait_shared_child(&child, None).map(|status| (status, None));
+    let (status, cancellation) = match waited {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            #[cfg(not(unix))]
+            {
+                let _ = child.kill();
+                let _ = wait_shared_child(&child, None);
+            }
+            trace.fail(&error);
+            return Err(error).with_context(|| format!("failed to execute {}", path.display()));
+        }
+    };
+    trace.complete(status.success());
+    if let Some(signal) = cancellation {
+        return Err(WorktrunkError::Interrupted { signal, hint: None }.into());
+    }
 
     if status.success() {
         return Ok(());
@@ -161,9 +189,8 @@ fn run_custom(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> Res
 
     // Propagate the exact exit status so `wt foo` behaves like running
     // `wt-foo` directly. A signal kill surfaces as `Interrupted` (exit
-    // `128 + sig`, rendered per shell convention — a signal-killed child
-    // usually never got to report anything, and wt's own survival suppresses
-    // the shell's "Terminated" line). A plain non-zero exit surfaces as
+    // `128 + sig`, with native INT/TERM passed on to the parent shell).
+    // A plain non-zero exit surfaces as
     // `AlreadyDisplayed` (not `ChildProcessExited`): the custom command
     // already reported its own failure, so `wt` just forwards the code
     // without adding a second error line.
@@ -297,9 +324,12 @@ mod tests {
         // (the success path is covered by the signal test above).
         let err = run_custom(Path::new("/no/such/wt-custom-7f3a9b2c"), &[], None)
             .expect_err("spawning a missing binary should fail");
-        assert!(
-            err.to_string().contains("failed to execute"),
-            "expected spawn-failure context, got: {err}"
+        assert_eq!(
+            err.to_string(),
+            "Failed to execute /no/such/wt-custom-7f3a9b2c"
         );
+        let cause = err.root_cause().downcast_ref::<std::io::Error>().unwrap();
+        assert_eq!(cause.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(format!("{err:#}").matches(&cause.to_string()).count(), 1);
     }
 }
