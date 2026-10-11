@@ -10,6 +10,8 @@
 
 - **Choose a worktree directory independently of its branch**: experimental `wt switch --create feature/JIRA-1234 --path ../dark-mode` overrides the path template for one worktree. Switch by branch or path as usual; `wt step relocate` can return it to the template location. [Docs](https://worktrunk.dev/switch/#custom-path) ([#4317](https://github.com/max-sixty/worktrunk/pull/4317), thanks @christowiz for requesting in [#1982](https://github.com/max-sixty/worktrunk/issues/1982))
 
+- **System config uses one platform path** (Breaking): `XDG_CONFIG_DIRS` is no longer searched, and macOS no longer falls back to `/etc/xdg`. Use `WORKTRUNK_SYSTEM_CONFIG_PATH` to override the location. [Docs](https://worktrunk.dev/config/#configuration-files) ([#4169](https://github.com/max-sixty/worktrunk/pull/4169))
+
 - **Prune runs pre-remove hooks concurrently across worktrees** (Breaking): hooks writing shared resources must coordinate those writes. `wt step prune --foreground` serializes worktree removals. [Docs](https://worktrunk.dev/step/#wt-step-prune) ([#4337](https://github.com/max-sixty/worktrunk/pull/4337))
 
 - **Config views and shell integration advice**: installation and authentication instructions have their own rows, while config and approvals parse errors name the source file and show one consistent diagnostic. Merge and removal suggest restarting the shell when integration is installed but inactive. ([#4351](https://github.com/max-sixty/worktrunk/pull/4351), [#4343](https://github.com/max-sixty/worktrunk/pull/4343))
