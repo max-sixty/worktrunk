@@ -882,8 +882,19 @@ mod tests {
             }
         }
 
-        rename_worktree_directory(&source, &destination).unwrap();
+        rename_into_reserved_directory(&source, &destination).unwrap();
         assert!(!source.exists());
+        assert_eq!(
+            std::fs::read_to_string(destination.join("payload")).unwrap(),
+            "keep"
+        );
+
+        // A source that disappeared leaves no empty reservation behind.
+        let absent = temp.path().join("absent");
+        let reservation = temp.path().join("reservation");
+        let error = rename_into_reserved_directory(&absent, &reservation).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        assert!(!reservation.exists());
         assert_eq!(
             std::fs::read_to_string(destination.join("payload")).unwrap(),
             "keep"

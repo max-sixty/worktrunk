@@ -3977,8 +3977,8 @@ pub mod tests {
         );
     }
 
-    /// Restoring a row that's already back is a no-op — no duplicate, no extra
-    /// warning. Guards rapid repeated alt-x racing on the same row.
+    /// A restored row is never duplicated or flashed again, but a supplied
+    /// failure cause survives rapid repeated alt-x racing on the same row.
     #[test]
     fn test_restore_failed_removal_skips_when_already_present() {
         let row = branch_only_picker_item("present");
@@ -3993,7 +3993,7 @@ pub mod tests {
             &render_tx,
             &stashed,
             super::DroppedRow {
-                item: row,
+                item: Arc::clone(&row),
                 pos: 0,
                 label: "present".to_string(),
                 noun: "worktree",
@@ -4010,6 +4010,28 @@ pub mod tests {
             header_flash.current().is_none(),
             "the already-present early return skips the flash too"
         );
+
+        // A second removal can fail after the first already restored the row.
+        // Its cause must survive without inserting another row or flashing.
+        super::restore_failed_removal(
+            &items,
+            &header_flash,
+            &render_tx,
+            &stashed,
+            super::DroppedRow {
+                item: row,
+                pos: 0,
+                label: "present".to_string(),
+                noun: "worktree",
+            },
+            Some("registration could not be removed"),
+        );
+        assert_eq!(items.lock().unwrap().len(), 1);
+        assert_eq!(
+            *stashed.lock().unwrap(),
+            ["registration could not be removed"]
+        );
+        assert!(header_flash.current().is_none());
     }
 
     /// `revert_morph` undoes an optimistic morph after the worktree removal failed:
@@ -4357,6 +4379,86 @@ pub mod tests {
         }
     }
 
+    /// A ref lock must restore the branch-only row and retain Git's cause.
+    #[test]
+    fn test_apply_reports_branch_only_deletion_failure() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        repo.run_command(&["branch", "feature"]).unwrap();
+        fs::write(
+            repo.git_common_dir().join("refs/heads/feature.lock"),
+            "another ref writer",
+        )
+        .unwrap();
+        let row = branch_only_picker_item("feature");
+        let token = row.output().into_owned();
+        let items = Arc::new(Mutex::new(vec![row]));
+        let remover = test_remover(Arc::clone(&items), repo.clone());
+        assert!(matches!(remover.apply(token), RemovalEffect::Dropped));
+        super::finish_removals(&remover.removal_threads, std::io::sink()).unwrap();
+
+        assert!(repo.branch("feature").exists_locally().unwrap());
+        assert_eq!(items.lock().unwrap().len(), 1);
+        let warnings = remover.stashed_warnings.lock().unwrap();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("feature.lock"), "{}", warnings[0]);
+    }
+
+    /// A failed pre-remove hook must undo the optimistic morph while keeping
+    /// the checkout, its unmerged branch and the hook's diagnostic.
+    #[test]
+    fn test_apply_reverts_morph_when_pre_remove_fails() {
+        let mut test = worktrunk::testing::TestRepo::with_initial_commit();
+        test.add_worktree_with_commit("feature", "payload.txt", "keep", "unmerged");
+        fs::create_dir_all(test.path().join(".config")).unwrap();
+        fs::write(
+            test.path().join(".config/wt.toml"),
+            "pre-remove = \"false\"\n",
+        )
+        .unwrap();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let path = repo
+            .list_worktrees()
+            .unwrap()
+            .iter()
+            .find(|worktree| worktree.branch.as_deref() == Some("feature"))
+            .unwrap()
+            .path
+            .clone();
+        let approvals_dir = worktrunk::testing::test_tempdir();
+        let mut approvals = Approvals::default();
+        approvals
+            .approve_commands(
+                repo.project_identifier().unwrap(),
+                vec!["false".to_string()],
+                &approvals_dir.path().join("approvals.toml"),
+            )
+            .unwrap();
+        let items = Arc::new(Mutex::new(Vec::new()));
+        let mut remover = test_remover(Arc::clone(&items), repo.clone());
+        remover.approvals = Arc::new(approvals);
+        let (row, token, rendered, morphed) = setup_morphable_row(&remover, "feature", &path);
+        let original = rendered.lock().unwrap().clone();
+        items.lock().unwrap().push(row);
+        assert!(matches!(
+            remover.apply(token.clone()),
+            RemovalEffect::Morphed
+        ));
+        super::finish_removals(&remover.removal_threads, std::io::sink()).unwrap();
+
+        assert!(!morphed.load(std::sync::atomic::Ordering::Relaxed));
+        assert_eq!(*rendered.lock().unwrap(), original);
+        assert_eq!(items.lock().unwrap()[0].output().as_ref(), token);
+        assert_eq!(
+            fs::read_to_string(path.join("payload.txt")).unwrap(),
+            "keep"
+        );
+        assert!(repo.branch("feature").exists_locally().unwrap());
+        let warnings = remover.stashed_warnings.lock().unwrap();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("pre-remove command failed"));
+    }
+
     /// Worktree removal can succeed while deleting its branch fails. The picker
     /// must show the branch failure even though there is no worktree row to restore.
     #[test]
@@ -4378,7 +4480,10 @@ pub mod tests {
             .unwrap()
             .path
             .clone();
-        assert_eq!(fs::canonicalize(created).unwrap(), path);
+        assert_eq!(
+            worktrunk::git::WorktreeId::new(&created),
+            worktrunk::git::WorktreeId::new(&path)
+        );
         let lock = repo.git_common_dir().join("refs/heads/feature.lock");
         fs::write(&lock, "another ref writer").unwrap();
         let item = branched_picker_item("feature", &path);

@@ -1850,3 +1850,41 @@ pub(super) fn all_markers(repo: &Repository) -> Vec<MarkerEntry> {
     });
     markers
 }
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// An empty trash directory still needs its parent's write permission to be
+    /// removed. Report that failure rather than claiming state clearing succeeded.
+    #[test]
+    fn clear_trash_reports_empty_directory_removal_failure() {
+        use std::os::unix::fs::PermissionsExt;
+
+        struct RestorePermissions(std::path::PathBuf, std::fs::Permissions);
+        impl Drop for RestorePermissions {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(&self.0, self.1.clone());
+            }
+        }
+
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        std::fs::create_dir_all(repo.wt_trash_dir()).unwrap();
+        let parent = repo.wt_dir();
+        let restore = RestorePermissions(
+            parent.clone(),
+            std::fs::metadata(&parent).unwrap().permissions(),
+        );
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let error = clear_trash(&repo).unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+        assert!(repo.wt_trash_dir().is_dir());
+        drop(restore);
+        assert_eq!(clear_trash(&repo).unwrap(), 0);
+        assert!(!repo.wt_trash_dir().exists());
+    }
+}

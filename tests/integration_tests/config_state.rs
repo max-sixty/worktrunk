@@ -3603,3 +3603,56 @@ fn test_state_disposal_inventory_error_prevents_clear(repo: TestRepo) {
         assert_eq!(std::fs::read_to_string(&blocker).unwrap(), "keep blocker");
     }
 }
+
+/// Readable directory entries still need search permission before their
+/// metadata can be inspected. Neither failure authorizes clearing other data.
+#[cfg(unix)]
+#[rstest]
+#[case(0o000, "Failed to read disposal")]
+#[case(0o444, "Failed to inspect disposal")]
+fn test_state_disposal_permission_error_prevents_clear(
+    repo: TestRepo,
+    #[case] mode: u32,
+    #[case] expected_error: &str,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    use worktrunk::git::Repository;
+
+    struct RestorePermissions(std::path::PathBuf, std::fs::Permissions);
+    impl Drop for RestorePermissions {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(&self.0, self.1.clone());
+        }
+    }
+
+    let repository = Repository::at(repo.root_path()).unwrap();
+    let metadata = repository.git_common_dir().join(format!(
+        "{}control-1234567890",
+        Repository::UNREGISTERED_WORKTREE_PREFIX
+    ));
+    std::fs::create_dir(&metadata).unwrap();
+    let trash = repository.wt_trash_dir();
+    std::fs::create_dir_all(&trash).unwrap();
+    let payload = trash.join("keep.txt");
+    std::fs::write(&payload, "not yet authorized").unwrap();
+    let restore = RestorePermissions(
+        trash.clone(),
+        std::fs::metadata(&trash).unwrap().permissions(),
+    );
+    std::fs::set_permissions(&trash, std::fs::Permissions::from_mode(mode)).unwrap();
+    for mut command in [wt_state_get_json_cmd(&repo), wt_state_clear_all_cmd(&repo)] {
+        let output = command.output().unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected_error),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(metadata.is_dir());
+    }
+    drop(restore);
+    assert_eq!(
+        std::fs::read_to_string(payload).unwrap(),
+        "not yet authorized"
+    );
+}

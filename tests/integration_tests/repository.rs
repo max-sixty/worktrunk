@@ -1352,6 +1352,100 @@ fn test_branch_diff_stats_scoped_to_sparse_checkout() {
 // Atomic worktree unregister
 // =============================================================================
 
+/// Failure before the rename preserves repairable metadata; failure after it
+/// leaves only visible disposal, whose failed cleanup must be reported.
+#[cfg(unix)]
+#[test]
+fn test_unregister_permission_failures_respect_commit_boundary() {
+    use std::os::unix::fs::PermissionsExt;
+    use worktrunk::git::WorktreePruneMode;
+
+    struct RestorePermissions(std::path::PathBuf, fs::Permissions);
+    impl Drop for RestorePermissions {
+        fn drop(&mut self) {
+            let _ = fs::set_permissions(&self.0, self.1.clone());
+        }
+    }
+
+    for mode in [WorktreePruneMode::Stale, WorktreePruneMode::RemovedLive] {
+        let mut repo = TestRepo::with_initial_commit();
+        let worktree = repo.add_worktree("permission-unregister");
+        let repository = Repository::at(repo.root_path()).unwrap();
+        let registration = repository.worktree_at(&worktree).git_dir().unwrap();
+        let originals: Vec<_> = ["HEAD", "commondir", "gitdir", "index"]
+            .into_iter()
+            .map(|name| (name, fs::read(registration.join(name)).unwrap()))
+            .collect();
+        fs::remove_file(worktree.join(".git")).unwrap();
+        let common = repository.git_common_dir();
+        let restore = RestorePermissions(
+            common.to_path_buf(),
+            fs::metadata(common).unwrap().permissions(),
+        );
+        fs::set_permissions(common, fs::Permissions::from_mode(0o555)).unwrap();
+        let error = repository
+            .prune_worktree_entry(&worktree, mode)
+            .unwrap_err();
+        drop(restore);
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to prepare metadata disposal")
+        );
+        for (name, bytes) in &originals {
+            assert_eq!(fs::read(registration.join(name)).unwrap(), *bytes, "{name}");
+        }
+        assert!(unregistered_metadata_paths(&repository).is_empty());
+
+        // A read-only metadata subtree moves with the writable registration,
+        // but its contents cannot be recursively removed after that commit.
+        let logs = registration.join("logs");
+        fs::create_dir_all(&logs).unwrap();
+        fs::write(logs.join("cleanup-control"), "disposable metadata").unwrap();
+        let permissions = fs::metadata(&logs).unwrap().permissions();
+        let mut restore = RestorePermissions(logs.clone(), permissions);
+        fs::set_permissions(&logs, fs::Permissions::from_mode(0o555)).unwrap();
+        repository.prune_worktree_entry(&worktree, mode).unwrap();
+        assert!(!registration.exists(), "unregister committed");
+        let garbage = unregistered_metadata_paths(&repository);
+        assert_eq!(garbage.len(), 1);
+        let moved = garbage[0].join("registration");
+        restore.0 = moved.join("logs");
+        assert_eq!(
+            fs::read_to_string(moved.join("logs/cleanup-control")).unwrap(),
+            "disposable metadata"
+        );
+        let inspection = repo
+            .wt_command()
+            .args(["config", "state", "get", "--format=json"])
+            .output()
+            .unwrap();
+        assert!(inspection.status.success());
+        let state: serde_json::Value = serde_json::from_slice(&inspection.stdout).unwrap();
+        assert_eq!(state["trash"].as_array().unwrap().len(), 1);
+        let cleanup = repo
+            .wt_command()
+            .args(["config", "state", "clear", "--yes"])
+            .output()
+            .unwrap();
+        assert!(!cleanup.status.success());
+        assert!(String::from_utf8_lossy(&cleanup.stderr).contains("Failed to clear trash"));
+        assert!(moved.join("logs/cleanup-control").is_file());
+        drop(restore);
+        let cleanup = repo
+            .wt_command()
+            .args(["config", "state", "clear", "--yes"])
+            .output()
+            .unwrap();
+        assert!(
+            cleanup.status.success(),
+            "{}",
+            String::from_utf8_lossy(&cleanup.stderr)
+        );
+        assert!(!garbage[0].exists());
+    }
+}
+
 /// A failed unregister must preserve the complete registration, so moving the
 /// retained checkout back through `git worktree repair` really reconnects it.
 #[cfg(unix)]

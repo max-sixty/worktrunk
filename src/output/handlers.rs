@@ -2353,6 +2353,38 @@ mod tests {
     use super::*;
     use insta::assert_snapshot;
 
+    /// A failed synchronous branch deletion preserves the ref and identifies
+    /// the checkout that was already removed, rather than blaming its removal.
+    #[test]
+    fn synchronous_branch_failure_preserves_removal_context() {
+        let mut test = worktrunk::testing::TestRepo::with_initial_commit();
+        let path = test.add_worktree("feature");
+        let repo = Repository::at(test.path()).unwrap();
+        repo.remove_worktree(&path, false).unwrap();
+        std::fs::write(
+            repo.git_common_dir().join("refs/heads/feature.lock"),
+            "another writer",
+        )
+        .unwrap();
+
+        let error = delete_branch_in_synchronous_fallback(
+            &repo,
+            "feature",
+            &path,
+            Some("main"),
+            BranchDeletionMode::SafeDelete,
+            false,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<GitError>(),
+            Some(GitError::BranchDeletionFailed { branch, removed_worktree: Some(removed), .. })
+                if branch == "feature" && removed == &path
+        ));
+        assert!(!path.exists());
+        assert!(repo.branch("feature").exists_locally().unwrap());
+    }
+
     /// Exercises each arm of [`warn_if_branch_retained`] for coverage and
     /// to pin the suppression rule. Output goes to stderr and isn't captured
     /// here — the assertion is that the call doesn't panic on any arm.
