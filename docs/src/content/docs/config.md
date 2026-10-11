@@ -150,7 +150,7 @@ command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haik
 
 ### Codex
 
-Create `~/.codex/worktrunk-commit-instructions.txt` containing just `.` (no newline). Accepting Worktrunk's first-run Codex setup creates the file for you.
+Create `~/.codex/worktrunk-commit-instructions.txt` containing just `.` (no newline) to replace Codex's default instructions. Accepting Worktrunk's first-run Codex setup creates the file for you.
 
 ```toml
 [commit.generation]
@@ -1017,7 +1017,7 @@ Usage: wt config state [OPTIONS] <COMMAND>
 
 Commands:
   get             Get all stored state
-  clear           Clear all stored state
+  clear           Clear repository state
   cache           Regenerable caches
   default-branch  Default branch detection and override
   logs            Operation and debug logs

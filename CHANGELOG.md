@@ -4,7 +4,7 @@
 
 ### Improved
 
-- **Interactive hooks**: a `pre-start` hook with one command can prompt. On Unix, Ctrl-Z/fg suspend and resume foreground commands normally. (Breaking: hooks no longer receive JSON on stdin; pass context through template arguments. `wt step for-each` keeps JSON.) [Docs](https://worktrunk.dev/hook/#interactive-hooks) ([#3129](https://github.com/max-sixty/worktrunk/pull/3129), [#4400](https://github.com/max-sixty/worktrunk/pull/4400), thanks @endigma for requesting and @user753 and @willparsons for reporting)
+- **Interactive hooks**: foreground hooks can prompt when their commands run one at a time. On Unix, Ctrl-Z/fg suspend and resume foreground commands normally. (Breaking: hooks no longer receive JSON on stdin; pass context through template arguments. `wt step for-each` keeps JSON.) [Docs](https://worktrunk.dev/hook/#interactive-hooks) ([#3129](https://github.com/max-sixty/worktrunk/pull/3129), [#4400](https://github.com/max-sixty/worktrunk/pull/4400), thanks @endigma for requesting and @user753 and @willparsons for reporting)
 
 - **Nushell integration requires 0.113 or newer** (Breaking). [Docs](https://worktrunk.dev/shell-integration/) ([#4400](https://github.com/max-sixty/worktrunk/pull/4400))
 
@@ -28,7 +28,7 @@
 
 - **Formatters in pre-commit hooks during a squash**: `wt merge` and `wt step squash` run those hooks before auto-staging, so their edits enter the commit instead of being left uncommitted. ([#4321](https://github.com/max-sixty/worktrunk/pull/4321))
 
-- **Removing several targets when one fails**: a failing hook or removal now reports the failure and continues with later targets, returning exit status 1 if any failed. Uncaught SIGINT and SIGTERM still cancel the batch. ([#4357](https://github.com/max-sixty/worktrunk/pull/4357))
+- **Removing several targets when one fails**: a failing hook or removal now reports the failure and continues with later targets, returning exit status 1 if any failed. An unhandled interrupt or SIGTERM cancels the remaining targets. ([#4357](https://github.com/max-sixty/worktrunk/pull/4357))
 
 - **Concurrent pruning and stale registrations**: pruning reports lock failures instead of treating them as success. Cleanup preserves staged changes and unfinished Git operations in missing worktrees unless forced. If Git metadata cleanup fails during removal, Worktrunk keeps the checkout for recovery. ([#4337](https://github.com/max-sixty/worktrunk/pull/4337), [#4361](https://github.com/max-sixty/worktrunk/pull/4361), [#4393](https://github.com/max-sixty/worktrunk/pull/4393))
 
