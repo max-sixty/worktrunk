@@ -1063,25 +1063,20 @@ fn run_with_timeout_impl(
                 // A child already ended by a native INT/TERM stays cancelled even
                 // when a descendant holding its pipes ran the readers to the
                 // deadline; reporting `TimedOut` would let callers fall back as
-                // if the command were merely slow. Reading that status reaps the
-                // leader, so its pgid is pinned only by surviving members — the
-                // exposure `terminate_process_group` describes for tether.
-                let exited = child.try_wait().ok().flatten();
+                // if the command were merely slow. The probe leaves the leader
+                // unreaped for the teardown, and signalling its zombie cannot
+                // change the status the final `wait` then reports.
+                let interrupted = exited_by_native_interrupt(child.id());
                 kill_timed_out_tree(child.id());
                 let _ = child.kill();
-                let _ = child.wait();
-                if let Some(status) = exited.filter(|status| {
-                    use signal_hook::consts::{SIGINT, SIGTERM};
-                    use std::os::unix::process::ExitStatusExt;
-                    matches!(status.signal(), Some(SIGINT | SIGTERM))
-                }) {
-                    return Ok(std::process::Output {
+                return match child.wait() {
+                    Ok(status) if interrupted => Ok(std::process::Output {
                         status,
                         stdout: Vec::new(),
                         stderr: Vec::new(),
-                    });
-                }
-                return Err(error);
+                    }),
+                    _ => Err(error),
+                };
             }
         };
         let status = match wait_shared_child(&child, Some(deadline)) {
@@ -1103,6 +1098,51 @@ fn run_with_timeout_impl(
     })
 }
 
+/// Whether SIGINT/SIGTERM already ended `pid`, read with `WNOWAIT` so the
+/// child stays unreaped and keeps pinning its pgid for the teardown.
+#[cfg(target_os = "linux")]
+fn exited_by_native_interrupt(pid: u32) -> bool {
+    use nix::sys::signal::Signal;
+    use nix::sys::wait::{Id, WaitPidFlag, WaitStatus, waitid};
+    matches!(
+        waitid(
+            Id::Pid(nix::unistd::Pid::from_raw(pid as i32)),
+            WaitPidFlag::WEXITED | WaitPidFlag::WNOWAIT | WaitPidFlag::WNOHANG,
+        ),
+        Ok(WaitStatus::Signaled(_, Signal::SIGINT | Signal::SIGTERM, _))
+    )
+}
+
+/// Darwin's `waitid` with the same flags; nix doesn't wrap it there. Darwin
+/// leaves `siginfo` untouched for a running child, hence the zeroed buffer,
+/// and can report a stop through `WEXITED`, hence matching `CLD_KILLED` only.
+#[cfg(target_vendor = "apple")]
+#[allow(unsafe_code)]
+fn exited_by_native_interrupt(pid: u32) -> bool {
+    use nix::libc;
+    // SAFETY: `siginfo_t` is plain data; all-zero is a valid value.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    // SAFETY: `info` is a valid, exclusively borrowed `siginfo_t`.
+    let ret = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            pid as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOWAIT | libc::WNOHANG,
+        )
+    };
+    ret == 0
+        && info.si_signo == libc::SIGCHLD
+        && info.si_code == libc::CLD_KILLED
+        && matches!(info.si_status, libc::SIGINT | libc::SIGTERM)
+}
+
+/// No unreaped status probe here: a deadline-bound cancellation stays `TimedOut`.
+#[cfg(all(unix, not(target_os = "linux"), not(target_vendor = "apple")))]
+fn exited_by_native_interrupt(_pid: u32) -> bool {
+    false
+}
+
 /// Tear down the process tree of a child that outlived its timeout.
 ///
 /// `run_with_timeout_impl` made the child its own process-group leader, so its
@@ -1115,9 +1155,6 @@ fn run_with_timeout_impl(
 /// and an expired direct wait leaves the child unreaped. An exited child stays
 /// a zombie reserving its pid until the caller's own `wait()`. It cannot name a different
 /// process group by the time the signal lands.
-///
-/// The one exception is a leader a native INT/TERM already ended, which the
-/// caller reaps to read that status; its surviving members still pin the pgid.
 ///
 /// The same unreaped zombie means the escalation's liveness probe reads the
 /// group as alive for the entire grace, so its final SIGKILL fires even when
