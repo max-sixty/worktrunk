@@ -1254,10 +1254,8 @@ fn test_copy_ignored_directory_with_symlinks(mut repo: TestRepo) {
     assert_eq!(fs::read_link(&link).unwrap().to_str().unwrap(), "data.txt");
 }
 
-/// Test that copy errors include file paths in the message (GitHub issue #1084)
-///
-/// Tests both the directory recursive copy error path (copy_dir_recursive)
-/// and the top-level file copy error path (step_copy_ignored main loop).
+/// Recursive copy failures identify the destination where staging failed
+/// (GitHub issue #1084), while preserving the source and destination data.
 #[cfg(unix)]
 #[rstest]
 fn test_copy_ignored_error_includes_path_directory(mut repo: TestRepo) {
@@ -1277,7 +1275,7 @@ fn test_copy_ignored_error_includes_path_directory(mut repo: TestRepo) {
     fs::create_dir_all(&dest_sub).unwrap();
     fs::set_permissions(&dest_sub, fs::Permissions::from_mode(0o555)).unwrap();
 
-    // Copy should fail — error message should mention the file path
+    // Copy should fail at staging in the read-only destination directory.
     let output = repo
         .wt_command()
         .args(["step", "copy-ignored"])
@@ -1291,12 +1289,18 @@ fn test_copy_ignored_error_includes_path_directory(mut repo: TestRepo) {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("copying"),
-        "Error should mention the file path, got: {stderr}"
+        stderr.contains("copying directory") && stderr.contains("repo.feature/target/sub"),
+        "Error should identify the failing destination directory, got: {stderr}"
     );
+    assert_eq!(
+        fs::read(target_dir.join("sub/file.txt")).unwrap(),
+        b"content"
+    );
+    assert!(!dest_sub.join("file.txt").exists());
 }
 
-/// Test that top-level file copy errors include file paths (GitHub issue #1084)
+/// Top-level file copy failures identify the destination where staging failed
+/// (GitHub issue #1084).
 ///
 /// This exercises the error path in the main copy loop (not copy_dir_recursive).
 #[cfg(unix)]
@@ -1310,8 +1314,8 @@ fn test_copy_ignored_error_includes_path_file(mut repo: TestRepo) {
     fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
     fs::write(repo.root_path().join(".gitignore"), ".env\n").unwrap();
 
-    // Make the destination worktree root read-only so reflink_or_copy fails
-    // with PermissionDenied (not AlreadyExists)
+    // Make the destination worktree root read-only so staging fails with
+    // PermissionDenied before any file is copied.
     fs::set_permissions(&feature_path, fs::Permissions::from_mode(0o555)).unwrap();
 
     let output = repo
@@ -1327,9 +1331,15 @@ fn test_copy_ignored_error_includes_path_file(mut repo: TestRepo) {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("copying") && stderr.contains(".env"),
-        "Error should mention the file path, got: {stderr}"
+        stderr.contains("creating copy staging directory for")
+            && stderr.contains("repo.feature/.env"),
+        "Error should identify the failing destination directory, got: {stderr}"
     );
+    assert_eq!(
+        fs::read(repo.root_path().join(".env")).unwrap(),
+        b"SECRET=value"
+    );
+    assert!(!feature_path.join(".env").exists());
 }
 
 /// Test that nested file copy errors mention the parent directory creation failure

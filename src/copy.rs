@@ -220,8 +220,8 @@ impl PreparedLeaf {
             .tempdir_in(parent)
             .with_context(|| {
                 format!(
-                    "creating copy staging directory @ {}",
-                    format_path_for_display(parent)
+                    "creating copy staging directory for {}",
+                    format_path_for_display(dest)
                 )
             })?;
         Self::new_in(src, dest, metadata, stamp, Arc::new(directory))
@@ -893,7 +893,10 @@ mod tests {
         assert!(copy_error.downcast_ref::<std::io::Error>().is_some());
         assert_eq!(
             copy_error.to_string(),
-            format!("creating copy staging directory @ '{}'", blocker.display())
+            format!(
+                "creating copy staging directory for '{}'",
+                invalid_dest.display()
+            )
         );
         assert_eq!(fs::read(&source_file).unwrap(), b"source data");
 
@@ -903,7 +906,10 @@ mod tests {
         assert!(link_error.downcast_ref::<std::io::Error>().is_some());
         assert_eq!(
             link_error.to_string(),
-            format!("creating copy staging directory @ '{}'", blocker.display())
+            format!(
+                "creating copy staging directory for '{}'",
+                invalid_dest.display()
+            )
         );
         assert_eq!(fs::read_link(&source_link).unwrap(), source_file);
         assert_eq!(fs::read(&blocker).unwrap(), b"existing data");
