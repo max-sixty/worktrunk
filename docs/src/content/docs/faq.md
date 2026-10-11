@@ -149,7 +149,7 @@ Worktrunk stores repository state, caches, and logs under `.git/`:
 | `.git/wt/logs/trace.jsonl` | Machine trace (one JSON object per record) | Running with `-vv` |
 | `.git/wt/logs/subprocess.log` | Raw uncapped subprocess stdout/stderr (may be multi-MB) | Running with `-vv` |
 | `.git/wt/logs/diagnostic.md` | Diagnostic report for issue reporting (leads with the performance profile) | Running with `-vv` |
-| `.git/wt/trash/<name>-<timestamp>` | Staged worktree contents pending background deletion | `wt remove` |
+| `.git/wt/trash/<name>-<timestamp>` | Removed worktree contents pending background deletion | `wt remove` |
 | `.git/wt/retained/<name>-<timestamp>` | Worktree contents kept after a failed removal; recover or delete manually | `wt remove` |
 | `.git/worktrunk-unregistered-*` | A removed worktree's Git metadata, pending deletion | `wt remove`, `wt step prune` |
 

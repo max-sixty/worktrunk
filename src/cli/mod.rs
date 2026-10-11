@@ -1798,7 +1798,7 @@ Variables use dot access and the `default` filter for missing keys. JSON object/
 dev = "ENV={{ vars.env | default('development') }} npm start -- --port {{ vars.config.port | default('3000') }}"
 ```
 
-<span id="json-context"></span>
+<!-- anchor: json-context -->
 
 Logic that templates can't express belongs in a script, with the values it needs passed as arguments:
 

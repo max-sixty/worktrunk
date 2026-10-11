@@ -990,12 +990,12 @@ Drop the regenerable caches:
 $ wt config state cache clear
 ```
 
-Show all stored state:
+Show repository state:
 ```console
 $ wt config state get
 ```
 
-Clear all stored state:
+Clear repository state:
 ```console
 $ wt config state clear
 ```
@@ -1008,7 +1008,7 @@ wt config state - Manage internal data and cache
 Usage: wt config state [OPTIONS] <COMMAND>
 
 Commands:
-  get             Get all stored state
+  get             Get repository state
   clear           Clear repository state
   cache           Regenerable caches
   default-branch  Default branch detection and override

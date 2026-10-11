@@ -48,7 +48,7 @@ wt config state - Manage internal data and cache
 Usage: [1m[36mwt config state[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
 [1m[32mCommands:[0m
-  [1m[36mget[0m             Get all stored state
+  [1m[36mget[0m             Get repository state
   [1m[36mclear[0m           Clear repository state
   [1m[36mcache[0m           Regenerable caches
   [1m[36mdefault-branch[0m  Default branch detection and override
@@ -103,10 +103,10 @@ Store arbitrary data:
 Drop the regenerable caches:
 [107m [0m [2m[0m[2m[34mwt[0m[2m config state cache clear[0m
 
-Show all stored state:
+Show repository state:
 [107m [0m [2m[0m[2m[34mwt[0m[2m config state get[0m
 
-Clear all stored state:
+Clear repository state:
 [107m [0m [2m[0m[2m[34mwt[0m[2m config state clear[0m
 
 ----- stderr -----

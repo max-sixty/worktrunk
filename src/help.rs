@@ -580,6 +580,10 @@ fn post_process_for_html(text: &str) -> String {
     // the heading. This keeps the badge out of the generated anchor slug.
     // Terminal help keeps [experimental] on the heading line (different render path).
     let text = move_experimental_from_headings(text);
+    // Bookmark aliases belong to the site; terminal help ignores the comment.
+    static ANCHOR: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"<!-- anchor: ([a-z0-9-]+) -->").unwrap());
+    let text = ANCHOR.replace_all(&text, r#"<span id="$1"></span>"#);
 
     text
         // CI status colors (in table cells)
@@ -975,6 +979,19 @@ mod tests {
         assert!(
             expanded.contains("<figcaption>Switching worktrees</figcaption>"),
             "{expanded}"
+        );
+    }
+
+    #[test]
+    fn bookmark_alias_is_only_expanded_for_the_site() {
+        let source = "<!-- anchor: previous-heading -->\nCurrent guidance";
+        assert_eq!(
+            post_process_for_html(source),
+            "<span id=\"previous-heading\"></span>\nCurrent guidance"
+        );
+        assert_eq!(
+            crate::md_help::render_markdown_flush(source, None),
+            "Current guidance\n"
         );
     }
 }

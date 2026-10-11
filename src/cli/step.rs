@@ -136,10 +136,10 @@ The squash commit is made on a detached HEAD, as `git rebase` does, so git's own
 
 ## Recovering staged changes
 
-Working-tree changes staged for a squash are backed up to `refs/wt-backup/<branch>`; unstaged changes aren't included. Recover them in a new worktree:
+Working-tree changes staged for a squash are backed up to `refs/wt-backup/<branch>`; unstaged changes aren't included. Recover the latest backup of branch `feature` in a new worktree:
 
 ```console
-$ wt switch --create recovery --base refs/wt-backup/<branch> --no-hooks
+$ wt switch --create recovery --base refs/wt-backup/feature --no-hooks
 ```
 
 ## Options

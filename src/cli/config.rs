@@ -877,12 +877,12 @@ Drop the regenerable caches:
 $ wt config state cache clear
 ```
 
-Show all stored state:
+Show repository state:
 ```console
 $ wt config state get
 ```
 
-Clear all stored state:
+Clear repository state:
 ```console
 $ wt config state clear
 ```
@@ -909,8 +909,8 @@ $ wt config state clear
 // notice and are absent from `--help`.
 #[derive(Subcommand)]
 pub enum StateCommand {
-    /// Get all stored state
-    #[command(after_long_help = r#"Shows all stored state including:
+    /// Get repository state
+    #[command(after_long_help = r#"Shows repository state:
 
 - **Default branch**: Cached result of querying remote for default branch
 - **Previous branch**: Previous branch for `wt switch -`
