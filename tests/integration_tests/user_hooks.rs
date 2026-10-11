@@ -565,7 +565,7 @@ long = "sh -c 'echo start >> hook.log; sleep 30; echo done >> hook.log'"
 /// Implementation mirrors `test_for_each_aborts_on_signal_exit`: the first
 /// hook step self-signals via SIGTERM after touching a marker. SIGINT against
 /// the parent wt would kill the test harness, so we drive the same
-/// `ChildProcessExited { signal: Some(_), .. }` path with an in-child signal.
+/// `ChildProcessExited { physical_signal: Some(_), .. }` path with an in-child signal.
 #[rstest]
 #[cfg(unix)]
 fn test_pre_merge_pipeline_aborts_on_signal_exit(repo: TestRepo) {
@@ -1366,13 +1366,125 @@ broken = "echo {{ does_not_exist }} > should_not_exist.txt"
     assert!(!repo.root_path().join("should_not_exist.txt").exists());
 }
 
-/// Runner-log failure messages label steps the way the foreground does:
-/// named steps by command name, unnamed steps by the expanded command.
+/// A later preparation error must reap already admitted concurrent children and
+/// resolve their traces before the background runner reports its failure.
+#[rstest]
+#[cfg(unix)]
+fn test_background_concurrent_template_failure_reaps_admitted_child(repo: TestRepo) {
+    use nix::fcntl::OFlag;
+    use nix::sys::signal::{Signal, kill, killpg};
+    use nix::sys::stat::Mode;
+    use nix::unistd::{Pid, mkfifo};
+    use std::io::Write;
+    use std::os::unix::{fs::OpenOptionsExt, process::CommandExt};
+    use std::process::{Child, Stdio};
+
+    struct Runner {
+        child: Child,
+        waited: bool,
+    }
+    impl Drop for Runner {
+        fn drop(&mut self) {
+            if !self.waited {
+                // The unreaped leader reserves this group ID, including when
+                // an assertion fails while the runner is blocked on the FIFO.
+                let _ = killpg(Pid::from_raw(self.child.id() as i32), Signal::SIGKILL);
+                let _ = self.child.wait();
+            }
+        }
+    }
+
+    let admitted = "printf '%s' $$ > admitted.pid; exec sleep 60";
+    let command = |name: &str, template: &str| {
+        serde_json::json!({
+            "name": name,
+            "template": template,
+            "context": {},
+            "template_name": format!("user:{name}"),
+            "label": format!("user:{name}"),
+        })
+    };
+    let spec = serde_json::json!({
+        "worktree_path": repo.root_path(),
+        "branch": "main",
+        "hook_type": worktrunk::HookType::PostCreate,
+        "source": worktrunk::config::HookSource::User,
+        "steps": [{"Concurrent": [
+            command("admitted", admitted),
+            command("broken", "echo {{ does_not_exist }}"),
+        ]}],
+    });
+    let logs = resolve_git_common_dir(repo.root_path()).join("wt/logs");
+    let hook_logs = logs.join("main/user/post-start");
+    fs::create_dir_all(&hook_logs).unwrap();
+    let blocked_log = hook_logs.join("broken.log");
+    mkfifo(&blocked_log, Mode::S_IRUSR | Mode::S_IWUSR).unwrap();
+
+    let runner_log = repo.root_path().join("runner-error.log");
+    let child = repo
+        .wt_command()
+        .args(["-vv", "hook", "run-pipeline"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(fs::File::create(&runner_log).unwrap())
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let mut runner = Runner {
+        child,
+        waited: false,
+    };
+    runner
+        .child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(&serde_json::to_vec(&spec).unwrap())
+        .unwrap();
+
+    // Opening the second command's log blocks preparation until we have
+    // observed the first child's PID. The FIFO supplies ordering, not a delay.
+    let pid_path = repo.root_path().join("admitted.pid");
+    wait_for_file_content(&pid_path);
+    let pid = Pid::from_raw(fs::read_to_string(pid_path).unwrap().parse().unwrap());
+    kill(pid, None).expect("admitted child must still be running");
+    let _reader = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(OFlag::O_NONBLOCK.bits())
+        .open(blocked_log)
+        .unwrap();
+
+    crate::common::wait_for("concurrent preparation failure", || {
+        fs::read_to_string(&runner_log)
+            .unwrap()
+            .contains("Failed to expand user:broken:")
+    });
+    assert_eq!(kill(pid, None), Err(nix::errno::Errno::ESRCH));
+
+    let trace = fs::read_to_string(logs.join("trace.jsonl")).unwrap();
+    let outcomes: Vec<_> = worktrunk::trace::parse_lines(&trace)
+        .into_iter()
+        .filter(|entry| {
+            matches!(&entry.kind,
+            worktrunk::trace::TraceEntryKind::Command { command, .. } if command == admitted)
+        })
+        .map(|entry| entry.is_success())
+        .collect();
+    assert_eq!(outcomes, [false], "{trace}");
+    let status = runner.child.wait().unwrap();
+    runner.waited = true;
+    assert_eq!(status.code(), Some(1));
+}
+
+/// Runner-log failures use the same hook/status grammar as foreground failures.
 #[rstest]
 fn test_background_hook_failure_labels_in_runner_log(repo: TestRepo) {
     repo.write_test_config(
         r#"post-start = [{ broken = "exit 7" }]
-post-switch = "exit 9"
+post-switch = """
+true
+exit 9
+"""
 "#,
     );
 
@@ -1400,11 +1512,15 @@ post-switch = "exit 9"
 
     let named = runner_log("post-start");
     wait_for_file_content(&named);
-    assert_snapshot!(fs::read_to_string(&named).unwrap(), @"[31m✗[39m [31mcommand failed with exit code 7: broken[39m");
+    assert_snapshot!(fs::read_to_string(&named).unwrap(), @"[31m✗[39m [31m[1mpost-start user:broken[22m failed (exit code 7)[39m");
 
     let unnamed = runner_log("post-switch");
     wait_for_file_content(&unnamed);
-    assert_snapshot!(fs::read_to_string(&unnamed).unwrap(), @"[31m✗[39m [31mcommand failed with exit code 9: exit 9[39m");
+    assert_snapshot!(fs::read_to_string(&unnamed).unwrap(), @"
+    [31m✗[39m [31m[1mpost-switch user hook[22m failed (exit code 9)[39m
+    [107m [0m [2m[0m[2m[34mtrue[0m
+    [107m [0m [2m[0m[2m[34mexit[0m[2m 9[0m
+    ");
 }
 
 /// A semantic template error in a foreground pipeline step surfaces when that
@@ -4766,6 +4882,110 @@ fn test_concurrent_hook_does_not_inherit_git_discovery_vars(repo: TestRepo) {
     let marker = repo.root_path().join("env_seen.txt");
     assert!(marker.exists(), "concurrent hook did not run");
     assert_git_env_scrubbed(&marker);
+}
+
+/// A serial project hook and a concurrent user hook share status and source grammar.
+#[rstest]
+#[case(false, "project")]
+#[case(true, "user")]
+fn test_hook_failure_status_and_source(
+    repo: TestRepo,
+    #[case] concurrent: bool,
+    #[case] source: &str,
+) {
+    let config = if concurrent {
+        r#"pre-merge = [{ check = "exit 7", sibling = "true" }]"#
+    } else {
+        r#"pre-merge = [{ check = "exit 7" }]"#
+    };
+    if source == "project" {
+        repo.write_project_config(config);
+    } else {
+        repo.write_test_config(config);
+    }
+    let output = repo
+        .wt_command()
+        .args(["hook", "pre-merge", "--yes"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(7), "{stderr}");
+    setup_snapshot_settings(&repo).bind(|| {
+        assert_snapshot!(format!("hook_failure_status_{source}"), stderr);
+    });
+}
+
+/// A hook moves its worktree, so the next spawn fails. Serial and concurrent
+/// paths retain the failing command and OS cause under Warn and FailFast.
+#[rstest]
+#[cfg(unix)]
+#[case::warn_serial(true, false)]
+#[case::warn_concurrent(true, true)]
+#[case::failfast_serial(false, false)]
+#[case::failfast_concurrent(false, true)]
+fn test_foreground_hook_spawn_failure_has_one_io_detail(
+    mut repo: TestRepo,
+    #[case] warn: bool,
+    #[case] concurrent: bool,
+) {
+    let worktree = repo.add_worktree("move-away");
+    let hook = if warn { "post-start" } else { "pre-merge" };
+    let config = if concurrent {
+        r#"[
+    { move = "mv {{ worktree_path }} {{ worktree_path }}.moved" },
+    { check = "true", sibling = "true" },
+]
+"#
+    } else {
+        r#"[
+    { move = "mv {{ worktree_path }} {{ worktree_path }}.moved" },
+    { check = "true" },
+]
+"#
+    };
+    repo.write_test_config(&format!("{hook} = {config}"));
+    let output = repo
+        .wt_command()
+        .args(["hook", hook, "--foreground", "--yes"])
+        .current_dir(&worktree)
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(if warn { 0 } else { 1 }),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !worktree.exists(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(worktree.with_file_name("repo.move-away.moved").exists());
+    assert!(repo.root_path().exists());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr.matches("Failed to execute").count(),
+        if warn && concurrent { 2 } else { 1 },
+        "{stderr}"
+    );
+    assert_eq!(
+        stderr.matches("os error 2").count(),
+        if warn && concurrent { 2 } else { 1 },
+        "{stderr}"
+    );
+    setup_snapshot_settings(&repo).bind(|| {
+        assert_snapshot!(
+            match (warn, concurrent) {
+                (true, false) => "foreground_hook_spawn_failure_has_one_io_detail",
+                (true, true) => "foreground_concurrent_hook_spawn_failure_has_one_io_detail",
+                (false, false) => "foreground_hook_failfast_spawn_failure_has_one_io_detail",
+                (false, true) =>
+                    "foreground_concurrent_hook_failfast_spawn_failure_has_one_io_detail",
+            },
+            stderr
+        );
+    });
 }
 
 /// Sibling count must not change access to /dev/tty. Exercise the reported

@@ -6,7 +6,7 @@
 
 - **Interactive hooks**: foreground hooks can prompt when their commands run one at a time. On Unix, Ctrl-Z/fg suspend and resume foreground commands normally. (Breaking: hooks no longer receive JSON on stdin; pass context through template arguments. `wt step for-each` keeps JSON.) [Docs](https://worktrunk.dev/hook/#interactive-hooks) ([#3129](https://github.com/max-sixty/worktrunk/pull/3129), [#4400](https://github.com/max-sixty/worktrunk/pull/4400), thanks @endigma for requesting and @user753 and @willparsons for reporting)
 
-- **Nushell integration requires 0.113 or newer** (Breaking). [Docs](https://worktrunk.dev/shell-integration/) ([#4400](https://github.com/max-sixty/worktrunk/pull/4400))
+- **Nushell integration requires 0.113 or newer** (Breaking). [Docs](https://worktrunk.dev/config/#wt-config-shell-init--manual-setup) ([#4400](https://github.com/max-sixty/worktrunk/pull/4400))
 
 - **Choose a worktree directory independently of its branch**: experimental `wt switch --create feature/JIRA-1234 --path ../dark-mode` overrides the path template for one worktree. Switch by branch or path as usual; `wt step relocate` can return it to the template location. [Docs](https://worktrunk.dev/switch/#custom-path) ([#4317](https://github.com/max-sixty/worktrunk/pull/4317), thanks @christowiz for requesting in [#1982](https://github.com/max-sixty/worktrunk/issues/1982))
 
@@ -14,11 +14,15 @@
 
 - **Prune runs pre-remove hooks concurrently across worktrees** (Breaking): hooks writing shared resources must coordinate those writes. `wt step prune --foreground` serializes worktree removals. [Docs](https://worktrunk.dev/step/#wt-step-prune) ([#4337](https://github.com/max-sixty/worktrunk/pull/4337))
 
-- **Config views and shell integration advice**: installation and authentication instructions have their own rows, while config and approvals parse errors name the source file and show one consistent diagnostic. Merge and removal suggest restarting the shell when integration is installed but inactive. ([#4351](https://github.com/max-sixty/worktrunk/pull/4351), [#4343](https://github.com/max-sixty/worktrunk/pull/4343))
+- **Config views and shell integration advice**: `wt config show` lists installation and authentication advice on their own lines; config and approvals parse errors name the source file. Merge and removal suggest restarting the shell when integration is installed but inactive. ([#4351](https://github.com/max-sixty/worktrunk/pull/4351), [#4343](https://github.com/max-sixty/worktrunk/pull/4343))
+
+- **Hook failure diagnostics**: failures name the hook and its source; commands that cannot start report the program, working directory and OS error. A concurrent hook that cannot start no longer stops its siblings. ([#4352](https://github.com/max-sixty/worktrunk/pull/4352))
 
 - **Removal and squash recovery advice**: forced removal reports uncommitted changes or a listing failure; dirty-worktree hints recommend `git stash -u` when untracked files need preserving. Squashing staged work prints the backup ref and a command to recover its exact commit in a new worktree. ([#4347](https://github.com/max-sixty/worktrunk/pull/4347))
 
 - **Worktrunk branding in Codex**: the plugin manifest now supplies a Worktrunk logo and composer icon. ([#4327](https://github.com/max-sixty/worktrunk/pull/4327))
+
+- **`/wt-switch-create` across repositories**: with a repository argument, the Claude Code skill reads that repository’s root `CLAUDE.md` and `AGENTS.md` before starting the task. ([#4414](https://github.com/max-sixty/worktrunk/pull/4414))
 
 ### Fixed
 
@@ -50,11 +54,11 @@
 
 - **The bare-repository recipe fetches tracking refs**: it configures the fetch refspec and remote HEAD, so worktrees created from that layout can see remote branches. [Docs](https://worktrunk.dev/tips-patterns/#bare-repository-layout) ([#4323](https://github.com/max-sixty/worktrunk/pull/4323), thanks @gitNetw0rk for reporting in [#4322](https://github.com/max-sixty/worktrunk/issues/4322))
 
-- **Config and list help match current behavior**: config state examples use supported subcommands and include post-remove logs; JSON help no longer claims dirty or stale branches are skipped. ([#4363](https://github.com/max-sixty/worktrunk/pull/4363), [#4359](https://github.com/max-sixty/worktrunk/pull/4359))
+- **Config, shell and list help**: config state examples use supported subcommands and include post-remove logs; JSON help no longer claims dirty or stale branches are skipped. Shell setup and current-session checks live under `wt config shell --help`, including manual PowerShell setup. [Docs](https://worktrunk.dev/config/#wt-config-shell) ([#4363](https://github.com/max-sixty/worktrunk/pull/4363), [#4359](https://github.com/max-sixty/worktrunk/pull/4359), [#4344](https://github.com/max-sixty/worktrunk/pull/4344))
 
 ### Internal
 
-- **Library API changes** (Breaking): config and error types changed; signal forwarding methods and shell fields were removed; copy helpers take a timestamp; `ensure_holds_this_worktree` returns its Git directory; `prune_worktree_entry` takes a cleanup mode; `ensure_clean` takes a scan mode; `create_safety_backup` returns a `SafetyBackup`. ([#4347](https://github.com/max-sixty/worktrunk/pull/4347), [#4351](https://github.com/max-sixty/worktrunk/pull/4351), [#4357](https://github.com/max-sixty/worktrunk/pull/4357), [#4319](https://github.com/max-sixty/worktrunk/pull/4319), [#4361](https://github.com/max-sixty/worktrunk/pull/4361), [#4400](https://github.com/max-sixty/worktrunk/pull/4400), [#4393](https://github.com/max-sixty/worktrunk/pull/4393))
+- **Library API changes** (Breaking): config and error types, signal forwarding, shell fields, copying, worktree cleanup, safety backups and tracing APIs changed. ([#4347](https://github.com/max-sixty/worktrunk/pull/4347), [#4351](https://github.com/max-sixty/worktrunk/pull/4351), [#4357](https://github.com/max-sixty/worktrunk/pull/4357), [#4319](https://github.com/max-sixty/worktrunk/pull/4319), [#4361](https://github.com/max-sixty/worktrunk/pull/4361), [#4400](https://github.com/max-sixty/worktrunk/pull/4400), [#4393](https://github.com/max-sixty/worktrunk/pull/4393), [#4352](https://github.com/max-sixty/worktrunk/pull/4352))
 
 - **Building from source requires Rust 1.98**. ([#4367](https://github.com/max-sixty/worktrunk/pull/4367))
 

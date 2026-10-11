@@ -1938,12 +1938,17 @@ static AUTO_GENERATED_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 static HTML_FIGURE_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)<figure[^>]*>.*?</figure>\n*").unwrap());
 
+/// Empty compatibility anchors have no meaning outside the site.
+static HTML_ANCHOR_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?m)^[ \t]*<span id="[a-z0-9-]+"></span>[ \t]*\n?"#).unwrap());
+
 /// Transform docs content for skill file consumption
 ///
 /// Transforms:
 /// - Extracts title from YAML frontmatter and prepends it as H1
 /// - Strips AUTO-GENERATED marker comments (keeps content)
 /// - Strips HTML figure elements (demo GIFs not useful for skill)
+/// - Strips empty compatibility anchors
 /// - Converts site-root links to full URLs
 /// - Removes "See also" section (just links to other docs pages)
 fn transform_docs_for_skill(content: &str) -> String {
@@ -1961,6 +1966,8 @@ fn transform_docs_for_skill(content: &str) -> String {
 
     // Strip HTML figure elements (demo GIFs)
     let content = HTML_FIGURE_PATTERN.replace_all(&content, "");
+
+    let content = HTML_ANCHOR_PATTERN.replace_all(&content, "");
 
     // Replace the HTML badge with its portable text equivalent.
     // Sourcing the badge HTML from `worktrunk::docs` keeps producer (help.rs)

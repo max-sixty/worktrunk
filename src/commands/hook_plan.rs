@@ -54,9 +54,9 @@ use super::command_executor::{
     CommandContext, FailureStrategy, PipelineKind, execute_pipeline_foreground, prepare_steps,
 };
 use super::hook_announcement::SourcedStep;
-use super::hook_filter::HookSource;
 use super::hooks::{HookAnnouncer, into_source_groups, sourced_steps_to_foreground};
 use super::project_config::{ApprovableCommand, Phase};
+use worktrunk::config::HookSource;
 
 /// One `(hook_type, anchor)`'s frozen, source-tagged selection.
 ///

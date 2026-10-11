@@ -6962,7 +6962,6 @@ fn test_remove_branch_deletion_failure_context(
     let stderr = String::from_utf8(output.stderr).unwrap();
     let plain = stderr.ansi_strip();
     assert_eq!(output.status.code(), Some(1), "{plain}");
-    assert_eq!(plain.matches("cannot lock ref").count(), 1, "{plain}");
     assert_eq!(
         plain.contains("Worktree removed @"),
         with_worktree,
@@ -6971,19 +6970,43 @@ fn test_remove_branch_deletion_failure_context(
     assert_branch_exists(&repo, "feature", true, &stderr);
     if let Some(worktree) = worktree {
         assert!(!worktree.exists(), "the checkout removal succeeded");
-        crate::common::wait_for("post-remove hook after ref failure", || {
-            repo.root_path().join("removed-marker").is_file()
-        });
+        // Opening the marker precedes writing it, even after foreground removal.
+        crate::common::wait_for_file_content(&repo.root_path().join("removed-marker"));
         assert_eq!(
             fs::read_to_string(repo.root_path().join("removed-marker")).unwrap(),
             "complete"
         );
     }
+    // Git's indented cause includes advice that varies by Git version.
+    // Snapshot Worktrunk's context and separately assert the real lock cause.
+    let mut context = Vec::new();
+    let mut native_cause = Vec::new();
+    let mut in_native_block = false;
+    for line in stderr.lines() {
+        let native = line.ansi_strip().starts_with(' ');
+        if native {
+            native_cause.push(line);
+            if !in_native_block {
+                context.push("[Git error details]");
+            }
+        } else {
+            context.push(line);
+        }
+        in_native_block = native;
+    }
+    let native_cause = native_cause.join("\n");
+    assert_eq!(
+        native_cause.matches("cannot lock ref").count(),
+        1,
+        "{plain}"
+    );
+    assert!(native_cause.contains("refs/heads/feature.lock"), "{plain}");
+    let context = context.join("\n");
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         assert_snapshot!(
             format!("remove_branch_deletion_failure_{snapshot_name}"),
-            stderr
+            context
         );
     });
 }

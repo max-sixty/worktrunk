@@ -4258,7 +4258,7 @@ pub mod tests {
         assert!(
             warnings
                 .iter()
-                .any(|w| w.contains("pre-remove command failed") && w.contains("--no-hooks")),
+                .any(|w| w.contains("pre-remove project hook") && w.contains("--no-hooks")),
             "a failed removal stashes the hook failure: {warnings:?}"
         );
 
@@ -4456,20 +4456,16 @@ pub mod tests {
         assert!(repo.branch("feature").exists_locally().unwrap());
         let warnings = remover.stashed_warnings.lock().unwrap();
         assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].contains("pre-remove command failed"));
+        assert!(warnings[0].contains("pre-remove project hook"));
     }
 
     /// Worktree removal can succeed while deleting its branch fails. The picker
     /// must show the branch failure even though there is no worktree row to restore.
     #[test]
     fn test_apply_reports_branch_deletion_failure_after_worktree_removal() {
-        // Keep Git's lock-path wrapping independent of the platform's temp root.
-        let directory = worktrunk::testing::test_tempdir();
-        let root = directory.path().join("picker-branch-failure".repeat(6));
-        let mut test = worktrunk::testing::TestRepo::at(&root);
-        fs::write(test.path().join("file.txt"), "initial").unwrap();
-        test.run_git(&["add", "."]);
-        test.run_git(&["commit", "-m", "initial"]);
+        use ansi_str::AnsiStr;
+
+        let mut test = worktrunk::testing::TestRepo::with_initial_commit();
         let created = test.add_worktree("feature");
         let repo = worktrunk::git::Repository::at(test.path()).unwrap();
         let path = repo
@@ -4510,7 +4506,34 @@ pub mod tests {
                     .replace('\\', "/"),
                 "[GIT_DIR]",
             );
-        insta::assert_snapshot!("picker_branch_deletion_failure", diagnostic);
+        // Git's indented cause includes version-dependent lock advice.
+        let mut context = Vec::new();
+        let mut native_cause = Vec::new();
+        let mut in_native_block = false;
+        for line in diagnostic.lines() {
+            let native = line.ansi_strip().starts_with(' ');
+            if native {
+                native_cause.push(line);
+                if !in_native_block {
+                    context.push("[Git error details]");
+                }
+            } else {
+                context.push(line);
+            }
+            in_native_block = native;
+        }
+        let native_cause = native_cause.join("\n");
+        assert_eq!(
+            native_cause.matches("cannot lock ref").count(),
+            1,
+            "{diagnostic}"
+        );
+        assert!(
+            native_cause.contains("refs/heads/feature.lock"),
+            "{diagnostic}"
+        );
+        let context = context.join("\n");
+        insta::assert_snapshot!("picker_branch_deletion_failure", context);
     }
 
     /// End-to-end through `apply`: alt-x on a worktree whose branch is unmerged

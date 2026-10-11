@@ -156,8 +156,8 @@ fn run_custom(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> Res
     let child = match spawned {
         Ok(child) => Arc::new(child),
         Err(error) => {
-            trace.fail(&error);
-            return Err(error).with_context(|| format!("failed to execute {}", path.display()));
+            trace.fail(error.as_ref());
+            return Err(error);
         }
     };
     #[cfg(unix)]
@@ -324,9 +324,12 @@ mod tests {
         // (the success path is covered by the signal test above).
         let err = run_custom(Path::new("/no/such/wt-custom-7f3a9b2c"), &[], None)
             .expect_err("spawning a missing binary should fail");
-        assert!(
-            err.to_string().contains("failed to execute"),
-            "expected spawn-failure context, got: {err}"
+        assert_eq!(
+            err.to_string(),
+            "Failed to execute /no/such/wt-custom-7f3a9b2c"
         );
+        let cause = err.root_cause().downcast_ref::<std::io::Error>().unwrap();
+        assert_eq!(cause.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(format!("{err:#}").matches(&cause.to_string()).count(), 1);
     }
 }

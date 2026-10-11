@@ -22,7 +22,7 @@
 //!
 //! - **Long timeouts** (30s) ensure reliability on slow CI
 //! - **Fast polling** (10ms) means tests complete quickly when things work
-//! - **Content-based readiness** detects when skim has rendered ("> " prompt)
+//! - **Content-based readiness** requires the prompt and a selected item
 //! - **Stabilization detection** waits for screen to stop changing
 //! - **Content expectations** wait for async preview content to load (e.g., "diff --git")
 
@@ -41,10 +41,6 @@ use std::time::{Duration, Instant};
 const TERM_ROWS: u16 = 30;
 const TERM_COLS: u16 = 120;
 
-/// Maximum time to wait for skim to become ready (show "> " prompt).
-/// Long timeout ensures reliability on slow CI.
-const READY_TIMEOUT: Duration = Duration::from_secs(30);
-
 /// Maximum time to wait for screen to stabilize after input.
 /// Long timeout ensures reliability on slow CI where skim's async item loading
 /// and preview commands can be very slow under heavy load. Fast polling (10ms)
@@ -56,7 +52,7 @@ const STABILIZE_TIMEOUT: Duration = Duration::from_secs(30);
 /// keystroke (Enter to switch, Escape to abort). A clean switch or abort exits in
 /// well under a second, but under heavy CI parallelism the final git work (or
 /// skim's Windows terminal teardown) can lag. Generous like
-/// `READY_TIMEOUT`/`STABILIZE_TIMEOUT` for the same reason — fast polling means
+/// `STABILIZE_TIMEOUT` for the same reason — fast polling means
 /// the common case still returns at once. Reaching it is a hang, and
 /// [`wait_for_exit`] panics rather than reporting an exit code for it.
 const CHILD_EXIT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -225,10 +221,17 @@ fn assert_valid_create_exit_code(exit_code: i32) {
     );
 }
 
-/// Check if skim is ready (shows "> " prompt indicating it's accepting input)
-fn is_skim_ready(screen_content: &str) -> bool {
-    // Skim shows "> " at the start of the prompt line when accepting input.
-    screen_content.starts_with("> ") || screen_content.contains("\n> ")
+/// The query can paint before the async matcher supplies any items. Every
+/// session boots unfiltered, so require a real selection before driving it.
+fn is_picker_ready(screen: &str) -> bool {
+    screen
+        .lines()
+        .next()
+        .is_some_and(|line| line.starts_with('>'))
+        && picker_item_rows(screen).any(|row| {
+            row.strip_prefix('>')
+                .is_some_and(|item| !item.trim().is_empty())
+        })
 }
 
 /// Live handles for a booted picker PTY session.
@@ -287,31 +290,13 @@ fn boot_picker_pty(
 
     let mut parser = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
 
-    // Wait for skim to be ready (show "> " prompt)
-    let start = Instant::now();
-    loop {
-        while let Ok(chunk) = rx.try_recv() {
-            parser.process(&chunk);
-        }
-
-        let screen_content = parser.screen().contents();
-        if is_skim_ready(&screen_content) {
-            break;
-        }
-
-        if start.elapsed() > READY_TIMEOUT {
-            eprintln!(
-                "Warning: Timed out waiting for skim ready state. Screen content:\n{}",
-                screen_content
-            );
-            break;
-        }
-
-        std::thread::sleep(POLL_INTERVAL);
-    }
-
-    // Wait for initial render to stabilize
-    wait_for_stable(&rx, &mut parser);
+    wait_for_stable_until(
+        &rx,
+        &mut parser,
+        is_picker_ready,
+        Some("picker prompt and selected item"),
+        None,
+    );
 
     PickerSession {
         child,
@@ -533,11 +518,6 @@ fn exec_in_pty_capture_noop_probe(
 
     let exit_code = abort_and_exit_code(child, writer, rx);
     (baseline, after, exit_code)
-}
-
-/// Wait for screen content to stabilize (no changes for STABLE_DURATION)
-fn wait_for_stable(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser) {
-    wait_for_stable_with_content(rx, parser, None);
 }
 
 /// Wait for screen content to stabilize, optionally requiring specific content.
@@ -854,13 +834,32 @@ fn test_switch_picker_abort_with_escape(repo: TestRepo) {
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
     let env_vars = repo.test_env_vars();
-    let result = exec_in_pty_capture_before_abort(
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
         wt_bin().to_str().unwrap(),
         &["switch"],
         repo.root_path(),
         &env_vars,
-        &[], // No inputs before abort
     );
+    // The selected skeleton is interactive before row status and preview
+    // computation finish. This snapshot captures their completed contents.
+    wait_for_stable_until(
+        &rx,
+        &mut parser,
+        |screen| {
+            picker_item_rows(screen).any(|row| row.split_whitespace().eq([">", "@", "main", "^"]))
+                && screen.contains("main has no file changes vs main")
+        },
+        Some("completed main status row and empty-diff preview"),
+        None,
+    );
+    let exit_code = abort_and_exit_code(child, writer, rx);
+    let result = PtyResult { parser, exit_code };
 
     assert_valid_abort_exit_code(result.exit_code);
 
@@ -2533,6 +2532,23 @@ const UNSTARTED_SCREEN: &str = r">
   + wt-drop      _
   # fix/fl…
 ";
+
+#[test]
+fn test_picker_readiness_requires_a_selected_item() {
+    for incomplete in [
+        ">",
+        ">\n    Branch Status\n",
+        "> @ main\n    Branch Status\n  @ main\n",
+        ">\n    Branch Status\n>\n",
+    ] {
+        assert!(
+            !is_picker_ready(incomplete),
+            "incomplete frame:\n{incomplete}"
+        );
+    }
+    assert!(is_picker_ready(UNSTARTED_SCREEN));
+    assert!(is_picker_ready("> query\n    Branch Status\n>   main\n"));
+}
 
 #[test]
 fn test_arrow_toward_row_recovers_from_an_overshoot() {
