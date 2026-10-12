@@ -3154,7 +3154,16 @@ fn branch_deletion_refuses_a_registration_omitted_from_inventory() {
     let registration = Repository::git_dir_at(&linked).unwrap().unwrap();
     let backlink = registration.join("gitdir");
     std::fs::remove_file(&backlink).unwrap();
+    let selected = test.add_worktree("selected");
+    let selected_registration = Repository::git_dir_at(&selected).unwrap().unwrap();
+    std::fs::remove_dir_all(&selected).unwrap();
     let repo = Repository::at(test.root_path()).unwrap();
+    // Selecting/removing another registration does not require the broken
+    // sibling's identity; branch deletion still requires the full topology.
+    assert_eq!(repo.stale_worktree_work(&selected).unwrap(), None);
+    repo.prune_worktree_entry(&selected).unwrap();
+    assert!(!selected_registration.exists());
+    assert!(registration.exists());
     let listed = repo.list_worktrees().unwrap();
     assert!(listed.iter().all(|wt| !wt.detached));
     assert!(
@@ -3401,4 +3410,33 @@ fn linked_separate_git_dir_requires_repair_before_inventory() {
         Repository::at(&linked).unwrap().list_worktrees().unwrap()[0].path,
         dunce::canonicalize(&main).unwrap(),
     );
+}
+
+/// HEAD's backend storage does not change checkout protection or deletion.
+#[test]
+fn branch_deletion_retains_reftable_checkout() {
+    use crate::git::{BranchDeletionOutcome, delete_branch_if_safe};
+
+    let mut test = TestRepo::with_initial_commit();
+    test.run_git(&["refs", "migrate", "--ref-format=reftable"]);
+    let linked = test.add_worktree("feature");
+    test.create_branch("safe");
+    test.create_branch("forced");
+    let repo = Repository::at(test.root_path()).unwrap();
+    let snapshot = repo.capture_refs().unwrap();
+    let retained = delete_branch_if_safe(&repo, &snapshot, "feature", "main", false).unwrap();
+    assert!(matches!(
+        retained.outcome,
+        BranchDeletionOutcome::RetainedCheckedOut { path } if path == linked
+    ));
+    let safe = delete_branch_if_safe(&repo, &snapshot, "safe", "main", false).unwrap();
+    assert!(matches!(safe.outcome, BranchDeletionOutcome::Integrated(_)));
+    let forced = delete_branch_if_safe(&repo, &snapshot, "forced", "main", true).unwrap();
+    assert!(matches!(
+        forced.outcome,
+        BranchDeletionOutcome::ForceDeleted
+    ));
+    assert!(repo.branch("feature").exists_locally().unwrap());
+    assert!(!repo.branch("safe").exists_locally().unwrap());
+    assert!(!repo.branch("forced").exists_locally().unwrap());
 }
