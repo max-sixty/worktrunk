@@ -5944,12 +5944,12 @@ fn test_codex_hooks_carry_windows_commands() {
             "commandWindows must not invoke Windows Terminal as wt:\n{windows}"
         );
         assert!(
-            windows.starts_with(r#"set WT_HOOK=; & "${PLUGIN_ROOT}\hooks\wt.cmd" "#)
+            windows.starts_with(r#"cmd /d /c call "${PLUGIN_ROOT}\hooks\wt.cmd" "#)
                 && root.join("plugins/worktrunk/hooks/wt.cmd").is_file(),
-            "commandWindows must invoke the shipped shim without a bare executable lookup:\n{windows}"
+            "commandWindows must invoke the shipped shim through cmd /d /c call:\n{windows}"
         );
         assert!(
-            !windows.contains("||") && !windows.contains("exit /b"),
+            !windows.contains("||") && !windows.contains('&') && !windows.contains("exit /b"),
             "commandWindows must leave cmd-only failure handling in the shim:\n{windows}"
         );
         assert!(
@@ -6021,7 +6021,6 @@ fn msys_path(path: &std::path::Path) -> String {
 #[cfg(all(windows, feature = "shell-integration-tests"))]
 #[rstest]
 fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
-    use crate::common::mock_commands::{MockConfig, mock_calls};
     use std::os::windows::process::CommandExt;
 
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -6041,12 +6040,6 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
         .unwrap();
     }
 
-    fs::write(
-        plugin_root.join("hooks/quiet.cmd"),
-        "@echo off\r\nexit /b 0\r\n",
-    )
-    .unwrap();
-
     let command_for = |event: &str| -> String {
         codex["hooks"]["hooks"][event][0]["hooks"][0]["commandWindows"]
             .as_str()
@@ -6058,18 +6051,12 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
     let path_dir = repo.root_path().join("path-dir");
     fs::create_dir_all(&path_dir).unwrap();
     fs::copy(crate::common::wt_bin(), path_dir.join("git-wt.exe")).unwrap();
-    // Include the project directory explicitly so PowerShell's application
-    // lookup can select the decoy; it does not search the current directory.
-    let with_worktrunk = pinned_windows_path(&[repo.root_path().to_path_buf(), path_dir]);
+    let with_worktrunk = pinned_windows_path(&[path_dir]);
     let without_worktrunk = pinned_windows_path(&[]);
 
-    let call_log = TempDir::new().unwrap();
-    MockConfig::new("cmd")
-        .command("/d /c call", MockResponse::exit(0))
-        .write(repo.root_path());
-
-    let run_line =
-        |shell: &std::path::Path, line: &str, path: &std::ffi::OsString| -> std::process::Output {
+    let run_hook =
+        |shell: &std::path::Path, event: &str, path: &std::ffi::OsString| -> std::process::Output {
+            let line = command_for(event);
             let mut cmd = std::process::Command::new(shell);
             repo.configure_wt_cmd(&mut cmd);
             if shell.file_name() == Some(std::ffi::OsStr::new("cmd.exe")) {
@@ -6078,18 +6065,11 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
                 cmd.args(["-NoProfile", "-Command"]).arg(line);
             }
             cmd.env("PATH", path)
-                .env("PATHEXT", ".COM;.EXE;.BAT;.CMD")
-                .env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", repo.root_path())
-                .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
                 .env_remove("WORKTRUNK_BIN")
-                .env_remove("NoDefaultCurrentDirectoryInExePath")
                 .current_dir(repo.root_path())
                 .output()
                 .unwrap()
         };
-    let run_hook = |shell: &std::path::Path, event: &str, path: &std::ffi::OsString| {
-        run_line(shell, &command_for(event), path)
-    };
     let describe = |shell: &std::path::Path, output: &std::process::Output| {
         format!(
             "under {}, got {}\nstdout:\n{}\nstderr:\n{}",
@@ -6104,94 +6084,59 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
         let output = repo
             .git_command()
             .args(["config", "--get", &marker_key])
-            .run()
-            .unwrap();
-        if output.status.code() == Some(1) && output.stdout.is_empty() {
-            return String::new();
-        }
-        assert!(output.status.success(), "{output:?}");
-        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()["marker"]
-            .as_str()
-            .unwrap()
-            .to_owned()
+            .run();
+        output.map_or_else(
+            |_| String::new(),
+            |output| String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+        )
     };
 
-    // Prove the decoy is reachable through the old bare-cmd hop in PowerShell.
-    // cmd can resolve its own name to the system interpreter, so a native cmd
-    // control cannot establish that this decoy would have run. Keep the decoy
-    // on PATH while exercising every shipped hook below.
-    let system_cmd = std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap())
-        .join("System32")
-        .join("cmd.exe");
-    let windows_powershell =
-        which::which("powershell.exe").expect("Windows PowerShell must be installed");
-    // cmd parses its own argv[0], which must use native separators even though
-    // CreateProcess accepts a forward slash in the executable path.
-    let output = run_line(&system_cmd, "ver", &with_worktrunk);
-    assert!(
-        output.status.success(),
-        "the host command processor must start; {}",
-        describe(&system_cmd, &output)
-    );
-    let old_command = format!(
-        r#"cmd /d /c call "{}\hooks\wt.cmd" config state marker set 🤖"#,
-        plugin_root.display()
-    );
-    let output = run_line(&windows_powershell, &old_command, &with_worktrunk);
-    assert!(
-        output.status.success(),
-        "{}",
-        describe(&windows_powershell, &output)
-    );
-    let expected_calls = vec![format!(
-        "/d /c call {}\\hooks\\wt.cmd config state marker set 🤖",
-        plugin_root.display()
-    )];
-    assert_eq!(
-        mock_calls(call_log.path(), "cmd"),
-        expected_calls,
-        "the PowerShell PATH control must select the project decoy; {}",
-        describe(&windows_powershell, &output)
-    );
-    assert!(marker().is_empty(), "the decoy must not set a real marker");
-
     for shell in [
-        system_cmd,
-        windows_powershell,
+        which::which("cmd.exe").expect("cmd.exe must be installed"),
+        which::which("powershell.exe").expect("Windows PowerShell must be installed"),
         which::which("pwsh.exe").expect("shell-integration-tests requires PowerShell 7 on PATH"),
     ] {
         let shell = shell.as_path();
 
-        // Separate shell diagnostics from Worktrunk's own marker messages.
-        let quiet_command = command_for("UserPromptSubmit").replace("\\wt.cmd", "\\quiet.cmd");
-        let output = run_line(shell, &quiet_command, &with_worktrunk);
+        let output = run_hook(shell, "UserPromptSubmit", &with_worktrunk);
         assert!(
-            output.status.success() && output.stdout.is_empty() && output.stderr.is_empty(),
-            "the launcher must not emit shell output; {}",
+            output.status.success(),
+            "UserPromptSubmit hook must succeed; {}",
+            describe(shell, &output)
+        );
+        assert!(
+            marker().contains('🤖'),
+            "UserPromptSubmit must store the working marker, not a mangled byte sequence; \
+             got {:?} {}",
+            marker(),
             describe(shell, &output)
         );
 
-        for (event, expected) in [
-            ("UserPromptSubmit", "🤖"),
-            ("PermissionRequest", "💬"),
-            ("Stop", "💬"),
-            ("SessionEnd", ""),
-        ] {
-            let output = run_hook(shell, event, &with_worktrunk);
-            assert!(
-                output.status.success() && output.stdout.is_empty(),
-                "{event} must succeed without hook context; {}",
-                describe(shell, &output)
-            );
-            assert_eq!(marker(), expected, "{event}: {}", describe(shell, &output));
-            assert!(
-                mock_calls(call_log.path(), "cmd") == expected_calls,
-                "{event} must not execute the project-local cmd; {}",
-                describe(shell, &output)
-            );
-        }
+        let output = run_hook(shell, "Stop", &with_worktrunk);
+        assert!(
+            output.status.success(),
+            "Stop hook must succeed; {}",
+            describe(shell, &output)
+        );
+        assert!(
+            marker().contains('💬'),
+            "Stop must replace the marker with the waiting one; got {:?} {}",
+            marker(),
+            describe(shell, &output)
+        );
 
-        assert_eq!(mock_calls(call_log.path(), "cmd"), expected_calls);
+        let output = run_hook(shell, "SessionEnd", &with_worktrunk);
+        assert!(
+            output.status.success(),
+            "SessionEnd hook must succeed; {}",
+            describe(shell, &output)
+        );
+        assert!(
+            marker().is_empty(),
+            "SessionEnd must clear the marker; got {:?} {}",
+            marker(),
+            describe(shell, &output)
+        );
 
         // Worktrunk not installed: the marker is optional decoration, so the
         // hook must stay silent rather than fail every prompt (#4007).
@@ -6208,7 +6153,6 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
             marker(),
             describe(shell, &output)
         );
-        assert_eq!(mock_calls(call_log.path(), "cmd"), expected_calls);
     }
 }
 

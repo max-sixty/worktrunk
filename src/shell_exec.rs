@@ -565,20 +565,9 @@ fn find_git_bash() -> Option<PathBuf> {
 fn git_bash_beside_git(git_path: &Path) -> Option<PathBuf> {
     let git_dir = git_path.parent()?;
     let root = git_dir.parent()?;
-    // Only known nested runtime layouts justify another ascent. A shallow
-    // Git/cmd or Git/bin install must not select a sibling ../bin/bash.exe.
-    let nested_runtime = git_dir
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.eq_ignore_ascii_case("bin"))
-        && root
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| {
-                ["usr", "mingw32", "mingw64"]
-                    .iter()
-                    .any(|runtime| name.eq_ignore_ascii_case(runtime))
-            });
+    // Git runtime prefixes own libexec/git-core. A shallow Git/cmd or
+    // Git/bin install must not select a sibling ../bin/bash.exe.
+    let nested_runtime = root.join("libexec").join("git-core").is_dir();
     std::iter::once(root)
         .chain(root.parent().filter(|_| nested_runtime))
         .find_map(|root| {
@@ -3067,8 +3056,18 @@ print(*counts)
     fn test_git_bash_beside_git_install_layouts() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("Git");
-        for sub in ["bin", "usr/bin", "cmd", "mingw32/bin", "mingw64/bin"] {
+        for sub in [
+            "bin",
+            "usr/bin",
+            "cmd",
+            "mingw32/bin",
+            "mingw64/bin",
+            "clangarm64/bin",
+        ] {
             std::fs::create_dir_all(root.join(sub)).unwrap();
+        }
+        for runtime in ["mingw32", "mingw64", "clangarm64"] {
+            std::fs::create_dir_all(root.join(runtime).join("libexec/git-core")).unwrap();
         }
         let bin_bash = root.join("bin").join("bash.exe");
         std::fs::write(&bin_bash, "").unwrap();
@@ -3079,6 +3078,7 @@ print(*counts)
             "bin/git.exe",
             "mingw32/bin/git.exe",
             "mingw64/bin/git.exe",
+            "clangarm64/bin/git.exe",
         ] {
             assert_eq!(
                 git_bash_beside_git(&root.join(git)),
@@ -3110,6 +3110,7 @@ print(*counts)
             "usr/bin/git.exe",
             "mingw32/bin/git.exe",
             "mingw64/bin/git.exe",
+            "clangarm64/bin/git.exe",
         ] {
             assert_eq!(git_bash_beside_git(&root.join(git)), None, "{git}");
         }
