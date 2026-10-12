@@ -303,6 +303,12 @@ pub fn vars_available_in(scope: ValidationScope) -> Vec<&'static str> {
     vars
 }
 
+/// Whether `name` is a variable Worktrunk supplies in some scope.
+fn is_worktrunk_var(name: &str) -> bool {
+    use strum::IntoEnumIterator;
+    HookType::iter().any(|hook| vars_available_in(ValidationScope::Hook(hook)).contains(&name))
+}
+
 /// Cheap vars `build_hook_context` computes regardless of [`VarScope`] but
 /// which can still come out absent, so their absence is `(unset)` — a fact
 /// about the worktree — rather than `(unused)`, which claims the scope gate
@@ -860,8 +866,10 @@ fn build_undefined_vars_error(
     } else {
         "variables"
     };
+    // A name Worktrunk defines somewhere is unset here, not misspelled, so a
+    // similar name (`target_worktree_path` for `target`) would mislead.
     let suggestion = match undefined_vars {
-        [var] => did_you_mean(var, available_vars.iter().cloned())
+        [var] if !is_worktrunk_var(var) => did_you_mean(var, available_vars.iter().cloned())
             .into_iter()
             .next(),
         _ => None,
@@ -1762,6 +1770,28 @@ mod tests {
             assert_eq!(err.suggestion.as_deref(), Some("branch"));
             assert_eq!(err.source_line.as_deref(), template.lines().last());
         }
+    }
+
+    /// A Worktrunk variable the operation left unset (`target` in a
+    /// `post-switch` hook to a detached worktree) is not a typo: suggesting a
+    /// similarly named variable would steer the user to the wrong value.
+    #[test]
+    fn test_unset_worktrunk_variable_gets_no_suggestion() {
+        let test = test_repo();
+        let vars = HashMap::from([("branch", "main"), ("target_worktree_path", "/tmp/wt")]);
+        let err = expand_template(
+            "echo {{ target }}",
+            &vars,
+            ShellEscapeMode::Literal,
+            &test.repo,
+            "test",
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.message,
+            "Failed to expand test: undefined variable target @ line 1"
+        );
+        assert_eq!(err.suggestion, None);
     }
 
     #[test]
