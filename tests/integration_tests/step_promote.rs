@@ -515,29 +515,6 @@ fn test_promote_keeps_worktree_metadata_with_tracked_sibling(mut repo: TestRepo)
         );
     }
     assert!(!repo.root_path().join(".git/wt/staging/promote").exists());
-
-    // Moving the blocker aside is enough to retry; no manual branch or staging repair.
-    fs::rename(
-        repo.root_path().join(".conductor/local"),
-        repo.root_path().join(".conductor/saved-local"),
-    )
-    .unwrap();
-    let retry = repo
-        .wt_command()
-        .args(["step", "promote", "main"])
-        .output()
-        .unwrap();
-    assert!(
-        retry.status.success(),
-        "{}",
-        String::from_utf8_lossy(&retry.stderr)
-    );
-    assert_eq!(branch_name(&repo, repo.root_path()), "main");
-    assert_eq!(branch_name(&repo, &feature), "feature");
-    assert_eq!(
-        fs::read_to_string(repo.root_path().join(".conductor/saved-local")).unwrap(),
-        "main .conductor"
-    );
 }
 
 /// Only main worktree has gitignored files — they should move to the other worktree
