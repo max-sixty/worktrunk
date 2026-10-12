@@ -44,25 +44,8 @@ impl Repository {
         self.cache
             .worktrees
             .get_or_try_init(|| {
-                let stdout = {
-                    let _registry = self.worktree_registry_read();
-                    self.run_command_bytes(&["worktree", "list", "--porcelain", "-z"])?
-                };
-                let raw_worktrees = WorktreeInfo::parse_porcelain_list_z(&stdout)?;
-                let mut worktrees: Vec<_> =
-                    raw_worktrees.into_iter().filter(|wt| !wt.bare).collect();
-
-                // Git infers the main from the common directory's name. A
-                // separate store (including one named .git) needs verified
-                // discovery instead. Bare repositories have no main worktree.
-                if !self.is_bare()?
-                    && let Some(first) = worktrees.first_mut()
-                {
-                    first.path = self.repo_path()?.to_path_buf();
-                }
-
-                finalize_worktrees(self, &mut worktrees)?;
-                Ok(worktrees)
+                let _registry = self.worktree_registry_read();
+                self.load_worktrees_unlocked()
             })
             .map(Vec::as_slice)
     }
@@ -112,6 +95,25 @@ impl Repository {
             }
         }
         Ok(None)
+    }
+
+    /// Load inventory while the caller holds the registry read or write lock.
+    /// Deletion uses this with its strict registration scan in one snapshot.
+    pub(in crate::git) fn load_worktrees_unlocked(&self) -> anyhow::Result<Vec<WorktreeInfo>> {
+        let stdout = self.run_command_bytes(&["worktree", "list", "--porcelain", "-z"])?;
+        let raw_worktrees = WorktreeInfo::parse_porcelain_list_z(&stdout)?;
+        let mut worktrees: Vec<_> = raw_worktrees.into_iter().filter(|wt| !wt.bare).collect();
+
+        // Git infers the main from the common directory's name. A
+        // separate store (including one named .git) needs verified
+        // discovery instead. Bare repositories have no main worktree.
+        if !self.is_bare()?
+            && let Some(first) = worktrees.first_mut()
+        {
+            first.path = self.repo_path()?.to_path_buf();
+        }
+        finalize_worktrees(self, &mut worktrees)?;
+        Ok(worktrees)
     }
 
     /// Find the worktree path for a given branch, if one exists.
@@ -323,6 +325,7 @@ impl Repository {
     /// remains stay on disk either way, and a registration with no index has
     /// nothing staged.
     pub fn stale_worktree_work(&self, path: &Path) -> anyhow::Result<Option<StaleWorktreeWork>> {
+        let _registry = self.worktree_registry_read();
         let (registration, _) = self.registration_at(path)?;
         if let Some(operation) = operation_in_progress_at(&registration) {
             return Ok(Some(StaleWorktreeWork::Operation(operation)));

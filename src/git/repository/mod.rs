@@ -1678,7 +1678,8 @@ impl Repository {
     /// Resolve the main from its reciprocal backlink, discovery in that main
     /// worktree, or conventional `.git` parent. Git init/clone with a separate
     /// Git directory do not write the backlink; `git worktree repair` does.
-    /// Linked-worktree discovery cannot identify an unrecorded main.
+    /// From a linked checkout, an unrecorded store named `.git` resolves to its
+    /// parent, as Git does; other separate stores need a repaired backlink.
     ///
     /// Every candidate's own `.git` must resolve to this common directory.
     /// Direct discovery in the main needs no subprocess. It takes precedence
