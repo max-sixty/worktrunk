@@ -6112,7 +6112,7 @@ fn test_force_remove_interrupted_status_preserves_worktrees(
 
 /// The child uses the invoking checkout's target and retains a moved tip,
 /// even when the replacement commit is integrated into that target.
-#[rstest]
+#[test]
 fn test_detached_delete_child_captured_target_and_tip() {
     let mut repo = TestRepo::with_initial_commit();
     let original = repo.git_output(&["rev-parse", "HEAD"]);

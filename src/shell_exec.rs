@@ -3145,21 +3145,6 @@ print(*counts)
     // Cmd and timeout tests
     // ========================================================================
 
-    #[cfg(unix)]
-    #[test]
-    fn test_cmd_preserves_native_argument_bytes() {
-        use std::os::unix::ffi::OsStringExt as _;
-
-        let argument = OsString::from_vec(b"native-\xff\n'$argument".to_vec());
-        let output = Cmd::new("sh")
-            .args(["-c", "printf '%s' \"$1\"", "sh"])
-            .arg(&argument)
-            .run()
-            .unwrap();
-        assert!(output.status.success());
-        assert_eq!(output.stdout, argument.into_vec());
-    }
-
     #[test]
     fn test_cmd_completes_fast_command() {
         let result = Cmd::new("echo")

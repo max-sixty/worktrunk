@@ -878,9 +878,8 @@ impl<'a> WorkingTree<'a> {
         // A git dir that can't be resolved at all is the strongest form of "not
         // this worktree": nothing there answers for it. Treating that as a
         // refusal keeps the failure closed.
-        let git_dir = Repository::git_dir_at(&self.path)
-            .with_context(|| format!("Failed to read Git entry @ {}", self.path.display()))?;
-        if git_dir == common_dir {
+        let git_dir = Repository::git_dir_at(&self.path);
+        if git_dir.as_deref() == Some(common_dir) {
             return Ok(common_dir.to_path_buf());
         }
 
@@ -889,7 +888,7 @@ impl<'a> WorkingTree<'a> {
         // different repository, or its registration here has lost its `gitdir`
         // file.
         let registrations = common_dir.join("worktrees");
-        let registration = (git_dir.parent() == Some(registrations.as_path())).then_some(git_dir);
+        let registration = git_dir.filter(|dir| dir.parent() == Some(registrations.as_path()));
         let occupant_registered_at = registration
             .as_deref()
             .and_then(|entry| registration_worktree_path(entry).ok());
