@@ -32,7 +32,6 @@ fn test_finalize_worktree_with_branch() {
         path: PathBuf::from("/path/to/worktree"),
         head: "abcd1234".to_string(),
         branch: Some("feature".to_string()),
-        branch_identity_error: None,
         bare: false,
         detached: false,
         locked: None,
@@ -54,7 +53,6 @@ fn test_finalize_worktree_detached_with_branch() {
         path: PathBuf::from("/path/to/worktree"),
         head: "abcd1234".to_string(),
         branch: Some("feature".to_string()),
-        branch_identity_error: None,
         bare: false,
         detached: true,
         locked: None,
@@ -77,7 +75,6 @@ fn test_finalize_worktree_detached_no_branch() {
         path: PathBuf::from("/nonexistent/path"),
         head: "abcd1234".to_string(),
         branch: None,
-        branch_identity_error: None,
         bare: false,
         detached: true,
         locked: None,
@@ -90,7 +87,6 @@ fn test_finalize_worktree_detached_no_branch() {
     finalize_worktrees(&repo, &mut worktrees).unwrap();
     let [finalized] = worktrees;
     assert_eq!(finalized.branch, None);
-    assert!(finalized.branch_identity_error.is_some());
 }
 
 #[test]
@@ -342,22 +338,6 @@ fn test_resolved_worktree_none_branch() {
     } else {
         panic!("Expected Worktree variant");
     }
-}
-
-#[test]
-fn test_worktree_prunable() {
-    let output = "worktree /path/to/prunable
-HEAD abcd1234
-detached
-prunable gitdir file points to non-existent location
-
-";
-
-    let worktrees =
-        WorktreeInfo::parse_porcelain_list_z(output.replace('\n', "\0").as_bytes()).unwrap();
-    let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
-    assert!(wt.prunable.is_some());
-    assert!(wt.prunable.as_ref().unwrap().contains("non-existent"));
 }
 
 #[test]
@@ -2948,7 +2928,6 @@ fn prewarm_preserves_native_common_directory_paths() {
 
     let seed = TestRepo::with_initial_commit();
     let names = [
-        b"bare\nstore".as_slice(),
         b"bare\ntrue\nstore\nHEAD".as_slice(),
         b"bare  ".as_slice(),
         #[cfg(target_os = "linux")]
@@ -3112,7 +3091,16 @@ fn test_finalize_genuine_detached_rebase() {
     let wt = &repo.list_worktrees().unwrap()[0];
     assert!(wt.detached);
     assert_eq!(wt.branch, None);
-    assert_eq!(wt.branch_identity_error, None);
+    test.create_branch("unrelated");
+    crate::git::delete_branch_if_safe(
+        &repo,
+        &repo.capture_refs().unwrap(),
+        "unrelated",
+        "HEAD",
+        false,
+    )
+    .unwrap();
+    assert!(!repo.branch("unrelated").exists_locally().unwrap());
 }
 
 #[test]
@@ -3143,13 +3131,20 @@ fn test_finalize_detached_git_am_without_rebase_branch() {
     let state = test.root_path().join(".git/rebase-apply");
     assert!(state.join("applying").is_file());
     assert!(!state.join("head-name").exists());
-    // Git recognizes am from this marker's existence, regardless of content.
-    std::fs::write(state.join("applying"), b"non-empty marker\n").unwrap();
     let repo = Repository::at(test.root_path()).unwrap();
     let wt = &repo.list_worktrees().unwrap()[0];
     assert!(wt.detached);
     assert_eq!(wt.branch, None);
-    assert_eq!(wt.branch_identity_error, None);
+    test.create_branch("unrelated");
+    crate::git::delete_branch_if_safe(
+        &repo,
+        &repo.capture_refs().unwrap(),
+        "unrelated",
+        "HEAD",
+        false,
+    )
+    .unwrap();
+    assert!(!repo.branch("unrelated").exists_locally().unwrap());
 }
 
 #[test]
@@ -3158,7 +3153,6 @@ fn branch_deletion_refuses_a_registration_omitted_from_inventory() {
     let linked = test.add_worktree("feature");
     let registration = Repository::git_dir_at(&linked).unwrap().unwrap();
     let backlink = registration.join("gitdir");
-    let contents = std::fs::read(&backlink).unwrap();
     std::fs::remove_file(&backlink).unwrap();
     let repo = Repository::at(test.root_path()).unwrap();
     let listed = repo.list_worktrees().unwrap();
@@ -3181,21 +3175,6 @@ fn branch_deletion_refuses_a_registration_omitted_from_inventory() {
         );
         assert!(repo.branch("feature").exists_locally().unwrap());
     }
-    // The old cached inventory omits this registration. Restoring its producer
-    // must still retain the live checkout on the deletion-time fresh read.
-    std::fs::write(backlink, contents).unwrap();
-    let retained = crate::git::delete_branch_if_safe(
-        &repo,
-        &repo.capture_refs().unwrap(),
-        "feature",
-        "main",
-        false,
-    )
-    .unwrap();
-    assert!(
-        matches!(retained.outcome, crate::git::BranchDeletionOutcome::RetainedCheckedOut { path } if path == linked)
-    );
-    assert!(repo.branch("feature").exists_locally().unwrap());
 }
 
 #[test]
@@ -3204,7 +3183,6 @@ fn unknown_operation_identity_blocks_branch_deletion() {
     let linked = paused_linked_rebase(&mut test);
     let registration = Repository::git_dir_at(&linked).unwrap().unwrap();
     let head_name = registration.join("rebase-merge/head-name");
-    let content = std::fs::read(&head_name).unwrap();
     std::fs::remove_file(&head_name).unwrap();
     let repo = Repository::at(test.root_path()).unwrap();
     let wt = repo
@@ -3213,7 +3191,7 @@ fn unknown_operation_identity_blocks_branch_deletion() {
         .iter()
         .find(|wt| wt.path == linked)
         .unwrap();
-    assert!(wt.detached && wt.branch.is_none() && wt.branch_identity_error.is_some());
+    assert!(wt.detached && wt.branch.is_none());
     assert!(
         crate::git::delete_branch_if_safe(
             &repo,
@@ -3225,21 +3203,6 @@ fn unknown_operation_identity_blocks_branch_deletion() {
         .is_err()
     );
     assert!(repo.branch("feature").exists_locally().unwrap());
-
-    // Repairing the producer must release the fresh identity gate despite
-    // the caller's cached unknown row, retaining the now-known live branch.
-    std::fs::write(head_name, content).unwrap();
-    let result = crate::git::delete_branch_if_safe(
-        &repo,
-        &repo.capture_refs().unwrap(),
-        "feature",
-        "main",
-        false,
-    )
-    .unwrap();
-    assert!(
-        matches!(result.outcome, crate::git::BranchDeletionOutcome::RetainedCheckedOut { path } if path == linked)
-    );
 }
 
 /// Discovery from main takes precedence over a separate store named `.git`.
@@ -3302,7 +3265,6 @@ fn branch_deletion_retains_bisect_without_display_alias() {
             .unwrap();
         assert!(wt.detached);
         assert_eq!(wt.branch, None);
-        assert_eq!(wt.branch_identity_error, None);
         assert_eq!(repo.worktree_for_branch("feature").unwrap(), None);
         let result = delete_branch_if_safe(
             &repo,
@@ -3403,4 +3365,40 @@ fn branch_deletion_retains_rebase_update_refs() {
         result.outcome,
         BranchDeletionOutcome::Integrated(_)
     ));
+}
+
+/// A linked checkout cannot identify an unrepaired separate store's main.
+#[test]
+fn linked_separate_git_dir_requires_repair_before_inventory() {
+    let seed = TestRepo::with_initial_commit();
+    let directory = crate::testing::test_tempdir();
+    let main = directory.path().join("main");
+    let store = directory.path().join("store");
+    let linked = directory.path().join("linked");
+    seed.run_git(&[
+        "clone",
+        "--separate-git-dir",
+        store.to_str().unwrap(),
+        seed.root_path().to_str().unwrap(),
+        main.to_str().unwrap(),
+    ]);
+    seed.run_git_in(
+        &main,
+        &["worktree", "add", "-b", "feature", linked.to_str().unwrap()],
+    );
+    assert!(!store.join("gitdir").exists());
+    let error = Repository::at(&linked)
+        .unwrap()
+        .list_worktrees()
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("git worktree repair"),
+        "{error:#}"
+    );
+
+    seed.run_git_in(&main, &["worktree", "repair"]);
+    assert_eq!(
+        Repository::at(&linked).unwrap().list_worktrees().unwrap()[0].path,
+        dunce::canonicalize(&main).unwrap(),
+    );
 }

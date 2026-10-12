@@ -517,7 +517,7 @@ fn build_trash_sweep_command(paths: &[PathBuf]) -> anyhow::Result<String> {
 }
 
 /// Shell command strings cannot represent arbitrary native path bytes.
-fn path_shell_argument(path: impl AsRef<Path>) -> anyhow::Result<String> {
+pub(crate) fn path_shell_argument(path: impl AsRef<Path>) -> anyhow::Result<String> {
     let path = path
         .as_ref()
         .to_str()
