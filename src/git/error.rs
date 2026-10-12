@@ -1424,24 +1424,18 @@ impl GitError {
                 remaining_entries,
                 ..
             } => {
+                // A classified failure owns its diagnostic and recovery hint.
+                // In particular, the original path may now hold another
+                // checkout: listing it must not obscure the preserved path.
+                if let Some(classified) = error
+                    .chain()
+                    .find_map(|cause| cause.downcast_ref::<GitError>())
+                {
+                    return write!(f, "{}", classified.render());
+                }
                 let error = error.display_message();
                 let title = self.title();
                 write!(f, "{}", format_error_block(error_message(&title), &error))?;
-                if let Some(entries) = remaining_entries {
-                    const MAX_SHOWN: usize = 10;
-                    let listing = if entries.len() > MAX_SHOWN {
-                        let shown = entries[..MAX_SHOWN].join(", ");
-                        let remaining = entries.len() - MAX_SHOWN;
-                        format!("{shown}, and {remaining} more")
-                    } else {
-                        entries.join(", ")
-                    };
-                    write!(
-                        f,
-                        "\n{}",
-                        hint_message(cformat!("Remaining in directory: <underline>{listing}</>"))
-                    )?;
-                }
                 // Fragile by necessity: matches git's English, which is
                 // localized and could be reworded. The text is `git worktree
                 // remove`'s own stderr — the failure never passes through a
@@ -1451,6 +1445,23 @@ impl GitError {
                 // leaves entries behind, and this hint is only right for
                 // ENOTEMPTY. A miss costs one hint.
                 if error.contains("not empty") {
+                    if let Some(entries) = remaining_entries {
+                        const MAX_SHOWN: usize = 10;
+                        let listing = if entries.len() > MAX_SHOWN {
+                            let shown = entries[..MAX_SHOWN].join(", ");
+                            let remaining = entries.len() - MAX_SHOWN;
+                            format!("{shown}, and {remaining} more")
+                        } else {
+                            entries.join(", ")
+                        };
+                        write!(
+                            f,
+                            "\n{}",
+                            hint_message(cformat!(
+                                "Remaining in directory: <underline>{listing}</>"
+                            ))
+                        )?;
+                    }
                     write!(
                         f,
                         "\n{}",
@@ -2539,6 +2550,27 @@ mod tests {
         }
         .into();
         assert!(!render_anyhow(&add_hook_skip_hint(err)).contains("--no-hooks"));
+    }
+
+    /// Directory contents help diagnose ENOTEMPTY, not a refusal before removal.
+    #[test]
+    fn removal_failure_lists_contents_only_when_not_empty() {
+        for (message, lists_contents) in [
+            ("fatal: directory not empty", true),
+            (
+                "Failed to read submodule repositories: Permission denied",
+                false,
+            ),
+        ] {
+            let rendered = GitError::WorktreeRemovalFailed {
+                branch: "feature".into(),
+                path: PathBuf::from("/tmp/repo.feature"),
+                error: anyhow::anyhow!(message),
+                remaining_entries: Some(vec![".git".into()]),
+            }
+            .render();
+            assert_eq!(rendered.contains("Remaining in directory:"), lists_contents);
+        }
     }
 
     /// `Display` is the short single-line label per variant — no symbol,
