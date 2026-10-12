@@ -450,6 +450,10 @@ pub fn stage_worktree_removal(
     branch: Option<&str>,
     force_worktree: bool,
 ) -> anyhow::Result<Option<PathBuf>> {
+    #[cfg(unix)]
+    if let Some(signal) = crate::signal_forwarder::operation_interrupt_signal() {
+        return Err(crate::git::WorktrunkError::Interrupted { signal, hint: None }.into());
+    }
     let worktree = repo.worktree_at(worktree_path);
     let git_dir = require_removal_allowed(&worktree, branch, None)?;
     if force_worktree {
@@ -544,10 +548,6 @@ fn require_removal_allowed(
 /// be absent right now keeps its registration. A locked worktree never reaches
 /// here — [`stage_worktree_removal`] rejects one before the rename.
 fn rename_into_trash(repo: &Repository, worktree_path: &Path, git_dir: &Path) -> Option<PathBuf> {
-    #[cfg(unix)]
-    if let Some(signal) = crate::signal_forwarder::operation_interrupt_signal() {
-        return Err(crate::git::WorktrunkError::Interrupted { signal, hint: None }.into());
-    }
     let trash_dir = repo.wt_trash_dir();
     let _ = std::fs::create_dir_all(&trash_dir);
     let staged_path = generate_removing_path(&trash_dir, git_dir);
@@ -787,14 +787,14 @@ mod tests {
     /// runs. Filesystem staging must honor that cancellation before its rename.
     #[cfg(unix)]
     #[test]
-    fn rename_refuses_cancelled_operation() {
+    fn stage_refuses_cancelled_operation() {
         const CHILD_ENV: &str = "WORKTRUNK_TEST_REMOVE_CANCELLED_STAGING_CHILD";
         if std::env::var_os(CHILD_ENV).is_none() {
             let mut command = std::process::Command::new(std::env::current_exe().unwrap());
             command
                 .args([
                     "--exact",
-                    "git::remove::tests::rename_refuses_cancelled_operation",
+                    "git::remove::tests::stage_refuses_cancelled_operation",
                 ])
                 .env(CHILD_ENV, "1")
                 .stdout(std::process::Stdio::piped());
@@ -819,7 +819,7 @@ mod tests {
             operation.interrupt_signal(),
             Some(signal_hook::consts::SIGTERM)
         );
-        let error = rename_into_trash(&repo, &worktree, &registration).unwrap_err();
+        let error = stage_worktree_removal(&repo, &worktree, Some("feature"), false).unwrap_err();
         assert_eq!(error.interrupt_signal(), Some(signal_hook::consts::SIGTERM));
         assert!(worktree.join(".git").is_file());
         assert_eq!(std::fs::read(registration.join("index")).unwrap(), index);
