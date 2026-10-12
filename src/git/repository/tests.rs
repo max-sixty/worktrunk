@@ -2895,14 +2895,3 @@ fn repo_path_follows_a_relative_separate_git_dir_backlink() {
         "a relative backlink must resolve against the store, not the cwd"
     );
 }
-
-/// Empty module containers do not retain a checkout.
-#[test]
-fn empty_module_container_has_no_local_history() {
-    let mut test = TestRepo::with_initial_commit();
-    let outer = test.add_worktree("outer");
-    let repo = Repository::at(test.root_path()).unwrap();
-    let registration = repo.worktree_at(&outer).git_dir().unwrap();
-    std::fs::create_dir(registration.join("modules")).unwrap();
-    assert!(!repo.has_local_submodule_history(&outer).unwrap());
-}

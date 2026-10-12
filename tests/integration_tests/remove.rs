@@ -4917,19 +4917,15 @@ fn test_remove_preserves_sole_submodule_history(mut repo: TestRepo, #[case] stat
         .output()
         .unwrap();
     assert!(!output.status.success(), "{output:?}");
-    let reason = if state == "stale" {
-        "local submodule commits"
-    } else {
-        "submodule commits outside remote-tracking history"
-    };
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains(reason),
+        String::from_utf8_lossy(&output.stderr)
+            .contains("submodule commits outside remote-tracking history"),
         "{output:?}"
     );
     let saved_object = repo
         .git_command()
         .arg("--git-dir")
-        .arg(&modules)
+        .arg(modules.to_str().unwrap())
         .args(["cat-file", "-t", &sha])
         .run()
         .unwrap();

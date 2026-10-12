@@ -305,15 +305,11 @@ fn merge_in(
         None => repo.home_path()?,
     };
 
-    // Select removal hooks only when cleanup can proceed. The finish sequence
-    // refreshes these checks before attempting removal.
+    // Cleanup eligibility can change while approved hooks run. Select removal
+    // hooks whenever cleanup is requested; finish decides whether to use them.
     let on_target = current_branch == target_branch;
     let feature_root = current_wt.root()?;
-    let preserves_submodule_history = remove
-        && !on_target
-        && current_wt.is_linked()?
-        && repo.has_local_submodule_history(&feature_root)?;
-    let remove_requested = remove && !on_target && !preserves_submodule_history;
+    let remove_requested = remove && !on_target;
     // Freeze the commit decision before approval so every later gate agrees
     // with the hooks shown to the user. Squash owns its commit decision and
     // staging, so it does not need this extra index simulation.

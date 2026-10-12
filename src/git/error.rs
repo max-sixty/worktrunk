@@ -885,7 +885,7 @@ impl GitError {
                 }
                 StaleWorktreeWork::SubmoduleLocalHistory => {
                     cformat!(
-                        "Worktree for <bold>{branch}</> is stale but holds local submodule commits"
+                        "Worktree for <bold>{branch}</> is stale but holds submodule commits outside remote-tracking history"
                     )
                 }
                 StaleWorktreeWork::Operation(operation) => cformat!(

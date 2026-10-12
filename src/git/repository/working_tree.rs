@@ -111,18 +111,6 @@ fn temporary_path_exclusion(worktree_root: &Path, temporary_path: &Path) -> Opti
         .map(|relative| format!(":(top,exclude,literal){}", relative.to_slash_lossy()))
 }
 
-/// Parse `git submodule status` output and detect whether any submodule is initialized.
-///
-/// Status lines start with a one-character state marker:
-/// - `-` = not initialized
-/// - ` ` / `+` / `U` = initialized variants
-fn has_initialized_submodules_from_status(status: &str) -> bool {
-    status.lines().any(|line| match line.chars().next() {
-        Some('-') | None => false,
-        Some(_) => true,
-    })
-}
-
 /// A git operation a worktree is partway through, detected from the state files
 /// git writes under its git dir (`MERGE_HEAD`, `rebase-merge/`, `BISECT_LOG`, …).
 ///
@@ -1147,15 +1135,6 @@ impl<'a> WorkingTree<'a> {
         }
     }
 
-    /// Check whether this worktree has initialized submodules.
-    ///
-    /// Uses `git submodule status --recursive` and parses its stable single-character
-    /// status prefix instead of relying on human-readable git error messages.
-    pub fn has_initialized_submodules(&self) -> anyhow::Result<bool> {
-        let output = self.run_command(&["submodule", "status", "--recursive"])?;
-        Ok(has_initialized_submodules_from_status(&output))
-    }
-
     /// Back up the index, as a squash is about to commit it, to `refs/wt-backup/<branch>`.
     ///
     /// Writes the index as a commit whose parent is `HEAD`, so one commit holds
@@ -1440,7 +1419,6 @@ fn run_checked(command: Cmd, args: &[String]) -> anyhow::Result<std::process::Ou
 
 #[cfg(test)]
 mod tests {
-    use super::has_initialized_submodules_from_status;
     use crate::git::{LineDiff, Repository};
     use crate::shell_exec::Cmd;
     use crate::testing::TestRepo;
@@ -1594,32 +1572,6 @@ mod tests {
                 .unwrap(),
             "dirty submodule contents cannot be staged in the parent repository"
         );
-    }
-
-    #[test]
-    fn submodule_status_empty_is_not_initialized() {
-        assert!(!has_initialized_submodules_from_status(""));
-    }
-
-    #[test]
-    fn submodule_status_dash_is_not_initialized() {
-        assert!(!has_initialized_submodules_from_status(
-            "-9c8b8ff2fe89b8f1c5b8e17cb60f0d0df47f71e0 submod"
-        ));
-    }
-
-    #[test]
-    fn submodule_status_space_is_initialized() {
-        assert!(has_initialized_submodules_from_status(
-            " 9c8b8ff2fe89b8f1c5b8e17cb60f0d0df47f71e0 submod (heads/main)"
-        ));
-    }
-
-    #[test]
-    fn submodule_status_plus_is_initialized() {
-        assert!(has_initialized_submodules_from_status(
-            "+9c8b8ff2fe89b8f1c5b8e17cb60f0d0df47f71e0 submod (heads/main)"
-        ));
     }
 
     #[test]
