@@ -22,12 +22,6 @@ use crate::path::{
 use crate::shell_exec::Cmd;
 use crate::styling::{eprintln, format_with_gutter, hint_message, warning_message};
 
-/// Keep the registry entry's mutation address separate from its Git storage.
-pub(crate) struct WorktreeRegistration {
-    pub(crate) path: PathBuf,
-    pub(crate) git_dir: PathBuf,
-}
-
 impl Repository {
     /// List all worktrees for this repository.
     ///
@@ -364,12 +358,10 @@ impl Repository {
         Ok((!unchanged).then_some(StaleWorktreeWork::StagedChanges))
     }
 
-    /// Map checkout identities to their lexical registry entry and canonical
-    /// Git storage. Only vanished entries may be skipped; surviving incomplete
+    /// Map canonical checkout identities to canonical Git storage.
+    /// Only vanished entries may be skipped; surviving incomplete
     /// entries cannot establish safe branch-deletion topology.
-    pub(crate) fn worktree_registrations(
-        &self,
-    ) -> anyhow::Result<BTreeMap<PathBuf, WorktreeRegistration>> {
+    pub(crate) fn worktree_registrations(&self) -> anyhow::Result<BTreeMap<PathBuf, PathBuf>> {
         let registrations = self.git_common_dir().join("worktrees");
         let entries = match std::fs::read_dir(&registrations) {
             Ok(entries) => entries,
@@ -421,16 +413,7 @@ impl Repository {
                     return Err(error).context("Failed to resolve worktree registration");
                 }
             };
-            if found
-                .insert(
-                    recorded.clone(),
-                    WorktreeRegistration {
-                        path: registration,
-                        git_dir,
-                    },
-                )
-                .is_some()
-            {
+            if found.insert(recorded.clone(), git_dir).is_some() {
                 anyhow::bail!(
                     "Multiple worktrees registered @ {}",
                     format_path_for_display(&recorded)

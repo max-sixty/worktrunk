@@ -1085,7 +1085,7 @@ pub(crate) fn finalize_worktrees(
                 .as_ref()
                 .ok()
                 .and_then(|registrations| registrations.get(&path))
-                .map(|registration| registration.git_dir.as_path())
+                .map(PathBuf::as_path)
         };
         if let Some(git_dir) = git_dir
             && let Ok(branch) = rebase_branch(git_dir)
