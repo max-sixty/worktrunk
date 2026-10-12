@@ -148,7 +148,7 @@ use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
 // Import types from parent module
 use super::{
     CommandError, DefaultBranchName, ErrorExt, ForgeKind, GitError, GitItemId, LineDiff,
-    WorktreeInfo,
+    WorktreeInfo, git_path_from_bytes,
 };
 
 // Re-export types needed by submodules
@@ -536,8 +536,9 @@ struct RepositoryLocks {
 /// keyed by the canonicalized path used as the cache key (same convention as
 /// [`Repository::worktree_at`] / [`WorkingTree`]).
 ///
-/// **Invariant:** `WORKTREE_ROOTS.contains_key(path)` ⇔ `path` is inside a git
-/// work tree. The fallback path `WorkingTree::root` returns when `rev-parse
+/// Cached values are confirmed worktree roots. Ambiguous batch output leaves
+/// discovery to the exact single-selector accessor. The fallback path
+/// `WorkingTree::root` returns when `rev-parse
 /// --show-toplevel` fails (deleted CWD, bare repo root, non-repo dir) is
 /// **not** persisted, which keeps the membership check usable as a
 /// "is-inside-worktree" signal — see [`WorkingTree::prewarm_info`]'s fast path.
@@ -684,6 +685,13 @@ pub fn normalize_selector(name: &str) -> &str {
     if trimmed.is_empty() { name } else { trimmed }
 }
 
+fn path_is_missing(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+    )
+}
+
 /// Quote one path for Git's C-style alternate-object-directory list.
 #[cfg(unix)]
 fn quote_alternate_object_directory(path: &OsStr) -> OsString {
@@ -809,6 +817,12 @@ impl Drop for TemporaryObjectStore {
             .observation_object_directories
             .remove(&self.registered_path);
     }
+}
+
+fn worktree_root_from_batch(raw: &[u8], discovery: &Path) -> Option<PathBuf> {
+    let root = canonicalize(git_path_from_bytes(raw).ok()?).ok()?;
+    (discovery.starts_with(&root) && Repository::git_dir_at(&root).ok().flatten().is_some())
+        .then_some(root)
 }
 
 impl Repository {
@@ -1132,17 +1146,28 @@ impl Repository {
             return;
         };
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut lines = stdout.lines();
-
-        // Line 1: --git-common-dir. Cache even on non-zero exit — git emits
-        // this line before bailing out of `--show-toplevel` in a bare repo.
-        let Some(common_raw) = lines.next() else {
+        // Only the complete worktree batch and bare-repo partial batch have
+        // unambiguous selector boundaries. Embedded path newlines can imitate
+        // extra fields, especially when the bare batch stops after its boolean.
+        let Some(bytes) = output.stdout.strip_suffix(b"\n") else {
             return;
         };
-        let common_path = PathBuf::from(common_raw.trim());
+        let fields: Vec<_> = bytes.split(|byte| *byte == b'\n').collect();
+        let bare_batch = fields.len() == 2 && fields[1] == b"false";
+        let worktree_batch = fields.len() == 5
+            && fields[1] == b"true"
+            && (output.status.success() || fields[4] == b"HEAD");
+        if !bare_batch && !worktree_batch {
+            return;
+        }
+        let mut fields = fields.into_iter();
+
+        // Common-dir precedes selectors that can fail in bare or unborn repos.
+        let Some(common_path) = fields.next().and_then(|raw| git_path_from_bytes(raw).ok()) else {
+            return;
+        };
         let common_absolute = if common_path.is_relative() {
-            discovery_path.join(&common_path)
+            discovery_path.join(common_path)
         } else {
             common_path
         };
@@ -1150,57 +1175,35 @@ impl Repository {
             return;
         };
         GIT_COMMON_DIR_CACHE.insert(discovery_path.to_path_buf(), common_resolved);
-
-        // Per-worktree maps key on the canonicalized form of `discovery_path`,
-        // matching what `worktree_at` derives. Use the same fallback as
-        // `worktree_at` so the keys line up (canonicalize when the path
-        // exists, raw otherwise).
         let worktree_key =
             canonicalize(discovery_path).unwrap_or_else(|_| discovery_path.to_path_buf());
-
-        // Line 2: --is-inside-work-tree. "false" or missing → leave the
-        // per-worktree maps untouched. The membership invariant on
-        // `WORKTREE_ROOTS` ("contains_key ⇔ inside a worktree") forbids
-        // recording a sentinel here; `WorkingTree::root` and `prewarm_info`
-        // would misclassify the path as inside a worktree on the next call.
-        let is_inside = lines.next().is_some_and(|s| s.trim() == "true");
-        if !is_inside {
+        if fields.next() != Some(b"true".as_slice()) {
             return;
         }
 
-        // Line 3: --show-toplevel. Always emits when is_inside=true; mirror
-        // `prewarm_info`'s `self.path` fallback when canonicalize fails.
-        let raw_toplevel = lines.next().unwrap_or("").trim();
-        let canonical_root =
-            canonicalize(PathBuf::from(raw_toplevel)).unwrap_or_else(|_| worktree_key.clone());
-        WORKTREE_ROOTS
-            .entry(worktree_key.clone())
-            .or_insert(canonical_root);
-
-        // Line 4: --git-dir. Resolve relative-to-discovery and canonicalize;
-        // only land it when canonicalize succeeds, matching `prewarm_info`.
-        if let Some(git_dir) = lines.next().and_then(|raw| {
-            let path = PathBuf::from(raw.trim());
+        if let Some(root) = fields
+            .next()
+            .and_then(|raw| worktree_root_from_batch(raw, &worktree_key))
+        {
+            WORKTREE_ROOTS.entry(worktree_key.clone()).or_insert(root);
+        }
+        if let Some(git_dir) = fields.next().and_then(|raw| {
+            let path = git_path_from_bytes(raw).ok()?;
             let absolute = if path.is_relative() {
-                discovery_path.join(&path)
+                discovery_path.join(path)
             } else {
                 path
             };
-            canonicalize(&absolute).ok()
+            canonicalize(absolute).ok()
         }) {
             GIT_DIRS.entry(worktree_key.clone()).or_insert(git_dir);
         }
-
-        // Line 5: --symbolic-full-name HEAD. Only trustworthy when the whole
-        // batch succeeded — on unborn HEAD this lands as the literal string
-        // "HEAD" (indistinguishable from detached HEAD without exit status).
-        // On unborn HEAD we leave `CURRENT_BRANCHES` empty so the
-        // `symbolic-ref --short HEAD` fallback in `WorkingTree::branch`
-        // resolves the unborn branch name.
+        // An unborn HEAD prints a fallback despite the failed batch; leave
+        // its branch unresolved so the canonical branch accessor can ask Git.
         if output.status.success()
-            && let Some(raw) = lines.next()
+            && let Some(raw) = fields.next().and_then(|raw| std::str::from_utf8(raw).ok())
         {
-            let branch = raw.trim().strip_prefix("refs/heads/").map(str::to_owned);
+            let branch = raw.strip_prefix("refs/heads/").map(str::to_owned);
             CURRENT_BRANCHES.entry(worktree_key).or_insert(branch);
         }
     }
@@ -1378,8 +1381,11 @@ impl Repository {
             );
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let path = PathBuf::from(stdout.trim());
+        let bytes = output
+            .stdout
+            .strip_suffix(b"\n")
+            .context("Invalid git common-directory output")?;
+        let path = git_path_from_bytes(bytes)?;
         // Always canonicalize to resolve symlinks (e.g., /var -> /private/var on macOS)
         let absolute_path = if path.is_relative() {
             discovery_path.join(&path)
@@ -1460,55 +1466,53 @@ impl Repository {
             // A worktree's top-level path is its own `root()`.
             WORKTREE_ROOTS.entry(key.clone()).or_insert(key.clone());
 
-            if let Some(git_dir) = Self::git_dir_at(&key) {
+            if let Ok(Some(git_dir)) = Self::git_dir_at(&key) {
                 GIT_DIRS.entry(key).or_insert(git_dir);
             }
         }
     }
 
-    /// The git dir a directory's own `.git` entry names, without forking
-    /// `git rev-parse --git-dir`. A `.git` directory *is* the git dir (a main
-    /// worktree, or the root of some other repository); a `.git` file holds
-    /// `gitdir: <path>` pointing at `<common>/worktrees/<id>` (a linked
-    /// worktree). Returns the canonicalized git dir, or `None` when the entry
-    /// is missing, unreadable, or in a form not worth second-guessing. Mirrors
-    /// the `--git-dir` canonicalization in [`Self::prewarm`]
-    /// (`prewarm_rev_parse`).
-    ///
-    /// Answers for the directory rather than for a repository: it reads the
-    /// `.git` entry sitting there and never walks up to a parent, which is what
-    /// lets [`WorkingTree::ensure_holds_this_worktree`] compare the answer
-    /// against this repository and learn something. Every call reads the
-    /// filesystem, so a caller consulting it twice sees any change in between —
-    /// the reason that gate uses it rather than the `GIT_DIRS`-cached
-    /// [`WorkingTree::git_dir`].
-    ///
-    /// Three callers, with different readings of `None`:
-    /// [`Self::prime_worktree_path_caches`] declines to seed a cache entry and
-    /// leaves the answer to the subprocess, `separate_git_dir_work_tree`
-    /// declines the backlink it was confirming and falls back to
-    /// `parent(git_common_dir)`, and the removal gate refuses.
-    fn git_dir_at(dir: &Path) -> Option<PathBuf> {
+    /// Resolve a directory's own Git entry to a canonical native path.
+    /// Missing or unsupported entries return None; unexpected I/O errors propagate.
+    fn git_dir_at(dir: &Path) -> std::io::Result<Option<PathBuf>> {
         let dot_git = dir.join(".git");
-        // Follows a symlinked `.git`, as git and the subprocess fallback do.
-        let file_type = std::fs::metadata(&dot_git).ok()?.file_type();
-        if file_type.is_dir() {
-            return canonicalize(&dot_git).ok();
-        }
-        if !file_type.is_file() {
-            return None;
-        }
-        // `.git` file: `gitdir: <path>` (git writes it absolute; resolve a
-        // relative form against the worktree, as `prewarm_rev_parse` does).
-        let content = std::fs::read_to_string(&dot_git).ok()?;
-        let gitdir = content.lines().find_map(|l| l.strip_prefix("gitdir: "))?;
-        let path = PathBuf::from(gitdir.trim());
-        let absolute = if path.is_relative() {
-            dir.join(path)
-        } else {
-            path
+        let metadata = match std::fs::metadata(&dot_git) {
+            Ok(metadata) => metadata,
+            Err(error) if path_is_missing(&error) => return Ok(None),
+            Err(error) => return Err(error),
         };
-        canonicalize(&absolute).ok()
+        let target = if metadata.is_dir() {
+            dot_git
+        } else if metadata.is_file() {
+            let content = std::fs::read(&dot_git)?;
+            let Some(mut path) = content.strip_prefix(b"gitdir: ") else {
+                return Ok(None);
+            };
+            while matches!(path.last(), Some(b'\n' | b'\r')) {
+                path = &path[..path.len() - 1];
+            }
+            if path.is_empty() {
+                return Ok(None);
+            }
+            let path = git_path_from_bytes(path)?;
+            if path.is_relative() {
+                dir.join(path)
+            } else {
+                path
+            }
+        } else {
+            return Ok(None);
+        };
+        let path = match canonicalize(target) {
+            Ok(path) => path,
+            Err(error) if path_is_missing(&error) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        match std::fs::metadata(&path) {
+            Ok(metadata) => Ok(metadata.is_dir().then_some(path)),
+            Err(error) if path_is_missing(&error) => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     /// Get a branch handle for branch-specific operations.
@@ -1659,8 +1663,9 @@ impl Repository {
                         .context(path_to_logging_context(&self.git_common_dir))
                         .run()
                     && out.status.success()
+                    && let Some(bytes) = out.stdout.strip_suffix(b"\n")
                 {
-                    return Ok(PathBuf::from(String::from_utf8_lossy(&out.stdout).trim()));
+                    return Ok(git_path_from_bytes(bytes)?);
                 }
 
                 if let Some(work_tree) = self.separate_git_dir_work_tree() {
@@ -1708,8 +1713,8 @@ impl Repository {
     /// repository. That round trip is also why a normal repository or a
     /// submodule can't misfire here on a stray `gitdir` file.
     fn separate_git_dir_work_tree(&self) -> Option<PathBuf> {
-        let work_tree = registration_worktree_path(&self.git_common_dir)?;
-        (Self::git_dir_at(&work_tree)? == self.git_common_dir).then_some(work_tree)
+        let work_tree = registration_worktree_path(&self.git_common_dir).ok()?;
+        (Self::git_dir_at(&work_tree).ok()?? == self.git_common_dir).then_some(work_tree)
     }
 
     /// Access the bulk git config map, populating on first call.

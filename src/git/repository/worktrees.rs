@@ -40,9 +40,9 @@ impl Repository {
             .get_or_try_init(|| {
                 let stdout = {
                     let _registry = self.worktree_registry_read();
-                    self.run_command(&["worktree", "list", "--porcelain"])?
+                    self.run_command_bytes(&["worktree", "list", "--porcelain", "-z"])?
                 };
-                let raw_worktrees = WorktreeInfo::parse_porcelain_list(&stdout)?;
+                let raw_worktrees = WorktreeInfo::parse_porcelain_list_z(&stdout)?;
                 let mut worktrees: Vec<_> =
                     raw_worktrees.into_iter().filter(|wt| !wt.bare).collect();
 
@@ -340,7 +340,7 @@ impl Repository {
             .filter_map(Result::ok)
             .map(|entry| entry.path())
             .find_map(|registration| {
-                let recorded = registration_worktree_path(&registration)?;
+                let recorded = registration_worktree_path(&registration).ok()?;
                 paths_match(&recorded, path).then_some((registration, recorded))
             })
             .with_context(|| format!("No worktree registered @ {}", format_path_for_display(path)))
