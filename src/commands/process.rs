@@ -456,14 +456,20 @@ pub fn build_remove_command(
     path: &Path,
     force_worktree: bool,
     changed_directory: bool,
+    tail: Option<&[OsString]>,
 ) -> Vec<OsString> {
     let delay = if changed_directory { "sleep 1 && " } else { "" };
     let force = if force_worktree { " --force" } else { "" };
-    vec![
-        format!(r#"{delay}git -c core.fsmonitor=false worktree remove{force} -- "$1""#).into(),
-        "wt".into(),
-        path.as_os_str().into(),
-    ]
+    let mut script =
+        format!(r#"{delay}git -c core.fsmonitor=false worktree remove{force} -- "$1""#);
+    if tail.is_some() {
+        script.push_str(r#" && shift && "$@""#);
+    }
+    let mut args = vec![script.into(), "wt".into(), path.as_os_str().into()];
+    if let Some(tail) = tail {
+        args.extend_from_slice(tail);
+    }
+    args
 }
 
 #[cfg(test)]

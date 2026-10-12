@@ -1460,7 +1460,7 @@ impl Repository {
             // A worktree's top-level path is its own `root()`.
             WORKTREE_ROOTS.entry(key.clone()).or_insert(key.clone());
 
-            if let Ok(git_dir) = Self::git_dir_at(&key) {
+            if let Some(git_dir) = Self::git_dir_at(&key) {
                 GIT_DIRS.entry(key).or_insert(git_dir);
             }
         }
@@ -1474,39 +1474,24 @@ impl Repository {
     /// between gates; `WorkingTree::git_dir` uses a process-wide cache instead.
     /// Read and resolution errors refuse removal; cache priming and main-path
     /// discovery decline entries they cannot resolve.
-    fn git_dir_at(dir: &Path) -> std::io::Result<PathBuf> {
+    fn git_dir_at(dir: &Path) -> Option<PathBuf> {
         let dot_git = dir.join(".git");
-        let metadata = std::fs::metadata(&dot_git)?;
+        let metadata = std::fs::metadata(&dot_git).ok()?;
         let target = if metadata.is_dir() {
             dot_git
         } else if metadata.is_file() {
-            let content = std::fs::read(&dot_git)?;
-            let path = content.strip_prefix(b"gitdir: ").ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Invalid gitfile: expected gitdir: <path>",
-                )
-            })?;
-            let path = super::git_path_from_file(path)?;
+            let content = std::fs::read(&dot_git).ok()?;
+            let path = super::git_path_from_file(content.strip_prefix(b"gitdir: ")?).ok()?;
             if path.is_relative() {
                 dir.join(path)
             } else {
                 path
             }
         } else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Git entry is neither a directory nor a gitfile",
-            ));
+            return None;
         };
-        let path = canonicalize(target)?;
-        if !std::fs::metadata(&path)?.is_dir() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::NotADirectory,
-                "Git store is not a directory",
-            ));
-        }
-        Ok(path)
+        let path = canonicalize(target).ok()?;
+        std::fs::metadata(&path).ok()?.is_dir().then_some(path)
     }
 
     /// Get a branch handle for branch-specific operations.
@@ -1707,7 +1692,7 @@ impl Repository {
     /// submodule can't misfire here on a stray `gitdir` file.
     fn separate_git_dir_work_tree(&self) -> Option<PathBuf> {
         let work_tree = registration_worktree_path(&self.git_common_dir).ok()?;
-        (Self::git_dir_at(&work_tree).ok()? == self.git_common_dir).then_some(work_tree)
+        (Self::git_dir_at(&work_tree)? == self.git_common_dir).then_some(work_tree)
     }
 
     /// Access the bulk git config map, populating on first call.
