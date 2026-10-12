@@ -4,7 +4,7 @@
 //!
 //! - [`stage_worktree_removal`] — the ordered prelude every removal path runs
 //!   in the foreground before the worktree directory stops existing: the
-//!   dirty-worktree gate, the fsmonitor stop, then the
+//!   ownership/lock checks, fsmonitor stop, final full-scan gate, then the
 //!   rename into trash. It owns the gates, so it is the one place removal's
 //!   data safety is decided.
 //! - [`remove_worktree_with_cleanup`] — that prelude, plus the direct-removal
@@ -24,18 +24,14 @@
 //! Steps 1-3 are [`stage_worktree_removal`]; 4-5 are the rest of
 //! [`remove_worktree_with_cleanup`].
 //!
-//! 1. **Lock and clean checks**. A `git worktree lock` is refused
-//!    unconditionally (matching `git worktree remove`; `--force` does not
-//!    override it). The dirty-worktree gate is skipped with
-//!    [`RemoveOptions::force_worktree`], which reports the current uncommitted
-//!    paths, or why they could not be read, before deletion instead. Why the
-//!    dirty gate precedes the stop below: [`stage_worktree_removal`], "Why this order".
-//! 2. **fsmonitor daemon stopped** (best effort). [`stop_fsmonitor_daemon`]
-//!    runs against the target worktree before its path disappears: it sends
-//!    the graceful `git fsmonitor--daemon stop` IPC request, then verifies the
-//!    daemon is actually gone and force-kills it by PID if it has wedged.
-//!    Without this, a daemon that has stopped answering its socket leaks
-//!    forever once its worktree is removed.
+//! 1. **Ownership and lock checks.** Refuse a replaced worktree or a
+//!    `git worktree lock`, even with `--force`. Force reports the current
+//!    uncommitted paths, or why they could not be read, before deletion.
+//! 2. **fsmonitor shutdown and final gates.** [`stop_fsmonitor_daemon`] runs
+//!    against the target worktree before its path disappears. It sends the
+//!    graceful IPC request, then force-kills a wedged daemon by PID. After
+//!    shutdown, recheck ownership and lock; unless forced, run a full
+//!    cleanliness scan and recheck ownership and lock before staging.
 //! 3. **Fast-path trash staging.** The worktree directory is renamed into
 //!    `<git-common-dir>/wt/trash/<name>-<timestamp>/`. Same-filesystem renames
 //!    are instant metadata operations, so the user's workspace clears
@@ -55,7 +51,6 @@
 //!
 //! # Final removal gate
 //!
-//! Builtin fsmonitor users get an early cleanliness check before daemon shutdown.
 //! After shutdown, removal rescans without fsmonitor and rechecks the captured
 //! registration and lock. Force waives dirt, never ownership or locks.
 //!
@@ -90,7 +85,6 @@
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-
 
 use crate::git::repository::WorkingTree;
 use crate::git::{
@@ -399,8 +393,8 @@ pub fn remove_worktree_with_cleanup(
     })
 }
 
-/// Gate, stop the fsmonitor daemon, and stage a worktree for removal — steps
-/// 1-3 of the [module-level docs](self), in that order.
+/// Check ownership, stop fsmonitor, run the final gates, and stage a worktree
+/// for removal — steps 1-3 of the [module-level docs](self).
 ///
 /// Every removal path runs this, in the foreground, before the worktree
 /// directory stops existing: the synchronous
@@ -419,8 +413,8 @@ pub fn remove_worktree_with_cleanup(
 /// # Why this order
 ///
 /// The final cleanliness scan runs after shutdown with fsmonitor disabled, so
-/// writes during shutdown are observed without restarting the daemon. Builtin
-/// fsmonitor users also get an early check to leave dirty worktrees untouched.
+/// writes during shutdown are observed without restarting the daemon. The
+/// direct-removal fallback also disables fsmonitor in its cleanliness gates.
 ///
 /// The daemon stop runs **before** the rename because on Windows the daemon
 /// holds a handle on the worktree that would fail it, and git's graceful stop
@@ -483,13 +477,6 @@ pub fn stage_worktree_removal(
                 eprintln!("{}", format_with_gutter(&error.display_message(), None));
             }
         }
-    } else if worktree.is_builtin_fsmonitor_enabled()? {
-        worktree.ensure_clean(
-            "remove worktree",
-            branch,
-            true,
-            CleanCheckMode::ConfiguredFsmonitor,
-        )?;
     }
 
     stop_fsmonitor_daemon(&repo.worktree_at(worktree_path));
@@ -497,8 +484,8 @@ pub fn stage_worktree_removal(
     // Shutdown can overlap writers. Rescan after it without restarting the
     // daemon: an index-only check would miss unstaged and untracked files.
     // Refuse replacements before either query can inspect another repository.
-    require_removal_allowed(&worktree, branch, Some(&git_dir))?;
     if !force_worktree {
+        require_removal_allowed(&worktree, branch, Some(&git_dir))?;
         worktree.ensure_clean("remove worktree", branch, true, CleanCheckMode::FullScan)?;
     }
 
@@ -525,7 +512,6 @@ fn require_removal_allowed(
     expected_registration: Option<&Path>,
 ) -> anyhow::Result<PathBuf> {
     let git_dir = worktree.ensure_holds_this_worktree()?;
-    super::rebase_branch(&git_dir)?;
     if expected_registration.is_some_and(|expected| !crate::path::paths_match(expected, &git_dir)) {
         anyhow::bail!(
             "Worktree registration changed during removal @ {}",
@@ -625,7 +611,7 @@ pub fn delete_branch_if_safe(
     // Force-delete: skip integration check entirely (matches compute_integration_reason
     // behavior for the Worktree path). The user explicitly chose -D.
     if force_delete {
-        // Git cannot protect a rebase branch whose head-name is unreadable.
+        // Git cannot protect an operation branch whose identity is unreadable.
         let _ = fresh_branch_checkout(repo, branch_name)?;
         repo.run_command(&["branch", "-D", "--", branch_name])?;
         return Ok(BranchDeletionResult {
@@ -677,7 +663,15 @@ pub fn delete_branch_if_safe(
 fn fresh_branch_checkout(repo: &Repository, branch_name: &str) -> anyhow::Result<Option<PathBuf>> {
     let fresh_repo = Repository::at(repo.discovery_path())?;
     let worktrees = fresh_repo.list_worktrees()?;
-    fresh_repo.require_branch_deletion_topology(worktrees)?;
+    fresh_repo.worktree_registrations()?;
+    for worktree in worktrees {
+        if let Some(error) = &worktree.branch_identity_error {
+            anyhow::bail!(
+                "Cannot determine worktree branch @ {}: {error}",
+                format_path_for_display(&worktree.path)
+            );
+        }
+    }
     Ok(worktrees
         .iter()
         .find(|worktree| branch_checkout_requires_retention(worktree, branch_name))

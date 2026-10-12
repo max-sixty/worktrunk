@@ -481,7 +481,13 @@ pub fn sweep_stale_trash(repo: &Repository) {
         return;
     }
 
-    let command = build_trash_sweep_command(&stale);
+    let command = match build_trash_sweep_command(&stale) {
+        Ok(command) => command,
+        Err(error) => {
+            tracing::debug!(%error, "Failed to build disposal sweep command");
+            return;
+        }
+    };
 
     // The sweep is repo-wide (not branch-scoped), so it logs to a top-level
     // shared file alongside `commands.jsonl` and `trace.log`. The branch
@@ -502,12 +508,21 @@ pub fn sweep_stale_trash(repo: &Repository) {
 /// sweep spawns one background process regardless of how many stale entries
 /// exist; each path is POSIX-escaped so directories with spaces or shell
 /// metacharacters round-trip safely through the wrapping `sh -c`.
-fn build_trash_sweep_command(paths: &[PathBuf]) -> String {
-    let escaped: Vec<String> = paths
+fn build_trash_sweep_command(paths: &[PathBuf]) -> anyhow::Result<String> {
+    let escaped: Vec<_> = paths
         .iter()
-        .map(|p| shell_escape::unix::escape(p.to_string_lossy().as_ref().into()).into_owned())
-        .collect();
-    format!("rm -rf -- {}", escaped.join(" "))
+        .map(path_shell_argument)
+        .collect::<anyhow::Result<_>>()?;
+    Ok(format!("rm -rf -- {}", escaped.join(" ")))
+}
+
+/// Shell command strings cannot represent arbitrary native path bytes.
+fn path_shell_argument(path: impl AsRef<Path>) -> anyhow::Result<String> {
+    let path = path
+        .as_ref()
+        .to_str()
+        .context("Cannot build a removal command for a non-UTF-8 path")?;
+    Ok(shell_escape::unix::escape(path.into()).into_owned())
 }
 
 /// Collect paths in `trash_dir` whose embedded timestamp is older than
@@ -547,24 +562,19 @@ fn parse_trash_entry_timestamp(name: &str) -> Option<u64> {
 ///
 /// The worktree has been renamed and its registry entry pruned. This command
 /// can start immediately; it never touches the original worktree path.
-pub fn build_remove_command_staged(staged_path: &std::path::Path) -> String {
-    use shell_escape::unix::escape;
-
-    let staged_path_str = staged_path.to_string_lossy();
-    let staged_escaped = escape(staged_path_str.as_ref().into());
-    format!("rm -rf -- {}", staged_escaped)
+pub fn build_remove_command_staged(staged_path: &Path) -> anyhow::Result<String> {
+    Ok(format!("rm -rf -- {}", path_shell_argument(staged_path)?))
 }
 
 /// Remove the empty shell-PWD placeholder after synchronous removal finishes.
 ///
 /// The one-second delay gives the shell wrapper time to consume its cd
 /// directive. `rmdir` preserves any files written into the original path.
-pub fn build_remove_placeholder_command(original_path: &std::path::Path) -> String {
-    use shell_escape::unix::escape;
-
-    let original_path_str = original_path.to_string_lossy();
-    let original_escaped = escape(original_path_str.as_ref().into());
-    format!("sleep 1 && rmdir -- {} 2>/dev/null", original_escaped)
+pub fn build_remove_placeholder_command(original_path: &Path) -> anyhow::Result<String> {
+    Ok(format!(
+        "sleep 1 && rmdir -- {} 2>/dev/null",
+        path_shell_argument(original_path)?
+    ))
 }
 
 /// Build shell command for background worktree removal (legacy path).
@@ -587,18 +597,18 @@ pub fn build_remove_command(
     branch_to_delete: Option<&str>,
     force_worktree: bool,
     changed_directory: bool,
-) -> String {
+) -> anyhow::Result<String> {
     use shell_escape::unix::escape;
 
-    let worktree_path_str = worktree_path.to_string_lossy();
-    let worktree_escaped = escape(worktree_path_str.as_ref().into());
+    let worktree_escaped = path_shell_argument(worktree_path)?;
 
     let force_flag = if force_worktree { " --force" } else { "" };
 
     // The fsmonitor daemon is stopped (and force-killed if wedged) synchronously
     // in the Rust foreground by `stop_fsmonitor_daemon`, before this command is
     // built — see `spawn_background_removal`. The detached process only does the
-    // `git worktree remove` / `rm -rf`.
+    // `git worktree remove` with fsmonitor disabled, so its dirty gate cannot
+    // restart the daemon, or `rm -rf`.
     //
     // When removing the current worktree, delay so the shell wrapper can cd away
     // before the directory is removed. The primary fix for the "shell-init: error
@@ -611,21 +621,21 @@ pub fn build_remove_command(
         String::new()
     };
 
-    match branch_to_delete {
+    Ok(match branch_to_delete {
         Some(branch_name) => {
             let branch_escaped = escape(branch_name.into());
             format!(
-                "{}git worktree remove{} {} && git branch -D -- {}",
+                "{}git -c core.fsmonitor=false worktree remove{} {} && git branch -D -- {}",
                 prefix, force_flag, worktree_escaped, branch_escaped
             )
         }
         None => {
             format!(
-                "{}git worktree remove{} {}",
+                "{}git -c core.fsmonitor=false worktree remove{} {}",
                 prefix, force_flag, worktree_escaped
             )
         }
-    }
+    })
 }
 
 #[cfg(test)]
@@ -714,6 +724,18 @@ mod tests {
         assert_eq!(posix_command_separator("echo; hello"), ";");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn test_removal_builders_refuse_non_utf8_paths() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let path = PathBuf::from(std::ffi::OsString::from_vec(b"/tmp/worktree-\xff".to_vec()));
+        assert!(build_remove_command(&path, None, false, false).is_err());
+        assert!(build_remove_command_staged(&path).is_err());
+        assert!(build_remove_placeholder_command(&path).is_err());
+        assert!(build_trash_sweep_command(&[path]).is_err());
+    }
+
     #[test]
     fn test_build_remove_command() {
         use std::path::PathBuf;
@@ -721,32 +743,32 @@ mod tests {
         let path = PathBuf::from("/tmp/test-worktree");
 
         // changed_directory=true: sleep before removal
-        assert_snapshot!(build_remove_command(&path, None, false, true), @"sleep 1 && git worktree remove /tmp/test-worktree");
-        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, true), @"sleep 1 && git worktree remove /tmp/test-worktree && git branch -D -- feature-branch");
+        assert_snapshot!(build_remove_command(&path, None, false, true).unwrap(), @"sleep 1 && git worktree remove /tmp/test-worktree");
+        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, true).unwrap(), @"sleep 1 && git worktree remove /tmp/test-worktree && git branch -D -- feature-branch");
 
         // changed_directory=false: no sleep
-        assert_snapshot!(build_remove_command(&path, None, false, false), @"git worktree remove /tmp/test-worktree");
-        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, false), @"git worktree remove /tmp/test-worktree && git branch -D -- feature-branch");
+        assert_snapshot!(build_remove_command(&path, None, false, false).unwrap(), @"git worktree remove /tmp/test-worktree");
+        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, false).unwrap(), @"git worktree remove /tmp/test-worktree && git branch -D -- feature-branch");
 
         // With force flag
-        assert_snapshot!(build_remove_command(&path, None, true, true), @"sleep 1 && git worktree remove --force /tmp/test-worktree");
+        assert_snapshot!(build_remove_command(&path, None, true, true).unwrap(), @"sleep 1 && git worktree remove --force /tmp/test-worktree");
 
         // Shell escaping for special characters
         let special_path = PathBuf::from("/tmp/test worktree");
-        assert_snapshot!(build_remove_command(&special_path, Some("feature/branch"), false, true), @"sleep 1 && git worktree remove '/tmp/test worktree' && git branch -D -- feature/branch");
+        assert_snapshot!(build_remove_command(&special_path, Some("feature/branch"), false, true).unwrap(), @"sleep 1 && git worktree remove '/tmp/test worktree' && git branch -D -- feature/branch");
     }
 
     #[test]
     fn test_build_remove_command_staged() {
         let staged_path = PathBuf::from("/tmp/repo/.git/wt/trash/my-project.feature-1234567890");
         let original_path = PathBuf::from("/tmp/my-project.feature");
-        assert_snapshot!(build_remove_command_staged(&staged_path), @"rm -rf -- /tmp/repo/.git/wt/trash/my-project.feature-1234567890");
-        assert_snapshot!(build_remove_placeholder_command(&original_path), @"sleep 1 && rmdir -- /tmp/my-project.feature 2>/dev/null");
+        assert_snapshot!(build_remove_command_staged(&staged_path).unwrap(), @"rm -rf -- /tmp/repo/.git/wt/trash/my-project.feature-1234567890");
+        assert_snapshot!(build_remove_placeholder_command(&original_path).unwrap(), @"sleep 1 && rmdir -- /tmp/my-project.feature 2>/dev/null");
 
         let special_path = PathBuf::from("/tmp/repo/.git/wt/trash/test worktree-123");
         let special_original = PathBuf::from("/tmp/test worktree");
-        assert_snapshot!(build_remove_command_staged(&special_path), @"rm -rf -- '/tmp/repo/.git/wt/trash/test worktree-123'");
-        assert_snapshot!(build_remove_placeholder_command(&special_original), @"sleep 1 && rmdir -- '/tmp/test worktree' 2>/dev/null");
+        assert_snapshot!(build_remove_command_staged(&special_path).unwrap(), @"rm -rf -- '/tmp/repo/.git/wt/trash/test worktree-123'");
+        assert_snapshot!(build_remove_placeholder_command(&special_original).unwrap(), @"sleep 1 && rmdir -- '/tmp/test worktree' 2>/dev/null");
     }
 
     #[test]
@@ -754,7 +776,7 @@ mod tests {
         // Empty list still produces a well-formed command — the caller
         // (`sweep_stale_trash`) bails before we get here, but the helper itself
         // must not panic on an empty slice.
-        assert_snapshot!(build_trash_sweep_command(&[]), @"rm -rf -- ");
+        assert_snapshot!(build_trash_sweep_command(&[]).unwrap(), @"rm -rf -- ");
 
         // Plain paths — joined with spaces, no quoting.
         let paths = [
@@ -762,7 +784,7 @@ mod tests {
             PathBuf::from("/tmp/repo/.git/wt/trash/bugfix-1700000100"),
         ];
         assert_snapshot!(
-            build_trash_sweep_command(&paths),
+            build_trash_sweep_command(&paths).unwrap(),
             @"rm -rf -- /tmp/repo/.git/wt/trash/feature-1700000000 /tmp/repo/.git/wt/trash/bugfix-1700000100"
         );
 
@@ -778,7 +800,7 @@ mod tests {
             PathBuf::from("/tmp/trash/a'b-3"),
         ];
         assert_snapshot!(
-            build_trash_sweep_command(&nasty),
+            build_trash_sweep_command(&nasty).unwrap(),
             @"rm -rf -- '/tmp/trash/with space-1' '/tmp/trash/$(echo pwned)-2' '/tmp/trash/a'\\''b-3'"
         );
     }
