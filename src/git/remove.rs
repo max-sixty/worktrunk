@@ -564,6 +564,10 @@ fn rename_into_trash(
     worktree_path: &Path,
     git_dir: &Path,
 ) -> anyhow::Result<Option<PathBuf>> {
+    #[cfg(unix)]
+    if let Some(signal) = crate::signal_forwarder::operation_interrupt_signal() {
+        return Err(crate::git::WorktrunkError::Interrupted { signal, hint: None }.into());
+    }
     let retained_dir = repo.wt_dir().join("retained");
     if let Err(error) = std::fs::create_dir_all(&retained_dir) {
         tracing::debug!(%error, "Failed to prepare worktree staging, falling back");
@@ -804,6 +808,51 @@ pub(crate) fn generate_removing_path(trash_dir: &Path, git_dir: &Path) -> PathBu
 
 #[cfg(test)]
 mod tests {
+    /// A sibling foreground lease can latch TERM while the final topology scan
+    /// runs. Filesystem staging must honor that cancellation before its rename.
+    #[cfg(unix)]
+    #[test]
+    fn rename_refuses_cancelled_operation() {
+        const CHILD_ENV: &str = "WORKTRUNK_TEST_REMOVE_CANCELLED_STAGING_CHILD";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "git::remove::tests::rename_refuses_cancelled_operation",
+                ])
+                .env(CHILD_ENV, "1")
+                .stdout(std::process::Stdio::piped());
+            let output = crate::shell_exec::spawn(&mut command)
+                .unwrap()
+                .wait_with_output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(output.status.success(), "{stdout}");
+            assert!(stdout.contains(" 1 passed;"), "{stdout}");
+            return;
+        }
+        let mut test = TestRepo::with_initial_commit();
+        let worktree = test.add_worktree("feature");
+        let repo = Repository::at(test.root_path()).unwrap();
+        let registration = repo.worktree_at(&worktree).git_dir().unwrap();
+        let index = std::fs::read(registration.join("index")).unwrap();
+        let operation = crate::signal_forwarder::CommandOperation::start().unwrap();
+        let foreground = crate::signal_forwarder::ForegroundSignals::install().unwrap();
+        signal_hook::low_level::raise(signal_hook::consts::SIGTERM).unwrap();
+        assert_eq!(
+            operation.interrupt_signal(),
+            Some(signal_hook::consts::SIGTERM)
+        );
+        let error = rename_into_trash(&repo, &worktree, &registration).unwrap_err();
+        assert_eq!(error.interrupt_signal(), Some(signal_hook::consts::SIGTERM));
+        assert!(worktree.join(".git").is_file());
+        assert_eq!(std::fs::read(registration.join("index")).unwrap(), index);
+        assert!(!repo.wt_dir().join("retained").exists());
+        drop(foreground);
+        drop(operation);
+    }
+
     use super::*;
     use crate::git::ErrorExt;
     use crate::testing::TestRepo;
