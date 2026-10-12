@@ -51,4 +51,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-✓ Pruned stale worktree & removed branch main (--force-delete)
+○ No worktree found for branch main
+✓ Removed branch main (--force-delete)
