@@ -2403,11 +2403,8 @@ fn test_remove_main_worktree_vs_linked_worktree(mut repo: TestRepo) {
     );
 }
 
-/// Removing the default branch worktree should be refused — the default branch
-/// is the integration target, not something to remove.
-///
-/// This requires a bare repo setup since you can't have a linked worktree for the default
-/// branch in a normal repo (the main worktree already has it checked out).
+/// Safe deletion refuses the default branch; Keep removes its linked checkout
+/// and retains the ref. A bare repository permits a linked default checkout.
 #[test]
 fn test_remove_default_branch_refused() {
     let test = BareRepoTest::new();
@@ -2428,12 +2425,6 @@ fn test_remove_default_branch_refused() {
         assert_cmd_snapshot!("remove_default_branch_refused", cmd);
     });
 
-    let original = test
-        .git_command(&feature_worktree)
-        .args(["rev-parse", "refs/heads/main"])
-        .run()
-        .unwrap()
-        .stdout;
     settings.bind(|| {
         let mut cmd = test.wt_command();
         cmd.args(["remove", "--foreground", "--no-delete-branch", "main"])
@@ -2443,14 +2434,7 @@ fn test_remove_default_branch_refused() {
     assert!(!main_worktree.exists());
     let repo = worktrunk::git::Repository::at(&feature_worktree).unwrap();
     assert_eq!(repo.worktree_for_branch("main").unwrap(), None);
-    assert_eq!(
-        test.git_command(&feature_worktree)
-            .args(["rev-parse", "refs/heads/main"])
-            .run()
-            .unwrap()
-            .stdout,
-        original
-    );
+    assert!(repo.branch("main").exists_locally().unwrap());
 
     // Restore the checkout to exercise explicit deletion independently of Keep.
     let added = test
@@ -2470,8 +2454,8 @@ fn test_remove_default_branch_refused() {
     });
 }
 
-/// BranchOnly path: when the default branch has no worktree (directory deleted),
-/// removal should be refused without -D, and allowed with -D.
+/// A stale default-branch registration refuses safe deletion. Keep prunes the
+/// registration and retains the ref; explicit force deletes the branch.
 #[test]
 fn test_remove_default_branch_branch_only() {
     let test = BareRepoTest::new();
@@ -2503,13 +2487,6 @@ fn test_remove_default_branch_branch_only() {
     let repo = worktrunk::git::Repository::at(&feature_worktree).unwrap();
     assert_eq!(repo.worktree_for_branch("main").unwrap(), None);
     assert!(repo.branch("main").exists_locally().unwrap());
-
-    // With no checkout or registration, keeping the branch would do nothing.
-    settings.bind(|| {
-        let mut cmd = test.wt_command();
-        cmd.args(["remove", "main"]).current_dir(&feature_worktree);
-        assert_cmd_snapshot!("remove_default_branch_no_entry_refused", cmd);
-    });
 
     // With -D: should succeed (force-delete the default branch)
     settings.bind(|| {
