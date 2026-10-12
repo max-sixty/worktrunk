@@ -441,36 +441,24 @@ fn test_promote_swap_bidirectional(mut repo: TestRepo) {
     assert!(!feature_path.join("debug.log").exists());
 }
 
-/// Directory includes cover ordinary ignored files even beside tracked files,
-/// but must never move VCS/tool metadata between physical worktrees. Promote
-/// passes no configurable excludes, so shared discovery owns this guarantee.
+/// Metadata stays in its physical worktree when tracked config makes Git list
+/// ignored local files individually; ordinary ignored files still transfer.
 #[rstest]
-fn test_promote_directory_include_keeps_worktree_metadata(mut repo: TestRepo) {
-    for directory in [".jj", "config"] {
+fn test_promote_keeps_worktree_metadata_with_tracked_sibling(mut repo: TestRepo) {
+    for directory in [".conductor", "config"] {
         fs::create_dir(repo.root_path().join(directory)).unwrap();
         fs::write(repo.root_path().join(directory).join("tracked"), "tracked").unwrap();
     }
     fs::write(
         repo.root_path().join(".gitignore"),
-        ".jj/local\nconfig/local\n",
+        ".conductor/local\nconfig/local\n",
     )
     .unwrap();
-    fs::write(repo.root_path().join(".worktreeinclude"), ".jj/\nconfig/\n").unwrap();
-    repo.run_git(&[
-        "add",
-        ".jj/tracked",
-        "config/tracked",
-        ".gitignore",
-        ".worktreeinclude",
-    ]);
-    repo.run_git(&[
-        "commit",
-        "-m",
-        "Track include patterns and directory siblings",
-    ]);
+    repo.run_git(&["add", ".conductor/tracked", "config/tracked", ".gitignore"]);
+    repo.run_git(&["commit", "-m", "Track ignored-file directory siblings"]);
     let feature = repo.add_worktree("feature");
     for (path, label) in [(repo.root_path(), "main"), (feature.as_path(), "feature")] {
-        for directory in [".jj", "config"] {
+        for directory in [".conductor", "config"] {
             fs::write(
                 path.join(directory).join("local"),
                 format!("{label} {directory}"),
@@ -493,8 +481,8 @@ fn test_promote_directory_include_keeps_worktree_metadata(mut repo: TestRepo) {
         (feature.as_path(), "feature", "main"),
     ] {
         assert_eq!(
-            fs::read_to_string(path.join(".jj/local")).unwrap(),
-            format!("{original} .jj")
+            fs::read_to_string(path.join(".conductor/local")).unwrap(),
+            format!("{original} .conductor")
         );
         assert_eq!(
             fs::read_to_string(path.join("config/local")).unwrap(),

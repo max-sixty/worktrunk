@@ -50,7 +50,7 @@ pub(super) fn print_dry_run(
     Ok(())
 }
 
-/// Built-in excludes for `wt step copy-ignored`: VCS metadata + tool-state directories.
+/// Built-in excludes for ignored-file discovery: VCS metadata + tool-state directories.
 ///
 /// VCS directories contain internal state tied to a specific working directory.
 /// Git's own `.git` is implicitly excluded (git ls-files never reports it), but
@@ -69,19 +69,10 @@ pub(super) const BUILTIN_COPY_IGNORED_EXCLUDES: &[&str] = &[
     ".worktrees/",
 ];
 
-fn default_copy_ignored_excludes() -> Vec<String> {
-    BUILTIN_COPY_IGNORED_EXCLUDES
-        .iter()
-        .map(|s| (*s).to_string())
-        .collect()
-}
-
-/// Resolve the full copy-ignored config by merging built-in defaults, project
-/// config (`.config/wt.toml`), and user config (global + per-project overrides).
+/// Resolve the configured copy-ignored exclusions from project config
+/// (`.config/wt.toml`) and user config (global + per-project overrides).
 pub(super) fn resolve_copy_ignored_config(repo: &Repository) -> anyhow::Result<CopyIgnoredConfig> {
-    let mut config = CopyIgnoredConfig {
-        exclude: default_copy_ignored_excludes(),
-    };
+    let mut config = CopyIgnoredConfig::default();
     let user_config = repo.user_config();
     // No `.context()`: `project_config()` already wraps the load failure with
     // exactly that header (see `handle_hook_show`).
@@ -99,12 +90,11 @@ pub(super) fn resolve_copy_ignored_config(repo: &Repository) -> anyhow::Result<C
 /// List gitignored entries in a worktree, filtered by `.worktreeinclude` and excluding
 /// configured patterns, VCS metadata directories, and entries that contain nested worktrees.
 ///
-/// Combines five steps:
+/// Combines four steps:
 /// 1. `list_ignored_entries()` — git ls-files for ignored entries
 /// 2. `.worktreeinclude` filtering — only matching entries if the file exists
-/// 3. `[step.copy-ignored].exclude` filtering — skip entries matching configured patterns
-/// 4. Built-in exclude filtering — always skip VCS metadata and tool-state directories
-/// 5. Nested worktree filtering — exclude entries containing other worktrees
+/// 3. Exclude filtering — built-in metadata patterns and `[step.copy-ignored].exclude`
+/// 4. Nested worktree filtering — exclude entries containing other worktrees
 pub(super) fn list_and_filter_ignored_entries(
     worktree_path: &Path,
     context: &str,
@@ -140,53 +130,28 @@ pub(super) fn list_and_filter_ignored_entries(
         ignored_entries
     };
 
-    // Build exclude matcher for configured patterns (if any)
-    let exclude_matcher = if exclude_patterns.is_empty() {
-        None
-    } else {
-        let mut builder = GitignoreBuilder::new(worktree_path);
-        for pattern in exclude_patterns {
-            builder.add_line(None, pattern).map_err(|error| {
-                anyhow::anyhow!(
-                    "Invalid [step.copy-ignored].exclude pattern {:?}: {}",
-                    pattern,
-                    error
-                )
-            })?;
-        }
-        Some(
-            builder
-                .build()
-                .context("Failed to build copy-ignored exclude matcher")?,
-        )
-    };
-
-    // Built-in metadata exclusions apply independently of caller configuration,
-    // including to individual ignored files under a directory with tracked
-    // siblings. Promote deliberately supplies no configurable exclusions.
     let mut builder = GitignoreBuilder::new(worktree_path);
     for pattern in BUILTIN_COPY_IGNORED_EXCLUDES {
         builder.add_line(None, pattern)?;
     }
-    let builtin_matcher = builder
+    for pattern in exclude_patterns {
+        builder.add_line(None, pattern).map_err(|error| {
+            anyhow::anyhow!(
+                "Invalid [step.copy-ignored].exclude pattern {:?}: {}",
+                pattern,
+                error
+            )
+        })?;
+    }
+    let exclude_matcher = builder
         .build()
-        .context("Failed to build metadata exclude matcher")?;
+        .context("Failed to build copy-ignored exclude matcher")?;
 
     // Filter out excluded patterns, VCS metadata directories, and nested worktrees
     Ok(filtered
         .into_iter()
         .filter(|(path, is_dir)| {
-            // Skip entries matching configured exclude patterns
-            if let Some(ref matcher) = exclude_matcher
-                && matcher
-                    .matched_path_or_any_parents(relative_entry(path, worktree_path), *is_dir)
-                    .is_ignore()
-            {
-                return false;
-            }
-            // Never transfer worktree-local VCS or tool metadata, regardless
-            // of whether Git listed the directory or a file inside it.
-            if builtin_matcher
+            if exclude_matcher
                 .matched_path_or_any_parents(relative_entry(path, worktree_path), *is_dir)
                 .is_ignore()
             {
