@@ -8838,6 +8838,38 @@ fn test_switch_path_never_moves_git_common_dir(#[case] explicit: bool) {
     assert!(git_dir.join("HEAD").is_file());
 }
 
+/// The documented in-repository template can clobber a stale ignored directory.
+#[rstest]
+fn test_switch_clobbers_stale_ignored_template_directory(repo: TestRepo) {
+    repo.write_test_config(r#"worktree-path = ".worktrees/{{ branch | sanitize }}""#);
+    std::fs::write(repo.root_path().join(".git/info/exclude"), ".worktrees/\n").unwrap();
+    let stale = repo.root_path().join(".worktrees/feature");
+    std::fs::create_dir_all(&stale).unwrap();
+    std::fs::write(stale.join("keep.txt"), "stale contents").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "feature", "--clobber", "--yes"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(stale.join(".git").is_file());
+    let backup = std::fs::read_dir(stale.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("feature.bak.")
+        })
+        .expect("stale directory must be backed up");
+    assert_eq!(
+        std::fs::read_to_string(backup.join("keep.txt")).unwrap(),
+        "stale contents"
+    );
+}
+
 /// Invalid branch names are rejected before worktree creation.
 #[rstest]
 #[case::space("bad name")]

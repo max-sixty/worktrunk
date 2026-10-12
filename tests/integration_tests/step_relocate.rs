@@ -534,6 +534,39 @@ fn test_relocate_clobber_backs_up(repo: TestRepo) {
     assert!(backup_exists, "Backup directory should exist");
 }
 
+/// A template destination cannot clobber the bare Git store during relocation.
+#[rstest]
+fn test_relocate_clobber_preserves_bare_git_store(repo: TestRepo) {
+    repo.write_test_config(r#"worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}""#);
+    let git_dir = repo.home_path().join("git-data");
+    let checkout = repo.home_path().join("wrong-location");
+    repo.run_git(&["clone", "--bare", ".", git_dir.to_str().unwrap()]);
+    repo.run_git_in(
+        &git_dir,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "git-data",
+            checkout.to_str().unwrap(),
+        ],
+    );
+
+    let output = repo
+        .wt_command()
+        .current_dir(&checkout)
+        .args(["step", "relocate", "--clobber", "git-data"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("is the repository's Git directory"),
+        "{output:?}"
+    );
+    assert!(git_dir.join("HEAD").is_file());
+    assert!(checkout.join(".git").is_file());
+}
+
 /// Regression: when the computed backup path already exists, relocate
 /// --clobber falls back to the next free `-N` name rather than overwriting it.
 /// (Matches the `wt switch --clobber` contract — see

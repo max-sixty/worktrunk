@@ -2,8 +2,8 @@
 //!
 //! Both `wt switch --clobber` and `wt step relocate --clobber` need to move a
 //! stale or blocking path aside before they can take its place. They share this
-//! helper so the two paths behave identically: the backup name and the atomic
-//! no-overwrite rename are defined once.
+//! helper so the two paths share Git-storage/worktree protection, backup names,
+//! and the atomic no-overwrite rename.
 //!
 //! # Why an atomic rename
 //!
@@ -32,7 +32,54 @@
 
 use std::path::{Path, PathBuf};
 
+use anyhow::{Context, bail};
+use color_print::cformat;
+use dunce::canonicalize;
+use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
+
+/// Protect Git storage and registered worktrees before a clobber backup.
+/// Explicit switch paths also refuse directories inside worktrees; templates
+/// may intentionally place stale, ignored directories there.
+pub(crate) fn require_safe_clobber_target(
+    repo: &Repository,
+    requested: &Path,
+    explicit_path: bool,
+) -> anyhow::Result<()> {
+    let requested = canonicalize(requested).with_context(|| {
+        format!(
+            "Failed to resolve worktree path {}",
+            format_path_for_display(requested)
+        )
+    })?;
+    let git_dir = canonicalize(repo.git_common_dir())
+        .context("Failed to resolve repository Git directory")?;
+    if requested == git_dir {
+        bail!(cformat!(
+            "Worktree path <bold>{}</> is the repository's Git directory; choose a directory outside the repository and its worktrees",
+            format_path_for_display(&requested)
+        ));
+    }
+    // Execution must not reuse planning's cached registrations.
+    let fresh = Repository::at(repo.git_common_dir())?;
+    let registered = fresh.list_worktrees()?.iter().map(|wt| wt.path.as_path());
+    for existing in registered.chain([git_dir.as_path()]) {
+        let existing = canonicalize(existing).unwrap_or_else(|_| existing.to_path_buf());
+        let relation = if existing.starts_with(&requested) {
+            "contains"
+        } else if requested.starts_with(&existing) && (explicit_path || existing == git_dir) {
+            "is inside"
+        } else {
+            continue;
+        };
+        bail!(cformat!(
+            "Worktree path <bold>{}</> {relation} <bold>{}</>; choose a directory outside the repository and its worktrees",
+            format_path_for_display(&requested),
+            format_path_for_display(&existing),
+        ));
+    }
+    Ok(())
+}
 
 /// Generate a backup path for the given path with a timestamp suffix.
 ///
@@ -110,7 +157,11 @@ fn back_up_clobbered_path(blocking_path: &Path, base_suffix: &str) -> anyhow::Re
 /// Wraps [`back_up_clobbered_path`] with the timestamp suffix computed at move
 /// time, so the suffix reflects when the path is actually set aside. Returns the
 /// path the blocking directory was moved to.
-pub(crate) fn back_up_clobbered_path_now(blocking_path: &Path) -> anyhow::Result<PathBuf> {
+pub(crate) fn back_up_clobbered_path_now(
+    repo: &Repository,
+    blocking_path: &Path,
+) -> anyhow::Result<PathBuf> {
+    require_safe_clobber_target(repo, blocking_path, false)?;
     let timestamp_secs = worktrunk::utils::epoch_now() as i64;
     let datetime =
         chrono::DateTime::from_timestamp(timestamp_secs, 0).unwrap_or_else(chrono::Utc::now);
@@ -243,7 +294,9 @@ mod tests {
         let stale = temp.path().join("feature");
         std::fs::create_dir(&stale).unwrap();
 
-        let used = back_up_clobbered_path_now(&stale).unwrap();
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let used = back_up_clobbered_path_now(&repo, &stale).unwrap();
 
         let name = used.file_name().unwrap().to_string_lossy();
         assert!(

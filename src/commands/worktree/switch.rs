@@ -32,7 +32,7 @@ use worktrunk::styling::{
 use super::resolve::{compute_worktree_path, offer_bare_repo_worktree_path_fix};
 use super::types::{CreationMethod, RefIdentity, SwitchBranchInfo, SwitchPlan, SwitchResult};
 use crate::cli::{SwitchArgs, SwitchFormat};
-use crate::commands::backup::back_up_clobbered_path_now;
+use crate::commands::backup::{back_up_clobbered_path_now, require_safe_clobber_target};
 use crate::commands::command_approval::approve_hooks;
 use crate::commands::command_executor::FailureStrategy;
 use crate::commands::command_executor::{CommandContext, build_hook_context};
@@ -744,6 +744,7 @@ fn validate_worktree_creation(
     path: &Path,
     clobber: bool,
     method: &CreationMethod,
+    explicit_path: bool,
 ) -> anyhow::Result<bool> {
     // For regular switches without --create, validate branch exists
     if let CreationMethod::Regular {
@@ -789,7 +790,7 @@ fn validate_worktree_creation(
     if !path.exists() {
         return Ok(false);
     }
-    reject_path_overlapping_worktrees(repo, path)?;
+    require_safe_clobber_target(repo, path, explicit_path)?;
     if clobber {
         return Ok(true);
     }
@@ -990,6 +991,7 @@ fn plan_switch(
 
     // Phase 3: Compute expected path (only needed for create). `--path`
     // replaces the template outright.
+    let explicit_path = requested_path.is_some();
     let expected_path = match requested_path {
         Some(path) => path,
         None => compute_worktree_path(repo, target.selector.token(), config)?,
@@ -1002,6 +1004,7 @@ fn plan_switch(
         &expected_path,
         clobber,
         &target.method,
+        explicit_path,
     )?;
 
     // Phase 5: Return the plan
@@ -1013,44 +1016,6 @@ fn plan_switch(
         needs_clobber_backup,
         new_previous,
     })
-}
-
-/// Refuse an existing destination containing or inside the repository or a
-/// worktree, before clobber can move it. Exact worktree occupants were already
-/// rejected by `validate_worktree_creation`; the Git directory has no occupant
-/// in a bare repository and needs its own exact-match check.
-fn reject_path_overlapping_worktrees(repo: &Repository, requested: &Path) -> anyhow::Result<()> {
-    let requested = canonicalize(requested).with_context(|| {
-        format!(
-            "Failed to resolve worktree path {}",
-            format_path_for_display(requested)
-        )
-    })?;
-    let git_dir = canonicalize(repo.git_common_dir())
-        .context("Failed to resolve repository Git directory")?;
-    if requested == git_dir {
-        bail!(cformat!(
-            "Worktree path <bold>{}</> is the repository's Git directory; choose a directory outside the repository and its worktrees",
-            format_path_for_display(&requested)
-        ));
-    }
-    let registered = repo.list_worktrees()?.iter().map(|wt| wt.path.as_path());
-    for existing in registered.chain([git_dir.as_path()]) {
-        let existing = canonicalize(existing).unwrap_or_else(|_| existing.to_path_buf());
-        let relation = if existing.starts_with(&requested) {
-            "contains"
-        } else if requested.starts_with(&existing) {
-            "is inside"
-        } else {
-            continue;
-        };
-        let requested = format_path_for_display(&requested);
-        let existing = format_path_for_display(&existing);
-        bail!(cformat!(
-            "Worktree path <bold>{requested}</> {relation} <bold>{existing}</>; choose a directory outside the repository and its worktrees"
-        ));
-    }
-    Ok(())
 }
 
 /// Preserve the filesystem spelling Git and downstream commands can operate
@@ -1118,7 +1083,7 @@ fn execute_switch(
                 // name. A name already taken (a same-second clobber, or one
                 // that raced in after planning) is never overwritten — the move
                 // falls back to the next free `-N` name.
-                let backup_path = back_up_clobbered_path_now(&worktree_path)?;
+                let backup_path = back_up_clobbered_path_now(repo, &worktree_path)?;
 
                 let path_display = worktrunk::path::format_path_for_display(&worktree_path);
                 let backup_display = worktrunk::path::format_path_for_display(&backup_path);
