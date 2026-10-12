@@ -698,44 +698,6 @@ impl<'a> WorkingTree<'a> {
         }
     }
 
-    /// [`Self::git_dir`] for several worktrees, forking the uncached
-    /// `git rev-parse --git-dir` lookups concurrently through
-    /// [`Cmd::run_concurrently`]. Results are in input order.
-    pub fn git_dirs(worktrees: &[WorkingTree<'_>]) -> Vec<anyhow::Result<PathBuf>> {
-        const ARGS: [&str; 2] = ["rev-parse", "--git-dir"];
-        let cached: Vec<Option<PathBuf>> = worktrees
-            .iter()
-            .map(|wt| super::GIT_DIRS.get(&wt.path).map(|e| e.value().clone()))
-            .collect();
-        let cmds: Vec<Cmd> = worktrees
-            .iter()
-            .zip(&cached)
-            .filter(|(_, cached)| cached.is_none())
-            .map(|(wt, _)| wt.git_command(&ARGS))
-            .collect();
-        let mut fetched = Cmd::run_concurrently(&cmds).into_iter();
-        worktrees
-            .iter()
-            .zip(cached)
-            .map(|(wt, cached)| {
-                if let Some(git_dir) = cached {
-                    return Ok(git_dir);
-                }
-                let output = fetched
-                    .next()
-                    .context("run_concurrently returned fewer results than commands")??;
-                if !output.status.success() {
-                    return Err(CommandError::from_failed_output("git", &ARGS, &output).into());
-                }
-                let git_dir = wt.resolve_git_dir(&output.stdout)?;
-                Ok(super::GIT_DIRS
-                    .entry(wt.path.clone())
-                    .or_insert(git_dir)
-                    .clone())
-            })
-            .collect()
-    }
-
     /// Canonicalize `git rev-parse --git-dir` output run in this worktree.
     fn resolve_git_dir(&self, stdout: &[u8]) -> anyhow::Result<PathBuf> {
         let path = super::git_path_from_bytes(
