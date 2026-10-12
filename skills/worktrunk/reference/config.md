@@ -614,7 +614,7 @@ See [`wt config shell`](#wt-config-shell) for setup, activation, and current-she
 
 ### First-run prompts
 
-On first run without shell integration, Worktrunk offers to install it. On first commit without LLM configuration, it offers to configure a detected tool (`claude`, `codex`). Declining sets `skip-shell-integration-prompt` or `skip-commit-generation-prompt` automatically.
+On first run without shell integration, Worktrunk offers to install it. On first commit without LLM configuration, it offers to configure a detected tool (`claude`, `codex`, `opencode`). Declining sets `skip-shell-integration-prompt` or `skip-commit-generation-prompt` automatically.
 
 # Other
 
@@ -952,7 +952,7 @@ $ wt config show --full
 ```
 
 This tests:
-- **CI tool status** — Whether `gh` (GitHub) or `glab` (GitLab) is installed and authenticated
+- **CI tool status** — Whether the CLI for the repository's forge (`gh`, `glab`, `tea`, or `az`) is installed and authenticated
 - **Commit generation** — Whether the LLM command can generate commit messages
 - **Version check** — Whether a newer version is available on GitHub
 
@@ -1228,7 +1228,7 @@ View or drop worktrunk's regenerable caches in one place. Everything here is reb
 
 ### What's cached
 
-- **CI status** — GitHub/GitLab CI per branch (30–60s TTL), shown in [`wt list`](https://worktrunk.dev/list/#ci-status)
+- **CI status** — forge CI per branch (30–60s TTL), shown in [`wt list`](https://worktrunk.dev/list/#ci-status)
 - **Summaries** — LLM-generated branch summaries (`wt list --full`, `wt switch` preview)
 - **Git commands** — cached merge-tree, ancestry, diff-stat, and `wt switch` preview results
 - **Hints** — one-time hints already shown in this repo

@@ -105,9 +105,9 @@ git operations complete.
 
 [1m[32mFull mode[0m
 
-[2m--full[0m adds the two columns that reach off-machine: CI status (GitHub/GitLab 
-pipeline pass/fail, over the network) and LLM-generated summaries of each 
-branch's changes.
+[2m--full[0m adds the two columns that reach off-machine: CI status (forge pipeline 
+pass/fail, over the network) and LLM-generated summaries of each branch's 
+changes.
 
 [1m[32mExamples[0m
 
