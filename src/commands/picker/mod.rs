@@ -122,7 +122,9 @@ use worktrunk::HookType;
 use worktrunk::config::{Approvals, CommitGenerationConfig};
 use worktrunk::git::{ErrorExt, Repository, current_or_recover};
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{eprintln, error_message, hint_message, info_message, warning_message};
+use worktrunk::styling::{
+    eprintln, error_message, hint_message, info_message, progress_message, warning_message,
+};
 
 use crate::output::print_json;
 
@@ -153,6 +155,34 @@ use preview_orchestrator::PreviewOrchestrator;
 fn drain_stashed_warnings(stash: &Mutex<Vec<String>>) {
     for line in stash.lock().unwrap().drain(..) {
         eprintln!("{line}");
+    }
+}
+
+/// Keep the same diagnostic as the ordinary removal command, including recovery hints.
+fn removal_error_diagnostic(error: &anyhow::Error) -> String {
+    error
+        .render_diagnostic()
+        .unwrap_or_else(|| error_message(error.display_message()).to_string())
+}
+
+/// A failed removal may already have moved its checkout, so report it even when
+/// there is no row to restore. Keep the complete diagnostic until skim exits.
+fn stash_failed_removal(
+    stash: &Mutex<Vec<String>>,
+    header_flash: &Arc<items::HeaderFlash>,
+    render_tx: &Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
+    diagnostic: String,
+) {
+    if let Some(headline) = diagnostic.lines().next() {
+        flash_header(header_flash, render_tx, headline.to_owned());
+    }
+    stash_diagnostic(stash, diagnostic);
+}
+
+fn stash_diagnostic(stash: &Mutex<Vec<String>>, diagnostic: String) {
+    let mut stashed = stash.lock().unwrap();
+    if !stashed.contains(&diagnostic) {
+        stashed.push(diagnostic);
     }
 }
 
@@ -262,6 +292,8 @@ enum RemovalEffect {
 /// survived ([`removal_target_still_present`]) it restores the row
 /// ([`restore_failed_removal`] / [`revert_morph`]) and stashes why.
 struct AltXRemover {
+    /// User-requested mutations finish before picker exit drains diagnostics.
+    removal_threads: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
     /// The picker's row list (shared with [`PickerCollector`] and the handler).
     /// `apply` drops a row from it for the drop path; the callback then rebuilds
     /// skim's pool from it.
@@ -280,10 +312,9 @@ struct AltXRemover {
     /// fire after skim is showing rows, so it's always set by then.
     render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
     /// Same warning stash the progressive handler fills (drained to stderr once
-    /// skim releases the terminal). A failed background removal pushes a
-    /// `worktree kept` warning here so the user learns the row that flickered
-    /// back (or un-morphed) didn't actually go away. See [`restore_failed_removal`]
-    /// and [`revert_morph`].
+    /// skim releases the terminal). Background removal failures retain their
+    /// complete diagnostics here, even after a checkout has moved away. See
+    /// [`restore_failed_removal`] and [`revert_morph`].
     stashed_warnings: Arc<Mutex<Vec<String>>>,
     /// `alt-y` / `alt-o` lookup table (token → branch + URL). A morph re-keys the
     /// row's entry from the worktree token to the branch token. Shared with the
@@ -359,8 +390,8 @@ impl AltXRemover {
     /// `Ok` with the branch surviving. Instead it
     /// observes whether the target still exists ([`removal_target_still_present`])
     /// and restores the row via [`restore_failed_removal`] only when it does, so
-    /// the list never shows a removal that didn't happen. The `Result` is for
-    /// logging.
+    /// the list never shows a removal that didn't happen. Errors are stashed
+    /// for display after the picker releases the terminal.
     ///
     /// `repo` is the worktree the picker is operating from — the config source
     /// for the removal hooks (see [`approved_removal_plan`]) and the target of
@@ -404,26 +435,16 @@ impl AltXRemover {
                 // leave an entry with an unborn `HEAD`, which `wt step prune`
                 // never collects. A failed prune keeps the branch, so the row
                 // is restored.
-                if let Some(path) = prune_entry
-                    && let Err(e) = repo.prune_worktree_entry(path)
-                {
-                    tracing::warn!(branch = %branch_name, error = %e, "picker: failed to prune stale worktree for '{branch_name}': {e:#}");
-                    return Ok(());
+                if let Some(path) = prune_entry {
+                    repo.prune_worktree_entry(path)?;
                 }
                 if !deletion_mode.should_keep() {
                     let default_branch = repo.default_branch();
                     let target = default_branch.as_deref().unwrap_or("HEAD");
-                    if let Err(e) =
-                        execute_branch_deletion(repo, branch_name, target, deletion_mode.is_force())
-                    {
-                        // Safe-delete retention (`NotDeleted`,
-                        // `RetainedCheckedOut`, or `RetainedRaced`) is `Ok`, not
-                        // an error; this is a genuine deletion-command failure.
-                        // The row is restored anyway because the branch still
-                        // exists (see `removal_target_still_present`) — surface
-                        // the cause.
-                        tracing::warn!(branch = %branch_name, error = %e, "picker: failed to delete branch '{branch_name}': {e:#}");
-                    }
+                    // Safe-delete retention is `Ok`; propagate genuine command
+                    // failures so the background caller can show their cause.
+                    execute_branch_deletion(repo, branch_name, target, deletion_mode.is_force())
+                        .with_context(|| format!("Failed to delete branch {branch_name}"))?;
                 }
             }
         }
@@ -452,7 +473,7 @@ impl AltXRemover {
         selected_output: String,
         planning_repo: Repository,
         result: RemovalPlan,
-    ) {
+    ) -> RemovalEffect {
         // Capture the removed row (and its position) before dropping it: the
         // position is handed to the background thread so it can put the row back
         // at its slot if the removal fails (see `restore_failed_removal`). The
@@ -480,30 +501,47 @@ impl AltXRemover {
         let render_tx = Arc::clone(&self.render_tx);
         let stashed_warnings = Arc::clone(&self.stashed_warnings);
         let header_flash = Arc::clone(&self.header_flash);
-        spawn_removal(format!("picker-remove-{selected_output}"), move || {
-            if let Err(e) = Self::do_removal(&repo, &result, &approvals) {
-                tracing::warn!(selected_output = %selected_output, error = %e, "picker: removal of '{selected_output}' errored: {e:#}");
-            }
-            // A removal that keeps its branch never reaches here — that's the
-            // morph path (`morph_and_remove_in_background`). So a surviving
-            // target means the removal itself failed: put the row back.
-            if removal_target_still_present(&repo, &result)
-                && let Some((item, pos)) = removed
-            {
-                restore_failed_removal(
-                    &items,
-                    &header_flash,
-                    &render_tx,
-                    &stashed_warnings,
-                    DroppedRow {
-                        item,
-                        pos,
-                        label: removal_label,
-                        noun: removal_noun,
-                    },
-                );
-            }
-        });
+        let dropped = removed.clone();
+        let label = removal_label.clone();
+        let spawned = spawn_removal(
+            &self.removal_threads,
+            format!("picker-remove-{selected_output}"),
+            move || {
+                let failure = Self::do_removal(&repo, &result, &approvals).err();
+                let diagnostic = failure.as_ref().map(removal_error_diagnostic);
+                // A removal that keeps its branch never reaches here — that's the
+                // morph path (`morph_and_remove_in_background`). So a surviving
+                // target means the removal itself failed: put the row back.
+                if removal_target_still_present(&repo, &result)
+                    && let Some((item, pos)) = dropped
+                {
+                    restore_failed_removal(
+                        &items,
+                        &header_flash,
+                        &render_tx,
+                        &stashed_warnings,
+                        DroppedRow {
+                            item,
+                            pos,
+                            label,
+                            noun: removal_noun,
+                        },
+                        diagnostic.as_deref(),
+                    );
+                } else if let Some(diagnostic) = diagnostic {
+                    stash_failed_removal(&stashed_warnings, &header_flash, &render_tx, diagnostic);
+                }
+            },
+        );
+        self.finish_removal_spawn(
+            spawned,
+            RemovalRowChange::Dropped(removed.map(|(item, pos)| DroppedRow {
+                item,
+                pos,
+                label: removal_label,
+                noun: removal_noun,
+            })),
+        )
     }
 
     /// Flash a one-line message in the header for a beat (see the free
@@ -625,8 +663,7 @@ impl AltXRemover {
             }
         };
         let Some(slots) = prepared else {
-            self.drop_and_remove_in_background(selected_output, planning_repo, result);
-            return RemovalEffect::Dropped;
+            return self.drop_and_remove_in_background(selected_output, planning_repo, result);
         };
 
         // Snapshot the pre-morph display for the revert, then apply the morph.
@@ -661,18 +698,71 @@ impl AltXRemover {
             branch_token: branch.clone(),
             worktree_token: selected_output.clone(),
         };
-        spawn_removal(format!("picker-morph-{branch}"), move || {
-            if let Err(e) = Self::do_removal(&repo, &result, &approvals) {
-                tracing::warn!(branch = %branch, error = %e, "picker: removal of '{branch}' worktree errored: {e:#}");
-            }
-            // Only the worktree removal can realistically fail here; if it did,
-            // the worktree dir survives — undo the morph and say so.
-            if removal_target_still_present(&repo, &result) {
-                revert_morph(revert, &header_flash, &stashed_warnings, &render_tx);
-            }
-        });
+        let worker_revert = revert.clone();
+        let spawned = spawn_removal(
+            &self.removal_threads,
+            format!("picker-morph-{branch}"),
+            move || {
+                let failure = Self::do_removal(&repo, &result, &approvals).err();
+                let diagnostic = failure.as_ref().map(removal_error_diagnostic);
+                // Only the worktree removal can realistically fail here; if it did,
+                // the worktree dir survives — undo the morph and say so.
+                if removal_target_still_present(&repo, &result) {
+                    revert_morph(
+                        worker_revert,
+                        &header_flash,
+                        &stashed_warnings,
+                        &render_tx,
+                        diagnostic.as_deref(),
+                    );
+                } else if let Some(diagnostic) = diagnostic {
+                    stash_failed_removal(&stashed_warnings, &header_flash, &render_tx, diagnostic);
+                }
+            },
+        );
+        self.finish_removal_spawn(spawned, RemovalRowChange::Morphed(revert))
+    }
 
-        RemovalEffect::Morphed
+    /// Complete the handoff of an optimistic row change to its removal worker.
+    /// If no worker started, the target is untouched: undo the row change and
+    /// retain the spawn diagnostic, including when no row was found to restore.
+    fn finish_removal_spawn(
+        &self,
+        spawned: std::io::Result<()>,
+        row_change: RemovalRowChange,
+    ) -> RemovalEffect {
+        let Err(error) = spawned else {
+            return match row_change {
+                RemovalRowChange::Dropped(_) => RemovalEffect::Dropped,
+                RemovalRowChange::Morphed(_) => RemovalEffect::Morphed,
+            };
+        };
+        let error = anyhow::Error::new(error).context("Failed to start worktree removal");
+        let diagnostic = removal_error_diagnostic(&error);
+        match row_change {
+            RemovalRowChange::Dropped(Some(dropped)) => restore_failed_removal(
+                &self.items,
+                &self.header_flash,
+                &self.render_tx,
+                &self.stashed_warnings,
+                dropped,
+                Some(&diagnostic),
+            ),
+            RemovalRowChange::Dropped(None) => stash_failed_removal(
+                &self.stashed_warnings,
+                &self.header_flash,
+                &self.render_tx,
+                diagnostic,
+            ),
+            RemovalRowChange::Morphed(revert) => revert_morph(
+                revert,
+                &self.header_flash,
+                &self.stashed_warnings,
+                &self.render_tx,
+                Some(&diagnostic),
+            ),
+        }
+        RemovalEffect::Kept
     }
 
     /// Run the `alt-x` removal dispatch for the selected row.
@@ -710,8 +800,7 @@ impl AltXRemover {
                         result,
                     )
                 } else if removal_will_remove_target(&result) {
-                    self.drop_and_remove_in_background(selected_output, planning_repo, result);
-                    RemovalEffect::Dropped
+                    self.drop_and_remove_in_background(selected_output, planning_repo, result)
                 } else {
                     // The only non-removing outcome: `removal_will_remove_target`
                     // returns false solely for an unmerged `BranchOnly` row (a
@@ -732,19 +821,13 @@ impl AltXRemover {
                 // (drained to stderr on exit) instead of swallowing it, so alt-x
                 // isn't a silent dead keypress. Nothing was removed, so the row
                 // stays under the (un-reset) cursor.
-                if let Some(diagnostic) = e.render_diagnostic() {
-                    let mut stashed = self.stashed_warnings.lock().unwrap();
-                    if !stashed.contains(&diagnostic) {
-                        stashed.push(diagnostic);
-                    }
-                }
+                stash_diagnostic(&self.stashed_warnings, removal_error_diagnostic(&e));
                 // Flash the terse headline in the header too, so the *why* lands
                 // at alt-x time and not only when the stash drains on exit. Unlike
                 // the keep paths (by-design retains → info ○), this arm is a genuine
-                // rejection — error (✗), matching the `render_diagnostic` error this
-                // path stashes. `to_string()` is the typed error's short single-line
-                // label (ANSI-stripped); take its first line so a multi-line chain
-                // can't smear the header.
+                // rejection — error (✗), matching the diagnostic this path
+                // stashes. Use the outer message's first line so a multi-line
+                // chain can't smear the header.
                 let headline = e.to_string();
                 let headline = headline.lines().next().unwrap_or(&headline);
                 self.flash_header(error_message(headline).to_string());
@@ -804,6 +887,7 @@ struct MorphSlots {
 
 /// Everything the background thread needs to undo a morph when the worktree
 /// removal failed (see [`revert_morph`]).
+#[derive(Clone)]
 struct MorphRevert {
     rendered: Arc<Mutex<String>>,
     original_rendered: String,
@@ -855,13 +939,14 @@ fn build_morph_branch_row(
 /// `alt-y`/`alt-o` shortcut entry back to the worktree token. The row never left
 /// its slot, so [`flash_header`]'s repaint re-shows it — no reload, no cursor move
 /// (unlike [`restore_failed_removal`], which re-inserts a dropped row). The
-/// `kept … could not remove it` reason lands twice: flashed in the header now, and
-/// drained to stderr when the picker exits.
+/// A terse reason flashes in the header; the complete diagnostic is retained
+/// until the picker exits.
 fn revert_morph(
     revert: MorphRevert,
     header_flash: &Arc<items::HeaderFlash>,
     stashed_warnings: &Mutex<Vec<String>>,
     render_tx: &Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
+    diagnostic: Option<&str>,
 ) {
     let MorphRevert {
         rendered,
@@ -887,8 +972,8 @@ fn revert_morph(
     // Surface the "couldn't remove" reason two ways, like the drop path
     // ([`restore_failed_removal`]): flash it in the header now (the row un-morphed
     // under the cursor, so the *why* lands where the user is looking) and stash the
-    // same line to drain to stderr on exit. A genuine failure — the removal was
-    // attempted and the worktree survived — so warning (▲), not the keep paths'
+    // complete diagnostic to drain to stderr on exit. A genuine failure — the
+    // removal was attempted and the worktree survived — so warning (▲), not the keep paths'
     // by-design info (○). `flash_header`'s repaint also re-shows the reverted row,
     // so no separate `Event::Render` is needed.
     let warning = warning_message(cformat!(
@@ -896,7 +981,7 @@ fn revert_morph(
     ))
     .to_string();
     flash_header(header_flash, render_tx, warning.clone());
-    stashed_warnings.lock().unwrap().push(warning);
+    stash_diagnostic(stashed_warnings, diagnostic.unwrap_or(&warning).to_owned());
 }
 
 /// Number of leading non-selectable header rows the picker streams (the single
@@ -1187,6 +1272,13 @@ struct DroppedRow {
     noun: &'static str,
 }
 
+/// The optimistic row mutation to keep after a successful spawn or undo if
+/// the removal worker could not start.
+enum RemovalRowChange {
+    Dropped(Option<DroppedRow>),
+    Morphed(MorphRevert),
+}
+
 /// Put a row back after its background removal didn't happen, closing the alt-x
 /// loop so the list never shows a removal that didn't occur.
 ///
@@ -1199,8 +1291,8 @@ struct DroppedRow {
 /// filtered earlier by
 /// [`removal_will_remove_target`]), the row must reappear. This re-inserts it into
 /// `shared_items` at its original slot, flashes the `kept` reason in the header and
-/// stashes the same line (drained to stderr once skim releases the terminal; the
-/// full error, if any, is in the `tracing::warn!` the caller emits), then queues a
+/// stashes the detailed error (or that line if removal returned no error),
+/// drained to stderr once skim releases the terminal, then queues a
 /// [`resync_pool_action`] to re-show it.
 ///
 /// Re-inserting at the removed row's old slot lands the cursor back on the row for
@@ -1214,6 +1306,7 @@ fn restore_failed_removal(
     render_tx: &Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
     stashed_warnings: &Arc<Mutex<Vec<String>>>,
     dropped: DroppedRow,
+    diagnostic: Option<&str>,
 ) {
     let DroppedRow {
         item,
@@ -1227,6 +1320,9 @@ fn restore_failed_removal(
         // A concurrent restore (rapid alt-x on the same row) may have already
         // put it back; don't duplicate it.
         if items.iter().any(|it| it.output().as_ref() == token) {
+            if let Some(diagnostic) = diagnostic {
+                stash_diagnostic(stashed_warnings, diagnostic.to_owned());
+            }
             return;
         }
         // Another removal may have shrunk the list since the drop; clamp.
@@ -1236,15 +1332,15 @@ fn restore_failed_removal(
 
     // Surface the "couldn't remove" reason two ways, like the morph revert
     // ([`revert_morph`]): flash it in the header now (the row is back under the
-    // cursor, so the *why* lands where the user is looking) and stash the same line
-    // to drain to stderr on exit. A genuine failure — the removal was attempted and
+    // cursor, so the *why* lands where the user is looking) and stash the detailed
+    // diagnostic to drain to stderr on exit. A genuine failure — the removal was attempted and
     // the target survived — so warning (▲), not the keep paths' by-design info (○).
     let warning = warning_message(cformat!(
         "Kept <bold>{label}</> {noun} — could not remove it"
     ))
     .to_string();
     flash_header(header_flash, render_tx, warning.clone());
-    stashed_warnings.lock().unwrap().push(warning);
+    stash_diagnostic(stashed_warnings, diagnostic.unwrap_or(&warning).to_owned());
 
     let Some(event_tx) = render_tx.get() else {
         return;
@@ -1908,7 +2004,9 @@ pub fn handle_picker(
     // callback — it can't carry the collector's `Rc<PipelineFactory>`, so it owns
     // the morph/keep shared slots directly. See `AltXRemover` and
     // `install_remove_keybinding`.
+    let removal_threads = Arc::new(Mutex::new(Vec::new()));
     let alt_x_remover = AltXRemover {
+        removal_threads: Arc::clone(&removal_threads),
         items: Arc::clone(&shared_items),
         repo: repo.clone(),
         approvals,
@@ -2143,6 +2241,10 @@ pub fn handle_picker(
     // subprocess is read-only).
     drop(prs_handle);
 
+    // Requested mutations must finish before their recovery diagnostics drain.
+    // Unlike speculative collect/preview work, process exit cannot abandon them.
+    let removals = finish_removals(&removal_threads);
+
     // Skim has released the terminal — emit any warnings that collect's bg
     // thread stashed during the run. Late warnings (e.g. drain timeouts)
     // may still be in flight; we capture whatever has landed by now and let
@@ -2160,11 +2262,11 @@ pub fn handle_picker(
     // first would drain a spurious "couldn't fetch PRs" onto the user.
     //
     // Not everything running here is discardable — an `alt-x` removal is
-    // dispatched to its own thread and can still be mid-`git worktree remove`
-    // if the user pressed Enter straight after. Removal threads are spawned
-    // through `spawn_removal`, which marks them `uninterruptible` and lets
-    // them run to completion; this reaches only speculative work.
+    // dispatched through `spawn_removal` and joined above. Cancellation reaches
+    // only speculative work.
     worktrunk::shell_exec::cancel_background_commands();
+
+    removals?;
 
     // `run_skim` returns Err only on a genuine TUI init / event-loop failure;
     // a user cancel is `Ok` with `is_abort` set. Surface a real failure.
@@ -2424,13 +2526,34 @@ fn install_remove_keybinding(keymap: &mut skim::binds::KeyMap, remover: AltXRemo
 /// leave them half-removed. Every removal dispatch goes through here so the
 /// exemption is carried by the spawn path itself rather than remembered at
 /// each call site.
-fn spawn_removal<F>(name: String, work: F)
+fn spawn_removal<F>(
+    threads: &Mutex<Vec<std::thread::JoinHandle<()>>>,
+    name: String,
+    work: F,
+) -> std::io::Result<()>
 where
     F: FnOnce() + Send + 'static,
 {
-    let _ = std::thread::Builder::new()
+    let handle = std::thread::Builder::new()
         .name(name)
-        .spawn(move || worktrunk::shell_exec::uninterruptible(work));
+        .spawn(move || worktrunk::shell_exec::uninterruptible(work))?;
+    threads.lock().unwrap().push(handle);
+    Ok(())
+}
+
+/// Wait for requested mutations without holding their registry lock. Join every
+/// worker even if one panicked, so an error cannot abandon another removal.
+fn finish_removals(threads: &Mutex<Vec<std::thread::JoinHandle<()>>>) -> anyhow::Result<()> {
+    let pending = std::mem::take(&mut *threads.lock().unwrap());
+    if pending.iter().any(|thread| !thread.is_finished()) {
+        eprintln!("{}", progress_message("Waiting for pending removals..."));
+    }
+    let mut failed = false;
+    for thread in pending {
+        failed |= thread.join().is_err();
+    }
+    anyhow::ensure!(!failed, "Worktree removal thread panicked");
+    Ok(())
 }
 
 /// Run a row shortcut's OS action on a named background thread, logging any
@@ -2633,8 +2756,36 @@ pub mod tests {
         assert!(stash.lock().unwrap().is_empty());
     }
 
-    /// A fresh stash with no warnings is a no-op — exercising the empty path
-    /// keeps the loop body covered when the picker exits cleanly.
+    /// Picker exit waits for requested work before draining its late error.
+    #[test]
+    fn test_picker_exit_waits_for_removal_diagnostic() {
+        let threads = Arc::new(Mutex::new(Vec::new()));
+        let stash = Arc::new(Mutex::new(Vec::new()));
+        let (release, released) = std::sync::mpsc::channel();
+        let worker_stash = Arc::clone(&stash);
+        super::spawn_removal(&threads, "blocked-removal".into(), move || {
+            released.recv_timeout(Duration::from_secs(10)).unwrap();
+            super::stash_diagnostic(&worker_stash, "removal failed".into());
+        })
+        .unwrap();
+        let exit_threads = Arc::clone(&threads);
+        let exit_stash = Arc::clone(&stash);
+        let exit = std::thread::spawn(move || {
+            super::finish_removals(&exit_threads).unwrap();
+            let diagnostics = exit_stash.lock().unwrap().clone();
+            drain_stashed_warnings(&exit_stash);
+            diagnostics
+        });
+        worktrunk::testing::wait_for("picker exit to join removals", || {
+            threads.lock().unwrap().is_empty()
+        });
+        assert!(!exit.is_finished(), "requested work is still blocked");
+        release.send(()).unwrap();
+        assert_eq!(exit.join().unwrap(), ["removal failed"]);
+        assert!(stash.lock().unwrap().is_empty());
+    }
+
+    /// A fresh stash with no warnings is a no-op.
     #[test]
     fn drain_stashed_warnings_handles_empty_stash() {
         let stash: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -2969,7 +3120,7 @@ pub mod tests {
             branch_checked_out_at: None,
             detached_worktree: None,
         };
-        AltXRemover::do_removal(&repo, &result, &Approvals::default()).unwrap();
+        AltXRemover::do_removal(&repo, &result, &Approvals::default()).unwrap_err();
 
         let output = repo.run_command(&["branch", "--list", "feature"]).unwrap();
         assert!(
@@ -3383,6 +3534,7 @@ pub mod tests {
     ) -> AltXRemover {
         let factory = test_factory(repo.clone());
         AltXRemover {
+            removal_threads: Arc::new(Mutex::new(Vec::new())),
             items,
             repo,
             approvals: Arc::new(Approvals::default()),
@@ -3681,6 +3833,33 @@ pub mod tests {
         );
     }
 
+    /// A failed startup restores its optimistic row change and reports why.
+    #[test]
+    fn test_removal_spawn_failure_restores_dropped_row() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let items = Arc::new(Mutex::new(Vec::new()));
+        let remover = test_remover(Arc::clone(&items), repo);
+        let effect = remover.finish_removal_spawn(
+            Err(std::io::Error::other("thread limit reached")),
+            super::RemovalRowChange::Dropped(Some(super::DroppedRow {
+                item: branch_only_picker_item("feature"),
+                pos: 0,
+                label: "feature".into(),
+                noun: "branch",
+            })),
+        );
+        assert!(matches!(effect, RemovalEffect::Kept));
+        assert_eq!(items.lock().unwrap()[0].output().as_ref(), "feature");
+        assert_eq!(
+            remover.stashed_warnings.lock().unwrap().as_slice(),
+            [
+                super::error_message("Failed to start worktree removal: thread limit reached")
+                    .to_string()
+            ]
+        );
+    }
+
     /// `restore_failed_removal` puts a dropped row back at its original slot and
     /// stashes a `worktree kept` warning — the correction path that keeps the
     /// alt-x list from showing a removal that didn't happen.
@@ -3714,6 +3893,7 @@ pub mod tests {
                 label: "dropped-b".to_string(),
                 noun: "worktree",
             },
+            None,
         );
 
         let outputs: Vec<String> = items
@@ -3755,8 +3935,8 @@ pub mod tests {
         );
     }
 
-    /// Restoring a row that's already back is a no-op — no duplicate, no extra
-    /// warning. Guards rapid repeated alt-x racing on the same row.
+    /// A restored row is never duplicated or flashed again, but a supplied
+    /// failure cause survives rapid repeated alt-x racing on the same row.
     #[test]
     fn test_restore_failed_removal_skips_when_already_present() {
         let row = branch_only_picker_item("present");
@@ -3771,11 +3951,12 @@ pub mod tests {
             &render_tx,
             &stashed,
             super::DroppedRow {
-                item: row,
+                item: Arc::clone(&row),
                 pos: 0,
                 label: "present".to_string(),
                 noun: "worktree",
             },
+            None,
         );
 
         assert_eq!(items.lock().unwrap().len(), 1, "no duplicate inserted");
@@ -3787,6 +3968,28 @@ pub mod tests {
             header_flash.current().is_none(),
             "the already-present early return skips the flash too"
         );
+
+        // A second removal can fail after the first already restored the row.
+        // Its cause must survive without inserting another row or flashing.
+        super::restore_failed_removal(
+            &items,
+            &header_flash,
+            &render_tx,
+            &stashed,
+            super::DroppedRow {
+                item: row,
+                pos: 0,
+                label: "present".to_string(),
+                noun: "worktree",
+            },
+            Some("registration could not be removed"),
+        );
+        assert_eq!(items.lock().unwrap().len(), 1);
+        assert_eq!(
+            *stashed.lock().unwrap(),
+            ["registration could not be removed"]
+        );
+        assert!(header_flash.current().is_none());
     }
 
     /// `revert_morph` undoes an optimistic morph after the worktree removal failed:
@@ -3832,7 +4035,7 @@ pub mod tests {
         let header_flash = Arc::new(super::items::HeaderFlash::default());
         let stashed = Arc::new(Mutex::new(Vec::new()));
 
-        super::revert_morph(revert, &header_flash, &stashed, &render_tx);
+        super::revert_morph(revert, &header_flash, &stashed, &render_tx, None);
 
         // The row un-morphs in place: pre-morph line restored, flag cleared.
         assert_eq!(
@@ -3988,6 +4191,7 @@ pub mod tests {
         let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
         let stashed: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let remover = AltXRemover {
+            removal_threads: Arc::new(Mutex::new(Vec::new())),
             items: Arc::clone(&items),
             repo: repo.clone(),
             approvals: Arc::new(approvals),
@@ -4009,8 +4213,10 @@ pub mod tests {
         }
         let warnings = stashed.lock().unwrap().clone();
         assert!(
-            warnings.iter().any(|w| w.contains("feature")),
-            "a failed removal stashes a `kept` warning: {warnings:?}"
+            warnings
+                .iter()
+                .any(|w| w.contains("pre-remove project hook") && w.contains("--no-hooks")),
+            "a failed removal stashes the hook failure: {warnings:?}"
         );
 
         let outputs: Vec<String> = items
@@ -4028,6 +4234,86 @@ pub mod tests {
             reported_path.exists(),
             "the worktree is preserved when removal fails"
         );
+    }
+
+    /// A ref lock must restore the branch-only row and retain Git's cause.
+    #[test]
+    fn test_apply_reports_branch_only_deletion_failure() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        repo.run_command(&["branch", "feature"]).unwrap();
+        fs::write(
+            repo.git_common_dir().join("refs/heads/feature.lock"),
+            "another ref writer",
+        )
+        .unwrap();
+        let row = branch_only_picker_item("feature");
+        let token = row.output().into_owned();
+        let items = Arc::new(Mutex::new(vec![row]));
+        let remover = test_remover(Arc::clone(&items), repo.clone());
+        assert!(matches!(remover.apply(token), RemovalEffect::Dropped));
+        super::finish_removals(&remover.removal_threads).unwrap();
+
+        assert!(repo.branch("feature").exists_locally().unwrap());
+        assert_eq!(items.lock().unwrap().len(), 1);
+        let warnings = remover.stashed_warnings.lock().unwrap();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("feature.lock"), "{}", warnings[0]);
+    }
+
+    /// A failed pre-remove hook must undo the optimistic morph while keeping
+    /// the checkout, its unmerged branch and the hook's diagnostic.
+    #[test]
+    fn test_apply_reverts_morph_when_pre_remove_fails() {
+        let mut test = worktrunk::testing::TestRepo::with_initial_commit();
+        test.add_worktree_with_commit("feature", "payload.txt", "keep", "unmerged");
+        fs::create_dir_all(test.path().join(".config")).unwrap();
+        fs::write(
+            test.path().join(".config/wt.toml"),
+            "pre-remove = \"false\"\n",
+        )
+        .unwrap();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let path = repo
+            .list_worktrees()
+            .unwrap()
+            .iter()
+            .find(|worktree| worktree.branch.as_deref() == Some("feature"))
+            .unwrap()
+            .path
+            .clone();
+        let approvals_dir = worktrunk::testing::test_tempdir();
+        let mut approvals = Approvals::default();
+        approvals
+            .approve_commands(
+                repo.project_identifier().unwrap(),
+                vec!["false".to_string()],
+                &approvals_dir.path().join("approvals.toml"),
+            )
+            .unwrap();
+        let items = Arc::new(Mutex::new(Vec::new()));
+        let mut remover = test_remover(Arc::clone(&items), repo.clone());
+        remover.approvals = Arc::new(approvals);
+        let (row, token, rendered, morphed) = setup_morphable_row(&remover, "feature", &path);
+        let original = rendered.lock().unwrap().clone();
+        items.lock().unwrap().push(row);
+        assert!(matches!(
+            remover.apply(token.clone()),
+            RemovalEffect::Morphed
+        ));
+        super::finish_removals(&remover.removal_threads).unwrap();
+
+        assert!(!morphed.load(std::sync::atomic::Ordering::Relaxed));
+        assert_eq!(*rendered.lock().unwrap(), original);
+        assert_eq!(items.lock().unwrap()[0].output().as_ref(), token);
+        assert_eq!(
+            fs::read_to_string(path.join("payload.txt")).unwrap(),
+            "keep"
+        );
+        assert!(repo.branch("feature").exists_locally().unwrap());
+        let warnings = remover.stashed_warnings.lock().unwrap();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("pre-remove project hook"));
     }
 
     /// End-to-end through `apply`: alt-x on a worktree whose branch is unmerged
@@ -4598,6 +4884,7 @@ pub mod tests {
         render_tx.set(tx).unwrap();
         let header_flash = Arc::new(super::items::HeaderFlash::default());
         let remover = AltXRemover {
+            removal_threads: Arc::new(Mutex::new(Vec::new())),
             items,
             repo,
             approvals: Arc::new(Approvals::default()),
@@ -4664,6 +4951,7 @@ pub mod tests {
         render_tx.set(tx).unwrap();
         let header_flash = Arc::new(super::items::HeaderFlash::default());
         let remover = AltXRemover {
+            removal_threads: Arc::new(Mutex::new(Vec::new())),
             items: Arc::clone(&items),
             repo: repo.clone(),
             approvals: Arc::new(Approvals::default()),
@@ -4736,6 +5024,7 @@ pub mod tests {
         render_tx.set(tx).unwrap();
         let header_flash = Arc::new(super::items::HeaderFlash::default());
         let remover = AltXRemover {
+            removal_threads: Arc::new(Mutex::new(Vec::new())),
             items: Arc::clone(&items),
             repo: repo.clone(),
             approvals: Arc::new(Approvals::default()),
