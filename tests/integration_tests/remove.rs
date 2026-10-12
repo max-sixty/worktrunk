@@ -370,7 +370,7 @@ fn test_remove_as_git_subcommand(mut repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "remove", &[], Some(&worktree_path));
-        cmd.env("GIT_EXEC_PATH", "/usr/lib/git-core");
+        crate::common::configure_git_subcommand(&mut cmd, &repo);
         assert_cmd_snapshot!("remove_as_git_subcommand", cmd);
     });
 }
