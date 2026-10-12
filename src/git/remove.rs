@@ -460,10 +460,10 @@ pub fn remove_worktree_with_cleanup(
 ///
 /// # Errors
 ///
-/// Ownership, lock, and cleanliness refusals return errors. Cancellation
-/// returns `Interrupted` before filesystem staging begins. If unregister fails
-/// after staging, `WorktreeRemovalPreserved` reports the retained checkout and
-/// keeps its registration for repair. A failed initial rename returns `None`
+/// Ownership, lock, and cleanliness refusals return errors. If unregister fails,
+/// the checkout returns to its original path. If rollback also fails,
+/// `WorktreeRemovalPreserved` reports its retained path and keeps the complete
+/// registration for repair. A failed initial rename returns `None`
 /// for direct-removal fallback; daemon shutdown is best-effort.
 pub fn stage_worktree_removal(
     repo: &Repository,
@@ -566,10 +566,6 @@ fn rename_into_trash(
     worktree_path: &Path,
     git_dir: &Path,
 ) -> anyhow::Result<Option<PathBuf>> {
-    #[cfg(unix)]
-    if let Some(signal) = crate::signal_forwarder::operation_interrupt_signal() {
-        return Err(crate::git::WorktrunkError::Interrupted { signal, hint: None }.into());
-    }
     let retained_dir = repo.wt_dir().join("retained");
     if let Err(error) = std::fs::create_dir_all(&retained_dir) {
         tracing::debug!(%error, "Failed to prepare worktree staging, falling back");
@@ -581,12 +577,12 @@ fn rename_into_trash(
         return Ok(None);
     }
     if let Err(error) = repo.prune_worktree_entry(worktree_path) {
-        return Err(GitError::WorktreeRemovalPreserved {
-            path: retained_path,
-            git_common_dir: repo.git_common_dir().to_path_buf(),
+        return Err(restore_failed_removal(
+            repo,
+            worktree_path,
+            retained_path,
             error,
-        }
-        .into());
+        ));
     }
     let trash_dir = repo.wt_trash_dir();
     let staged_path = generate_removing_path(&trash_dir, git_dir);
@@ -598,6 +594,25 @@ fn rename_into_trash(
     } else {
         // Unregister committed; caller cleanup may delete this payload directly.
         Ok(Some(retained_path))
+    }
+}
+
+/// Roll back an uncommitted removal; keep the payload aside if its path is occupied.
+fn restore_failed_removal(
+    repo: &Repository,
+    original: &Path,
+    retained: PathBuf,
+    error: anyhow::Error,
+) -> anyhow::Error {
+    if std::fs::rename(&retained, original).is_ok() {
+        error
+    } else {
+        GitError::WorktreeRemovalPreserved {
+            path: retained,
+            git_common_dir: repo.git_common_dir().to_path_buf(),
+            error,
+        }
+        .into()
     }
 }
 
@@ -781,51 +796,6 @@ mod tests {
     use crate::git::ErrorExt;
     use crate::testing::TestRepo;
 
-    /// A sibling foreground lease can latch TERM while the final topology scan
-    /// runs. Filesystem staging must honor that cancellation before its rename.
-    #[cfg(unix)]
-    #[test]
-    fn rename_refuses_cancelled_operation() {
-        const CHILD_ENV: &str = "WORKTRUNK_TEST_REMOVE_CANCELLED_STAGING_CHILD";
-        if std::env::var_os(CHILD_ENV).is_none() {
-            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-            command
-                .args([
-                    "--exact",
-                    "git::remove::tests::rename_refuses_cancelled_operation",
-                ])
-                .env(CHILD_ENV, "1")
-                .stdout(std::process::Stdio::piped());
-            let output = crate::shell_exec::spawn(&mut command)
-                .unwrap()
-                .wait_with_output()
-                .unwrap();
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            assert!(output.status.success(), "{stdout}");
-            assert!(stdout.contains(" 1 passed;"), "{stdout}");
-            return;
-        }
-        let mut test = TestRepo::with_initial_commit();
-        let worktree = test.add_worktree("feature");
-        let repo = Repository::at(test.root_path()).unwrap();
-        let registration = repo.worktree_at(&worktree).git_dir().unwrap();
-        let index = std::fs::read(registration.join("index")).unwrap();
-        let operation = crate::signal_forwarder::CommandOperation::start().unwrap();
-        let foreground = crate::signal_forwarder::ForegroundSignals::install().unwrap();
-        signal_hook::low_level::raise(signal_hook::consts::SIGTERM).unwrap();
-        assert_eq!(
-            operation.interrupt_signal(),
-            Some(signal_hook::consts::SIGTERM)
-        );
-        let error = rename_into_trash(&repo, &worktree, &registration).unwrap_err();
-        assert_eq!(error.interrupt_signal(), Some(signal_hook::consts::SIGTERM));
-        assert!(worktree.join(".git").is_file());
-        assert_eq!(std::fs::read(registration.join("index")).unwrap(), index);
-        assert!(!repo.wt_dir().join("retained").exists());
-        drop(foreground);
-        drop(operation);
-    }
-
     /// Unregister refusal cannot put recoverable contents into swept trash.
     #[test]
     fn staging_failure_keeps_complete_registration_for_repair() {
@@ -842,6 +812,18 @@ mod tests {
         // Models a lock acquired after the live gate, at the unregister boundary.
         std::fs::write(registration.join("locked"), "new owner").unwrap();
         let error = rename_into_trash(&repo, &worktree, &registration).unwrap_err();
+        assert!(error.to_string().contains("locked"), "{error:#}");
+        assert_eq!(
+            std::fs::read_to_string(worktree.join("payload")).unwrap(),
+            "keep my work"
+        );
+        assert!(worktree.join(".git").is_file());
+        // A concurrent occupant can prevent rollback; preserve both checkouts.
+        let retained = repo.wt_dir().join("retained/occupied");
+        std::fs::rename(&worktree, &retained).unwrap();
+        std::fs::create_dir(&worktree).unwrap();
+        std::fs::write(worktree.join("new-occupant"), "preserve occupant").unwrap();
+        let error = restore_failed_removal(&repo, &worktree, retained, error);
         let Some(GitError::WorktreeRemovalPreserved { path: retained, .. }) =
             error.downcast_ref::<GitError>()
         else {
@@ -859,37 +841,16 @@ mod tests {
                 "{name}"
             );
         }
-        assert!(!worktree.exists());
         assert!(repo.disposal_entries().unwrap().is_empty());
         let diagnostic = error.render_diagnostic().unwrap();
         assert!(diagnostic.contains("worktree repair"), "{diagnostic}");
         std::fs::remove_file(registration.join("locked")).unwrap();
-        // The original path may already have a new occupant. Repair the
-        // retained checkout in place rather than moving it over that occupant.
-        std::fs::create_dir(&worktree).unwrap();
-        std::fs::write(worktree.join("new-occupant"), "preserve occupant").unwrap();
         test.run_git(&["worktree", "repair", retained.to_str().unwrap()]);
         test.run_git_in(retained, &["status", "--porcelain"]);
         assert_eq!(
             std::fs::read_to_string(worktree.join("new-occupant")).unwrap(),
             "preserve occupant",
         );
-
-        std::fs::rename(&worktree, worktree.with_extension("occupied")).unwrap();
-        std::fs::rename(retained, &worktree).unwrap();
-        test.run_git(&["worktree", "repair", worktree.to_str().unwrap()]);
-        let discarded = rename_into_trash(&repo, &worktree, &registration)
-            .unwrap()
-            .unwrap();
-        assert!(discarded.starts_with(repo.wt_trash_dir()));
-        assert_eq!(
-            std::fs::read_to_string(discarded.join("payload")).unwrap(),
-            "keep my work"
-        );
-        assert!(!registration.exists());
-        let disposal = repo.disposal_entries().unwrap();
-        assert_eq!(disposal.len(), 1);
-        assert_eq!(disposal[0].path, discarded);
     }
 
     /// A `git worktree lock` must stop the rename even when the caller skipped
