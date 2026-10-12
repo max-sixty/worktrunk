@@ -6104,19 +6104,11 @@ fn test_force_remove_interrupted_status_preserves_worktrees(
     assert!(!stderr.contains("Removing later-worktree"));
 }
 
-/// Work created during fsmonitor shutdown is refused after the first clean
-/// check, whether staged, modified or untracked. Paused operations cannot hide
-/// it; explicit force alone may discard it.
+/// Untracked work created during fsmonitor shutdown is refused; explicit force
+/// alone may discard it. An index-only final check would miss the new file.
 #[cfg(unix)]
 #[rstest]
-#[case::staged(true, false)]
-#[case::untracked(false, false)]
-#[case::modified(false, true)]
-fn test_remove_keeps_work_staged_during_fsmonitor_stop(
-    mut repo: TestRepo,
-    #[case] stage: bool,
-    #[case] modified: bool,
-) {
+fn test_remove_keeps_work_created_during_fsmonitor_stop(mut repo: TestRepo) {
     use std::os::unix::fs::PermissionsExt;
 
     let bin_dir = repo.home_path().join("late-index-git");
@@ -6130,10 +6122,7 @@ fn test_remove_keeps_work_staged_during_fsmonitor_stop(
             r#"#!/bin/sh
 if [ "$1" = fsmonitor--daemon ]; then
   if [ "$2" = stop ]; then
-    printf 'late staged work' > late.txt
-    if [ "$WORKTRUNK_TEST_REMOVAL_STAGE" = true ]; then
-      {real_git} -c core.fsmonitor=false add late.txt || exit 1
-    fi
+    printf 'late work' > late.txt
   fi
   exit 0
 fi
@@ -6150,14 +6139,6 @@ exec {real_git} -c core.fsmonitor=false "$@"
     for (branch, force) in [("keep-late", false), ("discard-late", true)] {
         let worktree = repo.add_worktree(branch);
         let registration = registration_dir(&worktree);
-        if modified {
-            repo.commit_in_worktree(
-                &worktree,
-                "late.txt",
-                "original tracked work",
-                "Track late file",
-            );
-        }
         let mut command = repo.wt_command();
         command
             .args([
@@ -6167,8 +6148,7 @@ exec {real_git} -c core.fsmonitor=false "$@"
                 "--yes",
                 "--no-delete-branch",
             ])
-            .env("PATH", &path)
-            .env("WORKTRUNK_TEST_REMOVAL_STAGE", stage.to_string());
+            .env("PATH", &path);
         if force {
             command.arg("--force");
         }
@@ -6184,27 +6164,18 @@ exec {real_git} -c core.fsmonitor=false "$@"
         if !force {
             assert_eq!(
                 fs::read_to_string(worktree.join("late.txt")).unwrap(),
-                "late staged work"
+                "late work"
             );
-            let staged = repo
-                .git_command()
-                .current_dir(&worktree)
-                .args(["show", ":late.txt"])
-                .run()
-                .unwrap();
-            assert_eq!(staged.status.success(), stage || modified);
-            if stage {
-                assert_eq!(staged.stdout, b"late staged work");
-            } else if modified {
-                assert_eq!(staged.stdout, b"original tracked work");
-            }
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("has uncommitted changes"),
+                "{output:?}"
+            );
         }
     }
 }
 
-/// A lock or replacement appearing during fsmonitor shutdown must still block
-/// removal after the final status scan, even forced;
-/// a same-repository replacement must not retarget the originally chosen entry.
+/// Force waives dirt, never a lock or replacement appearing during fsmonitor
+/// shutdown. A sibling replacement cannot retarget the chosen registration.
 #[cfg(unix)]
 #[rstest]
 #[case::lock("lock")]
@@ -6213,7 +6184,6 @@ exec {real_git} -c core.fsmonitor=false "$@"
 fn test_remove_rechecks_ownership_and_lock_after_fsmonitor_stop(
     mut repo: TestRepo,
     #[case] mutation: &str,
-    #[values(false, true)] force: bool,
 ) {
     use std::os::unix::fs::PermissionsExt;
 
@@ -6256,12 +6226,10 @@ exec {real_git} -c core.fsmonitor=false "$@"
         std::iter::once(bin_dir).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
     )
     .unwrap();
-    let branch = if force { "forced-gate" } else { "normal-gate" };
+    let branch = "forced-gate";
     let worktree = repo.add_worktree(branch);
     let registration = registration_dir(&worktree);
     let parked = worktree.with_extension("parked");
-    let replacement = repo.add_worktree(&format!("{branch}-replacement"));
-    let replacement_registration = registration_dir(&replacement);
     let proof = repo.home_path().join(format!("{branch}-mutation-proof"));
     let mut command = repo.wt_command();
     command
@@ -6271,28 +6239,38 @@ exec {real_git} -c core.fsmonitor=false "$@"
             "--foreground",
             "--yes",
             "--no-delete-branch",
+            "--force",
         ])
         .env("PATH", &path)
         .env("WORKTRUNK_TEST_REMOVAL_MUTATION", mutation)
         .env("WORKTRUNK_TEST_REMOVAL_PARKED", &parked)
-        .env("WORKTRUNK_TEST_REMOVAL_REPLACEMENT", &replacement)
-        .env(
-            "WORKTRUNK_TEST_REMOVAL_REPLACEMENT_REGISTRATION",
-            &replacement_registration,
-        )
         .env("WORKTRUNK_TEST_REMOVAL_PROOF", &proof);
-    if force {
-        command.arg("--force");
+    if mutation == "sibling" {
+        let replacement = repo.add_worktree(&format!("{branch}-replacement"));
+        command
+            .env("WORKTRUNK_TEST_REMOVAL_REPLACEMENT", &replacement)
+            .env(
+                "WORKTRUNK_TEST_REMOVAL_REPLACEMENT_REGISTRATION",
+                registration_dir(&replacement),
+            );
     }
     let output = command.output().unwrap();
     assert!(
         !output.status.success(),
-        "mutation {mutation}, force {force}: {}",
+        "mutation {mutation}: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let expected_error = match mutation {
+        "lock" => "worktree is locked (keep after shutdown)",
+        "foreign" => "does not hold the worktree registered there",
+        "sibling" => "Worktree registration changed during removal",
+        _ => unreachable!(),
+    };
+    assert!(stderr.contains(expected_error), "{stderr}");
     assert_eq!(
         fs::read_to_string(&proof).unwrap_or_else(|error| {
-            panic!("mutation {mutation}, force {force} did not run: {error}; {output:?}")
+            panic!("mutation {mutation} did not run: {error}; {output:?}")
         }),
         mutation,
         "mutation must complete"

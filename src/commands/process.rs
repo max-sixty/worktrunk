@@ -598,7 +598,8 @@ pub fn build_remove_command(
     // The fsmonitor daemon is stopped (and force-killed if wedged) synchronously
     // in the Rust foreground by `stop_fsmonitor_daemon`, before this command is
     // built — see `spawn_background_removal`. The detached process only does the
-    // `git worktree remove` / `rm -rf`.
+    // `git worktree remove` with fsmonitor disabled, so its dirty gate cannot
+    // restart the daemon, or `rm -rf`.
     //
     // When removing the current worktree, delay so the shell wrapper can cd away
     // before the directory is removed. The primary fix for the "shell-init: error
@@ -615,13 +616,13 @@ pub fn build_remove_command(
         Some(branch_name) => {
             let branch_escaped = escape(branch_name.into());
             format!(
-                "{}git worktree remove{} {} && git branch -D -- {}",
+                "{}git -c core.fsmonitor=false worktree remove{} {} && git branch -D -- {}",
                 prefix, force_flag, worktree_escaped, branch_escaped
             )
         }
         None => {
             format!(
-                "{}git worktree remove{} {}",
+                "{}git -c core.fsmonitor=false worktree remove{} {}",
                 prefix, force_flag, worktree_escaped
             )
         }

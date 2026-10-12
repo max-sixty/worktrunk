@@ -473,7 +473,9 @@ impl Repository {
         } else {
             self.worktree_at(path).has_initialized_submodules()?
         };
-        let mut args = vec!["worktree", "remove"];
+        // Staging already stopped fsmonitor; Git's own dirty gate must not
+        // restart it during this direct-removal fallback.
+        let mut args = vec!["-c", "core.fsmonitor=false", "worktree", "remove"];
         if use_force {
             args.push("--force");
         }
@@ -494,7 +496,7 @@ impl Repository {
                 "remove worktree with submodules",
                 None,
                 /* force_hint */ true,
-                crate::git::CleanCheckMode::ConfiguredFsmonitor,
+                crate::git::CleanCheckMode::FullScan,
             )?;
             tracing::debug!("Using --force for worktree removal due to initialized submodules");
         }
