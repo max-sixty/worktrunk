@@ -197,7 +197,6 @@ Unix only; on Windows [2m--reap[0m is rejected.
  [2mretained_unmerged[0m    Declined: the branch was not integrated into the target                                          
  [2mretained_checked_out[0m Declined: another worktree has the branch checked out                                            
  [2mretained_raced[0m       Declined: the branch moved during the removal. Retry                                             
- [2mretained_failed[0m      The delete command itself failed                                                                 
 
 [1m[32mHooks[0m
 
