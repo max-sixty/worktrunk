@@ -26,7 +26,6 @@ use worktrunk::config::UserConfig;
 use worktrunk::git::GitError;
 use worktrunk::git::IntegrationReason;
 use worktrunk::git::Repository;
-use worktrunk::git::path_dir_name;
 use worktrunk::git::{
     BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemoveOptions,
     execute_branch_deletion, remove_worktree_with_cleanup, stage_worktree_removal,
@@ -528,27 +527,6 @@ fn build_remove_command_with_tail(
         Some(tail) => format!("{remove_command} && {tail}"),
         None => remove_command,
     }
-}
-
-/// List top-level entries remaining in a directory after a failed removal.
-///
-/// Returns None if the directory doesn't exist, can't be read, or is empty.
-/// Entries are sorted, with directories suffixed with `/`.
-fn list_remaining_entries(path: &Path) -> Option<Vec<String>> {
-    let mut entries: Vec<String> = std::fs::read_dir(path)
-        .ok()?
-        .filter_map(|e| {
-            let e = e.ok()?;
-            let name = e.file_name().to_string_lossy().into_owned();
-            if e.file_type().ok()?.is_dir() {
-                Some(format!("{name}/"))
-            } else {
-                Some(name)
-            }
-        })
-        .collect();
-    entries.sort();
-    (!entries.is_empty()).then_some(entries)
 }
 
 // ============================================================================
@@ -1946,13 +1924,7 @@ fn handle_detached_removed_worktree_output(
                 target_branch: ctx.target_branch.map(String::from),
                 force_worktree: ctx.force_worktree,
             },
-        )
-        .map_err(|err| GitError::WorktreeRemovalFailed {
-            branch: path_dir_name(ctx.worktree_path).to_string(),
-            path: ctx.worktree_path.to_path_buf(),
-            remaining_entries: list_remaining_entries(ctx.worktree_path),
-            error: err,
-        })?;
+        )?;
         let (files, bytes) = output
             .staged_path
             .as_deref()
@@ -2025,13 +1997,7 @@ fn handle_named_removed_worktree_foreground(
             target_branch: ctx.target_branch.map(String::from),
             force_worktree: ctx.force_worktree,
         },
-    )
-    .map_err(|err| GitError::WorktreeRemovalFailed {
-        branch: branch_name.into(),
-        path: ctx.worktree_path.to_path_buf(),
-        remaining_entries: list_remaining_entries(ctx.worktree_path),
-        error: err,
-    })?;
+    )?;
     let stats = output
         .staged_path
         .as_deref()
