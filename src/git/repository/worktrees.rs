@@ -1,11 +1,13 @@
 //! Worktree management operations for Repository.
 
 use std::collections::{BTreeMap, HashSet};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
 use anyhow::Context as _;
 use color_print::cformat;
+use dunce::canonicalize;
 
 use super::working_tree::{
     operation_in_progress_at, path_to_logging_context, registration_worktree_path,
@@ -50,10 +52,29 @@ impl Repository {
         let raw_worktrees = WorktreeInfo::parse_porcelain_list_z(&stdout)?;
         let mut worktrees: Vec<_> = raw_worktrees.into_iter().filter(|wt| !wt.bare).collect();
 
-        // Git reports the common directory as main for submodules and
-        // separate stores; correct that entry from config/backlink.
+        // Main-worktree path correction.
+        //
+        // Git's `get_main_worktree()` computes the main worktree path by stripping
+        // a trailing `/.git` from the common dir. Two layouts have no such suffix,
+        // so git leaves the path unchanged and reports the git data directory as
+        // the "main worktree": submodules, whose common dir is `.git/modules/sub`,
+        // and `--separate-git-dir` repositories, whose common dir is wherever the
+        // user put the store. Git consults neither `core.worktree` nor its own
+        // `gitdir` backlink in this code path.
+        //
+        // We detect this by checking whether the first worktree's path equals
+        // git_common_dir (which never holds for normal repos, where git_common_dir
+        // is `.git` inside the worktree). When matched, we correct it using
+        // repo_path(), which resolves both layouts from the signals git does
+        // record.
+        //
+        // We fix this here rather than at each call site because list_worktrees()
+        // is the single point where worktree paths enter the system — all consumers
+        // (worktree_for_branch, resolve_worktree, etc.) depend on paths being
+        // working directories. If git fixes this upstream, the condition stops
+        // triggering.
         if let Some(first) = worktrees.first_mut()
-            && dunce::canonicalize(&first.path).ok().as_deref() == Some(self.git_common_dir())
+            && canonicalize(&first.path).ok().as_deref() == Some(self.git_common_dir())
         {
             first.path = self.repo_path()?.to_path_buf();
         }
@@ -281,10 +302,9 @@ impl Repository {
         // The registration is a git dir in its own right, so its index is read
         // against its `HEAD` without the working tree git can no longer find.
         // Both commands answer with exit 0 or 1; anything else is a failure.
-        let registration_arg = registration.to_string_lossy();
         let git = |args: &[&str]| -> anyhow::Result<(bool, String)> {
-            let mut all = vec!["--git-dir", registration_arg.as_ref()];
-            all.extend_from_slice(args);
+            let mut all = vec![OsStr::new("--git-dir"), registration.as_os_str()];
+            all.extend(args.iter().map(OsStr::new));
             let output = self
                 .with_object_store_env(
                     Cmd::new("git")
@@ -292,8 +312,7 @@ impl Repository {
                         .context(path_to_logging_context(path))
                         .scrub_git_discovery_env(),
                 )
-                .run()
-                .with_context(|| format!("Failed to execute: git {}", all.join(" ")))?;
+                .run()?;
             match output.status.code() {
                 Some(0 | 1) => Ok((
                     output.status.success(),
@@ -432,14 +451,6 @@ impl Repository {
     /// user-requested `force`, the user opted into destructive removal, so no
     /// re-check.)
     pub fn remove_worktree(&self, path: &std::path::Path, force: bool) -> anyhow::Result<()> {
-        let path_str = path.to_str().ok_or_else(|| {
-            anyhow::Error::from(GitError::Other {
-                message: format!(
-                    "Worktree path contains invalid UTF-8: {}",
-                    format_path_for_display(path)
-                ),
-            })
-        })?;
         let use_force = if force {
             true
         } else {
@@ -447,11 +458,16 @@ impl Repository {
         };
         // Staging already stopped fsmonitor; Git's own dirty gate must not
         // restart it during this direct-removal fallback.
-        let mut args = vec!["-c", "core.fsmonitor=false", "worktree", "remove"];
+        let mut args = vec![
+            OsStr::new("-c"),
+            OsStr::new("core.fsmonitor=false"),
+            OsStr::new("worktree"),
+            OsStr::new("remove"),
+        ];
         if use_force {
-            args.push("--force");
+            args.push(OsStr::new("--force"));
         }
-        args.push(path_str);
+        args.push(path.as_os_str());
 
         // The synthesized-force cleanliness check and destructive command are
         // one critical section. If this waited for another registry teardown
