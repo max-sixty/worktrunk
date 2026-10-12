@@ -3133,7 +3133,9 @@ fn test_prune_removal_failure_aborts_remaining_queue(repo: TestRepo) {
         "a failed removal must fail the run:\n{stderr}"
     );
     assert!(
-        stderr.contains("Failed to delete branch abort-a"),
+        stderr
+            .ansi_strip()
+            .contains("Failed to delete branch abort-a"),
         "the error should carry the failing candidate's context:\n{stderr}"
     );
     assert!(
