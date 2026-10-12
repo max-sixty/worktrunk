@@ -512,11 +512,11 @@ impl Repository {
             // cleanliness ourselves right before the destructive command —
             // a file modified since the caller's check must still fail
             // closed rather than be silently destroyed.
-            self.worktree_at(path).ensure_clean(
+            self.worktree_at(path).ensure_clean_with_mode(
                 "remove worktree with submodules",
                 None,
                 /* force_hint */ true,
-                crate::git::CleanCheckMode::FullScan,
+                super::CleanCheckMode::FullScan,
             )?;
             tracing::debug!("Using --force for worktree removal due to initialized submodules");
         }

@@ -15,7 +15,7 @@ use crate::commands::hook_plan::{ApprovedHookPlan, execute_planned_hook, registe
 use crate::commands::hooks::HookAnnouncer;
 use crate::commands::process::{
     HookLog, InternalOp, build_remove_command, build_remove_command_staged,
-    build_remove_placeholder_command, spawn_detached,
+    build_remove_placeholder_command, path_shell_argument, spawn_detached,
 };
 use crate::commands::template_vars::TemplateVars;
 use crate::commands::worktree::hooks::PostRemoveContext;
@@ -235,6 +235,10 @@ fn execute_instant_removal_or_fallback(
         changed_directory,
         planner_expected_retention,
     } = *removal;
+
+    // Reject paths the detached shell cannot carry before moving the checkout.
+    path_shell_argument(worktree_path)?;
+    path_shell_argument(repo.wt_trash_dir())?;
 
     // Dirty-worktree gate, fsmonitor stop, then the rename into .git/wt/trash/
     // (instant on same filesystem) — the same prelude the synchronous
@@ -2429,6 +2433,48 @@ mod tests {
         let branch_only = retained_checked_out_branch_message("feature", path, false);
         assert!(branch_only.contains("Retained branch"));
         assert!(!branch_only.contains("Removed worktree"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn background_removal_refuses_native_path_before_staging() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let original = test.create_worktree("feature", "feature");
+        let repo = Repository::at(test.root_path()).unwrap();
+        let registration = repo.worktree_at(&original).git_dir().unwrap();
+        let checkout =
+            original.with_file_name(std::ffi::OsString::from_vec(b"feature-\xff".to_vec()));
+        std::fs::rename(&original, &checkout).unwrap();
+        let mut backlink = checkout.join(".git").as_os_str().as_bytes().to_vec();
+        backlink.push(b'\n');
+        std::fs::write(registration.join("gitdir"), &backlink).unwrap();
+        let gitfile = std::fs::read(checkout.join(".git")).unwrap();
+
+        let error = execute_instant_removal_or_fallback(
+            &repo,
+            &BackgroundRemoval {
+                worktree_path: &checkout,
+                branch_name: Some("feature"),
+                deletion_mode: BranchDeletionMode::Keep,
+                target_branch: None,
+                force_worktree: false,
+                changed_directory: false,
+                planner_expected_retention: true,
+            },
+            BackgroundFallbackMode::Detached,
+            |_, _| panic!("an unrepresentable path must not schedule cleanup"),
+        )
+        .err()
+        .expect("a native path cannot be passed through the detached shell");
+        assert!(error.to_string().contains("non-UTF-8 path"));
+        assert_eq!(std::fs::read(checkout.join(".git")).unwrap(), gitfile);
+        assert_eq!(
+            std::fs::read(registration.join("gitdir")).unwrap(),
+            backlink
+        );
+        assert!(!repo.wt_trash_dir().exists());
     }
 
     #[test]

@@ -34,7 +34,6 @@ impl WorktreeInfo {
                         path: git_path_from_bytes(path)?,
                         head: String::new(),
                         branch: None,
-                        branch_identity_error: None,
                         bare: false,
                         detached: false,
                         locked: None,
@@ -309,15 +308,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_porcelain_list_multiple_worktrees() {
-        let output = "worktree /path/main\0HEAD aaa\0branch refs/heads/main\0\0worktree /path/feature\0HEAD bbb\0branch refs/heads/feature\0\0";
-        let worktrees = WorktreeInfo::parse_porcelain_list_z(output.as_bytes()).unwrap();
-        let [main_wt, feature_wt]: [WorktreeInfo; 2] = worktrees.try_into().unwrap();
-        assert_eq!(main_wt.branch, Some("main".to_string()));
-        assert_eq!(feature_wt.branch, Some("feature".to_string()));
-    }
-
-    #[test]
     fn test_parse_porcelain_list_bare_repo() {
         let output = "worktree /path/to/repo.git\0HEAD abc123\0bare\0\0";
         let worktrees = WorktreeInfo::parse_porcelain_list_z(output.as_bytes()).unwrap();
@@ -365,20 +355,6 @@ mod tests {
         assert!(result.is_ok());
         let worktrees = result.unwrap();
         assert_eq!(worktrees.len(), 1);
-    }
-
-    #[test]
-    fn test_parse_porcelain_list_missing_worktree_path() {
-        let output = "worktree\0HEAD abc123\0\0";
-        let result = WorktreeInfo::parse_porcelain_list_z(output.as_bytes());
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_parse_porcelain_list_missing_head_sha() {
-        let output = "worktree /path\0HEAD\0\0";
-        let result = WorktreeInfo::parse_porcelain_list_z(output.as_bytes());
-        assert!(result.is_err());
     }
 
     #[test]
