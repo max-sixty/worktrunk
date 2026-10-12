@@ -489,6 +489,31 @@ fn test_promote_keeps_worktree_metadata_with_tracked_sibling(mut repo: TestRepo)
             format!("{incoming} config")
         );
     }
+
+    // The incoming main branch now tracks a file that must stay local in root.
+    repo.run_git_in(&feature, &["add", "-f", ".conductor/local"]);
+    repo.run_git_in(&feature, &["commit", "-m", "Track incoming metadata"]);
+    let output = repo
+        .wt_command()
+        .args(["step", "promote", "main"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("would be overwritten"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("wt/staging/promote"));
+    for (path, label) in [(repo.root_path(), "main"), (feature.as_path(), "feature")] {
+        assert_eq!(
+            fs::read_to_string(path.join(".conductor/local")).unwrap(),
+            format!("{label} .conductor")
+        );
+    }
+    let staging = repo.root_path().join(".git/wt/staging/promote");
+    for (slot, label) in [("a", "feature"), ("b", "main")] {
+        assert_eq!(
+            fs::read_to_string(staging.join(slot).join("config/local")).unwrap(),
+            format!("{label} config")
+        );
+    }
 }
 
 /// Only main worktree has gitignored files — they should move to the other worktree

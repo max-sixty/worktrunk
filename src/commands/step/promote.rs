@@ -65,8 +65,7 @@ const PROMOTE_STAGING_DIR: &str = "staging/promote";
 
 /// Move gitignored files from both worktrees into a staging directory.
 ///
-/// Called BEFORE the branch exchange because `git switch` silently overwrites
-/// ignored files that collide with tracked files on the target branch.
+/// Staged files follow their branch; excluded metadata stays in its worktree.
 ///
 /// Returns the staging directory path and the count of entries staged.
 fn stage_ignored(
@@ -260,11 +259,9 @@ fn print_promote_announcement(is_restoring: bool, default_branch: Option<&str>) 
 /// Exchange branches between two worktrees.
 ///
 /// Steps: detach target → detach main → switch main → switch target.
-/// Both worktrees must be clean (verified by caller). Failure here is
-/// near-impossible given the preconditions (`ensure_clean` passed, branches
-/// exist, detach released locks); if it does happen, the caller surfaces the
-/// error and the worktrees may be left in a detached state for the user to
-/// resolve manually.
+/// Both worktrees must be clean (verified by caller). Git refuses tracked files
+/// that would overwrite ignored metadata left in either worktree. A failure
+/// can leave worktrees detached; staged files remain available for recovery.
 fn exchange_branches(
     main_wt: &worktrunk::git::WorkingTree<'_>,
     main_branch: &str,
@@ -276,12 +273,22 @@ fn exchange_branches(
         (main_wt, &["switch", "--detach"], "detach main"),
         (
             main_wt,
-            &["switch", "--end-of-options", target_branch],
+            &[
+                "switch",
+                "--no-overwrite-ignore",
+                "--end-of-options",
+                target_branch,
+            ],
             "switch main",
         ),
         (
             target_wt,
-            &["switch", "--end-of-options", main_branch],
+            &[
+                "switch",
+                "--no-overwrite-ignore",
+                "--end-of-options",
+                main_branch,
+            ],
             "switch target",
         ),
     ];
@@ -382,9 +389,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     let target_entries =
         list_and_filter_ignored_entries(target_path, &target_branch, &worktree_paths, no_excludes)?;
 
-    // Move gitignored files to staging BEFORE branch exchange.
-    // `git switch` silently overwrites ignored files that collide with tracked
-    // files on the target branch — staging them first prevents data loss.
+    // Stage ignored files before switching; excluded metadata stays in place.
     let staged = if !main_entries.is_empty() || !target_entries.is_empty() {
         let (dir, count) = stage_ignored(
             &repo,
@@ -403,14 +408,20 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     };
 
     // Exchange branches (detach both, then switch to swapped branches).
-    // Failure is near-impossible (both worktrees verified clean, branches exist).
-    // If it somehow fails, stale staging detection recovers on next run.
+    // A refused exchange retains staged files and reports their recovery path.
     exchange_branches(
         &main_working_tree,
         &main_branch,
         &target_working_tree,
         &target_branch,
-    )?;
+    )
+    .map_err(|error| match &staged {
+        Some((dir, _)) => error.context(format!(
+            "Staged files are recoverable from: {}",
+            dir.to_slash_lossy()
+        )),
+        None => error,
+    })?;
 
     // Distribute staged files to their new worktrees (after branch exchange)
     let swapped = if let Some((ref staging_dir, _)) = staged {

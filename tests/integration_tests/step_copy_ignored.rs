@@ -265,6 +265,26 @@ fn test_copy_ignored_exclude_directory_pattern_covers_files(mut repo: TestRepo) 
     );
 }
 
+#[rstest]
+fn test_copy_ignored_invalid_exclude_pattern(mut repo: TestRepo) {
+    let feature_path = setup_ignored_file_in_tracked_dir(&mut repo);
+    repo.write_test_config("[step.copy-ignored]\nexclude = [\"{unclosed\"]\n");
+
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("Invalid [step.copy-ignored].exclude pattern")
+    );
+    assert!(!feature_path.join("config/local.yml").exists());
+}
+
 /// Test error handling when .worktreeinclude has invalid syntax
 #[rstest]
 fn test_copy_ignored_invalid_worktreeinclude(mut repo: TestRepo) {
