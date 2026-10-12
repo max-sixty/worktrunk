@@ -23,6 +23,7 @@
 
 use crate::config::HookSource;
 use std::borrow::Cow;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use color_print::cformat;
@@ -213,7 +214,7 @@ impl CommandError {
     /// Build from the captured `Output` of a non-zero exit.
     pub fn from_failed_output(
         program: impl Into<String>,
-        args: &[impl AsRef<str>],
+        args: &[impl AsRef<OsStr>],
         output: &std::process::Output,
     ) -> Self {
         let stderr = String::from_utf8_lossy(&output.stderr).replace('\r', "\n");
@@ -224,7 +225,10 @@ impl CommandError {
         let signal = None;
         Self {
             program: program.into(),
-            args: args.iter().map(|s| s.as_ref().to_string()).collect(),
+            args: args
+                .iter()
+                .map(|s| s.as_ref().to_string_lossy().into_owned())
+                .collect(),
             stderr,
             stdout,
             exit_code: output.status.code(),

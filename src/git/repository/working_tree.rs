@@ -264,7 +264,8 @@ pub(super) fn operation_in_progress_at(git_dir: &Path) -> Option<InProgressOpera
 ///
 /// When `is_inside` is false every other field is `None` — nothing else ran.
 /// When `is_inside` is true, `root` lands unconditionally and `git_dir` lands
-/// unless canonicalization failed. `current_branch` is only populated when
+/// unless canonicalization failed or the batch framing was ambiguous.
+/// `current_branch` is only populated when
 /// the whole batch succeeded; on unborn HEAD it stays `None` and the
 /// per-accessor fallback paths handle the symbolic-ref lookup.
 #[derive(Debug, Clone, Default)]
@@ -275,11 +276,11 @@ pub struct WorkingTreeGitInfo {
     /// Canonicalized top-level directory. Always `Some` when `is_inside`.
     pub root: Option<PathBuf>,
     /// Canonicalized git directory (may differ from common dir in linked
-    /// worktrees). `Some` when `is_inside` and canonicalization succeeded.
+    /// worktrees). `None` when canonicalization or batch framing failed.
     pub git_dir: Option<PathBuf>,
     /// Current branch: outer `Some(Some(name))` on a branch, `Some(None)`
     /// detached. `None` when HEAD was unresolvable (unborn branch) or outside
-    /// a work tree.
+    /// a work tree, or the batch framing was ambiguous.
     pub current_branch: Option<Option<String>>,
 }
 
@@ -410,7 +411,7 @@ impl<'a> WorkingTree<'a> {
     ///
     /// `--show-toplevel` and `--git-dir` succeed even on unborn branches —
     /// rev-parse prints them before HEAD errors — so `root`/`git_dir` are
-    /// cached whenever we're inside a work tree. `current_branch` is only
+    /// cached unless a newline makes the batch framing ambiguous. `current_branch` is only
     /// populated when the whole batch succeeded, so [`Self::branch`]'s
     /// `symbolic-ref` fallback still handles genuine unborn HEADs. On unborn
     /// the symbolic-full-name line lands as a fallback literal "HEAD", which
@@ -879,7 +880,7 @@ impl<'a> WorkingTree<'a> {
         // refusal keeps the failure closed.
         let git_dir = Repository::git_dir_at(&self.path)
             .with_context(|| format!("Failed to read Git entry @ {}", self.path.display()))?;
-        if git_dir.as_deref() == Some(common_dir) {
+        if git_dir == common_dir {
             return Ok(common_dir.to_path_buf());
         }
 
@@ -888,8 +889,7 @@ impl<'a> WorkingTree<'a> {
         // different repository, or its registration here has lost its `gitdir`
         // file.
         let registrations = common_dir.join("worktrees");
-        let registration =
-            git_dir.filter(|git_dir| git_dir.parent() == Some(registrations.as_path()));
+        let registration = (git_dir.parent() == Some(registrations.as_path())).then_some(git_dir);
         let occupant_registered_at = registration
             .as_deref()
             .and_then(|entry| registration_worktree_path(entry).ok());
@@ -1383,7 +1383,7 @@ impl TempIndex {
     pub(super) fn command<I, S>(&self, args: I) -> Cmd
     where
         I: IntoIterator<Item = S>,
-        S: Into<String>,
+        S: AsRef<std::ffi::OsStr>,
     {
         let command = Cmd::new("git")
             .args(args)

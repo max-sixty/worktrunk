@@ -194,7 +194,7 @@ fn force_kill_fsmonitor_via_socket(socket: &Path) {
     let output = match Cmd::new("lsof")
         .arg("-t")
         .arg("--")
-        .arg(socket.to_string_lossy().into_owned())
+        .arg(socket)
         .timeout(FSMONITOR_LSOF_TIMEOUT)
         .run()
     {
@@ -588,21 +588,11 @@ fn rename_into_trash(repo: &Repository, worktree_path: &Path, git_dir: &Path) ->
     }
 }
 
-/// Capture fresh refs and run a planned branch deletion.
+/// Capture fresh refs and run branch deletion.
 ///
-/// The spelling of "the plan said delete; do it now" for every synchronous
-/// site that doesn't already hold a fresh snapshot (the background fast path,
-/// prune's synchronous fallback, branch-only removal, a picker row). The
-/// invariant it carries — no deletion ever runs against the planning-time
-/// snapshot, so the topology guard and CAS in [`delete_branch_if_safe`]
-/// re-decide against live state — also holds on the two paths that don't call
-/// it: the foreground removal captures its own fresh snapshot just before
-/// [`remove_worktree_with_cleanup`], and the detached fallback can't call
-/// Rust, so it gets the guarantee from a fresh porcelain topology read followed
-/// by an `update-ref -d <ref> <sha>` shell tail instead. A hook or concurrent
-/// process that advanced the branch after the integration check cannot lose
-/// that commit: the CAS rejects the deletion. Checkout protection is best
-/// effort, retaining any checkout observed by the fresh topology read.
+/// Used after worktree removal and for branch-only deletion. Every path,
+/// including the detached fallback, uses [`delete_branch_if_safe`] to recheck
+/// integration and checkout ownership; safe deletion uses CAS against the captured tip.
 pub fn execute_branch_deletion(
     repo: &Repository,
     branch_name: &str,
