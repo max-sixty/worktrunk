@@ -530,8 +530,8 @@ impl RepositoryCliExt for Repository {
 /// Check if the current worktree is the primary worktree (should not be removed).
 ///
 /// Returns true for the main worktree in normal repos and the default branch
-/// worktree in bare repos. Used by `wt merge` to skip removal silently, and
-/// by `prepare_worktree_removal` Phase 2 (which errors instead of skipping).
+/// worktree in bare repos. Merge cleanup skips it; `wt remove` requires an
+/// explicit target before removing a bare repository's primary checkout.
 pub(crate) fn is_primary_worktree(repo: &Repository) -> anyhow::Result<bool> {
     let current_root = repo.current_worktree().root()?;
     let primary = repo.primary_worktree()?;

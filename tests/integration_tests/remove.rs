@@ -2403,8 +2403,8 @@ fn test_remove_main_worktree_vs_linked_worktree(mut repo: TestRepo) {
     );
 }
 
-/// Safe deletion refuses the default branch; Keep removes its linked checkout
-/// and retains the ref. A bare repository permits a linked default checkout.
+/// Safe deletion refuses the default branch. Keep permits an explicit target,
+/// while configured Keep must not implicitly remove a bare primary checkout.
 #[test]
 fn test_remove_default_branch_refused() {
     let test = BareRepoTest::new();
@@ -2425,6 +2425,32 @@ fn test_remove_default_branch_refused() {
         assert_cmd_snapshot!("remove_default_branch_refused", cmd);
     });
 
+    std::fs::write(
+        test.config_path(),
+        "worktree-path = \"{{ branch }}\"\n[remove]\ndelete-branch = false\n",
+    )
+    .unwrap();
+    let output = test
+        .wt_command()
+        .args(["remove", "--foreground"])
+        .current_dir(&main_worktree)
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("Cannot remove the primary worktree without an explicit target"),
+        "{output:?}"
+    );
+    assert!(main_worktree.join(".git").exists());
+    assert!(
+        worktrunk::git::Repository::at(&main_worktree)
+            .unwrap()
+            .branch("main")
+            .exists_locally()
+            .unwrap()
+    );
+
     settings.bind(|| {
         let mut cmd = test.wt_command();
         cmd.args(["remove", "--foreground", "--no-delete-branch", "main"])
@@ -2437,6 +2463,7 @@ fn test_remove_default_branch_refused() {
     assert!(repo.branch("main").exists_locally().unwrap());
 
     // Restore the checkout to exercise explicit deletion independently of Keep.
+    std::fs::write(test.config_path(), "worktree-path = \"{{ branch }}\"\n").unwrap();
     let added = test
         .git_command(&feature_worktree)
         .args(["worktree", "add", main_worktree.to_str().unwrap(), "main"])
