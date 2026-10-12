@@ -2691,12 +2691,6 @@ Hooks, aliases and `step.copy-ignored.exclude` accumulate rather than replace, s
         branch: String,
         #[arg(long)]
         target: String,
-        #[arg(
-            long,
-            required_unless_present = "force_delete",
-            conflicts_with = "force_delete"
-        )]
-        expected_sha: Option<String>,
         #[arg(long)]
         force_delete: bool,
     },

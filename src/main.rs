@@ -963,14 +963,8 @@ fn dispatch_command(
         Commands::InternalDeleteBranchIfSafe {
             branch,
             target,
-            expected_sha,
             force_delete,
-        } => output::handlers::delete_branch_from_detached_fallback(
-            &branch,
-            &target,
-            expected_sha.as_deref(),
-            force_delete,
-        ),
+        } => output::handlers::delete_branch_from_detached_fallback(&branch, &target, force_delete),
         // `working_dir` is the top-level `-C <path>` flag, applied as the
         // child's current directory so global `-C` works for custom
         // subcommands the same way it does for built-ins.

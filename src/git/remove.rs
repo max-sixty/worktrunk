@@ -593,21 +593,11 @@ fn rename_into_trash(repo: &Repository, worktree_path: &Path, git_dir: &Path) ->
     }
 }
 
-/// Capture fresh refs and run a planned branch deletion.
+/// Capture fresh refs and run branch deletion.
 ///
-/// The spelling of "the plan said delete; do it now" for every synchronous
-/// site that doesn't already hold a fresh snapshot (the background fast path,
-/// prune's synchronous fallback, branch-only removal, a picker row). The
-/// invariant it carries — no deletion ever runs against the planning-time
-/// snapshot, so the topology guard and CAS in [`delete_branch_if_safe`]
-/// re-decide against live state — also holds on the two paths that don't call
-/// it: foreground removal captures its own fresh snapshot just before
-/// [`remove_worktree_with_cleanup`], and the detached Rust child compares its
-/// planned SHA before passing the same fresh snapshot to this primitive.
-/// A hook or concurrent process that advanced the branch after the integration
-/// check cannot lose that commit: the CAS rejects the deletion. Checkout
-/// protection is best effort, retaining any checkout observed by the fresh
-/// topology read.
+/// Used after worktree removal and for branch-only deletion, including the
+/// detached fallback. [`delete_branch_if_safe`] rechecks integration and checkout
+/// ownership against live state; safe deletion uses CAS against the captured tip.
 pub fn execute_branch_deletion(
     repo: &Repository,
     branch_name: &str,

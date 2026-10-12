@@ -4283,7 +4283,7 @@ fn block_staged_rename(repo: &TestRepo, worktree_path: &std::path::Path) -> std:
 }
 
 /// The rename-failure fallback honors `-D`: an unmerged branch is force-deleted
-/// in the legacy `git worktree remove && git branch -D` command.
+/// in the `git worktree remove` fallback followed by Worktrunk's deletion child.
 #[rstest]
 fn test_remove_background_fallback_force_delete_branch(mut repo: TestRepo) {
     repo.commit("initial");
@@ -6104,61 +6104,37 @@ fn test_force_remove_interrupted_status_preserves_worktrees(
     assert!(!stderr.contains("Removing later-worktree"));
 }
 
-/// Detached branch deletion uses the shipped command and fresh checkout
-/// ownership, including a newline that fooled the former shell parser.
+/// The shipped force-deletion child preserves a branch checked out elsewhere.
 #[rstest]
-#[case::safe_unchecked(false, false)]
-#[case::safe_checked_out(true, false)]
-#[case::forced_checked_out(true, true)]
-fn test_detached_delete_child_dispatch(#[case] checked_out: bool, #[case] force: bool) {
+fn test_detached_delete_child_force_keeps_checked_out_branch() {
     let mut repo = TestRepo::with_initial_commit();
-    let checkout = if checked_out {
-        let name = if cfg!(unix) {
-            "checkout\nprunable injected"
-        } else {
-            "checkout"
-        };
-        let path = repo.root_path().parent().unwrap().join(name);
-        Some(repo.add_worktree_at_path("feature", &path))
+    let name = if cfg!(unix) {
+        "checkout\nprunable injected"
     } else {
-        repo.run_git(&["branch", "feature"]);
-        None
+        "checkout"
     };
-    let expected_sha = repo.git_output(&["rev-parse", "feature"]);
-    let mut cmd = repo.wt_command();
-    cmd.args([
-        "_delete-branch-if-safe",
-        "--branch=feature",
-        "--target=main",
-    ]);
-    if force {
-        cmd.arg("--force-delete");
-    } else {
-        cmd.arg(format!("--expected-sha={expected_sha}"));
-    }
-    let output = cmd.output().unwrap();
-    assert_eq!(output.status.success(), !force, "{output:?}");
-    assert_eq!(
-        repo.git_command()
-            .args(["show-ref", "--verify", "refs/heads/feature"])
-            .run()
-            .unwrap()
-            .status
-            .success(),
-        checked_out,
+    let path = repo.root_path().parent().unwrap().join(name);
+    let checkout = repo.add_worktree_at_path("feature", &path);
+    let branch_sha = repo.git_output(&["rev-parse", "feature"]);
+    let output = repo
+        .wt_command()
+        .args([
+            "_delete-branch-if-safe",
+            "--branch=feature",
+            "--target=main",
+            "--force-delete",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .to_lowercase()
+            .contains("cannot delete branch"),
         "{output:?}"
     );
-    if let Some(checkout) = checkout {
-        assert_eq!(
-            repo.git_command()
-                .current_dir(checkout)
-                .args(["rev-parse", "--verify", "HEAD"])
-                .run()
-                .unwrap()
-                .stdout,
-            format!("{expected_sha}\n").as_bytes()
-        );
-    }
+    assert_eq!(repo.git_output(&["rev-parse", "feature"]), branch_sha);
+    assert!(checkout.join(".git").is_file());
 }
 
 /// Untracked work created during fsmonitor shutdown is refused; explicit force

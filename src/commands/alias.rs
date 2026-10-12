@@ -1644,16 +1644,6 @@ cmd = [
         for (args, builtin) in [
             (vec!["wt", "list"], true),
             (vec!["wt", "select"], true),
-            (
-                vec![
-                    "wt",
-                    "_delete-branch-if-safe",
-                    "--branch=feature",
-                    "--target=main",
-                    "--expected-sha=0123456789abcdef",
-                ],
-                true,
-            ),
             (vec!["wt", "commit"], false),
             (vec!["wt", "deploy"], false),
         ] {

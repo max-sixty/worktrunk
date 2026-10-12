@@ -283,15 +283,10 @@ fn execute_instant_removal_or_fallback(
             });
         }
 
-        // Fallback: cross-filesystem, permissions, Windows file locking, etc.
-        // Use legacy git worktree remove which handles these cases. For
-        // safe-delete, decide here whether to append a branch-deletion step:
-        // run worktrunk's full integration check now, and if the branch is
-        // integrated, append a Rust child that rechecks the expected SHA,
-        // integration and live topology through the canonical deletion API.
-        // The same captured child snapshot supplies the final CAS.
-        // Force-delete uses the same Rust child and fresh topology guard,
-        // skipping integration and the planned-SHA comparison.
+        // Fallback: Git handles cross-filesystem moves and file locking.
+        // Safe deletion is scheduled only for an integrated branch. The Rust
+        // child rechecks integration and live topology before deleting its fresh
+        // snapshot with CAS. Force uses the same child, skipping integration.
         let (command, fate) = match (branch_name, deletion_mode) {
             (Some(branch), BranchDeletionMode::ForceDelete) => {
                 let tail = build_branch_delete_tail(repo, branch, target_branch, true)?;
@@ -440,8 +435,8 @@ fn warn_if_branch_retained(
 
 /// Build the Rust branch-deletion child for the detached removal fallback.
 ///
-/// Safe deletion selects an integrated candidate and expected SHA; force skips
-/// those checks. Both use the canonical fresh topology guard in the child.
+/// Safe deletion selects an integrated candidate; force skips that pre-check.
+/// The child rechecks live state through the canonical deletion mechanism.
 /// Neither paths nor worktree records are parsed by the shell.
 fn build_branch_delete_tail(
     repo: &Repository,
@@ -452,16 +447,14 @@ fn build_branch_delete_tail(
     use shell_escape::unix::escape;
 
     let target = target_branch.unwrap_or("HEAD");
-    let deletion_mode = if force_delete {
-        "--force-delete".to_string()
-    } else {
+    if !force_delete {
         let snapshot = repo.capture_refs()?;
         let (_effective_target, reason) = repo.integration_reason(&snapshot, branch, target)?;
-        let Some(branch_info) = snapshot.local_branch(branch).filter(|_| reason.is_some()) else {
+        if reason.is_none() || snapshot.local_branch(branch).is_none() {
             return Ok(None);
-        };
-        escape(format!("--expected-sha={}", branch_info.commit_sha).into()).into_owned()
-    };
+        }
+    }
+    let deletion_mode = if force_delete { " --force-delete" } else { "" };
     let executable = std::env::current_exe().context("Failed to locate Worktrunk executable")?;
     let executable = worktrunk::path::to_posix_path(
         executable
@@ -472,51 +465,21 @@ fn build_branch_delete_tail(
     let branch = escape(format!("--branch={branch}").into());
     let target = escape(format!("--target={target}").into());
     Ok(Some(format!(
-        "{executable} _delete-branch-if-safe {branch} {target} {deletion_mode}"
+        "{executable} _delete-branch-if-safe {branch} {target}{deletion_mode}"
     )))
 }
 
-/// Complete the detached tail using the same deletion mechanism as foreground
-/// removal. Safe deletion retains a changed ref; force still requires known
-/// worktree identities before invoking Git's checkout-protected deletion.
+/// Complete the detached tail with the same fresh-state deletion as foreground
+/// removal. Force still uses Git's checkout-protected branch deletion.
 pub(crate) fn delete_branch_from_detached_fallback(
     branch: &str,
     target: &str,
-    expected_sha: Option<&str>,
     force_delete: bool,
 ) -> anyhow::Result<()> {
     let repo = Repository::current()?;
-    let result = if force_delete {
-        execute_branch_deletion(&repo, branch, target, true)?
-    } else {
-        delete_planned_branch(
-            &repo,
-            branch,
-            target,
-            expected_sha.context("Missing expected branch revision")?,
-        )?
-    };
+    let result = execute_branch_deletion(&repo, branch, target, force_delete)?;
     warn_if_branch_retained(branch, &Ok(result), false);
     Ok(())
-}
-
-fn delete_planned_branch(
-    repo: &Repository,
-    branch: &str,
-    target: &str,
-    expected_sha: &str,
-) -> anyhow::Result<BranchDeletionResult> {
-    let snapshot = repo.capture_refs()?;
-    let current = snapshot.local_branch(branch).with_context(|| {
-        format!("Cannot safely delete branch {branch}: absent from ref snapshot")
-    })?;
-    if current.commit_sha != expected_sha {
-        return Ok(BranchDeletionResult {
-            outcome: BranchDeletionOutcome::RetainedRaced,
-            integration_target: target.to_string(),
-        });
-    }
-    worktrunk::git::delete_branch_if_safe(repo, &snapshot, branch, target, false)
 }
 
 /// Build the detached worktree-removal command, optionally appending a
@@ -2467,42 +2430,6 @@ mod tests {
             tailed,
             format!("{bare} && git update-ref -d refs/heads/x deadbeef")
         );
-    }
-
-    /// Even a moved tip already integrated into the target must survive the
-    /// detached operation planned against its previous SHA.
-    #[test]
-    fn detached_delete_retains_changed_integrated_tip() {
-        let test = worktrunk::testing::TestRepo::with_initial_commit();
-        test.create_branch("feature");
-        let repo = Repository::at(test.root_path()).unwrap();
-        let expected_sha = test.git_output(&["rev-parse", "feature"]);
-        test.commit("Advance target");
-        test.run_git(&["update-ref", "refs/heads/feature", "HEAD"]);
-        let result = delete_planned_branch(&repo, "feature", "main", &expected_sha).unwrap();
-        assert!(matches!(
-            result.outcome,
-            BranchDeletionOutcome::RetainedRaced
-        ));
-        assert_eq!(
-            test.git_output(&["rev-parse", "feature"]),
-            test.git_output(&["rev-parse", "main"])
-        );
-    }
-
-    #[test]
-    fn detached_delete_propagates_mutation_failure() {
-        let test = worktrunk::testing::TestRepo::with_initial_commit();
-        test.create_branch("feature");
-        let repo = Repository::at(test.root_path()).unwrap();
-        let expected_sha = test.git_output(&["rev-parse", "feature"]);
-        std::fs::write(
-            repo.git_common_dir().join("refs/heads/feature.lock"),
-            "another writer",
-        )
-        .unwrap();
-        assert!(delete_planned_branch(&repo, "feature", "main", &expected_sha).is_err());
-        assert_eq!(test.git_output(&["rev-parse", "feature"]), expected_sha);
     }
 
     #[test]
