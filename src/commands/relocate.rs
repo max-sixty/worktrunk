@@ -441,6 +441,19 @@ impl<'a> RelocationExecutor<'a> {
                 continue;
             }
 
+            if let Err(error) = backup::require_safe_clobber_target(repo, expected_path, false) {
+                eprintln!(
+                    "{}",
+                    warning_message(cformat!("Skipping <bold>{branch}</> ({error})"))
+                );
+                blocked.insert(i);
+                skipped_entries.push(SkippedEntry {
+                    branch: branch.to_string(),
+                    reason: "target_protected",
+                });
+                continue;
+            }
+
             if clobber {
                 // Atomically move the blocker aside to a timestamped backup.
                 // A backup name already taken is never overwritten — the move

@@ -552,19 +552,46 @@ fn test_relocate_clobber_preserves_bare_git_store(repo: TestRepo) {
         ],
     );
 
-    let output = repo
-        .wt_command()
-        .current_dir(&checkout)
-        .args(["step", "relocate", "--clobber", "git-data"])
-        .output()
-        .unwrap();
-    assert!(!output.status.success(), "{output:?}");
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("is the repository's Git directory"),
-        "{output:?}"
-    );
-    assert!(git_dir.join("HEAD").is_file());
-    assert!(checkout.join(".git").is_file());
+    for (clobber, other_branch) in [(false, "other"), (true, "other-clobber")] {
+        let other_checkout = repo.home_path().join(format!("wrong-{other_branch}"));
+        repo.run_git_in(
+            &git_dir,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                other_branch,
+                other_checkout.to_str().unwrap(),
+            ],
+        );
+        let mut command = repo.wt_command();
+        command.current_dir(&checkout).args([
+            "step",
+            "relocate",
+            "--format=json",
+            "git-data",
+            other_branch,
+        ]);
+        if clobber {
+            command.arg("--clobber");
+        }
+        let output = command.output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("is the repository's Git directory"),
+            "{output:?}"
+        );
+        assert!(!stderr.contains("To backup blocking paths"), "{output:?}");
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["skipped"][0]["branch"], "git-data");
+        assert_eq!(result["skipped"][0]["reason"], "target_protected");
+        assert_eq!(result["relocated"][0]["branch"], other_branch);
+        assert!(repo.home_path().join(other_branch).join(".git").is_file());
+        assert!(!other_checkout.exists());
+        assert!(git_dir.join("HEAD").is_file());
+        assert!(checkout.join(".git").is_file());
+    }
 }
 
 /// Regression: when the computed backup path already exists, relocate
