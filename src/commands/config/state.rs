@@ -1,8 +1,7 @@
 //! State management commands.
 //!
 //! Commands for getting, setting, and clearing stored state. State lives in
-//! git config (under `worktrunk.*`), `.git/wt/`, and unregistered metadata
-//! disposal directories in the Git common directory.
+//! git config (under `worktrunk.*`) and `.git/wt/`.
 //!
 //! # `state get` ↔ `state clear` parity
 //!
@@ -212,7 +211,7 @@ struct TrashEntry {
     metadata: std::fs::Metadata,
 }
 
-/// Both disposal locations, sorted by mtime (newest first), then name.
+/// Committed trash entries, sorted by mtime (newest first), then name.
 fn list_trash_entries(repo: &Repository) -> anyhow::Result<Vec<TrashEntry>> {
     let mut entries: Vec<_> = repo
         .disposal_entries()?
@@ -1426,8 +1425,14 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     render_all_log_sections(&mut out, repo)?;
     writeln!(out)?;
 
-    // Disposal spans payload trash and unregistered metadata.
-    writeln!(out, "{}", format_heading("TRASH", None))?;
+    // Show trash (staged worktree removals awaiting background delete)
+    let trash_dir = repo.wt_trash_dir();
+    let trash_display = format_path_for_display(&trash_dir);
+    writeln!(
+        out,
+        "{}",
+        format_heading("TRASH", Some(&format!("@ {trash_display}")))
+    )?;
     let trash = list_trash_entries(repo)?;
     if trash.is_empty() {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
@@ -1442,10 +1447,10 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map(|d| format_relative_time_short(d.as_secs() as i64))
                     .unwrap_or_else(|| "?".to_string());
-                vec![format_path_for_display(std::path::Path::new(&e.path)), age]
+                vec![e.name.clone(), age]
             })
             .collect();
-        let rendered = crate::md_help::render_data_table(&["Path", "Age"], &rows);
+        let rendered = crate::md_help::render_data_table(&["Entry", "Age"], &rows);
         writeln!(out, "{}", rendered.trim_end())?;
     }
 

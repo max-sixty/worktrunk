@@ -833,24 +833,9 @@ mod tests {
         let foreign = trash.join("random-folder");
         fs::create_dir(&foreign).unwrap();
 
-        let metadata = repo.git_common_dir().join(format!(
-            "{}test-{}",
-            Repository::UNREGISTERED_WORKTREE_PREFIX,
-            now - 2 * day
-        ));
-        fs::create_dir(&metadata).unwrap();
-        let retained = repo
-            .wt_dir()
-            .join(format!("retained/feature-{}", now - 2 * day));
-        fs::create_dir_all(&retained).unwrap();
-        let unrelated = repo
-            .git_common_dir()
-            .join(format!("foreign-{}", now - 2 * day));
-        fs::create_dir(&unrelated).unwrap();
-
         let mut collected = collect_stale_trash_entries(&repo, now, day);
         collected.sort();
-        let mut expected = vec![stale, boundary, metadata];
+        let mut expected = vec![stale, boundary];
         expected.sort();
         assert_eq!(collected, expected);
         assert!(

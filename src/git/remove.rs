@@ -460,9 +460,11 @@ pub fn remove_worktree_with_cleanup(
 ///
 /// # Errors
 ///
-/// The ownership, lock, and dirty-worktree gates error. A
-/// failed rename is reported as `None`, not an error, and the daemon stop is
-/// best-effort throughout.
+/// Ownership, lock, and cleanliness refusals return errors. Cancellation
+/// returns `Interrupted` before filesystem staging begins. If unregister fails
+/// after staging, `WorktreeRemovalPreserved` reports the retained checkout and
+/// keeps its registration for repair. A failed initial rename returns `None`
+/// for direct-removal fallback; daemon shutdown is best-effort.
 pub fn stage_worktree_removal(
     repo: &Repository,
     worktree_path: &Path,
@@ -574,7 +576,7 @@ fn rename_into_trash(
         return Ok(None);
     }
     let retained_path = generate_removing_path(&retained_dir, git_dir);
-    if let Err(error) = rename_worktree_directory(worktree_path, &retained_path) {
+    if let Err(error) = std::fs::rename(worktree_path, &retained_path) {
         tracing::debug!(%error, "Failed to stage worktree, falling back");
         return Ok(None);
     }
@@ -589,7 +591,7 @@ fn rename_into_trash(
     let trash_dir = repo.wt_trash_dir();
     let staged_path = generate_removing_path(&trash_dir, git_dir);
     if std::fs::create_dir_all(&trash_dir)
-        .and_then(|()| rename_worktree_directory(&retained_path, &staged_path))
+        .and_then(|()| std::fs::rename(&retained_path, &staged_path))
         .is_ok()
     {
         Ok(Some(staged_path))
@@ -597,39 +599,6 @@ fn rename_into_trash(
         // Unregister committed; caller cleanup may delete this payload directly.
         Ok(Some(retained_path))
     }
-}
-
-/// Move a checkout without overwriting a destination that already exists.
-///
-/// Some Unix filesystems lack atomic no-replace rename. Reserve an empty
-/// directory there first: ordinary directory rename can replace that reservation,
-/// but must refuse if another writer fills it. Never use the general non-atomic
-/// fallback, which checks for absence and can then replace an unrelated path.
-fn rename_worktree_directory(from: &Path, to: &Path) -> std::io::Result<()> {
-    match renamore::rename_exclusive(from, to) {
-        #[cfg(unix)]
-        // Darwin's ENOTSUP is distinct from EOPNOTSUPP and Rust leaves its
-        // ErrorKind uncategorized. renamore returns that raw filesystem error.
-        Err(error) if lacks_atomic_noreplace(&error) => rename_into_reserved_directory(from, to),
-        result => result,
-    }
-}
-
-#[cfg(unix)]
-fn lacks_atomic_noreplace(error: &std::io::Error) -> bool {
-    error.kind() == std::io::ErrorKind::Unsupported
-        || error.raw_os_error() == Some(nix::errno::Errno::ENOTSUP as i32)
-}
-
-#[cfg(unix)]
-fn rename_into_reserved_directory(from: &Path, to: &Path) -> std::io::Result<()> {
-    std::fs::create_dir(to)?;
-    if let Err(error) = std::fs::rename(from, to) {
-        // Remove only our empty reservation. Anything written into it stays.
-        let _ = std::fs::remove_dir(to);
-        return Err(error);
-    }
-    Ok(())
 }
 
 /// Capture fresh refs and run a planned branch deletion.
@@ -808,6 +777,10 @@ pub(crate) fn generate_removing_path(trash_dir: &Path, git_dir: &Path) -> PathBu
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::git::ErrorExt;
+    use crate::testing::TestRepo;
+
     /// A sibling foreground lease can latch TERM while the final topology scan
     /// runs. Filesystem staging must honor that cancellation before its rename.
     #[cfg(unix)]
@@ -853,10 +826,6 @@ mod tests {
         drop(operation);
     }
 
-    use super::*;
-    use crate::git::ErrorExt;
-    use crate::testing::TestRepo;
-
     /// Unregister refusal cannot put recoverable contents into swept trash.
     #[test]
     fn staging_failure_keeps_complete_registration_for_repair() {
@@ -895,9 +864,18 @@ mod tests {
         let diagnostic = error.render_diagnostic().unwrap();
         assert!(diagnostic.contains("worktree repair"), "{diagnostic}");
         std::fs::remove_file(registration.join("locked")).unwrap();
+        // The original path may already have a new occupant. Repair the
+        // retained checkout in place rather than moving it over that occupant.
+        std::fs::create_dir(&worktree).unwrap();
+        std::fs::write(worktree.join("new-occupant"), "preserve occupant").unwrap();
         test.run_git(&["worktree", "repair", retained.to_str().unwrap()]);
         test.run_git_in(retained, &["status", "--porcelain"]);
+        assert_eq!(
+            std::fs::read_to_string(worktree.join("new-occupant")).unwrap(),
+            "preserve occupant",
+        );
 
+        std::fs::rename(&worktree, worktree.with_extension("occupied")).unwrap();
         std::fs::rename(retained, &worktree).unwrap();
         test.run_git(&["worktree", "repair", worktree.to_str().unwrap()]);
         let discarded = rename_into_trash(&repo, &worktree, &registration)
@@ -912,33 +890,6 @@ mod tests {
         let disposal = repo.disposal_entries().unwrap();
         assert_eq!(disposal.len(), 1);
         assert_eq!(disposal[0].path, discarded);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn reserved_staging_never_overwrites_an_existing_directory() {
-        let temp = tempfile::tempdir().unwrap();
-        let source = temp.path().join("source");
-        let destination = temp.path().join("destination");
-        std::fs::create_dir(&source).unwrap();
-        std::fs::write(source.join("payload"), "keep").unwrap();
-        std::fs::create_dir(&destination).unwrap();
-        assert_eq!(
-            rename_into_reserved_directory(&source, &destination)
-                .unwrap_err()
-                .kind(),
-            std::io::ErrorKind::AlreadyExists
-        );
-        assert_eq!(
-            std::fs::read_to_string(source.join("payload")).unwrap(),
-            "keep"
-        );
-        std::fs::remove_dir(&destination).unwrap();
-        rename_into_reserved_directory(&source, &destination).unwrap();
-        assert_eq!(
-            std::fs::read_to_string(destination.join("payload")).unwrap(),
-            "keep"
-        );
     }
 
     /// A `git worktree lock` must stop the rename even when the caller skipped

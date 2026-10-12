@@ -270,17 +270,21 @@ impl Repository {
         // Rename is the unregister commit: a failure leaves every registration
         // file available for repair. Recursive deletion before that commit can
         // fail after deleting HEAD/commondir while leaving an undeletable index.
-        // Payload staging under wt/trash is optional. Metadata disposal must
-        // still work when wt or trash is unavailable, so reserve its temporary
-        // parent directly in the Git common directory.
+        let trash = self.wt_trash_dir();
+        std::fs::create_dir_all(&trash).with_context(|| {
+            format!(
+                "Failed to prepare trash @ {}",
+                format_path_for_display(&trash)
+            )
+        })?;
         let garbage = tempfile::Builder::new()
-            .prefix(Self::UNREGISTERED_WORKTREE_PREFIX)
+            .prefix("registration-")
             .suffix(&format!("-{}", crate::utils::epoch_now()))
-            .tempdir_in(self.git_common_dir())
+            .tempdir_in(&trash)
             .with_context(|| {
                 format!(
-                    "Failed to prepare metadata disposal in {}",
-                    format_path_for_display(self.git_common_dir())
+                    "Failed to prepare metadata disposal @ {}",
+                    format_path_for_display(&trash)
                 )
             })?;
         // The uniquely created parent owns this absent child. A concurrent
@@ -292,7 +296,7 @@ impl Repository {
             )
         })?;
         // Removal has committed. Failed cleanup leaves only disposable metadata
-        // in the disposal namespace, where the janitor can try again later.
+        // in trash, where the janitor can try again later.
         if let Err(error) = garbage.close() {
             tracing::debug!(%error, "Failed to clean unregistered worktree metadata");
         }
