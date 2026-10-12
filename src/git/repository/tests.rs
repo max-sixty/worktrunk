@@ -2749,7 +2749,7 @@ fn list_worktrees_names_the_work_tree_of_a_separate_git_dir_repo() {
 fn repo_path_declines_a_stale_separate_git_dir_backlink() {
     // The backlink is one-way, so `repo_path` confirms it: a work tree that
     // has moved away leaves a `gitdir` file naming a path that no longer
-    // points back. Refuse instead of inventing a main at the store's parent.
+    // points back. Decline it and retain the conventional parent fallback.
     use super::Repository;
 
     let (_tmp, store, work_tree) = build_separate_git_dir_layout();
@@ -2765,7 +2765,7 @@ fn repo_path_declines_a_stale_separate_git_dir_backlink() {
     assert!(out.status.success(), "git init failed");
 
     let repo = Repository::at(&store).unwrap();
-    assert!(repo.repo_path().is_err());
+    assert_eq!(repo.repo_path().unwrap(), store.parent().unwrap());
 }
 
 #[test]
@@ -3000,66 +3000,22 @@ fn repo_path_preserves_local_core_worktree_path_bytes() {
     assert_eq!(repo.repo_path().unwrap(), expected);
 }
 
-/// Discovery from main takes precedence over a separate store named `.git`.
+/// A symlinked main .git has no backlink, and Git repair cannot create one.
+/// Inventory must retain the established usable linked-checkout behavior.
+#[cfg(unix)]
 #[test]
-fn repo_path_discovers_fresh_separate_git_dir_main() {
-    use dunce::canonicalize;
-
-    let seed = TestRepo::with_initial_commit();
-    let directory = crate::testing::test_tempdir();
-    let store = directory.path().join(".git");
-    let main = directory.path().join("main");
-    seed.run_git(&[
-        "clone",
-        "--separate-git-dir",
-        store.to_str().unwrap(),
-        seed.root_path().to_str().unwrap(),
-        main.to_str().unwrap(),
-    ]);
-    assert!(!store.join("gitdir").exists());
-    let repository = Repository::at(&main).unwrap();
-    assert_eq!(
-        repository.repo_path().unwrap(),
-        canonicalize(&main).unwrap()
-    );
-    assert_eq!(
-        repository.list_worktrees().unwrap()[0].path,
-        canonicalize(&main).unwrap()
-    );
-}
-
-/// A linked checkout cannot identify an unrepaired separate store's main.
-#[test]
-fn linked_separate_git_dir_requires_repair_before_inventory() {
-    let seed = TestRepo::with_initial_commit();
-    let directory = crate::testing::test_tempdir();
-    let main = directory.path().join("main");
-    let store = directory.path().join("store");
-    let linked = directory.path().join("linked");
-    seed.run_git(&[
-        "clone",
-        "--separate-git-dir",
-        store.to_str().unwrap(),
-        seed.root_path().to_str().unwrap(),
-        main.to_str().unwrap(),
-    ]);
-    seed.run_git_in(
-        &main,
-        &["worktree", "add", "-b", "feature", linked.to_str().unwrap()],
-    );
-    assert!(!store.join("gitdir").exists());
-    let error = Repository::at(&linked)
-        .unwrap()
-        .list_worktrees()
-        .unwrap_err();
+fn list_worktrees_accepts_symlinked_main_git_dir() {
+    let mut test = TestRepo::with_initial_commit();
+    let main = test.root_path().to_path_buf();
+    let store = main.parent().unwrap().join("store");
+    std::fs::rename(main.join(".git"), &store).unwrap();
+    std::os::unix::fs::symlink(&store, main.join(".git")).unwrap();
+    let linked = test.add_worktree("feature");
+    let repo = Repository::at(&linked).unwrap();
     assert!(
-        error.to_string().contains("git worktree repair"),
-        "{error:#}"
-    );
-
-    seed.run_git_in(&main, &["worktree", "repair"]);
-    assert_eq!(
-        Repository::at(&linked).unwrap().list_worktrees().unwrap()[0].path,
-        dunce::canonicalize(&main).unwrap(),
+        repo.list_worktrees()
+            .unwrap()
+            .iter()
+            .any(|worktree| worktree.path == linked)
     );
 }

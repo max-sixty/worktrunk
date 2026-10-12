@@ -45,11 +45,11 @@ impl Repository {
                 let mut worktrees: Vec<_> =
                     raw_worktrees.into_iter().filter(|wt| !wt.bare).collect();
 
-                // Git infers the main from the common directory's name. A
-                // separate store (including one named .git) needs verified
-                // discovery instead. Bare repositories have no main worktree.
-                if !self.is_bare()?
-                    && let Some(first) = worktrees.first_mut()
+                // Git reports the common directory as main for submodules and
+                // separate stores; correct that entry from config/backlink.
+                if let Some(first) = worktrees.first_mut()
+                    && dunce::canonicalize(&first.path).ok().as_deref()
+                        == Some(self.git_common_dir())
                 {
                     first.path = self.repo_path()?.to_path_buf();
                 }

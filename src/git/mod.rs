@@ -10,10 +10,9 @@ fn git_path_from_bytes(bytes: &[u8]) -> std::io::Result<PathBuf> {
     }
     #[cfg(not(unix))]
     {
-        use path_slash::PathBufExt as _;
-
+        // Windows accepts Git's forward slashes; preserve its output spelling.
         std::str::from_utf8(bytes)
-            .map(PathBuf::from_slash)
+            .map(PathBuf::from)
             .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
     }
 }
