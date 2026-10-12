@@ -3039,14 +3039,10 @@ print(*counts)
         std::fs::write(&bin_bash, "").unwrap();
         std::fs::write(&usr_bash, "").unwrap();
 
-        // No architecture allowlist: ARM uses a different runtime prefix.
-        for runtime in ["ucrt64", "clangarm64"] {
-            assert_eq!(
-                git_bash_from_exec_path(&root.join(runtime).join("libexec/git-core")),
-                Some(bin_bash.clone()),
-            );
-        }
-        let exec_path = root.join("ucrt64/libexec/git-core");
+        // ARM uses a different runtime prefix; discovery must not enumerate them.
+        let exec_path = root.join("clangarm64/libexec/git-core");
+        assert_eq!(git_bash_from_exec_path(&exec_path), Some(bin_bash.clone()));
+        assert_eq!(git_bash_from_exec_path(&root.join("x/y/z")), None);
         std::fs::remove_file(&bin_bash).unwrap();
         assert_eq!(git_bash_from_exec_path(&exec_path), Some(usr_bash.clone()));
 

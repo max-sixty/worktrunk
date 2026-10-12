@@ -6203,10 +6203,11 @@ fn test_wt_sh_ignores_an_inherited_wt(repo: TestRepo) {
     );
 }
 
-/// Find the PATH installation when the project contains an invalid git.exe.
+/// Never execute a project's git.exe when finding the PATH installation.
 #[cfg(windows)]
 #[rstest]
 fn test_shim_ignores_a_git_in_the_current_directory(repo: TestRepo) {
+    use crate::common::mock_commands::{MockConfig, mock_calls};
     use std::os::windows::process::CommandExt;
 
     let shim =
@@ -6220,7 +6221,10 @@ fn test_shim_ignores_a_git_in_the_current_directory(repo: TestRepo) {
 
     let project = repo.root_path().join("project");
     fs::create_dir_all(&project).unwrap();
-    fs::write(project.join("git.exe"), b"not an executable").unwrap();
+    MockConfig::new("git")
+        .command("--exec-path", MockResponse::output("not-an-install"))
+        .write(&project);
+    let call_log = TempDir::new().unwrap();
 
     let mut cmd = std::process::Command::new("cmd.exe");
     repo.configure_wt_cmd(&mut cmd);
@@ -6228,6 +6232,8 @@ fn test_shim_ignores_a_git_in_the_current_directory(repo: TestRepo) {
         .arg("/C")
         .raw_arg(format!("\"\"{}\" --version\"", shim.display()))
         .env("PATH", pinned_windows_path(&[path_dir]))
+        .env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", &project)
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
         .env_remove("WORKTRUNK_BIN")
         .current_dir(&project)
         .output()
@@ -6244,6 +6250,7 @@ fn test_shim_ignores_a_git_in_the_current_directory(repo: TestRepo) {
         output.status,
         String::from_utf8_lossy(&output.stderr)
     );
+    assert!(mock_calls(call_log.path(), "git").is_empty());
 }
 
 /// Run System32's where.exe even when a project-local where.bat would shadow it.

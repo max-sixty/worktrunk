@@ -37,9 +37,11 @@ exit /b 0
 rem Git for Windows reports <install>/<runtime>/libexec/git-core. The bin
 rem wrapper sets up MSYS for wt.sh; usr/bin is the runtime Bash itself.
 :derive
-for /f "delims=" %%I in ('set "GIT_EXEC_PATH=" ^& "%~1" --exec-path 2^>nul') do (
-    call :accept "%%I\..\..\..\bin\bash.exe"
-    if not defined BASH call :accept "%%I\..\..\..\usr\bin\bash.exe"
+for /f "delims=" %%I in ('set "GIT_EXEC_PATH=" ^& "%~1" --exec-path 2^>nul') do if /i "%%~nxI"=="git-core" (
+    for %%J in ("%%~dpI.") do for %%K in ("%%~fJ") do if /i "%%~nxK"=="libexec" (
+        call :accept "%%I\..\..\..\bin\bash.exe"
+        if not defined BASH call :accept "%%I\..\..\..\usr\bin\bash.exe"
+    )
 )
 goto :eof
 
