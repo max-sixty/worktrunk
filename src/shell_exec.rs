@@ -1221,7 +1221,7 @@ fn kill_timed_out_tree(pid: u32) {
 pub struct Cmd {
     /// Program name or shell command string (if shell_wrap is true)
     program: String,
-    args: Vec<String>,
+    args: Vec<OsString>,
     current_dir: Option<std::path::PathBuf>,
     context: Option<String>,
     stdin_data: Option<Vec<u8>>,
@@ -1585,7 +1585,15 @@ impl Cmd {
         if self.shell_wrap || self.args.is_empty() {
             self.program.clone()
         } else {
-            format!("{} {}", self.program, self.args.join(" "))
+            format!(
+                "{} {}",
+                self.program,
+                self.args
+                    .iter()
+                    .map(|arg| arg.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
         }
     }
 
@@ -1686,8 +1694,8 @@ impl Cmd {
     }
 
     /// Add a single argument.
-    pub fn arg(mut self, arg: impl Into<String>) -> Self {
-        self.args.push(arg.into());
+    pub fn arg(mut self, arg: impl AsRef<OsStr>) -> Self {
+        self.args.push(arg.as_ref().to_os_string());
         self
     }
 
@@ -1695,9 +1703,10 @@ impl Cmd {
     pub fn args<I, S>(mut self, args: I) -> Self
     where
         I: IntoIterator<Item = S>,
-        S: Into<String>,
+        S: AsRef<OsStr>,
     {
-        self.args.extend(args.into_iter().map(Into::into));
+        self.args
+            .extend(args.into_iter().map(|arg| arg.as_ref().to_os_string()));
         self
     }
 
@@ -3135,6 +3144,21 @@ print(*counts)
     // ========================================================================
     // Cmd and timeout tests
     // ========================================================================
+
+    #[cfg(unix)]
+    #[test]
+    fn test_cmd_preserves_native_argument_bytes() {
+        use std::os::unix::ffi::OsStringExt as _;
+
+        let argument = OsString::from_vec(b"native-\xff\n'$argument".to_vec());
+        let output = Cmd::new("sh")
+            .args(["-c", "printf '%s' \"$1\"", "sh"])
+            .arg(&argument)
+            .run()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, argument.into_vec());
+    }
 
     #[test]
     fn test_cmd_completes_fast_command() {
