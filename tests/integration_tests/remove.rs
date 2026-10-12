@@ -4812,12 +4812,7 @@ fn test_cleanup_fresh_submodule_worktree(mut repo: TestRepo, #[case] merge: bool
     if merge {
         crate::common::wait_for_worktree_removed(&outer);
     }
-    assert!(
-        !outer.exists(),
-        "fresh checkout was preserved; stdout: {}; stderr: {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    );
+    crate::common::assert_worktree_removed(&outer);
 }
 
 /// A clean superproject can hold submodule commits stored nowhere else.
