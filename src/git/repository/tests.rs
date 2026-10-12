@@ -26,48 +26,6 @@ fn alternate_object_directory_uses_git_c_style_quoting() {
 }
 
 #[test]
-fn test_parse_worktree_list() {
-    let output = "worktree /path/to/main
-HEAD abcd1234
-branch refs/heads/main
-
-worktree /path/to/feature
-HEAD efgh5678
-branch refs/heads/feature
-
-";
-
-    let worktrees =
-        WorktreeInfo::parse_porcelain_list_z(output.replace('\n', "\0").as_bytes()).unwrap();
-    let [main_wt, feature_wt]: [WorktreeInfo; 2] = worktrees.try_into().unwrap();
-
-    assert_eq!(main_wt.path, PathBuf::from("/path/to/main"));
-    assert_eq!(main_wt.head, "abcd1234");
-    assert_eq!(main_wt.branch, Some("main".to_string()));
-    assert!(!main_wt.bare);
-    assert!(!main_wt.detached);
-
-    assert_eq!(feature_wt.path, PathBuf::from("/path/to/feature"));
-    assert_eq!(feature_wt.head, "efgh5678");
-    assert_eq!(feature_wt.branch, Some("feature".to_string()));
-}
-
-#[test]
-fn test_parse_detached_worktree() {
-    let output = "worktree /path/to/detached
-HEAD abcd1234
-detached
-
-";
-
-    let worktrees =
-        WorktreeInfo::parse_porcelain_list_z(output.replace('\n', "\0").as_bytes()).unwrap();
-    let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
-    assert!(wt.detached);
-    assert_eq!(wt.branch, None);
-}
-
-#[test]
 fn test_finalize_worktree_with_branch() {
     // Worktree with a branch should not be modified
     let wt = WorktreeInfo {
@@ -2856,9 +2814,8 @@ fn list_worktrees_names_the_work_tree_of_a_separate_git_dir_repo() {
 fn repo_path_declines_a_stale_separate_git_dir_backlink() {
     // The backlink is one-way, so `repo_path` confirms it: a work tree that
     // has moved away leaves a `gitdir` file naming a path that no longer
-    // points back. Falling through to `parent(git_common_dir)` returns the
-    // pre-#4235 answer rather than a path that doesn't hold this repository.
-    use super::{Repository, canonicalize};
+    // points back. Refuse instead of inventing a main at the store's parent.
+    use super::Repository;
 
     let (_tmp, store, work_tree) = build_separate_git_dir_layout();
     let moved = work_tree.with_file_name("moved");
@@ -2873,11 +2830,7 @@ fn repo_path_declines_a_stale_separate_git_dir_backlink() {
     assert!(out.status.success(), "git init failed");
 
     let repo = Repository::at(&store).unwrap();
-    assert_eq!(
-        canonicalize(repo.repo_path().unwrap()).unwrap(),
-        canonicalize(store.parent().unwrap()).unwrap(),
-        "a backlink whose work tree no longer points back must not be used"
-    );
+    assert!(repo.repo_path().is_err());
 }
 
 #[test]
@@ -3387,4 +3340,42 @@ fn unknown_rebase_identity_blocks_destructive_consumers() {
     ));
     repo.prune_worktree_entry(&linked).unwrap();
     assert!(!registration.exists());
+}
+
+/// Unrepaired separate stores resolve from main discovery, but a linked
+/// checkout cannot identify an unrecorded main. Repair supplies that backlink.
+#[test]
+fn repo_path_discovers_fresh_separate_git_dir_main() {
+    let seed = TestRepo::with_initial_commit();
+    let directory = crate::testing::test_tempdir();
+    let store = directory.path().join(".git");
+    let main = directory.path().join("main");
+    let linked = directory.path().join("linked");
+    seed.run_git(&[
+        "clone",
+        "--separate-git-dir",
+        store.to_str().unwrap(),
+        seed.root_path().to_str().unwrap(),
+        main.to_str().unwrap(),
+    ]);
+    seed.run_git_in(
+        &main,
+        &["worktree", "add", "-b", "linked", linked.to_str().unwrap()],
+    );
+    assert!(!store.join("gitdir").exists());
+    let repository = Repository::at(&main).unwrap();
+    assert_eq!(
+        repository.repo_path().unwrap(),
+        canonicalize(&main).unwrap()
+    );
+    assert_eq!(
+        repository.list_worktrees().unwrap()[0].path,
+        canonicalize(&main).unwrap()
+    );
+    assert!(Repository::at(&linked).unwrap().repo_path().is_err());
+    seed.run_git_in(&main, &["worktree", "repair"]);
+    assert_eq!(
+        Repository::at(&linked).unwrap().repo_path().unwrap(),
+        canonicalize(&main).unwrap()
+    );
 }

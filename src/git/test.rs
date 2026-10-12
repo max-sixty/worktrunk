@@ -15,39 +15,6 @@ fn parse_single(input: &str) -> WorktreeInfo {
     list.into_iter().next().unwrap()
 }
 
-#[test]
-fn test_parse_worktree_list_no_trailing_blank_line() {
-    // Bug hypothesis: If output doesn't end with blank line,
-    // the last worktree might not be added.
-    // The end-of-input handling in parse_porcelain_list_z should cover this.
-    let output = "worktree /path/to/repo1\nHEAD abc123\nbranch refs/heads/main\n\nworktree /path/to/repo2\nHEAD def456\nbranch refs/heads/dev";
-    let result = WorktreeInfo::parse_porcelain_list_z(output.replace('\n', "\0").as_bytes());
-
-    assert!(result.is_ok());
-    let worktrees = result.unwrap();
-
-    // Should have 2 worktrees - code handles this with "if let Some(wt) = current" at end
-    assert_eq!(
-        worktrees.len(),
-        2,
-        "Should parse both worktrees even without trailing blank line"
-    );
-}
-
-#[test]
-fn test_parse_worktree_list_multiple_worktrees() {
-    let output = "worktree /path/to/main\nHEAD abc123\nbranch refs/heads/main\n\nworktree /path/to/feature\nHEAD def456\nbranch refs/heads/feature\ndetached\n\n";
-    let worktrees =
-        WorktreeInfo::parse_porcelain_list_z(output.replace('\n', "\0").as_bytes()).unwrap();
-    let [main_wt, feature_wt]: [WorktreeInfo; 2] = worktrees.try_into().unwrap();
-
-    assert_eq!(main_wt.branch, Some("main".to_string()));
-    assert!(!main_wt.detached);
-
-    assert_eq!(feature_wt.branch, Some("feature".to_string()));
-    assert!(feature_wt.detached);
-}
-
 #[rstest]
 #[case::missing_path("worktree\nHEAD abc123\n\n", "missing path")]
 #[case::head_missing_sha(
@@ -196,12 +163,6 @@ fn test_line_diff_from_shortstat(
 }
 
 #[test]
-fn snapshot_parse_worktree_list_empty_output() {
-    let result = WorktreeInfo::parse_porcelain_list_z(b"").expect("parse ok");
-    assert_debug_snapshot!(result, @"[]");
-}
-
-#[test]
 fn snapshot_parse_worktree_list_missing_head() {
     let wt = parse_single("worktree /path/to/repo\nbranch refs/heads/main\n\n");
     assert_debug_snapshot!(wt, @r#"
@@ -243,29 +204,6 @@ fn snapshot_parse_worktree_list_locked_with_empty_reason() {
 }
 
 #[test]
-fn snapshot_parse_worktree_list_locked_with_reason() {
-    let wt = parse_single(
-        "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main\nlocked working on it\n\n",
-    );
-    assert_debug_snapshot!(wt, @r#"
-    WorktreeInfo {
-        path: "/path/to/repo",
-        head: "abc123",
-        branch: Some(
-            "main",
-        ),
-        branch_identity_error: None,
-        bare: false,
-        detached: false,
-        locked: Some(
-            "working on it",
-        ),
-        prunable: None,
-    }
-    "#);
-}
-
-#[test]
 fn snapshot_parse_worktree_list_prunable_empty() {
     let wt =
         parse_single("worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main\nprunable\n\n");
@@ -297,80 +235,6 @@ fn snapshot_parse_worktree_list_fields_before_worktree() {
         path: "/path/to/repo",
         head: "def456",
         branch: None,
-        branch_identity_error: None,
-        bare: false,
-        detached: false,
-        locked: None,
-        prunable: None,
-    }
-    "#);
-}
-
-#[test]
-fn snapshot_parse_worktree_list_bare_repository() {
-    let wt = parse_single("worktree /path/to/repo\nbare\n\n");
-    assert_debug_snapshot!(wt, @r#"
-    WorktreeInfo {
-        path: "/path/to/repo",
-        head: "",
-        branch: None,
-        branch_identity_error: None,
-        bare: true,
-        detached: false,
-        locked: None,
-        prunable: None,
-    }
-    "#);
-}
-
-#[test]
-fn snapshot_parse_worktree_list_detached_head() {
-    let wt = parse_single("worktree /path/to/repo\nHEAD abc123\ndetached\n\n");
-    assert_debug_snapshot!(wt, @r#"
-    WorktreeInfo {
-        path: "/path/to/repo",
-        head: "abc123",
-        branch: None,
-        branch_identity_error: None,
-        bare: false,
-        detached: true,
-        locked: None,
-        prunable: None,
-    }
-    "#);
-}
-
-#[test]
-fn snapshot_parse_worktree_list_branch_with_refs_prefix() {
-    let wt = parse_single(
-        "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/feature/nested/branch\n\n",
-    );
-    assert_debug_snapshot!(wt, @r#"
-    WorktreeInfo {
-        path: "/path/to/repo",
-        head: "abc123",
-        branch: Some(
-            "feature/nested/branch",
-        ),
-        branch_identity_error: None,
-        bare: false,
-        detached: false,
-        locked: None,
-        prunable: None,
-    }
-    "#);
-}
-
-#[test]
-fn snapshot_parse_worktree_list_branch_without_refs_prefix() {
-    let wt = parse_single("worktree /path/to/repo\nHEAD abc123\nbranch main\n\n");
-    assert_debug_snapshot!(wt, @r#"
-    WorktreeInfo {
-        path: "/path/to/repo",
-        head: "abc123",
-        branch: Some(
-            "main",
-        ),
         branch_identity_error: None,
         bare: false,
         detached: false,

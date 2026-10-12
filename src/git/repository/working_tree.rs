@@ -180,7 +180,7 @@ fn sequencer_operation(git_dir: &Path) -> Option<InProgressOperation> {
 ///
 /// Two directories hold one: a `<common>/worktrees/<id>` registration, and the
 /// common dir itself when `git worktree repair` has written the main worktree's
-/// backlink there (`Repository::separate_git_dir_work_tree`). The format is the
+/// backlink there (`Repository::resolve_main_worktree`). The format is the
 /// same, so one reader answers for both.
 ///
 /// Resolved through [`canonicalize_with_parents`], which normalizes the `..`
@@ -190,31 +190,21 @@ fn sequencer_operation(git_dir: &Path) -> Option<InProgressOperation> {
 /// two directories compare equal.
 pub(super) fn registration_worktree_path(registration: &Path) -> std::io::Result<PathBuf> {
     let content = std::fs::read(registration.join("gitdir"))?;
-    let mut path = content.as_slice();
-    while matches!(path.last(), Some(b'\n' | b'\r')) {
-        path = &path[..path.len() - 1];
-    }
-    let recorded = super::git_path_from_bytes(path)?;
-    if recorded.file_name() != Some(std::ffi::OsStr::new(".git")) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "Invalid worktree gitdir backlink",
-        ));
-    }
+    let recorded = super::super::git_path_from_file(&content)?;
     let absolute = if recorded.is_relative() {
         registration.join(recorded)
     } else {
         recorded
     };
-    absolute
-        .parent()
-        .map(canonicalize_with_parents)
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Invalid worktree gitdir backlink",
-            )
-        })
+    // Git accepts a checkout path directly or its `.git` entry.
+    let checkout = if absolute.file_name() == Some(std::ffi::OsStr::new(".git")) {
+        absolute.parent().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid worktree backlink")
+        })?
+    } else {
+        &absolute
+    };
+    Ok(canonicalize_with_parents(checkout))
 }
 
 /// The git operation the worktree whose git dir is `git_dir` is partway
@@ -462,27 +452,21 @@ impl<'a> WorkingTree<'a> {
             "--symbolic-full-name",
             "HEAD",
         ])?;
-        let Some(bytes) = output.stdout.strip_suffix(b"\n") else {
-            return Ok(WorkingTreeGitInfo::default());
-        };
-        let fields: Vec<_> = bytes.split(|byte| *byte == b'\n').collect();
-        let is_inside = fields.first() == Some(&b"true".as_slice());
+        let is_inside = output.stdout.starts_with(b"true\n");
         if !is_inside {
             return Ok(WorkingTreeGitInfo::default());
         }
-        if fields.len() > 4 {
-            // Embedded path newlines make selector boundaries ambiguous. Resolve
-            // the root through its exact accessor, leaving other fields uncached.
+        let Some(fields) = super::rev_parse_fields(&output, 4) else {
             return Ok(WorkingTreeGitInfo {
                 is_inside,
                 root: Some(self.root()?),
                 ..WorkingTreeGitInfo::default()
             });
-        }
+        };
         let mut fields = fields.into_iter().skip(1);
         let root = if let Some(root) = fields
             .next()
-            .and_then(|raw| super::worktree_root_from_batch(raw, &self.path))
+            .and_then(|raw| canonicalize(super::git_path_from_bytes(raw).ok()?).ok())
         {
             super::WORKTREE_ROOTS
                 .entry(self.path.clone())
@@ -671,10 +655,7 @@ impl<'a> WorkingTree<'a> {
             Entry::Vacant(e) => match self
                 .run_command_bytes(&["rev-parse", "--show-toplevel"])
                 .ok()
-                .and_then(|bytes| {
-                    // Only Git's final protocol newline is outside the path.
-                    super::git_path_from_bytes(bytes.strip_suffix(b"\n")?).ok()
-                })
+                .and_then(|bytes| super::super::git_path_from_output(&bytes).ok())
                 .and_then(|p| canonicalize(&p).ok())
             {
                 Some(root) => Ok(e.insert(root).clone()),
@@ -700,11 +681,7 @@ impl<'a> WorkingTree<'a> {
 
     /// Canonicalize `git rev-parse --git-dir` output run in this worktree.
     fn resolve_git_dir(&self, stdout: &[u8]) -> anyhow::Result<PathBuf> {
-        let path = super::git_path_from_bytes(
-            stdout
-                .strip_suffix(b"\n")
-                .context("Unterminated git rev-parse --git-dir output")?,
-        )?;
+        let path = super::super::git_path_from_output(stdout)?;
 
         // Always canonicalize to resolve symlinks (e.g., /var -> /private/var on macOS)
         let absolute_path = if path.is_relative() {
