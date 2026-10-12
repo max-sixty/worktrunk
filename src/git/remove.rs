@@ -53,21 +53,11 @@
 //!    - [`ForceDelete`](BranchDeletionMode::ForceDelete): run `branch -D`
 //!      without the integration check.
 //!
-//! # The dirty-worktree gate follows git
+//! # Final removal gate
 //!
-//! Under `core.fsmonitor` the daemon answers step 1's `git status`, so a
-//! daemon returning a stale clean answer would let removal delete uncommitted
-//! work. That is git's own line, not a gap in `wt`: `git worktree remove`
-//! refuses a dirty worktree off the same daemon-served status, and on detected
-//! event loss the builtin daemon forces a client rescan or exits. A stale
-//! clean answer therefore requires an *undetected* loss, which lies to the
-//! user's own `git status` in that worktree just as readily.
-//!
-//! Matching git is the decision. Scoping `-c core.fsmonitor=` to that one call
-//! would make `wt` stricter than the command it replaces, and would restore
-//! the full re-stat the ordering above avoids — the dominant per-removal cost
-//! at rust-lang/rust scale. (`--no-optional-locks` is not that knob: it
-//! governs index-lock acquisition, and git still queries the daemon under it.)
+//! Builtin fsmonitor users get an early cleanliness check before daemon shutdown.
+//! After shutdown, removal rescans without fsmonitor and rechecks the captured
+//! registration and lock. Force waives dirt, never ownership or locks.
 //!
 //! # Example
 //!
@@ -104,7 +94,9 @@ use std::time::Duration;
 use anyhow::Context as _;
 
 use crate::git::repository::WorkingTree;
-use crate::git::{ErrorExt, GitError, IntegrationReason, Repository, WorktreeInfo, path_dir_name};
+use crate::git::{
+    CleanCheckMode, ErrorExt, GitError, IntegrationReason, Repository, WorktreeInfo, path_dir_name,
+};
 use crate::path::format_path_for_display;
 use crate::shell_exec::Cmd;
 use crate::styling::{eprintln, format_with_gutter, warning_message};
@@ -153,6 +145,7 @@ pub fn stop_fsmonitor_daemon(worktree: &WorkingTree) {
     // Graceful path first: a healthy daemon exits cleanly on this IPC request.
     let _ = Cmd::new("git")
         .args(["fsmonitor--daemon", "stop"])
+        .scrub_git_discovery_env()
         .current_dir(worktree.path())
         .context(crate::git::repository::path_to_logging_context(
             worktree.path(),
@@ -426,12 +419,9 @@ pub fn remove_worktree_with_cleanup(
 ///
 /// # Why this order
 ///
-/// The gate runs **before** the daemon stop because the fsmonitor daemon
-/// serves its `git status`; stopping first would force a full re-stat, the
-/// dominant per-removal cost on a large repo. That the gate therefore trusts
-/// the daemon is a deliberate match to `git worktree remove`, whose own gate
-/// trusts it identically — see "The dirty-worktree gate follows git" in the
-/// [module-level docs](self) for why that is the decision and not a gap.
+/// The final cleanliness scan runs after shutdown with fsmonitor disabled, so
+/// writes during shutdown are observed without restarting the daemon. Builtin
+/// fsmonitor users also get an early check to leave dirty worktrees untouched.
 ///
 /// The daemon stop runs **before** the rename because on Windows the daemon
 /// holds a handle on the worktree that would fail it, and git's graceful stop
@@ -468,25 +458,7 @@ pub fn stage_worktree_removal(
     force_worktree: bool,
 ) -> anyhow::Result<Option<PathBuf>> {
     let worktree = repo.worktree_at(worktree_path);
-    let git_dir = worktree.ensure_holds_this_worktree()?;
-
-    // Lock is the user's explicit "don't remove this". `--force` does not
-    // override it, matching `git worktree remove` and `prepare_worktree_removal`.
-    // Read the `locked` file rather than `list_worktrees()`: its `RepoCache`
-    // entry is already warm from planning, so it would report the lock state
-    // from before the approval prompt and the `pre-remove` hook.
-    if let Some(reason) = worktree.lock_reason()? {
-        let name = branch
-            .unwrap_or_else(|| path_dir_name(worktree_path))
-            .to_string();
-        return Err(GitError::WorktreeLocked {
-            branch: name,
-            path: worktree_path.to_path_buf(),
-            reason,
-        }
-        .into());
-    }
-
+    let git_dir = require_removal_allowed(&worktree, branch, None)?;
     if force_worktree {
         // Disclosure does not veto the force removal, but an interrupted
         // status command still cancels before any directory is removed.
@@ -512,13 +484,56 @@ pub fn stage_worktree_removal(
                 eprintln!("{}", format_with_gutter(&error.display_message(), None));
             }
         }
-    } else {
-        worktree.ensure_clean("remove worktree", branch, true)?;
+    } else if worktree.is_builtin_fsmonitor_enabled()? {
+        worktree.ensure_clean(
+            "remove worktree",
+            branch,
+            true,
+            CleanCheckMode::ConfiguredFsmonitor,
+        )?;
     }
 
     stop_fsmonitor_daemon(&repo.worktree_at(worktree_path));
 
+    // Shutdown can overlap writers. Rescan after it without restarting the
+    // daemon: an index-only check would miss unstaged and untracked files.
+    // Refuse replacements before either query can inspect another repository.
+    require_removal_allowed(&worktree, branch, Some(&git_dir))?;
+    if !force_worktree {
+        worktree.ensure_clean("remove worktree", branch, true, CleanCheckMode::FullScan)?;
+    }
+
+    // No external command runs between these final topology/owner/lock checks
+    // and rename. A replacement must not retarget the old removal.
+    require_removal_allowed(&worktree, branch, Some(&git_dir))?;
+
     Ok(rename_into_trash(repo, worktree_path, &git_dir))
+}
+
+fn require_removal_allowed(
+    worktree: &WorkingTree,
+    branch: Option<&str>,
+    expected_registration: Option<&Path>,
+) -> anyhow::Result<PathBuf> {
+    let git_dir = worktree.ensure_holds_this_worktree()?;
+    if expected_registration.is_some_and(|expected| !crate::path::paths_match(expected, &git_dir)) {
+        anyhow::bail!(
+            "Worktree registration changed during removal @ {}",
+            worktree.path().display(),
+        );
+    }
+    // Read the lock file freshly; planning already warmed the topology cache.
+    if let Some(reason) = worktree.lock_reason()? {
+        return Err(GitError::WorktreeLocked {
+            branch: branch
+                .unwrap_or_else(|| path_dir_name(worktree.path()))
+                .to_string(),
+            path: worktree.path().to_path_buf(),
+            reason,
+        }
+        .into());
+    }
+    Ok(git_dir)
 }
 
 /// Find a registered worktree contained in `worktree_path`, using a fresh

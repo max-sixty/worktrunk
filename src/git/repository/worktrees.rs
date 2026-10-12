@@ -410,6 +410,7 @@ impl Repository {
                 "remove worktree with submodules",
                 None,
                 /* force_hint */ true,
+                crate::git::CleanCheckMode::ConfiguredFsmonitor,
             )?;
             tracing::debug!("Using --force for worktree removal due to initialized submodules");
         }

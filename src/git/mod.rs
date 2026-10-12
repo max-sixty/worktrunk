@@ -102,9 +102,9 @@ pub use remove::{
 };
 pub use repository::sha_cache;
 pub use repository::{
-    Branch, BranchDiffSpec, CommitMessageDetail, InProgressOperation, IntegrationTargets,
-    PreparedDiff, RefSnapshot, Repository, ResolvedWorktree, SafetyBackup, Selector,
-    StaleWorktreeWork, TempIndex, WorkingTree, base_path, duplicated_branches,
+    Branch, BranchDiffSpec, CleanCheckMode, CommitMessageDetail, InProgressOperation,
+    IntegrationTargets, PreparedDiff, RefSnapshot, Repository, ResolvedWorktree, SafetyBackup,
+    Selector, StaleWorktreeWork, TempIndex, WorkingTree, base_path, duplicated_branches,
     is_valid_branch_name, normalize_selector, resolve_input_path, select_comparison_base,
     set_base_path,
 };

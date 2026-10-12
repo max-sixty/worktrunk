@@ -17,6 +17,16 @@ use crate::git::{CommandError, PlumbingDiff};
 
 const TEMP_INDEX_PREFIX: &str = "worktrunk-temp-index-";
 
+/// Whether a cleanliness gate uses Git's configured fsmonitor or rescans the
+/// filesystem without starting a daemon. Removal rescans after daemon shutdown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CleanCheckMode {
+    /// Follow `core.fsmonitor`, as an ordinary `git status` does.
+    ConfiguredFsmonitor,
+    /// Bypass fsmonitor to observe changes made during shutdown.
+    FullScan,
+}
+
 /// A squash safety backup: an immutable snapshot of the index and the ref
 /// whose reflog retains it. The backup commit's parent is the pre-squash HEAD.
 #[derive(Debug)]
@@ -389,6 +399,29 @@ impl<'a> WorkingTree<'a> {
     // Worktree-specific methods
     // =========================================================================
 
+    /// Whether this selected worktree uses Git's builtin fsmonitor daemon.
+    ///
+    /// Read freshly in the selected worktree, with discovery overrides scrubbed:
+    /// the repository's common-dir config snapshot can differ because of
+    /// worktree config or conditional includes. Command-scope config is retained.
+    /// Hook-valued fsmonitor configurations do not use the builtin daemon.
+    pub(crate) fn is_builtin_fsmonitor_enabled(&self) -> anyhow::Result<bool> {
+        let args = ["config", "--type=bool", "--get", "core.fsmonitor"];
+        let output = self.run_command_output(&args)?;
+        match output.status.code() {
+            Some(0) => Ok(output.stdout.trim_ascii() == b"true"),
+            Some(1) => Ok(false), // Unset.
+            Some(128) => {
+                // A hook path is valid core.fsmonitor but not a boolean. Read
+                // it untyped so malformed config and other read errors still
+                // surface, rather than treating every failed bool read as off.
+                self.run_command(&["config", "--get", "core.fsmonitor"])?;
+                Ok(false)
+            }
+            _ => Err(CommandError::from_failed_output("git", &args, &output).into()),
+        }
+    }
+
     /// Pre-warm the worktree caches with a single batched `git rev-parse` and
     /// return a snapshot of what it resolved.
     ///
@@ -604,13 +637,7 @@ impl<'a> WorkingTree<'a> {
     /// the user's `status.showUntrackedFiles` or `submodule.<name>.ignore`
     /// display preferences.
     pub fn is_dirty(&self) -> anyhow::Result<bool> {
-        let stdout = self.run_command(&[
-            "status",
-            "--porcelain",
-            "--untracked-files=normal",
-            "--ignore-submodules=none",
-        ])?;
-        Ok(!stdout.trim().is_empty())
+        Ok(!self.dirty_files()?.is_empty())
     }
 
     /// Return the raw `git status --porcelain` lines for a dirty working tree
@@ -620,12 +647,21 @@ impl<'a> WorkingTree<'a> {
     /// [`GitError::UncommittedChanges`] in [`Self::ensure_clean`]. The same
     /// caveats as [`Self::is_dirty`] apply (skip-worktree files are invisible).
     pub fn dirty_files(&self) -> anyhow::Result<Vec<String>> {
-        let stdout = self.run_command(&[
+        self.dirty_files_with_mode(CleanCheckMode::ConfiguredFsmonitor)
+    }
+
+    fn dirty_files_with_mode(&self, mode: CleanCheckMode) -> anyhow::Result<Vec<String>> {
+        let mut args = Vec::new();
+        if mode == CleanCheckMode::FullScan {
+            args.extend(["-c", "core.fsmonitor=false"]);
+        }
+        args.extend([
             "status",
             "--porcelain",
             "--untracked-files=normal",
             "--ignore-submodules=none",
-        ])?;
+        ]);
+        let stdout = self.run_command(&args)?;
         Ok(stdout.lines().map(str::to_owned).collect())
     }
 
@@ -941,13 +977,15 @@ impl<'a> WorkingTree<'a> {
     /// - `action` describes what was blocked (e.g., "remove worktree").
     /// - `branch` identifies which branch for multi-worktree operations.
     /// - `force_hint` when true, the error hint mentions `--force` as an alternative.
+    /// - `mode` controls whether the gate trusts configured fsmonitor or rescans.
     pub fn ensure_clean(
         &self,
         action: &str,
         branch: Option<&str>,
         force_hint: bool,
+        mode: CleanCheckMode,
     ) -> anyhow::Result<()> {
-        let dirty_files = self.dirty_files()?;
+        let dirty_files = self.dirty_files_with_mode(mode)?;
         if !dirty_files.is_empty() {
             return Err(GitError::UncommittedChanges {
                 action: Some(action.into()),
