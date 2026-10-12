@@ -120,11 +120,9 @@ use skim::reader::CommandCollector;
 use skim::tui::event::ActionCallback;
 use worktrunk::HookType;
 use worktrunk::config::{Approvals, CommitGenerationConfig};
-use worktrunk::git::{ErrorExt, Repository, current_or_recover};
+use worktrunk::git::{Repository, current_or_recover};
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{
-    eprintln, error_message, hint_message, info_message, progress_message, warning_message,
-};
+use worktrunk::styling::{eprintln, hint_message, info_message, progress_message, warning_message};
 
 use crate::output::print_json;
 
@@ -158,13 +156,6 @@ fn drain_stashed_warnings(stash: &Mutex<Vec<String>>) {
     }
 }
 
-/// Keep the same diagnostic as the ordinary removal command, including recovery hints.
-fn removal_error_diagnostic(error: &anyhow::Error) -> String {
-    error
-        .render_diagnostic()
-        .unwrap_or_else(|| error_message(error.display_message()).to_string())
-}
-
 /// A failed removal may already have moved its checkout, so report it even when
 /// there is no row to restore. Keep the complete diagnostic until skim exits.
 fn stash_failed_removal(
@@ -173,14 +164,21 @@ fn stash_failed_removal(
     render_tx: &Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
     error: anyhow::Error,
 ) {
-    let diagnostic = removal_error_diagnostic(&error);
+    let diagnostic = crate::format_command_error(&error);
+    let diagnostic = diagnostic.trim();
+    if diagnostic.is_empty() {
+        return;
+    }
     if let Some(headline) = diagnostic.lines().next() {
         flash_header(header_flash, render_tx, headline.to_owned());
     }
-    stash_diagnostic(stash, diagnostic);
+    stash_diagnostic(stash, diagnostic.to_owned());
 }
 
 fn stash_diagnostic(stash: &Mutex<Vec<String>>, diagnostic: String) {
+    if diagnostic.is_empty() {
+        return;
+    }
     let mut stashed = stash.lock().unwrap();
     if !stashed.contains(&diagnostic) {
         stashed.push(diagnostic);
@@ -512,7 +510,9 @@ impl AltXRemover {
             if removal_target_still_present(&repo, &result)
                 && let Some((item, pos)) = removed
             {
-                let diagnostic = failure.as_ref().map(removal_error_diagnostic);
+                let diagnostic = failure
+                    .as_ref()
+                    .map(|error| crate::format_command_error(error).trim().to_owned());
                 restore_failed_removal(
                     &items,
                     &header_flash,
@@ -692,7 +692,9 @@ impl AltXRemover {
             // Only the worktree removal can realistically fail here; if it did,
             // the worktree dir survives — undo the morph and say so.
             if removal_target_still_present(&repo, &result) {
-                let diagnostic = failure.as_ref().map(removal_error_diagnostic);
+                let diagnostic = failure
+                    .as_ref()
+                    .map(|error| crate::format_command_error(error).trim().to_owned());
                 revert_morph(
                     revert,
                     &header_flash,
@@ -3438,42 +3440,6 @@ pub mod tests {
         }
     }
 
-    /// Poll `git branch --list <branch>` until it succeeds and the branch
-    /// reaches the expected presence, tolerating the transient `exit 128` a
-    /// concurrent background removal can trigger.
-    ///
-    /// `apply` renames the worktree into the trash (so its path vanishes) and
-    /// then unregisters it, deleting that worktree's `.git/worktrees/<id>`
-    /// admin dir — all on a background thread.
-    /// `git branch --list` enumerates
-    /// worktrees to mark checked-out branches, so a query that races the
-    /// in-flight prune can read a half-deleted admin dir and fail with
-    /// `exit 128`. A test that `.unwrap()`s such a query flakes; retry until the
-    /// prune settles and the branch has reached its steady state.
-    fn await_branch_presence(
-        repo: &worktrunk::git::Repository,
-        branch: &str,
-        expect_present: bool,
-    ) {
-        worktrunk::testing::wait_for(
-            &format!(
-                "branch `{branch}` to become {}",
-                if expect_present {
-                    "retained"
-                } else {
-                    "deleted"
-                }
-            ),
-            || {
-                // A transient prune race surfaces as `Err`, not a successful
-                // empty read, so only a successful query is authoritative.
-                repo.run_command(&["branch", "--list", branch])
-                    .map(|list| list.is_empty() != expect_present)
-                    .unwrap_or(false)
-            },
-        );
-    }
-
     /// Two detached worktrees both render the branch label `(detached)`, but
     /// each row's `output()` token carries its unique path. alt-x on the
     /// second row must remove exactly that worktree — not the first detached
@@ -3542,10 +3508,7 @@ pub mod tests {
             .collect();
         assert_eq!(remaining, vec![first_output]);
 
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while second_path.exists() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        super::finish_removals(&remover.removal_threads).unwrap();
         assert!(first_path.exists(), "first detached worktree should remain");
         assert!(
             !second_path.exists(),
@@ -4054,29 +4017,13 @@ pub mod tests {
         let item = branched_picker_item("feature", &reported_path);
         let token = item.output().to_string();
         let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
-        let stashed: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-        let remover = AltXRemover {
-            removal_threads: Arc::new(Mutex::new(Vec::new())),
-            items: Arc::clone(&items),
-            repo: repo.clone(),
-            approvals: Arc::new(approvals),
-            render_tx: Arc::new(OnceLock::new()),
-            stashed_warnings: Arc::clone(&stashed),
-            shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
-            layout_slot: Arc::new(Mutex::new(None)),
-            header_flash: Arc::new(super::items::HeaderFlash::default()),
-        };
+        let mut remover = test_remover(Arc::clone(&items), repo.clone());
+        remover.approvals = Arc::new(approvals);
 
         remover.apply(token.clone());
 
-        // The background removal fails on the approved-yet-failing hook, so
-        // `restore_failed_removal` runs: only that path stashes a warning, so
-        // poll on it as the synchronization point.
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while stashed.lock().unwrap().is_empty() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        let warnings = stashed.lock().unwrap().clone();
+        super::finish_removals(&remover.removal_threads).unwrap();
+        let warnings = remover.stashed_warnings.lock().unwrap().clone();
         assert!(
             warnings
                 .iter()
@@ -4124,6 +4071,11 @@ pub mod tests {
         let warnings = remover.stashed_warnings.lock().unwrap();
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("feature.lock"), "{}", warnings[0]);
+        assert!(
+            warnings[0].contains("Failed to delete branch"),
+            "{}",
+            warnings[0]
+        );
     }
 
     /// A failed pre-remove hook must undo the optimistic morph while keeping
@@ -4256,13 +4208,10 @@ pub mod tests {
         );
 
         // The worktree removal itself runs in the background.
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while reported_path.exists() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        super::finish_removals(&remover.removal_threads).unwrap();
         assert!(!reported_path.exists(), "the worktree is removed");
         // The unmerged branch is retained after its worktree is removed.
-        await_branch_presence(&repo, "feature", true);
+        assert!(repo.branch("feature").exists_locally().unwrap());
         // The removal succeeded, so the morph stands (no revert).
         assert!(
             morphed.load(Ordering::Relaxed),
@@ -4327,13 +4276,10 @@ pub mod tests {
         );
 
         // The worktree is removed in the background; the unmerged branch is kept.
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while reported_path.exists() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        super::finish_removals(&remover.removal_threads).unwrap();
         assert!(!reported_path.exists(), "the worktree is removed");
         // The unmerged branch is retained.
-        await_branch_presence(&repo, "feature", true);
+        assert!(repo.branch("feature").exists_locally().unwrap());
     }
 
     /// The negative of the above, end-to-end through `apply`: alt-x on a worktree
@@ -4382,7 +4328,8 @@ pub mod tests {
 
         // The background removal deletes both the worktree and the branch
         // (nothing to keep).
-        await_branch_presence(&repo, "feature", false);
+        super::finish_removals(&remover.removal_threads).unwrap();
+        assert!(!repo.branch("feature").exists_locally().unwrap());
         assert!(!reported_path.exists(), "the worktree is removed");
     }
 
