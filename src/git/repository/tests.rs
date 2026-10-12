@@ -3066,6 +3066,8 @@ fn repo_path_preserves_local_core_worktree_path_bytes() {
 /// checkout cannot identify an unrecorded main. Repair supplies that backlink.
 #[test]
 fn repo_path_discovers_fresh_separate_git_dir_main() {
+    use dunce::canonicalize;
+
     let seed = TestRepo::with_initial_commit();
     let directory = crate::testing::test_tempdir();
     let store = directory.path().join(".git");
