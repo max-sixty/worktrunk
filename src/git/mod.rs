@@ -2,6 +2,22 @@
 
 use std::path::{Path, PathBuf};
 
+fn git_path_from_bytes(bytes: &[u8]) -> std::io::Result<PathBuf> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        Ok(PathBuf::from(std::ffi::OsString::from_vec(bytes.to_vec())))
+    }
+    #[cfg(not(unix))]
+    {
+        use path_slash::PathBufExt as _;
+
+        std::str::from_utf8(bytes)
+            .map(PathBuf::from_slash)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+    }
+}
+
 // Submodules
 mod ci_platform;
 mod diff;
@@ -34,7 +50,7 @@ mod test;
 // Heavy operations protected:
 // - git rev-list --count (accesses commit-graph via mmap)
 // - git diff-tree --shortstat (accesses pack files and indexes via mmap)
-use crate::path::canonicalize_with_parents;
+use crate::path::{canonicalize_with_parents, format_path_for_display};
 use crate::sync::Semaphore;
 use std::sync::LazyLock;
 static HEAVY_OPS_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(4));
@@ -792,7 +808,7 @@ impl WorktreeRef {
     }
 }
 
-/// Parsed worktree data from `git worktree list --porcelain`.
+/// Parsed worktree data from `git worktree list --porcelain -z`.
 ///
 /// This is a data record containing metadata about a worktree.
 /// For running commands in a worktree, use [`WorkingTree`] via
@@ -802,6 +818,10 @@ pub struct WorktreeInfo {
     pub path: PathBuf,
     pub head: String,
     pub branch: Option<String>,
+    /// Why a detached checkout's rebase branch could not be determined.
+    /// Destructive consumers require a known identity; inventory remains available.
+    #[serde(skip)]
+    pub branch_identity_error: Option<String>,
     pub bare: bool,
     pub detached: bool,
     pub locked: Option<String>,
@@ -819,6 +839,16 @@ pub fn path_dir_name(path: &std::path::Path) -> &str {
 }
 
 impl WorktreeInfo {
+    pub fn require_branch_identity(&self) -> anyhow::Result<()> {
+        if let Some(error) = &self.branch_identity_error {
+            anyhow::bail!(
+                "Cannot determine worktree branch @ {}: {error}",
+                format_path_for_display(&self.path)
+            );
+        }
+        Ok(())
+    }
+
     /// Canonical identity of this inventory entry. The registered path remains
     /// unchanged on [`Self::path`] for display and Git operations.
     pub fn id(&self) -> WorktreeId {
@@ -827,7 +857,7 @@ impl WorktreeInfo {
 
     /// Build the canonical worktree subject for this inventory entry.
     pub fn worktree_ref(&self) -> WorktreeRef {
-        // `branch` is the short form produced by `parse_porcelain_list` (one
+        // `branch` is the short form produced by `parse_porcelain_list_z` (one
         // `refs/heads/` prefix stripped). Re-qualifying it in the worktree
         // constructor preserves even a pathological branch literally named
         // `refs/heads/foo` as `refs/heads/refs/heads/foo`.
@@ -870,61 +900,129 @@ impl WorktreeInfo {
 // Placing them here avoids circular dependencies and keeps them close to WorktreeInfo.
 
 /// The branch a rebase in this git dir is rewriting, from `head-name`.
-fn rebase_branch(git_dir: &Path) -> Option<String> {
-    // Check both rebase-merge and rebase-apply
+fn rebase_branch(git_dir: &Path) -> anyhow::Result<Option<String>> {
+    use anyhow::Context;
+
+    // Git am shares rebase-apply but writes applying instead of rebase state.
     for rebase_dir in ["rebase-merge", "rebase-apply"] {
-        let head_name_path = git_dir.join(rebase_dir).join("head-name");
-        if let Ok(content) = std::fs::read_to_string(head_name_path) {
-            let branch_ref = content.trim();
-            // Strip refs/heads/ prefix if present
-            let branch = branch_ref
-                .strip_prefix("refs/heads/")
-                .unwrap_or(branch_ref)
-                .to_string();
-            return Some(branch);
+        let state = git_dir.join(rebase_dir);
+        let head_name_path = state.join("head-name");
+        let content = match std::fs::read_to_string(&head_name_path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                match std::fs::symlink_metadata(&state) {
+                    Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(error) => {
+                        return Err(error).with_context(|| {
+                            format!("Failed to inspect rebase state @ {}", state.display())
+                        });
+                    }
+                    Ok(_) => {}
+                }
+                if rebase_dir == "rebase-apply" {
+                    let applying = state.join("applying");
+                    match std::fs::read(&applying) {
+                        Ok(content) if content.is_empty() => {
+                            let rebasing = state.join("rebasing");
+                            match std::fs::symlink_metadata(&rebasing) {
+                                Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => {
+                                    continue;
+                                }
+                                Err(error) => {
+                                    return Err(error).with_context(|| {
+                                        format!(
+                                            "Failed to inspect rebase state @ {}",
+                                            rebasing.display()
+                                        )
+                                    });
+                                }
+                                Ok(_) => {}
+                            }
+                        }
+                        Ok(_) => anyhow::bail!("Invalid Git am state @ {}", applying.display()),
+                        Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => {
+                            return Err(error).with_context(|| {
+                                format!("Failed to read Git am state @ {}", applying.display())
+                            });
+                        }
+                    }
+                }
+                return Err(error).with_context(|| {
+                    format!(
+                        "Failed to read rebase branch @ {}",
+                        head_name_path.display()
+                    )
+                });
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "Failed to read rebase branch @ {}",
+                        head_name_path.display()
+                    )
+                });
+            }
+        };
+        if content == "detached HEAD\n" {
+            return Ok(None);
         }
+        let branch = content
+            .strip_suffix('\n')
+            .and_then(|head| head.strip_prefix("refs/heads/"))
+            .filter(|branch| is_valid_branch_name(branch))
+            .with_context(|| format!("Invalid rebase branch @ {}", head_name_path.display()))?;
+        return Ok(Some(branch.to_owned()));
     }
 
-    None
+    Ok(None)
 }
 
-/// Finalize worktrees after parsing: a detached worktree mid-rebase takes the
-/// name of the branch it is rebasing.
-///
-/// `git worktree list` reports a rebasing worktree only as `detached`, so each
-/// detached worktree needs its own `git rev-parse --git-dir` to find its rebase
-/// state. [`WorkingTree::git_dirs`] runs those forks concurrently as child
-/// processes rather than on a thread pool: this runs inside the
-/// `list_worktrees` cache initializer, and a pool thread waiting there would
-/// run other pool jobs, one of which could wait on the same cache.
-///
-/// A stale (prunable) entry's rebase state is read from its registration
-/// instead. With its `.git` gone, a `rev-parse` from its path finds nothing
-/// there and walks up to whatever repository encloses the directory — for a
-/// worktree nested in the main one, the main worktree's git dir — and would
-/// name the entry after a rebase that is not its own.
-pub(crate) fn finalize_worktrees(repo: &Repository, worktrees: &mut [WorktreeInfo]) {
-    let (stale, mut detached): (Vec<&mut WorktreeInfo>, Vec<&mut WorktreeInfo>) = worktrees
+/// Recover detached rebase identities from each checkout's own registration.
+/// A missing or broken gitfile must never redirect discovery into a parent
+/// repository. Record unreadable identities per entry so inventory remains
+/// available; destructive consumers reject them.
+pub(crate) fn finalize_worktrees(
+    repo: &Repository,
+    worktrees: &mut [WorktreeInfo],
+) -> anyhow::Result<()> {
+    if !worktrees
+        .iter()
+        .any(|wt| wt.detached && wt.branch.is_none())
+    {
+        return Ok(());
+    }
+    let registrations = repo.worktree_registrations();
+    let main = if repo.is_bare()? {
+        None
+    } else {
+        Some(canonicalize_with_parents(repo.repo_path()?))
+    };
+    for wt in worktrees
         .iter_mut()
         .filter(|wt| wt.detached && wt.branch.is_none())
-        .partition(|wt| wt.is_prunable());
-    for wt in stale {
-        if let Ok((registration, _)) = repo.registration_at(&wt.path) {
-            wt.branch = rebase_branch(&registration);
+    {
+        let path = canonicalize_with_parents(&wt.path);
+        let branch = if main.as_deref() == Some(path.as_path()) {
+            rebase_branch(repo.git_common_dir())
+        } else {
+            match &registrations {
+                Ok(registrations) => match registrations.get(&path) {
+                    Some(registration) => rebase_branch(&registration.git_dir),
+                    None => Err(anyhow::anyhow!(
+                        "Worktree registration not found @ {}",
+                        format_path_for_display(&wt.path)
+                    )),
+                },
+                Err(error) => Err(anyhow::anyhow!("{error:#}")),
+            }
+        };
+        match branch {
+            Ok(branch) => wt.branch = branch,
+            Err(error) => wt.branch_identity_error = Some(format!("{error:#}")),
         }
     }
-    if detached.is_empty() {
-        return;
-    }
-    let trees: Vec<WorkingTree<'_>> = detached
-        .iter()
-        .map(|wt| repo.worktree_at(&wt.path))
-        .collect();
-    for (wt, git_dir) in detached.iter_mut().zip(WorkingTree::git_dirs(&trees)) {
-        if let Ok(git_dir) = git_dir {
-            wt.branch = rebase_branch(&git_dir);
-        }
-    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1086,6 +1184,7 @@ mod tests {
             path: PathBuf::from("/repos/myrepo.feature"),
             head: "abc123".into(),
             branch: Some("feature".into()),
+            branch_identity_error: None,
             bare: false,
             detached: false,
             locked: None,
@@ -1114,6 +1213,7 @@ mod tests {
             path: PathBuf::from("/repo.feature"),
             head: "abc123".into(),
             branch: Some("feature".into()),
+            branch_identity_error: None,
             bare: false,
             detached: false,
             locked: None,
@@ -1386,6 +1486,7 @@ mod tests {
             path: PathBuf::from("/repo.detached"),
             head: "def456".into(),
             branch: None, // Detached HEAD
+            branch_identity_error: None,
             bare: false,
             detached: true,
             locked: None,

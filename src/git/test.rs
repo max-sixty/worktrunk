@@ -9,7 +9,8 @@ use rstest::rstest;
 
 /// Helper to parse a single worktree from porcelain output
 fn parse_single(input: &str) -> WorktreeInfo {
-    let list = WorktreeInfo::parse_porcelain_list(input).expect("parse ok");
+    let list = WorktreeInfo::parse_porcelain_list_z(input.replace('\n', "\0").as_bytes())
+        .expect("parse ok");
     assert_eq!(list.len(), 1);
     list.into_iter().next().unwrap()
 }
@@ -18,9 +19,9 @@ fn parse_single(input: &str) -> WorktreeInfo {
 fn test_parse_worktree_list_no_trailing_blank_line() {
     // Bug hypothesis: If output doesn't end with blank line,
     // the last worktree might not be added.
-    // The end-of-input handling in parse_porcelain_list should cover this.
+    // The end-of-input handling in parse_porcelain_list_z should cover this.
     let output = "worktree /path/to/repo1\nHEAD abc123\nbranch refs/heads/main\n\nworktree /path/to/repo2\nHEAD def456\nbranch refs/heads/dev";
-    let result = WorktreeInfo::parse_porcelain_list(output);
+    let result = WorktreeInfo::parse_porcelain_list_z(output.replace('\n', "\0").as_bytes());
 
     assert!(result.is_ok());
     let worktrees = result.unwrap();
@@ -36,7 +37,8 @@ fn test_parse_worktree_list_no_trailing_blank_line() {
 #[test]
 fn test_parse_worktree_list_multiple_worktrees() {
     let output = "worktree /path/to/main\nHEAD abc123\nbranch refs/heads/main\n\nworktree /path/to/feature\nHEAD def456\nbranch refs/heads/feature\ndetached\n\n";
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let worktrees =
+        WorktreeInfo::parse_porcelain_list_z(output.replace('\n', "\0").as_bytes()).unwrap();
     let [main_wt, feature_wt]: [WorktreeInfo; 2] = worktrees.try_into().unwrap();
 
     assert_eq!(main_wt.branch, Some("main".to_string()));
@@ -54,7 +56,7 @@ fn test_parse_worktree_list_multiple_worktrees() {
 )]
 #[case::branch_missing_ref("worktree /path/to/repo\nHEAD abc123\nbranch\n\n", "missing ref")]
 fn test_parse_worktree_list_error_cases(#[case] input: &str, #[case] expected_message: &str) {
-    let result = WorktreeInfo::parse_porcelain_list(input);
+    let result = WorktreeInfo::parse_porcelain_list_z(input.replace('\n', "\0").as_bytes());
 
     assert!(result.is_err(), "Parsing should fail");
     let err = result.unwrap_err();
@@ -195,7 +197,7 @@ fn test_line_diff_from_shortstat(
 
 #[test]
 fn snapshot_parse_worktree_list_empty_output() {
-    let result = WorktreeInfo::parse_porcelain_list("").expect("parse ok");
+    let result = WorktreeInfo::parse_porcelain_list_z(b"").expect("parse ok");
     assert_debug_snapshot!(result, @"[]");
 }
 
@@ -209,6 +211,7 @@ fn snapshot_parse_worktree_list_missing_head() {
         branch: Some(
             "main",
         ),
+        branch_identity_error: None,
         bare: false,
         detached: false,
         locked: None,
@@ -228,6 +231,7 @@ fn snapshot_parse_worktree_list_locked_with_empty_reason() {
         branch: Some(
             "main",
         ),
+        branch_identity_error: None,
         bare: false,
         detached: false,
         locked: Some(
@@ -250,6 +254,7 @@ fn snapshot_parse_worktree_list_locked_with_reason() {
         branch: Some(
             "main",
         ),
+        branch_identity_error: None,
         bare: false,
         detached: false,
         locked: Some(
@@ -271,6 +276,7 @@ fn snapshot_parse_worktree_list_prunable_empty() {
         branch: Some(
             "main",
         ),
+        branch_identity_error: None,
         bare: false,
         detached: false,
         locked: None,
@@ -291,6 +297,7 @@ fn snapshot_parse_worktree_list_fields_before_worktree() {
         path: "/path/to/repo",
         head: "def456",
         branch: None,
+        branch_identity_error: None,
         bare: false,
         detached: false,
         locked: None,
@@ -307,6 +314,7 @@ fn snapshot_parse_worktree_list_bare_repository() {
         path: "/path/to/repo",
         head: "",
         branch: None,
+        branch_identity_error: None,
         bare: true,
         detached: false,
         locked: None,
@@ -323,6 +331,7 @@ fn snapshot_parse_worktree_list_detached_head() {
         path: "/path/to/repo",
         head: "abc123",
         branch: None,
+        branch_identity_error: None,
         bare: false,
         detached: true,
         locked: None,
@@ -343,6 +352,7 @@ fn snapshot_parse_worktree_list_branch_with_refs_prefix() {
         branch: Some(
             "feature/nested/branch",
         ),
+        branch_identity_error: None,
         bare: false,
         detached: false,
         locked: None,
@@ -361,6 +371,7 @@ fn snapshot_parse_worktree_list_branch_without_refs_prefix() {
         branch: Some(
             "main",
         ),
+        branch_identity_error: None,
         bare: false,
         detached: false,
         locked: None,
@@ -377,6 +388,7 @@ fn snapshot_parse_worktree_list_unknown_attributes() {
         path: "/path/to/repo",
         head: "abc123",
         branch: None,
+        branch_identity_error: None,
         bare: false,
         detached: false,
         locked: None,

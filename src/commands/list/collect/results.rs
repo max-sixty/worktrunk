@@ -437,6 +437,7 @@ mod tests {
             path: std::path::PathBuf::from("/tmp/wt"),
             head: "abc123".into(),
             branch: Some("feat".into()),
+            branch_identity_error: None,
             bare: false,
             detached: false,
             locked: None,

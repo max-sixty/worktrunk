@@ -198,15 +198,33 @@ fn sequencer_operation(git_dir: &Path) -> Option<InProgressOperation> {
 /// no longer exist — the case the caller is usually asking about, and the path it
 /// then shows the user. Normalizing rewrites spellings only, so it cannot make
 /// two directories compare equal.
-pub(super) fn registration_worktree_path(registration: &Path) -> Option<PathBuf> {
-    let content = std::fs::read_to_string(registration.join("gitdir")).ok()?;
-    let recorded = PathBuf::from(content.trim());
+pub(super) fn registration_worktree_path(registration: &Path) -> std::io::Result<PathBuf> {
+    let content = std::fs::read(registration.join("gitdir"))?;
+    let mut path = content.as_slice();
+    while matches!(path.last(), Some(b'\n' | b'\r')) {
+        path = &path[..path.len() - 1];
+    }
+    let recorded = super::git_path_from_bytes(path)?;
+    if recorded.file_name() != Some(std::ffi::OsStr::new(".git")) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Invalid worktree gitdir backlink",
+        ));
+    }
     let absolute = if recorded.is_relative() {
         registration.join(recorded)
     } else {
         recorded
     };
-    absolute.parent().map(canonicalize_with_parents)
+    absolute
+        .parent()
+        .map(canonicalize_with_parents)
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Invalid worktree gitdir backlink",
+            )
+        })
 }
 
 /// The git operation the worktree whose git dir is `git_dir` is partway
@@ -477,60 +495,66 @@ impl<'a> WorkingTree<'a> {
             "--symbolic-full-name",
             "HEAD",
         ])?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut lines = stdout.lines();
-
-        let is_inside = lines.next().is_some_and(|s| s.trim() == "true");
+        let Some(bytes) = output.stdout.strip_suffix(b"\n") else {
+            return Ok(WorkingTreeGitInfo::default());
+        };
+        let fields: Vec<_> = bytes.split(|byte| *byte == b'\n').collect();
+        let is_inside = fields.first() == Some(&b"true".as_slice());
         if !is_inside {
             return Ok(WorkingTreeGitInfo::default());
         }
-
-        // `root` and `git_dir` are safe to cache whenever their lines landed,
-        // because any failure in the batch is from HEAD — which comes after.
-        // `--show-toplevel` always emits a line when `is_inside=true`; if
-        // canonicalize of that line fails (e.g., pathological filesystem
-        // state), fall back to `self.path` which is already canonicalized by
-        // `worktree_at` and guaranteed inside the work tree.
-        let raw_toplevel = lines.next().unwrap_or("").trim();
-        let canonical = canonicalize(PathBuf::from(raw_toplevel)).unwrap_or(self.path.clone());
-        super::WORKTREE_ROOTS
-            .entry(self.path.clone())
-            .or_insert_with(|| canonical.clone());
-        let root = Some(canonical);
-
-        let git_dir = lines.next().and_then(|raw| {
-            let path = PathBuf::from(raw.trim());
+        if fields.len() > 4 {
+            // Embedded path newlines make selector boundaries ambiguous. Resolve
+            // the root through its exact accessor, leaving other fields uncached.
+            return Ok(WorkingTreeGitInfo {
+                is_inside,
+                root: Some(self.root()?),
+                ..WorkingTreeGitInfo::default()
+            });
+        }
+        let mut fields = fields.into_iter().skip(1);
+        let root = if let Some(root) = fields
+            .next()
+            .and_then(|raw| super::worktree_root_from_batch(raw, &self.path))
+        {
+            super::WORKTREE_ROOTS
+                .entry(self.path.clone())
+                .or_insert_with(|| root.clone());
+            root
+        } else {
+            self.root()?
+        };
+        let git_dir = fields.next().and_then(|raw| {
+            let path = super::git_path_from_bytes(raw).ok()?;
             let absolute = if path.is_relative() {
-                self.path.join(&path)
+                self.path.join(path)
             } else {
                 path
             };
-            let resolved = canonicalize(&absolute).ok()?;
+            let resolved = canonicalize(absolute).ok()?;
             super::GIT_DIRS
                 .entry(self.path.clone())
                 .or_insert_with(|| resolved.clone());
             Some(resolved)
         });
-
-        // The `--symbolic-full-name HEAD` line is only trustworthy when the
-        // batch succeeded. On unborn HEAD the line lands but is the literal
-        // "HEAD" fallback — we can't tell that from detached HEAD without the
-        // exit status.
         let current_branch = if output.status.success() {
-            lines.next().map(|raw| {
-                let branch = raw.trim().strip_prefix("refs/heads/").map(str::to_owned);
-                super::CURRENT_BRANCHES
-                    .entry(self.path.clone())
-                    .or_insert_with(|| branch.clone());
-                branch
-            })
+            fields
+                .next()
+                .and_then(|raw| std::str::from_utf8(raw).ok())
+                .map(|raw| {
+                    let branch = raw.strip_prefix("refs/heads/").map(str::to_owned);
+                    super::CURRENT_BRANCHES
+                        .entry(self.path.clone())
+                        .or_insert_with(|| branch.clone());
+                    branch
+                })
         } else {
             None
         };
 
         Ok(WorkingTreeGitInfo {
             is_inside: true,
-            root,
+            root: Some(root),
             git_dir,
             current_branch,
         })
@@ -681,9 +705,12 @@ impl<'a> WorkingTree<'a> {
         match super::WORKTREE_ROOTS.entry(self.path.clone()) {
             Entry::Occupied(e) => Ok(e.get().clone()),
             Entry::Vacant(e) => match self
-                .run_command(&["rev-parse", "--show-toplevel"])
+                .run_command_bytes(&["rev-parse", "--show-toplevel"])
                 .ok()
-                .map(|s| PathBuf::from(s.trim()))
+                .and_then(|bytes| {
+                    // Only Git's final protocol newline is outside the path.
+                    super::git_path_from_bytes(bytes.strip_suffix(b"\n")?).ok()
+                })
                 .and_then(|p| canonicalize(&p).ok())
             {
                 Some(root) => Ok(e.insert(root).clone()),
@@ -701,53 +728,19 @@ impl<'a> WorkingTree<'a> {
         match super::GIT_DIRS.entry(self.path.clone()) {
             Entry::Occupied(e) => Ok(e.get().clone()),
             Entry::Vacant(e) => {
-                let stdout = self.run_command(&["rev-parse", "--git-dir"])?;
+                let stdout = self.run_command_bytes(&["rev-parse", "--git-dir"])?;
                 Ok(e.insert(self.resolve_git_dir(&stdout)?).clone())
             }
         }
     }
 
-    /// [`Self::git_dir`] for several worktrees, forking the uncached
-    /// `git rev-parse --git-dir` lookups concurrently through
-    /// [`Cmd::run_concurrently`]. Results are in input order.
-    pub fn git_dirs(worktrees: &[WorkingTree<'_>]) -> Vec<anyhow::Result<PathBuf>> {
-        const ARGS: [&str; 2] = ["rev-parse", "--git-dir"];
-        let cached: Vec<Option<PathBuf>> = worktrees
-            .iter()
-            .map(|wt| super::GIT_DIRS.get(&wt.path).map(|e| e.value().clone()))
-            .collect();
-        let cmds: Vec<Cmd> = worktrees
-            .iter()
-            .zip(&cached)
-            .filter(|(_, cached)| cached.is_none())
-            .map(|(wt, _)| wt.git_command(&ARGS))
-            .collect();
-        let mut fetched = Cmd::run_concurrently(&cmds).into_iter();
-        worktrees
-            .iter()
-            .zip(cached)
-            .map(|(wt, cached)| {
-                if let Some(git_dir) = cached {
-                    return Ok(git_dir);
-                }
-                let output = fetched
-                    .next()
-                    .context("run_concurrently returned fewer results than commands")??;
-                if !output.status.success() {
-                    return Err(CommandError::from_failed_output("git", &ARGS, &output).into());
-                }
-                let git_dir = wt.resolve_git_dir(&String::from_utf8_lossy(&output.stdout))?;
-                Ok(super::GIT_DIRS
-                    .entry(wt.path.clone())
-                    .or_insert(git_dir)
-                    .clone())
-            })
-            .collect()
-    }
-
     /// Canonicalize `git rev-parse --git-dir` output run in this worktree.
-    fn resolve_git_dir(&self, stdout: &str) -> anyhow::Result<PathBuf> {
-        let path = PathBuf::from(stdout.trim());
+    fn resolve_git_dir(&self, stdout: &[u8]) -> anyhow::Result<PathBuf> {
+        let path = super::git_path_from_bytes(
+            stdout
+                .strip_suffix(b"\n")
+                .context("Unterminated git rev-parse --git-dir output")?,
+        )?;
 
         // Always canonicalize to resolve symlinks (e.g., /var -> /private/var on macOS)
         let absolute_path = if path.is_relative() {
@@ -943,7 +936,8 @@ impl<'a> WorkingTree<'a> {
         // A git dir that can't be resolved at all is the strongest form of "not
         // this worktree": nothing there answers for it. Treating that as a
         // refusal keeps the failure closed.
-        let git_dir = Repository::git_dir_at(&self.path);
+        let git_dir = Repository::git_dir_at(&self.path)
+            .with_context(|| format!("Failed to read Git entry @ {}", self.path.display()))?;
         if git_dir.as_deref() == Some(common_dir) {
             return Ok(common_dir.to_path_buf());
         }
@@ -955,7 +949,9 @@ impl<'a> WorkingTree<'a> {
         let registrations = common_dir.join("worktrees");
         let registration =
             git_dir.filter(|git_dir| git_dir.parent() == Some(registrations.as_path()));
-        let occupant_registered_at = registration.as_deref().and_then(registration_worktree_path);
+        let occupant_registered_at = registration
+            .as_deref()
+            .and_then(|entry| registration_worktree_path(entry).ok());
         if let Some(registration) = registration
             && occupant_registered_at
                 .as_deref()
