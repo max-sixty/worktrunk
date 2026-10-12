@@ -281,7 +281,7 @@ fn test_prune_removes_multiple_detached(mut repo: TestRepo) {
 /// fallback when the rename-into-trash fast path is blocked.
 ///
 /// A detached worktree has no branch, so the fallback's branch deletion is a
-/// no-op — this covers that arm of `delete_branch_in_synchronous_fallback`.
+/// no-op — this covers that arm of `delete_removed_worktree_branch`.
 #[rstest]
 fn test_prune_detached_worktree_rename_fallback(mut repo: TestRepo) {
     repo.commit("initial");
