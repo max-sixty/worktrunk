@@ -572,9 +572,7 @@ pub fn build_remove_placeholder_command(original_path: &std::path::Path) -> Stri
 /// This is the fallback for when rename-based removal fails (e.g., cross-filesystem)
 /// or for foreground mode where `git worktree remove` provides better error messages.
 ///
-/// `branch_to_delete` is the branch to delete after removing the worktree.
-/// Pass `None` for detached HEAD or when branch should be retained.
-/// This decision is computed upfront (checking if branch is merged) before spawning the background process.
+/// The caller appends branch deletion through the canonical Rust child.
 ///
 /// `force_worktree` adds `--force` to `git worktree remove`, allowing removal
 /// even when the worktree contains untracked files (like build artifacts).
@@ -584,7 +582,6 @@ pub fn build_remove_placeholder_command(original_path: &std::path::Path) -> Stri
 /// non-current worktree), the removal runs immediately.
 pub fn build_remove_command(
     worktree_path: &std::path::Path,
-    branch_to_delete: Option<&str>,
     force_worktree: bool,
     changed_directory: bool,
 ) -> String {
@@ -611,21 +608,10 @@ pub fn build_remove_command(
         String::new()
     };
 
-    match branch_to_delete {
-        Some(branch_name) => {
-            let branch_escaped = escape(branch_name.into());
-            format!(
-                "{}git worktree remove{} {} && git branch -D -- {}",
-                prefix, force_flag, worktree_escaped, branch_escaped
-            )
-        }
-        None => {
-            format!(
-                "{}git worktree remove{} {}",
-                prefix, force_flag, worktree_escaped
-            )
-        }
-    }
+    format!(
+        "{}git worktree remove{} {}",
+        prefix, force_flag, worktree_escaped
+    )
 }
 
 #[cfg(test)]
@@ -721,19 +707,17 @@ mod tests {
         let path = PathBuf::from("/tmp/test-worktree");
 
         // changed_directory=true: sleep before removal
-        assert_snapshot!(build_remove_command(&path, None, false, true), @"sleep 1 && git worktree remove /tmp/test-worktree");
-        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, true), @"sleep 1 && git worktree remove /tmp/test-worktree && git branch -D -- feature-branch");
+        assert_snapshot!(build_remove_command(&path, false, true), @"sleep 1 && git worktree remove /tmp/test-worktree");
 
         // changed_directory=false: no sleep
-        assert_snapshot!(build_remove_command(&path, None, false, false), @"git worktree remove /tmp/test-worktree");
-        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, false), @"git worktree remove /tmp/test-worktree && git branch -D -- feature-branch");
+        assert_snapshot!(build_remove_command(&path, false, false), @"git worktree remove /tmp/test-worktree");
 
         // With force flag
-        assert_snapshot!(build_remove_command(&path, None, true, true), @"sleep 1 && git worktree remove --force /tmp/test-worktree");
+        assert_snapshot!(build_remove_command(&path, true, true), @"sleep 1 && git worktree remove --force /tmp/test-worktree");
 
         // Shell escaping for special characters
         let special_path = PathBuf::from("/tmp/test worktree");
-        assert_snapshot!(build_remove_command(&special_path, Some("feature/branch"), false, true), @"sleep 1 && git worktree remove '/tmp/test worktree' && git branch -D -- feature/branch");
+        assert_snapshot!(build_remove_command(&special_path, false, true), @"sleep 1 && git worktree remove '/tmp/test worktree'");
     }
 
     #[test]

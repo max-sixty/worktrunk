@@ -597,13 +597,13 @@ fn rename_into_trash(repo: &Repository, worktree_path: &Path, git_dir: &Path) ->
 /// invariant it carries — no deletion ever runs against the planning-time
 /// snapshot, so the topology guard and CAS in [`delete_branch_if_safe`]
 /// re-decide against live state — also holds on the two paths that don't call
-/// it: the foreground removal captures its own fresh snapshot just before
-/// [`remove_worktree_with_cleanup`], and the detached fallback can't call
-/// Rust, so it gets the guarantee from a fresh porcelain topology read followed
-/// by an `update-ref -d <ref> <sha>` shell tail instead. A hook or concurrent
-/// process that advanced the branch after the integration check cannot lose
-/// that commit: the CAS rejects the deletion. Checkout protection is best
-/// effort, retaining any checkout observed by the fresh topology read.
+/// it: foreground removal captures its own fresh snapshot just before
+/// [`remove_worktree_with_cleanup`], and the detached Rust child compares its
+/// planned SHA before passing the same fresh snapshot to this primitive.
+/// A hook or concurrent process that advanced the branch after the integration
+/// check cannot lose that commit: the CAS rejects the deletion. Checkout
+/// protection is best effort, retaining any checkout observed by the fresh
+/// topology read.
 pub fn execute_branch_deletion(
     repo: &Repository,
     branch_name: &str,

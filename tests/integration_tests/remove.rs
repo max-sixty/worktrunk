@@ -6103,3 +6103,60 @@ fn test_force_remove_interrupted_status_preserves_worktrees(
     assert!(!stderr.contains("discarding"));
     assert!(!stderr.contains("Removing later-worktree"));
 }
+
+/// Detached branch deletion uses the shipped command and fresh checkout
+/// ownership, including a newline that fooled the former shell parser.
+#[rstest]
+#[case::safe_unchecked(false, false)]
+#[case::safe_checked_out(true, false)]
+#[case::forced_checked_out(true, true)]
+fn test_detached_delete_child_dispatch(#[case] checked_out: bool, #[case] force: bool) {
+    let mut repo = TestRepo::with_initial_commit();
+    let checkout = if checked_out {
+        let name = if cfg!(unix) {
+            "checkout\nprunable injected"
+        } else {
+            "checkout"
+        };
+        let path = repo.root_path().parent().unwrap().join(name);
+        Some(repo.add_worktree_at_path("feature", &path))
+    } else {
+        repo.run_git(&["branch", "feature"]);
+        None
+    };
+    let expected_sha = repo.git_output(&["rev-parse", "feature"]);
+    let mut cmd = repo.wt_command();
+    cmd.args([
+        "_delete-branch-if-safe",
+        "--branch=feature",
+        "--target=main",
+    ]);
+    if force {
+        cmd.arg("--force-delete");
+    } else {
+        cmd.arg(format!("--expected-sha={expected_sha}"));
+    }
+    let output = cmd.output().unwrap();
+    assert_eq!(output.status.success(), !force, "{output:?}");
+    assert_eq!(
+        repo.git_command()
+            .args(["show-ref", "--verify", "refs/heads/feature"])
+            .output()
+            .unwrap()
+            .status
+            .success(),
+        checked_out,
+        "{output:?}"
+    );
+    if let Some(checkout) = checkout {
+        assert_eq!(
+            repo.git_command()
+                .current_dir(checkout)
+                .args(["rev-parse", "--verify", "HEAD"])
+                .output()
+                .unwrap()
+                .stdout,
+            format!("{expected_sha}\n").as_bytes()
+        );
+    }
+}

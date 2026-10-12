@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use anstyle::AnsiColor;
+use anyhow::Context as _;
 use color_print::cformat;
 use worktrunk::shell_exec::{Cmd, shell_cwd};
 use worktrunk::styling::{eprint, format_bash_with_gutter, stderr};
@@ -142,30 +143,6 @@ struct BackgroundRemovalOutcome {
     plan: BackgroundRemovalPlan,
     branch_fate: anyhow::Result<BranchFate>,
 }
-
-/// Print `live` when a complete porcelain record names the requested branch
-/// and is either non-prunable or locked.
-///
-/// The caller checks both this script's exit status and its exact output:
-/// an empty successful result means no live checkout, `live` means retain, and
-/// any tool failure or unexpected output fails closed. Paragraph mode (`RS =
-/// ""`) keeps each worktree's `branch`, `prunable`, and `locked` fields
-/// associated. A lock wins if a record ever carries both status fields.
-const LIVE_BRANCH_WORKTREE_AWK: &str = r#"BEGIN { RS = ""; FS = "\n" }
-{
-    has_branch = 0
-    prunable = 0
-    locked = 0
-    for (i = 1; i <= NF; i++) {
-        if ($i == worktrunk_wanted_branch) has_branch = 1
-        if ($i == "prunable" || index($i, "prunable ") == 1) prunable = 1
-        if ($i == "locked" || index($i, "locked ") == 1) locked = 1
-    }
-    if (has_branch && (!prunable || locked)) {
-        print "live"
-        exit
-    }
-}"#;
 
 /// Spawn background worktree removal: clean-check, stop fsmonitor,
 /// rename-then-prune, spawn detached rm.
@@ -314,33 +291,32 @@ fn execute_instant_removal_or_fallback(
         // Use legacy git worktree remove which handles these cases. For
         // safe-delete, decide here whether to append a branch-deletion step:
         // run worktrunk's full integration check now, and if the branch is
-        // integrated, append an atomic `git update-ref -d <ref> <sha>` keyed
-        // to the snapshotted SHA. This matches the fast path and the
-        // synchronous fallback — same `BranchDeletionMode::SafeDelete` input
-        // yields the same semantics (squash-merged, ancestor, patch-id-match
-        // all accepted), and the CAS protects against tip movement between
-        // the foreground check and the detached delete. Force-delete keeps
-        // the unconditional `git branch -D` shell tail.
+        // integrated, append a Rust child that rechecks the expected SHA,
+        // integration and live topology through the canonical deletion API.
+        // The same captured child snapshot supplies the final CAS.
+        // Force-delete uses the same Rust child and fresh topology guard,
+        // skipping integration and the planned-SHA comparison.
         let (command, fate) = match (branch_name, deletion_mode) {
-            (Some(branch), BranchDeletionMode::ForceDelete) => (
-                build_remove_command(
-                    worktree_path,
-                    Some(branch),
-                    force_worktree,
-                    changed_directory,
-                ),
-                BranchFate::Deferred,
-            ),
+            (Some(branch), BranchDeletionMode::ForceDelete) => {
+                let tail = build_branch_delete_tail(repo, branch, target_branch, true)?;
+                (
+                    build_remove_command_with_tail(
+                        worktree_path,
+                        force_worktree,
+                        changed_directory,
+                        tail.as_deref(),
+                    ),
+                    BranchFate::Deferred,
+                )
+            }
             (Some(branch), BranchDeletionMode::SafeDelete) => {
-                let cas_tail = build_cas_branch_delete_tail(repo, branch, target_branch);
+                let cas_tail = build_branch_delete_tail(repo, branch, target_branch, false)?;
                 // No tail means the foreground integration check declined (or
-                // couldn't run): the detached process won't touch the branch,
+                // found it absent): the detached process won't touch the branch,
                 // so its survival is known here, not deferred — and when the
                 // planner promised deletion, the progress message already said
                 // "worktree & branch", so the survival gets the same
-                // correction the fast path emits. (A check that errored
-                // collapses into this: it couldn't confirm integration, which
-                // is the message's effective claim.)
+                // correction the fast path emits.
                 let fate = match cas_tail {
                     Some(_) => BranchFate::Deferred,
                     None => {
@@ -369,7 +345,7 @@ fn execute_instant_removal_or_fallback(
                 )
             }
             _ => (
-                build_remove_command(worktree_path, None, force_worktree, changed_directory),
+                build_remove_command(worktree_path, force_worktree, changed_directory),
                 BranchFate::NotAttempted,
             ),
         };
@@ -466,47 +442,85 @@ fn warn_if_branch_retained(
     }
 }
 
-/// Compute the safe-delete branch-deletion shell tail for the Detached
-/// fallback path.
+/// Build the Rust branch-deletion child for the detached removal fallback.
 ///
-/// Captures a fresh snapshot, runs the same `integration_reason` check the
-/// fast path uses, and — if the branch is integrated — returns a fail-closed
-/// topology guard followed by atomic
-/// `git update-ref -d refs/heads/<branch> <expected-sha>`. The detached process
-/// re-reads `git worktree list --porcelain` after removing the original
-/// worktree and skips deletion if any non-prunable worktree now holds the
-/// branch; stale `prunable` records do not strand it. The tail is joined to
-/// `git worktree remove` with `&&`, so the exact target's registration is
-/// already gone before this guard runs; every same-branch record that remains
-/// belongs to a different worktree. The CAS then protects against tip movement.
-/// The detached executor provides POSIX `sh` on Unix and requires Git Bash on
-/// Windows, so the record-aware `awk` guard is available on both paths.
-///
-/// Returns `None` when the branch is not integrated, when the snapshot
-/// doesn't carry the branch SHA, or when the snapshot/integration call
-/// errors — all "don't delete" outcomes that preserve the pre-CAS detached
-/// behavior of skipping branch deletion.
-fn build_cas_branch_delete_tail(
+/// Safe deletion selects an integrated candidate and expected SHA; force skips
+/// those checks. Both use the canonical fresh topology guard in the child.
+/// Neither paths nor worktree records are parsed by the shell.
+fn build_branch_delete_tail(
     repo: &Repository,
     branch: &str,
     target_branch: Option<&str>,
-) -> Option<String> {
+    force_delete: bool,
+) -> anyhow::Result<Option<String>> {
     use shell_escape::unix::escape;
 
     let target = target_branch.unwrap_or("HEAD");
-    let snapshot = repo.capture_refs().ok()?;
-    let (_effective_target, reason) = repo.integration_reason(&snapshot, branch, target).ok()?;
-    reason?;
-    let expected_sha = snapshot.local_branch(branch)?.commit_sha.clone();
+    let deletion_mode = if force_delete {
+        "--force-delete".to_string()
+    } else {
+        let snapshot = repo.capture_refs()?;
+        let (_effective_target, reason) = repo.integration_reason(&snapshot, branch, target)?;
+        let Some(branch_info) = snapshot.local_branch(branch).filter(|_| reason.is_some()) else {
+            return Ok(None);
+        };
+        escape(format!("--expected-sha={}", branch_info.commit_sha).into()).into_owned()
+    };
+    let executable = std::env::current_exe().context("Failed to locate Worktrunk executable")?;
+    let executable = worktrunk::path::to_posix_path(
+        executable
+            .to_str()
+            .context("Worktrunk executable path is not UTF-8")?,
+    );
+    let executable = escape(executable.into());
+    let branch = escape(format!("--branch={branch}").into());
+    let target = escape(format!("--target={target}").into());
+    Ok(Some(format!(
+        "{executable} _delete-branch-if-safe {branch} {target} {deletion_mode}"
+    )))
+}
 
-    let ref_name = format!("refs/heads/{branch}");
-    let branch_line = format!("branch {ref_name}");
-    let branch_line_escaped = escape(branch_line.as_str().into());
-    let ref_escaped = escape(ref_name.as_str().into());
-    let sha_escaped = escape(expected_sha.as_str().into());
-    Some(format!(
-        "worktrunk_worktrees=$(git worktree list --porcelain) && {{ worktrunk_live_checkout=$(printf '%s\\n' \"$worktrunk_worktrees\" | awk -v worktrunk_wanted_branch={branch_line_escaped} '{LIVE_BRANCH_WORKTREE_AWK}') && {{ if [ \"$worktrunk_live_checkout\" = live ]; then :; elif [ -z \"$worktrunk_live_checkout\" ]; then git update-ref -d {ref_escaped} {sha_escaped}; else false; fi; }}; }}"
-    ))
+/// Complete the detached tail using the same deletion mechanism as foreground
+/// removal. Safe deletion retains a changed ref; force still requires known
+/// worktree identities before invoking Git's checkout-protected deletion.
+pub(crate) fn delete_branch_from_detached_fallback(
+    branch: &str,
+    target: &str,
+    expected_sha: Option<&str>,
+    force_delete: bool,
+) -> anyhow::Result<()> {
+    let repo = Repository::current()?;
+    let result = if force_delete {
+        execute_branch_deletion(&repo, branch, target, true)?
+    } else {
+        delete_planned_branch(
+            &repo,
+            branch,
+            target,
+            expected_sha.context("Missing expected branch revision")?,
+        )?
+    };
+    warn_if_branch_retained(branch, &Ok(result), false);
+    Ok(())
+}
+
+fn delete_planned_branch(
+    repo: &Repository,
+    branch: &str,
+    target: &str,
+    expected_sha: &str,
+) -> anyhow::Result<BranchDeletionResult> {
+    let snapshot = repo.capture_refs()?;
+    let current = snapshot.local_branch(branch).with_context(|| {
+        format!("Cannot safely delete branch {branch}: absent from ref snapshot")
+    })?;
+    if current.commit_sha != expected_sha {
+        return Ok(BranchDeletionResult {
+            outcome: BranchDeletionOutcome::RetainedRaced,
+            integration_target: target.to_string(),
+        });
+    }
+    worktrunk::git::delete_branch_if_safe(repo, &snapshot, branch, target, false)
 }
 
 /// Build the detached worktree-removal command, optionally appending a
@@ -518,8 +532,7 @@ fn build_remove_command_with_tail(
     changed_directory: bool,
     tail: Option<&str>,
 ) -> String {
-    let remove_command =
-        build_remove_command(worktree_path, None, force_worktree, changed_directory);
+    let remove_command = build_remove_command(worktree_path, force_worktree, changed_directory);
     match tail {
         Some(tail) => format!("{remove_command} && {tail}"),
         None => remove_command,
@@ -1431,14 +1444,8 @@ fn handle_branch_only_output(
         handle_branch_deletion_result(result, branch_name)?
     } else if deletion_mode.is_force() {
         let repo = worktrunk::git::Repository::current()?;
-        let result = repo.run_command(&["branch", "-D", "--", branch_name]);
-        handle_branch_deletion_result(
-            result.map(|_| BranchDeletionResult {
-                outcome: BranchDeletionOutcome::ForceDeleted,
-                integration_target: check_target.to_string(),
-            }),
-            branch_name,
-        )?
+        let result = execute_branch_deletion(&repo, branch_name, check_target, true);
+        handle_branch_deletion_result(result, branch_name)?
     } else {
         BranchDeletionDisplay {
             result: BranchDeletionResult {
@@ -2465,128 +2472,40 @@ mod tests {
         );
     }
 
-    /// The detached safe-delete tail samples worktree topology immediately
-    /// before the ref CAS. A checkout created after the tail was planned must
-    /// make the tail succeed without deleting the branch.
+    /// Even a moved tip already integrated into the target must survive the
+    /// detached operation planned against its previous SHA.
     #[test]
-    fn detached_cas_tail_retains_branch_checked_out_after_planning() {
+    fn detached_delete_retains_changed_integrated_tip() {
         let test = worktrunk::testing::TestRepo::with_initial_commit();
         test.create_branch("feature");
         let repo = Repository::at(test.root_path()).unwrap();
         let expected_sha = test.git_output(&["rev-parse", "feature"]);
-        let tail = build_cas_branch_delete_tail(&repo, "feature", Some("main")).unwrap();
-
-        let normalized_tail = tail.replace(&expected_sha, "<sha>");
-        assert!(
-            normalized_tail.contains("awk -v worktrunk_wanted_branch='branch refs/heads/feature'")
-                && normalized_tail.contains("git update-ref -d refs/heads/feature <sha>"),
-            "the guard must associate the exact branch record with the existing CAS: {normalized_tail}"
-        );
-
-        let checkout = test.home_path().join("repo.feature-detached-race");
-        test.run_git(&["worktree", "add", checkout.to_str().unwrap(), "feature"]);
-
-        let guarded = Cmd::new("sh")
-            .args(["-c", &tail])
-            .current_dir(test.root_path())
-            .run()
-            .unwrap();
-        assert!(
-            guarded.status.success(),
-            "a matching checkout is a clean skip"
-        );
-        assert!(
-            repo.run_command(&["rev-parse", "--verify", "refs/heads/feature"])
-                .is_ok(),
-            "the detached guard must retain a newly checked-out branch"
-        );
-        assert!(
-            repo.worktree_at(&checkout)
-                .run_command(&["rev-parse", "--verify", "HEAD"])
-                .is_ok(),
-            "the guarded tail must not orphan the checkout"
-        );
-
-        let failing_awk = format!("awk() {{ return 2; }}; {tail}");
-        let failed_guard = Cmd::new("sh")
-            .args(["-c", &failing_awk])
-            .current_dir(test.root_path())
-            .run()
-            .unwrap();
-        assert!(
-            !failed_guard.status.success(),
-            "an awk/tool failure is not the no-match case"
-        );
-        assert!(
-            repo.run_command(&["rev-parse", "--verify", "refs/heads/feature"])
-                .is_ok(),
-            "a topology-parser failure must fail closed"
+        test.commit("Advance target");
+        test.run_git(&["update-ref", "refs/heads/feature", "HEAD"]);
+        let result = delete_planned_branch(&repo, "feature", "main", &expected_sha).unwrap();
+        assert!(matches!(
+            result.outcome,
+            BranchDeletionOutcome::RetainedRaced
+        ));
+        assert_eq!(
+            test.git_output(&["rev-parse", "feature"]),
+            test.git_output(&["rev-parse", "main"])
         );
     }
 
-    /// A lock protects a temporarily absent worktree. The detached parser must
-    /// let it win even over a synthetic record that also says `prunable`.
     #[test]
-    fn detached_topology_parser_retains_locked_prunable_record() {
-        let porcelain = "worktree /missing/feature
-HEAD 0123456789abcdef
-branch refs/heads/feature
-locked detachable media
-prunable gitdir file points to non-existent location
-
-";
-        let command = format!(
-            "awk -v worktrunk_wanted_branch='branch refs/heads/feature' '{LIVE_BRANCH_WORKTREE_AWK}'"
-        );
-        let output = Cmd::new("sh")
-            .args(["-c", &command])
-            .stdin_bytes(porcelain)
-            .run()
-            .unwrap();
-
-        assert!(output.status.success());
-        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "live");
-    }
-
-    /// The exact porcelain branch line and ref argument are shell-escaped. A
-    /// prunable stale registration is not a live checkout, so that arm still
-    /// reaches the expected-SHA CAS without interpreting a valid but
-    /// shell-active branch name.
-    #[test]
-    fn detached_cas_tail_escapes_branch_and_deletes_when_not_checked_out() {
+    fn detached_delete_propagates_mutation_failure() {
         let test = worktrunk::testing::TestRepo::with_initial_commit();
-        let branch = "feature;touch${IFS}PWNED";
-        test.create_branch(branch);
+        test.create_branch("feature");
         let repo = Repository::at(test.root_path()).unwrap();
-        let tail = build_cas_branch_delete_tail(&repo, branch, Some("main")).unwrap();
-        assert!(
-            tail.contains("'branch refs/heads/feature;touch${IFS}PWNED'"),
-            "the complete porcelain line must be one escaped shell word: {tail}"
-        );
-        assert!(
-            tail.contains("'refs/heads/feature;touch${IFS}PWNED'"),
-            "the CAS ref must be escaped independently: {tail}"
-        );
-
-        let stale = test.home_path().join("repo.feature-stale");
-        test.run_git(&["worktree", "add", stale.to_str().unwrap(), branch]);
-        std::fs::remove_dir_all(&stale).unwrap();
-
-        let output = Cmd::new("sh")
-            .args(["-c", &tail])
-            .current_dir(test.root_path())
-            .run()
-            .unwrap();
-        assert!(output.status.success(), "no checkout should run the CAS");
-        assert!(
-            repo.run_command(&["rev-parse", "--verify", &format!("refs/heads/{branch}")])
-                .is_err(),
-            "the intended branch should be deleted"
-        );
-        assert!(
-            !test.root_path().join("PWNED").exists(),
-            "the branch name must never be interpreted by the shell"
-        );
+        let expected_sha = test.git_output(&["rev-parse", "feature"]);
+        std::fs::write(
+            repo.git_common_dir().join("refs/heads/feature.lock"),
+            "another writer",
+        )
+        .unwrap();
+        assert!(delete_planned_branch(&repo, "feature", "main", &expected_sha).is_err());
+        assert_eq!(test.git_output(&["rev-parse", "feature"]), expected_sha);
     }
 
     #[test]
