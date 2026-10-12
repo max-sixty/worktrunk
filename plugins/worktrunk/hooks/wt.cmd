@@ -41,8 +41,7 @@ for /f "delims=" %%I in ('set "GIT_EXEC_PATH=" ^& "%~1" --exec-path 2^>nul') do 
 goto :eof
 
 :runtime
-rem Git prints forward slashes. Match the runtime suffix directly: deriving
-rem its parent with %%~dp and a trailing dot leaves an empty %%~nx directory name.
+rem Normalize Git's forward slashes before matching its runtime suffix.
 set "GIT_RUNTIME=%~1"
 set "GIT_RUNTIME=%GIT_RUNTIME:/=\%"
 if /i not "%GIT_RUNTIME:~-17%"=="\libexec\git-core" goto :eof
