@@ -792,9 +792,8 @@ pub(crate) fn generate_removing_path(trash_dir: &Path, git_dir: &Path) -> PathBu
 
 #[cfg(test)]
 mod tests {
-    use crate::git::error::Diagnostic;
     use super::*;
-    use crate::git::ErrorExt;
+    use crate::git::error::Diagnostic;
     use crate::testing::TestRepo;
 
     /// Unregister refusal cannot put recoverable contents into swept trash.
