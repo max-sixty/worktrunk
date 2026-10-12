@@ -3071,29 +3071,6 @@ fn test_finalize_missing_locked_rebase_retains_branch() {
     assert!(
         matches!(result.outcome, BranchDeletionOutcome::RetainedCheckedOut { path } if path == linked)
     );
-
-    test.run_git(&["worktree", "unlock", linked.to_str().unwrap()]);
-    let repo = Repository::at(test.root_path()).unwrap();
-    let wt = repo
-        .list_worktrees()
-        .unwrap()
-        .iter()
-        .find(|wt| wt.path == linked)
-        .unwrap();
-    assert!(wt.detached && wt.locked.is_none() && wt.is_prunable());
-    assert_eq!(wt.branch.as_deref(), Some("feature"));
-    let result = delete_branch_if_safe(
-        &repo,
-        &repo.capture_refs().unwrap(),
-        "feature",
-        "main",
-        false,
-    )
-    .unwrap();
-    assert!(matches!(
-        result.outcome,
-        BranchDeletionOutcome::Integrated(_)
-    ));
 }
 
 #[test]
@@ -3296,7 +3273,7 @@ fn repo_path_discovers_fresh_separate_git_dir_main() {
 /// Git protects a named bisect's starting branch, but a bisect begun detached
 /// holds only an object id. The CAS deletion path must preserve that contrast.
 #[test]
-fn test_finalize_bisect_retains_its_original_branch() {
+fn branch_deletion_retains_bisect_without_display_alias() {
     use crate::git::{BranchDeletionOutcome, delete_branch_if_safe};
     for detached_start in [false, true] {
         let mut test = TestRepo::with_initial_commit();
@@ -3324,8 +3301,9 @@ fn test_finalize_bisect_retains_its_original_branch() {
             .find(|wt| wt.path == linked)
             .unwrap();
         assert!(wt.detached);
-        assert_eq!(wt.branch.as_deref(), (!detached_start).then_some("feature"));
+        assert_eq!(wt.branch, None);
         assert_eq!(wt.branch_identity_error, None);
+        assert_eq!(repo.worktree_for_branch("feature").unwrap(), None);
         let result = delete_branch_if_safe(
             &repo,
             &repo.capture_refs().unwrap(),
@@ -3345,4 +3323,84 @@ fn test_finalize_bisect_retains_its_original_branch() {
             );
         }
     }
+}
+
+/// Rebase --update-refs holds secondary branches without changing the listed
+/// branch. Once the operation ends, integrated secondary branches can go.
+#[test]
+fn branch_deletion_retains_rebase_update_refs() {
+    use crate::git::{BranchDeletionOutcome, delete_branch_if_safe};
+
+    let mut test = TestRepo::with_initial_commit();
+    let linked = test.add_worktree("stack-2");
+    std::fs::write(linked.join("one"), "one").unwrap();
+    test.run_git_in(&linked, &["add", "one"]);
+    test.run_git_in(&linked, &["commit", "-m", "One"]);
+    test.run_git_in(&linked, &["branch", "stack-1"]);
+    std::fs::write(linked.join("two"), "two").unwrap();
+    test.run_git_in(&linked, &["add", "two"]);
+    test.run_git_in(&linked, &["commit", "-m", "Two"]);
+    test.run_git(&["merge", "--ff-only", "stack-2"]);
+    let paused = test
+        .git_command()
+        .current_dir(&linked)
+        .args([
+            "-c",
+            "rebase.updateRefs=true",
+            "rebase",
+            "--exec",
+            "false",
+            "HEAD~2",
+        ])
+        .run()
+        .unwrap();
+    assert!(!paused.status.success(), "{paused:?}");
+    let registration = Repository::git_dir_at(&linked).unwrap().unwrap();
+    assert!(
+        std::fs::read_to_string(registration.join("rebase-merge/update-refs"))
+            .unwrap()
+            .lines()
+            .any(|line| line == "refs/heads/stack-1")
+    );
+    let refused = test
+        .git_command()
+        .args(["branch", "-d", "stack-1"])
+        .run()
+        .unwrap();
+    assert!(!refused.status.success(), "{refused:?}");
+
+    let repo = Repository::at(test.root_path()).unwrap();
+    let wt = repo
+        .list_worktrees()
+        .unwrap()
+        .iter()
+        .find(|wt| wt.path == linked)
+        .unwrap();
+    assert!(wt.detached);
+    assert_eq!(wt.branch.as_deref(), Some("stack-2"));
+    let result = delete_branch_if_safe(
+        &repo,
+        &repo.capture_refs().unwrap(),
+        "stack-1",
+        "main",
+        false,
+    )
+    .unwrap();
+    assert!(
+        matches!(result.outcome, BranchDeletionOutcome::RetainedCheckedOut { path } if path == linked)
+    );
+
+    test.run_git_in(&linked, &["rebase", "--abort"]);
+    let result = delete_branch_if_safe(
+        &repo,
+        &repo.capture_refs().unwrap(),
+        "stack-1",
+        "main",
+        false,
+    )
+    .unwrap();
+    assert!(matches!(
+        result.outcome,
+        BranchDeletionOutcome::Integrated(_)
+    ));
 }

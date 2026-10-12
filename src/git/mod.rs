@@ -844,8 +844,8 @@ pub struct WorktreeInfo {
     pub path: PathBuf,
     pub head: String,
     pub branch: Option<String>,
-    /// Why a detached checkout's operation branch could not be determined.
-    /// Branch deletion requires a known identity; inventory remains available.
+    /// Why a detached checkout's rebase branch could not be determined.
+    /// Inventory remains available; deletion re-reads strict held-branch state.
     #[serde(skip)]
     pub branch_identity_error: Option<String>,
     pub bare: bool,
@@ -915,8 +915,8 @@ impl WorktreeInfo {
 //
 // Placing them here avoids circular dependencies and keeps them close to WorktreeInfo.
 
-/// The branch a detached operation is holding, from its own Git directory.
-fn operation_branch(git_dir: &Path) -> anyhow::Result<Option<String>> {
+/// The rebasing branch shown in inventory, from its own Git directory.
+fn rebase_branch(git_dir: &Path) -> anyhow::Result<Option<String>> {
     use anyhow::Context;
 
     // Match Git's operation markers: am shares rebase-apply, but applying
@@ -953,6 +953,11 @@ fn operation_branch(git_dir: &Path) -> anyhow::Result<Option<String>> {
             })?;
         return Ok(Some(branch.to_owned()));
     }
+    Ok(None)
+}
+
+fn bisect_branch(git_dir: &Path) -> anyhow::Result<Option<String>> {
+    use anyhow::Context;
 
     // Bisect detaches HEAD too. BISECT_START holds the original short branch
     // name, or a full object id when the bisect started from detached HEAD.
@@ -985,6 +990,66 @@ fn operation_branch(git_dir: &Path) -> anyhow::Result<Option<String>> {
     Ok(Some(branch.to_owned()))
 }
 
+/// Branches Git protects from deletion for this registration. Display identity
+/// remains single-valued, but rebase --update-refs can hold several branches.
+fn held_branches(git_dir: &Path) -> anyhow::Result<std::collections::BTreeSet<String>> {
+    use anyhow::Context;
+
+    let mut branches = std::collections::BTreeSet::new();
+    let head_path = git_dir.join("HEAD");
+    let head = std::fs::read_to_string(&head_path).with_context(|| {
+        format!(
+            "Failed to read worktree HEAD @ {}",
+            format_path_for_display(&head_path)
+        )
+    })?;
+    if let Some(branch) = head.trim_end_matches('\n').strip_prefix("ref: refs/heads/") {
+        anyhow::ensure!(
+            is_valid_branch_name(branch),
+            "Invalid worktree HEAD @ {}",
+            format_path_for_display(&head_path)
+        );
+        branches.insert(branch.to_owned());
+    }
+    branches.extend(rebase_branch(git_dir)?);
+    branches.extend(bisect_branch(git_dir)?);
+
+    let path = git_dir.join("rebase-merge/update-refs");
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(branches),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "Failed to read rebase refs @ {}",
+                    format_path_for_display(&path)
+                )
+            });
+        }
+    };
+    // Git's sequencer stores one ref followed by its before and after OIDs.
+    let mut lines = content.lines();
+    while let Some(reference) = lines.next() {
+        for _ in 0..2 {
+            anyhow::ensure!(
+                lines.next().is_some_and(|oid| matches!(oid.len(), 40 | 64)
+                    && oid.bytes().all(|byte| byte.is_ascii_hexdigit())),
+                "Invalid rebase refs @ {}",
+                format_path_for_display(&path)
+            );
+        }
+        if let Some(branch) = reference.strip_prefix("refs/heads/") {
+            anyhow::ensure!(
+                is_valid_branch_name(branch),
+                "Invalid rebase ref @ {}",
+                format_path_for_display(&path)
+            );
+            branches.insert(branch.to_owned());
+        }
+    }
+    Ok(branches)
+}
+
 /// Recover detached operation identities from each checkout's own registration.
 /// A missing or broken gitfile must never redirect discovery into a parent
 /// repository. Record unreadable identities per entry so inventory remains
@@ -1011,11 +1076,11 @@ pub(crate) fn finalize_worktrees(
     {
         let path = canonicalize_with_parents(&wt.path);
         let branch = if main.as_deref() == Some(path.as_path()) {
-            operation_branch(repo.git_common_dir())
+            rebase_branch(repo.git_common_dir())
         } else {
             match &registrations {
                 Ok(registrations) => match registrations.get(&path) {
-                    Some(registration) => operation_branch(&registration.git_dir),
+                    Some(registration) => rebase_branch(&registration.git_dir),
                     None => Err(anyhow::anyhow!(
                         "Worktree registration not found @ {}",
                         format_path_for_display(&wt.path)
