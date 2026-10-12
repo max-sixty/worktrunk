@@ -6104,14 +6104,12 @@ fn test_force_remove_interrupted_status_preserves_worktrees(
     assert!(!stderr.contains("Removing later-worktree"));
 }
 
-/// Untracked work created during fsmonitor shutdown is refused; explicit force
-/// alone may discard it. An index-only final check would miss the new file.
+/// Install a Git shim that performs one mutation during daemon shutdown.
 #[cfg(unix)]
-#[rstest]
-fn test_remove_keeps_work_created_during_fsmonitor_stop(mut repo: TestRepo) {
+fn removal_shutdown_git_shim(repo: &TestRepo, stop_script: &str) -> std::ffi::OsString {
     use std::os::unix::fs::PermissionsExt;
 
-    let bin_dir = repo.home_path().join("late-index-git");
+    let bin_dir = repo.home_path().join("shutdown-git");
     fs::create_dir(&bin_dir).unwrap();
     let shim = bin_dir.join("git");
     let real_git = which::which("git").unwrap();
@@ -6120,22 +6118,31 @@ fn test_remove_keeps_work_created_during_fsmonitor_stop(mut repo: TestRepo) {
         &shim,
         format!(
             r#"#!/bin/sh
+real_git={real_git}
 if [ "$1" = fsmonitor--daemon ]; then
   if [ "$2" = stop ]; then
-    printf 'late work' > late.txt
+{stop_script}
   fi
   exit 0
 fi
-exec {real_git} -c core.fsmonitor=false "$@"
+exec "$real_git" -c core.fsmonitor=false "$@"
 "#
         ),
     )
     .unwrap();
     fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
-    let path = std::env::join_paths(
+    std::env::join_paths(
         std::iter::once(bin_dir).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
     )
-    .unwrap();
+    .unwrap()
+}
+
+/// Untracked work created during fsmonitor shutdown is refused; explicit force
+/// alone may discard it. An index-only final check would miss the new file.
+#[cfg(unix)]
+#[rstest]
+fn test_remove_keeps_work_created_during_fsmonitor_stop(mut repo: TestRepo) {
+    let path = removal_shutdown_git_shim(&repo, "    printf 'late work' > late.txt");
     for (branch, force) in [("keep-late", false), ("discard-late", true)] {
         let worktree = repo.add_worktree(branch);
         let registration = registration_dir(&worktree);
@@ -6174,37 +6181,32 @@ exec {real_git} -c core.fsmonitor=false "$@"
     }
 }
 
-/// Force waives dirt, never a lock or replacement appearing during fsmonitor
-/// shutdown. A sibling replacement cannot retarget the chosen registration.
+/// Force waives dirt, never cancellation, a lock, or replacement appearing
+/// during shutdown. A sibling cannot retarget the chosen registration.
 #[cfg(unix)]
 #[rstest]
 #[case::lock("lock")]
 #[case::foreign("foreign")]
 #[case::sibling("sibling")]
+#[case::cancel("cancel")]
 fn test_remove_rechecks_ownership_and_lock_after_fsmonitor_stop(
     mut repo: TestRepo,
     #[case] mutation: &str,
 ) {
-    use std::os::unix::fs::PermissionsExt;
-
-    let bin_dir = repo.home_path().join("shutdown-ownership-git");
-    fs::create_dir(&bin_dir).unwrap();
-    let shim = bin_dir.join("git");
-    let real_git = which::which("git").unwrap();
-    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
-    fs::write(
-        &shim,
-        format!(
-            r#"#!/bin/sh
-if [ "$1" = fsmonitor--daemon ]; then
-  if [ "$2" = stop ]; then
-    case "$WORKTRUNK_TEST_REMOVAL_MUTATION" in
-      lock) {real_git} worktree lock "$PWD" --reason 'keep after shutdown' || exit 1 ;;
+    let path = removal_shutdown_git_shim(
+        &repo,
+        r#"    case "$WORKTRUNK_TEST_REMOVAL_MUTATION" in
+      cancel)
+        printf '%s' "$WORKTRUNK_TEST_REMOVAL_MUTATION" > "$WORKTRUNK_TEST_REMOVAL_PROOF" || exit 1
+        kill -TERM "$PPID"
+        exit 0
+        ;;
+      lock) "$real_git" worktree lock "$PWD" --reason 'keep after shutdown' || exit 1 ;;
       foreign|sibling)
         mv "$PWD" "$WORKTRUNK_TEST_REMOVAL_PARKED" || exit 1
         if [ "$WORKTRUNK_TEST_REMOVAL_MUTATION" = foreign ]; then
           mkdir "$PWD" || exit 1
-          {real_git} -C "$PWD" init --quiet || exit 1
+          "$real_git" -C "$PWD" init --quiet || exit 1
         else
           mv "$WORKTRUNK_TEST_REMOVAL_REPLACEMENT" "$PWD" || exit 1
           printf '%s/.git\n' "$PWD" > "$WORKTRUNK_TEST_REMOVAL_REPLACEMENT_REGISTRATION/gitdir" || exit 1
@@ -6212,20 +6214,8 @@ if [ "$1" = fsmonitor--daemon ]; then
         printf 'replacement data' > "$PWD/precious.txt"
         ;;
     esac
-    printf '%s' "$WORKTRUNK_TEST_REMOVAL_MUTATION" > "$WORKTRUNK_TEST_REMOVAL_PROOF" || exit 1
-  fi
-  exit 0
-fi
-exec {real_git} -c core.fsmonitor=false "$@"
-"#
-        ),
-    )
-    .unwrap();
-    fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
-    let path = std::env::join_paths(
-        std::iter::once(bin_dir).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
-    )
-    .unwrap();
+    printf '%s' "$WORKTRUNK_TEST_REMOVAL_MUTATION" > "$WORKTRUNK_TEST_REMOVAL_PROOF" || exit 1"#,
+    );
     let branch = "forced-gate";
     let worktree = repo.add_worktree(branch);
     let registration = registration_dir(&worktree);
@@ -6261,13 +6251,20 @@ exec {real_git} -c core.fsmonitor=false "$@"
         String::from_utf8_lossy(&output.stderr)
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let expected_error = match mutation {
-        "lock" => "worktree is locked (keep after shutdown)",
-        "foreign" => "does not hold the worktree registered there",
-        "sibling" => "Worktree registration changed during removal",
-        _ => unreachable!(),
-    };
-    assert!(stderr.contains(expected_error), "{stderr}");
+    if mutation == "cancel" {
+        assert_eq!(
+            crate::common::shell_exit_code(&output.status),
+            Some(128 + signal_hook::consts::SIGTERM)
+        );
+    } else {
+        let expected_error = match mutation {
+            "lock" => "worktree is locked (keep after shutdown)",
+            "foreign" => "does not hold the worktree registered there",
+            "sibling" => "Worktree registration changed during removal",
+            _ => unreachable!(),
+        };
+        assert!(stderr.contains(expected_error), "{stderr}");
+    }
     assert_eq!(
         fs::read_to_string(&proof).unwrap_or_else(|error| {
             panic!("mutation {mutation} did not run: {error}; {output:?}")
@@ -6279,7 +6276,7 @@ exec {real_git} -c core.fsmonitor=false "$@"
     assert!(registration.is_dir(), "original registration must survive");
     if mutation == "lock" {
         assert!(registration.join("locked").is_file());
-    } else {
+    } else if mutation != "cancel" {
         assert_eq!(
             fs::read_to_string(worktree.join("precious.txt")).unwrap(),
             "replacement data"

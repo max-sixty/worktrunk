@@ -52,7 +52,10 @@
 //! # Final removal gate
 //!
 //! After shutdown, removal rescans without fsmonitor and rechecks the captured
-//! registration and lock. Force waives dirt, never ownership or locks.
+//! registration and lock. This costs a full-tree re-stat instead of trusting
+//! Git's configured daemon. It observes shutdown-time writes, but does not
+//! serialize arbitrary external writers. Force waives dirt, never ownership,
+//! locks, or cancellation.
 //!
 //! # Example
 //!
@@ -88,10 +91,8 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 
-use crate::git::repository::WorkingTree;
-use crate::git::{
-    CleanCheckMode, ErrorExt, GitError, IntegrationReason, Repository, WorktreeInfo, path_dir_name,
-};
+use crate::git::repository::{CleanCheckMode, WorkingTree};
+use crate::git::{ErrorExt, GitError, IntegrationReason, Repository, WorktreeInfo, path_dir_name};
 use crate::path::{canonicalize_with_parents, format_path_for_display};
 use crate::shell_exec::Cmd;
 use crate::styling::{eprintln, format_with_gutter, warning_message};
@@ -443,7 +444,7 @@ pub fn remove_worktree_with_cleanup(
 ///
 /// # Errors
 ///
-/// The ownership, lock, and dirty-worktree gates error. A
+/// The ownership, lock, dirty-worktree, and cancellation gates error. A
 /// failed rename is reported as `None`, not an error, and the daemon stop is
 /// best-effort throughout.
 pub fn stage_worktree_removal(
@@ -452,10 +453,6 @@ pub fn stage_worktree_removal(
     branch: Option<&str>,
     force_worktree: bool,
 ) -> anyhow::Result<Option<PathBuf>> {
-    #[cfg(unix)]
-    if let Some(signal) = crate::signal_forwarder::operation_interrupt_signal() {
-        return Err(crate::git::WorktrunkError::Interrupted { signal, hint: None }.into());
-    }
     let worktree = repo.worktree_at(worktree_path);
     let git_dir = require_removal_allowed(&worktree, branch, None)?;
     if force_worktree {
@@ -492,11 +489,20 @@ pub fn stage_worktree_removal(
     // Refuse replacements before either query can inspect another repository.
     require_removal_allowed(&worktree, branch, Some(&git_dir))?;
     if !force_worktree {
-        worktree.ensure_clean("remove worktree", branch, true, CleanCheckMode::FullScan)?;
+        worktree.ensure_clean_with_mode(
+            "remove worktree",
+            branch,
+            true,
+            CleanCheckMode::FullScan,
+        )?;
         // Status ran an external command; recheck before the rename.
         require_removal_allowed(&worktree, branch, Some(&git_dir))?;
     }
 
+    #[cfg(unix)]
+    if let Some(signal) = crate::signal_forwarder::operation_interrupt_signal() {
+        return Err(crate::git::WorktrunkError::Interrupted { signal, hint: None }.into());
+    }
     Ok(rename_into_trash(repo, worktree_path, &git_dir))
 }
 
@@ -805,10 +811,7 @@ mod tests {
     use crate::git::ErrorExt;
     use crate::testing::TestRepo;
 
-    /// A `git worktree lock` must stop the rename even when the caller skipped
-    /// `prepare_worktree_removal` (merge used to construct a plan by hand).
-    /// A sibling foreground lease can latch TERM while the final topology scan
-    /// runs. Filesystem staging must honor that cancellation before its rename.
+    /// Already latched cancellation preserves the checkout and registration.
     #[cfg(unix)]
     #[test]
     fn stage_refuses_cancelled_operation() {
@@ -852,6 +855,8 @@ mod tests {
         drop(operation);
     }
 
+    /// A `git worktree lock` must stop the rename even when the caller skipped
+    /// `prepare_worktree_removal` (merge used to construct a plan by hand).
     #[test]
     fn stage_refuses_locked_worktree() {
         let mut test = TestRepo::with_initial_commit();
