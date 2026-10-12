@@ -3470,16 +3470,38 @@ fn test_state_clear_preserves_retained_recovery(mut repo: TestRepo) {
     fs::create_dir_all(&pending).unwrap();
     fs::rename(&pending_worktree, pending.join("checkout")).unwrap();
     let committed_worktree = repo.add_worktree("committed-removal");
-    let committed = worktrunk::git::stage_worktree_removal(
+    let blocker = repository
+        .wt_trash_dir()
+        .join(format!("committed-removal-{}", crate::common::TEST_EPOCH));
+    fs::create_dir_all(blocker.parent().unwrap()).unwrap();
+    fs::write(&blocker, "occupied trash destination").unwrap();
+    let error = worktrunk::git::stage_worktree_removal(
         &repository,
         &committed_worktree,
         Some("committed-removal"),
         false,
     )
-    .unwrap()
-    .unwrap();
+    .unwrap_err();
+    assert!(error.to_string().contains("prepare cleanup"), "{error:#}");
+    let committed = repository.wt_dir().join(format!(
+        "retained/removing/committed-removal-{}",
+        crate::common::TEST_EPOCH
+    ));
     assert!(committed.join("registration/index").is_file());
     assert!(committed.join("checkout/.git").is_file());
+    let partial_worktree = repo.add_worktree("partial-cleanup");
+    let partial = worktrunk::git::stage_worktree_removal(
+        &repository,
+        &partial_worktree,
+        Some("partial-cleanup"),
+        false,
+    )
+    .unwrap()
+    .unwrap();
+    // Generic cleanup can remove metadata first; the remaining checkout must
+    // still be discoverable in ordinary trash.
+    fs::remove_dir_all(partial.join("registration")).unwrap();
+    assert!(partial.join("checkout/.git").is_file());
     let payload = repository.wt_trash_dir().join("discard-1234567890");
     fs::create_dir_all(payload.parent().unwrap()).unwrap();
     fs::write(&payload, "discard").unwrap();
@@ -3495,7 +3517,7 @@ fn test_state_clear_preserves_retained_recovery(mut repo: TestRepo) {
     use path_slash::PathExt as _;
     assert_eq!(
         actual,
-        [&payload, &committed]
+        [&payload, &blocker, &committed, &partial]
             .map(|path| path.to_slash_lossy().into_owned())
             .into_iter()
             .collect()
@@ -3504,6 +3526,7 @@ fn test_state_clear_preserves_retained_recovery(mut repo: TestRepo) {
     assert!(output.status.success(), "{output:?}");
     assert!(!payload.exists());
     assert!(!committed.exists());
+    assert!(!partial.exists());
     assert!(pending.join("checkout/.git").is_file());
     assert_eq!(
         fs::read_to_string(retained.join("payload")).unwrap(),

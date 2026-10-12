@@ -3,7 +3,7 @@
 //! container enters disposal only when it holds the complete registration moved
 //! out of Git by the atomic unregister commit. Recoverable checkouts stay out.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 
@@ -23,6 +23,36 @@ impl Repository {
     /// payloads whose own files cannot authorize disposal.
     pub(crate) fn worktree_staging_dir(&self) -> PathBuf {
         self.wt_dir().join("retained/removing")
+    }
+
+    /// Put committed disposal in trash before generic recursive cleanup. There,
+    /// partial deletion cannot erase the registration that authorized cleanup
+    /// and hide the remaining checkout from later inventory.
+    pub fn prepare_disposal(&self, path: &Path) -> anyhow::Result<PathBuf> {
+        let trash = self.wt_trash_dir();
+        if path.parent() == Some(trash.as_path()) {
+            return Ok(path.to_path_buf());
+        }
+        anyhow::ensure!(
+            path.parent() == Some(self.worktree_staging_dir().as_path())
+                && std::fs::symlink_metadata(path.join("registration"))?.is_dir(),
+            "Not a committed removal @ {}",
+            format_path_for_display(path)
+        );
+        std::fs::create_dir_all(&trash).with_context(|| {
+            format!(
+                "Failed to prepare trash @ {}",
+                format_path_for_display(&trash)
+            )
+        })?;
+        let destination = trash.join(path.file_name().context("Disposal path has no name")?);
+        std::fs::rename(path, &destination).with_context(|| {
+            format!(
+                "Failed to prepare cleanup of committed removal @ {}",
+                format_path_for_display(path)
+            )
+        })?;
+        Ok(destination)
     }
 
     /// Every entry authorized for disposal. Missing entries can race with

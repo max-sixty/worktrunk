@@ -38,8 +38,9 @@
 //!    forever once its worktree is removed.
 //! 3. **Fast-path staging.** The checkout moves into a `wt/retained/` container,
 //!    then its complete Git registration moves beside it. That atomic unregister
-//!    authorizes disposal of the container. Failed unregister leaves the checkout
-//!    and full registration available for repair.
+//!    authorizes disposal of the container, which moves to ordinary trash before
+//!    cleanup. Failed unregister leaves the checkout and full registration
+//!    available for repair; a failed trash move leaves committed disposal visible.
 //!    Same-filesystem renames
 //!    are instant metadata operations, so the user's workspace clears
 //!    immediately. The caller is responsible for eventually removing the
@@ -591,7 +592,7 @@ fn rename_into_trash(
         let _ = std::fs::remove_dir(&container);
         return Err(error);
     }
-    Ok(Some(container))
+    repo.prepare_disposal(&container).map(Some)
 }
 
 /// Roll back an uncommitted removal; keep the payload aside if its path is occupied.

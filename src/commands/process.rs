@@ -522,7 +522,16 @@ fn collect_stale_trash_entries(repo: &Repository, now: u64, threshold_secs: u64)
         .into_iter()
         .filter_map(|entry| {
             let timestamp = entry.staged_at?;
-            (now.saturating_sub(timestamp) >= threshold_secs).then_some(entry.path)
+            if now.saturating_sub(timestamp) < threshold_secs {
+                return None;
+            }
+            match repo.prepare_disposal(&entry.path) {
+                Ok(path) => Some(path),
+                Err(error) => {
+                    tracing::debug!(%error, "Failed to prepare disposal cleanup");
+                    None
+                }
+            }
         })
         .collect()
 }
@@ -832,12 +841,19 @@ mod tests {
         // Unparsable: no timestamp suffix — sweep ignores it
         let foreign = trash.join("random-folder");
         fs::create_dir(&foreign).unwrap();
+        let committed = repo
+            .wt_dir()
+            .join(format!("retained/removing/committed-{}", now - 2 * day));
+        fs::create_dir_all(committed.join("registration")).unwrap();
 
         let mut collected = collect_stale_trash_entries(&repo, now, day);
         collected.sort();
-        let mut expected = vec![stale, boundary];
+        let prepared = trash.join(committed.file_name().unwrap());
+        let mut expected = vec![stale, boundary, prepared.clone()];
         expected.sort();
         assert_eq!(collected, expected);
+        assert!(!committed.exists());
+        assert!(prepared.join("registration").is_dir());
         assert!(
             fresh.exists(),
             "fresh entries must not appear in stale list"

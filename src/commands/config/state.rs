@@ -243,17 +243,13 @@ fn clear_trash(repo: &Repository) -> anyhow::Result<usize> {
     let entries = repo.disposal_entries()?;
     let cleared = entries.len();
     for entry in entries {
+        let path = repo.prepare_disposal(&entry.path)?;
         if entry.metadata.is_dir() {
-            std::fs::remove_dir_all(&entry.path)
+            std::fs::remove_dir_all(&path)
         } else {
-            std::fs::remove_file(&entry.path)
+            std::fs::remove_file(&path)
         }
-        .with_context(|| {
-            format!(
-                "Failed to clear trash @ {}",
-                format_path_for_display(&entry.path)
-            )
-        })?;
+        .with_context(|| format!("Failed to clear trash @ {}", format_path_for_display(&path)))?;
     }
     // An absent or non-empty payload-trash directory needs no further action.
     let trash = repo.wt_trash_dir();
