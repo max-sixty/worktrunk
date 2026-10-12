@@ -1,7 +1,6 @@
 //! Gitea PR backend using the `tea` CLI. It also hosts the `tea`-facing helpers
-//! other modules share: [`api_status`] (how
-//! every caller separates a failed request from a resource, and decides whether
-//! a retry could help), [`is_authed_for`], and [`has_any_login`] — read by the
+//! other modules share: [`api_status`] (how every caller separates a failed
+//! request from a resource), [`is_authed_for`], and [`has_any_login`] — read by the
 //! switch dispatcher and the CI-status backend, so a change to one of them is
 //! not local.
 //!

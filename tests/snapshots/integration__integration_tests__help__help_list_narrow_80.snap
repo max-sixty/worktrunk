@@ -209,8 +209,8 @@ checks object and review states give the JSON form of each value:
  [31m#[0m red     [2m"failed"[0m             One or more checks failed                       
  [33m#[0m yellow  [2m"conflicts"[0m          Merge conflicts with the target branch          
  [90m#[0m gray    [2m"no-ci"[0m              No PR/MR, or no checks configured               
- [33m⚠[0m yellow  [2m"error"[0m              CI status could not be fetched (rate limit,     
-                                network, etc.)                                  
+ [33m⚠[0m yellow  [2m"error"[0m              CI status could not be fetched (not logged in,  
+                                rate limit, network, etc.)                      
  [35m#[0m magenta [2m"changes_requested"[0m  A reviewer requested changes                    
  [36m#[0m cyan    [2m"pending"[0m            A review is required (e.g. branch protection)   
                                 but not yet given                               

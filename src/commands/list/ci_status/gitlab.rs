@@ -22,7 +22,7 @@ use worktrunk::git::Repository;
 
 use super::{
     CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrRef, PrStatus, ReviewState,
-    is_retriable_error, non_interactive_cmd, parse_json,
+    non_interactive_cmd, parse_json,
 };
 
 /// Project IDs already resolved in this process, keyed by the worktree root
@@ -141,13 +141,7 @@ pub(super) fn detect_gitlab(
     };
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        // Return error status for retriable failures (rate limit, network) so they
-        // surface as warnings instead of being cached as "no CI"
-        if is_retriable_error(&stderr) {
-            return Some(PrStatus::error());
-        }
-        return None;
+        return Some(PrStatus::error());
     }
 
     // Step 1: Parse mr list output to find matching MR.
@@ -287,13 +281,7 @@ pub(super) fn detect_gitlab_pipeline(
     };
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        // Return error status for retriable failures (rate limit, network) so they
-        // surface as warnings instead of being cached as "no CI"
-        if is_retriable_error(&stderr) {
-            return Some(PrStatus::error());
-        }
-        return None;
+        return Some(PrStatus::error());
     }
 
     let pipelines: Vec<GitLabPipeline> = parse_json(&output.stdout, "glab ci list", branch)?;

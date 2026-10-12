@@ -458,14 +458,10 @@ mod tests {
 
     #[test]
     fn test_shell_config_paths_returns_paths() {
-        // All shells should return at least one config path
-        let shells = [
-            Shell::Bash,
-            Shell::Zsh,
-            Shell::Fish,
-            Shell::Nushell,
-            Shell::PowerShell,
-        ];
+        // Shells whose paths don't depend on querying an installed shell.
+        // Nushell and Unix PowerShell paths come from `nu` and `pwsh`, and are
+        // empty without them.
+        let shells = [Shell::Bash, Shell::Zsh, Shell::Fish];
         for shell in shells {
             let result = shell.config_paths("wt");
             assert!(result.is_ok(), "Failed to get config paths for {:?}", shell);
@@ -480,14 +476,8 @@ mod tests {
 
     #[test]
     fn test_shell_completion_path_returns_path() {
-        // All shells should return a completion path
-        let shells = [
-            Shell::Bash,
-            Shell::Zsh,
-            Shell::Fish,
-            Shell::Nushell,
-            Shell::PowerShell,
-        ];
+        // Nushell's path comes from `nu`, so it is absent without it.
+        let shells = [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell];
         for shell in shells {
             let result = shell.completion_path("wt");
             assert!(

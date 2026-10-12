@@ -911,7 +911,7 @@ The CI column shows the branch's open PR/MR — `#3035` on GitHub, Gitea, and Az
 | `#` red | `"failed"` | One or more checks failed |
 | `#` yellow | `"conflicts"` | Merge conflicts with the target branch |
 | `#` gray | `"no-ci"` | No PR/MR, or no checks configured |
-| `⚠` yellow | `"error"` | CI status could not be fetched (rate limit, network, etc.) |
+| `⚠` yellow | `"error"` | CI status could not be fetched (not logged in, rate limit, network, etc.) |
 | `#` magenta | `"changes_requested"` | A reviewer requested changes |
 | `#` cyan | `"pending"` | A review is required (e.g. branch protection) but not yet given |
 | (blank) | `pr` and `checks` absent | Branch never pushed, or no PR/MR and no branch workflow |

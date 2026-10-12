@@ -2590,6 +2590,8 @@ impl TestRepo {
             .version("gh version 2.0.0 (mock)")
             .command("auth", MockResponse::exit(0))
             .command("pr", MockResponse::file("pr_data.json"))
+            // A branch with no PR falls back to its commit's check runs: none.
+            .command("api", MockResponse::output("[]"))
             .write(&mock_bin);
 
         // Configure glab mock (fails - no GitLab support)
@@ -2740,7 +2742,7 @@ impl TestRepo {
 
     /// Set up mock glab that returns a rate limit error on `ci list`.
     ///
-    /// Used to test the `is_retriable_error` path in `detect_gitlab_pipeline`.
+    /// Used to test the failure path in `detect_gitlab_pipeline`.
     /// MR list returns empty (no MRs), so the code falls through to pipeline detection
     /// which then hits the rate limit error.
     pub fn setup_mock_glab_with_ci_rate_limit(&mut self, project_id: Option<u64>) {
@@ -2817,7 +2819,7 @@ impl TestRepo {
     /// Setup mock `az` where `az repos pr list` and/or `az pipelines runs list`
     /// fail with the given stderr (exit code 1).
     ///
-    /// Used to exercise the `is_retriable_error` branches in `detect_azure_pr`
+    /// Used to exercise the failure branches in `detect_azure_pr`
     /// and `detect_azure_pipeline`. A `None` argument makes that command return
     /// an empty JSON array instead of failing.
     pub fn setup_mock_az_with_detection_errors(
@@ -2918,6 +2920,13 @@ impl TestRepo {
                 MockResponse::file("tea_status.json")
                     .with_stderr(&tea_api_include_stderr(status_status)),
             )
+            // Every other branch's commit has no statuses, so only `head_sha`'s
+            // row reflects `status`.
+            .command(
+                "api --include",
+                MockResponse::output(r#"{"state":"","total_count":0}"#)
+                    .with_stderr(&tea_api_include_stderr("200 OK")),
+            )
             .command("_default", MockResponse::exit(1))
             .write(&mock_bin);
 
@@ -2935,7 +2944,7 @@ impl TestRepo {
     /// Setup mock `tea` where every `tea api` call fails with the given stderr
     /// (exit code 1).
     ///
-    /// Used to exercise the `is_retriable_error` branch in `detect_gitea_pr`.
+    /// Used to exercise the failure branch in `detect_gitea_pr`.
     pub fn setup_mock_tea_with_detection_error(&mut self, stderr: &str) {
         let mock_bin = self.temp_dir.path().join("mock-bin");
         std::fs::create_dir_all(&mock_bin).unwrap();
@@ -2960,7 +2969,7 @@ impl TestRepo {
     /// fails with `stderr` (exit code 1). Assumes the repo's remote points at
     /// `owner/test-repo`.
     ///
-    /// Used to exercise the `is_retriable_error` branch in
+    /// Used to exercise the failure branch in
     /// `fetch_combined_status`.
     pub fn setup_mock_tea_commit_status_error(&mut self, head_sha: &str, stderr: &str) {
         let mock_bin = self.temp_dir.path().join("mock-bin");
@@ -2980,6 +2989,12 @@ impl TestRepo {
                 // `tea` itself failing: no response, so no status line.
                 &format!("api --include repos/owner/test-repo/commits/{head_sha}/status"),
                 MockResponse::stderr(stderr).with_exit_code(1),
+            )
+            // Every other branch's commit has no statuses.
+            .command(
+                "api --include",
+                MockResponse::output(r#"{"state":"","total_count":0}"#)
+                    .with_stderr(&tea_api_include_stderr("200 OK")),
             )
             .command("_default", MockResponse::exit(1))
             .write(&mock_bin);

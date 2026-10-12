@@ -7,7 +7,7 @@ use worktrunk::git::Repository;
 
 use super::{
     CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrRef, PrStatus, ReviewState,
-    branch_owner_repo, non_interactive_cmd, parse_json, retriable_pr_error,
+    branch_owner_repo, non_interactive_cmd, parse_json,
 };
 // CI detection primes the picker's on-disk comments cache: this `gh pr list`
 // call already transfers the comment thread (we count it for `comment_count`),
@@ -99,7 +99,7 @@ pub(super) fn detect_github(
     };
 
     if !output.status.success() {
-        return retriable_pr_error(&output);
+        return Some(PrStatus::error());
     }
 
     // gh pr list returns an array - find the first PR from our origin
@@ -202,6 +202,9 @@ pub(super) fn detect_github_commit_checks(
     branch: &CiBranchName,
     local_head: &str,
 ) -> Option<PrStatus> {
+    if !branch.head_on_remote(repo, local_head) {
+        return None;
+    }
     let repo_root = repo.current_worktree().root().ok()?;
     let (owner, repo_name) = branch_owner_repo(repo, branch)?;
 
@@ -235,7 +238,7 @@ pub(super) fn detect_github_commit_checks(
     };
 
     if !output.status.success() {
-        return retriable_pr_error(&output);
+        return Some(PrStatus::error());
     }
 
     let checks: Vec<GitHubCheck> = parse_json(&output.stdout, "gh api check-runs", local_head)?;

@@ -12,8 +12,6 @@ mod github;
 mod gitlab;
 mod platform;
 
-use std::process::Output;
-
 use super::layout::LinkStyle;
 use anstyle::{AnsiColor, Color, Style};
 use schemars::JsonSchema;
@@ -80,6 +78,24 @@ impl CiBranchName {
     pub fn has_upstream(&self, repo: &Repository) -> bool {
         self.is_remote() || repo.branch(&self.name).upstream().ok().flatten().is_some()
     }
+
+    /// Whether `local_head` is on a remote, so a forge lookup by commit SHA can
+    /// find it. A remote branch's head is; a local branch's is when any
+    /// remote-tracking ref contains it. A commit that only exists locally gets
+    /// no lookup by SHA, which the forge would answer with an error.
+    pub(super) fn head_on_remote(&self, repo: &Repository, local_head: &str) -> bool {
+        self.is_remote()
+            || repo
+                .run_command(&[
+                    "for-each-ref",
+                    "--count=1",
+                    "--format=%(refname)",
+                    "--contains",
+                    local_head,
+                    "refs/remotes/",
+                ])
+                .is_ok_and(|out| !out.trim().is_empty())
+    }
 }
 
 // Re-export public types
@@ -137,26 +153,6 @@ fn parse_json<T: DeserializeOwned>(stdout: &[u8], command: &str, branch: &str) -
         .ok()
 }
 
-/// Combine stderr and stdout for retriable-error sniffing.
-///
-/// Some CLIs (notably `tea`) report API errors as JSON on stdout while
-/// transport errors land on stderr — checking both avoids missing retriable
-/// errors when the tool routes them differently.
-fn output_error_text(output: &Output) -> String {
-    format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stderr),
-        String::from_utf8_lossy(&output.stdout)
-    )
-}
-
-/// If a non-success `Output` indicates a retriable failure, surface it as a
-/// PR-status warning. Returns `None` for non-retriable failures so callers
-/// can `?` it to fall through to "no CI status".
-fn retriable_pr_error(output: &Output) -> Option<PrStatus> {
-    is_retriable_error(&output_error_text(output)).then(PrStatus::error)
-}
-
 /// Resolve `(owner, repo)` for a branch's effective remote.
 ///
 /// Thin wrapper over [`branch_remote_url`] + [`parse_owner_repo`]. The
@@ -193,22 +189,6 @@ fn branch_remote_url(repo: &Repository, branch: &CiBranchName) -> Option<String>
             repo.effective_remote_url(&remote)
         })
     }
-}
-
-/// Check if stderr indicates a retriable error (rate limit, network issues)
-fn is_retriable_error(stderr: &str) -> bool {
-    let lower = stderr.to_ascii_lowercase();
-    [
-        "rate limit",
-        "api rate",
-        "403",
-        "429",
-        "timeout",
-        "connection",
-        "network",
-    ]
-    .iter()
-    .any(|p| lower.contains(p))
 }
 
 /// Status of CI tools availability
@@ -581,7 +561,7 @@ impl PrStatus {
         }
     }
 
-    /// Create an error status for retriable failures (rate limit, network errors)
+    /// The status for a forge CLI call that failed.
     fn error() -> Self {
         Self {
             ci_status: CiStatus::Error,
@@ -769,30 +749,6 @@ mod tests {
     use super::super::model::ListItem;
     use super::*;
     use worktrunk::testing::TestRepo;
-
-    #[test]
-    fn test_is_retriable_error() {
-        // Rate limit errors
-        assert!(is_retriable_error("API rate limit exceeded"));
-        assert!(is_retriable_error("rate limit exceeded for requests"));
-        assert!(is_retriable_error("Error 403: forbidden"));
-        assert!(is_retriable_error("HTTP 429 Too Many Requests"));
-
-        // Network errors
-        assert!(is_retriable_error("connection timed out"));
-        assert!(is_retriable_error("network error"));
-        assert!(is_retriable_error("timeout waiting for response"));
-
-        // Case insensitivity
-        assert!(is_retriable_error("RATE LIMIT"));
-        assert!(is_retriable_error("Connection Reset"));
-
-        // Non-retriable errors
-        assert!(!is_retriable_error("branch not found"));
-        assert!(!is_retriable_error("invalid credentials"));
-        assert!(!is_retriable_error("permission denied"));
-        assert!(!is_retriable_error(""));
-    }
 
     #[test]
     fn test_ci_status_color() {
@@ -1096,54 +1052,6 @@ mod tests {
                 .fg_color(Some(Color::Ansi(AnsiColor::Green)))
                 .dimmed()
         );
-    }
-
-    /// Build a synthetic non-success `Output` with the given stderr/stdout
-    /// bodies — `Command::output()` is the only "real" constructor and
-    /// would require spawning a process. Status uses `ExitStatus::default()`
-    /// (success), but the retriable-error helpers ignore status and only
-    /// look at the bytes.
-    fn fake_output(stderr: &str, stdout: &str) -> Output {
-        Output {
-            status: Default::default(),
-            stdout: stdout.as_bytes().to_vec(),
-            stderr: stderr.as_bytes().to_vec(),
-        }
-    }
-
-    /// `output_error_text` must combine both streams — `tea` routes API
-    /// errors to stdout while transport errors land on stderr, so a
-    /// stderr-only sniff would miss rate-limit messages from the JSON body.
-    #[test]
-    fn test_output_error_text_combines_streams() {
-        let out = fake_output("transport: connection reset", r#"{"message":"rate limit"}"#);
-        let text = output_error_text(&out);
-        assert!(text.contains("transport: connection reset"));
-        assert!(text.contains("rate limit"));
-    }
-
-    /// `retriable_pr_error` returns `Some(PrStatus::error())` when either
-    /// stream contains a retriable marker, and `None` otherwise — the
-    /// fall-through case where `?` propagates "no CI status".
-    #[test]
-    fn test_retriable_pr_error_routing() {
-        // Retriable from stderr.
-        let out = fake_output("HTTP 429 Too Many Requests", "");
-        let status = retriable_pr_error(&out).expect("retriable should yield Some");
-        assert_eq!(status.ci_status, CiStatus::Error);
-
-        // Retriable from stdout — a tool that copies the server's error body
-        // through rather than writing its own message to stderr.
-        let out = fake_output("", r#"{"message":"rate limit exceeded"}"#);
-        assert!(retriable_pr_error(&out).is_some());
-
-        // Non-retriable failure → None, so caller's `?` falls through.
-        let out = fake_output("not found", "");
-        assert!(retriable_pr_error(&out).is_none());
-
-        // No body at all → None.
-        let out = fake_output("", "");
-        assert!(retriable_pr_error(&out).is_none());
     }
 
     fn passed_pr_status(number: Option<u64>) -> PrStatus {
