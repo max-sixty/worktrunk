@@ -1582,11 +1582,10 @@ impl Repository {
         self.wt_dir().join("logs")
     }
 
-    /// Get the directory where worktrees are staged for background deletion.
+    /// Directory for committed disposal awaiting cleanup.
     ///
     /// Returns `<git-common-dir>/wt/trash/` (typically `.git/wt/trash/`).
-    /// Worktrees are renamed here (instant same-filesystem rename) before
-    /// being deleted by a background process.
+    /// Committed removal containers move here before recursive deletion.
     pub fn wt_trash_dir(&self) -> PathBuf {
         self.wt_dir().join("trash")
     }

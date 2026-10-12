@@ -288,8 +288,8 @@ impl Repository {
 
     /// Move the complete registration into caller-owned disposal. The atomic
     /// rename is the removal commit; if it fails, every file remains available
-    /// for repair. A staged checkout uses the moved registration as its disposal
-    /// authorization, so no later namespace move or marker write can fail.
+    /// for repair. The moved registration authorizes disposal of a staged
+    /// checkout, even if its later move into ordinary trash fails.
     pub(crate) fn unregister_worktree_entry(
         &self,
         path: &Path,
