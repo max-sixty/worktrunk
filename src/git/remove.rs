@@ -92,7 +92,7 @@ use crate::git::repository::WorkingTree;
 use crate::git::{
     CleanCheckMode, ErrorExt, GitError, IntegrationReason, Repository, WorktreeInfo, path_dir_name,
 };
-use crate::path::format_path_for_display;
+use crate::path::{canonicalize_with_parents, format_path_for_display};
 use crate::shell_exec::Cmd;
 use crate::styling::{eprintln, format_with_gutter, warning_message};
 use crate::utils::epoch_now;
@@ -682,7 +682,8 @@ pub fn delete_branch_if_safe(
 /// Removal planning intentionally caches `git worktree list`, but branch
 /// deletion happens after hooks and other concurrent actors may have changed
 /// topology. Constructing a new [`Repository`] is the cache boundary: its first
-/// `list_worktrees` call executes a fresh `git worktree list --porcelain`.
+/// inventory query executes a fresh `git worktree list --porcelain`, under the
+/// same registry lock as the strict held-branch scan.
 ///
 /// Git still lists stale registrations whose directories are gone, marking
 /// them `prunable`; those have no live checkout to orphan and must not strand
@@ -690,30 +691,50 @@ pub fn delete_branch_if_safe(
 /// continues to retain the branch conservatively.
 fn fresh_branch_checkout(repo: &Repository, branch_name: &str) -> anyhow::Result<Option<PathBuf>> {
     let fresh_repo = Repository::at(repo.discovery_path())?;
-    let worktrees = fresh_repo.list_worktrees()?;
-    fresh_repo.worktree_registrations()?;
-    for worktree in worktrees {
-        if let Some(error) = &worktree.branch_identity_error {
-            anyhow::bail!(
-                "Cannot determine worktree branch @ {}: {error}",
-                format_path_for_display(&worktree.path)
-            );
+    let _registry = fresh_repo.worktree_registry_read();
+    let worktrees = fresh_repo.load_worktrees_unlocked()?;
+    // Also guard incomplete registrations Git omits from its worktree list.
+    let registrations = fresh_repo.worktree_registrations()?;
+    let main = if fresh_repo.is_bare()? {
+        None
+    } else {
+        Some(canonicalize_with_parents(fresh_repo.repo_path()?))
+    };
+    let mut checked_out = None;
+    // Consult every surviving registration, including one added by an external
+    // Git process after the inventory query. Vanished registrations are absent.
+    let git_dirs = registrations
+        .iter()
+        .map(|(path, registration)| (path, registration.git_dir.as_path()))
+        .chain(
+            main.as_ref()
+                .map(|path| (path, fresh_repo.git_common_dir())),
+        );
+    for (path, git_dir) in git_dirs {
+        let branches = super::held_branches(git_dir).with_context(|| {
+            format!(
+                "Cannot determine worktree branches @ {}",
+                format_path_for_display(path)
+            )
+        })?;
+        let worktree = worktrees
+            .iter()
+            .find(|wt| canonicalize_with_parents(&wt.path) == *path);
+        if worktree.is_none_or(branch_checkout_requires_retention) && branches.contains(branch_name)
+        {
+            checked_out.get_or_insert_with(|| worktree.map_or(path, |wt| &wt.path).clone());
         }
     }
-    Ok(worktrees
-        .iter()
-        .find(|worktree| branch_checkout_requires_retention(worktree, branch_name))
-        .map(|worktree| worktree.path.clone()))
+    Ok(checked_out)
 }
 
-/// Whether deleting `branch` would risk orphaning this worktree record.
+/// Whether this worktree record retains its held branches.
 ///
 /// Git normally reports a missing locked worktree as `locked` but not
 /// `prunable`. Letting the lock win explicitly keeps the guard fail-closed if a
 /// Git version or synthetic porcelain record ever carries both fields.
-fn branch_checkout_requires_retention(worktree: &WorktreeInfo, branch_name: &str) -> bool {
-    worktree.branch.as_deref() == Some(branch_name)
-        && (!worktree.is_prunable() || worktree.locked.is_some())
+fn branch_checkout_requires_retention(worktree: &WorktreeInfo) -> bool {
+    !worktree.is_prunable() || worktree.locked.is_some()
 }
 
 /// Atomically delete `refs/heads/<branch>` iff it currently points at
@@ -1113,9 +1134,9 @@ mod tests {
             prunable: Some("gitdir file points to non-existent location".to_string()),
         };
 
-        assert!(branch_checkout_requires_retention(&worktree, "feature"));
+        assert!(branch_checkout_requires_retention(&worktree));
         worktree.locked = None;
-        assert!(!branch_checkout_requires_retention(&worktree, "feature"));
+        assert!(!branch_checkout_requires_retention(&worktree));
     }
 
     /// When the branch ref vanishes between snapshot capture and the CAS
