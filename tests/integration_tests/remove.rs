@@ -3397,6 +3397,35 @@ approved-commands = ["exit 1"]
 }
 
 #[rstest]
+fn test_nested_worktree_refusal_keeps_current_directory(mut repo: TestRepo) {
+    let outer = repo.add_worktree("outer");
+    fs::write(repo.root_path().join(".git/info/exclude"), ".storage/\n").unwrap();
+    let inner = outer.join(".storage/inner");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "--detach",
+        inner.to_str().unwrap(),
+        "HEAD",
+    ]);
+    let (directives, _guard) = directive_file();
+    let mut command = repo.wt_command();
+    command.current_dir(&outer).args(["remove", "--foreground"]);
+    configure_directive_file(&mut command, &directives);
+    let output = command.output().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("contains worktree"));
+    assert!(
+        fs::read_to_string(directives)
+            .unwrap_or_default()
+            .trim()
+            .is_empty()
+    );
+    assert!(outer.join(".git").is_file());
+    assert!(inner.join(".git").is_file());
+}
+
+#[rstest]
 fn test_pre_remove_hook_not_for_branch_only(repo: TestRepo) {
     // Create a marker file that the hook would create
     let marker_file = repo.root_path().join("branch-only-hook.txt");

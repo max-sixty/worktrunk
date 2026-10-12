@@ -1247,14 +1247,10 @@ pub fn handle_remove_output(
     quiet: bool,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<BranchFate> {
-    handle_remove_output_inner(plan, execution, hook_plan, quiet, false, announcer)
+    handle_remove_output_inner(plan, execution, hook_plan, quiet, announcer)
 }
 
-/// Merge may select a source containing another checkout, including the
-/// invoking worktree. Recheck its topology after pre-remove hooks, before the
-/// removal core's final safety gates. This is merge-specific: ordinary remove
-/// and batch prune retain their concurrent staging without a live registry
-/// read before each rename.
+/// Run merge cleanup through the same removal and containment gates.
 pub fn handle_merge_remove_output(
     plan: &RemovalPlan,
     hook_plan: &ApprovedHookPlan,
@@ -1265,7 +1261,6 @@ pub fn handle_merge_remove_output(
         RemovalExecution::Background(BackgroundFallbackMode::Detached),
         hook_plan,
         false,
-        true,
         announcer,
     )
 }
@@ -1275,7 +1270,6 @@ fn handle_remove_output_inner(
     execution: RemovalExecution,
     hook_plan: &ApprovedHookPlan,
     quiet: bool,
-    protect_nested_worktrees: bool,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<BranchFate> {
     match plan {
@@ -1304,7 +1298,6 @@ fn handle_remove_output_inner(
                 branch_checked_out_at: branch_checked_out_at.as_ref(),
                 hook_plan,
                 execution,
-                protect_nested_worktrees,
             },
             announcer,
         ),
@@ -1841,7 +1834,6 @@ struct WorktreeRemovalContext<'a> {
     /// no `ProjectConfig` snapshot to thread.
     hook_plan: &'a ApprovedHookPlan,
     execution: RemovalExecution,
-    protect_nested_worktrees: bool,
 }
 
 impl WorktreeRemovalContext<'_> {
@@ -2136,12 +2128,10 @@ fn handle_removed_worktree_output(
         execute_pre_remove_hooks_if_needed(&repo, &ctx)?;
     }
 
-    // Keep merge cleanup preflight before the cd directive: refusing cleanup
+    // Keep containment preflight before the cd directive: refusing removal
     // must not move the invoking shell. The shared staging core repeats the
     // fresh registry check after status and daemon shutdown.
-    if ctx.protect_nested_worktrees
-        && let Some(nested) = repo.nested_worktree(ctx.worktree_path)?
-    {
+    if let Some(nested) = repo.nested_worktree(ctx.worktree_path)? {
         anyhow::bail!(cformat!(
             "Cannot remove worktree @ <bold>{}</>; contains worktree @ <bold>{}</>",
             format_path_for_display(ctx.worktree_path),
