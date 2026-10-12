@@ -31,7 +31,9 @@
 //!    against the target worktree before its path disappears. It sends the
 //!    graceful IPC request, then force-kills a wedged daemon by PID. After
 //!    shutdown, recheck ownership and lock; unless forced, run a full
-//!    cleanliness scan and recheck ownership and lock before staging.
+//!    cleanliness scan and recheck ownership and lock before staging. Refuse
+//!    trees containing a registered checkout or this repository's Git storage,
+//!    even with `--force`.
 //! 3. **Fast-path trash staging.** The worktree directory is renamed into
 //!    `<git-common-dir>/wt/trash/<name>-<timestamp>/`. Same-filesystem renames
 //!    are instant metadata operations, so the user's workspace clears
@@ -444,7 +446,7 @@ pub fn remove_worktree_with_cleanup(
 ///
 /// # Errors
 ///
-/// The ownership, lock, dirty-worktree, and cancellation gates error. A
+/// The ownership, lock, dirty-worktree, containment, and cancellation gates error. A
 /// failed rename is reported as `None`, not an error, and the daemon stop is
 /// best-effort throughout.
 pub fn stage_worktree_removal(
@@ -501,7 +503,7 @@ pub fn stage_worktree_removal(
     // sibling Git storage inside the removal tree. Force never waives it.
     if let Some(nested) = repo.nested_worktree(worktree_path)? {
         anyhow::bail!(
-            "Cannot remove worktree @ {}; contains worktree @ {}",
+            "Cannot remove worktree @ {}; contains worktree or Git storage @ {}",
             format_path_for_display(worktree_path),
             format_path_for_display(&nested),
         );
@@ -874,57 +876,123 @@ mod tests {
     }
 
     #[test]
-    fn nested_worktree_reads_fresh_topology() {
+    fn final_removal_preserves_registered_ignored_nested_checkout() {
         let mut test = TestRepo::with_initial_commit();
-        let source = test.add_worktree("source");
+        std::fs::write(test.root_path().join(".gitignore"), ".storage/\n").unwrap();
+        test.commit("Ignore storage");
+        let outer = test.add_worktree("outer");
+        let inner = test.add_worktree_at_path("inner", &outer.join(".storage/inner"));
+        std::fs::write(inner.join("notes.txt"), "independent work").unwrap();
         let repo = Repository::at(test.root_path()).unwrap();
-        // Warm the cache before adding another checkout: the guard must read
-        // topology after planning, independently of that cache.
-        repo.list_worktrees().unwrap();
-        let late = test.add_worktree_at_path("late", &source.join("late"));
-        assert_eq!(repo.nested_worktree(&source).unwrap(), Some(late));
+        assert!(repo.worktree_at(&outer).dirty_files().unwrap().is_empty());
+        for force in [false, true] {
+            let error = crate::git::stage_worktree_removal(&repo, &outer, Some("outer"), force)
+                .unwrap_err();
+            assert!(error.to_string().contains("contains worktree"), "{error:#}");
+            assert!(outer.join(".git").is_file());
+            assert!(inner.join(".git").is_file());
+            assert_eq!(
+                std::fs::read_to_string(inner.join("notes.txt")).unwrap(),
+                "independent work"
+            );
+        }
     }
 
     #[cfg(unix)]
     #[test]
-    fn nested_worktree_resolves_symlinked_parent() {
-        let mut test = TestRepo::with_initial_commit();
-        let source = test.add_worktree("source");
-        let nested = test.add_worktree_at_path("nested", &source.join("nested"));
-        let alias = test.root_path().parent().unwrap().join("source-alias");
-        std::os::unix::fs::symlink(&source, &alias).unwrap();
-        let repo = Repository::at(test.root_path()).unwrap();
-        assert_eq!(repo.nested_worktree(&alias).unwrap(), Some(nested));
+    fn final_removal_preserves_contained_registration_storage() {
+        for contained in [true, false] {
+            let mut test = TestRepo::with_initial_commit();
+            std::fs::write(test.root_path().join(".gitignore"), ".storage/\n").unwrap();
+            test.commit("Ignore storage");
+            let outer = test.add_worktree("outer");
+            let inner = test.add_worktree("inner");
+            let repo = Repository::at(test.root_path()).unwrap();
+            let registration = repo.worktree_at(&inner).git_dir().unwrap();
+            let storage = if contained {
+                outer.join(".storage/inner-registration")
+            } else {
+                test.root_path().join("external-registration")
+            };
+            std::fs::create_dir_all(storage.parent().unwrap()).unwrap();
+            std::fs::rename(&registration, &storage).unwrap();
+            std::fs::write(
+                storage.join("commondir"),
+                format!("{}\n", repo.git_common_dir().display()),
+            )
+            .unwrap();
+            std::os::unix::fs::symlink(&storage, &registration).unwrap();
+            assert!(repo.worktree_at(&outer).dirty_files().unwrap().is_empty());
+            let result = crate::git::stage_worktree_removal(&repo, &outer, Some("outer"), true);
+            if contained {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("contains worktree or Git storage")
+                );
+                assert!(outer.join(".git").is_file());
+            } else {
+                assert!(result.unwrap().is_some());
+                assert!(!outer.exists());
+            }
+            assert!(registration.is_symlink());
+        }
     }
 
     #[test]
-    fn nested_worktree_skips_missing_checkout() {
-        let mut test = TestRepo::with_initial_commit();
-        let source = test.add_worktree("source");
-        let nested = test.add_worktree_at_path("nested", &source.join("nested"));
-        std::fs::rename(&nested, test.root_path().parent().unwrap().join("saved")).unwrap();
-        let repo = Repository::at(test.root_path()).unwrap();
-        assert_eq!(repo.nested_worktree(&source).unwrap(), None);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn nested_worktree_refuses_unresolvable_checkout() {
-        let mut test = TestRepo::with_initial_commit();
-        let source = test.add_worktree("source");
-        let nested = test.add_worktree_at_path("nested", &source.join("nested"));
-        let saved = test.root_path().parent().unwrap().join("saved");
-        std::fs::rename(&nested, &saved).unwrap();
-        // A symlink loop is an actual resolution error, not evidence that the
-        // registered checkout is absent. Refuse cleanup rather than skip it.
-        std::os::unix::fs::symlink(&nested, &nested).unwrap();
-        let repo = Repository::at(test.root_path()).unwrap();
-        let err = repo.nested_worktree(&source).unwrap_err();
-        assert!(
-            err.to_string().contains("Failed to resolve worktree @"),
-            "{err:?}"
+    fn nested_worktree_refuses_contained_common_git_storage() {
+        let seed = TestRepo::with_initial_commit();
+        std::fs::write(seed.root_path().join(".gitignore"), ".store/\n").unwrap();
+        seed.run_git(&["add", ".gitignore"]);
+        seed.run_git(&["commit", "-m", "ignore moved store"]);
+        let directory = crate::testing::test_tempdir();
+        let original = directory.path().join("bare.git");
+        let outer = directory.path().join("outer");
+        seed.run_git(&[
+            "clone",
+            "--bare",
+            seed.root_path().to_str().unwrap(),
+            original.to_str().unwrap(),
+        ]);
+        seed.run_git_in(
+            &original,
+            &["worktree", "add", "-b", "outer", outer.to_str().unwrap()],
         );
-        assert!(saved.join(".git").exists());
+        std::fs::write(outer.join("only-history.txt"), "sole unpushed history").unwrap();
+        seed.run_git_in(&outer, &["add", "only-history.txt"]);
+        seed.run_git_in(&outer, &["commit", "-m", "sole history"]);
+        let head = String::from_utf8(
+            seed.git_command()
+                .args(["rev-parse", "HEAD"])
+                .current_dir(&outer)
+                .run()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap();
+        let store = outer.join(".store");
+        std::fs::rename(&original, &store).unwrap();
+        std::fs::write(
+            outer.join(".git"),
+            format!("gitdir: {}\n", store.join("worktrees/outer").display()),
+        )
+        .unwrap();
+        let repo = Repository::at(&outer).unwrap();
+        assert!(repo.is_bare().unwrap());
+        assert_eq!(
+            repo.nested_worktree(&outer).unwrap(),
+            Some(dunce::canonicalize(&store).unwrap())
+        );
+        let error = crate::git::remove::stage_worktree_removal(&repo, &outer, Some("outer"), true)
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("contains worktree or Git storage"),
+            "{error:#}"
+        );
+        seed.run_git_in(&outer, &["cat-file", "-e", head.trim()]);
     }
 
     /// Registry serialization starts after the fast-path rename, so worktree

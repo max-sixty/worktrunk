@@ -140,7 +140,7 @@ pub fn finish_after_merge(
         eprintln!(
             "{}",
             info_message(format!(
-                "Worktree preserved (contains worktree @ {})",
+                "Worktree preserved (contains worktree or Git storage @ {})",
                 format_path_for_display(&nested)
             ))
         );

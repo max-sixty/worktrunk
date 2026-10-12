@@ -3350,17 +3350,16 @@ approved-commands = ["exit 1"]
 /// Bug: cd directive was written before pre-remove hooks ran, so if hooks failed,
 /// the shell would still cd to main_path even though the worktree wasn't removed.
 #[rstest]
-fn test_pre_remove_hook_failure_no_cd_directive(mut repo: TestRepo) {
-    // Create project config with failing hook
-    repo.write_project_config(r#"pre-remove = "exit 1""#);
+#[case::failed_hook("exit 1")]
+#[case::dirty_after_hook("touch late.txt")]
+fn test_pre_remove_hook_failure_no_cd_directive(mut repo: TestRepo, #[case] hook: &str) {
+    repo.write_project_config(&format!("pre-remove = {hook:?}"));
     repo.commit("Add config");
 
     // Pre-approve the command
-    repo.write_test_approvals(
-        r#"[projects."../origin"]
-approved-commands = ["exit 1"]
-"#,
-    );
+    repo.write_test_approvals(&format!(
+        "[projects.\"../origin\"]\napproved-commands = [{hook:?}]\n"
+    ));
 
     // Create a worktree to remove
     let worktree_path = repo.add_worktree("feature-cd-test");
@@ -3375,7 +3374,7 @@ approved-commands = ["exit 1"]
     configure_directive_file(&mut cmd, &cd_path);
     let output = cmd.output().unwrap();
 
-    // Command should have failed (hook failure)
+    // Hook failure or final cleanliness refusal must preserve the shell cwd.
     assert!(
         !output.status.success(),
         "Remove should fail when pre-remove hook fails"

@@ -6,6 +6,7 @@ use std::sync::{LazyLock, Mutex};
 
 use anyhow::Context as _;
 use color_print::cformat;
+use dunce::canonicalize;
 
 use super::working_tree::{
     operation_in_progress_at, path_to_logging_context, registration_worktree_path,
@@ -49,31 +50,23 @@ impl Repository {
             .map(Vec::as_slice)
     }
 
-    /// Find a registered checkout inside the removal tree, and refuse trees
-    /// containing this repository's common or registration Git storage.
+    /// Find a registered checkout or Git storage inside the removal tree.
     /// Reads backlinks freshly without waiting on the registry lock. Directory
     /// symlinks resolve to their actual locations; missing checkouts are skipped.
     /// Unrecorded or manually moved checkouts are outside this registry check.
     pub fn nested_worktree(&self, path: &Path) -> anyhow::Result<Option<PathBuf>> {
         let root = canonicalize(path).context("Failed to resolve worktree for removal")?;
-        let fresh = Repository::at(self.discovery_path())?;
-        let require_outside_removal = |git_dir: &Path| -> anyhow::Result<()> {
-            if git_dir.starts_with(&root) {
-                anyhow::bail!(
-                    "Cannot remove worktree @ {}; contains a Git directory @ {}",
-                    format_path_for_display(&root),
-                    format_path_for_display(git_dir),
-                );
-            }
-            Ok(())
-        };
-        require_outside_removal(fresh.git_common_dir())?;
-        let mut paths = Vec::new();
-        if !fresh.is_bare()? {
-            paths.push(fresh.repo_path()?.to_path_buf());
+        if self.git_common_dir().starts_with(&root) {
+            return Ok(Some(self.git_common_dir().to_path_buf()));
         }
-        for (path, registration) in fresh.worktree_registrations()? {
-            require_outside_removal(&registration.git_dir)?;
+        let mut paths = Vec::new();
+        if !self.is_bare()? {
+            paths.push(self.repo_path()?.to_path_buf());
+        }
+        for (path, registration) in self.worktree_registrations()? {
+            if registration.git_dir.starts_with(&root) {
+                return Ok(Some(registration.git_dir));
+            }
             paths.push(path);
         }
         for path in paths {
