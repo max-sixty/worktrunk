@@ -4815,11 +4815,10 @@ fn test_cleanup_fresh_submodule_worktree(mut repo: TestRepo, #[case] merge: bool
     crate::common::assert_worktree_removed(&outer);
 }
 
-/// A shallow SHA fetch records its pin in FETCH_HEAD, although the remote
-/// branch's truncated graph cannot reach it. A gitlink to a new local commit
-/// does not make that commit disposable, even after it only survives in reflog.
+/// Shallow fetched pins without remote-tracking reachability are retained,
+/// including after another fetch replaces FETCH_HEAD.
 #[rstest]
-fn test_submodule_shallow_fetch_preserves_unpublished_history(mut repo: TestRepo) {
+fn test_remove_retains_uncovered_shallow_submodule_history(mut repo: TestRepo) {
     let outer = add_initialized_submodule_worktree(&mut repo, "outer");
     let source = repo.root_path().parent().unwrap().join("sub-source");
     let sub = outer.join("sub");
@@ -4852,26 +4851,24 @@ fn test_submodule_shallow_fetch_preserves_unpublished_history(mut repo: TestRepo
         .run()
         .unwrap();
     assert_eq!(reachability.status.code(), Some(1), "{reachability:?}");
-    let api = worktrunk::git::Repository::at(repo.root_path()).unwrap();
-    assert!(!api.has_local_submodule_history(&outer).unwrap());
-
-    repo.run_git_in(
-        &sub,
-        &["commit", "--allow-empty", "-m", "Unpublished local commit"],
+    repo.run_git_in(&sub, &["fetch", "--depth=1", "origin"]);
+    let output = repo
+        .wt_command()
+        .args(["remove", "outer", "--foreground", "--no-delete-branch"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("submodule commits outside remote-tracking history"),
+        "{output:?}"
     );
-    repo.run_git_in(&outer, &["add", "sub"]);
-    repo.run_git_in(
-        &outer,
-        &["commit", "-m", "Pin unpublished submodule commit"],
-    );
-    assert!(api.has_local_submodule_history(&outer).unwrap());
-    repo.run_git_in(&sub, &["reset", "--keep", &pin]);
-    assert!(api.has_local_submodule_history(&outer).unwrap());
+    assert!(sub.join("sub.txt").is_file());
 }
 
 /// A clean superproject can hold submodule commits stored nowhere else.
 /// Initialized, deinitialized and stale checkouts need explicit force to
-/// discard commits outside fetched history.
+/// discard commits outside remote-tracking history.
 #[rstest]
 #[case::initialized("initialized")]
 #[case::deinitialized("deinitialized")]
@@ -4962,7 +4959,8 @@ fn test_remove_preserves_sole_submodule_history(mut repo: TestRepo, #[case] stat
         assert!(merged.status.success(), "{stderr}");
         assert!(outer.exists());
         assert!(
-            stderr.contains("Worktree preserved (submodule commits outside fetched history)"),
+            stderr
+                .contains("Worktree preserved (submodule commits outside remote-tracking history)"),
             "{stderr}"
         );
         assert!(!stderr.contains("--force"), "{stderr}");
@@ -4975,7 +4973,7 @@ fn test_remove_preserves_sole_submodule_history(mut repo: TestRepo, #[case] stat
     assert!(!output.status.success(), "{output:?}");
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("submodule commits outside fetched history"),
+            .contains("submodule commits outside remote-tracking history"),
         "{output:?}"
     );
     let saved_object = repo

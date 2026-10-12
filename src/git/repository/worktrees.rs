@@ -360,10 +360,10 @@ impl Repository {
     }
 
     /// Whether removal would discard submodule commits not reachable from
-    /// remote-tracking refs or FETCH_HEAD. Include reflogs: a reset does not
-    /// make local history disposable. FETCH_HEAD covers shallow fetched pins
-    /// that the local remote-tracking graph cannot reach. This is local fetch
-    /// metadata, not a check that a remote still retains those commits.
+    /// local remote-tracking refs. Include reflogs: a reset does not make local
+    /// history disposable. This conservative check can retain shallow fetched
+    /// pins whose truncated graph cannot establish reachability; it does not
+    /// query a remote or verify that it still retains those commits.
     pub fn has_local_submodule_history(&self, path: &Path) -> anyhow::Result<bool> {
         let (registration, _) = self.registration_at(path)?;
         if module_container_has_local_history(&registration.join("modules"))? {
@@ -376,12 +376,7 @@ impl Repository {
             return Ok(false);
         }
         let query = format!(
-            r#"if test -d .git; then
-                fetch_head=$(git rev-parse --verify --quiet FETCH_HEAD)
-                status=$?
-                if test "$status" -gt 1; then exit "$status"; fi
-                git {} $fetch_head
-            fi"#,
+            "if test -d .git; then git {}; fi",
             SUBMODULE_LOCAL_HISTORY_ARGS.join(" ")
         );
         let output = self.worktree_at(path).run_command(&[
@@ -756,7 +751,7 @@ impl Repository {
 pub enum StaleWorktreeWork {
     /// The index differs from `HEAD`.
     StagedChanges,
-    /// Submodule commits are not reachable from locally recorded fetches.
+    /// Submodule commits are not reachable from local remote-tracking refs.
     SubmoduleLocalHistory,
     /// A git operation is partway through.
     Operation(InProgressOperation),
@@ -810,26 +805,8 @@ fn module_has_local_history(path: &Path) -> anyhow::Result<bool> {
     let git_dir = path
         .to_str()
         .context("Cannot inspect a non-UTF-8 submodule Git directory")?;
-    let fetch_args = [
-        "--git-dir",
-        git_dir,
-        "rev-parse",
-        "--verify",
-        "--quiet",
-        "FETCH_HEAD",
-    ];
-    let fetch = Cmd::new("git")
-        .args(fetch_args)
-        .scrub_git_discovery_env()
-        .run()?;
-    let fetch_head = match fetch.status.code() {
-        Some(0) => Some(std::str::from_utf8(&fetch.stdout)?.trim()),
-        Some(1) => None,
-        _ => return Err(CommandError::from_failed_output("git", &fetch_args, &fetch).into()),
-    };
     let mut args = vec!["--git-dir", git_dir];
     args.extend(SUBMODULE_LOCAL_HISTORY_ARGS);
-    args.extend(fetch_head);
     let output = Cmd::new("git")
         .args(args.iter().copied())
         .scrub_git_discovery_env()
