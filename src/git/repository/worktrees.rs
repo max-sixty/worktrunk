@@ -62,8 +62,8 @@ impl Repository {
         if !self.is_bare()? {
             paths.push(self.repo_path()?.to_path_buf());
         }
-        for (path, registration) in self.worktree_registrations()? {
-            let git_dir = strip_verbatim_disk_prefix(registration.git_dir);
+        for (path, git_dir) in self.worktree_registrations()? {
+            let git_dir = strip_verbatim_disk_prefix(git_dir);
             if git_dir.starts_with(&root) {
                 return Ok(Some(git_dir));
             }
