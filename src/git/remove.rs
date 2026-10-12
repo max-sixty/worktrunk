@@ -892,7 +892,7 @@ mod tests {
         }
         assert!(!worktree.exists());
         assert!(repo.disposal_entries().unwrap().is_empty());
-        let diagnostic = error.display_message();
+        let diagnostic = error.render_diagnostic().unwrap();
         assert!(diagnostic.contains("worktree repair"), "{diagnostic}");
         std::fs::remove_file(registration.join("locked")).unwrap();
         test.run_git(&["worktree", "repair", retained.to_str().unwrap()]);
