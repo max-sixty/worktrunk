@@ -1856,7 +1856,7 @@ fn test_state_get_empty(repo: TestRepo) {
         [36mDIAGNOSTIC[39m @ <PATH>
         [107m [0m (none)
 
-        [36mTRASH[39m @ _REPO_/.git/wt/trash
+        [36mTRASH[39m @ _REPO_/.git/wt
         [107m [0m (none)
         ");
     });
@@ -3470,23 +3470,22 @@ fn test_state_clear_preserves_retained_recovery(mut repo: TestRepo) {
     fs::create_dir_all(&pending).unwrap();
     fs::rename(&pending_worktree, pending.join("checkout")).unwrap();
     let committed_worktree = repo.add_worktree("committed-removal");
-    let blocker = repository
-        .wt_trash_dir()
-        .join(format!("committed-removal-{}", crate::common::TEST_EPOCH));
-    fs::create_dir_all(blocker.parent().unwrap()).unwrap();
-    fs::write(&blocker, "occupied trash destination").unwrap();
-    let error = worktrunk::git::stage_worktree_removal(
+    let blocker = worktrunk::git::stage_worktree_removal(
         &repository,
         &committed_worktree,
         Some("committed-removal"),
         false,
     )
-    .unwrap_err();
+    .unwrap()
+    .unwrap();
+    let committed = repository
+        .wt_dir()
+        .join("retained/removing")
+        .join(blocker.file_name().unwrap());
+    fs::rename(&blocker, &committed).unwrap();
+    fs::write(&blocker, "occupied trash destination").unwrap();
+    let error = repository.prepare_disposal(&committed).unwrap_err();
     assert!(error.to_string().contains("prepare cleanup"), "{error:#}");
-    let committed = repository.wt_dir().join(format!(
-        "retained/removing/committed-removal-{}",
-        crate::common::TEST_EPOCH
-    ));
     assert!(committed.join("registration/index").is_file());
     assert!(committed.join("checkout/.git").is_file());
     let partial_worktree = repo.add_worktree("partial-cleanup");
