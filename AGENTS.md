@@ -42,7 +42,7 @@ Be conservative across the gap between a safety check and the operation. If file
 
 Full-file rewrites of user-owned or externally owned files use utils::write_atomically; creation of an observed-missing file uses write_new_atomically. Shell rc additions append under the installer lock; removal rewrites atomically. A user-named --output path is an intentional replacement. Regenerable caches and diagnostic reports may use ordinary writes. See the write helper contracts for symlink and mode behavior.
 
-Git itself may overwrite an ignored destination file when a tracked file arrives, and core.fsmonitor controls Git's final dirty-worktree gate. The inventory is in the FAQ sections “What files does Worktrunk create?” and “What can Worktrunk delete?”
+Git itself may overwrite an ignored destination file when a tracked file arrives. Git's dirty-worktree gates for merge and push target updates follow core.fsmonitor; non-forced removal rescans without fsmonitor before deleting a checkout. The inventory is in the FAQ sections “What files does Worktrunk create?” and “What can Worktrunk delete?”
 
 ## Command Execution Principles
 
