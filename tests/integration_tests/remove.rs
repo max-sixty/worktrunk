@@ -6141,7 +6141,7 @@ fn test_detached_delete_child_dispatch(#[case] checked_out: bool, #[case] force:
     assert_eq!(
         repo.git_command()
             .args(["show-ref", "--verify", "refs/heads/feature"])
-            .output()
+            .run()
             .unwrap()
             .status
             .success(),
@@ -6153,7 +6153,7 @@ fn test_detached_delete_child_dispatch(#[case] checked_out: bool, #[case] force:
             repo.git_command()
                 .current_dir(checkout)
                 .args(["rev-parse", "--verify", "HEAD"])
-                .output()
+                .run()
                 .unwrap()
                 .stdout,
             format!("{expected_sha}\n").as_bytes()
