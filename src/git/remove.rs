@@ -92,7 +92,7 @@ use crate::git::repository::WorkingTree;
 use crate::git::{
     CleanCheckMode, ErrorExt, GitError, IntegrationReason, Repository, WorktreeInfo, path_dir_name,
 };
-use crate::path::format_path_for_display;
+use crate::path::{canonicalize_with_parents, format_path_for_display};
 use crate::shell_exec::Cmd;
 use crate::styling::{eprintln, format_with_gutter, warning_message};
 use crate::utils::epoch_now;
@@ -568,6 +568,10 @@ pub fn nested_worktree(repo: &Repository, worktree_path: &Path) -> anyhow::Resul
 /// be absent right now keeps its registration. A locked worktree never reaches
 /// here — [`stage_worktree_removal`] rejects one before the rename.
 fn rename_into_trash(repo: &Repository, worktree_path: &Path, git_dir: &Path) -> Option<PathBuf> {
+    #[cfg(unix)]
+    if let Some(signal) = crate::signal_forwarder::operation_interrupt_signal() {
+        return Err(crate::git::WorktrunkError::Interrupted { signal, hint: None }.into());
+    }
     let trash_dir = repo.wt_trash_dir();
     let _ = std::fs::create_dir_all(&trash_dir);
     let staged_path = generate_removing_path(&trash_dir, git_dir);
@@ -678,7 +682,8 @@ pub fn delete_branch_if_safe(
 /// Removal planning intentionally caches `git worktree list`, but branch
 /// deletion happens after hooks and other concurrent actors may have changed
 /// topology. Constructing a new [`Repository`] is the cache boundary: its first
-/// `list_worktrees` call executes a fresh `git worktree list --porcelain`.
+/// inventory query executes a fresh `git worktree list --porcelain`, under the
+/// same registry lock as the strict held-branch scan.
 ///
 /// Git still lists stale registrations whose directories are gone, marking
 /// them `prunable`; those have no live checkout to orphan and must not strand
@@ -686,30 +691,50 @@ pub fn delete_branch_if_safe(
 /// continues to retain the branch conservatively.
 fn fresh_branch_checkout(repo: &Repository, branch_name: &str) -> anyhow::Result<Option<PathBuf>> {
     let fresh_repo = Repository::at(repo.discovery_path())?;
-    let worktrees = fresh_repo.list_worktrees()?;
-    fresh_repo.worktree_registrations()?;
-    for worktree in worktrees {
-        if let Some(error) = &worktree.branch_identity_error {
-            anyhow::bail!(
-                "Cannot determine worktree branch @ {}: {error}",
-                format_path_for_display(&worktree.path)
-            );
+    let _registry = fresh_repo.worktree_registry_read();
+    let worktrees = fresh_repo.load_worktrees_unlocked()?;
+    // Also guard incomplete registrations Git omits from its worktree list.
+    let registrations = fresh_repo.worktree_registrations()?;
+    let main = if fresh_repo.is_bare()? {
+        None
+    } else {
+        Some(canonicalize_with_parents(fresh_repo.repo_path()?))
+    };
+    let mut checked_out = None;
+    // Consult every surviving registration, including one added by an external
+    // Git process after the inventory query. Vanished registrations are absent.
+    let git_dirs = registrations
+        .iter()
+        .map(|(path, registration)| (path, registration.git_dir.as_path()))
+        .chain(
+            main.as_ref()
+                .map(|path| (path, fresh_repo.git_common_dir())),
+        );
+    for (path, git_dir) in git_dirs {
+        let branches = super::held_branches(git_dir).with_context(|| {
+            format!(
+                "Cannot determine worktree branches @ {}",
+                format_path_for_display(path)
+            )
+        })?;
+        let worktree = worktrees
+            .iter()
+            .find(|wt| canonicalize_with_parents(&wt.path) == *path);
+        if worktree.is_none_or(branch_checkout_requires_retention) && branches.contains(branch_name)
+        {
+            checked_out.get_or_insert_with(|| worktree.map_or(path, |wt| &wt.path).clone());
         }
     }
-    Ok(worktrees
-        .iter()
-        .find(|worktree| branch_checkout_requires_retention(worktree, branch_name))
-        .map(|worktree| worktree.path.clone()))
+    Ok(checked_out)
 }
 
-/// Whether deleting `branch` would risk orphaning this worktree record.
+/// Whether this worktree record retains its held branches.
 ///
 /// Git normally reports a missing locked worktree as `locked` but not
 /// `prunable`. Letting the lock win explicitly keeps the guard fail-closed if a
 /// Git version or synthetic porcelain record ever carries both fields.
-fn branch_checkout_requires_retention(worktree: &WorktreeInfo, branch_name: &str) -> bool {
-    worktree.branch.as_deref() == Some(branch_name)
-        && (!worktree.is_prunable() || worktree.locked.is_some())
+fn branch_checkout_requires_retention(worktree: &WorktreeInfo) -> bool {
+    !worktree.is_prunable() || worktree.locked.is_some()
 }
 
 /// Atomically delete `refs/heads/<branch>` iff it currently points at
@@ -782,6 +807,51 @@ mod tests {
 
     /// A `git worktree lock` must stop the rename even when the caller skipped
     /// `prepare_worktree_removal` (merge used to construct a plan by hand).
+    /// A sibling foreground lease can latch TERM while the final topology scan
+    /// runs. Filesystem staging must honor that cancellation before its rename.
+    #[cfg(unix)]
+    #[test]
+    fn rename_refuses_cancelled_operation() {
+        const CHILD_ENV: &str = "WORKTRUNK_TEST_REMOVE_CANCELLED_STAGING_CHILD";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "git::remove::tests::rename_refuses_cancelled_operation",
+                ])
+                .env(CHILD_ENV, "1")
+                .stdout(std::process::Stdio::piped());
+            let output = crate::shell_exec::spawn(&mut command)
+                .unwrap()
+                .wait_with_output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(output.status.success(), "{stdout}");
+            assert!(stdout.contains(" 1 passed;"), "{stdout}");
+            return;
+        }
+        let mut test = TestRepo::with_initial_commit();
+        let worktree = test.add_worktree("feature");
+        let repo = Repository::at(test.root_path()).unwrap();
+        let registration = repo.worktree_at(&worktree).git_dir().unwrap();
+        let index = std::fs::read(registration.join("index")).unwrap();
+        let operation = crate::signal_forwarder::CommandOperation::start().unwrap();
+        let foreground = crate::signal_forwarder::ForegroundSignals::install().unwrap();
+        signal_hook::low_level::raise(signal_hook::consts::SIGTERM).unwrap();
+        assert_eq!(
+            operation.interrupt_signal(),
+            Some(signal_hook::consts::SIGTERM)
+        );
+        let error = rename_into_trash(&repo, &worktree, &registration).unwrap_err();
+        assert_eq!(error.interrupt_signal(), Some(signal_hook::consts::SIGTERM));
+        assert!(worktree.join(".git").is_file());
+        assert_eq!(std::fs::read(registration.join("index")).unwrap(), index);
+        assert!(!repo.wt_dir().join("retained").exists());
+        drop(foreground);
+        drop(operation);
+    }
+
     #[test]
     fn stage_refuses_locked_worktree() {
         let mut test = TestRepo::with_initial_commit();
@@ -1064,9 +1134,9 @@ mod tests {
             prunable: Some("gitdir file points to non-existent location".to_string()),
         };
 
-        assert!(branch_checkout_requires_retention(&worktree, "feature"));
+        assert!(branch_checkout_requires_retention(&worktree));
         worktree.locked = None;
-        assert!(!branch_checkout_requires_retention(&worktree, "feature"));
+        assert!(!branch_checkout_requires_retention(&worktree));
     }
 
     /// When the branch ref vanishes between snapshot capture and the CAS
