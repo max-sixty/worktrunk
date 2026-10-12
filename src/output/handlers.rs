@@ -334,7 +334,7 @@ fn execute_instant_removal_or_fallback(
             },
             None => (None, Ok(BranchFate::NotAttempted)),
         };
-        let command = build_remove_command_with_tail(
+        let command = build_remove_command(
             worktree_path,
             force_worktree,
             changed_directory,
@@ -509,22 +509,6 @@ pub(crate) fn delete_branch_from_detached_fallback(
     };
     warn_if_branch_retained(branch, &Ok(result), false);
     Ok(())
-}
-
-/// Run the branch-deletion child only after Git removes the checkout.
-/// The checkout is the first positional argument; the child follows as native argv.
-fn build_remove_command_with_tail(
-    worktree_path: &Path,
-    force_worktree: bool,
-    changed_directory: bool,
-    tail: Option<&[OsString]>,
-) -> Vec<OsString> {
-    let mut args = build_remove_command(worktree_path, force_worktree, changed_directory);
-    if let Some(tail) = tail {
-        args[0].push(r#" && shift && "$@""#);
-        args.extend_from_slice(tail);
-    }
-    args
 }
 
 /// List top-level entries remaining in a directory after a failed removal.
