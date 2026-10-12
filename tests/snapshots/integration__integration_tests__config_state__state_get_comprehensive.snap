@@ -48,8 +48,8 @@ expression: "String::from_utf8_lossy(&output.stdout)"
 [36mDIAGNOSTIC[39m @ <PATH>
 [107m [0m (none)
 
-[36mTRASH[39m @ _REPO_/.git/wt/trash
-            Entry              Age   
- ──────────────────────────── ────── 
- myproject.bugfix-9999999999  future 
- myproject.feature-1234567890 future
+[36mTRASH[39m
+                       Path                         Age   
+ ───────────────────────────────────────────────── ────── 
+ _REPO_/.git/wt/trash/myproject.bugfix-9999999999  future 
+ _REPO_/.git/wt/trash/myproject.feature-1234567890 future

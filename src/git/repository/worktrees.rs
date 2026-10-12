@@ -251,7 +251,9 @@ impl Repository {
     /// repository-scoped write lock closes the in-process window;
     /// [`Repository::list_worktrees`] takes the matching read side. A `git
     /// worktree list` in an *unrelated* process — outside wt's lock — remains
-    /// exposed; wt's serialization only covers its own removals.
+    /// exposed; wt's serialization only covers its own removals. Unregister
+    /// first moves the complete entry outside the registry; failed cleanup
+    /// cannot leave a partially deleted registration there.
     ///
     /// Git also `rmdir`s `.git/worktrees` once its last entry goes. This
     /// leaves the empty directory, which git reads as no linked worktrees.
@@ -265,12 +267,36 @@ impl Repository {
         if !definitely_absent(&recorded.join(".git"))? {
             anyhow::bail!("Worktree @ {display} is no longer stale; its .git exists");
         }
-        std::fs::remove_dir_all(&registration).with_context(|| {
+        // Rename is the unregister commit: a failure leaves every registration
+        // file available for repair. Recursive deletion before that commit can
+        // fail after deleting HEAD/commondir while leaving an undeletable index.
+        // Payload staging under wt/trash is optional. Metadata disposal must
+        // still work when wt or trash is unavailable, so reserve its temporary
+        // parent directly in the Git common directory.
+        let garbage = tempfile::Builder::new()
+            .prefix(Self::UNREGISTERED_WORKTREE_PREFIX)
+            .suffix(&format!("-{}", crate::utils::epoch_now()))
+            .tempdir_in(self.git_common_dir())
+            .with_context(|| {
+                format!(
+                    "Failed to prepare metadata disposal in {}",
+                    format_path_for_display(self.git_common_dir())
+                )
+            })?;
+        // The uniquely created parent owns this absent child. A concurrent
+        // janitor sweep before the move only makes it fail, preserving metadata.
+        std::fs::rename(&registration, garbage.path().join("registration")).with_context(|| {
             format!(
-                "Failed to delete {}",
+                "Failed to unregister {}",
                 format_path_for_display(&registration)
             )
-        })
+        })?;
+        // Removal has committed. Failed cleanup leaves only disposable metadata
+        // in the disposal namespace, where the janitor can try again later.
+        if let Err(error) = garbage.close() {
+            tracing::debug!(%error, "Failed to clean unregistered worktree metadata");
+        }
+        Ok(())
     }
 
     /// What unregistering the stale worktree at `path` would destroy that

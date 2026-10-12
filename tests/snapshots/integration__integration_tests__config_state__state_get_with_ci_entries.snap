@@ -39,5 +39,5 @@ expression: "String::from_utf8_lossy(&output.stdout)"
 [36mDIAGNOSTIC[39m @ <PATH>
 [107m [0m (none)
 
-[36mTRASH[39m @ _REPO_/.git/wt/trash
+[36mTRASH[39m
 [107m [0m (none)

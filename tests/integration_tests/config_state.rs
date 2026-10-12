@@ -3448,3 +3448,59 @@ fn state_branch_flag_resolves_selectors(mut repo: TestRepo) {
         String::from_utf8_lossy(&get.stderr)
     );
 }
+
+/// State clearing removes committed disposal, preserving recoverable checkouts.
+#[rstest]
+fn test_state_clear_preserves_retained_recovery(mut repo: TestRepo) {
+    use worktrunk::git::Repository;
+    let parked = repo.add_worktree("parked");
+    let repository = Repository::at(repo.root_path()).unwrap();
+    let registration = repository.worktree_at(&parked).git_dir().unwrap();
+    let index = fs::read(registration.join("index")).unwrap();
+    let retained = repository.wt_dir().join("retained/parked-1234567890");
+    fs::create_dir_all(retained.parent().unwrap()).unwrap();
+    fs::rename(&parked, &retained).unwrap();
+    fs::write(retained.join("payload"), "recoverable work").unwrap();
+    let payload = repository.wt_trash_dir().join("discard-1234567890");
+    fs::create_dir_all(payload.parent().unwrap()).unwrap();
+    fs::write(&payload, "discard").unwrap();
+    let metadata = repository.git_common_dir().join(format!(
+        "{}test-1234567890",
+        Repository::UNREGISTERED_WORKTREE_PREFIX
+    ));
+    fs::create_dir(&metadata).unwrap();
+    fs::write(metadata.join("index"), "discarded metadata").unwrap();
+    let foreign = repository.git_common_dir().join("foreign-1234567890");
+    fs::create_dir(&foreign).unwrap();
+    let output = wt_state_get_json_cmd(&repo).output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let actual: std::collections::BTreeSet<_> = json["trash"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["path"].as_str().unwrap().to_owned())
+        .collect();
+    use path_slash::PathExt as _;
+    assert_eq!(
+        actual,
+        [
+            payload.to_slash_lossy().into_owned(),
+            metadata.to_slash_lossy().into_owned()
+        ]
+        .into_iter()
+        .collect()
+    );
+    let output = wt_state_clear_all_cmd(&repo).output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(!payload.exists());
+    assert!(!metadata.exists());
+    assert!(foreign.is_dir());
+    assert_eq!(
+        fs::read_to_string(retained.join("payload")).unwrap(),
+        "recoverable work"
+    );
+    assert_eq!(fs::read(registration.join("index")).unwrap(), index);
+    repo.run_git(&["worktree", "repair", retained.to_str().unwrap()]);
+    repo.run_git_in(&retained, &["status", "--porcelain"]);
+}
