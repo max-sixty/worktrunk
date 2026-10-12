@@ -188,15 +188,23 @@ fn sequencer_operation(git_dir: &Path) -> Option<InProgressOperation> {
 /// no longer exist — the case the caller is usually asking about, and the path it
 /// then shows the user. Normalizing rewrites spellings only, so it cannot make
 /// two directories compare equal.
-pub(super) fn registration_worktree_path(registration: &Path) -> Option<PathBuf> {
-    let content = std::fs::read_to_string(registration.join("gitdir")).ok()?;
-    let recorded = PathBuf::from(content.trim());
+pub(super) fn registration_worktree_path(registration: &Path) -> std::io::Result<PathBuf> {
+    let content = std::fs::read(registration.join("gitdir"))?;
+    let recorded = super::super::git_path_from_file(&content)?;
     let absolute = if recorded.is_relative() {
         registration.join(recorded)
     } else {
         recorded
     };
-    absolute.parent().map(canonicalize_with_parents)
+    // Git accepts a checkout path directly or its `.git` entry.
+    let checkout = if absolute.file_name() == Some(std::ffi::OsStr::new(".git")) {
+        absolute.parent().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid worktree backlink")
+        })?
+    } else {
+        &absolute
+    };
+    Ok(canonicalize_with_parents(checkout))
 }
 
 /// The git operation the worktree whose git dir is `git_dir` is partway
@@ -256,7 +264,8 @@ pub(super) fn operation_in_progress_at(git_dir: &Path) -> Option<InProgressOpera
 ///
 /// When `is_inside` is false every other field is `None` — nothing else ran.
 /// When `is_inside` is true, `root` lands unconditionally and `git_dir` lands
-/// unless canonicalization failed. `current_branch` is only populated when
+/// unless canonicalization failed or the batch framing was ambiguous.
+/// `current_branch` is only populated when
 /// the whole batch succeeded; on unborn HEAD it stays `None` and the
 /// per-accessor fallback paths handle the symbolic-ref lookup.
 #[derive(Debug, Clone, Default)]
@@ -267,11 +276,11 @@ pub struct WorkingTreeGitInfo {
     /// Canonicalized top-level directory. Always `Some` when `is_inside`.
     pub root: Option<PathBuf>,
     /// Canonicalized git directory (may differ from common dir in linked
-    /// worktrees). `Some` when `is_inside` and canonicalization succeeded.
+    /// worktrees). `None` when canonicalization or batch framing failed.
     pub git_dir: Option<PathBuf>,
     /// Current branch: outer `Some(Some(name))` on a branch, `Some(None)`
     /// detached. `None` when HEAD was unresolvable (unborn branch) or outside
-    /// a work tree.
+    /// a work tree, or the batch framing was ambiguous.
     pub current_branch: Option<Option<String>>,
 }
 
@@ -402,7 +411,7 @@ impl<'a> WorkingTree<'a> {
     ///
     /// `--show-toplevel` and `--git-dir` succeed even on unborn branches —
     /// rev-parse prints them before HEAD errors — so `root`/`git_dir` are
-    /// cached whenever we're inside a work tree. `current_branch` is only
+    /// cached unless a newline makes the batch framing ambiguous. `current_branch` is only
     /// populated when the whole batch succeeded, so [`Self::branch`]'s
     /// `symbolic-ref` fallback still handles genuine unborn HEADs. On unborn
     /// the symbolic-full-name line lands as a fallback literal "HEAD", which
@@ -444,60 +453,60 @@ impl<'a> WorkingTree<'a> {
             "--symbolic-full-name",
             "HEAD",
         ])?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut lines = stdout.lines();
-
-        let is_inside = lines.next().is_some_and(|s| s.trim() == "true");
+        let is_inside = output.stdout.starts_with(b"true\n");
         if !is_inside {
             return Ok(WorkingTreeGitInfo::default());
         }
-
-        // `root` and `git_dir` are safe to cache whenever their lines landed,
-        // because any failure in the batch is from HEAD — which comes after.
-        // `--show-toplevel` always emits a line when `is_inside=true`; if
-        // canonicalize of that line fails (e.g., pathological filesystem
-        // state), fall back to `self.path` which is already canonicalized by
-        // `worktree_at` and guaranteed inside the work tree.
-        let raw_toplevel = lines.next().unwrap_or("").trim();
-        let canonical = canonicalize(PathBuf::from(raw_toplevel)).unwrap_or(self.path.clone());
-        super::WORKTREE_ROOTS
-            .entry(self.path.clone())
-            .or_insert_with(|| canonical.clone());
-        let root = Some(canonical);
-
-        let git_dir = lines.next().and_then(|raw| {
-            let path = PathBuf::from(raw.trim());
+        let Some(fields) = super::rev_parse_fields(&output, 4) else {
+            return Ok(WorkingTreeGitInfo {
+                is_inside,
+                root: Some(self.root()?),
+                ..WorkingTreeGitInfo::default()
+            });
+        };
+        let mut fields = fields.into_iter().skip(1);
+        let root = if let Some(root) = fields
+            .next()
+            .and_then(|raw| canonicalize(super::git_path_from_bytes(raw).ok()?).ok())
+        {
+            super::WORKTREE_ROOTS
+                .entry(self.path.clone())
+                .or_insert_with(|| root.clone());
+            root
+        } else {
+            self.root()?
+        };
+        let git_dir = fields.next().and_then(|raw| {
+            let path = super::git_path_from_bytes(raw).ok()?;
             let absolute = if path.is_relative() {
-                self.path.join(&path)
+                self.path.join(path)
             } else {
                 path
             };
-            let resolved = canonicalize(&absolute).ok()?;
+            let resolved = canonicalize(absolute).ok()?;
             super::GIT_DIRS
                 .entry(self.path.clone())
                 .or_insert_with(|| resolved.clone());
             Some(resolved)
         });
-
-        // The `--symbolic-full-name HEAD` line is only trustworthy when the
-        // batch succeeded. On unborn HEAD the line lands but is the literal
-        // "HEAD" fallback — we can't tell that from detached HEAD without the
-        // exit status.
         let current_branch = if output.status.success() {
-            lines.next().map(|raw| {
-                let branch = raw.trim().strip_prefix("refs/heads/").map(str::to_owned);
-                super::CURRENT_BRANCHES
-                    .entry(self.path.clone())
-                    .or_insert_with(|| branch.clone());
-                branch
-            })
+            fields
+                .next()
+                .and_then(|raw| std::str::from_utf8(raw).ok())
+                .map(|raw| {
+                    let branch = raw.strip_prefix("refs/heads/").map(str::to_owned);
+                    super::CURRENT_BRANCHES
+                        .entry(self.path.clone())
+                        .or_insert_with(|| branch.clone());
+                    branch
+                })
         } else {
             None
         };
 
         Ok(WorkingTreeGitInfo {
             is_inside: true,
-            root,
+            root: Some(root),
             git_dir,
             current_branch,
         })
@@ -645,9 +654,9 @@ impl<'a> WorkingTree<'a> {
         match super::WORKTREE_ROOTS.entry(self.path.clone()) {
             Entry::Occupied(e) => Ok(e.get().clone()),
             Entry::Vacant(e) => match self
-                .run_command(&["rev-parse", "--show-toplevel"])
+                .run_command_bytes(&["rev-parse", "--show-toplevel"])
                 .ok()
-                .map(|s| PathBuf::from(s.trim()))
+                .and_then(|bytes| super::super::git_path_from_output(&bytes).ok())
                 .and_then(|p| canonicalize(&p).ok())
             {
                 Some(root) => Ok(e.insert(root).clone()),
@@ -665,7 +674,7 @@ impl<'a> WorkingTree<'a> {
         match super::GIT_DIRS.entry(self.path.clone()) {
             Entry::Occupied(e) => Ok(e.get().clone()),
             Entry::Vacant(e) => {
-                let stdout = self.run_command(&["rev-parse", "--git-dir"])?;
+                let stdout = self.run_command_bytes(&["rev-parse", "--git-dir"])?;
                 Ok(e.insert(self.resolve_git_dir(&stdout)?).clone())
             }
         }
@@ -700,7 +709,7 @@ impl<'a> WorkingTree<'a> {
                 if !output.status.success() {
                     return Err(CommandError::from_failed_output("git", &ARGS, &output).into());
                 }
-                let git_dir = wt.resolve_git_dir(&String::from_utf8_lossy(&output.stdout))?;
+                let git_dir = wt.resolve_git_dir(&output.stdout)?;
                 Ok(super::GIT_DIRS
                     .entry(wt.path.clone())
                     .or_insert(git_dir)
@@ -710,8 +719,8 @@ impl<'a> WorkingTree<'a> {
     }
 
     /// Canonicalize `git rev-parse --git-dir` output run in this worktree.
-    fn resolve_git_dir(&self, stdout: &str) -> anyhow::Result<PathBuf> {
-        let path = PathBuf::from(stdout.trim());
+    fn resolve_git_dir(&self, stdout: &[u8]) -> anyhow::Result<PathBuf> {
+        let path = super::super::git_path_from_output(stdout)?;
 
         // Always canonicalize to resolve symlinks (e.g., /var -> /private/var on macOS)
         let absolute_path = if path.is_relative() {
@@ -907,8 +916,9 @@ impl<'a> WorkingTree<'a> {
         // A git dir that can't be resolved at all is the strongest form of "not
         // this worktree": nothing there answers for it. Treating that as a
         // refusal keeps the failure closed.
-        let git_dir = Repository::git_dir_at(&self.path);
-        if git_dir.as_deref() == Some(common_dir) {
+        let git_dir = Repository::git_dir_at(&self.path)
+            .with_context(|| format!("Failed to read Git entry @ {}", self.path.display()))?;
+        if git_dir == common_dir {
             return Ok(common_dir.to_path_buf());
         }
 
@@ -917,9 +927,10 @@ impl<'a> WorkingTree<'a> {
         // different repository, or its registration here has lost its `gitdir`
         // file.
         let registrations = common_dir.join("worktrees");
-        let registration =
-            git_dir.filter(|git_dir| git_dir.parent() == Some(registrations.as_path()));
-        let occupant_registered_at = registration.as_deref().and_then(registration_worktree_path);
+        let registration = (git_dir.parent() == Some(registrations.as_path())).then_some(git_dir);
+        let occupant_registered_at = registration
+            .as_deref()
+            .and_then(|entry| registration_worktree_path(entry).ok());
         if let Some(registration) = registration
             && occupant_registered_at
                 .as_deref()
@@ -1410,7 +1421,7 @@ impl TempIndex {
     pub(super) fn command<I, S>(&self, args: I) -> Cmd
     where
         I: IntoIterator<Item = S>,
-        S: Into<String>,
+        S: AsRef<std::ffi::OsStr>,
     {
         let command = Cmd::new("git")
             .args(args)
