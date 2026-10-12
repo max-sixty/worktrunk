@@ -3315,6 +3315,7 @@ fn unknown_operation_identity_blocks_branch_deletion() {
 #[test]
 fn repo_path_discovers_fresh_separate_git_dir_main() {
     use dunce::canonicalize;
+
     let seed = TestRepo::with_initial_commit();
     let directory = crate::testing::test_tempdir();
     let store = directory.path().join(".git");
