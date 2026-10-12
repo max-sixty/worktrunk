@@ -572,7 +572,7 @@ pub enum GitError {
         /// Top-level entries remaining in the directory (for "Directory not empty" diagnostics)
         remaining_entries: Option<Vec<String>>,
     },
-    /// Removal would discard submodule commits outside remote-tracking history.
+    /// Removal would discard submodule commits outside fetched history.
     SubmoduleLocalHistory {
         path: PathBuf,
         force_hint: bool,
@@ -885,7 +885,7 @@ impl GitError {
                 }
                 StaleWorktreeWork::SubmoduleLocalHistory => {
                     cformat!(
-                        "Worktree for <bold>{branch}</> is stale but holds submodule commits outside remote-tracking history"
+                        "Worktree for <bold>{branch}</> is stale but holds submodule commits outside fetched history"
                     )
                 }
                 StaleWorktreeWork::Operation(operation) => cformat!(
@@ -945,7 +945,7 @@ impl GitError {
             }
 
             GitError::SubmoduleLocalHistory { path, .. } => cformat!(
-                "Cannot remove worktree @ <bold>{}</>; holds submodule commits outside remote-tracking history",
+                "Cannot remove worktree @ <bold>{}</>; holds submodule commits outside fetched history",
                 format_path_for_display(path)
             ),
 

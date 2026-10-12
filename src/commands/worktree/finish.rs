@@ -149,7 +149,7 @@ pub fn finish_after_merge(
     } else if repo.has_local_submodule_history(&env.worktree_path)? {
         eprintln!(
             "{}",
-            info_message("Worktree preserved (submodule commits outside remote-tracking history)")
+            info_message("Worktree preserved (submodule commits outside fetched history)")
         );
         false
     } else {
