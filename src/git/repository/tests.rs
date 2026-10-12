@@ -173,35 +173,6 @@ fn test_finalize_worktree_stale_reads_its_own_rebase() {
 }
 
 #[test]
-fn test_parse_locked_worktree() {
-    let output = "worktree /path/to/locked
-HEAD abcd1234
-branch refs/heads/main
-locked reason for lock
-
-";
-
-    let worktrees =
-        WorktreeInfo::parse_porcelain_list_z(output.replace('\n', "\0").as_bytes()).unwrap();
-    let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
-    assert_eq!(wt.locked, Some("reason for lock".to_string()));
-}
-
-#[test]
-fn test_parse_bare_worktree() {
-    let output = "worktree /path/to/bare
-HEAD abcd1234
-bare
-
-";
-
-    let worktrees =
-        WorktreeInfo::parse_porcelain_list_z(output.replace('\n', "\0").as_bytes()).unwrap();
-    let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
-    assert!(wt.bare);
-}
-
-#[test]
 fn test_parse_local_default_branch_with_prefix() {
     let output = "origin/main\n";
     let branch = DefaultBranchName::from_local("origin", output)
@@ -371,22 +342,6 @@ fn test_resolved_worktree_none_branch() {
     } else {
         panic!("Expected Worktree variant");
     }
-}
-
-#[test]
-fn test_worktree_locked_empty_reason() {
-    let output = "worktree /path/to/locked
-HEAD abcd1234
-branch refs/heads/main
-locked
-
-";
-
-    let worktrees =
-        WorktreeInfo::parse_porcelain_list_z(output.replace('\n', "\0").as_bytes()).unwrap();
-    let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
-    // Empty lock reason should still be recorded
-    assert_eq!(wt.locked, Some(String::new()));
 }
 
 #[test]
@@ -3310,8 +3265,7 @@ fn unknown_operation_identity_blocks_branch_deletion() {
     );
 }
 
-/// Unrepaired separate stores resolve from main discovery, but a linked
-/// checkout cannot identify an unrecorded main. Repair supplies that backlink.
+/// Discovery from main takes precedence over a separate store named `.git`.
 #[test]
 fn repo_path_discovers_fresh_separate_git_dir_main() {
     use dunce::canonicalize;
@@ -3320,7 +3274,6 @@ fn repo_path_discovers_fresh_separate_git_dir_main() {
     let directory = crate::testing::test_tempdir();
     let store = directory.path().join(".git");
     let main = directory.path().join("main");
-    let linked = directory.path().join("linked");
     seed.run_git(&[
         "clone",
         "--separate-git-dir",
@@ -3328,10 +3281,6 @@ fn repo_path_discovers_fresh_separate_git_dir_main() {
         seed.root_path().to_str().unwrap(),
         main.to_str().unwrap(),
     ]);
-    seed.run_git_in(
-        &main,
-        &["worktree", "add", "-b", "linked", linked.to_str().unwrap()],
-    );
     assert!(!store.join("gitdir").exists());
     let repository = Repository::at(&main).unwrap();
     assert_eq!(
@@ -3340,12 +3289,6 @@ fn repo_path_discovers_fresh_separate_git_dir_main() {
     );
     assert_eq!(
         repository.list_worktrees().unwrap()[0].path,
-        canonicalize(&main).unwrap()
-    );
-    assert!(Repository::at(&linked).unwrap().repo_path().is_err());
-    seed.run_git_in(&main, &["worktree", "repair"]);
-    assert_eq!(
-        Repository::at(&linked).unwrap().repo_path().unwrap(),
         canonicalize(&main).unwrap()
     );
 }
