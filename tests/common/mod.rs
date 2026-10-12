@@ -717,6 +717,21 @@ pub fn shell_command(
     cmd
 }
 
+/// Simulate Git invoking wt while retaining Git's own subcommand helpers.
+pub fn configure_git_subcommand(cmd: &mut std::process::Command, repo: &TestRepo) {
+    let output = repo
+        .git_command()
+        .args(["--exec-path"])
+        .env_remove("GIT_EXEC_PATH")
+        .run()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    cmd.env(
+        "GIT_EXEC_PATH",
+        String::from_utf8(output.stdout).unwrap().trim(),
+    );
+}
+
 // =============================================================================
 // Snapshot settings functions (insta)
 // =============================================================================
@@ -746,6 +761,7 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
     // Windows: etcetera uses APPDATA for config_dir()
     settings.add_redaction(".env.APPDATA", "[TEST_CONFIG_HOME]");
     settings.add_redaction(".env.PATH", "[PATH]");
+    settings.add_redaction(".env.GIT_EXEC_PATH", "[GIT_EXEC_PATH]");
     settings.add_redaction(".env.PWD", "[PWD]");
     // Mock commands directory (temp path for mock gh/glab binaries)
     settings.add_redaction(".env.WORKTRUNK_TEST_MOCK_CONFIG_DIR", "[TEST_MOCK_CONFIG]");

@@ -739,7 +739,7 @@ fn test_switch_existing_as_git_subcommand(mut repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["git-subcommand-test"], None);
-        cmd.env("GIT_EXEC_PATH", "/usr/lib/git-core");
+        crate::common::configure_git_subcommand(&mut cmd, &repo);
         assert_cmd_snapshot!("switch_as_git_subcommand", cmd);
     });
 }
