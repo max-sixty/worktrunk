@@ -2144,9 +2144,7 @@ fn handle_removed_worktree_output(
 /// This does the synchronous git worktree removal and registers `post-remove` /
 /// `post-switch` hooks onto `announcer`, but with no progress/success message
 /// and no trash-cleanup spinner — `eprintln!` while skim owns the terminal
-/// would corrupt the frame. A removal failure propagates as-is (the picker logs
-/// it); there's no TTY to render the foreground path's nicer "remaining
-/// entries" error against.
+/// would corrupt the frame. Removal failures propagate to the picker.
 fn remove_removed_worktree_silently(
     repo: &Repository,
     ctx: &WorktreeRemovalContext<'_>,
