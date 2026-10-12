@@ -743,19 +743,19 @@ mod tests {
         let path = PathBuf::from("/tmp/test-worktree");
 
         // changed_directory=true: sleep before removal
-        assert_snapshot!(build_remove_command(&path, None, false, true).unwrap(), @"sleep 1 && git worktree remove /tmp/test-worktree");
-        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, true).unwrap(), @"sleep 1 && git worktree remove /tmp/test-worktree && git branch -D -- feature-branch");
+        assert_snapshot!(build_remove_command(&path, None, false, true).unwrap(), @"sleep 1 && git -c core.fsmonitor=false worktree remove /tmp/test-worktree");
+        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, true).unwrap(), @"sleep 1 && git -c core.fsmonitor=false worktree remove /tmp/test-worktree && git branch -D -- feature-branch");
 
         // changed_directory=false: no sleep
-        assert_snapshot!(build_remove_command(&path, None, false, false).unwrap(), @"git worktree remove /tmp/test-worktree");
-        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, false).unwrap(), @"git worktree remove /tmp/test-worktree && git branch -D -- feature-branch");
+        assert_snapshot!(build_remove_command(&path, None, false, false).unwrap(), @"git -c core.fsmonitor=false worktree remove /tmp/test-worktree");
+        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, false).unwrap(), @"git -c core.fsmonitor=false worktree remove /tmp/test-worktree && git branch -D -- feature-branch");
 
         // With force flag
-        assert_snapshot!(build_remove_command(&path, None, true, true).unwrap(), @"sleep 1 && git worktree remove --force /tmp/test-worktree");
+        assert_snapshot!(build_remove_command(&path, None, true, true).unwrap(), @"sleep 1 && git -c core.fsmonitor=false worktree remove --force /tmp/test-worktree");
 
         // Shell escaping for special characters
         let special_path = PathBuf::from("/tmp/test worktree");
-        assert_snapshot!(build_remove_command(&special_path, Some("feature/branch"), false, true).unwrap(), @"sleep 1 && git worktree remove '/tmp/test worktree' && git branch -D -- feature/branch");
+        assert_snapshot!(build_remove_command(&special_path, Some("feature/branch"), false, true).unwrap(), @"sleep 1 && git -c core.fsmonitor=false worktree remove '/tmp/test worktree' && git branch -D -- feature/branch");
     }
 
     #[test]
