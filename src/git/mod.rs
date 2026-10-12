@@ -844,8 +844,8 @@ pub struct WorktreeInfo {
     pub path: PathBuf,
     pub head: String,
     pub branch: Option<String>,
-    /// Why a detached checkout's rebase branch could not be determined.
-    /// Destructive consumers require a known identity; inventory remains available.
+    /// Why a detached checkout's operation branch could not be determined.
+    /// Branch deletion requires a known identity; inventory remains available.
     #[serde(skip)]
     pub branch_identity_error: Option<String>,
     pub bare: bool,
@@ -865,16 +865,6 @@ pub fn path_dir_name(path: &std::path::Path) -> &str {
 }
 
 impl WorktreeInfo {
-    pub fn require_branch_identity(&self) -> anyhow::Result<()> {
-        if let Some(error) = &self.branch_identity_error {
-            anyhow::bail!(
-                "Cannot determine worktree branch @ {}: {error}",
-                format_path_for_display(&self.path)
-            );
-        }
-        Ok(())
-    }
-
     /// Canonical identity of this inventory entry. The registered path remains
     /// unchanged on [`Self::path`] for display and Git operations.
     pub fn id(&self) -> WorktreeId {
@@ -925,89 +915,80 @@ impl WorktreeInfo {
 //
 // Placing them here avoids circular dependencies and keeps them close to WorktreeInfo.
 
-/// The branch a rebase in this git dir is rewriting, from `head-name`.
-fn rebase_branch(git_dir: &Path) -> anyhow::Result<Option<String>> {
+/// The branch a detached operation is holding, from its own Git directory.
+fn operation_branch(git_dir: &Path) -> anyhow::Result<Option<String>> {
     use anyhow::Context;
 
-    // Git am shares rebase-apply but writes applying instead of rebase state.
-    for rebase_dir in ["rebase-merge", "rebase-apply"] {
-        let state = git_dir.join(rebase_dir);
-        let head_name_path = state.join("head-name");
-        let content = match std::fs::read_to_string(&head_name_path) {
-            Ok(content) => content,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                match std::fs::symlink_metadata(&state) {
-                    Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => continue,
-                    Err(error) => {
-                        return Err(error).with_context(|| {
-                            format!("Failed to inspect rebase state @ {}", state.display())
-                        });
-                    }
-                    Ok(_) => {}
-                }
-                if rebase_dir == "rebase-apply" {
-                    let applying = state.join("applying");
-                    match std::fs::read(&applying) {
-                        Ok(content) if content.is_empty() => {
-                            let rebasing = state.join("rebasing");
-                            match std::fs::symlink_metadata(&rebasing) {
-                                Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => {
-                                    continue;
-                                }
-                                Err(error) => {
-                                    return Err(error).with_context(|| {
-                                        format!(
-                                            "Failed to inspect rebase state @ {}",
-                                            rebasing.display()
-                                        )
-                                    });
-                                }
-                                Ok(_) => {}
-                            }
-                        }
-                        Ok(_) => anyhow::bail!("Invalid Git am state @ {}", applying.display()),
-                        Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => {}
-                        Err(error) => {
-                            return Err(error).with_context(|| {
-                                format!("Failed to read Git am state @ {}", applying.display())
-                            });
-                        }
-                    }
-                }
-                return Err(error).with_context(|| {
-                    format!(
-                        "Failed to read rebase branch @ {}",
-                        head_name_path.display()
-                    )
-                });
-            }
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!(
-                        "Failed to read rebase branch @ {}",
-                        head_name_path.display()
-                    )
-                });
-            }
-        };
-        if content == "detached HEAD\n" {
-            return Ok(None);
+    // Match Git's operation markers: am shares rebase-apply, but applying
+    // only needs to exist. Its contents do not establish a branch identity.
+    for backend in ["rebase-apply", "rebase-merge"] {
+        let state = git_dir.join(backend);
+        if !state.try_exists().with_context(|| {
+            format!(
+                "Failed to inspect rebase state @ {}",
+                format_path_for_display(&state)
+            )
+        })? {
+            continue;
         }
-        let branch = content
-            .strip_suffix('\n')
-            .and_then(|head| head.strip_prefix("refs/heads/"))
+        if backend == "rebase-apply" && state.join("applying").try_exists()? {
+            break;
+        }
+        let path = state.join("head-name");
+        let content = std::fs::read_to_string(&path).with_context(|| {
+            format!(
+                "Failed to read rebase branch @ {}",
+                format_path_for_display(&path)
+            )
+        })?;
+        let head = content.trim_end_matches('\n');
+        if head == "detached HEAD" {
+            break;
+        }
+        let branch = head
+            .strip_prefix("refs/heads/")
             .filter(|branch| is_valid_branch_name(branch))
-            .with_context(|| format!("Invalid rebase branch @ {}", head_name_path.display()))?;
+            .with_context(|| {
+                format!("Invalid rebase branch @ {}", format_path_for_display(&path))
+            })?;
         return Ok(Some(branch.to_owned()));
     }
 
-    Ok(None)
+    // Bisect detaches HEAD too. BISECT_START holds the original short branch
+    // name, or a full object id when the bisect started from detached HEAD.
+    let log = git_dir.join("BISECT_LOG");
+    if !log.try_exists().with_context(|| {
+        format!(
+            "Failed to inspect bisect state @ {}",
+            format_path_for_display(&log)
+        )
+    })? {
+        return Ok(None);
+    }
+    let path = git_dir.join("BISECT_START");
+    let content = std::fs::read_to_string(&path).with_context(|| {
+        format!(
+            "Failed to read bisect branch @ {}",
+            format_path_for_display(&path)
+        )
+    })?;
+    let head = content.trim_end_matches('\n');
+    if matches!(head.len(), 40 | 64) && head.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Ok(None);
+    }
+    let branch = head.strip_prefix("refs/heads/").unwrap_or(head);
+    anyhow::ensure!(
+        is_valid_branch_name(branch),
+        "Invalid bisect branch @ {}",
+        format_path_for_display(&path)
+    );
+    Ok(Some(branch.to_owned()))
 }
 
-/// Recover detached rebase identities from each checkout's own registration.
+/// Recover detached operation identities from each checkout's own registration.
 /// A missing or broken gitfile must never redirect discovery into a parent
 /// repository. Record unreadable identities per entry so inventory remains
-/// available; destructive consumers reject them.
+/// available; branch deletion rejects unknown identities.
 pub(crate) fn finalize_worktrees(
     repo: &Repository,
     worktrees: &mut [WorktreeInfo],
@@ -1030,11 +1011,11 @@ pub(crate) fn finalize_worktrees(
     {
         let path = canonicalize_with_parents(&wt.path);
         let branch = if main.as_deref() == Some(path.as_path()) {
-            rebase_branch(repo.git_common_dir())
+            operation_branch(repo.git_common_dir())
         } else {
             match &registrations {
                 Ok(registrations) => match registrations.get(&path) {
-                    Some(registration) => rebase_branch(&registration.git_dir),
+                    Some(registration) => operation_branch(&registration.git_dir),
                     None => Err(anyhow::anyhow!(
                         "Worktree registration not found @ {}",
                         format_path_for_display(&wt.path)

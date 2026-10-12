@@ -469,7 +469,6 @@ pub fn stage_worktree_removal(
 ) -> anyhow::Result<Option<PathBuf>> {
     let worktree = repo.worktree_at(worktree_path);
     let git_dir = worktree.ensure_holds_this_worktree()?;
-    super::rebase_branch(&git_dir)?;
 
     // Lock is the user's explicit "don't remove this". `--force` does not
     // override it, matching `git worktree remove` and `prepare_worktree_removal`.
@@ -635,7 +634,7 @@ pub fn delete_branch_if_safe(
     // Force-delete: skip integration check entirely (matches compute_integration_reason
     // behavior for the Worktree path). The user explicitly chose -D.
     if force_delete {
-        // Git cannot protect a rebase branch whose head-name is unreadable.
+        // Git cannot protect an operation branch whose identity is unreadable.
         let _ = fresh_branch_checkout(repo, branch_name)?;
         repo.run_command(&["branch", "-D", "--", branch_name])?;
         return Ok(BranchDeletionResult {
@@ -687,7 +686,15 @@ pub fn delete_branch_if_safe(
 fn fresh_branch_checkout(repo: &Repository, branch_name: &str) -> anyhow::Result<Option<PathBuf>> {
     let fresh_repo = Repository::at(repo.discovery_path())?;
     let worktrees = fresh_repo.list_worktrees()?;
-    fresh_repo.require_branch_deletion_topology(worktrees)?;
+    fresh_repo.worktree_registrations()?;
+    for worktree in worktrees {
+        if let Some(error) = &worktree.branch_identity_error {
+            anyhow::bail!(
+                "Cannot determine worktree branch @ {}: {error}",
+                format_path_for_display(&worktree.path)
+            );
+        }
+    }
     Ok(worktrees
         .iter()
         .find(|worktree| branch_checkout_requires_retention(worktree, branch_name))
