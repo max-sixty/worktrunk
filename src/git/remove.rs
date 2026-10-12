@@ -86,6 +86,8 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use anyhow::Context as _;
+
 use crate::git::repository::WorkingTree;
 use crate::git::{
     CleanCheckMode, ErrorExt, GitError, IntegrationReason, Repository, WorktreeInfo, path_dir_name,
