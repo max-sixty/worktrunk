@@ -2421,8 +2421,8 @@ mod tests {
     fn background_removal_refuses_native_path_before_staging() {
         use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
-        let test = worktrunk::testing::TestRepo::with_initial_commit();
-        let original = test.create_worktree("feature", "feature");
+        let mut test = worktrunk::testing::TestRepo::with_initial_commit();
+        let original = test.add_worktree("feature");
         let repo = Repository::at(test.root_path()).unwrap();
         let registration = repo.worktree_at(&original).git_dir().unwrap();
         let checkout =

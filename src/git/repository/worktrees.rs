@@ -6,7 +6,6 @@ use std::sync::{LazyLock, Mutex};
 
 use anyhow::Context as _;
 use color_print::cformat;
-use dunce::canonicalize;
 
 use super::working_tree::{
     operation_in_progress_at, path_to_logging_context, registration_worktree_path,
