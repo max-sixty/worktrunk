@@ -829,6 +829,7 @@ mod tests {
         else {
             panic!("{error:#}");
         };
+        let retained = retained.clone();
         assert!(retained.starts_with(repo.wt_dir().join("retained")));
         assert_eq!(
             std::fs::read_to_string(retained.join("payload")).unwrap(),
@@ -842,11 +843,25 @@ mod tests {
             );
         }
         assert!(repo.disposal_entries().unwrap().is_empty());
-        let diagnostic = error.render_diagnostic().unwrap();
+        let diagnostic = GitError::WorktreeRemovalFailed {
+            branch: "feature".into(),
+            path: worktree.clone(),
+            error,
+            remaining_entries: Some(vec!["new-occupant".into()]),
+        }
+        .render();
         assert!(diagnostic.contains("worktree repair"), "{diagnostic}");
+        assert!(
+            diagnostic.contains(retained.to_str().unwrap()),
+            "{diagnostic}"
+        );
+        assert!(
+            !diagnostic.contains("Remaining in directory:"),
+            "{diagnostic}"
+        );
         std::fs::remove_file(registration.join("locked")).unwrap();
         test.run_git(&["worktree", "repair", retained.to_str().unwrap()]);
-        test.run_git_in(retained, &["status", "--porcelain"]);
+        test.run_git_in(&retained, &["status", "--porcelain"]);
         assert_eq!(
             std::fs::read_to_string(worktree.join("new-occupant")).unwrap(),
             "preserve occupant",

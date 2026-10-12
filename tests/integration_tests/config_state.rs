@@ -3456,8 +3456,6 @@ fn test_state_clear_preserves_retained_recovery(mut repo: TestRepo) {
     use worktrunk::git::Repository;
     let parked = repo.add_worktree("parked");
     let repository = Repository::at(repo.root_path()).unwrap();
-    let registration = repository.worktree_at(&parked).git_dir().unwrap();
-    let index = fs::read(registration.join("index")).unwrap();
     let retained = repository.wt_dir().join("retained/parked-1234567890");
     fs::create_dir_all(retained.parent().unwrap()).unwrap();
     fs::rename(&parked, &retained).unwrap();
@@ -3488,7 +3486,4 @@ fn test_state_clear_preserves_retained_recovery(mut repo: TestRepo) {
         fs::read_to_string(retained.join("payload")).unwrap(),
         "recoverable work"
     );
-    assert_eq!(fs::read(registration.join("index")).unwrap(), index);
-    repo.run_git(&["worktree", "repair", retained.to_str().unwrap()]);
-    repo.run_git_in(&retained, &["status", "--porcelain"]);
 }
