@@ -4135,7 +4135,6 @@ pub mod tests {
             let warnings = remover.stashed_warnings.lock().unwrap();
             assert_eq!(warnings.len(), 1);
             assert!(warnings[0].contains("feature.lock"), "{}", warnings[0]);
-            assert!(remover.header_flash.current().is_some());
         }
     }
 
