@@ -130,10 +130,12 @@ pub(super) fn list_and_filter_ignored_entries(
         ignored_entries
     };
 
-    let mut builder = GitignoreBuilder::new(worktree_path);
+    let mut builtins = GitignoreBuilder::new(worktree_path);
     for pattern in BUILTIN_COPY_IGNORED_EXCLUDES {
-        builder.add_line(None, pattern)?;
+        builtins.add_line(None, pattern)?;
     }
+    let builtin_matcher = builtins.build()?;
+    let mut builder = GitignoreBuilder::new(worktree_path);
     for pattern in exclude_patterns {
         builder.add_line(None, pattern).map_err(|error| {
             anyhow::anyhow!(
@@ -151,6 +153,12 @@ pub(super) fn list_and_filter_ignored_entries(
     Ok(filtered
         .into_iter()
         .filter(|(path, is_dir)| {
+            if builtin_matcher
+                .matched_path_or_any_parents(relative_entry(path, worktree_path), *is_dir)
+                .is_ignore()
+            {
+                return false;
+            }
             if exclude_matcher
                 .matched_path_or_any_parents(relative_entry(path, worktree_path), *is_dir)
                 .is_ignore()

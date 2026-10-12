@@ -194,6 +194,9 @@ fn test_copy_ignored_excludes_user_config(mut repo: TestRepo) {
 #[rstest]
 fn test_copy_ignored_skips_built_in_excluded_dirs(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
+    repo.write_test_config(
+        "[step.copy-ignored]\nexclude = [\"!.conductor/\", \"!.entire/state.json\"]\n",
+    );
     let ignored_entries = ".conductor/\n.entire/\n.env\n";
 
     for dir in [".conductor", ".entire"] {
