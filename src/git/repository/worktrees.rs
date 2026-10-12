@@ -46,29 +46,11 @@ impl Repository {
                 let mut worktrees: Vec<_> =
                     raw_worktrees.into_iter().filter(|wt| !wt.bare).collect();
 
-                // Main-worktree path correction.
-                //
-                // Git's `get_main_worktree()` computes the main worktree path by stripping
-                // a trailing `/.git` from the common dir. Two layouts have no such suffix,
-                // so git leaves the path unchanged and reports the git data directory as
-                // the "main worktree": submodules, whose common dir is `.git/modules/sub`,
-                // and `--separate-git-dir` repositories, whose common dir is wherever the
-                // user put the store. Git consults neither `core.worktree` nor its own
-                // `gitdir` backlink in this code path.
-                //
-                // We detect this by checking whether the first worktree's path equals
-                // git_common_dir (which never holds for normal repos, where git_common_dir
-                // is `.git` inside the worktree). When matched, we correct it using
-                // repo_path(), which resolves both layouts from the signals git does
-                // record.
-                //
-                // We fix this here rather than at each call site because list_worktrees()
-                // is the single point where worktree paths enter the system — all consumers
-                // (worktree_for_branch, resolve_worktree, etc.) depend on paths being
-                // working directories. If git fixes this upstream, the condition stops
-                // triggering.
-                if let Some(first) = worktrees.first_mut()
-                    && canonicalize(&first.path).ok().as_deref() == Some(self.git_common_dir())
+                // Git infers the main from the common directory's name. A
+                // separate store (including one named .git) needs verified
+                // discovery instead. Bare repositories have no main worktree.
+                if !self.is_bare()?
+                    && let Some(first) = worktrees.first_mut()
                 {
                     first.path = self.repo_path()?.to_path_buf();
                 }
