@@ -180,7 +180,7 @@ fn sequencer_operation(git_dir: &Path) -> Option<InProgressOperation> {
 ///
 /// Two directories hold one: a `<common>/worktrees/<id>` registration, and the
 /// common dir itself when `git worktree repair` has written the main worktree's
-/// backlink there (`Repository::resolve_main_worktree`). The format is the
+/// backlink there (`Repository::separate_git_dir_work_tree`). The format is the
 /// same, so one reader answers for both.
 ///
 /// Resolved through [`canonicalize_with_parents`], which normalizes the `..`
