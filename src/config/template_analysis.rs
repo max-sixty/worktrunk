@@ -27,8 +27,7 @@ impl<'a> TemplateVars<'a> {
     /// renderer rejects too, left untouched rather than guessed at.
     pub(super) fn of(template: &'a str) -> Option<Self> {
         // Whitespace settings shape literal output, never variable spans.
-        let ast =
-            parse_template(template, "<config>", Default::default(), Default::default()).ok()?;
+        let ast = parse_template(template, "<config>", Default::default()).ok()?;
         let mut vars = TemplateVars {
             reads: Vec::new(),
             bound: HashSet::new(),
@@ -178,6 +177,11 @@ impl<'a> TemplateVars<'a> {
             }
             ast::Expr::Call(node) => self.call(node),
             ast::Expr::List(node) => {
+                for item in &node.items {
+                    self.expr(item);
+                }
+            }
+            ast::Expr::Tuple(node) => {
                 for item in &node.items {
                     self.expr(item);
                 }
