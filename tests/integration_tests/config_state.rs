@@ -3460,6 +3460,26 @@ fn test_state_clear_preserves_retained_recovery(mut repo: TestRepo) {
     fs::create_dir_all(retained.parent().unwrap()).unwrap();
     fs::rename(&parked, &retained).unwrap();
     fs::write(retained.join("payload"), "recoverable work").unwrap();
+    // Older retained paths hold the checkout itself, whose files are never a
+    // disposal marker.
+    fs::create_dir(retained.join("registration")).unwrap();
+    let pending_worktree = repo.add_worktree("pending-removal");
+    let pending = repository
+        .wt_dir()
+        .join("retained/removing/pending-1234567890");
+    fs::create_dir_all(&pending).unwrap();
+    fs::rename(&pending_worktree, pending.join("checkout")).unwrap();
+    let committed_worktree = repo.add_worktree("committed-removal");
+    let committed = worktrunk::git::stage_worktree_removal(
+        &repository,
+        &committed_worktree,
+        Some("committed-removal"),
+        false,
+    )
+    .unwrap()
+    .unwrap();
+    assert!(committed.join("registration/index").is_file());
+    assert!(committed.join("checkout/.git").is_file());
     let payload = repository.wt_trash_dir().join("discard-1234567890");
     fs::create_dir_all(payload.parent().unwrap()).unwrap();
     fs::write(&payload, "discard").unwrap();
@@ -3475,13 +3495,16 @@ fn test_state_clear_preserves_retained_recovery(mut repo: TestRepo) {
     use path_slash::PathExt as _;
     assert_eq!(
         actual,
-        [payload.to_slash_lossy().into_owned()]
+        [&payload, &committed]
+            .map(|path| path.to_slash_lossy().into_owned())
             .into_iter()
             .collect()
     );
     let output = wt_state_clear_all_cmd(&repo).output().unwrap();
     assert!(output.status.success(), "{output:?}");
     assert!(!payload.exists());
+    assert!(!committed.exists());
+    assert!(pending.join("checkout/.git").is_file());
     assert_eq!(
         fs::read_to_string(retained.join("payload")).unwrap(),
         "recoverable work"

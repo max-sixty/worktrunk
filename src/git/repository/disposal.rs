@@ -1,7 +1,7 @@
 //! Inventory of authorized worktree disposal, shared by inspection, clearing,
-//! and the age-based janitor. Retained checkouts and live registrations never
-//! enter it. Every direct entry in wt/trash is committed disposal: either a
-//! checkout payload or an unregistered metadata directory.
+//! and the age-based janitor. Trash entries are disposable. A retained staging
+//! container enters disposal only when it holds the complete registration moved
+//! out of Git by the atomic unregister commit. Recoverable checkouts stay out.
 
 use std::path::PathBuf;
 
@@ -19,46 +19,69 @@ pub struct DisposalEntry {
 }
 
 impl Repository {
+    /// Containers reserved by removal, distinct from older retained checkout
+    /// payloads whose own files cannot authorize disposal.
+    pub(crate) fn worktree_staging_dir(&self) -> PathBuf {
+        self.wt_dir().join("retained/removing")
+    }
+
     /// Every entry authorized for disposal. Missing entries can race with
     /// cleanup; other read errors fail the inventory before a caller deletes.
     pub fn disposal_entries(&self) -> anyhow::Result<Vec<DisposalEntry>> {
         let mut entries = Vec::new();
-        let directory = self.wt_trash_dir();
-        let context = || {
-            format!(
-                "Failed to read disposal @ {}",
-                format_path_for_display(&directory)
-            )
-        };
-        match std::fs::symlink_metadata(&directory) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(entries),
-            result => {
-                let metadata = result.with_context(context)?;
-                anyhow::ensure!(
-                    metadata.is_dir(),
-                    "Disposal path is not a directory @ {}",
+        for (directory, needs_registration) in [
+            (self.wt_trash_dir(), false),
+            (self.worktree_staging_dir(), true),
+        ] {
+            let context = || {
+                format!(
+                    "Failed to read disposal @ {}",
                     format_path_for_display(&directory)
-                );
-            }
-        }
-        for entry in std::fs::read_dir(&directory).with_context(context)? {
-            let entry = entry.with_context(context)?;
-            let staged_at = entry.file_name().to_str().and_then(disposal_timestamp);
-            let path = entry.path();
-            let metadata = match std::fs::symlink_metadata(&path) {
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                result => result.with_context(|| {
-                    format!(
-                        "Failed to inspect disposal @ {}",
-                        format_path_for_display(&path)
-                    )
-                })?,
+                )
             };
-            entries.push(DisposalEntry {
-                path,
-                metadata,
-                staged_at,
-            });
+            match std::fs::symlink_metadata(&directory) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                result => {
+                    let metadata = result.with_context(context)?;
+                    anyhow::ensure!(
+                        metadata.is_dir(),
+                        "Disposal path is not a directory @ {}",
+                        format_path_for_display(&directory)
+                    );
+                }
+            }
+            for entry in std::fs::read_dir(&directory).with_context(context)? {
+                let entry = entry.with_context(context)?;
+                let staged_at = entry.file_name().to_str().and_then(disposal_timestamp);
+                let path = entry.path();
+                let metadata = match std::fs::symlink_metadata(&path) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    result => result.with_context(|| {
+                        format!(
+                            "Failed to inspect disposal @ {}",
+                            format_path_for_display(&path)
+                        )
+                    })?,
+                };
+                if needs_registration {
+                    if !metadata.is_dir() {
+                        continue;
+                    }
+                    match std::fs::symlink_metadata(path.join("registration")) {
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                        result => {
+                            if !result.with_context(context)?.is_dir() {
+                                continue;
+                            }
+                        }
+                    }
+                }
+                entries.push(DisposalEntry {
+                    path,
+                    metadata,
+                    staged_at,
+                });
+            }
         }
         Ok(entries)
     }

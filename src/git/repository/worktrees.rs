@@ -258,18 +258,6 @@ impl Repository {
     /// Git also `rmdir`s `.git/worktrees` once its last entry goes. This
     /// leaves the empty directory, which git reads as no linked worktrees.
     pub fn prune_worktree_entry(&self, path: &Path) -> anyhow::Result<()> {
-        let display = format_path_for_display(path);
-        let _registry = self.worktree_registry_write();
-        let (registration, recorded) = self.registration_at(path)?;
-        if !definitely_absent(&registration.join("locked"))? {
-            anyhow::bail!("Worktree @ {display} is locked");
-        }
-        if !definitely_absent(&recorded.join(".git"))? {
-            anyhow::bail!("Worktree @ {display} is no longer stale; its .git exists");
-        }
-        // Rename is the unregister commit: a failure leaves every registration
-        // file available for repair. Recursive deletion before that commit can
-        // fail after deleting HEAD/commondir while leaving an undeletable index.
         let trash = self.wt_trash_dir();
         std::fs::create_dir_all(&trash).with_context(|| {
             format!(
@@ -289,18 +277,39 @@ impl Repository {
             })?;
         // The uniquely created parent owns this absent child. A concurrent
         // janitor sweep before the move only makes it fail, preserving metadata.
-        std::fs::rename(&registration, garbage.path().join("registration")).with_context(|| {
-            format!(
-                "Failed to unregister {}",
-                format_path_for_display(&registration)
-            )
-        })?;
+        self.unregister_worktree_entry(path, &garbage.path().join("registration"))?;
         // Removal has committed. Failed cleanup leaves only disposable metadata
         // in trash, where the janitor can try again later.
         if let Err(error) = garbage.close() {
             tracing::debug!(%error, "Failed to clean unregistered worktree metadata");
         }
         Ok(())
+    }
+
+    /// Move the complete registration into caller-owned disposal. The atomic
+    /// rename is the removal commit; if it fails, every file remains available
+    /// for repair. A staged checkout uses the moved registration as its disposal
+    /// authorization, so no later namespace move or marker write can fail.
+    pub(crate) fn unregister_worktree_entry(
+        &self,
+        path: &Path,
+        destination: &Path,
+    ) -> anyhow::Result<()> {
+        let display = format_path_for_display(path);
+        let _registry = self.worktree_registry_write();
+        let (registration, recorded) = self.registration_at(path)?;
+        if !definitely_absent(&registration.join("locked"))? {
+            anyhow::bail!("Worktree @ {display} is locked");
+        }
+        if !definitely_absent(&recorded.join(".git"))? {
+            anyhow::bail!("Worktree @ {display} is no longer stale; its .git exists");
+        }
+        std::fs::rename(&registration, destination).with_context(|| {
+            format!(
+                "Failed to unregister {}",
+                format_path_for_display(&registration)
+            )
+        })
     }
 
     /// What unregistering the stale worktree at `path` would destroy that

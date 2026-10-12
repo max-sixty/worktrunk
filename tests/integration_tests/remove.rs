@@ -4257,7 +4257,8 @@ fn test_remove_background_fallback_on_rename_failure(mut repo: TestRepo) {
 /// caller can clean it up. (On POSIX a directory cannot be renamed onto an
 /// existing file, so `stage_worktree_removal` falls back to legacy removal.)
 fn block_retained_rename(repo: &TestRepo, worktree_path: &std::path::Path) -> std::path::PathBuf {
-    let retained_dir = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/retained");
+    let retained_dir =
+        crate::common::resolve_git_common_dir(repo.root_path()).join("wt/retained/removing");
     std::fs::create_dir_all(&retained_dir).unwrap();
     let staged_path = retained_dir.join(format!(
         "{}-{}",

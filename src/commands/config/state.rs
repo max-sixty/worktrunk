@@ -207,7 +207,7 @@ fn sort_hook_entries(entries: &mut [HookOutputEntry]) {
 /// A disposal entry formatted for state views.
 struct TrashEntry {
     name: String,
-    path: String,
+    path: PathBuf,
     metadata: std::fs::Metadata,
 }
 
@@ -223,7 +223,7 @@ fn list_trash_entries(repo: &Repository) -> anyhow::Result<Vec<TrashEntry>> {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .into_owned(),
-            path: entry.path.to_slash_lossy().into_owned(),
+            path: entry.path,
             metadata: entry.metadata,
         })
         .collect();
@@ -1300,7 +1300,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
                 .map(|d| d.as_secs());
             serde_json::json!({
                 "name": e.name,
-                "path": e.path,
+                "path": e.path.to_slash_lossy(),
                 "modified_at": modified_at,
             })
         })
@@ -1426,8 +1426,8 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     writeln!(out)?;
 
     // Show trash (staged worktree removals awaiting background delete)
-    let trash_dir = repo.wt_trash_dir();
-    let trash_display = format_path_for_display(&trash_dir);
+    let removal_dir = repo.wt_dir();
+    let trash_display = format_path_for_display(&removal_dir);
     writeln!(
         out,
         "{}",
@@ -1447,9 +1447,13 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map(|d| format_relative_time_short(d.as_secs() as i64))
                     .unwrap_or_else(|| "?".to_string());
-                vec![e.name.clone(), age]
+                let relative = e
+                    .path
+                    .strip_prefix(&removal_dir)
+                    .context("Disposal entry is outside repository removal storage")?;
+                Ok(vec![relative.to_slash_lossy().into_owned(), age])
             })
-            .collect();
+            .collect::<anyhow::Result<_>>()?;
         let rendered = crate::md_help::render_data_table(&["Entry", "Age"], &rows);
         writeln!(out, "{}", rendered.trim_end())?;
     }

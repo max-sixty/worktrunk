@@ -445,7 +445,7 @@ fn spawn_detached_exec_windows(
 ///
 /// Steps:
 ///
-/// 1. [`sweep_stale_trash`] — delete stale `.git/wt/trash/` entries left by
+/// 1. [`sweep_stale_trash`] — delete committed disposal left by
 ///    an interrupted background removal.
 /// 2. [`worktrunk::git::fsmonitor::reap_orphan_fsmonitor_daemons`] — terminate
 ///    `git fsmonitor--daemon` processes whose worktree no longer exists.
@@ -458,14 +458,14 @@ pub fn run_internal_sweep(repo: &Repository) {
     worktrunk::git::fsmonitor::reap_orphan_fsmonitor_daemons(repo);
 }
 
-/// How old a `.git/wt/trash/` entry must be before [`sweep_stale_trash`] deletes it.
+/// How old a committed disposal entry must be before [`sweep_stale_trash`] deletes it.
 pub const TRASH_STALE_THRESHOLD_SECS: u64 = 24 * 60 * 60;
 
 /// Fire-and-forget cleanup of discarded worktrees and unregistered metadata.
 ///
-/// Worktree removal uses a fast path that renames the worktree into
-/// `.git/wt/trash/<name>-<timestamp>/` and deletes it in a detached background
-/// process. If that process is interrupted (SIGKILL, reboot, disk full), the
+/// Worktree removal stages the checkout alongside its unregistered metadata
+/// and deletes that container in a detached background process. If that
+/// process is interrupted (SIGKILL, reboot, disk full), the
 /// renamed directory is orphaned. `wt remove` calls this function after its
 /// primary user-visible output — so the sweep never delays the progress or
 /// success message — to provide eventual cleanup: entries older than
