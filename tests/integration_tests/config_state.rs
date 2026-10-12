@@ -1,6 +1,7 @@
 use crate::common::{TEST_EPOCH, TestRepo, repo, repo_with_remote, wt_command};
 use insta::assert_snapshot;
 use rstest::rstest;
+use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

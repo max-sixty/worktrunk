@@ -174,7 +174,6 @@ mod worktrees;
 pub use branch::Branch;
 pub use branch::is_valid_branch_name;
 pub use diff::{CommitMessageDetail, PreparedDiff};
-pub use disposal::DisposalEntry;
 pub use integration::{BranchDiffSpec, IntegrationTargets, select_comparison_base};
 pub use ref_snapshot::RefSnapshot;
 pub(super) use working_tree::path_to_logging_context;
