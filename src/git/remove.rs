@@ -1077,7 +1077,6 @@ mod tests {
             path: PathBuf::from("/missing/feature"),
             head: "0123456789abcdef".to_string(),
             branch: Some("feature".to_string()),
-            branch_identity_error: None,
             bare: false,
             detached: false,
             locked: Some("detachable media".to_string()),

@@ -34,7 +34,6 @@ impl WorktreeInfo {
                         path: git_path_from_bytes(path)?,
                         head: String::new(),
                         branch: None,
-                        branch_identity_error: None,
                         bare: false,
                         detached: false,
                         locked: None,
