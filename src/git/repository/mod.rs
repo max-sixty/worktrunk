@@ -1891,6 +1891,7 @@ impl Repository {
         // The one production git spawn that bypasses `Cmd` (see the daemon
         // rationale above), so it re-applies the test floor by hand.
         crate::shell_exec::apply_hermetic_test_env(&mut cmd);
+        crate::shell_exec::scrub_git_discovery_env_vars(&mut cmd);
         crate::shell_exec::scrub_directive_env_vars(&mut cmd);
         // Trace the daemon launch so it's attributed in the timeline rather than
         // appearing as a gap on the switch hot path. Wait without captured
