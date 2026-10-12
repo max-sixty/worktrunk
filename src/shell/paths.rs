@@ -55,9 +55,9 @@ fn parse_nu_path(line: &str) -> Option<PathBuf> {
 /// once per process (memoised).
 ///
 /// Returns [`NuDirs::default`] (all `None`) when `nu` is not in PATH or the
-/// query fails. A single `wt config shell install` resolves both the write
-/// target (`completion_path`) and the installed-state candidates
-/// (`config_paths`), which would otherwise each spawn `nu` for the same answer.
+/// query fails. A single `wt config shell install` or `wt config show` resolves
+/// the Nushell candidates (`config_paths`, the uninstall scan, detection) more
+/// than once, which would otherwise each spawn `nu` for the same answer.
 fn nu_dirs() -> NuDirs {
     static CACHE: OnceLock<NuDirs> = OnceLock::new();
     CACHE
@@ -309,7 +309,7 @@ pub fn powershell_profile_paths(home: &std::path::Path) -> std::io::Result<Vec<P
 /// everywhere else.
 ///
 /// Every path fish itself reads goes through this one function — the wrapper
-/// (`config_paths`) and the completion (`completion_path`) — because they have
+/// (`config_paths`) and the completion (`fish_completion_path`) — because they have
 /// to agree. Resolving the wrapper's directory separately from the completion's
 /// put the wrapper under `~/.config/fish` whenever `$XDG_CONFIG_HOME` pointed
 /// anywhere else, which fish never reads, while the completion landed in the
