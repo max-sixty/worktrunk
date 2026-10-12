@@ -311,6 +311,7 @@ impl RepositoryCliExt for Repository {
                         branch_name: branch,
                         deletion_mode: BranchDeletionMode::Keep,
                         prune_entry: pruned_from,
+                        force_worktree,
                         target_branch: None,
                         integration_reason: None,
                         branch_checked_out_at: shared,
@@ -330,6 +331,7 @@ impl RepositoryCliExt for Repository {
                     branch_name: branch,
                     deletion_mode,
                     prune_entry: pruned_from,
+                    force_worktree,
                     target_branch,
                     integration_reason,
                     branch_checked_out_at: None,
@@ -362,6 +364,7 @@ impl RepositoryCliExt for Repository {
 
         if !force_worktree {
             target_wt.ensure_clean("remove worktree", branch_name.as_deref(), true)?;
+            self.require_discardable_submodules(&worktree_path, true)?;
         }
 
         // main_path: where post-remove hooks run from and background removal

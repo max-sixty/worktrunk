@@ -1312,6 +1312,7 @@ fn handle_remove_output_inner(
             branch_name,
             deletion_mode,
             prune_entry,
+            force_worktree,
             target_branch,
             integration_reason,
             branch_checked_out_at,
@@ -1320,6 +1321,7 @@ fn handle_remove_output_inner(
             branch_name,
             *deletion_mode,
             prune_entry.as_deref(),
+            *force_worktree,
             *integration_reason,
             target_branch.as_deref(),
             branch_checked_out_at.as_ref(),
@@ -1352,6 +1354,7 @@ fn handle_branch_only_output(
     branch_name: &str,
     deletion_mode: BranchDeletionMode,
     prune_entry: Option<&Path>,
+    force_worktree: bool,
     integration_reason: Option<IntegrationReason>,
     target_branch: Option<&str>,
     branch_checked_out_at: Option<&SharedBranchCheckout>,
@@ -1359,7 +1362,7 @@ fn handle_branch_only_output(
     quiet: bool,
 ) -> anyhow::Result<BranchFate> {
     let pruned = if let Some(path) = prune_entry {
-        Repository::current()?.prune_worktree_entry(path)?;
+        Repository::current()?.prune_worktree_entry(path, force_worktree)?;
         true
     } else {
         false

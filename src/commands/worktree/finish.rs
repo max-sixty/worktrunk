@@ -7,9 +7,9 @@
 //! 1. Capture the feature worktree's path + commit BEFORE removal — afterward
 //!    the worktree directory is gone, but post-merge hooks still need to
 //!    reference it via Active template overrides.
-//! 2. Decide whether to remove the feature worktree. Six conditions block
-//!    removal: `--no-remove`, on-target, primary-worktree, locked, and
-//!    default-branch, and nested worktrees. Otherwise `ensure_clean` gates removal and
+//! 2. Decide whether to remove the feature worktree. `--no-remove`, on-target,
+//!    primary-worktree, locked, default-branch, nested worktrees, and local
+//!    submodule history block removal. Otherwise `ensure_clean` gates removal and
 //!    `handle_merge_remove_output` performs it (sharing the staging path with
 //!    `wt remove`).
 //! 3. Register the post-merge hook with the announcer. The caller owns
@@ -144,6 +144,12 @@ pub fn finish_after_merge(
                 "Worktree preserved (contains worktree @ {})",
                 format_path_for_display(&nested)
             ))
+        );
+        false
+    } else if repo.has_local_submodule_history(&env.worktree_path)? {
+        eprintln!(
+            "{}",
+            info_message("Worktree preserved (submodule commits outside remote-tracking history)")
         );
         false
     } else {

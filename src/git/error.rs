@@ -572,6 +572,11 @@ pub enum GitError {
         /// Top-level entries remaining in the directory (for "Directory not empty" diagnostics)
         remaining_entries: Option<Vec<String>>,
     },
+    /// Removal would discard submodule commits outside remote-tracking history.
+    SubmoduleLocalHistory {
+        path: PathBuf,
+        force_hint: bool,
+    },
     CannotRemoveMainWorktree,
     CannotRemoveDefaultBranch {
         branch: String,
@@ -878,6 +883,11 @@ impl GitError {
                 StaleWorktreeWork::StagedChanges => {
                     cformat!("Worktree for <bold>{branch}</> is stale but holds staged changes")
                 }
+                StaleWorktreeWork::SubmoduleLocalHistory => {
+                    cformat!(
+                        "Worktree for <bold>{branch}</> is stale but holds submodule commits outside remote-tracking history"
+                    )
+                }
                 StaleWorktreeWork::Operation(operation) => cformat!(
                     "Worktree for <bold>{branch}</> is stale with a {} in progress",
                     operation_noun(*operation)
@@ -933,6 +943,11 @@ impl GitError {
                     "Failed to remove worktree for <bold>{branch}</> @ <bold>{path_display}</>"
                 )
             }
+
+            GitError::SubmoduleLocalHistory { path, .. } => cformat!(
+                "Cannot remove worktree @ <bold>{}</>; holds submodule commits outside remote-tracking history",
+                format_path_for_display(path)
+            ),
 
             GitError::CannotRemoveMainWorktree => "The main worktree cannot be removed".to_string(),
 
@@ -1426,6 +1441,20 @@ impl GitError {
                         "\n{}",
                         hint_message(cformat!(
                             "A background process may be writing files; try <underline>wt remove</> (without --foreground)"
+                        ))
+                    )?;
+                }
+                Ok(())
+            }
+
+            GitError::SubmoduleLocalHistory { force_hint, .. } => {
+                write!(f, "{}", error_message(self.title()))?;
+                if *force_hint {
+                    write!(
+                        f,
+                        "\n{}",
+                        hint_message(cformat!(
+                            "To discard local changes and submodule history, use <underline>--force</>"
                         ))
                     )?;
                 }

@@ -125,7 +125,7 @@ fn test_merge_as_git_subcommand(merge_scenario: (TestRepo, PathBuf)) {
     // Merge with GIT_EXEC_PATH set (simulating `git wt merge ...`)
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(&repo, "merge", &["main"], Some(&feature_wt));
-        cmd.env("GIT_EXEC_PATH", "/usr/lib/git-core");
+        crate::common::configure_git_subcommand(&mut cmd, &repo);
         cmd
     });
 }

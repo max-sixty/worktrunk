@@ -336,7 +336,7 @@ fn try_remove(
             .path
             .as_deref()
             .context("stale detached candidate has no worktree path")?;
-        ctx.repo.prune_worktree_entry(path)?;
+        ctx.repo.prune_worktree_entry(path, false)?;
         // A stale detached entry has no branch to delete.
         return Ok(Some(BranchFate::NotAttempted));
     }
