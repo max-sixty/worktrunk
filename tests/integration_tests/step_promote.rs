@@ -500,20 +500,44 @@ fn test_promote_keeps_worktree_metadata_with_tracked_sibling(mut repo: TestRepo)
         .unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("would be overwritten"));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("wt/staging/promote"));
     for (path, label) in [(repo.root_path(), "main"), (feature.as_path(), "feature")] {
         assert_eq!(
             fs::read_to_string(path.join(".conductor/local")).unwrap(),
             format!("{label} .conductor")
         );
     }
-    let staging = repo.root_path().join(".git/wt/staging/promote");
-    for (slot, label) in [("a", "feature"), ("b", "main")] {
+    assert_eq!(branch_name(&repo, repo.root_path()), "feature");
+    assert_eq!(branch_name(&repo, &feature), "main");
+    for (path, label) in [(repo.root_path(), "feature"), (feature.as_path(), "main")] {
         assert_eq!(
-            fs::read_to_string(staging.join(slot).join("config/local")).unwrap(),
+            fs::read_to_string(path.join("config/local")).unwrap(),
             format!("{label} config")
         );
     }
+    assert!(!repo.root_path().join(".git/wt/staging/promote").exists());
+
+    // Moving the blocker aside is enough to retry; no manual branch or staging repair.
+    fs::rename(
+        repo.root_path().join(".conductor/local"),
+        repo.root_path().join(".conductor/saved-local"),
+    )
+    .unwrap();
+    let retry = repo
+        .wt_command()
+        .args(["step", "promote", "main"])
+        .output()
+        .unwrap();
+    assert!(
+        retry.status.success(),
+        "{}",
+        String::from_utf8_lossy(&retry.stderr)
+    );
+    assert_eq!(branch_name(&repo, repo.root_path()), "main");
+    assert_eq!(branch_name(&repo, &feature), "feature");
+    assert_eq!(
+        fs::read_to_string(repo.root_path().join(".conductor/saved-local")).unwrap(),
+        "main .conductor"
+    );
 }
 
 /// Only main worktree has gitignored files — they should move to the other worktree
