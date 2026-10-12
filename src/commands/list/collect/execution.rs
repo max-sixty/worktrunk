@@ -585,7 +585,6 @@ mod tests {
             path: test.path().to_path_buf(),
             head: "deadbeef".to_string(),
             branch: Some("main".to_string()),
-            branch_identity_error: None,
             bare: false,
             detached: false,
             locked: None,

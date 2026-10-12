@@ -175,9 +175,10 @@ pub use branch::is_valid_branch_name;
 pub use diff::{CommitMessageDetail, PreparedDiff};
 pub use integration::{BranchDiffSpec, IntegrationTargets, select_comparison_base};
 pub use ref_snapshot::RefSnapshot;
+pub(crate) use working_tree::CleanCheckMode;
 pub(super) use working_tree::path_to_logging_context;
 use working_tree::registration_worktree_path;
-pub use working_tree::{CleanCheckMode, InProgressOperation, SafetyBackup, TempIndex, WorkingTree};
+pub use working_tree::{InProgressOperation, SafetyBackup, TempIndex, WorkingTree};
 pub use worktrees::{StaleWorktreeWork, duplicated_branches};
 
 // ============================================================================

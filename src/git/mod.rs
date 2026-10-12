@@ -144,9 +144,9 @@ pub use remove::{
 };
 pub use repository::sha_cache;
 pub use repository::{
-    Branch, BranchDiffSpec, CleanCheckMode, CommitMessageDetail, InProgressOperation,
-    IntegrationTargets, PreparedDiff, RefSnapshot, Repository, ResolvedWorktree, SafetyBackup,
-    Selector, StaleWorktreeWork, TempIndex, WorkingTree, base_path, duplicated_branches,
+    Branch, BranchDiffSpec, CommitMessageDetail, InProgressOperation, IntegrationTargets,
+    PreparedDiff, RefSnapshot, Repository, ResolvedWorktree, SafetyBackup, Selector,
+    StaleWorktreeWork, TempIndex, WorkingTree, base_path, duplicated_branches,
     is_valid_branch_name, normalize_selector, resolve_input_path, select_comparison_base,
     set_base_path,
 };
@@ -844,10 +844,6 @@ pub struct WorktreeInfo {
     pub path: PathBuf,
     pub head: String,
     pub branch: Option<String>,
-    /// Why a detached checkout's rebase branch could not be determined.
-    /// Inventory remains available; deletion re-reads strict held-branch state.
-    #[serde(skip)]
-    pub branch_identity_error: Option<String>,
     pub bare: bool,
     pub detached: bool,
     pub locked: Option<String>,
@@ -1052,8 +1048,8 @@ fn held_branches(git_dir: &Path) -> anyhow::Result<std::collections::BTreeSet<St
 
 /// Recover detached operation identities from each checkout's own registration.
 /// A missing or broken gitfile must never redirect discovery into a parent
-/// repository. Record unreadable identities per entry so inventory remains
-/// available; branch deletion rejects unknown identities.
+/// repository. Inventory leaves unreadable identities detached; branch deletion
+/// independently rejects unknown identities on its strict fresh read.
 pub(crate) fn finalize_worktrees(
     repo: &Repository,
     worktrees: &mut [WorktreeInfo],
@@ -1075,23 +1071,19 @@ pub(crate) fn finalize_worktrees(
         .filter(|wt| wt.detached && wt.branch.is_none())
     {
         let path = canonicalize_with_parents(&wt.path);
-        let branch = if main.as_deref() == Some(path.as_path()) {
-            rebase_branch(repo.git_common_dir())
+        let git_dir = if main.as_deref() == Some(path.as_path()) {
+            Some(repo.git_common_dir())
         } else {
-            match &registrations {
-                Ok(registrations) => match registrations.get(&path) {
-                    Some(registration) => rebase_branch(&registration.git_dir),
-                    None => Err(anyhow::anyhow!(
-                        "Worktree registration not found @ {}",
-                        format_path_for_display(&wt.path)
-                    )),
-                },
-                Err(error) => Err(anyhow::anyhow!("{error:#}")),
-            }
+            registrations
+                .as_ref()
+                .ok()
+                .and_then(|registrations| registrations.get(&path))
+                .map(|registration| registration.git_dir.as_path())
         };
-        match branch {
-            Ok(branch) => wt.branch = branch,
-            Err(error) => wt.branch_identity_error = Some(format!("{error:#}")),
+        if let Some(git_dir) = git_dir
+            && let Ok(branch) = rebase_branch(git_dir)
+        {
+            wt.branch = branch;
         }
     }
     Ok(())
@@ -1256,7 +1248,6 @@ mod tests {
             path: PathBuf::from("/repos/myrepo.feature"),
             head: "abc123".into(),
             branch: Some("feature".into()),
-            branch_identity_error: None,
             bare: false,
             detached: false,
             locked: None,
@@ -1285,7 +1276,6 @@ mod tests {
             path: PathBuf::from("/repo.feature"),
             head: "abc123".into(),
             branch: Some("feature".into()),
-            branch_identity_error: None,
             bare: false,
             detached: false,
             locked: None,
@@ -1558,7 +1548,6 @@ mod tests {
             path: PathBuf::from("/repo.detached"),
             head: "def456".into(),
             branch: None, // Detached HEAD
-            branch_identity_error: None,
             bare: false,
             detached: true,
             locked: None,

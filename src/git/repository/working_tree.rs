@@ -20,7 +20,7 @@ const TEMP_INDEX_PREFIX: &str = "worktrunk-temp-index-";
 /// Whether a cleanliness gate uses Git's configured fsmonitor or rescans the
 /// filesystem without starting a daemon. Removal rescans after daemon shutdown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CleanCheckMode {
+pub(crate) enum CleanCheckMode {
     /// Follow `core.fsmonitor`, as an ordinary `git status` does.
     ConfiguredFsmonitor,
     /// Bypass fsmonitor to observe changes made during shutdown.
@@ -927,8 +927,22 @@ impl<'a> WorkingTree<'a> {
     /// - `action` describes what was blocked (e.g., "remove worktree").
     /// - `branch` identifies which branch for multi-worktree operations.
     /// - `force_hint` when true, the error hint mentions `--force` as an alternative.
-    /// - `mode` controls whether the gate trusts configured fsmonitor or rescans.
     pub fn ensure_clean(
+        &self,
+        action: &str,
+        branch: Option<&str>,
+        force_hint: bool,
+    ) -> anyhow::Result<()> {
+        self.ensure_clean_with_mode(
+            action,
+            branch,
+            force_hint,
+            CleanCheckMode::ConfiguredFsmonitor,
+        )
+    }
+
+    /// Internal removal gate, which can bypass fsmonitor after daemon shutdown.
+    pub(crate) fn ensure_clean_with_mode(
         &self,
         action: &str,
         branch: Option<&str>,
