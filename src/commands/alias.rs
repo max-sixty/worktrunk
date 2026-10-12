@@ -38,6 +38,8 @@
 //! applies `DirectivePassthrough`: the CD directive file is passed through so
 //! inner `wt` invocations can redirect the parent shell's cwd.
 
+use crate::commands::command_executor::ForegroundStdin;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, bail};
@@ -738,7 +740,7 @@ fn run_alias(
         sourced_steps_to_foreground(
             sourced_steps,
             &PipelineKind::Alias { name: alias_name },
-            super::command_executor::ForegroundStdin::Inherit,
+            ForegroundStdin::Inherit,
         )
     };
 

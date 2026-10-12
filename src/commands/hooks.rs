@@ -66,6 +66,8 @@
 //! (test isolation); user config (`~/.config/worktrunk/config.toml`) is global
 //! and unaffected.
 
+use crate::commands::command_executor::ForegroundStdin;
+
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -659,7 +661,7 @@ fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: PendingPipeline) -> an
 pub(crate) fn sourced_steps_to_foreground(
     sourced_steps: Vec<SourcedStep>,
     kind: &PipelineKind,
-    stdin: super::command_executor::ForegroundStdin,
+    stdin: ForegroundStdin,
 ) -> Vec<ForegroundStep> {
     sourced_steps
         .into_iter()

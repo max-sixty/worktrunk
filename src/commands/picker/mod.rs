@@ -103,6 +103,8 @@ mod progressive_handler;
 mod prs;
 mod summary;
 
+use crate::commands::command_executor::ForegroundStdin;
+
 use std::cell::RefCell;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -387,7 +389,7 @@ impl AltXRemover {
                 handle_remove_output(
                     result,
                     RemovalExecution::Silent,
-                    crate::commands::command_executor::ForegroundStdin::Closed,
+                    ForegroundStdin::Closed,
                     &plan,
                     /* quiet */ true,
                     &mut announcer,
