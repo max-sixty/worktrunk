@@ -1813,12 +1813,17 @@ mod tests {
                 "test",
             )
             .unwrap_err();
-            assert_eq!(
-                err.message,
+            // MiniJinja names the undefined expression only when the
+            // environment's debug flag is on, which defaults to
+            // `debug_assertions`.
+            let expected = if cfg!(debug_assertions) {
                 format!(
                     "Failed to expand test: undefined value: `{undefined}` is undefined @ line 1"
                 )
-            );
+            } else {
+                "Failed to expand test: undefined value @ line 1".to_string()
+            };
+            assert_eq!(err.message, expected);
             assert_eq!(err.suggestion, None);
         }
     }
