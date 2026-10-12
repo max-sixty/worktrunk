@@ -586,7 +586,7 @@ fn test_relocate_clobber_preserves_bare_git_store(repo: TestRepo) {
         let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(result["skipped"][0]["branch"], "git-data");
         assert_eq!(result["skipped"][0]["reason"], "target_protected");
-        assert_eq!(result["relocated"][0]["branch"], other_branch);
+        assert_eq!(result["entries"][0]["branch"], other_branch);
         assert!(repo.home_path().join(other_branch).join(".git").is_file());
         assert!(!other_checkout.exists());
         assert!(git_dir.join("HEAD").is_file());
