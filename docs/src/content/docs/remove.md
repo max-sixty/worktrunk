@@ -116,7 +116,6 @@ Unix only; on Windows `--reap` is rejected.
 | `retained_unmerged` | Declined: the branch was not integrated into the target |
 | `retained_checked_out` | Declined: another worktree has the branch checked out |
 | `retained_raced` | Declined: the branch moved during the removal. Retry |
-| `retained_failed` | The delete command itself failed |
 
 ## Hooks
 
