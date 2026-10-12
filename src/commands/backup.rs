@@ -282,6 +282,10 @@ mod tests {
         // retried.
         let temp = tempfile::tempdir().unwrap();
         let missing = temp.path().join("does-not-exist");
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let err = back_up_clobbered_path_now(&repo, &missing).unwrap_err();
+        assert!(err.to_string().contains("Failed to resolve worktree path"));
         let err = back_up_clobbered_path(&missing, "20250101-000000").unwrap_err();
         assert!(
             err.to_string().contains("Failed to move"),
