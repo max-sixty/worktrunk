@@ -6104,6 +6104,49 @@ fn test_force_remove_interrupted_status_preserves_worktrees(
     assert!(!stderr.contains("Removing later-worktree"));
 }
 
+/// The child uses the invoking checkout's target and retains a moved tip,
+/// even when the replacement commit is integrated into that target.
+#[rstest]
+fn test_detached_delete_child_captured_target_and_tip() {
+    let mut repo = TestRepo::with_initial_commit();
+    let original = repo.git_output(&["rev-parse", "HEAD"]);
+    let invoking = repo.add_worktree("invoking");
+    repo.commit_in_worktree(&invoking, "new.txt", "new content", "new commit");
+    let target = repo.git_output(&["rev-parse", "invoking"]);
+    repo.run_git(&["branch", "feature", &target]);
+
+    let run_child = |tip: &str| {
+        repo.wt_command()
+            .args([
+                "_delete-branch-if-safe",
+                "--branch=feature",
+                &format!("--target={target}"),
+                &format!("--expected-tip={tip}"),
+            ])
+            .output()
+            .unwrap()
+    };
+    // The child runs from main, whose HEAD is behind the invoking target.
+    let output = run_child(&target);
+    assert!(output.status.success(), "{output:?}");
+    assert_branch_exists(
+        &repo,
+        "feature",
+        false,
+        &String::from_utf8_lossy(&output.stderr),
+    );
+
+    repo.run_git(&["branch", "feature", &original]);
+    repo.run_git(&["update-ref", "refs/heads/feature", &target, &original]);
+    let output = run_child(&original);
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("moved during deletion"),
+        "{output:?}"
+    );
+    assert_eq!(repo.git_output(&["rev-parse", "feature"]), target);
+}
+
 /// The shipped force-deletion child preserves a branch checked out elsewhere.
 #[rstest]
 fn test_detached_delete_child_force_keeps_checked_out_branch() {

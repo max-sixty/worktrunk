@@ -31,7 +31,8 @@ use worktrunk::git::Repository;
 use worktrunk::git::path_dir_name;
 use worktrunk::git::{
     BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemoveOptions,
-    execute_branch_deletion, remove_worktree_with_cleanup, stage_worktree_removal,
+    delete_branch_if_safe, execute_branch_deletion, remove_worktree_with_cleanup,
+    stage_worktree_removal,
 };
 use worktrunk::path::{canonicalize_with_parents, format_path_for_display};
 use worktrunk::progress::{Progress, format_stats_paren};
@@ -289,8 +290,8 @@ fn execute_instant_removal_or_fallback(
 
         // Fallback: Git handles cross-filesystem moves and file locking.
         // Safe deletion is scheduled only for an integrated branch. The Rust
-        // child rechecks integration and live topology before deleting its fresh
-        // snapshot with CAS. Force uses the same child, skipping integration.
+        // child retains a changed tip, then rechecks integration and live topology
+        // before CAS. Force uses the same child, skipping integration.
         let (command, fate) = match (branch_name, deletion_mode) {
             (Some(branch), BranchDeletionMode::ForceDelete) => {
                 let tail = build_branch_delete_tail(repo, branch, target_branch, true)?;
@@ -439,8 +440,9 @@ fn warn_if_branch_retained(
 
 /// Build the Rust branch-deletion child for the detached removal fallback.
 ///
-/// Safe deletion selects an integrated candidate; force skips that pre-check.
-/// The child rechecks live state through the canonical deletion mechanism.
+/// Safe deletion captures the integrated tip and target commit for the child.
+/// The child retains a moved tip and rechecks live checkout ownership. Force
+/// skips the integration and captured-tip gates.
 /// Neither paths nor worktree records are parsed by the shell.
 fn build_branch_delete_tail(
     repo: &Repository,
@@ -451,13 +453,38 @@ fn build_branch_delete_tail(
     use shell_escape::unix::escape;
 
     let target = target_branch.unwrap_or("HEAD");
-    if !force_delete {
+    let mut expected_tip = String::new();
+    let target = if force_delete {
+        target.to_string()
+    } else {
         let snapshot = repo.capture_refs()?;
-        let (_effective_target, reason) = repo.integration_reason(&snapshot, branch, target)?;
-        if reason.is_none() || snapshot.local_branch(branch).is_none() {
+        // HEAD belongs to the invoking checkout, while the detached child runs
+        // from the main worktree. Resolve it before checking integration.
+        let target = if target == "HEAD" {
+            repo.run_command(&["rev-parse", "--verify", "HEAD^{commit}"])?
+                .trim()
+                .to_string()
+        } else {
+            target.to_string()
+        };
+        let (effective_target, reason) = repo.integration_reason(&snapshot, branch, &target)?;
+        let Some(branch_ref) = snapshot.local_branch(branch).filter(|_| reason.is_some()) else {
             return Ok(None);
+        };
+        expected_tip = format!(" --expected-tip={}", branch_ref.commit_sha);
+        if let Some(sha) = snapshot.resolve(&effective_target) {
+            sha.to_string()
+        } else {
+            repo.run_command(&[
+                "rev-parse",
+                "--verify",
+                "--end-of-options",
+                &format!("{effective_target}^{{commit}}"),
+            ])?
+            .trim()
+            .to_string()
         }
-    }
+    };
     let deletion_mode = if force_delete { " --force-delete" } else { "" };
     let executable = std::env::current_exe().context("Failed to locate Worktrunk executable")?;
     let executable = worktrunk::path::to_posix_path(
@@ -469,19 +496,34 @@ fn build_branch_delete_tail(
     let branch = escape(format!("--branch={branch}").into());
     let target = escape(format!("--target={target}").into());
     Ok(Some(format!(
-        "{executable} _delete-branch-if-safe {branch} {target}{deletion_mode}"
+        "{executable} _delete-branch-if-safe {branch} {target}{expected_tip}{deletion_mode}"
     )))
 }
 
-/// Complete the detached tail with the same fresh-state deletion as foreground
-/// removal. Force still uses Git's checkout-protected branch deletion.
+/// Complete detached deletion without expanding the foreground's candidate.
+/// A moved tip is retained before rechecking integration and checkout ownership.
+/// Force still uses Git's checkout-protected branch deletion.
 pub(crate) fn delete_branch_from_detached_fallback(
     branch: &str,
     target: &str,
+    expected_tip: Option<&str>,
     force_delete: bool,
 ) -> anyhow::Result<()> {
     let repo = Repository::current()?;
-    let result = execute_branch_deletion(&repo, branch, target, force_delete)?;
+    let snapshot = repo.capture_refs()?;
+    let result = if expected_tip.is_some_and(|tip| {
+        snapshot
+            .local_branch(branch)
+            .map(|branch| branch.commit_sha.as_str())
+            != Some(tip)
+    }) {
+        BranchDeletionResult {
+            outcome: BranchDeletionOutcome::RetainedRaced,
+            integration_target: target.to_string(),
+        }
+    } else {
+        delete_branch_if_safe(&repo, &snapshot, branch, target, force_delete)?
+    };
     warn_if_branch_retained(branch, &Ok(result), false);
     Ok(())
 }
@@ -2456,6 +2498,22 @@ mod tests {
             backlink
         );
         assert!(!repo.wt_trash_dir().exists());
+    }
+
+    #[test]
+    fn detached_delete_tail_captures_invoking_head_and_branch_tip() {
+        let mut test = worktrunk::testing::TestRepo::with_initial_commit();
+        let invoking = test.add_worktree("invoking");
+        test.commit_in_worktree(&invoking, "new.txt", "new content", "new commit");
+        let head = test.git_output(&["rev-parse", "invoking"]);
+        test.run_git(&["branch", "feature", &head]);
+        let repo = Repository::at(&invoking).unwrap();
+
+        let tail = build_branch_delete_tail(&repo, "feature", None, false)
+            .unwrap()
+            .unwrap();
+        assert!(tail.contains(&format!("--target={head}")), "{tail}");
+        assert!(tail.contains(&format!("--expected-tip={head}")), "{tail}");
     }
 
     #[test]
