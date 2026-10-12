@@ -8868,6 +8868,29 @@ fn test_switch_clobbers_stale_ignored_template_directory(repo: TestRepo) {
         std::fs::read_to_string(backup.join("keep.txt")).unwrap(),
         "stale contents"
     );
+
+    // A template must not move tracked content out of the containing worktree.
+    let docs = repo.root_path().join("docs");
+    std::fs::create_dir(&docs).unwrap();
+    std::fs::write(docs.join("guide.md"), "tracked docs").unwrap();
+    repo.run_git(&["add", "docs/guide.md"]);
+    repo.run_git(&["commit", "-m", "Track docs"]);
+    repo.write_test_config(r#"worktree-path = "{{ branch | sanitize }}""#);
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "docs", "--clobber", "--yes"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("contains tracked files"),
+        "{output:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(docs.join("guide.md")).unwrap(),
+        "tracked docs"
+    );
+    assert!(!docs.join(".git").exists());
 }
 
 /// Invalid branch names are rejected before worktree creation.

@@ -37,10 +37,11 @@ use color_print::cformat;
 use dunce::canonicalize;
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
+use worktrunk::shell_exec::Cmd;
 
 /// Protect Git storage and registered worktrees before a clobber backup.
-/// Explicit switch paths also refuse directories inside worktrees; templates
-/// may intentionally place stale, ignored directories there.
+/// Explicit switch paths also refuse directories inside worktrees. Template
+/// paths may replace stale directories there, but never tracked content.
 pub(crate) fn require_safe_clobber_target(
     repo: &Repository,
     requested: &Path,
@@ -67,8 +68,33 @@ pub(crate) fn require_safe_clobber_target(
         let existing = canonicalize(existing).unwrap_or_else(|_| existing.to_path_buf());
         let relation = if existing.starts_with(&requested) {
             "contains"
-        } else if requested.starts_with(&existing) && (explicit_path || existing == git_dir) {
-            "is inside"
+        } else if let Ok(relative) = requested.strip_prefix(&existing) {
+            if explicit_path || existing == git_dir {
+                "is inside"
+            } else {
+                let args = ["--literal-pathspecs", "ls-files", "-z", "--"];
+                let output = Cmd::new("git")
+                    .args(args)
+                    .arg(relative)
+                    .current_dir(&existing)
+                    .scrub_git_discovery_env()
+                    .run()
+                    .context("Failed to check tracked files at the worktree destination")?;
+                if !output.status.success() {
+                    return Err(worktrunk::git::CommandError::from_failed_output(
+                        "git", &args, &output,
+                    )
+                    .into());
+                }
+                if output.stdout.is_empty() {
+                    continue;
+                }
+                bail!(cformat!(
+                    "Worktree path <bold>{}</> contains tracked files from <bold>{}</>; choose a different directory",
+                    format_path_for_display(&requested),
+                    format_path_for_display(&existing),
+                ));
+            }
         } else {
             continue;
         };
