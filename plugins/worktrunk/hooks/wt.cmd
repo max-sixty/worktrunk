@@ -25,9 +25,9 @@ set "BASH="
 rem Ask Git for its runtime path so PATH shims resolve to the installation
 rem they launch. Ignore GIT_EXEC_PATH in the query: it overrides the installed
 rem helper path. The hook itself keeps the caller's environment.
-rem `where`'s `$PATH:` searches PATH only, avoiding a project's git.exe. Spell
-rem where absolutely too, because cmd otherwise searches the current directory.
-for /f "delims=" %%I in ('"%SystemRoot%\System32\where.exe" "$PATH:git.exe" 2^>nul') do if not defined BASH call :derive "%%~fI"
+rem cmd's PATH modifier finds the first git.exe on PATH without consulting
+rem the project directory or spawning another command interpreter for lookup.
+for %%I in (git.exe) do if not "%%~$PATH:I"=="" call :derive "%%~$PATH:I"
 
 if not defined BASH goto :missing
 
