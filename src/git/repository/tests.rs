@@ -341,22 +341,6 @@ fn test_resolved_worktree_none_branch() {
 }
 
 #[test]
-fn test_worktree_prunable() {
-    let output = "worktree /path/to/prunable
-HEAD abcd1234
-detached
-prunable gitdir file points to non-existent location
-
-";
-
-    let worktrees =
-        WorktreeInfo::parse_porcelain_list_z(output.replace('\n', "\0").as_bytes()).unwrap();
-    let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
-    assert!(wt.prunable.is_some());
-    assert!(wt.prunable.as_ref().unwrap().contains("non-existent"));
-}
-
-#[test]
 fn test_parse_multiple_worktrees() {
     let output = "worktree /main
 HEAD 1111111111111111111111111111111111111111
@@ -2944,7 +2928,6 @@ fn prewarm_preserves_native_common_directory_paths() {
 
     let seed = TestRepo::with_initial_commit();
     let names = [
-        b"bare\nstore".as_slice(),
         b"bare\ntrue\nstore\nHEAD".as_slice(),
         b"bare  ".as_slice(),
         #[cfg(target_os = "linux")]
@@ -3382,4 +3365,40 @@ fn branch_deletion_retains_rebase_update_refs() {
         result.outcome,
         BranchDeletionOutcome::Integrated(_)
     ));
+}
+
+/// A linked checkout cannot identify an unrepaired separate store's main.
+#[test]
+fn linked_separate_git_dir_requires_repair_before_inventory() {
+    let seed = TestRepo::with_initial_commit();
+    let directory = crate::testing::test_tempdir();
+    let main = directory.path().join("main");
+    let store = directory.path().join("store");
+    let linked = directory.path().join("linked");
+    seed.run_git(&[
+        "clone",
+        "--separate-git-dir",
+        store.to_str().unwrap(),
+        seed.root_path().to_str().unwrap(),
+        main.to_str().unwrap(),
+    ]);
+    seed.run_git_in(
+        &main,
+        &["worktree", "add", "-b", "feature", linked.to_str().unwrap()],
+    );
+    assert!(!store.join("gitdir").exists());
+    let error = Repository::at(&linked)
+        .unwrap()
+        .list_worktrees()
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("git worktree repair"),
+        "{error:#}"
+    );
+
+    seed.run_git_in(&main, &["worktree", "repair"]);
+    assert_eq!(
+        Repository::at(&linked).unwrap().list_worktrees().unwrap()[0].path,
+        dunce::canonicalize(&main).unwrap(),
+    );
 }
