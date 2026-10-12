@@ -992,20 +992,28 @@ fn held_branches(git_dir: &Path) -> anyhow::Result<std::collections::BTreeSet<St
     use anyhow::Context;
 
     let mut branches = std::collections::BTreeSet::new();
-    let head_path = git_dir.join("HEAD");
-    let head = std::fs::read_to_string(&head_path).with_context(|| {
-        format!(
-            "Failed to read worktree HEAD @ {}",
-            format_path_for_display(&head_path)
-        )
-    })?;
-    if let Some(branch) = head.trim_end_matches('\n').strip_prefix("ref: refs/heads/") {
-        anyhow::ensure!(
-            is_valid_branch_name(branch),
-            "Invalid worktree HEAD @ {}",
-            format_path_for_display(&head_path)
-        );
-        branches.insert(branch.to_owned());
+    // HEAD can live in reftable; its compatibility file is not the ref.
+    let args = ["--git-dir=.", "symbolic-ref", "--quiet", "HEAD"];
+    let output = crate::shell_exec::Cmd::new("git")
+        .args(args)
+        .current_dir(git_dir)
+        .scrub_git_discovery_env()
+        .run()
+        .context("Failed to read worktree HEAD")?;
+    match output.status.code() {
+        Some(0) => {
+            let head = std::str::from_utf8(&output.stdout).context("Invalid worktree HEAD")?;
+            if let Some(branch) = head.trim_end_matches('\n').strip_prefix("refs/heads/") {
+                anyhow::ensure!(
+                    is_valid_branch_name(branch),
+                    "Invalid worktree HEAD @ {}",
+                    format_path_for_display(git_dir)
+                );
+                branches.insert(branch.to_owned());
+            }
+        }
+        Some(1) => {} // Detached HEAD.
+        _ => return Err(CommandError::from_failed_output("git", &args, &output).into()),
     }
     branches.extend(rebase_branch(git_dir)?);
     branches.extend(bisect_branch(git_dir)?);

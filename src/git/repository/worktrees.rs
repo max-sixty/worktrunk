@@ -408,7 +408,7 @@ impl Repository {
                     });
                 }
             };
-            let git_dir = match canonicalize(&registration) {
+            let git_dir = match dunce::canonicalize(&registration) {
                 Ok(git_dir) => git_dir,
                 Err(error) if vanished_registration(&registration, &error) => continue,
                 Err(error) => {
@@ -434,12 +434,30 @@ impl Repository {
         Ok(found)
     }
 
-    /// Require the selected worktree's registration from a fresh, strict scan.
+    /// Find the selected registration by its backlink, ignoring unreadable
+    /// siblings. Only branch deletion requires a complete registry topology.
     pub(crate) fn registration_at(&self, path: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
-        self.worktree_registrations()?
-            .remove_entry(&canonicalize_with_parents(path))
-            .map(|(recorded, registration)| (registration.path, recorded))
-            .with_context(|| format!("No worktree registered @ {}", format_path_for_display(path)))
+        let registrations = self.git_common_dir().join("worktrees");
+        let entries = std::fs::read_dir(&registrations).with_context(|| {
+            format!("Failed to read {}", format_path_for_display(&registrations))
+        })?;
+        let selected = canonicalize_with_parents(path);
+        let mut found = None;
+        for entry in entries {
+            let registration = entry?.path();
+            let Ok(recorded) = registration_worktree_path(&registration) else {
+                continue;
+            };
+            if recorded == selected {
+                anyhow::ensure!(
+                    found.is_none(),
+                    "Multiple worktrees registered @ {}",
+                    format_path_for_display(path)
+                );
+                found = Some((registration, recorded));
+            }
+        }
+        found.with_context(|| format!("No worktree registered @ {}", format_path_for_display(path)))
     }
 
     /// Remove a worktree at the specified path.
