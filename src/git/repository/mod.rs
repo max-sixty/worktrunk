@@ -147,7 +147,8 @@ use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
 
 // Import types from parent module
 use super::{
-    CommandError, DefaultBranchName, ForgeKind, GitError, GitItemId, LineDiff, WorktreeInfo,
+    CommandError, DefaultBranchName, ErrorExt, ForgeKind, GitError, GitItemId, LineDiff,
+    WorktreeInfo,
 };
 
 // Re-export types needed by submodules
@@ -176,7 +177,7 @@ pub use integration::{BranchDiffSpec, IntegrationTargets, select_comparison_base
 pub use ref_snapshot::RefSnapshot;
 pub(super) use working_tree::path_to_logging_context;
 use working_tree::registration_worktree_path;
-pub use working_tree::{InProgressOperation, TempIndex, WorkingTree};
+pub use working_tree::{InProgressOperation, SafetyBackup, TempIndex, WorkingTree};
 pub use worktrees::{StaleWorktreeWork, duplicated_branches};
 
 // ============================================================================
@@ -619,8 +620,8 @@ pub fn set_base_path(path: PathBuf) {
     BASE_PATH.set(path).ok();
 }
 
-/// Get the base path for repository operations.
-fn base_path() -> &'static PathBuf {
+/// Directory used for repository discovery, including the command's `-C` base.
+pub fn base_path() -> &'static PathBuf {
     BASE_PATH.get().unwrap_or(&DEFAULT_BASE_PATH)
 }
 
@@ -645,9 +646,8 @@ fn base_path() -> &'static PathBuf {
 ///   config directory) are already absolute.
 /// - `WORKTRUNK_PROJECT_CONFIG_PATH` resolves from the worktree root, its
 ///   documented base, because the project config is per-worktree.
-/// - `WORKTRUNK_BIN` and `XDG_CONFIG_DIRS` are never opened by wt: the first is
-///   expanded by the generated shell wrapper, and the XDG spec already requires
-///   the second to be absolute.
+/// - `WORKTRUNK_BIN` is never opened by wt: the generated shell wrapper
+///   expands it.
 pub fn resolve_input_path(path: impl AsRef<Path>) -> PathBuf {
     let path = crate::path::expand_tilde(path.as_ref());
     match BASE_PATH.get() {
@@ -1799,8 +1799,7 @@ impl Repository {
     /// a commit meant to match what porcelain would record passes `-S` itself.
     /// Asked of git from this worktree rather than read from the cached config
     /// map, which is read from the common dir and so misses worktree-scoped
-    /// config, and whose boolean parsing is not git's (a valueless key is true
-    /// to git).
+    /// config.
     pub fn signs_commits(&self) -> anyhow::Result<bool> {
         let args = ["config", "--type=bool", "--get", "commit.gpgSign"];
         let output = self.run_command_output(&args)?;
@@ -1859,7 +1858,7 @@ impl Repository {
     /// too long for `sun_path`, an unresolvable git dir) falls through to the
     /// fork, which starts the daemon or reports it running.
     ///
-    /// Uses `Command::status()` with null stdio instead of `Cmd::run()` to avoid
+    /// Spawns with null stdio instead of `Cmd::run()` to avoid
     /// pipe inheritance: the daemon process (`git fsmonitor--daemon run --detach`)
     /// inherits pipe file descriptors from its parent, keeping them open
     /// indefinitely. `read_to_end()` in `Command::output()` then blocks forever
@@ -1867,10 +1866,11 @@ impl Repository {
     pub fn start_fsmonitor_daemon_at(&self, path: &Path) {
         #[cfg(unix)]
         if let Ok(git_dir) = self.worktree_at(path).git_dir()
-            && std::os::unix::net::UnixStream::connect(
-                git_dir.join(super::fsmonitor::IPC_SOCKET_NAME),
-            )
-            .is_ok()
+            && socket2::SockAddr::unix(git_dir.join(super::fsmonitor::IPC_SOCKET_NAME))
+                .and_then(|address| {
+                    crate::shell_exec::stream_socket(socket2::Domain::UNIX)?.connect(&address)
+                })
+                .is_ok()
         {
             return;
         }
@@ -1888,10 +1888,10 @@ impl Repository {
         crate::shell_exec::apply_hermetic_test_env(&mut cmd);
         crate::shell_exec::scrub_directive_env_vars(&mut cmd);
         // Trace the daemon launch so it's attributed in the timeline rather than
-        // appearing as a gap on the switch hot path. Uses `status()` (not
-        // `Cmd::run`) deliberately — see the doc comment.
+        // appearing as a gap on the switch hot path. Wait without captured
+        // pipes (unlike `Cmd::run`) — see the daemon rationale above.
         let mut trace = crate::trace::CommandTrace::new(Some(&context), cmd_str);
-        let result = cmd.status();
+        let result = crate::shell_exec::spawn(&mut cmd).and_then(|mut child| child.wait());
         match result {
             Ok(status) => {
                 trace.complete(status.success());
@@ -1901,7 +1901,7 @@ impl Repository {
             }
             Err(e) => {
                 trace.fail(&e);
-                tracing::debug!(error = %e, "fsmonitor daemon start failed (usually fine): {e}");
+                tracing::debug!(error = %crate::git::error_chain_message(&e), "fsmonitor daemon start failed (usually fine)");
             }
         }
     }
@@ -2186,15 +2186,13 @@ impl Repository {
                 e.output.clone(),
                 Some(super::error::FailedCommand {
                     command: e.command.clone(),
-                    exit_info: e.exit_info.clone(),
+                    exit_info: e.exit_info(),
                 }),
             );
         }
         if let Some(cmd_err) = CommandError::find_in(err) {
-            let exit_info = match cmd_err.exit_code {
-                Some(code) => format!("exit code {code}"),
-                None => "killed by signal".to_string(),
-            };
+            let exit_info =
+                super::error::process_exit_description(cmd_err.exit_code, cmd_err.signal);
             return (
                 cmd_err.combined_output(),
                 Some(super::error::FailedCommand {
@@ -2203,7 +2201,7 @@ impl Repository {
                 }),
             );
         }
-        (err.to_string(), None)
+        (err.display_message(), None)
     }
 }
 
@@ -2263,8 +2261,10 @@ fn worktree_config_enabled(parsed: &indexmap::IndexMap<String, Vec<String>>) -> 
 
 /// Parse the output of `git config --list -z`.
 ///
-/// Format: each entry is `key\nvalue\0`. Values may be empty (no `\n`) for
-/// keys set via `git config key ""` — handled as `key -> ""`.
+/// Format: each entry is `key\nvalue\0`. An explicitly empty value
+/// (`key = ""`) keeps the newline and parses as `key -> ""`. A key written
+/// with no value at all is emitted as bare `key\0`; git reads that as boolean
+/// true, so it parses as `key -> "true"`.
 ///
 /// Returns a map from canonical key (as git emits it) to the list of
 /// values, preserving order (matches git's own multivar semantics where
@@ -2278,9 +2278,8 @@ fn parse_config_list_z(stdout: &[u8]) -> indexmap::IndexMap<String, Vec<String>>
         let text = String::from_utf8_lossy(entry);
         let (key, value) = match text.split_once('\n') {
             Some((k, v)) => (k, v),
-            // `key` without any newline → no value set (shouldn't happen
-            // with `--list -z`, but tolerate gracefully).
-            None => (text.as_ref(), ""),
+            // A key with no value is git's implicit boolean true.
+            None => (text.as_ref(), "true"),
         };
         map.entry(key.to_string())
             .or_default()

@@ -1044,15 +1044,21 @@ fn test_bare_repo_no_project_config_when_primary_off_branch_and_none_present() {
     // No config exists, so no worktree should be reported as carrying one and
     // no project hook can run. `wt config show` from the bare root confirms the
     // fallback found nothing rather than resolving a phantom config.
-    let mut show = wt_command();
-    test.configure_wt_cmd(&mut show);
-    show.args(["config", "show"])
+    let mut show = test.wt_command();
+    show.args(["config", "show", "--format=json"])
         .current_dir(test.bare_repo_path());
     let show_out = show.output().unwrap();
-    let stdout = String::from_utf8_lossy(&show_out.stdout);
     assert!(
-        !stdout.contains("[pre-start]") && !stdout.contains("[post-start]"),
-        "no project hooks should be resolved when no config exists:\n{stdout}"
+        show_out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&show_out.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&show_out.stdout)).unwrap();
+    assert!(
+        json["project"]["config"].is_null(),
+        "no project config should be resolved when none exists, got: {}",
+        json["project"]["config"]
     );
 }
 

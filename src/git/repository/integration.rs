@@ -304,8 +304,8 @@ fn classify_candidates<'a>(
 
 impl Repository {
     /// Check if `base_sha` is an ancestor of `head_sha`, taking commit SHAs
-    /// directly. Hits the persistent SHA-keyed cache without going through
-    /// the (stale-prone) ambient ref→SHA cache.
+    /// directly. Hits the persistent SHA-keyed cache without resolving any
+    /// ref names.
     ///
     /// Callers that hold SHAs (e.g., from a `RefSnapshot` or a
     /// `BranchRef.commit_sha`) should prefer this form.
@@ -328,9 +328,9 @@ impl Repository {
     /// For orphan branches (no common ancestor with target), returns true since all
     /// their changes are unique.
     ///
-    /// Bypasses the ambient ref→SHA cache so callers holding SHAs from a
-    /// [`RefSnapshot`] (or `BranchRef.commit_sha`) can short-circuit to the
-    /// persistent SHA-keyed cache directly.
+    /// Takes commit SHAs, so callers holding SHAs from a [`RefSnapshot`] (or
+    /// `BranchRef.commit_sha`) go straight to the persistent SHA-keyed cache
+    /// without resolving ref names.
     pub fn has_added_changes_by_sha(
         &self,
         branch_sha: &str,
@@ -563,8 +563,9 @@ impl Repository {
     /// only the rest go through `git patch-id` (see [`RawChange`]).
     ///
     /// Returns `Ok(true)` if a matching squash-merge commit is found on the target,
-    /// `Ok(false)` otherwise (including past either cap, or when patch-id
-    /// computation fails — all conservative).
+    /// `Ok(false)` otherwise (including past either cap — conservative). A
+    /// failing git command propagates as `Err`; the caller treats that as no
+    /// match.
     fn is_squash_merged_via_patch_id(&self, branch: &str, target: &str) -> anyhow::Result<bool> {
         let Some(merge_base) = self.merge_base(target, branch)? else {
             return Ok(false);
@@ -1112,7 +1113,10 @@ impl Repository {
             return Ok(None);
         };
         let target_sha = self.resolve_to_commit_sha(target_branch)?;
-        match self.merge_base("HEAD", &upstream)? {
+        let head = self
+            .current_worktree()
+            .run_command(&["rev-parse", "HEAD"])?;
+        match self.merge_base(head.trim(), &upstream)? {
             Some(fork_point) if !self.is_ancestor_by_sha(&fork_point, &target_sha)? => {
                 Ok(Some(upstream))
             }

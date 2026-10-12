@@ -1286,6 +1286,56 @@ fn test_switch_execute_failure(repo: TestRepo) {
     );
 }
 
+/// Suppressing wt's own failure message must preserve a program's native
+/// termination signal, distinct from an ordinary exit with the same shell code.
+#[rstest]
+#[case::interrupt(Some(nix::libc::SIGINT))]
+#[case::terminate(Some(nix::libc::SIGTERM))]
+#[case::ordinary_exit(None)]
+#[cfg(unix)]
+fn test_switch_execute_preserves_native_signal(repo: TestRepo, #[case] signal: Option<i32>) {
+    use std::os::unix::process::ExitStatusExt;
+
+    let program = r#"import os, signal, sys
+number = int(sys.argv[1])
+print('child output', flush=True)
+if number:
+    signal.signal(number, signal.SIG_DFL)
+    os.kill(os.getpid(), number)
+else:
+    os._exit(130)
+"#;
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "main",
+            "--no-cd",
+            "--execute",
+            "python3",
+            "--",
+            "-c",
+            program,
+        ])
+        .arg(signal.unwrap_or(0).to_string())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.signal(), signal, "{output:?}");
+    assert_eq!(
+        output.status.code(),
+        signal.is_none().then_some(130),
+        "{output:?}"
+    );
+    assert_eq!(output.stdout, b"child output\n");
+    let raw_stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = raw_stderr.ansi_strip();
+    assert!(
+        !stderr.contains('✗'),
+        "unexpected wt failure message: {stderr}"
+    );
+}
+
 // Execute template expansion tests
 #[rstest]
 fn test_switch_execute_template_branch(repo: TestRepo) {
@@ -6042,7 +6092,7 @@ fn test_switch_pr_gitlab_remote_rejects_pr(#[from(repo_with_remote)] repo: TestR
 
 /// Self-hosted forge whose hostname doesn't match any URL detection rule, but
 /// `tea` has a login configured for it (via `tea login add`) — dispatch
-/// inspects tea's config file and routes to Gitea.
+/// queries tea's local login list and routes to Gitea.
 #[rstest]
 fn test_switch_pr_self_hosted_tea_authed_dispatches_to_gitea(
     #[from(repo_with_remote)] repo: TestRepo,
@@ -6053,14 +6103,6 @@ fn test_switch_pr_self_hosted_tea_authed_dispatches_to_gitea(
         "origin",
         "https://forge.selfhosted.test/owner/test-repo.git",
     ]);
-
-    let tea_config_dir = repo.home_path().join(".config").join("tea");
-    fs::create_dir_all(&tea_config_dir).unwrap();
-    fs::write(
-        tea_config_dir.join("config.yml"),
-        "logins:\n  - name: selfhosted\n    url: https://forge.selfhosted.test\n    default: true\n",
-    )
-    .unwrap();
 
     let tea_response = r#"{
         "title": "Routed via tea config",
@@ -6080,13 +6122,38 @@ fn test_switch_pr_self_hosted_tea_authed_dispatches_to_gitea(
         "html_url": "https://forge.selfhosted.test/owner/test-repo/pulls/101"
     }"#;
     let mock_bin = setup_mock_tea(&repo, "200 OK", tea_response);
+    // Model tea's JSON output boundary: tea owns reading YAML and finding its
+    // config directory; Worktrunk consumes only the structured login list.
+    MockConfig::new("tea")
+        .command(
+            "logins list --output",
+            MockResponse::output(
+                r#"[{"name":"selfhosted","url":"https://FORGE.selfhosted.test/","ssh_host":"forge-ssh.selfhosted.test","user":"alice","default":"true"}]"#,
+            ),
+        )
+        .command(
+            "api",
+            MockResponse::file("tea_pr_response.json")
+                .with_stderr(&tea_api_include_stderr("200 OK")),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    let call_log = tempfile::tempdir().unwrap();
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
+        cmd.env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path());
         assert_cmd_snapshot!("switch_pr_self_hosted_tea_authed", cmd);
     });
+    let calls = fs::read_to_string(call_log.path().join("tea.calls")).unwrap();
+    assert_eq!(calls.lines().next(), Some("logins list --output json"));
+    assert!(
+        calls
+            .lines()
+            .any(|line| line == "api --include repos/owner/test-repo/pulls/101")
+    );
 }
 
 /// Self-hosted forge with a non-distinctive hostname (`forge.example.com`)
@@ -6094,7 +6161,12 @@ fn test_switch_pr_self_hosted_tea_authed_dispatches_to_gitea(
 /// GitHub. The mock `gh api` succeeds, so the PR is checked out and the
 /// user never sees a wrapped error.
 #[rstest]
-fn test_switch_pr_self_hosted_defaults_to_github(#[from(repo_with_remote)] mut repo: TestRepo) {
+#[case::unrelated_tea_login(true)]
+#[cfg_attr(unix, case::tea_not_installed(false))]
+fn test_switch_pr_self_hosted_defaults_to_github(
+    #[from(repo_with_remote)] mut repo: TestRepo,
+    #[case] tea_installed: bool,
+) {
     repo.add_worktree("feature-auth");
     repo.run_git(&["push", "origin", "feature-auth"]);
 
@@ -6137,13 +6209,131 @@ fn test_switch_pr_self_hosted_defaults_to_github(#[from(repo_with_remote)] mut r
         "html_url": "https://forge.example.com/owner/test-repo/pull/101"
     }"#;
     let mock_bin = setup_mock_gh_for_pr(&repo, gh_response);
+    if tea_installed {
+        // A login on another Gitea host must not claim this remote.
+        MockConfig::new("tea")
+            .command(
+                "logins list --output",
+                MockResponse::output(r#"[{"url":"https://different-forge.example.com","ssh_host":"different-ssh.example.com"}]"#),
+            )
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(which::which("git").unwrap(), mock_bin.join("git")).unwrap();
+    let call_log = tempfile::tempdir().unwrap();
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
+        if !tea_installed {
+            // Exclude any real tea on the host; the mock gh and git suffice.
+            cmd.env("PATH", &mock_bin);
+        }
+        cmd.env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path());
         assert_cmd_snapshot!("switch_pr_self_hosted_defaults_to_github", cmd);
     });
+    if tea_installed {
+        let calls = fs::read_to_string(call_log.path().join("tea.calls")).unwrap();
+        assert_eq!(calls.trim(), "logins list --output json");
+    } else {
+        assert!(!call_log.path().join("tea.calls").exists());
+    }
+}
+
+/// A configured SSH hostname can differ from the web hostname. tea's login
+/// list supplies both, so an SSH remote must route to the same Gitea account.
+#[rstest]
+fn test_switch_pr_tea_login_matches_distinct_ssh_host(repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "git@forge-ssh.selfhosted.test:owner/test-repo.git",
+    ]);
+    let mock_bin = repo.home_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    MockConfig::new("tea")
+        .command(
+            "logins list --output",
+            MockResponse::output(
+                r#"[{"url":"https://forge-web.selfhosted.test","ssh_host":"FORGE-SSH.selfhosted.test"}]"#,
+            ),
+        )
+        .command("api", MockResponse::stderr("Gitea lookup reached").with_exit_code(1))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    MockConfig::new("gh")
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    let call_log = tempfile::tempdir().unwrap();
+    let mut cmd = repo.wt_command();
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd
+        .args(["switch", "pr:101"])
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Gitea lookup reached"));
+    assert_eq!(
+        fs::read_to_string(call_log.path().join("tea.calls")).unwrap(),
+        "logins list --output json\napi --include repos/owner/test-repo/pulls/101\n"
+    );
+    assert_eq!(
+        fs::read_to_string(call_log.path().join("gh.calls")).unwrap(),
+        "auth token --hostname forge-ssh.selfhosted.test\n"
+    );
+}
+
+/// Native child cancellation stops forge selection; an ordinary exit 130 still
+/// means an unavailable login and permits the GitHub fallback.
+#[cfg(unix)]
+#[rstest]
+#[case::sigint("kill -INT $$", Some(2))]
+#[case::sigterm("kill -TERM $$", Some(15))]
+#[case::exit_130("exit 130", None)]
+fn test_switch_pr_tea_login_native_interruption(
+    repo: TestRepo,
+    #[case] tea_command: &str,
+    #[case] signal: Option<i32>,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::ExitStatusExt;
+
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://forge.selfhosted.test/owner/test-repo.git",
+    ]);
+    let mock_bin = repo.home_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    let tea = mock_bin.join("tea");
+    fs::write(
+        &tea,
+        format!(
+            "#!/bin/sh
+{tea_command}
+"
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&tea, fs::Permissions::from_mode(0o755)).unwrap();
+    MockConfig::new("gh")
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    let call_log = tempfile::tempdir().unwrap();
+    let mut cmd = repo.wt_command();
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd
+        .args(["switch", "pr:101"])
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.signal(), signal, "{output:?}");
+    assert_eq!(call_log.path().join("gh.calls").exists(), signal.is_none());
 }
 
 /// Gitea API returns malformed JSON — covers the JSON parse error path
@@ -6784,6 +6974,41 @@ fn test_switch_pr_azure_fork(#[from(repo_with_remote)] repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_azure_fork", cmd);
+    });
+}
+
+/// With no `webUrl` in the response, the org and host come from the local
+/// remote. An `ssh.dev.azure.com` remote must still suggest an HTTPS
+/// `dev.azure.com` URL for the PR's repository, not one on the SSH host.
+#[rstest]
+fn test_switch_pr_azure_ssh_remote_suggests_web_host(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "git@ssh.dev.azure.com:v3/myorg/myproject/test-repo",
+    ]);
+
+    let az_response = r#"{
+        "title": "Fix in a sibling repository",
+        "createdBy": {"uniqueName": "alice@example.com"},
+        "status": "active",
+        "isDraft": false,
+        "sourceRefName": "refs/heads/feature-auth",
+        "repository": {
+            "name": "other-repo",
+            "project": {"name": "myproject"}
+        },
+        "forkSource": null
+    }"#;
+
+    let mock_bin = setup_mock_az(&repo, az_response);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_azure_ssh_remote_suggests_web_host", cmd);
     });
 }
 
@@ -8584,4 +8809,188 @@ fn test_switch_path_rejects_directory_overlapping_repo(repo: TestRepo) {
 
     assert!(repo.root_path().join("src").is_dir());
     assert!(repo.root_path().join(".git").exists());
+}
+
+/// Invalid branch names are rejected before worktree creation.
+#[rstest]
+#[case::space("bad name")]
+#[case::ref_syntax("bad..name")]
+#[case::reserved("HEAD")]
+fn switch_creation_rejects_invalid_branch(repo: TestRepo, #[case] name: &str) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", name], None);
+        assert_cmd_snapshot!(
+            format!(
+                "switch_invalid_branch_{}",
+                name.replace([' ', '.', '-'], "_")
+            ),
+            cmd
+        );
+    });
+    assert!(
+        !repo
+            .root_path()
+            .parent()
+            .unwrap()
+            .join(format!("repo.{name}"))
+            .exists()
+    );
+}
+
+/// Creation takes a literal branch name, even when Git could expand checkout
+/// history to a branch that no longer exists.
+#[rstest]
+#[case::present(false)]
+#[case::deleted(true)]
+fn switch_creation_rejects_checkout_history(repo: TestRepo, #[case] deleted: bool) {
+    repo.run_git(&["checkout", "-b", "previous"]);
+    repo.run_git(&["checkout", "main"]);
+    if deleted {
+        repo.run_git(&["branch", "-d", "previous"]);
+    }
+    assert_eq!(
+        repo.git_output(&["check-ref-format", "--branch", "@{-1}"])
+            .trim(),
+        "previous"
+    );
+    let refs_before = repo.git_output(&["for-each-ref", "--format=%(refname)"]);
+    let worktrees_before = repo.git_output(&["worktree", "list", "--porcelain"]);
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "@{-1}", "--no-hooks"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    insta::allow_duplicates! {
+        insta::assert_snapshot!(
+            String::from_utf8_lossy(&output.stderr).ansi_strip(),
+            @"✗ Invalid branch name @{-1}"
+        );
+    }
+    assert_eq!(
+        repo.git_output(&["for-each-ref", "--format=%(refname)"]),
+        refs_before
+    );
+    assert_eq!(
+        repo.git_output(&["worktree", "list", "--porcelain"]),
+        worktrees_before
+    );
+}
+
+#[rstest]
+#[case::nested("topic/nested")]
+#[case::unicode("café")]
+fn switch_creation_preserves_literal_branch_name(repo: TestRepo, #[case] name: &str) {
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", name, "--no-hooks"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        repo.git_output(&[
+            "show-ref",
+            "--verify",
+            "--hash",
+            &format!("refs/heads/{name}")
+        ]),
+        repo.git_output(&["rev-parse", "main"])
+    );
+}
+
+/// A validator subprocess cancellation is an interrupted operation, not an
+/// invalid branch name. Other Git commands still use real Git.
+#[cfg(unix)]
+#[rstest]
+fn switch_creation_preserves_validation_interrupt(repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::ExitStatusExt;
+
+    let bin_dir = repo.home_path().join("validation-interrupt");
+    fs::create_dir_all(&bin_dir).unwrap();
+    let git = bin_dir.join("git");
+    let marker = bin_dir.join("interrupted");
+    let real_git = which::which("git").unwrap();
+    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
+    fs::write(
+        &git,
+        format!(
+            r#"#!/bin/sh
+if [ "$1" = check-ref-format ]; then
+  printf called > "$WORKTRUNK_TEST_VALIDATION_MARKER"
+  kill -TERM "$$"
+fi
+exec {real_git} "$@"
+"#
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&git, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut paths: Vec<_> = std::env::split_paths(&std::env::var_os("PATH").unwrap()).collect();
+    paths.insert(0, bin_dir);
+    let worktrees_before = repo.git_output(&["worktree", "list", "--porcelain"]);
+    assert!(!marker.exists());
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "interrupted", "--no-hooks"])
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .env("WORKTRUNK_TEST_VALIDATION_MARKER", &marker)
+        .output()
+        .unwrap();
+    assert_eq!(fs::read_to_string(marker).unwrap(), "called");
+    assert_eq!(
+        output.status.signal(),
+        Some(nix::sys::signal::Signal::SIGTERM as i32),
+        "{output:?}"
+    );
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        repo.git_output(&["worktree", "list", "--porcelain"]),
+        worktrees_before
+    );
+    assert!(
+        repo.git_output(&["branch", "--list", "interrupted"])
+            .is_empty()
+    );
+}
+
+#[rstest]
+fn switch_missing_path_selector(repo: TestRepo) {
+    snapshot_switch("switch_missing_path_selector", &repo, &["./ghost"]);
+}
+
+/// Explicit and configured suppression both leave the directive untouched and
+/// report the available checkout without claiming the shell switched there.
+#[rstest]
+#[case::flag(false)]
+#[case::config(true)]
+fn switch_existing_without_cd(mut repo: TestRepo, #[case] configured: bool) {
+    let feature = repo.add_worktree("feature");
+    if configured {
+        repo.write_test_config("[switch]\ncd = false\n");
+    }
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let (cd_path, _guard) = directive_file();
+        let args = if configured {
+            vec!["feature"]
+        } else {
+            vec!["feature", "--no-cd"]
+        };
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &args, None);
+        configure_directive_file(&mut cmd, &cd_path);
+        assert_cmd_snapshot!(
+            if configured {
+                "switch_existing_cd_disabled_config"
+            } else {
+                "switch_existing_cd_disabled_flag"
+            },
+            cmd
+        );
+        assert!(fs::read_to_string(&cd_path).unwrap().is_empty());
+    });
+    assert!(feature.is_dir());
 }

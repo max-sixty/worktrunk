@@ -79,7 +79,7 @@ Install and manage Worktrunk plugins for AI coding tools.
 [1m[32mSupported tools[0m
 
 - [1mclaude[0m — Claude Code plugin (activity tracking + statusline)
-- [1mcodex[0m — Codex plugin (Worktrunk configuration skill)
+- [1mcodex[0m — Codex plugin (activity tracking + Worktrunk configuration skill)
 - [1momp[0m — oh-my-pi hook (activity tracking)
 - [1mopencode[0m — OpenCode plugin (activity tracking)
 - [1mpi[0m — Pi extension (activity tracking)

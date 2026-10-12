@@ -18,12 +18,15 @@ Binary symbol names are deliberately omitted — they re-minify every build.
 
 ## The design
 
-1. `EnterWorktree({name})` for a new branch in this repo. It creates through
+Steps are numbered as in `SKILL.md`; step 1, picking the branch name, needs
+no rationale.
+
+2. `EnterWorktree({name})` for a new branch in this repo. It creates through
    worktrunk's `WorktreeCreate` hook (`wt switch --create`), so the result is
    an ordinary `wt` worktree, and it passes no `path`, which is what keeps M2's
    confirmation from firing. It fails on an existing branch and from a session
    that already entered a worktree, and it has no repo targeting.
-2. Otherwise `wt -C <repo> switch --create <branch> --no-cd --format=json` in
+3. Otherwise `wt -C <repo> switch --create <branch> --no-cd --format=json` in
    Bash, then, for another repo, `cd <repo>`, then `EnterWorktree({path})`.
    `wt` solves repo targeting (`-C` works from anywhere), existing-branch
    handling (rerun without `--create`), and machine-readable output (`.path`
@@ -33,7 +36,8 @@ Binary symbol names are deliberately omitted — they re-minify every build.
    worktrunk's hook answers the confirmation only for that repository's
    worktrees ("The confirmation hook"). The `cd` satisfies both. Entry that someone declined
    ends there, with the worktree left unentered (M2).
-3. On a tool error (or a denial with no user behind it), the session can still
+
+   On a tool error (or a denial with no user behind it), the session can still
    work there iff the path sits
    inside a directory it's allowed in (an `additionalDirectories` entry). A
    single `cd <path>` discovers which: it sticks when reachable, resets when
@@ -229,6 +233,26 @@ plain session re-roots into the sibling `wt` creates. The agent **cannot**
 enlarge that set itself (`/add-dir` is user-typed; the only automatic add is a
 narrow symlink-resolving-to-the-same-cwd fixup), so a repo reachable by neither
 the cwd nor config is a genuine handback to the user.
+
+### Re-rooting keeps the launch repo's instructions
+
+Re-rooting into another repo changes the cwd but not the instruction context.
+Verified 2026-10-10 against Claude Code 2.1.296 with three headless sessions.
+Two launched in another repo, then ran `cd` plus `EnterWorktree({path})` or
+`cd` plus `EnterWorktree({name})`; each context still held the launch repo's
+root `AGENTS.md` and auto-memory index, with nothing from the new repo. The
+third, started in the worktree, loaded the new repo's. Nested instruction files of the
+new repo still load lazily when a file in their directory is read. Both routes
+run the same post-entry code in the binary, which clears the memo of loaded
+instruction files but doesn't rebuild the root block, which reloads only at
+session start and compaction; the entry confirmation's "loads project
+configuration (CLAUDE.md, settings)" doesn't hold for it. The `name` route can't
+cross repos anyway: the `WorktreeCreate` hook `cd`s to `$CLAUDE_PROJECT_DIR`,
+which stays the launch repo, so the worktree lands there.
+
+So with a repo argument, the skill has the agent read the new root files after
+entry. That fixes the instructions only; the launch repo's root file stays in
+context, as does its auto-memory.
 
 ### Why `--no-cd`
 

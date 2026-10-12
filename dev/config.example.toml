@@ -75,7 +75,7 @@
 # ### OpenCode
 #
 # [commit.generation]
-# command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"
+# command = "opencode run -m anthropic/claude-haiku-5-5 --variant fast"
 #
 # ### llm
 #
@@ -212,6 +212,7 @@
 #
 # [switch.picker]
 # pager = "delta --paging=never"   # Example: override git's core.pager for diff preview
+# preview = true                   # Show the preview panel on open (Alt-p toggles)
 #
 # ### Step
 #
@@ -234,7 +235,7 @@
 #
 # User config can include a `[projects]` table for project-specific settings — worktree layout, setting overrides, anything else — separate from the project config (https://worktrunk.dev/config/#project-configuration) shared with teammates.
 #
-# Entries are keyed by project identifier — `<host>/<owner>/<repo>` derived from the primary remote URL (no `.git` suffix), or the canonical repo path when there is no remote. Run `wt config show` inside the repo to see the identifier for the current project; it appears in the `PROJECT CONFIG` section as `Identifier: …`.
+# Entries are keyed by project identifier — `<host>/<owner>/<repo>` derived from the primary remote URL (no `.git` suffix; an explicit port other than SSH's default 22 stays with the host, as in `gitlab.example.com:2222/team/project`), or the canonical repo path when there is no remote. Run `wt config show` inside the repo to see the identifier for the current project; it appears in the `PROJECT CONFIG` section as `Identifier: …`.
 #
 # Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first. See how the layers rank (https://worktrunk.dev/config/#precedence).
 #
@@ -259,7 +260,7 @@
 # [projects."git.company.example/platform/*"]
 # worktree-path = ".worktrees/{{ branch | sanitize }}"
 #
-# Every matching entry applies, least- to most-specific, following the rule above: a more specific entry — `git.company.example/platform/*` over `git.company.example/*` — wins where both set the same setting, while hooks and aliases from every matching entry all run, least-specific first. A literal key is the most specific of all; specificity is the count of non-`*` characters in the key. End a host-wide key with `/*` — a bare `git.company.example*` also covers hosts whose names merely start with that string.
+# Every matching entry applies, least- to most-specific, following the rule above: a more specific entry — `git.company.example/platform/*` over `git.company.example/*` — wins where both set the same setting, while hooks and aliases from every matching entry all run, least-specific first. A literal key is the most specific of all; specificity is the count of non-`*` characters in the key. End a host-wide key with `/*` — a bare `git.company.example*` also covers hosts whose names merely start with that string. A remote on a non-default SSH port carries the port in its identifier, so its host-wide key is `git.company.example:2222/*`.
 #
 # Entries in `approvals.toml` match the same way, so a hand-written pattern entry approves its commands for every repository it covers.
 #

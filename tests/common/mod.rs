@@ -28,6 +28,30 @@ use worktrunk::path::to_posix_path;
 // Signal handling (for PTY tests)
 // =============================================================================
 
+#[cfg(unix)]
+pub const FOREGROUND_TRACE_FILTER: &str = "worktrunk::wt_trace=debug,worktrunk::trace::emit=debug";
+
+/// Child readiness may precede the parent's spawn return. Caught-signal tests
+/// wait for wt to commit admission before delivering ordinary terminal input.
+#[cfg(unix)]
+pub fn wait_for_foreground_admission(repo: &TestRepo, children: &[i32]) {
+    let trace = resolve_git_common_dir(repo.root_path()).join("wt/logs/trace.jsonl");
+    let admissions: Vec<_> = children
+        .iter()
+        .map(|pid| format!("Foreground admitted:{pid}"))
+        .collect();
+    wait_for("foreground child admission", || {
+        std::fs::read_to_string(&trace).is_ok_and(|records| {
+            let events = worktrunk::trace::parse_lines(&records);
+            admissions.iter().all(|admission| {
+                events.iter().any(|entry| {
+                    matches!(&entry.kind, worktrunk::trace::TraceEntryKind::Instant { name } if name == admission)
+                })
+            })
+        })
+    });
+}
+
 /// Block SIGTTIN and SIGTTOU signals to prevent test processes from being
 /// stopped when PTY operations interact with terminal control in background
 /// process groups.
@@ -1378,6 +1402,19 @@ pub fn add_pty_binary_path_filters(settings: &mut insta::Settings) {
         r"[^\s]+/target/(?:[^/\s]+/)*(?:debug|release|\[BUILD_MODE\])/(?:wt-test-bin/[0-9a-f]+-[0-9a-f]+/)?wt",
         "[BIN]",
     );
+}
+
+/// Shell-visible exit status, including a CLI terminated by its native signal.
+pub fn shell_exit_code(status: &std::process::ExitStatus) -> Option<i32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        status
+            .code()
+            .or_else(|| status.signal().map(|signal| 128 + signal))
+    }
+    #[cfg(not(unix))]
+    status.code()
 }
 
 // =============================================================================

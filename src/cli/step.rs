@@ -134,6 +134,12 @@ Three sections are printed: the rendered prompt, the shell command that would in
 
 The squash commit is made on a detached HEAD, as `git rebase` does, so git's own commit hooks run and see no current branch.
 
+## Recovering staged changes
+
+Before squashing staged changes, Worktrunk saves them to `refs/wt-backup/<branch>`. Changes left unstaged are not included in the backup.
+
+The output prints a command to recover the saved changes in a new worktree, including after `wt merge` removes the original.
+
 ## Options
 
 ### Staging
@@ -508,7 +514,7 @@ feature/auth
     ///
     /// Executes sequentially with real-time output; continues past command failures.
     #[command(
-        after_long_help = r#"A summary of successes and failures is shown at the end. Context JSON — a flat object of every template variable — is piped to stdin for scripts that need structured data.
+        after_long_help = r#"A summary of successes and failures is shown at the end. Context JSON — a flat object of every template variable — is provided on stdin for scripts that need structured data.
 
 ## Arguments
 
@@ -621,7 +627,7 @@ In `wt list`, candidates show `_` (same commit) or `⊂` (content integrated). R
 
 Locked worktrees, worktrees with uncommitted changes, and the main worktree are always skipped. The current worktree is removed last, triggering cd to the primary worktree. Pre-remove and post-remove hooks run for each removal; a candidate whose hooks include an unapproved project command is skipped with `(approval required)` (pre-approve with `wt config approvals add`, or pass `--yes`).
 
-Removals and their hooks may run concurrently across worktrees. Each worktree's pre-remove hooks finish before its removal begins. Hooks must coordinate writes to shared resources and avoid writing into other worktrees being pruned.
+Prune removes worktrees concurrently, so hooks that write shared resources must coordinate those writes.
 
 ## Min-age guard
 

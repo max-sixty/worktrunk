@@ -23,6 +23,7 @@ mod error;
 mod expansion;
 mod hooks;
 mod project;
+mod template_analysis;
 #[cfg(test)]
 mod test;
 mod unknown_tree;
@@ -211,13 +212,14 @@ pub use deprecation::{
 pub use deprecation::{DeprecationKind, Deprecations};
 pub use expansion::{
     ACTIVE_VARS, ALIAS_ARGS_KEY, EXEC_BASE_VARS, REPO_VARS, TemplateContext, TemplateExpandError,
-    ValidationScope, VarScope, VarsMode, alias_context_filter, base_vars, expand_template,
-    format_alias_variables, format_base_variables, format_hook_variables, redact_credentials,
-    referenced_vars_for_config, referenced_vars_for_templates, sanitize_branch_name, sanitize_db,
-    short_hash, template_environment, template_references_var, validate_list_column_template,
-    validate_template, validate_template_syntax, vars_available_in, vars_map_to_value,
+    ValidationScope, VarScope, VarsMode, alias_context_filter, base_vars, binds_cli_var,
+    expand_template, format_alias_variables, format_base_variables, format_hook_variables,
+    redact_credentials, referenced_vars_for_config, referenced_vars_for_templates,
+    sanitize_branch_name, sanitize_db, short_hash, template_environment, template_references_var,
+    validate_list_column_template, validate_template, validate_template_syntax, vars_available_in,
+    vars_map_to_value,
 };
-pub use hooks::HooksConfig;
+pub use hooks::{HookSource, HooksConfig};
 pub use project::{
     ProjectCiConfig, ProjectCommitConfig, ProjectCommitGenerationConfig, ProjectConfig,
     ProjectForgeConfig, ProjectListConfig, valid_project_config_keys,
@@ -231,8 +233,8 @@ pub use user::{
     CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListColumnConfig, ListConfig,
     MergeConfig, RemoveConfig, ResolvedConfig, StageMode, StepConfig, SwitchConfig,
     SwitchPickerConfig, UserConfig, UserProjectOverrides, config_path, config_path_for_display,
-    default_config_path, default_system_config_path, require_config_path, set_config_overrides,
-    set_config_path, system_config_path, valid_user_config_keys,
+    default_config_path, require_config_path, set_config_overrides, set_config_path,
+    system_config_path, valid_user_config_keys,
 };
 
 #[cfg(test)]

@@ -2189,6 +2189,7 @@ impl TestRepo {
             .expect("call setup_mock_ci_tools_unauthenticated() first");
         MockConfig::new("tea")
             .version("tea version development (mock)")
+            .command("logins list --output", MockResponse::output("[]"))
             .write(mock_bin);
     }
 
@@ -3494,30 +3495,6 @@ pub fn wait_for_file_lines(path: &Path, expected_lines: usize) {
         BG_TIMEOUT,
         actual,
         path.display()
-    );
-}
-
-/// Wait for a file to contain valid JSON, polling with exponential backoff.
-/// Use when a background process writes JSON that may be partially written.
-pub fn wait_for_valid_json(path: &Path) -> serde_json::Value {
-    let start = std::time::Instant::now();
-    let mut attempt = 0;
-    let mut last_error = String::new();
-    while start.elapsed() < BG_TIMEOUT {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            match serde_json::from_str(&content) {
-                Ok(json) => return json,
-                Err(e) => last_error = format!("{e} (content: {content})"),
-            }
-        }
-        exponential_sleep(attempt);
-        attempt += 1;
-    }
-    panic!(
-        "File did not contain valid JSON within {:?}: {}\nLast error: {}",
-        BG_TIMEOUT,
-        path.display(),
-        last_error
     );
 }
 

@@ -223,7 +223,7 @@ fn test_expand_template_missing_variable() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
-        err.message.contains("undefined value"),
+        err.message.contains("undefined variable"),
         "got: {}",
         err.message
     );

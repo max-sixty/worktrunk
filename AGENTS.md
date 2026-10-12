@@ -26,7 +26,7 @@ Each worktree maps to one branch. Worktree arguments resolve branch first throug
 
 ## Documentation
 
-Public docs are curated product guidance, not an exhaustive specification. Document new capabilities and changed usage; correct existing claims that become false. A correctness fix with no change to usage needs no new prose: an omitted failure case is not an inaccurate claim. Keep regression conditions in tests and commit messages.
+Public docs help users choose and use Worktrunk. Keep them concise, in the reader’s terms, with detail proportional to how many readers need it. Document new capabilities and changed usage; correct false claims in place with the smallest sufficient edit. Implementation rationale belongs in code. A correctness fix that preserves usage needs no new guide prose; keep regression conditions in tests and commit messages.
 
 src/cli/mod.rs is primary for command help and generated command pages; docs/AGENTS.md explains sync. Check that --help matches behavior. Run cargo test --test integration test_docs_are_in_sync, then refresh help snapshots when help text changes.
 
@@ -76,7 +76,7 @@ Worktrunk touches the network only when the user asks for it. The first Reposito
 
 ### Signal Handling: Ctrl-C Cancels the Current Command
 
-When a child is interrupted, every foreground loop stops before its next step, including Warn hook pipelines and worktree loops. Use err.interrupt_signal() from ErrorExt and propagate WorktrunkError::Interrupted. Capture mode treats SIGINT and SIGTERM as interrupts; other child signals remain visible failures. See src/shell_exec.rs and src/commands/command_executor.rs for signal normalization and rendering.
+Foreground commands share the caller's native job group. A child terminated by SIGINT or SIGTERM stops every foreground loop before its next step, including Warn hook pipelines and worktree loops. A caught Ctrl-C retains the child's normal exit semantics, including an ordinary exit code 130; do not infer cancellation from numeric exit codes. SIGTERM addressed to wt cancels its owned work even if the child catches it. Use err.interrupt_signal() from ErrorExt and propagate WorktrunkError::Interrupted through loops. Capture mode also classifies native SIGINT/SIGTERM exits; other child signals remain visible failures. See src/shell_exec.rs and src/signal_forwarder.rs for the contracts.
 
 ### Project Commands Run Only After Approval
 

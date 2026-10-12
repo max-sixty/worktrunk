@@ -17,6 +17,14 @@ use crate::git::{CommandError, PlumbingDiff};
 
 const TEMP_INDEX_PREFIX: &str = "worktrunk-temp-index-";
 
+/// A squash safety backup: an immutable snapshot of the index and the ref
+/// whose reflog retains it. The backup commit's parent is the pre-squash HEAD.
+#[derive(Debug)]
+pub struct SafetyBackup {
+    pub sha: String,
+    pub ref_name: String,
+}
+
 #[derive(Debug)]
 struct NumstatEntry {
     diff: LineDiff,
@@ -890,14 +898,18 @@ impl<'a> WorkingTree<'a> {
     /// two cover different halves of "the directory no longer holds this
     /// worktree": prunable is the half git notices, this is the half it does
     /// not.
-    pub fn ensure_holds_this_worktree(&self) -> anyhow::Result<()> {
+    ///
+    /// Returns the git dir that answers for this worktree: the common dir for
+    /// the main worktree, its registration under `<common>/worktrees/`
+    /// otherwise.
+    pub fn ensure_holds_this_worktree(&self) -> anyhow::Result<PathBuf> {
         let common_dir = self.repo.git_common_dir();
         // A git dir that can't be resolved at all is the strongest form of "not
         // this worktree": nothing there answers for it. Treating that as a
         // refusal keeps the failure closed.
         let git_dir = Repository::git_dir_at(&self.path);
         if git_dir.as_deref() == Some(common_dir) {
-            return Ok(());
+            return Ok(common_dir.to_path_buf());
         }
 
         // Where the occupant's own registration says it lives. `None` when there
@@ -905,15 +917,15 @@ impl<'a> WorkingTree<'a> {
         // different repository, or its registration here has lost its `gitdir`
         // file.
         let registrations = common_dir.join("worktrees");
-        let occupant_registered_at = git_dir
-            .filter(|git_dir| git_dir.parent() == Some(registrations.as_path()))
-            .as_deref()
-            .and_then(registration_worktree_path);
-        if occupant_registered_at
-            .as_deref()
-            .is_some_and(|recorded| crate::path::paths_match(recorded, &self.path))
+        let registration =
+            git_dir.filter(|git_dir| git_dir.parent() == Some(registrations.as_path()));
+        let occupant_registered_at = registration.as_deref().and_then(registration_worktree_path);
+        if let Some(registration) = registration
+            && occupant_registered_at
+                .as_deref()
+                .is_some_and(|recorded| crate::path::paths_match(recorded, &self.path))
         {
-            return Ok(());
+            return Ok(registration);
         }
 
         Err(GitError::WorktreePathNotOurs {
@@ -1160,7 +1172,7 @@ impl<'a> WorkingTree<'a> {
     /// `git read-tree <sha>` restores that index, `git checkout <sha> -- .` also
     /// restores the files, and `<sha>^` is the branch tip before the squash.
     ///
-    /// Returns the short SHA of the backup commit.
+    /// Returns the backup commit's SHA and the ref retaining it.
     ///
     /// # Example
     /// ```no_run
@@ -1168,11 +1180,11 @@ impl<'a> WorkingTree<'a> {
     ///
     /// let repo = Repository::current()?;
     /// let wt = repo.current_worktree();
-    /// let sha = wt.create_safety_backup("feature → main (squash)")?;
-    /// println!("Backup created: {}", sha);
+    /// let backup = wt.create_safety_backup("feature → main (squash)")?;
+    /// println!("Backup created: {}", backup.sha);
     /// # Ok::<(), anyhow::Error>(())
     /// ```
-    pub fn create_safety_backup(&self, message: &str) -> anyhow::Result<String> {
+    pub fn create_safety_backup(&self, message: &str) -> anyhow::Result<SafetyBackup> {
         let tree = self.run_command(&["write-tree"])?;
         let backup_sha = self
             .run_command(&[
@@ -1210,7 +1222,10 @@ impl<'a> WorkingTree<'a> {
         ])
         .context("Failed to create backup ref")?;
 
-        self.repo().short_sha(&backup_sha)
+        Ok(SafetyBackup {
+            sha: backup_sha,
+            ref_name,
+        })
     }
 }
 

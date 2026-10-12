@@ -44,7 +44,7 @@ use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::{
     ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, VarScope, alias_context_filter,
-    format_alias_variables, referenced_vars_for_config,
+    binds_cli_var, format_alias_variables, referenced_vars_for_config,
 };
 use worktrunk::git::{CommandError, Repository, WorktrunkError};
 use worktrunk::styling::{
@@ -61,8 +61,9 @@ use crate::commands::command_executor::{
 use crate::commands::hook_announcement::{
     SourcedStep, format_pipeline_summary_from_names, step_names_from_config,
 };
-use crate::commands::hooks::{HookSource, sourced_steps_to_foreground};
+use crate::commands::hooks::sourced_steps_to_foreground;
 use crate::commands::{build_invalid_subcommand_error, similar_subcommands};
+use worktrunk::config::HookSource;
 
 /// Built-in `wt step` subcommand names. Aliases with these names are
 /// reachable via `wt <name>` (top-level) but shadowed via `wt step <name>`.
@@ -242,7 +243,7 @@ impl AliasOptions {
                         bail!("invalid KEY=VALUE: key cannot be empty");
                     }
                     let canon = key.replace('-', "_");
-                    if referenced_vars.contains(&canon) {
+                    if binds_cli_var(&canon, referenced_vars) {
                         vars.push((canon, value.to_string()));
                     } else {
                         positional_args.push(arg.clone());
@@ -256,7 +257,7 @@ impl AliasOptions {
                 // At end of args, forward `--KEY` alone.
                 let canon = rest.replace('-', "_");
                 if let Some(next) = args.get(i + 1) {
-                    if referenced_vars.contains(&canon) {
+                    if binds_cli_var(&canon, referenced_vars) {
                         // Warn on the footgun case: `--KEY --VALUE` with KEY
                         // referenced binds VALUE as the value. Almost always
                         // a typo — the user probably meant `--KEY=--VALUE`.
@@ -350,8 +351,9 @@ fn format_alias_announcement(name: &str, entry: &AliasEntry) -> Option<String> {
 /// `load_aliases` returns (a name only appears in the map if some source
 /// defines it). When both are set, both bodies run — user first, then
 /// project — and each runs under its own trust regime: user steps skip
-/// approval and pass EXEC through (issue #2101); project steps require
-/// approval and scrub EXEC.
+/// approval, project steps require it. Directive passthrough no longer
+/// varies by source: the EXEC directive file is retired (#3977), so every
+/// child scrubs it and only the CD file is passed through.
 pub(crate) struct AliasEntry {
     pub user: Option<CommandConfig>,
     pub project: Option<CommandConfig>,
@@ -1312,6 +1314,26 @@ cmd = [
                 ),
             ],
             positional_args: [],
+        }
+        "#);
+    }
+
+    #[test]
+    fn test_parse_reserved_keys_forward_even_when_referenced() {
+        use insta::assert_debug_snapshot;
+        // `args` and `vars` are set by the runtime after CLI bindings, so a
+        // binding would be overwritten and the token lost. Both forms forward
+        // into `{{ args }}` instead, even though the template references them.
+        assert_debug_snapshot!(parse_with(&["deploy", "--args=x", "--vars", "y", "z"], &["args", "vars"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            vars: [],
+            positional_args: [
+                "--args=x",
+                "--vars",
+                "y",
+                "z",
+            ],
         }
         "#);
     }

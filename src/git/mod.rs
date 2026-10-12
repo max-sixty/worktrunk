@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 mod ci_platform;
 mod diff;
 mod error;
+pub(crate) use error::error_chain_message;
 pub mod fsmonitor;
 mod parse;
 #[cfg(unix)]
@@ -88,6 +89,7 @@ pub use error::{
     add_hook_skip_hint,
     // Shared phrasing for an unmerged index ("1 path with unresolved conflicts")
     format_unresolved_conflicts,
+    process_exit_description,
     // Render a single error via Diagnostic if it implements one
     try_render_diagnostic,
 };
@@ -101,9 +103,10 @@ pub use remove::{
 pub use repository::sha_cache;
 pub use repository::{
     Branch, BranchDiffSpec, CommitMessageDetail, InProgressOperation, IntegrationTargets,
-    PreparedDiff, RefSnapshot, Repository, ResolvedWorktree, Selector, StaleWorktreeWork,
-    TempIndex, WorkingTree, duplicated_branches, is_valid_branch_name, normalize_selector,
-    resolve_input_path, select_comparison_base, set_base_path,
+    PreparedDiff, RefSnapshot, Repository, ResolvedWorktree, SafetyBackup, Selector,
+    StaleWorktreeWork, TempIndex, WorkingTree, base_path, duplicated_branches,
+    is_valid_branch_name, normalize_selector, resolve_input_path, select_comparison_base,
+    set_base_path,
 };
 pub use url::parse_owner_repo;
 pub use url::{GitRemoteUrl, GitRepoInfo, GitRepoProvider};
@@ -272,7 +275,7 @@ pub fn check_integration(signals: &IntegrationSignals) -> Option<IntegrationReas
 /// For batch operations, use parallel tasks to build [`IntegrationSignals`] directly.
 ///
 /// Resolves both `branch` and `target` to commit SHAs via `snapshot` so the
-/// integration probes are immune to ambient ref→SHA cache staleness — this
+/// integration probes read the ref state the caller captured — this
 /// is the safety contract that lets `wt merge`'s post-update-ref check
 /// observe the new local target SHA instead of the pre-merge value.
 /// Refs not in the snapshot (typically transient HEAD commits during a

@@ -42,7 +42,7 @@ use worktrunk::styling::{
 
 use super::shell_integration::{
     compute_shell_warning_reason, explicit_path_hint, git_subcommand_warning,
-    print_shell_integration_hint, should_show_explicit_path_hint,
+    print_shell_activation_hint, should_show_explicit_path_hint,
 };
 
 // ============================================================================
@@ -190,7 +190,6 @@ fn spawn_background_removal(
             remove_command,
             log_label,
             &HookLog::Internal(operation),
-            None,
         )
         .map(|_| ())
     };
@@ -606,7 +605,7 @@ fn build_switch_output_context(
     result: &SwitchResult,
     branch_info: &SwitchBranchInfo,
     change_dir: bool,
-) -> SwitchOutputContext {
+) -> anyhow::Result<SwitchOutputContext> {
     let path = super::to_logical_path(result.path());
     let path_display = format_path_for_display(&path);
     let branch = branch_info
@@ -621,28 +620,29 @@ fn build_switch_output_context(
     } else if is_git_subcommand {
         Some("ran git wt; running through git prevents cd".to_string())
     } else {
-        Some(compute_shell_warning_reason())
+        Some(compute_shell_warning_reason()?)
     };
     let user_wont_be_in_worktree = !change_dir || shell_warning_reason.is_some();
 
-    SwitchOutputContext {
+    Ok(SwitchOutputContext {
         path,
         path_display,
         branch,
         shell_warning_reason,
         user_wont_be_in_worktree,
         is_git_subcommand,
-    }
+    })
 }
 
-fn print_switch_directory_hint(branch: &str, is_git_subcommand: bool) {
+fn print_switch_directory_hint(branch: &str, is_git_subcommand: bool) -> anyhow::Result<()> {
     if is_git_subcommand {
         eprintln!("{}", hint_message(git_subcommand_warning()));
     } else if super::retired_shell_wrapper_active() {
         super::print_outdated_shell_wrapper_hint_once();
-    } else if should_show_explicit_path_hint() {
+    } else if should_show_explicit_path_hint()? {
         eprintln!("{}", hint_message(explicit_path_hint(branch)));
     }
+    Ok(())
 }
 
 fn handle_switch_already_at_output(ctx: &SwitchOutputContext) -> Option<PathBuf> {
@@ -657,7 +657,7 @@ fn handle_switch_already_at_output(ctx: &SwitchOutputContext) -> Option<PathBuf>
     None
 }
 
-fn handle_switch_existing_output(ctx: &SwitchOutputContext) -> Option<PathBuf> {
+fn handle_switch_existing_output(ctx: &SwitchOutputContext) -> anyhow::Result<Option<PathBuf>> {
     if let Some(reason) = &ctx.shell_warning_reason {
         eprintln!(
             "{}",
@@ -667,7 +667,16 @@ fn handle_switch_existing_output(ctx: &SwitchOutputContext) -> Option<PathBuf> {
                 ctx.path_display
             ))
         );
-        print_switch_directory_hint(&ctx.branch, ctx.is_git_subcommand);
+        print_switch_directory_hint(&ctx.branch, ctx.is_git_subcommand)?;
+    } else if ctx.user_wont_be_in_worktree {
+        eprintln!(
+            "{}",
+            info_message(cformat!(
+                "Worktree for <bold>{}</> @ <bold>{}</> (directory change disabled)",
+                ctx.branch,
+                ctx.path_display
+            ))
+        );
     } else {
         eprintln!(
             "{}",
@@ -682,7 +691,7 @@ fn handle_switch_existing_output(ctx: &SwitchOutputContext) -> Option<PathBuf> {
         );
     }
 
-    ctx.user_wont_be_in_worktree.then(|| ctx.path.clone())
+    Ok(ctx.user_wont_be_in_worktree.then(|| ctx.path.clone()))
 }
 
 fn maybe_print_worktree_path_hint(created_branch: bool) {
@@ -715,7 +724,7 @@ fn handle_switch_created_output(
     created_branch: bool,
     base_branch: Option<&str>,
     from_remote: Option<&str>,
-) -> Option<PathBuf> {
+) -> anyhow::Result<Option<PathBuf>> {
     eprintln!(
         "{}",
         success_message(format_switch_message(
@@ -735,10 +744,10 @@ fn handle_switch_created_output(
             "{}",
             warning_message(cformat!("Cannot change directory — {reason}"))
         );
-        print_switch_directory_hint(&ctx.branch, ctx.is_git_subcommand);
+        print_switch_directory_hint(&ctx.branch, ctx.is_git_subcommand)?;
     }
 
-    ctx.user_wont_be_in_worktree.then(|| ctx.path.clone())
+    Ok(ctx.user_wont_be_in_worktree.then(|| ctx.path.clone()))
 }
 
 struct BranchDeletionDisplay {
@@ -1006,7 +1015,7 @@ fn print_switch_message_if_changed(
         eprintln!("{}", hint_message(git_subcommand_warning()));
     } else {
         // Shell integration not active - compute specific reason
-        let reason = compute_shell_warning_reason();
+        let reason = compute_shell_warning_reason()?;
         eprintln!(
             "{}",
             warning_message(cformat!(
@@ -1016,10 +1025,10 @@ fn print_switch_message_if_changed(
         // Show appropriate hint based on invocation mode
         if super::retired_shell_wrapper_active() {
             super::print_outdated_shell_wrapper_hint_once();
-        } else if should_show_explicit_path_hint() {
+        } else if should_show_explicit_path_hint()? {
             eprintln!("{}", hint_message(explicit_path_hint(&dest_branch)));
         } else {
-            print_shell_integration_hint(&repo);
+            print_shell_activation_hint(&repo)?;
         }
     }
     Ok(())
@@ -1131,11 +1140,11 @@ pub fn handle_switch_output(
 
     // Translate to the user's logical (symlink-preserved) path for display messages.
     // The cd directive (above) handles its own translation internally.
-    let ctx = build_switch_output_context(result, branch_info, change_dir);
+    let ctx = build_switch_output_context(result, branch_info, change_dir)?;
 
     let display_path_for_hooks = match result {
         SwitchResult::AlreadyAt(_) => handle_switch_already_at_output(&ctx),
-        SwitchResult::Existing { .. } => handle_switch_existing_output(&ctx),
+        SwitchResult::Existing { .. } => handle_switch_existing_output(&ctx)?,
         SwitchResult::Created {
             created_branch,
             base_branch,
@@ -1146,7 +1155,7 @@ pub fn handle_switch_output(
             *created_branch,
             base_branch.as_deref(),
             from_remote.as_deref(),
-        ),
+        )?,
     };
 
     // The program runs in `destination`, which is the worktree root only when
@@ -1238,6 +1247,37 @@ pub fn handle_remove_output(
     quiet: bool,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<BranchFate> {
+    handle_remove_output_inner(plan, execution, hook_plan, quiet, false, announcer)
+}
+
+/// Merge may select a source containing another checkout, including the
+/// invoking worktree. Recheck its topology after pre-remove hooks, before the
+/// removal core's final safety gates. This is merge-specific: ordinary remove
+/// and batch prune retain their concurrent staging without a live registry
+/// read before each rename.
+pub fn handle_merge_remove_output(
+    plan: &RemovalPlan,
+    hook_plan: &ApprovedHookPlan,
+    announcer: &mut HookAnnouncer<'_>,
+) -> anyhow::Result<BranchFate> {
+    handle_remove_output_inner(
+        plan,
+        RemovalExecution::Background(BackgroundFallbackMode::Detached),
+        hook_plan,
+        false,
+        true,
+        announcer,
+    )
+}
+
+fn handle_remove_output_inner(
+    plan: &RemovalPlan,
+    execution: RemovalExecution,
+    hook_plan: &ApprovedHookPlan,
+    quiet: bool,
+    protect_nested_worktrees: bool,
+    announcer: &mut HookAnnouncer<'_>,
+) -> anyhow::Result<BranchFate> {
     match plan {
         RemovalPlan::Worktree {
             main_path,
@@ -1264,6 +1304,7 @@ pub fn handle_remove_output(
                 branch_checked_out_at: branch_checked_out_at.as_ref(),
                 hook_plan,
                 execution,
+                protect_nested_worktrees,
             },
             announcer,
         ),
@@ -1800,6 +1841,7 @@ struct WorktreeRemovalContext<'a> {
     /// no `ProjectConfig` snapshot to thread.
     hook_plan: &'a ApprovedHookPlan,
     execution: RemovalExecution,
+    protect_nested_worktrees: bool,
 }
 
 impl WorktreeRemovalContext<'_> {
@@ -1916,7 +1958,7 @@ fn handle_detached_removed_worktree_output(
             branch: path_dir_name(ctx.worktree_path).to_string(),
             path: ctx.worktree_path.to_path_buf(),
             remaining_entries: list_remaining_entries(ctx.worktree_path),
-            error: err.display_message(),
+            error: err,
         })?;
         let (files, bytes) = output
             .staged_path
@@ -1995,7 +2037,7 @@ fn handle_named_removed_worktree_foreground(
         branch: branch_name.into(),
         path: ctx.worktree_path.to_path_buf(),
         remaining_entries: list_remaining_entries(ctx.worktree_path),
-        error: err.display_message(),
+        error: err,
     })?;
     let stats = output
         .staged_path
@@ -2094,11 +2136,23 @@ fn handle_removed_worktree_output(
         execute_pre_remove_hooks_if_needed(&repo, &ctx)?;
     }
 
-    // No re-validation after `pre-remove` hooks: the pre-rename `ensure_clean`
-    // in the removal core catches a hook-dirtied worktree, and the branch
-    // deletion re-decides against fresh refs (`delete_branch_if_safe`'s CAS)
-    // — one mechanism per guarantee. `ctx.integration_reason` /
-    // `ctx.target_branch` carry the planning-time verdict for display.
+    // This read may wait for a registry teardown. Keep it before the final
+    // ownership/lock/dirty gates in the removal core, so edits made during
+    // the wait are checked before staging. Also precede the cd directive:
+    // refusing cleanup must not move the invoking shell.
+    if ctx.protect_nested_worktrees
+        && let Some(nested) = worktrunk::git::remove::nested_worktree(&repo, ctx.worktree_path)?
+    {
+        anyhow::bail!(cformat!(
+            "Cannot remove worktree @ <bold>{}</>; contains worktree @ <bold>{}</>",
+            format_path_for_display(ctx.worktree_path),
+            format_path_for_display(&nested)
+        ));
+    }
+
+    // The pre-rename `ensure_clean` catches a hook-dirtied worktree, and the
+    // branch deletion re-decides against fresh refs (`delete_branch_if_safe`'s
+    // CAS). The planning-time integration verdict is only for display.
 
     // TUI (picker) path: the removal runs in a background thread while skim
     // owns the terminal, so no messages, no spinner, no `cd` directive (the
@@ -2171,8 +2225,20 @@ fn remove_removed_worktree_silently(
 /// detached) have their own spawning logic.
 ///
 /// Capabilities: optional stdout→stderr redirect for deterministic ordering,
-/// SIGINT/SIGTERM forwarding to child process group, ANSI reset before child
+/// native Ctrl-C and direct-child SIGTERM delivery, ANSI reset before child
 /// runs, `Cmd` tracing/logging, and CD directive control.
+///
+/// ## Stdin
+///
+/// The child inherits the parent's stdin for interactive input. Foreground children
+/// share the caller's process group independently of stdin, so a `pre-*` hook
+/// can `gum confirm`, and an alias body's `wt switch` picker can drive `/dev/tty`.
+///
+/// Nothing is ever written to that stdin — a hook reads its context through
+/// template variables, whatever form it runs in. The two forms that can't be
+/// interactive close stdin instead, in their own spawn paths: concurrent groups
+/// in `output/concurrent.rs`, detached `post-*` pipelines in
+/// `commands/run_pipeline.rs`.
 ///
 /// ## Directive files
 ///
@@ -2216,7 +2282,6 @@ fn remove_removed_worktree_silently(
 pub fn execute_shell_command(
     working_dir: &std::path::Path,
     command: &str,
-    stdin_content: Option<&str>,
     command_log_label: Option<&str>,
     directives: DirectivePassthrough,
     redirect_stdout_to_stderr: bool,
@@ -2250,16 +2315,10 @@ pub fn execute_shell_command(
         cmd = cmd.external(label);
     }
 
-    if let Some(content) = stdin_content {
-        cmd = cmd.stdin_bytes(content);
-    } else {
-        // Inherit the parent's stdin so interactive children (e.g. TUI
-        // pickers) keep their controlling terminal. `inherit_stdin()` also
-        // keeps the child in the parent's process group so `tcsetattr` on
-        // `/dev/tty` succeeds — see the method's doc comment for the
-        // SIGTTOU rationale.
-        cmd = cmd.inherit_stdin();
-    }
+    // Inherit the parent's stdin so interactive children (e.g. TUI pickers,
+    // a `gum confirm` in a hook body) keep their controlling terminal — see
+    // the "Stdin" section of this function's docs.
+    cmd = cmd.inherit_stdin();
 
     if let Some(path) = directives.cd_file {
         cmd = cmd.directive_cd_file(path);

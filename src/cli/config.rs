@@ -33,7 +33,7 @@ pub enum ConfigShellCommand {
 
 ## Manual setup
 
-Add one line to the shell config:
+For bash, fish, zsh, and PowerShell, add the matching line to the shell config. For Nushell, run the command to save the wrapper in its autoload directory.
 
 Bash (~/.bashrc):
 ```console
@@ -50,9 +50,14 @@ Zsh (~/.zshrc):
 eval "$(wt config shell init zsh)"
 ```
 
-Nushell [experimental] — save to vendor autoload directory:
+Nushell 0.113+ [experimental] — save to vendor autoload directory:
 ```console
 $ wt config shell init nu | save -f ($nu.vendor-autoload-dirs | last | path join wt.nu)
+```
+
+PowerShell ($PROFILE):
+```powershell
+Invoke-Expression (& wt config shell init powershell | Out-String)
 ```"#
     )]
     Init {
@@ -71,7 +76,7 @@ $ wt config shell init nu | save -f ($nu.vendor-autoload-dirs | last | path join
 
     /// Write shell integration to config files
     #[command(
-        after_long_help = r#"Detects existing shell config files and adds the integration line.
+        after_long_help = r#"Appends an initialization line to bash, zsh, and PowerShell config files. For fish and Nushell, it replaces the autoloaded wrapper file; fish also gets a separate completion file. See [worktrunk.dev/shell-integration](/shell-integration/#files-created) for their locations.
 
 ## Examples
 
@@ -108,7 +113,7 @@ Use --yes to skip confirmation."#
 
     /// Remove shell integration from config files
     #[command(
-        after_long_help = r#"Removes shell integration lines from config files.
+        after_long_help = r#"Removes Worktrunk initialization lines from bash, zsh, and PowerShell config files, and Worktrunk wrapper and completion files for fish and Nushell.
 
 ## Examples
 
@@ -626,6 +631,36 @@ $ wt config alias dry-run deploy -- --env=staging
 #[derive(Subcommand)]
 pub enum ConfigCommand {
     /// Shell integration setup
+    #[command(
+        after_long_help = r#"A subprocess cannot change its parent shell's directory. Shell integration defines a function that runs the Worktrunk binary, then changes the shell's directory when the command requests it. It also enables tab completion.
+
+## Setup
+
+```console
+$ wt config shell install
+```
+
+Start a new shell after installation to load the wrapper. Invoke `wt` by name. Running a binary path or `git wt` bypasses the wrapper, so the shell's directory stays unchanged.
+
+- `wt config shell install --help` — installation options
+- `wt config shell init --help` — manual setup
+- `wt config shell uninstall` — remove the integration
+
+## Check the current shell
+
+```console
+$ wt config show
+```
+
+The SHELL INTEGRATION section reports whether the wrapper is active in the current session. Installation and activation are separate: a configured shell can still be running without the wrapper until its config is reloaded.
+
+In bash, zsh, or fish, `type wt` checks that `wt` resolves to a function. In PowerShell, `Get-Command wt -All` lists the Function and Application definitions.
+
+See [worktrunk.dev/shell-integration](/shell-integration/) for warning messages, installed files, and wrapper behavior.
+<!-- subdoc: init -->
+<!-- subdoc: install -->
+<!-- subdoc: uninstall -->"#
+    )]
     Shell {
         #[command(subcommand)]
         action: ConfigShellCommand,
@@ -818,7 +853,7 @@ $ wt config alias dry-run deploy -- --env=staging
 ## Supported tools
 
 - **claude** — Claude Code plugin (activity tracking + statusline)
-- **codex** — Codex plugin (Worktrunk configuration skill)
+- **codex** — Codex plugin (activity tracking + Worktrunk configuration skill)
 - **omp** — oh-my-pi hook (activity tracking)
 - **opencode** — OpenCode plugin (activity tracking)
 - **pi** — Pi extension (activity tracking)
@@ -1077,7 +1112,7 @@ Hook output lives in per-branch subtrees under `.git/wt/logs/{branch}/`:
 | Background hooks | `{branch}/{source}/{hook-type}/{name}.log` |
 | Background removal | `{branch}/internal/remove.log` |
 
-All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the background and produce log files. Source is `user` or `project`. Branch and hook names are sanitized for filesystem safety. Same operation on same branch overwrites the previous log. Removing a branch clears its subtree; orphans from deleted branches can be swept with `wt config state logs clear`.
+All `post-*` hooks (post-start, post-switch, post-commit, post-merge, post-remove) run in the background and produce log files. Source is `user` or `project`. Branch and hook names are sanitized for filesystem safety. Same operation on same branch overwrites the previous log. Removing a branch clears its subtree; orphans from deleted branches can be swept with `wt config state logs clear`.
 
 ### Diagnostic files
 
@@ -1198,7 +1233,7 @@ wt list
 ## Use cases
 
 - **Work status** — `🚧` WIP, `✅` ready for review, `🔥` urgent
-- **Agent tracking** — The [Claude Code](/claude-code/) plugin sets markers automatically
+- **Agent tracking** — [Agent plugins](/claude-code/) set markers automatically
 - **Notes** — Any short text: `"blocked"`, `"needs tests"`
 
 ## Storage
@@ -1737,7 +1772,7 @@ $ wt config state vars clear --all
 
 Clear all keys for a specific branch:
 ```console
-$ wt config state vars clear env --branch=feature
+$ wt config state vars clear --all --branch=feature
 ```"#)]
     Clear {
         /// Key to clear (required unless --all)
