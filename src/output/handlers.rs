@@ -24,7 +24,6 @@ use crate::commands::worktree::{
     BranchFate, RemovalPlan, RetainedReason, SharedBranchCheckout, SwitchBranchInfo, SwitchResult,
 };
 use worktrunk::config::UserConfig;
-use worktrunk::git::ErrorExt;
 use worktrunk::git::GitError;
 use worktrunk::git::IntegrationReason;
 use worktrunk::git::Repository;
@@ -37,8 +36,8 @@ use worktrunk::path::{canonicalize_with_parents, format_path_for_display};
 use worktrunk::progress::{Progress, format_stats_paren};
 use worktrunk::remove_dir::remove_dir_with_progress;
 use worktrunk::styling::{
-    FormattedMessage, eprintln, error_message, format_with_gutter, hint_message, info_message,
-    progress_message, success_message, suggest_command, verbosity, warning_message,
+    FormattedMessage, eprintln, hint_message, info_message, progress_message, success_message,
+    suggest_command, verbosity, warning_message,
 };
 
 use super::shell_integration::{
@@ -2402,7 +2401,7 @@ mod tests {
         let repo = Repository::at(test.path()).unwrap();
         let plan = repo
             .prepare_worktree_removal(
-                RemoveTarget::BranchOnly("feature".into()),
+                RemoveTarget::WorktreePath(path.clone()),
                 BranchDeletionMode::SafeDelete,
                 false,
                 test.path(),
