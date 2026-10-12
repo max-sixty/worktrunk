@@ -1189,7 +1189,7 @@ fn render_zsh_compinit_warning(out: &mut String) -> anyhow::Result<()> {
 /// Returns whether the file is missing, so it counts toward the section's
 /// single trailing `wt config shell install` hint.
 fn render_fish_completion_status(out: &mut String, cmd: &str) -> anyhow::Result<bool> {
-    let Ok(completion_path) = Shell::Fish.completion_path(cmd) else {
+    let Ok(completion_path) = worktrunk::shell::fish_completion_path(cmd) else {
         return Ok(false);
     };
     let completion_display = format_path_for_display(&completion_path);

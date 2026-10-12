@@ -978,17 +978,70 @@ fn test_list_full_skips_commit_checks_for_unpushed_head(mut repo: TestRepo) {
     let output = cmd.output().unwrap();
     assert!(output.status.success(), "wt list should succeed");
 
-    let stdout = String::from_utf8_lossy(&output.stdout)
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!list_line(&stdout, "feature-a").contains('⚠'), "{stdout}");
+    assert!(list_line(&stdout, "feature-b").contains('⚠'), "{stdout}");
+}
+
+/// The `wt list --full` line for `branch`, ANSI-stripped.
+fn list_line(stdout: &str, branch: &str) -> String {
+    stdout
         .ansi_strip()
-        .into_owned();
-    let line = |branch: &str| {
-        stdout
-            .lines()
-            .find(|line| line.contains(&format!(" {branch} ")))
-            .unwrap_or_else(|| panic!("expected a {branch} line\nstdout:\n{stdout}"))
-    };
-    assert!(!line("feature-a").contains('⚠'), "stdout:\n{stdout}");
-    assert!(line("feature-b").contains('⚠'), "stdout:\n{stdout}");
+        .lines()
+        .find(|line| line.contains(&format!(" {branch} ")))
+        .unwrap_or_else(|| panic!("expected a {branch} line\nstdout:\n{stdout}"))
+        .to_string()
+}
+
+/// A failed PR/MR list shows the error indicator whatever the CLI printed, here
+/// an authentication failure that no retry would change.
+#[rstest]
+#[case::github("gh", "pr list", "https://github.com/test-owner/test-repo.git")]
+#[case::gitlab("glab", "mr list", "https://gitlab.com/test-group/test-project.git")]
+fn test_list_full_failed_pr_list_shows_error(
+    mut repo: TestRepo,
+    #[case] tool: &str,
+    #[case] list_command: &str,
+    #[case] remote_url: &str,
+) {
+    repo.run_git(&["remote", "set-url", "origin", remote_url]);
+    repo.add_worktree("feature");
+    setup_tracking_for_all_branches(&repo, "origin");
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    std::fs::create_dir_all(&mock_bin).unwrap();
+    MockConfig::new(tool)
+        .version(&format!("{tool} version 2.0.0 (mock)"))
+        .command(
+            list_command,
+            MockResponse::stderr("HTTP 401: Bad credentials").with_exit_code(1),
+        )
+        .command("_default", MockResponse::output("[]"))
+        .write(&mock_bin);
+
+    let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+    configure_mock_ci_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(list_line(&stdout, "feature").contains('⚠'), "{stdout}");
+}
+
+/// The Gitea commit-status lookup is by SHA too, so an unpushed head skips it
+/// (the pushed `test_list_full_with_gitea_commit_status_tea_failure` is the
+/// control: the same failing lookup shows the error indicator).
+#[rstest]
+fn test_list_full_gitea_skips_commit_status_for_unpushed_head(mut repo: TestRepo) {
+    let head_sha = setup_gitea_repo_with_feature(&mut repo);
+    repo.run_git(&["update-ref", "refs/remotes/origin/feature", "feature~1"]);
+    repo.setup_mock_tea_commit_status_error(&head_sha, "Error: connection refused");
+
+    let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+    repo.configure_mock_commands(&mut cmd);
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!list_line(&stdout, "feature").contains('⚠'), "{stdout}");
 }
 
 // =============================================================================

@@ -425,56 +425,14 @@ pub(super) fn legacy_fish_conf_d_path(cmd: &str) -> Result<PathBuf, std::io::Err
         .join(format!("{}.fish", cmd)))
 }
 
-/// Returns the path to the native completion directory for a shell.
-///
-/// The `cmd` parameter affects the completion filename (e.g., `wt.fish` or `git-wt.fish`).
-///
-/// Note: Bash and Zsh use inline lazy completions in the init script.
-/// Only Fish uses a separate completion file at ~/.config/fish/completions/
-/// (installed by `wt config shell install`) that uses $WORKTRUNK_BIN to bypass
-/// the shell function wrapper.
-pub(super) fn completion_path(shell: super::Shell, cmd: &str) -> Result<PathBuf, std::io::Error> {
-    let home = home_dir_required()?;
-
-    // Use etcetera for XDG-compliant paths when available
-    let strategy = choose_base_strategy().ok();
-
-    Ok(match shell {
-        super::Shell::Bash => {
-            // XDG_DATA_HOME defaults to ~/.local/share
-            let data_home = strategy
-                .as_ref()
-                .map(|s| s.data_dir())
-                .unwrap_or_else(|| home.join(".local").join("share"));
-            data_home
-                .join("bash-completion")
-                .join("completions")
-                .join(cmd)
-        }
-        super::Shell::Zsh => home.join(".zfunc").join(format!("_{}", cmd)),
-        super::Shell::Fish => fish_config_dir(&home)
-            .join("completions")
-            .join(format!("{}.fish", cmd)),
-        super::Shell::Nushell => {
-            // Nushell completions are defined inline in the init script.
-            // Return the canonical vendor-autoload path (same as config).
-            nu_dirs()
-                .vendor_autoload
-                .ok_or_else(|| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        "`nu` did not report its vendor-autoload directory",
-                    )
-                })?
-                .join(format!("{}.nu", cmd))
-        }
-        super::Shell::PowerShell => {
-            // PowerShell doesn't use a separate completion file - completions are
-            // registered inline in the profile using Register-ArgumentCompleter
-            // Return a dummy path that won't be used
-            home.join(format!(".{}-powershell-completions", cmd))
-        }
-    })
+/// The completion file worktrunk installs for fish, the one shell whose
+/// completions live in their own file (`<fish config>/completions/<cmd>.fish`).
+/// Bash, Zsh, Nushell and PowerShell register completions inline in the
+/// integration they install.
+pub fn fish_completion_path(cmd: &str) -> Result<PathBuf, std::io::Error> {
+    Ok(fish_config_dir(&home_dir_required()?)
+        .join("completions")
+        .join(format!("{cmd}.fish")))
 }
 
 #[cfg(test)]
@@ -592,13 +550,9 @@ mod tests {
         let home = PathBuf::from("/home/user");
         let candidates = nushell_autoload_candidates(&home);
 
-        // Without `nu` there is nothing to integrate with, so no candidates.
-        let Some(target) = nu_dirs().vendor_autoload else {
-            assert!(candidates.is_empty(), "{candidates:?}");
-            return;
-        };
-        // The write target (first entry) is the directory `nu` reports.
-        assert_eq!(candidates[0], target);
+        // The write target (first entry) is the directory `nu` reports; without
+        // `nu` there is nothing to integrate with, so no candidates at all.
+        assert_eq!(candidates.first(), nu_dirs().vendor_autoload.as_ref());
         // No duplicates.
         let unique: std::collections::HashSet<_> = candidates.iter().collect();
         assert_eq!(
@@ -606,11 +560,13 @@ mod tests {
             unique.len(),
             "candidates must not contain duplicates: {candidates:?}"
         );
-        // The legacy ~/.config location is always present for cleanup.
-        assert!(
+        // Whenever there is a target, the legacy ~/.config location is there
+        // too, for cleanup.
+        assert_eq!(
             candidates
                 .iter()
                 .any(|p| p == &home.join(".config/nushell/vendor/autoload")),
+            !candidates.is_empty(),
             "legacy ~/.config/nushell location must be a candidate: {candidates:?}"
         );
     }
