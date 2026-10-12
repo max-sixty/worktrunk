@@ -881,7 +881,17 @@ mod tests {
         std::fs::write(test.root_path().join(".gitignore"), ".storage/\n").unwrap();
         test.commit("Ignore storage");
         let outer = test.add_worktree("outer");
-        let inner = test.add_worktree_at_path("inner", &outer.join(".storage/inner"));
+        let inner_path = outer.join(".storage/inner");
+        #[cfg(windows)]
+        let inner_path = {
+            test.run_git(&["config", "core.longpaths", "true"]);
+            let mut deep = inner_path;
+            while deep.as_os_str().len() < 320 {
+                deep.push("nested-checkout-directory");
+            }
+            deep
+        };
+        let inner = test.add_worktree_at_path("inner", &inner_path);
         std::fs::write(inner.join("notes.txt"), "independent work").unwrap();
         let repo = Repository::at(test.root_path()).unwrap();
         assert!(repo.worktree_at(&outer).dirty_files().unwrap().is_empty());

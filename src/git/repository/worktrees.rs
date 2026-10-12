@@ -16,7 +16,9 @@ use super::{
     is_valid_branch_name, normalize_selector, resolve_input_path,
 };
 use crate::git::{CommandError, PlumbingDiff, WorktreeId, finalize_worktrees, is_bare_repo_dir};
-use crate::path::{canonicalize_with_parents, format_path_for_display, paths_match};
+use crate::path::{
+    canonicalize_with_parents, format_path_for_display, paths_match, strip_verbatim_disk_prefix,
+};
 use crate::shell_exec::Cmd;
 use crate::styling::{eprintln, format_with_gutter, hint_message, warning_message};
 
@@ -55,17 +57,21 @@ impl Repository {
     /// symlinks resolve to their actual locations; missing checkouts are skipped.
     /// Unrecorded or manually moved checkouts are outside this registry check.
     pub fn nested_worktree(&self, path: &Path) -> anyhow::Result<Option<PathBuf>> {
-        let root = canonicalize(path).context("Failed to resolve worktree for removal")?;
-        if self.git_common_dir().starts_with(&root) {
-            return Ok(Some(self.git_common_dir().to_path_buf()));
+        let root = strip_verbatim_disk_prefix(
+            canonicalize(path).context("Failed to resolve worktree for removal")?,
+        );
+        let common_dir = strip_verbatim_disk_prefix(self.git_common_dir().to_path_buf());
+        if common_dir.starts_with(&root) {
+            return Ok(Some(common_dir));
         }
         let mut paths = Vec::new();
         if !self.is_bare()? {
             paths.push(self.repo_path()?.to_path_buf());
         }
         for (path, registration) in self.worktree_registrations()? {
-            if registration.git_dir.starts_with(&root) {
-                return Ok(Some(registration.git_dir));
+            let git_dir = strip_verbatim_disk_prefix(registration.git_dir);
+            if git_dir.starts_with(&root) {
+                return Ok(Some(git_dir));
             }
             paths.push(path);
         }
@@ -82,6 +88,7 @@ impl Repository {
                     });
                 }
             };
+            let path = strip_verbatim_disk_prefix(path);
             if path != root && path.starts_with(&root) {
                 return Ok(Some(path));
             }
