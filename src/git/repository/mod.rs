@@ -685,13 +685,6 @@ pub fn normalize_selector(name: &str) -> &str {
     if trimmed.is_empty() { name } else { trimmed }
 }
 
-fn path_is_missing(error: &std::io::Error) -> bool {
-    matches!(
-        error.kind(),
-        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-    )
-}
-
 /// Quote one path for Git's C-style alternate-object-directory list.
 #[cfg(unix)]
 fn quote_alternate_object_directory(path: &OsStr) -> OsString {
@@ -1466,7 +1459,7 @@ impl Repository {
             // A worktree's top-level path is its own `root()`.
             WORKTREE_ROOTS.entry(key.clone()).or_insert(key.clone());
 
-            if let Ok(Some(git_dir)) = Self::git_dir_at(&key) {
+            if let Ok(git_dir) = Self::git_dir_at(&key) {
                 GIT_DIRS.entry(key).or_insert(git_dir);
             }
         }
@@ -1478,24 +1471,21 @@ impl Repository {
     ///
     /// Reads are deliberately uncached so removal can detect replacement
     /// between gates; `WorkingTree::git_dir` uses a process-wide cache instead.
-    /// Missing or unsupported entries return `Ok(None)`, while unexpected I/O
-    /// errors propagate. Cache priming declines unresolved entries; main-path
-    /// discovery declines unverified candidates; removal refuses `Ok(None)`
-    /// and surfaces `Err` before mutating any checkout.
-    fn git_dir_at(dir: &Path) -> std::io::Result<Option<PathBuf>> {
+    /// Read and resolution errors refuse removal; cache priming and main-path
+    /// discovery decline entries they cannot resolve.
+    fn git_dir_at(dir: &Path) -> std::io::Result<PathBuf> {
         let dot_git = dir.join(".git");
-        let metadata = match std::fs::metadata(&dot_git) {
-            Ok(metadata) => metadata,
-            Err(error) if path_is_missing(&error) => return Ok(None),
-            Err(error) => return Err(error),
-        };
+        let metadata = std::fs::metadata(&dot_git)?;
         let target = if metadata.is_dir() {
             dot_git
         } else if metadata.is_file() {
             let content = std::fs::read(&dot_git)?;
-            let Some(path) = content.strip_prefix(b"gitdir: ") else {
-                return Ok(None);
-            };
+            let path = content.strip_prefix(b"gitdir: ").ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Invalid gitfile: expected gitdir: <path>",
+                )
+            })?;
             let path = super::git_path_from_file(path)?;
             if path.is_relative() {
                 dir.join(path)
@@ -1503,18 +1493,19 @@ impl Repository {
                 path
             }
         } else {
-            return Ok(None);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Git entry is neither a directory nor a gitfile",
+            ));
         };
-        let path = match canonicalize(target) {
-            Ok(path) => path,
-            Err(error) if path_is_missing(&error) => return Ok(None),
-            Err(error) => return Err(error),
-        };
-        match std::fs::metadata(&path) {
-            Ok(metadata) => Ok(metadata.is_dir().then_some(path)),
-            Err(error) if path_is_missing(&error) => Ok(None),
-            Err(error) => Err(error),
+        let path = canonicalize(target)?;
+        if !std::fs::metadata(&path)?.is_dir() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotADirectory,
+                "Git store is not a directory",
+            ));
         }
+        Ok(path)
     }
 
     /// Get a branch handle for branch-specific operations.
@@ -1715,7 +1706,7 @@ impl Repository {
     /// submodule can't misfire here on a stray `gitdir` file.
     fn separate_git_dir_work_tree(&self) -> Option<PathBuf> {
         let work_tree = registration_worktree_path(&self.git_common_dir).ok()?;
-        (Self::git_dir_at(&work_tree).ok()?? == self.git_common_dir).then_some(work_tree)
+        (Self::git_dir_at(&work_tree).ok()? == self.git_common_dir).then_some(work_tree)
     }
 
     /// Access the bulk git config map, populating on first call.
@@ -1989,7 +1980,7 @@ impl Repository {
     /// let branches = repo.run_command(&["branch", "--list"])?;
     /// # Ok::<(), anyhow::Error>(())
     /// ```
-    pub fn run_command(&self, args: &[&str]) -> anyhow::Result<String> {
+    pub fn run_command(&self, args: &[impl AsRef<OsStr>]) -> anyhow::Result<String> {
         self.run_command_bounded(args, None)
     }
 
@@ -2005,34 +1996,32 @@ impl Repository {
     /// else limits how long an unreachable host takes to not answer.
     pub(super) fn run_command_bounded(
         &self,
-        args: &[&str],
+        args: &[impl AsRef<OsStr>],
         timeout: Option<std::time::Duration>,
     ) -> anyhow::Result<String> {
         Ok(String::from_utf8_lossy(&self.run_command_bytes_bounded(args, timeout)?).into_owned())
     }
 
     /// Run a git command and return stdout without decoding paths.
-    pub fn run_command_bytes(&self, args: &[&str]) -> anyhow::Result<Vec<u8>> {
+    pub fn run_command_bytes(&self, args: &[impl AsRef<OsStr>]) -> anyhow::Result<Vec<u8>> {
         self.run_command_bytes_bounded(args, None)
     }
 
     fn run_command_bytes_bounded(
         &self,
-        args: &[&str],
+        args: &[impl AsRef<OsStr>],
         timeout: Option<std::time::Duration>,
     ) -> anyhow::Result<Vec<u8>> {
         let mut cmd = self.with_object_store_env(
             Cmd::new("git")
-                .args(args.iter().copied())
+                .args(args)
                 .current_dir(&self.discovery_path)
                 .context(self.logging_context()),
         );
         if let Some(timeout) = timeout {
             cmd = cmd.timeout(timeout);
         }
-        let output = cmd
-            .run()
-            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
+        let output = cmd.run()?;
 
         if !output.status.success() {
             return Err(

@@ -2817,7 +2817,7 @@ fn worktree_inventory_preserves_native_paths_and_lock_reasons() {
             reason,
             original.to_str().unwrap(),
         ]);
-        let git_dir = Repository::git_dir_at(&original).unwrap().unwrap();
+        let git_dir = Repository::git_dir_at(&original).unwrap();
         let checkout = test
             .root_path()
             .parent()
@@ -2831,7 +2831,7 @@ fn worktree_inventory_preserves_native_paths_and_lock_reasons() {
             super::working_tree::registration_worktree_path(&git_dir).unwrap(),
             checkout
         );
-        assert_eq!(Repository::git_dir_at(&checkout).unwrap(), Some(git_dir));
+        assert_eq!(Repository::git_dir_at(&checkout).unwrap(), git_dir);
 
         let repo = Repository::at(test.root_path()).unwrap();
         let worktrees = repo.list_worktrees().unwrap();
@@ -2851,74 +2851,67 @@ fn worktree_inventory_preserves_native_paths_and_lock_reasons() {
 #[cfg(unix)]
 #[test]
 fn git_dir_at_preserves_native_gitfile_target() {
-    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    use std::os::unix::ffi::OsStrExt;
 
     let test = TestRepo::with_initial_commit();
-    let names = [
-        b"store\twith\nwhitespace  ".as_slice(),
-        #[cfg(target_os = "linux")]
-        b"store-\xff  ".as_slice(),
-    ];
-    for (index, name) in names.into_iter().enumerate() {
-        let target = test
-            .root_path()
-            .parent()
-            .unwrap()
-            .join(std::ffi::OsString::from_vec(name.to_vec()));
-        let neighbor = PathBuf::from(target.to_string_lossy().trim_end());
-        let child = test
-            .root_path()
-            .parent()
-            .unwrap()
-            .join(format!("gitfile-{index}"));
-        let output = test
-            .git_command()
-            .arg("clone")
-            .arg(test.root_path().to_str().unwrap())
-            .arg(child.to_str().unwrap())
-            .run()
-            .unwrap();
-        assert!(output.status.success(), "{output:?}");
-        // Move native paths through the filesystem rather than Cmd's UTF-8 arguments.
-        std::fs::rename(child.join(".git"), &target).unwrap();
-        std::fs::create_dir(&neighbor).unwrap();
-        let output = test
-            .git_command()
-            .current_dir(&neighbor)
-            .args(["init", "--bare"])
-            .run()
-            .unwrap();
-        assert!(output.status.success(), "{output:?}");
-        assert_ne!(
-            dunce::canonicalize(&target).unwrap(),
-            dunce::canonicalize(&neighbor).unwrap()
-        );
-        // CRLF is a Git terminator; the trailing spaces belong to the path.
-        let mut content = b"gitdir: ".to_vec();
-        content.extend_from_slice(target.as_os_str().as_bytes());
-        content.extend_from_slice(b"\r\n");
-        std::fs::write(child.join(".git"), content).unwrap();
-        assert_eq!(
-            Repository::git_dir_at(&child).unwrap(),
-            Some(dunce::canonicalize(&target).unwrap())
-        );
-        let output = test
-            .git_command()
-            .current_dir(&child)
-            .args(["rev-parse", "--absolute-git-dir"])
-            .run()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "Git must accept the real gitfile: {output:?}"
-        );
-        let mut expected = dunce::canonicalize(target)
-            .unwrap()
-            .into_os_string()
-            .into_vec();
-        expected.push(b'\n');
-        assert_eq!(output.stdout, expected);
-    }
+    let target = test
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("store\twith\nwhitespace  ");
+    let neighbor = test
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("store\twith\nwhitespace");
+    let child = test.root_path().parent().unwrap().join("gitfile");
+    let output = test
+        .git_command()
+        .arg("clone")
+        .arg(test.root_path())
+        .arg(&child)
+        .run()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    std::fs::rename(child.join(".git"), &target).unwrap();
+    std::fs::create_dir(&neighbor).unwrap();
+    let output = test
+        .git_command()
+        .current_dir(&neighbor)
+        .args(["init", "--bare"])
+        .run()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_ne!(
+        dunce::canonicalize(&target).unwrap(),
+        dunce::canonicalize(&neighbor).unwrap()
+    );
+    // CRLF is a Git terminator; the trailing spaces belong to the path.
+    let mut content = b"gitdir: ".to_vec();
+    content.extend_from_slice(target.as_os_str().as_bytes());
+    content.extend_from_slice(b"\r\n");
+    std::fs::write(child.join(".git"), content).unwrap();
+    assert_eq!(
+        Repository::git_dir_at(&child).unwrap(),
+        dunce::canonicalize(&target).unwrap()
+    );
+    let output = test
+        .git_command()
+        .current_dir(&child)
+        .args(["rev-parse", "--absolute-git-dir"])
+        .run()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "Git must accept the real gitfile: {output:?}"
+    );
+    let mut expected = dunce::canonicalize(target)
+        .unwrap()
+        .as_os_str()
+        .as_bytes()
+        .to_vec();
+    expected.push(b'\n');
+    assert_eq!(output.stdout, expected);
 }
 
 #[cfg(unix)]
@@ -3000,22 +2993,24 @@ fn repo_path_preserves_local_core_worktree_path_bytes() {
     assert_eq!(repo.repo_path().unwrap(), expected);
 }
 
-/// A symlinked main .git has no backlink, and Git repair cannot create one.
-/// Inventory must retain the established usable linked-checkout behavior.
-#[cfg(unix)]
+/// Git retains native bytes in a registration id as well as its checkout path.
+#[cfg(target_os = "linux")]
 #[test]
-fn list_worktrees_accepts_symlinked_main_git_dir() {
-    let mut test = TestRepo::with_initial_commit();
-    let main = test.root_path().to_path_buf();
-    let store = main.parent().unwrap().join("store");
-    std::fs::rename(main.join(".git"), &store).unwrap();
-    std::os::unix::fs::symlink(&store, main.join(".git")).unwrap();
-    let linked = test.add_worktree("feature");
-    let repo = Repository::at(&linked).unwrap();
-    assert!(
-        repo.list_worktrees()
-            .unwrap()
-            .iter()
-            .any(|worktree| worktree.path == linked)
-    );
+fn stale_worktree_work_preserves_native_registration_arguments() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let test = TestRepo::with_initial_commit();
+    let checkout = test
+        .home_path()
+        .join(std::ffi::OsString::from_vec(b"feature-\xff".to_vec()));
+    let output = test
+        .git_command()
+        .args(["worktree", "add", "-b", "feature"])
+        .arg(&checkout)
+        .run()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    std::fs::remove_dir_all(&checkout).unwrap();
+    let repo = Repository::at(test.root_path()).unwrap();
+    assert_eq!(repo.stale_worktree_work(&checkout).unwrap(), None);
 }

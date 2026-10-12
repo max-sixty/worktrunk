@@ -31,7 +31,7 @@ use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::styling::{eprint, format_bash_with_gutter, info_message, println};
 
 use crate::commands::alias::{
-    AliasOptions, TOP_LEVEL_BUILTINS, load_aliases, load_aliases_for_listing,
+    AliasOptions, is_top_level_builtin, load_aliases, load_aliases_for_listing,
 };
 use crate::commands::build_invalid_subcommand_error;
 use crate::commands::command_executor::{
@@ -124,7 +124,7 @@ fn list_aliases() -> anyhow::Result<()> {
 /// surface rather than silently during an invocation that never reaches the
 /// alias.
 fn warn_if_shadowed(name: &str) {
-    if TOP_LEVEL_BUILTINS.contains(&name) {
+    if is_top_level_builtin(name) {
         worktrunk::styling::eprintln!(
             "{}",
             worktrunk::styling::warning_message(cformat!(
