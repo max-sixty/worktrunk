@@ -3,12 +3,12 @@ rem Windows hook entrypoint: find Git Bash by installation path, avoiding the
 rem System32\bash.exe WSL launcher (#4007), then run the shared wt.sh.
 rem Usage: wt.cmd [args...]
 rem
-rem Codex uses the session shell, so commandWindows must parse in cmd and both
-rem PowerShell editions (#4239). `cmd /d /c call "${PLUGIN_ROOT}\hooks\wt.cmd"`
-rem starts with a command rather than a PowerShell string expression. `call`
-rem avoids cmd's initial-quote stripping; /d disables AutoRun for this cmd hop.
-rem The outer cmd, if Codex uses one, still runs its own AutoRun. A cmd-session
-rem lookup of the bare `cmd` can also resolve an executable in the project cwd.
+rem Codex uses the session shell. The manifest starts with `set WT_HOOK=; &`:
+rem cmd sets an unused environment variable, then & runs this absolute path;
+rem PowerShell sets an unused variable, then ; ends that statement and & calls
+rem this path. Both builtins are silent. Avoid a bare cmd launcher, whose lookup
+rem depends on the session shell and PATH. Direct batch execution uses the
+rem system interpreter (MS14-019). The session shell owns its startup behavior.
 rem
 rem Always exit 0: markers are best-effort, and cmd's `|| exit /b 0` cannot live
 rem in the cross-shell command string. Diagnostics still go to stderr.
@@ -46,15 +46,32 @@ exit /b 0
 
 rem %1 is a Git install's cmd\, bin\, or mingw64\bin\ directory, with the
 rem trailing separator `%~dpI` leaves on; the last sits a level deeper, so the
-rem install root is tried one level further up when the first two miss.
+rem install root is tried one level further up for a known nested runtime.
 rem Git\bin\bash.exe first, as find_git_bash does: it is the wrapper that
 rem sets up the MSYS environment for a caller outside Git Bash, which is what
 rem puts `uname` and friends within reach of wt.sh.
 :derive
 call :accept "%~1..\bin\bash.exe"
 if not defined BASH call :accept "%~1..\usr\bin\bash.exe"
-if not defined BASH call :accept "%~1..\..\bin\bash.exe"
-if not defined BASH call :accept "%~1..\..\usr\bin\bash.exe"
+if not defined BASH for %%I in ("%~1.") do call :derive_deeper "%%~fI"
+goto :eof
+
+rem Only usr\bin and mingw32/64\bin sit below the Git install root.
+rem Shallow cmd or bin lookups must never climb outside that installation.
+:derive_deeper
+if /i not "%~nx1"=="bin" goto :eof
+for %%I in ("%~1\..") do call :derive_runtime "%%~fI"
+goto :eof
+
+:derive_runtime
+if /i "%~nx1"=="usr" call :derive_root "%~1"
+if /i "%~nx1"=="mingw32" call :derive_root "%~1"
+if /i "%~nx1"=="mingw64" call :derive_root "%~1"
+goto :eof
+
+:derive_root
+call :accept "%~1\..\bin\bash.exe"
+if not defined BASH call :accept "%~1\..\usr\bin\bash.exe"
 goto :eof
 
 :accept
