@@ -161,6 +161,17 @@ pub(super) fn list_and_filter_ignored_entries(
         )
     };
 
+    // Built-in metadata exclusions apply independently of caller configuration,
+    // including to individual ignored files under a directory with tracked
+    // siblings. Promote deliberately supplies no configurable exclusions.
+    let mut builder = GitignoreBuilder::new(worktree_path);
+    for pattern in BUILTIN_COPY_IGNORED_EXCLUDES {
+        builder.add_line(None, pattern)?;
+    }
+    let builtin_matcher = builder
+        .build()
+        .context("Failed to build metadata exclude matcher")?;
+
     // Filter out excluded patterns, VCS metadata directories, and nested worktrees
     Ok(filtered
         .into_iter()
@@ -173,16 +184,11 @@ pub(super) fn list_and_filter_ignored_entries(
             {
                 return false;
             }
-            // Skip built-in excluded directories (.jj, .hg, .worktrees, etc.)
-            if *is_dir
-                && path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|name| {
-                        BUILTIN_COPY_IGNORED_EXCLUDES
-                            .iter()
-                            .any(|pat| pat.trim_end_matches('/') == name)
-                    })
+            // Never transfer worktree-local VCS or tool metadata, regardless
+            // of whether Git listed the directory or a file inside it.
+            if builtin_matcher
+                .matched_path_or_any_parents(relative_entry(path, worktree_path), *is_dir)
+                .is_ignore()
             {
                 return false;
             }
