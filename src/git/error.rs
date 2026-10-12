@@ -529,6 +529,12 @@ pub enum GitError {
         directory_remains: bool,
         work: StaleWorktreeWork,
     },
+    /// Branch deletion failed, possibly after its checkout was removed.
+    BranchDeletionFailed {
+        branch: String,
+        removed_worktree: Option<PathBuf>,
+        error: anyhow::Error,
+    },
     RemoteOnlyBranch {
         branch: String,
         remote: String,
@@ -752,7 +758,8 @@ pub enum GitError {
 impl std::error::Error for GitError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::WorktreeRemovalFailed { error, .. } => Some(error.as_ref()),
+            Self::WorktreeRemovalFailed { error, .. }
+            | Self::BranchDeletionFailed { error, .. } => Some(error.as_ref()),
             _ => None,
         }
     }
@@ -882,6 +889,18 @@ impl GitError {
                     "Worktree for <bold>{branch}</> is stale with a {} in progress",
                     operation_noun(*operation)
                 ),
+            },
+
+            GitError::BranchDeletionFailed {
+                branch,
+                removed_worktree,
+                ..
+            } => match removed_worktree {
+                Some(path) => cformat!(
+                    "Worktree removed @ <bold>{}</>; failed to delete branch <bold>{branch}</>",
+                    format_path_for_display(path)
+                ),
+                None => cformat!("Failed to delete branch <bold>{branch}</>"),
             },
 
             GitError::RemoteOnlyBranch { branch, remote } => {
@@ -1386,6 +1405,15 @@ impl GitError {
                     hint_message(cformat!(
                         "Git stores branches as file paths, so <underline>{branch}</> and <underline>{conflicting}</> can't both exist. Pick a different name, or rename the existing branch."
                     ))
+                )
+            }
+
+            GitError::BranchDeletionFailed { error, .. } => {
+                let title = self.title();
+                write!(
+                    f,
+                    "{}",
+                    format_error_block(error_message(&title), &error.display_message())
                 )
             }
 
@@ -2589,6 +2617,21 @@ mod tests {
             WorktrunkError::AlreadyDisplayed { exit_code: 1 }.to_string(),
             ""
         );
+    }
+
+    #[test]
+    fn branch_deletion_error_preserves_cancellation() {
+        let error: anyhow::Error = GitError::BranchDeletionFailed {
+            branch: "feature".into(),
+            removed_worktree: None,
+            error: WorktrunkError::Interrupted {
+                signal: 15,
+                hint: None,
+            }
+            .into(),
+        }
+        .into();
+        assert_eq!(error.interrupt_signal(), Some(15));
     }
 
     #[test]

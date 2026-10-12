@@ -6103,3 +6103,59 @@ fn test_force_remove_interrupted_status_preserves_worktrees(
     assert!(!stderr.contains("discarding"));
     assert!(!stderr.contains("Removing later-worktree"));
 }
+
+/// A failed branch mutation is reported once after removal, with teardown hooks
+/// still running. Branch-only failures must not claim a checkout was removed.
+#[rstest]
+#[case::foreground(true, true)]
+#[case::background(false, true)]
+#[case::branch_only(true, false)]
+fn test_remove_branch_deletion_failure_context(
+    mut repo: TestRepo,
+    #[case] foreground: bool,
+    #[case] with_worktree: bool,
+) {
+    repo.write_project_config("post-remove = 'printf complete > removed-marker'");
+    repo.commit("Add post-remove hook");
+    let worktree = if with_worktree {
+        Some(repo.add_worktree("feature"))
+    } else {
+        repo.create_branch("feature");
+        None
+    };
+    fs::write(
+        repo.root_path().join(".git/refs/heads/feature.lock"),
+        "another writer",
+    )
+    .unwrap();
+    let mut command = repo.wt_command();
+    command.args(["remove", "feature", "--yes"]);
+    if foreground {
+        command.arg("--foreground");
+    }
+    let output = command.output().unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let plain = stderr.ansi_strip();
+    assert_eq!(output.status.code(), Some(1), "{plain}");
+    assert_eq!(
+        plain.contains("Worktree removed @"),
+        with_worktree,
+        "{plain}"
+    );
+    assert_eq!(
+        plain.matches("failed to delete branch").count()
+            + plain.matches("Failed to delete branch").count(),
+        1,
+        "{plain}"
+    );
+    assert_eq!(plain.matches("cannot lock ref").count(), 1, "{plain}");
+    assert!(!repo.git_output(&["branch", "--list", "feature"]).is_empty());
+    if let Some(worktree) = worktree {
+        assert!(!worktree.exists());
+        crate::common::wait_for_file_content(&repo.root_path().join("removed-marker"));
+        assert_eq!(
+            fs::read_to_string(repo.root_path().join("removed-marker")).unwrap(),
+            "complete"
+        );
+    }
+}
