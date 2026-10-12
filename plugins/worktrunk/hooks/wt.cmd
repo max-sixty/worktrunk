@@ -22,53 +22,25 @@ rem hands each hook the session env snapshot, so an inherited BASH would name
 rem what every event runs.
 set "BASH="
 
-rem git.exe installs at Git\cmd\git.exe, Git\bin\git.exe, or
-rem Git\mingw64\bin\git.exe, and bash.exe at Git\bin\bash.exe or
-rem Git\usr\bin\bash.exe. The lookup uses `where`'s `$var:` prefix, which
-rem searches the directories named in that variable and nowhere else: a bare
-rem `where git.exe` searches the current directory first, as cmd's
-rem own bare-name lookup does, and a hook's current directory is the user's
-rem project -- so a `git.exe` committed to a repo would otherwise choose the
-rem bash every event runs. `where` itself is spelled absolutely for the same
-rem reason: cmd resolves that name from the current directory too.
-for /f "delims=" %%I in ('"%SystemRoot%\System32\where.exe" "$PATH:git.exe" 2^>nul') do if not defined BASH call :derive "%%~dpI"
-
-rem A git.exe PATH doesn't name, or names through a shim outside its install:
-rem the system-wide default, then the per-user one an install without admin
-rem rights writes (#1259).
-if not defined BASH call :accept "%ProgramFiles%\Git\bin\bash.exe"
-if not defined BASH call :accept "%LOCALAPPDATA%\Programs\Git\bin\bash.exe"
+rem Ask Git for its runtime path so PATH shims resolve to the installation
+rem they launch. Ignore GIT_EXEC_PATH in the query: it overrides the installed
+rem helper path. The hook itself keeps the caller's environment.
+rem `where`'s `$PATH:` searches PATH only, avoiding a project's git.exe. Spell
+rem where absolutely too, because cmd otherwise searches the current directory.
+for /f "delims=" %%I in ('"%SystemRoot%\System32\where.exe" "$PATH:git.exe" 2^>nul') do if not defined BASH call :derive "%%~fI"
 
 if not defined BASH goto :missing
 
 "%BASH%" "%~dp0wt.sh" %*
 exit /b 0
 
-rem %1 is a Git install's cmd\, bin\, or mingw64\bin\ directory, with the
-rem trailing separator `%~dpI` leaves on; the last sits a level deeper, so the
-rem install root is tried one level further up for a Git runtime prefix.
-rem Git\bin\bash.exe first, as find_git_bash does: it is the wrapper that
-rem sets up the MSYS environment for a caller outside Git Bash, which is what
-rem puts `uname` and friends within reach of wt.sh.
+rem Git for Windows reports <install>/<runtime>/libexec/git-core. The bin
+rem wrapper sets up MSYS for wt.sh; usr/bin is the runtime Bash itself.
 :derive
-call :accept "%~1..\bin\bash.exe"
-if not defined BASH call :accept "%~1..\usr\bin\bash.exe"
-if not defined BASH for %%I in ("%~1.") do call :derive_deeper "%%~fI"
-goto :eof
-
-rem A runtime prefix owns libexec\git-core; shallow cmd/bin roots do not.
-:derive_deeper
-if /i not "%~nx1"=="bin" goto :eof
-for %%I in ("%~1\..") do call :derive_runtime "%%~fI"
-goto :eof
-
-:derive_runtime
-if exist "%~1\libexec\git-core\" call :derive_root "%~1"
-goto :eof
-
-:derive_root
-call :accept "%~1\..\bin\bash.exe"
-if not defined BASH call :accept "%~1\..\usr\bin\bash.exe"
+for /f "delims=" %%I in ('set "GIT_EXEC_PATH=" ^& "%~1" --exec-path 2^>nul') do (
+    call :accept "%%I\..\..\..\bin\bash.exe"
+    if not defined BASH call :accept "%%I\..\..\..\usr\bin\bash.exe"
+)
 goto :eof
 
 :accept
