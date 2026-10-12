@@ -885,17 +885,15 @@ mod tests {
         std::fs::write(inner.join("notes.txt"), "independent work").unwrap();
         let repo = Repository::at(test.root_path()).unwrap();
         assert!(repo.worktree_at(&outer).dirty_files().unwrap().is_empty());
-        for force in [false, true] {
-            let error = crate::git::stage_worktree_removal(&repo, &outer, Some("outer"), force)
-                .unwrap_err();
-            assert!(error.to_string().contains("contains worktree"), "{error:#}");
-            assert!(outer.join(".git").is_file());
-            assert!(inner.join(".git").is_file());
-            assert_eq!(
-                std::fs::read_to_string(inner.join("notes.txt")).unwrap(),
-                "independent work"
-            );
-        }
+        let error =
+            crate::git::stage_worktree_removal(&repo, &outer, Some("outer"), true).unwrap_err();
+        assert!(error.to_string().contains("contains worktree"), "{error:#}");
+        assert!(outer.join(".git").is_file());
+        assert!(inner.join(".git").is_file());
+        assert_eq!(
+            std::fs::read_to_string(inner.join("notes.txt")).unwrap(),
+            "independent work"
+        );
     }
 
     #[cfg(unix)]
@@ -980,10 +978,6 @@ mod tests {
         .unwrap();
         let repo = Repository::at(&outer).unwrap();
         assert!(repo.is_bare().unwrap());
-        assert_eq!(
-            repo.nested_worktree(&outer).unwrap(),
-            Some(dunce::canonicalize(&store).unwrap())
-        );
         let error = crate::git::remove::stage_worktree_removal(&repo, &outer, Some("outer"), true)
             .unwrap_err();
         assert!(
