@@ -789,6 +789,7 @@ fn validate_worktree_creation(
     if !path.exists() {
         return Ok(false);
     }
+    reject_path_overlapping_worktrees(repo, path)?;
     if clobber {
         return Ok(true);
     }
@@ -990,10 +991,7 @@ fn plan_switch(
     // Phase 3: Compute expected path (only needed for create). `--path`
     // replaces the template outright.
     let expected_path = match requested_path {
-        Some(path) => {
-            reject_path_overlapping_worktrees(repo, &path)?;
-            path
-        }
+        Some(path) => path,
         None => compute_worktree_path(repo, target.selector.token(), config)?,
     };
 
@@ -1017,49 +1015,39 @@ fn plan_switch(
     })
 }
 
-/// Refuse a `--path` directory that holds a worktree or the repository, or
-/// that sits inside one.
-///
-/// Such a directory always exists, so `validate_worktree_creation` would
-/// otherwise offer `--clobber`, which moves it aside: `--path ..` would move
-/// the repository itself, and `--path src` a tracked directory of the current
-/// worktree. The template never produces these; a typed path easily does. A
-/// directory that does not exist yet is left alone — nesting a new worktree
-/// inside another is git's call, not a clobber.
+/// Refuse an existing destination containing or inside the repository or a
+/// worktree, before clobber can move it. Exact worktree occupants were already
+/// rejected by `validate_worktree_creation`; the Git directory has no occupant
+/// in a bare repository and needs its own exact-match check.
 fn reject_path_overlapping_worktrees(repo: &Repository, requested: &Path) -> anyhow::Result<()> {
-    let Ok(requested) = canonicalize(requested) else {
-        return Ok(());
-    };
-    let registered = repo
-        .list_worktrees()?
-        .iter()
-        .map(|wt| (wt.path.as_path(), true));
-    for (existing, is_worktree) in registered.chain([(repo.git_common_dir(), false)]) {
+    let requested = canonicalize(requested).with_context(|| {
+        format!(
+            "Failed to resolve worktree path {}",
+            format_path_for_display(requested)
+        )
+    })?;
+    let git_dir = canonicalize(repo.git_common_dir())
+        .context("Failed to resolve repository Git directory")?;
+    if requested == git_dir {
+        bail!(cformat!(
+            "Worktree path <bold>{}</> is the repository's Git directory; choose a directory outside the repository and its worktrees",
+            format_path_for_display(&requested)
+        ));
+    }
+    let registered = repo.list_worktrees()?.iter().map(|wt| wt.path.as_path());
+    for existing in registered.chain([git_dir.as_path()]) {
         let existing = canonicalize(existing).unwrap_or_else(|_| existing.to_path_buf());
-        let (relation, exact_git_dir) = if existing == requested {
-            // An exact worktree path gets its occupant diagnosis from
-            // validate_worktree_creation. The existing Git common directory
-            // must never be clobbered: bare and separate-git-dir stores have
-            // no worktree at this path.
-            if is_worktree {
-                continue;
-            }
-            ("is", true)
-        } else if existing.starts_with(&requested) {
-            ("contains", false)
+        let relation = if existing.starts_with(&requested) {
+            "contains"
         } else if requested.starts_with(&existing) {
-            ("is inside", false)
+            "is inside"
         } else {
             continue;
         };
         let requested = format_path_for_display(&requested);
-        let existing = if exact_git_dir {
-            "the repository's Git directory".to_owned()
-        } else {
-            cformat!("<bold>{}</>", format_path_for_display(&existing))
-        };
+        let existing = format_path_for_display(&existing);
         bail!(cformat!(
-            "<bold>--path {requested}</> {relation} {existing}; choose a directory outside the repository and its worktrees"
+            "Worktree path <bold>{requested}</> {relation} <bold>{existing}</>; choose a directory outside the repository and its worktrees"
         ));
     }
     Ok(())
