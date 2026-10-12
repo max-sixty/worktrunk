@@ -2896,31 +2896,13 @@ fn repo_path_follows_a_relative_separate_git_dir_backlink() {
     );
 }
 
-/// Empty module containers are disposable. Once a repository appears after
-/// planning, both stale inventory and the final unregister preserve its store.
+/// Empty module containers do not retain a checkout.
 #[test]
-fn prune_worktree_entry_preserves_submodule_storage() {
-    use crate::git::StaleWorktreeWork;
+fn empty_module_container_has_no_local_history() {
     let mut test = TestRepo::with_initial_commit();
     let outer = test.add_worktree("outer");
     let repo = Repository::at(test.root_path()).unwrap();
     let registration = repo.worktree_at(&outer).git_dir().unwrap();
-    let modules = registration.join("modules");
-    std::fs::create_dir(&modules).unwrap();
-    repo.require_no_submodule_storage(&outer).unwrap();
-    assert!(repo.stale_worktree_work(&outer).unwrap().is_none());
-    test.run_git(&["init", "--bare", modules.join("sub").to_str().unwrap()]);
-    std::fs::remove_file(outer.join(".git")).unwrap();
-    assert_eq!(
-        repo.stale_worktree_work(&outer).unwrap(),
-        Some(StaleWorktreeWork::SubmoduleRepositories)
-    );
-    let error = repo.prune_worktree_entry(&outer, false).unwrap_err();
-    assert!(
-        error.to_string().contains("submodule repositories"),
-        "{error:#}"
-    );
-    assert!(modules.join("sub/objects").is_dir());
-    repo.prune_worktree_entry(&outer, true).unwrap();
-    assert!(!registration.exists());
+    std::fs::create_dir(registration.join("modules")).unwrap();
+    assert!(!repo.has_local_submodule_history(&outer).unwrap());
 }

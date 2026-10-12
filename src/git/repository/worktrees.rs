@@ -253,8 +253,8 @@ impl Repository {
     /// worktree list` in an *unrelated* process — outside wt's lock — remains
     /// exposed; wt's serialization only covers its own removals.
     ///
-    /// Stored submodule repositories require explicit `force`; a stale
-    /// checkout can still be their only object store.
+    /// Submodule commits outside remote-tracking history require explicit
+    /// `force`; a stale checkout can still be their only object store.
     ///
     /// Git also `rmdir`s `.git/worktrees` once its last entry goes. This
     /// leaves the empty directory, which git reads as no linked worktrees.
@@ -269,7 +269,11 @@ impl Repository {
             anyhow::bail!("Worktree @ {display} is no longer stale; its .git exists");
         }
         if !force {
-            require_discardable_submodules(path, registration_has_submodules(&registration)?)?;
+            require_discardable_submodules(
+                path,
+                module_container_has_local_history(&registration.join("modules"))?,
+                false,
+            )?;
         }
         std::fs::remove_dir_all(&registration).with_context(|| {
             format!(
@@ -280,8 +284,8 @@ impl Repository {
     }
 
     /// What unregistering the stale worktree at `path` would destroy that
-    /// nothing else holds: submodule repositories, staged changes in its
-    /// index, or a git operation partway through. `None` when none are present.
+    /// would be lost: local submodule history, staged changes in its index,
+    /// or a git operation partway through. `None` when none are present.
     ///
     /// [`prune_worktree_entry`](Self::prune_worktree_entry) deletes the
     /// registration, and the index and any rebase, merge, cherry-pick, revert
@@ -295,8 +299,8 @@ impl Repository {
     /// nothing staged.
     pub fn stale_worktree_work(&self, path: &Path) -> anyhow::Result<Option<StaleWorktreeWork>> {
         let (registration, _) = self.registration_at(path)?;
-        if registration_has_submodules(&registration)? {
-            return Ok(Some(StaleWorktreeWork::SubmoduleRepositories));
+        if module_container_has_local_history(&registration.join("modules"))? {
+            return Ok(Some(StaleWorktreeWork::SubmoduleLocalHistory));
         }
         if let Some(operation) = operation_in_progress_at(&registration) {
             return Ok(Some(StaleWorktreeWork::Operation(operation)));
@@ -355,14 +359,43 @@ impl Repository {
             .with_context(|| format!("No worktree registered @ {}", format_path_for_display(path)))
     }
 
-    /// Preserve registration-local module repositories and initialized
-    /// submodules. A clean superproject does not establish that their local
-    /// history is backed up elsewhere. Explicit force is handled by the caller.
-    pub fn require_no_submodule_storage(&self, path: &Path) -> anyhow::Result<()> {
+    /// Whether removal would discard submodule commits not reachable from
+    /// remote-tracking refs. Include reflogs: a reset does not make local
+    /// history disposable. This is a local reachability convention, not a
+    /// network check that any remote still retains those commits.
+    pub fn has_local_submodule_history(&self, path: &Path) -> anyhow::Result<bool> {
         let (registration, _) = self.registration_at(path)?;
-        let stored = registration_has_submodules(&registration)?;
-        let initialized = !stored && self.worktree_at(path).has_initialized_submodules()?;
-        require_discardable_submodules(path, stored || initialized)
+        if module_container_has_local_history(&registration.join("modules"))? {
+            return Ok(true);
+        }
+        // Git owns discovery of initialized submodules. Legacy embedded stores
+        // live in the payload rather than the registration; shared external
+        // stores are not removed with this worktree.
+        if definitely_absent(&path.join(".git"))? {
+            return Ok(false);
+        }
+        let query = format!(
+            "if test -d .git; then git {}; fi",
+            SUBMODULE_LOCAL_HISTORY_ARGS.join(" ")
+        );
+        let output = self.worktree_at(path).run_command(&[
+            "submodule",
+            "foreach",
+            "--quiet",
+            "--recursive",
+            &query,
+        ])?;
+        Ok(!output.is_empty())
+    }
+
+    /// Require the same local-history check in planning and at removal. Only
+    /// a caller whose command accepts force may offer that override in advice.
+    pub fn require_discardable_submodules(
+        &self,
+        path: &Path,
+        force_hint: bool,
+    ) -> anyhow::Result<()> {
+        require_discardable_submodules(path, self.has_local_submodule_history(path)?, force_hint)
     }
 
     /// Remove a worktree at the specified path. Only explicit `force` passes
@@ -383,7 +416,7 @@ impl Repository {
         args.push(path_str);
         let _registry = self.worktree_registry_write();
         if !force {
-            self.require_no_submodule_storage(path)?;
+            self.require_discardable_submodules(path, false)?;
         }
         self.run_command(&args)?;
         Ok(())
@@ -717,43 +750,77 @@ impl Repository {
 pub enum StaleWorktreeWork {
     /// The index differs from `HEAD`.
     StagedChanges,
-    /// Registration-local repositories can hold unpublished submodule history.
-    SubmoduleRepositories,
+    /// Submodule commits are not reachable from remote-tracking refs.
+    SubmoduleLocalHistory,
     /// A git operation is partway through.
     Operation(InProgressOperation),
 }
 
-/// The registration's `modules` container owns repositories even after
-/// `submodule deinit`. Inspect only that container, never checkout contents.
-/// Empty containers hold nothing; unreadable entries remain errors.
-fn registration_has_submodules(registration: &Path) -> anyhow::Result<bool> {
-    let modules = registration.join("modules");
-    let metadata = match std::fs::symlink_metadata(&modules) {
-        Ok(metadata) => metadata,
+const SUBMODULE_LOCAL_HISTORY_ARGS: [&str; 6] = [
+    "rev-list",
+    "--all",
+    "--reflog",
+    "--not",
+    "--remotes",
+    "--max-count=1",
+];
+
+/// Inspect only Git's module-storage hierarchy, including namespace prefixes
+/// and each repository's nested `modules/`. Never walk checkout contents or
+/// objects/refs. Surviving unreadable storage cannot establish disposability.
+fn module_container_has_local_history(container: &Path) -> anyhow::Result<bool> {
+    let entries = match std::fs::read_dir(container) {
+        Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(error).context("Failed to inspect submodule repositories"),
+        Err(error) => return Err(error).context("Failed to read submodule repositories"),
     };
-    if !metadata.is_dir() {
-        return Ok(true);
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        if !entry.file_type()?.is_dir() {
+            anyhow::bail!(
+                "Unexpected submodule storage @ {}",
+                format_path_for_display(&path)
+            );
+        }
+        let is_repository =
+            !definitely_absent(&path.join("HEAD"))? || !definitely_absent(&path.join("config"))?;
+        if !is_repository {
+            if module_container_has_local_history(&path)? {
+                return Ok(true);
+            }
+            continue;
+        }
+        let git_dir = path
+            .to_str()
+            .context("Cannot inspect a non-UTF-8 submodule Git directory")?;
+        let mut args = vec!["--git-dir", git_dir];
+        args.extend(SUBMODULE_LOCAL_HISTORY_ARGS);
+        let output = Cmd::new("git")
+            .args(args.iter().copied())
+            .scrub_git_discovery_env()
+            .run()?;
+        if !output.status.success() {
+            return Err(CommandError::from_failed_output("git", &args, &output).into());
+        }
+        if !output.stdout.is_empty() || module_container_has_local_history(&path.join("modules"))? {
+            return Ok(true);
+        }
     }
-    let first = std::fs::read_dir(&modules)
-        .with_context(|| {
-            format!(
-                "Failed to read submodule repositories @ {}",
-                format_path_for_display(&modules)
-            )
-        })?
-        .next()
-        .transpose()?;
-    Ok(first.is_some())
+    Ok(false)
 }
 
-fn require_discardable_submodules(path: &Path, present: bool) -> anyhow::Result<()> {
-    if present {
-        anyhow::bail!(
-            "Cannot remove worktree @ {}; contains submodule repositories; use --force to discard them",
-            format_path_for_display(path)
-        );
+fn require_discardable_submodules(
+    path: &Path,
+    local_history: bool,
+    force_hint: bool,
+) -> anyhow::Result<()> {
+    if local_history {
+        return Err(GitError::SubmoduleLocalHistory {
+            path: path.to_path_buf(),
+            force_hint,
+        }
+        .into());
     }
     Ok(())
 }

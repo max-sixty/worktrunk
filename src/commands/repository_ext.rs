@@ -364,6 +364,7 @@ impl RepositoryCliExt for Repository {
 
         if !force_worktree {
             target_wt.ensure_clean("remove worktree", branch_name.as_deref(), true)?;
+            self.require_discardable_submodules(&worktree_path, true)?;
         }
 
         // main_path: where post-remove hooks run from and background removal

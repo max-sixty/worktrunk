@@ -4745,14 +4745,7 @@ fn test_remove_foreground_succeeds_with_stuck_directory_detached(mut repo: TestR
     assert!(!worktree_path.exists(), "Worktree directory should be gone");
 }
 
-/// A clean superproject can hold submodule commits stored nowhere else.
-/// Initialized, deinitialized and stale checkouts need explicit force to
-/// discard their registration-local object store.
-#[rstest]
-#[case::initialized("initialized")]
-#[case::deinitialized("deinitialized")]
-#[case::stale("stale")]
-fn test_remove_preserves_sole_submodule_history(mut repo: TestRepo, #[case] state: &str) {
+fn add_initialized_submodule_worktree(repo: &mut TestRepo, branch: &str) -> PathBuf {
     let source = repo.root_path().parent().unwrap().join("sub-source");
     fs::create_dir(&source).unwrap();
     repo.run_git_in(&source, &["init", "-b", "main"]);
@@ -4768,7 +4761,7 @@ fn test_remove_preserves_sole_submodule_history(mut repo: TestRepo, #[case] stat
         "sub",
     ]);
     repo.run_git(&["commit", "-am", "Add submodule"]);
-    let outer = repo.add_worktree("outer");
+    let outer = repo.add_worktree(branch);
     repo.run_git_in(
         &outer,
         &[
@@ -4779,6 +4772,58 @@ fn test_remove_preserves_sole_submodule_history(mut repo: TestRepo, #[case] stat
             "--init",
         ],
     );
+    outer
+}
+
+/// Fresh submodule commits are reachable from their remote-tracking refs;
+/// neither removal nor merge cleanup needs explicit force.
+#[rstest]
+#[case::remove(false)]
+#[case::merge(true)]
+fn test_cleanup_fresh_submodule_worktree(mut repo: TestRepo, #[case] merge: bool) {
+    let outer = add_initialized_submodule_worktree(&mut repo, "outer");
+    let api = worktrunk::git::Repository::at(repo.root_path()).unwrap();
+    assert!(!api.has_local_submodule_history(&outer).unwrap());
+    let output = if merge {
+        repo.wt_command()
+            .arg("-C")
+            .arg(&outer)
+            .args([
+                "merge",
+                "main",
+                "--no-squash",
+                "--no-commit",
+                "--no-rebase",
+                "--yes",
+            ])
+            .output()
+            .unwrap()
+    } else {
+        repo.wt_command()
+            .args(["remove", "outer", "--foreground", "--no-delete-branch"])
+            .output()
+            .unwrap()
+    };
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!outer.exists());
+}
+
+/// A clean superproject can hold submodule commits stored nowhere else.
+/// Initialized, deinitialized and stale checkouts need explicit force to
+/// discard commits outside remote-tracking history.
+#[rstest]
+#[case::initialized("initialized")]
+#[case::deinitialized("deinitialized")]
+#[case::stale("stale")]
+#[case::reflog("reflog")]
+#[case::embedded("embedded")]
+fn test_remove_preserves_sole_submodule_history(mut repo: TestRepo, #[case] state: &str) {
+    let outer = add_initialized_submodule_worktree(&mut repo, "outer");
+    let source = repo.root_path().parent().unwrap().join("sub-source");
     repo.run_git_in(
         &outer.join("sub"),
         &["commit", "--allow-empty", "-m", "Sole local history"],
@@ -4803,9 +4848,27 @@ fn test_remove_preserves_sole_submodule_history(mut repo: TestRepo, #[case] stat
         !source_object.status.success(),
         "local history must not exist at its source"
     );
+    if state == "reflog" {
+        repo.run_git_in(&outer.join("sub"), &["reset", "--keep", "HEAD~1"]);
+        repo.run_git_in(&outer, &["add", "sub"]);
+        repo.run_git_in(&outer, &["commit", "-m", "Record reset submodule"]);
+    }
     let api = worktrunk::git::Repository::at(repo.root_path()).unwrap();
     let registration = api.worktree_at(&outer).git_dir().unwrap();
-    let modules = registration.join("modules/sub");
+    let mut modules = registration.join("modules/sub");
+    if state == "embedded" {
+        let embedded = outer.join("sub/.git");
+        fs::remove_file(&embedded).unwrap();
+        fs::rename(&modules, &embedded).unwrap();
+        repo.run_git(&[
+            "config",
+            "--file",
+            embedded.join("config").to_str().unwrap(),
+            "core.worktree",
+            "..",
+        ]);
+        modules = embedded;
+    }
     assert!(modules.join("objects").is_dir());
     if state == "deinitialized" {
         repo.run_git_in(&outer, &["submodule", "deinit", "--all"]);
@@ -4824,20 +4887,43 @@ fn test_remove_preserves_sole_submodule_history(mut repo: TestRepo, #[case] stat
         fs::remove_file(outer.join(".git")).unwrap();
     }
     if state == "initialized" {
-        let error = api.remove_worktree(&outer, false).unwrap_err();
-        assert_snapshot!(
-            error.to_string().replace(&worktrunk::path::format_path_for_display(&outer), "<worktree>"),
-            @"Cannot remove worktree @ <worktree>; contains submodule repositories; use --force to discard them"
+        let merged = repo
+            .wt_command()
+            .arg("-C")
+            .arg(&outer)
+            .args([
+                "merge",
+                "main",
+                "--no-squash",
+                "--no-commit",
+                "--no-rebase",
+                "--yes",
+            ])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&merged.stderr);
+        assert!(merged.status.success(), "{stderr}");
+        assert!(outer.exists());
+        assert!(
+            stderr
+                .contains("Worktree preserved (submodule commits outside remote-tracking history)"),
+            "{stderr}"
         );
+        assert!(!stderr.contains("--force"), "{stderr}");
     }
     let output = repo
         .wt_command()
-        .args(["remove", "outer", "--foreground", "--keep-branch"])
+        .args(["remove", "outer", "--foreground", "--no-delete-branch"])
         .output()
         .unwrap();
     assert!(!output.status.success(), "{output:?}");
+    let reason = if state == "stale" {
+        "local submodule commits"
+    } else {
+        "submodule commits outside remote-tracking history"
+    };
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("submodule repositories"),
+        String::from_utf8_lossy(&output.stderr).contains(reason),
         "{output:?}"
     );
     let saved_object = repo
@@ -4857,7 +4943,7 @@ fn test_remove_preserves_sole_submodule_history(mut repo: TestRepo, #[case] stat
             "remove",
             "outer",
             "--foreground",
-            "--keep-branch",
+            "--no-delete-branch",
             "--force",
         ])
         .output()

@@ -514,7 +514,7 @@ pub fn stage_worktree_removal(
         }
     } else {
         worktree.ensure_clean("remove worktree", branch, true)?;
-        repo.require_no_submodule_storage(worktree_path)?;
+        repo.require_discardable_submodules(worktree_path, false)?;
     }
 
     stop_fsmonitor_daemon(&repo.worktree_at(worktree_path));

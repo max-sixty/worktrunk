@@ -305,12 +305,15 @@ fn merge_in(
         None => repo.home_path()?,
     };
 
-    // Quick check for command approval: will removal be attempted?
-    // The authoritative guard is prepare_merge_removal (shared with wt remove),
-    // but we need a lightweight answer here to decide whether to include
-    // pre-remove/post-remove hooks in the batch approval prompt.
+    // Select removal hooks only when cleanup can proceed. The finish sequence
+    // refreshes these checks before attempting removal.
     let on_target = current_branch == target_branch;
-    let remove_requested = remove && !on_target;
+    let feature_root = current_wt.root()?;
+    let preserves_submodule_history = remove
+        && !on_target
+        && current_wt.is_linked()?
+        && repo.has_local_submodule_history(&feature_root)?;
+    let remove_requested = remove && !on_target && !preserves_submodule_history;
     // Freeze the commit decision before approval so every later gate agrees
     // with the hooks shown to the user. Squash owns its commit decision and
     // staging, so it does not need this extra index simulation.
@@ -328,7 +331,6 @@ fn merge_in(
     let project_id = repo.project_identifier()?;
     // One anchor for every feature-worktree hook: the canonical root, the same
     // value `finish_after_merge` records as `RemovalPlan::worktree_path`.
-    let feature_root = current_wt.root()?;
     let plan = approve_merge_plan(
         repo,
         config,
