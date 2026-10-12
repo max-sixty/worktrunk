@@ -3477,6 +3477,7 @@ fn test_state_clear_preserves_retained_recovery(mut repo: TestRepo) {
         false,
     )
     .unwrap()
+    .map(|path| repository.prepare_disposal(&path).unwrap())
     .unwrap();
     let committed = repository
         .wt_dir()
@@ -3496,6 +3497,7 @@ fn test_state_clear_preserves_retained_recovery(mut repo: TestRepo) {
         false,
     )
     .unwrap()
+    .map(|path| repository.prepare_disposal(&path).unwrap())
     .unwrap();
     // Generic cleanup can remove metadata first; the remaining checkout must
     // still be discoverable in ordinary trash.

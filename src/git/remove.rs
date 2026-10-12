@@ -95,9 +95,11 @@
 //!     },
 //! )?;
 //!
-//! // Caller cleans up the staged trash entry (sync or background).
-//! if let Some(staged) = output.staged_path {
-//!     let _ = std::fs::remove_dir_all(staged);
+//! // Failed preparation leaves committed disposal for a later cleanup.
+//! if let Some(staged) = output.staged_path
+//!     && let Ok(trash) = repo.prepare_disposal(&staged)
+//! {
+//!     let _ = std::fs::remove_dir_all(trash);
 //! }
 //! # Ok::<(), anyhow::Error>(())
 //! ```
@@ -349,11 +351,12 @@ pub struct RemoveOptions {
 /// them (best-effort), and external tools can do whatever fits.
 ///
 /// `staged_path` is `Some` only on the fast path. Callers are responsible for
-/// cleaning up the staged directory; `wt remove` does this with a detached
+/// preparing and cleaning up the staged directory; `wt remove` uses a detached
 /// background `rm -rf` so the foreground command returns immediately.
 pub struct RemovalOutput {
     pub branch_result: Option<anyhow::Result<BranchDeletionResult>>,
-    /// Path to the staged trash directory on the fast path.
+    /// Committed disposal container on the fast path. Callers must run
+    /// [`Repository::prepare_disposal`] before generic recursive cleanup.
     ///
     /// `None` if the fast-path rename failed and the fallback `git worktree
     /// remove` was used.
@@ -426,7 +429,8 @@ pub fn remove_worktree_with_cleanup(
 /// checkout and unregistered metadata, `None` when the rename failed
 /// (cross-filesystem, permissions, Windows file locking) and the caller must
 /// fall back to a direct `git worktree remove`. Either way the caller owns the
-/// staged directory and must eventually delete it.
+/// staged directory. Prepare it with [`Repository::prepare_disposal`] before
+/// recursive deletion; preparation failure must defer cleanup, not removal.
 ///
 /// # Why this order
 ///
@@ -592,7 +596,7 @@ fn rename_into_trash(
         let _ = std::fs::remove_dir(&container);
         return Err(error);
     }
-    repo.prepare_disposal(&container).map(Some)
+    Ok(Some(container))
 }
 
 /// Roll back an uncommitted removal; keep the payload aside if its path is occupied.
