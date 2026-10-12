@@ -166,9 +166,6 @@ fn stash_failed_removal(
 ) {
     let diagnostic = crate::format_command_error(&error);
     let diagnostic = diagnostic.trim();
-    if diagnostic.is_empty() {
-        return;
-    }
     if let Some(headline) = diagnostic.lines().next() {
         flash_header(header_flash, render_tx, headline.to_owned());
     }
@@ -606,9 +603,8 @@ impl AltXRemover {
     /// git removal and, only if the worktree unexpectedly survives
     /// ([`removal_target_still_present`] — a clean-check race, a locked dir, a
     /// failing `pre-remove` hook), reverts the morph back to the worktree row via
-    /// [`revert_morph`] and surfaces why. (The branch can't flip integrated in the
-    /// millisecond between the prediction and the delete, so the only realistic
-    /// failure is the worktree removal itself.)
+    /// [`revert_morph`] and surfaces why. An error after checkout removal keeps
+    /// the branch row and its diagnostic.
     ///
     /// Returns [`RemovalEffect::Morphed`] on the in-place morph, or
     /// [`RemovalEffect::Dropped`] when it falls back to
@@ -689,8 +685,8 @@ impl AltXRemover {
         };
         self.spawn_removal(format!("picker-morph-{branch}"), move || {
             let failure = Self::do_removal(&repo, &result, &approvals).err();
-            // Only the worktree removal can realistically fail here; if it did,
-            // the worktree dir survives — undo the morph and say so.
+            // Undo the morph only while its checkout survives. Branch deletion
+            // can fail after that checkout has already been removed.
             if removal_target_still_present(&repo, &result) {
                 let diagnostic = failure
                     .as_ref()
@@ -4076,6 +4072,71 @@ pub mod tests {
             "{}",
             warnings[0]
         );
+    }
+
+    /// Ref deletion can fail after checkout removal on either optimistic route.
+    /// A branch integrated after prediction also exercises the morph worker.
+    #[test]
+    fn test_post_removal_ref_failure_preserves_drop_or_morph_outcome() {
+        for morph in [false, true] {
+            let mut test = worktrunk::testing::TestRepo::with_initial_commit();
+            let path =
+                test.add_worktree_with_commit("feature", "payload.txt", "feature", "Feature");
+            if !morph {
+                test.run_git(&["merge", "--ff-only", "feature"]);
+            }
+            let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+            let items = Arc::new(Mutex::new(Vec::new()));
+            let remover = test_remover(Arc::clone(&items), repo.clone());
+            let (row, token, _, morphed) = setup_morphable_row(&remover, "feature", &path);
+            items.lock().unwrap().push(Arc::clone(&row));
+            let (planning_repo, plan) = remover
+                .prepare_removal(parse_removal_target(&token).unwrap())
+                .unwrap();
+            assert_eq!(
+                super::worktree_removal_keeps_branch(&planning_repo, &plan).is_some(),
+                morph
+            );
+            if morph {
+                // Integration changes after the row's retention prediction;
+                // the executor must reread refs before trying deletion.
+                test.run_git(&["merge", "--ff-only", "feature"]);
+            }
+            fs::write(
+                repo.git_common_dir().join("refs/heads/feature.lock"),
+                "another ref writer",
+            )
+            .unwrap();
+            let effect = if morph {
+                remover.morph_and_remove_in_background(
+                    token,
+                    "feature".to_owned(),
+                    planning_repo,
+                    plan,
+                )
+            } else {
+                remover.drop_and_remove_in_background(token, planning_repo, plan)
+            };
+            assert!(matches!(
+                (morph, effect),
+                (true, RemovalEffect::Morphed) | (false, RemovalEffect::Dropped)
+            ));
+            super::finish_removals(&remover.removal_threads).unwrap();
+
+            assert!(!path.exists(), "a ref lock must not resurrect the checkout");
+            assert!(repo.branch("feature").exists_locally().unwrap());
+            if morph {
+                assert!(morphed.load(std::sync::atomic::Ordering::Relaxed));
+                assert_eq!(items.lock().unwrap().len(), 1);
+                assert_eq!(row.output().as_ref(), "feature");
+            } else {
+                assert!(items.lock().unwrap().is_empty());
+            }
+            let warnings = remover.stashed_warnings.lock().unwrap();
+            assert_eq!(warnings.len(), 1);
+            assert!(warnings[0].contains("feature.lock"), "{}", warnings[0]);
+            assert!(remover.header_flash.current().is_some());
+        }
     }
 
     /// A failed pre-remove hook must undo the optimistic morph while keeping
