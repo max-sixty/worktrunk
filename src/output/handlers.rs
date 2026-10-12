@@ -10,7 +10,7 @@ use worktrunk::shell_exec::{Cmd, shell_cwd};
 use worktrunk::styling::{eprint, format_bash_with_gutter, stderr};
 
 use crate::commands::command_executor::CommandContext;
-use crate::commands::command_executor::FailureStrategy;
+use crate::commands::command_executor::{FailureStrategy, ForegroundStdin};
 use crate::commands::hook_plan::{ApprovedHookPlan, execute_planned_hook, register_planned};
 use crate::commands::hooks::HookAnnouncer;
 use crate::commands::process::{
@@ -1243,11 +1243,12 @@ pub fn execute_user_command(
 pub fn handle_remove_output(
     plan: &RemovalPlan,
     execution: RemovalExecution,
+    stdin: ForegroundStdin,
     hook_plan: &ApprovedHookPlan,
     quiet: bool,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<BranchFate> {
-    handle_remove_output_inner(plan, execution, hook_plan, quiet, false, announcer)
+    handle_remove_output_inner(plan, execution, stdin, hook_plan, quiet, false, announcer)
 }
 
 /// Merge may select a source containing another checkout, including the
@@ -1263,6 +1264,7 @@ pub fn handle_merge_remove_output(
     handle_remove_output_inner(
         plan,
         RemovalExecution::Background(BackgroundFallbackMode::Detached),
+        ForegroundStdin::Inherit,
         hook_plan,
         false,
         true,
@@ -1273,6 +1275,7 @@ pub fn handle_merge_remove_output(
 fn handle_remove_output_inner(
     plan: &RemovalPlan,
     execution: RemovalExecution,
+    stdin: ForegroundStdin,
     hook_plan: &ApprovedHookPlan,
     quiet: bool,
     protect_nested_worktrees: bool,
@@ -1304,6 +1307,7 @@ fn handle_remove_output_inner(
                 branch_checked_out_at: branch_checked_out_at.as_ref(),
                 hook_plan,
                 execution,
+                stdin,
                 protect_nested_worktrees,
             },
             announcer,
@@ -1841,6 +1845,7 @@ struct WorktreeRemovalContext<'a> {
     /// no `ProjectConfig` snapshot to thread.
     hook_plan: &'a ApprovedHookPlan,
     execution: RemovalExecution,
+    stdin: ForegroundStdin,
     protect_nested_worktrees: bool,
 }
 
@@ -1874,7 +1879,8 @@ fn execute_pre_remove_hooks_if_needed(
         ctx.branch_name,
         ctx.worktree_path,
         false, // yes=false for CommandContext (not approval-related)
-    );
+    )
+    .with_stdin(ctx.stdin);
     let display_path = if ctx.changed_directory {
         None
     } else {
@@ -2230,15 +2236,10 @@ fn remove_removed_worktree_silently(
 ///
 /// ## Stdin
 ///
-/// The child inherits the parent's stdin for interactive input. Foreground children
-/// share the caller's process group independently of stdin, so a `pre-*` hook
-/// can `gum confirm`, and an alias body's `wt switch` picker can drive `/dev/tty`.
-///
-/// Nothing is ever written to that stdin — a hook reads its context through
-/// template variables, whatever form it runs in. The two forms that can't be
-/// interactive close stdin instead, in their own spawn paths: concurrent groups
-/// in `output/concurrent.rs`, detached `post-*` pipelines in
-/// `commands/run_pipeline.rs`.
+/// Exclusive pipelines inherit stdin. Picker removals and parallel prune hooks
+/// close it so they cannot consume another input owner's bytes. Process-group
+/// membership and signal forwarding are independent of this input policy.
+/// Hook context comes from template variables.
 ///
 /// ## Directive files
 ///
@@ -2284,6 +2285,7 @@ pub fn execute_shell_command(
     command: &str,
     command_log_label: Option<&str>,
     directives: DirectivePassthrough,
+    stdin: ForegroundStdin,
     redirect_stdout_to_stderr: bool,
     scrub_git_discovery: bool,
 ) -> anyhow::Result<()> {
@@ -2315,10 +2317,10 @@ pub fn execute_shell_command(
         cmd = cmd.external(label);
     }
 
-    // Inherit the parent's stdin so interactive children (e.g. TUI pickers,
-    // a `gum confirm` in a hook body) keep their controlling terminal — see
-    // the "Stdin" section of this function's docs.
-    cmd = cmd.inherit_stdin();
+    cmd = match stdin {
+        ForegroundStdin::Inherit => cmd.inherit_stdin(),
+        ForegroundStdin::Closed => cmd.stdin(Stdio::null()),
+    };
 
     if let Some(path) = directives.cd_file {
         cmd = cmd.directive_cd_file(path);

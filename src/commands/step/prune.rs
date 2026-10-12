@@ -351,7 +351,12 @@ fn try_remove(
     } else {
         RemovalExecution::Background(BackgroundFallbackMode::SynchronousForNonCurrent)
     };
-    let fate = handle_remove_output(&plan, execution, ctx.hook_plan, true, &mut announcer)?;
+    let stdin = if needs_write {
+        crate::commands::command_executor::ForegroundStdin::Inherit
+    } else {
+        crate::commands::command_executor::ForegroundStdin::Closed
+    };
+    let fate = handle_remove_output(&plan, execution, stdin, ctx.hook_plan, true, &mut announcer)?;
     announcer.flush()?;
     let branch_deleted = fate.deleted();
     // A branch-only candidate that kept its branch removed nothing at all —

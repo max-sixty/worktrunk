@@ -387,6 +387,7 @@ impl AltXRemover {
                 handle_remove_output(
                     result,
                     RemovalExecution::Silent,
+                    crate::commands::command_executor::ForegroundStdin::Closed,
                     &plan,
                     /* quiet */ true,
                     &mut announcer,

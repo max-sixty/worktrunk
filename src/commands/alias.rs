@@ -735,7 +735,11 @@ fn run_alias(
                 sourced_steps.push(SourcedStep { step, source });
             }
         }
-        sourced_steps_to_foreground(sourced_steps, &PipelineKind::Alias { name: alias_name })
+        sourced_steps_to_foreground(
+            sourced_steps,
+            &PipelineKind::Alias { name: alias_name },
+            super::command_executor::ForegroundStdin::Inherit,
+        )
     };
 
     execute_pipeline_foreground(&foreground_steps, repo, &wt_path, FailureStrategy::FailFast)

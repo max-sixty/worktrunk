@@ -484,6 +484,7 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                 let fate = handle_remove_output(
                     &result,
                     removal_execution(args.foreground),
+                    crate::commands::command_executor::ForegroundStdin::Inherit,
                     &plan,
                     false,
                     &mut announcer,
@@ -546,6 +547,7 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                     let fate = handle_remove_output(
                         result,
                         removal_execution(args.foreground),
+                    crate::commands::command_executor::ForegroundStdin::Inherit,
                         &plan,
                         false,
                         &mut announcer,
