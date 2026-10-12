@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use anstyle::AnsiColor;
-use anyhow::Context as _;
 use color_print::cformat;
 use worktrunk::shell_exec::{Cmd, shell_cwd};
 use worktrunk::styling::{eprint, format_bash_with_gutter, stderr};
