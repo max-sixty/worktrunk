@@ -2411,14 +2411,14 @@ fn prune_worktree_entry_repeats_git_prune_test() {
             .collect::<Vec<_>>()
     };
 
-    let err = repo.prune_worktree_entry(&live).unwrap_err();
+    let err = repo.prune_worktree_entry(&live, false).unwrap_err();
     assert!(err.to_string().contains("no longer stale"), "got: {err}");
-    let err = repo.prune_worktree_entry(&locked).unwrap_err();
+    let err = repo.prune_worktree_entry(&locked, false).unwrap_err();
     assert!(err.to_string().contains("is locked"), "got: {err}");
 
-    repo.prune_worktree_entry(&absent).unwrap();
-    repo.prune_worktree_entry(&dotgit_gone).unwrap();
-    repo.prune_worktree_entry(&now_a_file).unwrap();
+    repo.prune_worktree_entry(&absent, false).unwrap();
+    repo.prune_worktree_entry(&dotgit_gone, false).unwrap();
+    repo.prune_worktree_entry(&now_a_file, false).unwrap();
     let names = registered();
     for (path, kept) in [
         (&live, true),
@@ -2436,7 +2436,7 @@ fn prune_worktree_entry_repeats_git_prune_test() {
     }
     assert!(dotgit_gone.join("leftover.txt").is_file());
 
-    let err = repo.prune_worktree_entry(&absent).unwrap_err();
+    let err = repo.prune_worktree_entry(&absent, false).unwrap_err();
     assert!(
         err.to_string().contains("No worktree registered"),
         "got: {err}"
@@ -2475,7 +2475,7 @@ fn prune_worktree_entry_keeps_an_entry_it_cannot_check() {
         crate::styling::eprintln!("Skipping - running with elevated privileges");
         return;
     }
-    let result = repo.prune_worktree_entry(&worktree_path);
+    let result = repo.prune_worktree_entry(&worktree_path, false);
     set_mode(0o755);
 
     let err = result.unwrap_err();
@@ -2592,7 +2592,8 @@ fn prune_worktree_entry_waits_for_registry_readers() {
     let worker_repo = repo.clone();
 
     let reader = repo.worktree_registry_read();
-    let worker = std::thread::spawn(move || worker_repo.prune_worktree_entry(&worktree_path));
+    let worker =
+        std::thread::spawn(move || worker_repo.prune_worktree_entry(&worktree_path, false));
     let deadline = Instant::now() + Duration::from_millis(200);
     while registration.exists() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
@@ -2893,4 +2894,33 @@ fn repo_path_follows_a_relative_separate_git_dir_backlink() {
         work_tree,
         "a relative backlink must resolve against the store, not the cwd"
     );
+}
+
+/// Empty module containers are disposable. Once a repository appears after
+/// planning, both stale inventory and the final unregister preserve its store.
+#[test]
+fn prune_worktree_entry_preserves_submodule_storage() {
+    use crate::git::StaleWorktreeWork;
+    let mut test = TestRepo::with_initial_commit();
+    let outer = test.add_worktree("outer");
+    let repo = Repository::at(test.root_path()).unwrap();
+    let registration = repo.worktree_at(&outer).git_dir().unwrap();
+    let modules = registration.join("modules");
+    std::fs::create_dir(&modules).unwrap();
+    repo.require_no_submodule_storage(&outer).unwrap();
+    assert!(repo.stale_worktree_work(&outer).unwrap().is_none());
+    test.run_git(&["init", "--bare", modules.join("sub").to_str().unwrap()]);
+    std::fs::remove_file(outer.join(".git")).unwrap();
+    assert_eq!(
+        repo.stale_worktree_work(&outer).unwrap(),
+        Some(StaleWorktreeWork::SubmoduleRepositories)
+    );
+    let error = repo.prune_worktree_entry(&outer, false).unwrap_err();
+    assert!(
+        error.to_string().contains("submodule repositories"),
+        "{error:#}"
+    );
+    assert!(modules.join("sub/objects").is_dir());
+    repo.prune_worktree_entry(&outer, true).unwrap();
+    assert!(!registration.exists());
 }

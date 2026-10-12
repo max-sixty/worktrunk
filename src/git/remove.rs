@@ -514,11 +514,17 @@ pub fn stage_worktree_removal(
         }
     } else {
         worktree.ensure_clean("remove worktree", branch, true)?;
+        repo.require_no_submodule_storage(worktree_path)?;
     }
 
     stop_fsmonitor_daemon(&repo.worktree_at(worktree_path));
 
-    Ok(rename_into_trash(repo, worktree_path, &git_dir))
+    Ok(rename_into_trash(
+        repo,
+        worktree_path,
+        &git_dir,
+        force_worktree,
+    ))
 }
 
 /// Find a registered worktree contained in `worktree_path`, using a fresh
@@ -566,7 +572,12 @@ pub fn nested_worktree(repo: &Repository, worktree_path: &Path) -> anyhow::Resul
 /// sweeping the repository, so a sibling worktree whose directory happens to
 /// be absent right now keeps its registration. A locked worktree never reaches
 /// here — [`stage_worktree_removal`] rejects one before the rename.
-fn rename_into_trash(repo: &Repository, worktree_path: &Path, git_dir: &Path) -> Option<PathBuf> {
+fn rename_into_trash(
+    repo: &Repository,
+    worktree_path: &Path,
+    git_dir: &Path,
+    force_worktree: bool,
+) -> Option<PathBuf> {
     let trash_dir = repo.wt_trash_dir();
     let _ = std::fs::create_dir_all(&trash_dir);
     let staged_path = generate_removing_path(&trash_dir, git_dir);
@@ -579,7 +590,7 @@ fn rename_into_trash(repo: &Repository, worktree_path: &Path, git_dir: &Path) ->
     {
         // The rename moved the directory out from under `worktree_path`,
         // leaving its registration stale for the prune to delete.
-        if let Err(e) = repo.prune_worktree_entry(worktree_path) {
+        if let Err(e) = repo.prune_worktree_entry(worktree_path, force_worktree) {
             tracing::debug!(error = %e, "Failed to prune worktree entry after rename: {e}");
         }
         Some(staged_path)

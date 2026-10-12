@@ -4745,173 +4745,130 @@ fn test_remove_foreground_succeeds_with_stuck_directory_detached(mut repo: TestR
     assert!(!worktree_path.exists(), "Worktree directory should be gone");
 }
 
-/// Worktrees with initialized git submodules should be removable.
-///
-/// Git refuses `git worktree remove` when submodules are initialized,
-/// requiring `--force`. This test verifies that `wt remove --foreground`
-/// handles this automatically (retries with `--force`).
-///
-/// Regression test for <https://github.com/max-sixty/worktrunk/issues/1194>.
+/// A clean superproject can hold submodule commits stored nowhere else.
+/// Initialized, deinitialized and stale checkouts need explicit force to
+/// discard their registration-local object store.
 #[rstest]
-fn test_remove_foreground_with_submodules(mut repo: TestRepo) {
-    // Create a local repo to use as a submodule source
-    let sub_source = repo.root_path().parent().unwrap().join("sub-source");
-    std::fs::create_dir_all(&sub_source).unwrap();
-    repo.run_git_in(&sub_source, &["init", "-b", "main"]);
-    std::fs::write(sub_source.join("sub.txt"), "submodule content").unwrap();
-    repo.run_git_in(&sub_source, &["add", "sub.txt"]);
-    repo.run_git_in(&sub_source, &["commit", "-m", "sub init"]);
-
-    // Add submodule to the main repo (requires protocol.file.allow=always)
-    let output = repo
-        .git_command()
-        .args([
-            "-c",
-            "protocol.file.allow=always",
-            "submodule",
-            "add",
-            sub_source.to_str().unwrap(),
-            "submod",
-        ])
-        .run()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "Failed to add submodule: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    repo.run_git(&["commit", "-m", "add submodule"]);
-
-    // Create a worktree and initialize submodules in it
-    let worktree_path = repo.add_worktree("feature-submod");
-    let output = repo
-        .git_command()
-        .current_dir(&worktree_path)
-        .args([
+#[case::initialized("initialized")]
+#[case::deinitialized("deinitialized")]
+#[case::stale("stale")]
+fn test_remove_preserves_sole_submodule_history(mut repo: TestRepo, #[case] state: &str) {
+    let source = repo.root_path().parent().unwrap().join("sub-source");
+    fs::create_dir(&source).unwrap();
+    repo.run_git_in(&source, &["init", "-b", "main"]);
+    fs::write(source.join("sub.txt"), "original").unwrap();
+    repo.run_git_in(&source, &["add", "sub.txt"]);
+    repo.run_git_in(&source, &["commit", "-m", "Original submodule"]);
+    repo.run_git(&[
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        source.to_str().unwrap(),
+        "sub",
+    ]);
+    repo.run_git(&["commit", "-am", "Add submodule"]);
+    let outer = repo.add_worktree("outer");
+    repo.run_git_in(
+        &outer,
+        &[
             "-c",
             "protocol.file.allow=always",
             "submodule",
             "update",
             "--init",
-        ])
+        ],
+    );
+    repo.run_git_in(
+        &outer.join("sub"),
+        &["commit", "--allow-empty", "-m", "Sole local history"],
+    );
+    repo.run_git_in(&outer, &["add", "sub"]);
+    repo.run_git_in(&outer, &["commit", "-m", "Record submodule history"]);
+    let sha = repo
+        .git_command()
+        .current_dir(outer.join("sub"))
+        .args(["rev-parse", "HEAD"])
+        .run()
+        .unwrap();
+    assert!(sha.status.success(), "{sha:?}");
+    let sha = String::from_utf8(sha.stdout).unwrap().trim().to_owned();
+    let source_object = repo
+        .git_command()
+        .current_dir(&source)
+        .args(["cat-file", "-t", &sha])
         .run()
         .unwrap();
     assert!(
-        output.status.success(),
-        "Failed to init submodule: {}",
-        String::from_utf8_lossy(&output.stderr)
+        !source_object.status.success(),
+        "local history must not exist at its source"
     );
-
-    // Verify the submodule is actually initialized
+    let api = worktrunk::git::Repository::at(repo.root_path()).unwrap();
+    let registration = api.worktree_at(&outer).git_dir().unwrap();
+    let modules = registration.join("modules/sub");
+    assert!(modules.join("objects").is_dir());
+    if state == "deinitialized" {
+        repo.run_git_in(&outer, &["submodule", "deinit", "--all"]);
+    }
+    let status = repo
+        .git_command()
+        .current_dir(&outer)
+        .args(["status", "--porcelain", "--ignore-submodules=none"])
+        .run()
+        .unwrap();
     assert!(
-        worktree_path.join("submod").join("sub.txt").exists(),
-        "Submodule should be initialized"
+        status.status.success() && status.stdout.is_empty(),
+        "{status:?}"
     );
-
-    // Remove the worktree in foreground mode — should succeed despite submodules
+    if state == "stale" {
+        fs::remove_file(outer.join(".git")).unwrap();
+    }
+    if state == "initialized" {
+        let error = api.remove_worktree(&outer, false).unwrap_err();
+        assert_snapshot!(
+            error.to_string().replace(&worktrunk::path::format_path_for_display(&outer), "<worktree>"),
+            @"Cannot remove worktree @ <worktree>; contains submodule repositories; use --force to discard them"
+        );
+    }
     let output = repo
         .wt_command()
-        .args(["remove", "--foreground", "feature-submod"])
+        .args(["remove", "outer", "--foreground", "--keep-branch"])
         .output()
         .unwrap();
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{output:?}");
     assert!(
-        output.status.success(),
-        "Remove should succeed with submodules, got: {stderr}"
+        String::from_utf8_lossy(&output.stderr).contains("submodule repositories"),
+        "{output:?}"
     );
-    assert!(
-        !worktree_path.exists(),
-        "Worktree directory should be removed"
-    );
-}
-
-/// Regression: `Repository::remove_worktree(path, force=false)` synthesizes
-/// `git worktree remove --force` for submodule worktrees, which suppresses
-/// git's own dirty-file check. The method must re-validate cleanliness
-/// itself right before the synthesized-force command so a file dirtied after
-/// the caller's planning-time check is not silently destroyed.
-#[rstest]
-fn test_remove_worktree_submodule_dirty_fails_closed(mut repo: TestRepo) {
-    use worktrunk::git::Repository;
-
-    // Submodule source.
-    let sub_source = repo.root_path().parent().unwrap().join("sub-source-dirty");
-    std::fs::create_dir_all(&sub_source).unwrap();
-    repo.run_git_in(&sub_source, &["init", "-b", "main"]);
-    std::fs::write(sub_source.join("sub.txt"), "submodule content").unwrap();
-    repo.run_git_in(&sub_source, &["add", "sub.txt"]);
-    repo.run_git_in(&sub_source, &["commit", "-m", "sub init"]);
-
-    std::fs::write(repo.root_path().join("tracked.txt"), "original\n").unwrap();
-    repo.run_git(&["add", "tracked.txt"]);
-    repo.run_git(&["commit", "-m", "add tracked file"]);
-
-    let output = repo
+    let saved_object = repo
         .git_command()
-        .args([
-            "-c",
-            "protocol.file.allow=always",
-            "submodule",
-            "add",
-            sub_source.to_str().unwrap(),
-            "submod",
-        ])
+        .arg("--git-dir")
+        .arg(&modules)
+        .args(["cat-file", "-t", &sha])
         .run()
         .unwrap();
-    assert!(
-        output.status.success(),
-        "Failed to add submodule: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    repo.run_git(&["commit", "-m", "add submodule"]);
+    assert!(saved_object.status.success(), "{saved_object:?}");
 
-    let worktree_path = repo.add_worktree("feature-submod-dirty");
-    let output = repo
-        .git_command()
-        .current_dir(&worktree_path)
+    // Explicit worktree force has Git's destructive meaning. It must reach
+    // stale unregister as well, independently of branch deletion consent.
+    let forced = repo
+        .wt_command()
         .args([
-            "-c",
-            "protocol.file.allow=always",
-            "submodule",
-            "update",
-            "--init",
+            "remove",
+            "outer",
+            "--foreground",
+            "--keep-branch",
+            "--force",
         ])
-        .run()
+        .output()
         .unwrap();
-    assert!(
-        output.status.success(),
-        "Failed to init submodule: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    // Simulate the TOCTOU window: a tracked file is modified after the
-    // caller's clean check but before remove_worktree's destructive step.
-    std::fs::write(worktree_path.join("tracked.txt"), "DIRTIED\n").unwrap();
-
-    let repo_api = Repository::at(repo.root_path()).unwrap();
-    let result = repo_api.remove_worktree(&worktree_path, /* force */ false);
-
-    assert!(
-        result.is_err(),
-        "remove_worktree must fail closed when a submodule worktree is dirty \
-         (synthesized --force would otherwise destroy the change)"
-    );
-    assert!(
-        worktree_path.exists(),
-        "submodule worktree must be preserved, not force-removed"
-    );
-    assert_eq!(
-        std::fs::read_to_string(worktree_path.join("tracked.txt")).unwrap(),
-        "DIRTIED\n",
-        "the post-check modification must be intact (not destroyed)"
-    );
+    assert!(forced.status.success(), "{forced:?}");
+    assert!(!registration.exists());
+    assert_eq!(outer.exists(), state == "stale");
 }
 
 /// `submodule.<name>.ignore=all` is a display preference, not permission to
-/// delete modifications inside an initialized submodule. This is especially
-/// important because Worktrunk must internally force Git's worktree removal
-/// when initialized submodules are present.
+/// delete modifications inside an initialized submodule.
 #[rstest]
 fn test_remove_refuses_dirty_submodule_hidden_by_user_config(mut repo: TestRepo) {
     let sub_source = repo.root_path().parent().unwrap().join("sub-source-hidden");

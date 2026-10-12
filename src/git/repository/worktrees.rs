@@ -253,9 +253,12 @@ impl Repository {
     /// worktree list` in an *unrelated* process — outside wt's lock — remains
     /// exposed; wt's serialization only covers its own removals.
     ///
+    /// Stored submodule repositories require explicit `force`; a stale
+    /// checkout can still be their only object store.
+    ///
     /// Git also `rmdir`s `.git/worktrees` once its last entry goes. This
     /// leaves the empty directory, which git reads as no linked worktrees.
-    pub fn prune_worktree_entry(&self, path: &Path) -> anyhow::Result<()> {
+    pub fn prune_worktree_entry(&self, path: &Path, force: bool) -> anyhow::Result<()> {
         let display = format_path_for_display(path);
         let _registry = self.worktree_registry_write();
         let (registration, recorded) = self.registration_at(path)?;
@@ -264,6 +267,9 @@ impl Repository {
         }
         if !definitely_absent(&recorded.join(".git"))? {
             anyhow::bail!("Worktree @ {display} is no longer stale; its .git exists");
+        }
+        if !force {
+            require_discardable_submodules(path, registration_has_submodules(&registration)?)?;
         }
         std::fs::remove_dir_all(&registration).with_context(|| {
             format!(
@@ -274,8 +280,8 @@ impl Repository {
     }
 
     /// What unregistering the stale worktree at `path` would destroy that
-    /// nothing else holds: staged changes in its index, or a git operation
-    /// partway through. `None` when its registration holds neither.
+    /// nothing else holds: submodule repositories, staged changes in its
+    /// index, or a git operation partway through. `None` when none are present.
     ///
     /// [`prune_worktree_entry`](Self::prune_worktree_entry) deletes the
     /// registration, and the index and any rebase, merge, cherry-pick, revert
@@ -283,12 +289,15 @@ impl Repository {
     /// worktree repair <path>` reconnects the directory — recreated first, if
     /// it went too — and all of that comes back; afterwards staged files
     /// survive only as dangling blobs. So the stale-removal paths ask this
-    /// first and keep an entry that holds either, which is where they are
+    /// first and keep an entry that holds any, which is where they are
     /// more careful than `git worktree prune`. Files in a directory that
     /// remains stay on disk either way, and a registration with no index has
     /// nothing staged.
     pub fn stale_worktree_work(&self, path: &Path) -> anyhow::Result<Option<StaleWorktreeWork>> {
         let (registration, _) = self.registration_at(path)?;
+        if registration_has_submodules(&registration)? {
+            return Ok(Some(StaleWorktreeWork::SubmoduleRepositories));
+        }
         if let Some(operation) = operation_in_progress_at(&registration) {
             return Ok(Some(StaleWorktreeWork::Operation(operation)));
         }
@@ -346,35 +355,18 @@ impl Repository {
             .with_context(|| format!("No worktree registered @ {}", format_path_for_display(path)))
     }
 
-    /// Remove a worktree at the specified path.
-    ///
-    /// When `force` is true, passes `--force` to `git worktree remove`,
-    /// allowing removal even when the worktree contains untracked files
-    /// (like build artifacts such as `.vite/` or `node_modules/`).
-    ///
-    /// When the worktree contains initialized submodules, git refuses removal
-    /// even for clean worktrees. This method detects that case up front and
-    /// adds `--force`, which is safe because the caller has already validated
-    /// worktree cleanliness via `ensure_clean()`.
-    ///
-    /// # Why git requires `--force` for submodules
-    ///
-    /// Git's `--force` flag on `worktree remove` bypasses two unrelated
-    /// protections under one flag: dirty working tree checks AND the
-    /// submodule structural check. We separate these concerns — our
-    /// `ensure_clean()` handles dirty state, and `--force`
-    /// handles the submodule restriction.
-    ///
-    /// # TOCTOU note
-    ///
-    /// Git checks for submodules *before* checking for dirty files, so when
-    /// we synthesize `--force` for a submodule worktree, git's own dirty
-    /// check is bypassed. To keep failing closed on a file modified after the
-    /// caller's `ensure_clean()`, this method re-runs `ensure_clean()` itself
-    /// immediately before the synthesized-force removal — restoring the
-    /// backstop git would otherwise have provided. (For an explicit
-    /// user-requested `force`, the user opted into destructive removal, so no
-    /// re-check.)
+    /// Preserve registration-local module repositories and initialized
+    /// submodules. A clean superproject does not establish that their local
+    /// history is backed up elsewhere. Explicit force is handled by the caller.
+    pub fn require_no_submodule_storage(&self, path: &Path) -> anyhow::Result<()> {
+        let (registration, _) = self.registration_at(path)?;
+        let stored = registration_has_submodules(&registration)?;
+        let initialized = !stored && self.worktree_at(path).has_initialized_submodules()?;
+        require_discardable_submodules(path, stored || initialized)
+    }
+
+    /// Remove a worktree at the specified path. Only explicit `force` passes
+    /// `--force` to Git: cleanliness cannot prove submodule history disposable.
     pub fn remove_worktree(&self, path: &std::path::Path, force: bool) -> anyhow::Result<()> {
         let path_str = path.to_str().ok_or_else(|| {
             anyhow::Error::from(GitError::Other {
@@ -384,36 +376,15 @@ impl Repository {
                 ),
             })
         })?;
-        let use_force = if force {
-            true
-        } else {
-            self.worktree_at(path).has_initialized_submodules()?
-        };
         let mut args = vec!["worktree", "remove"];
-        if use_force {
+        if force {
             args.push("--force");
         }
         args.push(path_str);
-
-        // The synthesized-force cleanliness check and destructive command are
-        // one critical section. If this waited for another registry teardown
-        // after the check, a concurrent writer could dirty the worktree before
-        // `--force` bypassed Git's own dirty gate.
         let _registry = self.worktree_registry_write();
-        if use_force && !force {
-            // Synthesized force (submodule worktree, not user-requested).
-            // `--force` will suppress git's dirty check, so re-validate
-            // cleanliness ourselves right before the destructive command —
-            // a file modified since the caller's check must still fail
-            // closed rather than be silently destroyed.
-            self.worktree_at(path).ensure_clean(
-                "remove worktree with submodules",
-                None,
-                /* force_hint */ true,
-            )?;
-            tracing::debug!("Using --force for worktree removal due to initialized submodules");
+        if !force {
+            self.require_no_submodule_storage(path)?;
         }
-
         self.run_command(&args)?;
         Ok(())
     }
@@ -746,8 +717,45 @@ impl Repository {
 pub enum StaleWorktreeWork {
     /// The index differs from `HEAD`.
     StagedChanges,
+    /// Registration-local repositories can hold unpublished submodule history.
+    SubmoduleRepositories,
     /// A git operation is partway through.
     Operation(InProgressOperation),
+}
+
+/// The registration's `modules` container owns repositories even after
+/// `submodule deinit`. Inspect only that container, never checkout contents.
+/// Empty containers hold nothing; unreadable entries remain errors.
+fn registration_has_submodules(registration: &Path) -> anyhow::Result<bool> {
+    let modules = registration.join("modules");
+    let metadata = match std::fs::symlink_metadata(&modules) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error).context("Failed to inspect submodule repositories"),
+    };
+    if !metadata.is_dir() {
+        return Ok(true);
+    }
+    let first = std::fs::read_dir(&modules)
+        .with_context(|| {
+            format!(
+                "Failed to read submodule repositories @ {}",
+                format_path_for_display(&modules)
+            )
+        })?
+        .next()
+        .transpose()?;
+    Ok(first.is_some())
+}
+
+fn require_discardable_submodules(path: &Path, present: bool) -> anyhow::Result<()> {
+    if present {
+        anyhow::bail!(
+            "Cannot remove worktree @ {}; contains submodule repositories; use --force to discard them",
+            format_path_for_display(path)
+        );
+    }
+    Ok(())
 }
 
 /// Whether nothing is at `path`: `NotFound`, or `NotADirectory` where a parent

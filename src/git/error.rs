@@ -878,6 +878,11 @@ impl GitError {
                 StaleWorktreeWork::StagedChanges => {
                     cformat!("Worktree for <bold>{branch}</> is stale but holds staged changes")
                 }
+                StaleWorktreeWork::SubmoduleRepositories => {
+                    cformat!(
+                        "Worktree for <bold>{branch}</> is stale but holds submodule repositories"
+                    )
+                }
                 StaleWorktreeWork::Operation(operation) => cformat!(
                     "Worktree for <bold>{branch}</> is stale with a {} in progress",
                     operation_noun(*operation)

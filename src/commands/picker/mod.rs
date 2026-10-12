@@ -405,7 +405,7 @@ impl AltXRemover {
                 // never collects. A failed prune keeps the branch, so the row
                 // is restored.
                 if let Some(path) = prune_entry
-                    && let Err(e) = repo.prune_worktree_entry(path)
+                    && let Err(e) = repo.prune_worktree_entry(path, false)
                 {
                     tracing::warn!(branch = %branch_name, error = %e, "picker: failed to prune stale worktree for '{branch_name}': {e:#}");
                     return Ok(());
@@ -2908,6 +2908,7 @@ pub mod tests {
             branch_name: "feature".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
             prune_entry: None,
+            force_worktree: false,
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
@@ -2933,6 +2934,7 @@ pub mod tests {
             branch_name: "feature".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
             prune_entry: Some(wt_path.clone()),
+            force_worktree: false,
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
@@ -2964,6 +2966,7 @@ pub mod tests {
             branch_name: "feature".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
             prune_entry: Some(test.path().join("not-registered")),
+            force_worktree: false,
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
@@ -2995,6 +2998,7 @@ pub mod tests {
             branch_name: "unmerged".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
             prune_entry: None,
+            force_worktree: false,
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
@@ -3922,6 +3926,7 @@ pub mod tests {
             branch_name: "orphan".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
             prune_entry: None,
+            force_worktree: false,
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
@@ -4383,6 +4388,7 @@ pub mod tests {
             branch_name: "live-branch".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
             prune_entry: None,
+            force_worktree: false,
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
@@ -4394,6 +4400,7 @@ pub mod tests {
             branch_name: "no-such-branch".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
             prune_entry: None,
+            force_worktree: false,
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
@@ -4416,6 +4423,7 @@ pub mod tests {
                 branch_name: "b".to_string(),
                 deletion_mode: mode,
                 prune_entry: None,
+                force_worktree: false,
                 target_branch: None,
                 integration_reason: integration,
                 branch_checked_out_at: None,
