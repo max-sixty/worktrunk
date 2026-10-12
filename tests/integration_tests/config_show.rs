@@ -1652,7 +1652,8 @@ fn test_config_show_full_gitea_remote(mut repo: TestRepo, temp_home: TempDir) {
 /// command output. The mock replaces the external tea CLI, not our process
 /// wiring or diagnostics logic.
 #[rstest]
-#[case::login(r#"[{"name":"local","url":"https://forge.example.test","ssh_host":"","user":"alice","default":"true"}]"#, 0, true)]
+#[case::login(r#"[{"name":"local","url":"https://gitea.example.com","ssh_host":"","user":"alice","default":"true"}]"#, 0, true)]
+#[case::other_host(r#"[{"name":"local","url":"https://forge.example.test","ssh_host":"","user":"alice","default":"true"}]"#, 0, false)]
 #[case::empty("[]", 0, false)]
 #[case::invalid_json("not JSON", 0, false)]
 #[case::invalid_shape(r#"[{"name":"missing-url"}]"#, 0, false)]

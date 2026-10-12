@@ -3,44 +3,53 @@
 //! Given a [`ForgeKind`] (resolved by [`Repository::ci_platform`]), routes to
 //! the GitHub (`gh`), GitLab (`glab`), Gitea (`tea`), or Azure DevOps (`az`)
 //! backend and checks whether that CLI is installed.
+//!
+//! A failed call shows the error indicator only when the CLI holds a login for
+//! the forge's host. Without one, the user isn't using that CLI here, and the
+//! cell stays blank. `gh` says so itself, with exit code 4 for the host it
+//! resolved for the request; for the other CLIs, a login check reads local
+//! state for the remote's host. Either way, a lost connection still shows the
+//! error.
 
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
-use worktrunk::git::{ForgeKind, Repository};
+use dashmap::DashMap;
+use worktrunk::git::{ForgeKind, Repository, remote_ref};
 
-use super::{CiBranchName, PrStatus, azure, gitea, github, gitlab, tool_available};
+use super::{
+    CiBranchName, CiStatus, PrStatus, auth_host, azure, branch_remote_url, gitea, github, gitlab,
+    tool_available,
+};
 
-/// Cached availability of CI CLI tools (`gh`, `glab`, `tea`, `az`).
-///
-/// Probed once on first access via a `--version` check.
-static CI_TOOLS: OnceLock<CiToolsAvailable> = OnceLock::new();
+/// Whether each forge's CLI is installed, probed once per process.
+static INSTALLED: LazyLock<DashMap<ForgeKind, bool>> = LazyLock::new(DashMap::new);
 
-struct CiToolsAvailable {
-    gh: bool,
-    glab: bool,
-    tea: bool,
-    az: bool,
-}
-
-impl CiToolsAvailable {
-    fn get() -> &'static Self {
-        CI_TOOLS.get_or_init(|| Self {
-            gh: tool_available("gh", &["--version"]),
-            glab: tool_available("glab", &["--version"]),
-            tea: tool_available("tea", &["--version"]),
-            az: tool_available("az", &["--version"]),
-        })
-    }
-}
+/// Whether each forge's CLI holds a login for a host, asked once per process,
+/// and only once a call has failed.
+static LOGGED_IN: LazyLock<DashMap<(ForgeKind, String), bool>> = LazyLock::new(DashMap::new);
 
 /// Whether the CLI tool for this platform is installed (cached).
 fn is_tool_available(platform: ForgeKind) -> bool {
-    match platform {
-        ForgeKind::GitHub => CiToolsAvailable::get().gh,
-        ForgeKind::GitLab => CiToolsAvailable::get().glab,
-        ForgeKind::Gitea => CiToolsAvailable::get().tea,
-        ForgeKind::AzureDevOps => CiToolsAvailable::get().az,
+    *INSTALLED
+        .entry(platform)
+        .or_insert_with(|| tool_available(platform.cli(), &["--version"]))
+}
+
+/// Whether the platform's CLI holds a login for the branch's forge host
+/// (cached). A host that can't be resolved, or a check that can't finish,
+/// counts as logged in, leaving the failure on display.
+fn is_logged_in(platform: ForgeKind, repo: &Repository, branch: &CiBranchName) -> bool {
+    // A `gh` call without a login never reaches here: the backend reads its
+    // exit code, which follows SSH host aliases where a check by host can't.
+    if platform == ForgeKind::GitHub {
+        return true;
     }
+    let Some(host) = auth_host(repo, branch_remote_url(repo, branch)) else {
+        return true;
+    };
+    *LOGGED_IN
+        .entry((platform, host.clone()))
+        .or_insert_with(|| remote_ref::is_authed_for(platform, &host).unwrap_or(true))
 }
 
 /// Detect CI status from a PR/MR.
@@ -108,7 +117,8 @@ fn detect_branch(
 /// Detect CI status: PR/MR first when the branch [may head one](may_head_pr),
 /// then branch workflow/pipeline if `has_upstream`.
 ///
-/// Returns `None` if the CLI tool isn't installed or no CI status is found.
+/// Returns `None` if the CLI tool isn't installed, no CI status is found, or a
+/// call failed and the CLI holds no login for the host.
 pub(super) fn detect_ci(
     platform: ForgeKind,
     repo: &Repository,
@@ -119,13 +129,16 @@ pub(super) fn detect_ci(
     if !is_tool_available(platform) {
         return None;
     }
-    if may_head_pr(repo, branch)
-        && let Some(status) = detect_pr_mr(platform, repo, branch, local_head)
-    {
-        return Some(status);
+    let status = may_head_pr(repo, branch)
+        .then(|| detect_pr_mr(platform, repo, branch, local_head))
+        .flatten()
+        .or_else(|| {
+            has_upstream
+                .then(|| detect_branch(platform, repo, branch, local_head))
+                .flatten()
+        })?;
+    if status.ci_status == CiStatus::Error && !is_logged_in(platform, repo, branch) {
+        return None;
     }
-    if has_upstream {
-        return detect_branch(platform, repo, branch, local_head);
-    }
-    None
+    Some(status)
 }

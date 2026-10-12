@@ -11,6 +11,18 @@ use crate::git::url::{GitRemoteUrl, authority_host};
 use crate::git::{ForgeKind, Repository};
 use crate::shell_exec::Cmd;
 
+/// Whether `az` is logged in.
+///
+/// `az account show` reads the local profile and exits non-zero when logged
+/// out, whether or not the azure-devops extension is installed. Returns
+/// `false` if `az` is not installed.
+pub fn is_logged_in() -> bool {
+    Cmd::new("az")
+        .args(["account", "show"])
+        .run()
+        .is_ok_and(|output| output.status.success())
+}
+
 /// Construct an Azure DevOps remote URL for a repo.
 ///
 /// Emits `https://{host}/{org}/{project}/_git/{repo}` for `dev.azure.com` and

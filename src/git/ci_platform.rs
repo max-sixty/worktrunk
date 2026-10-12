@@ -14,7 +14,7 @@ use crate::git::{GitRemoteUrl, RefType, Repository};
 /// classification, remote-ref dispatch, and CI dispatch. Unknown hosts stay
 /// outside the enum as `None`; callers that expose an explicit `unknown` value
 /// add it only at that output boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::Display, strum::EnumString)]
 #[strum(serialize_all = "lowercase")]
 pub enum ForgeKind {
     GitHub,
@@ -60,6 +60,16 @@ impl ForgeKind {
             Some(Self::Gitea)
         } else {
             None
+        }
+    }
+
+    /// The CLI worktrunk drives for this forge.
+    pub const fn cli(self) -> &'static str {
+        match self {
+            Self::GitHub => "gh",
+            Self::GitLab => "glab",
+            Self::Gitea => "tea",
+            Self::AzureDevOps => "az",
         }
     }
 

@@ -19,7 +19,7 @@ use super::{
 /// status reaches us — see the [`gitea`](worktrunk::git::remote_ref::gitea)
 /// module docs.
 ///
-/// `is_tool_available` has already confirmed `tea` is on PATH, so a spawn
+/// `detect_ci` has already confirmed `tea` is on PATH, so a spawn
 /// failure here is an OS-level edge case — fall through to `None` (no CI status
 /// for this branch) rather than logging.
 fn tea_api(repo: &Repository, path: &str) -> Option<Output> {

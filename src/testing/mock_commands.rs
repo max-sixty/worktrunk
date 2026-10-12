@@ -269,6 +269,12 @@ pub fn tea_api_include_stderr(status: &str) -> String {
     format!("HTTP/1.1 {status}\r\nContent-Type: application/json;charset=utf-8\r\n\r\n")
 }
 
+/// `tea logins list --output json` holding a login for `gitea.example.com`,
+/// the host the Gitea CI tests use, so a failed call there shows the error
+/// indicator.
+pub const TEA_TEST_LOGINS: &str =
+    r#"[{"url":"https://gitea.example.com","ssh_host":"gitea.example.com"}]"#;
+
 /// Create a mock cargo command for tests.
 pub fn create_mock_cargo(bin_dir: &Path) {
     MockConfig::new("cargo")

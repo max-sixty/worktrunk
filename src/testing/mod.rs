@@ -64,7 +64,7 @@ use crate::git::Repository;
 use crate::shell_exec::{self, Cmd, INHERITED_GIT_PATH_VARS};
 use path_slash::PathExt;
 
-use self::mock_commands::{MockConfig, MockResponse, tea_api_include_stderr};
+use self::mock_commands::{MockConfig, MockResponse, TEA_TEST_LOGINS, tea_api_include_stderr};
 
 /// Path to the `wt` binary built by Cargo, pinned against concurrent builds.
 ///
@@ -2140,7 +2140,7 @@ impl TestRepo {
     /// use `configure_mock_commands()` to add the mock bin to PATH for your commands.
     ///
     /// The mock gh returns:
-    /// - `gh auth status`: exits successfully (0)
+    /// - `gh auth token`: exits successfully (0)
     /// - `gh pr list`: returns empty JSON array (no PRs found)
     ///
     /// This prevents CI detection from blocking tests with network calls.
@@ -2153,9 +2153,9 @@ impl TestRepo {
     /// Use this for `wt config show` tests that need deterministic BINARIES output.
     /// Creates mocks where:
     /// - `gh --version`: succeeds (installed)
-    /// - `gh auth status`: fails (not authenticated)
+    /// - `gh auth token`: fails (not authenticated)
     /// - `glab --version`: succeeds (installed)
-    /// - `glab auth status`: fails (not authenticated)
+    /// - `glab config get token`: prints nothing (not authenticated)
     pub fn setup_mock_ci_tools_unauthenticated(&mut self) {
         let mock_bin = self.temp_dir.path().join("mock-bin");
         std::fs::create_dir_all(&mock_bin).unwrap();
@@ -2169,7 +2169,7 @@ impl TestRepo {
         // glab: installed but not authenticated
         MockConfig::new("glab")
             .version("glab version 1.0.0 (mock)")
-            .command("auth", MockResponse::exit(1))
+            .command("config get token", MockResponse::output(""))
             .write(&mock_bin);
 
         // claude: not installed (don't create mock - which::which won't find it)
@@ -2638,7 +2638,7 @@ impl TestRepo {
         // This allows triple-matching "mr view <iid>" to return the correct MR
         let mut mock_config = MockConfig::new("glab")
             .version("glab version 1.0.0 (mock)")
-            .command("auth", MockResponse::exit(0))
+            .command("config get token", MockResponse::output("glpat-mock"))
             .command("mr list", MockResponse::file("mr_list_data.json"));
 
         // Parse MR array and create iid-specific view commands
@@ -2697,7 +2697,7 @@ impl TestRepo {
         // (falls back to exit code 1)
         MockConfig::new("glab")
             .version("glab version 1.0.0 (mock)")
-            .command("auth", MockResponse::exit(0))
+            .command("config get token", MockResponse::output("glpat-mock"))
             .command("mr list", MockResponse::file("mr_list_data.json"))
             // No "mr view" commands - will fall back to default exit code 1
             .command("repo", MockResponse::output(&project_id_response))
@@ -2727,7 +2727,7 @@ impl TestRepo {
         // glab mock: mr list returns empty (no MRs), ci list returns the pipeline
         MockConfig::new("glab")
             .version("glab version 1.0.0 (mock)")
-            .command("auth", MockResponse::exit(0))
+            .command("config get token", MockResponse::output("glpat-mock"))
             .command("mr list", MockResponse::output("[]")) // No MRs - triggers ci list fallback
             .command("repo", MockResponse::output(&project_id_response))
             .command("ci", MockResponse::output(pipeline_json))
@@ -2757,7 +2757,7 @@ impl TestRepo {
         // glab mock: mr list returns empty (no MRs), ci list fails with rate limit
         MockConfig::new("glab")
             .version("glab version 1.0.0 (mock)")
-            .command("auth", MockResponse::exit(0))
+            .command("config get token", MockResponse::output("glpat-mock"))
             .command("mr list", MockResponse::output("[]")) // No MRs - triggers ci list fallback
             .command("repo", MockResponse::output(&project_id_response))
             .command(
@@ -2911,6 +2911,10 @@ impl TestRepo {
         MockConfig::new("tea")
             .version("tea version development (mock)")
             .command(
+                "logins list --output",
+                MockResponse::output(TEA_TEST_LOGINS),
+            )
+            .command(
                 &pulls_path,
                 MockResponse::file("tea_pulls.json")
                     .with_stderr(&tea_api_include_stderr(pulls_status)),
@@ -2951,6 +2955,10 @@ impl TestRepo {
 
         MockConfig::new("tea")
             .version("tea version development (mock)")
+            .command(
+                "logins list --output",
+                MockResponse::output(TEA_TEST_LOGINS),
+            )
             .command("api", MockResponse::stderr(stderr).with_exit_code(1))
             .command("_default", MockResponse::exit(1))
             .write(&mock_bin);
@@ -2979,6 +2987,10 @@ impl TestRepo {
 
         MockConfig::new("tea")
             .version("tea version development (mock)")
+            .command(
+                "logins list --output",
+                MockResponse::output(TEA_TEST_LOGINS),
+            )
             .command(
                 // Keep `&limit=20` in sync with `MAX_PRS_TO_FETCH` in
                 // `src/commands/list/ci_status/mod.rs`.

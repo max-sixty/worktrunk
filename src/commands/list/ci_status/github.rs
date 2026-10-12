@@ -99,7 +99,7 @@ pub(super) fn detect_github(
     };
 
     if !output.status.success() {
-        return Some(PrStatus::error());
+        return gh_failure(&output);
     }
 
     // gh pr list returns an array - find the first PR from our origin
@@ -192,6 +192,14 @@ fn prime_comments_cache(repo: &Repository, pr_info: &GitHubPrInfo) {
     preview_cache::write_comments(repo, number as u32, updated_at, &entries);
 }
 
+/// The CI status for a failed `gh` call: none when `gh` holds no login for
+/// the host it resolved for the request (its documented exit code 4), else the
+/// error indicator.
+fn gh_failure(output: &std::process::Output) -> Option<PrStatus> {
+    const AUTH_REQUIRED: i32 = 4;
+    (output.status.code() != Some(AUTH_REQUIRED)).then(PrStatus::error)
+}
+
 /// Detect CI status for a commit using GitHub's check-runs API.
 ///
 /// This queries all check runs for the commit SHA, giving us the same data
@@ -238,7 +246,7 @@ pub(super) fn detect_github_commit_checks(
     };
 
     if !output.status.success() {
-        return Some(PrStatus::error());
+        return gh_failure(&output);
     }
 
     let checks: Vec<GitHubCheck> = parse_json(&output.stdout, "gh api check-runs", local_head)?;
