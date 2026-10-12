@@ -700,7 +700,7 @@ fn fresh_branch_checkout(repo: &Repository, branch_name: &str) -> anyhow::Result
     // Git process after the inventory query. Vanished registrations are absent.
     let git_dirs = registrations
         .iter()
-        .map(|(path, registration)| (path, registration.git_dir.as_path()))
+        .map(|(path, git_dir)| (path, git_dir.as_path()))
         .chain(
             main.as_ref()
                 .map(|path| (path, fresh_repo.git_common_dir())),
