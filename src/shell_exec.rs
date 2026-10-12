@@ -176,9 +176,8 @@ fn is_foreground_thread() -> bool {
 /// Only cancellable threads register ([`is_cancellable_thread`]): the
 /// foreground thread is the one that cancels, and is never itself inside a
 /// tracked command while doing so, so the work the user is actually waiting
-/// on is never a target; an [`uninterruptible`] thread finishes what it
-/// started. A command marked [`Cmd::finish_once_started`] doesn't register
-/// either, so it runs to completion once spawned.
+/// on is never a target. A command marked [`Cmd::finish_once_started`] doesn't
+/// register either, so it runs to completion once spawned.
 static BACKGROUND_PIDS: Mutex<BTreeSet<u32>> = Mutex::new(BTreeSet::new());
 
 /// Deregisters a background command's PID however the command finishes.
@@ -200,38 +199,10 @@ impl Drop for BackgroundPid {
     }
 }
 
-std::thread_local! {
-    /// Whether this thread is running work cancellation must not touch. See
-    /// [`uninterruptible`].
-    static UNINTERRUPTIBLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Run `f` with this thread's commands exempt from cancellation, for work the
-/// user has already asked for rather than work done on spec.
-///
-/// Cancelling is safe for a preview because its only effect is a cache entry
-/// nobody will read. It is not safe for a mutation: the picker runs an `alt-x`
-/// worktree removal on a background thread so the UI stays live, and a SIGTERM
-/// landing between `git worktree remove` and the branch delete would leave the
-/// user half-removed. Such a thread finishes what it started; only its result
-/// is discardable, not its effects.
-pub fn uninterruptible<T>(f: impl FnOnce() -> T) -> T {
-    struct Restore(bool);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            UNINTERRUPTIBLE.with(|flag| flag.set(self.0));
-        }
-    }
-
-    let _restore = Restore(UNINTERRUPTIBLE.with(|flag| flag.replace(true)));
-    f()
-}
-
-/// Whether this thread's commands are subject to cancellation: background (the
-/// foreground thread is the one doing the cancelling, and goes on to run the
-/// switch itself) and not marked [`uninterruptible`].
+/// Whether this thread's commands are subject to cancellation. The foreground
+/// thread cancels speculative work after joining requested background mutations.
 fn is_cancellable_thread() -> bool {
-    !is_foreground_thread() && !UNINTERRUPTIBLE.with(std::cell::Cell::get)
+    !is_foreground_thread()
 }
 
 /// Register a freshly spawned child as cancellable for as long as the returned
