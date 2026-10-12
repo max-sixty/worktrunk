@@ -588,7 +588,7 @@ fn test_remove_default_branch_with_detached_main_worktree(repo: TestRepo) {
 }
 
 /// `-D` is what reaches the annotation for the default branch: without it
-/// `check_not_default_branch` errors first, so the case above never exercises
+/// `require_branch_deletion_allowed` errors first, so the case above never exercises
 /// the exclusion it appears to be about. `compute_worktree_path` returns the
 /// repo root for the default branch of a non-bare repo, and a detached main
 /// worktree passes every other predicate in the `find` — `is_linked()` is the
@@ -2436,6 +2436,54 @@ fn test_remove_default_branch_refused() {
 
         assert_cmd_snapshot!("remove_default_branch_force_delete", cmd);
     });
+}
+
+/// A linked default-branch checkout can be removed while retaining its ref.
+#[test]
+fn test_remove_linked_default_branch_keep() {
+    let test = BareRepoTest::new();
+    let main = test.create_worktree("main", "main");
+    test.commit_in(&main, "Initial commit on main");
+    let feature = test.create_worktree("feature", "feature");
+    let original = test
+        .git_command(&feature)
+        .args(["rev-parse", "refs/heads/main"])
+        .run()
+        .unwrap()
+        .stdout;
+
+    let refused = test
+        .wt_command()
+        .current_dir(&feature)
+        .args(["remove", "--foreground", "main"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(main.exists());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("--no-delete-branch"));
+
+    let removed = test
+        .wt_command()
+        .current_dir(&feature)
+        .args(["remove", "--foreground", "--no-delete-branch", "main"])
+        .output()
+        .unwrap();
+    assert!(
+        removed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&removed.stderr)
+    );
+    assert!(!main.exists());
+    let repo = worktrunk::git::Repository::at(&feature).unwrap();
+    assert_eq!(repo.worktree_for_branch("main").unwrap(), None);
+    assert_eq!(
+        test.git_command(&feature)
+            .args(["rev-parse", "refs/heads/main"])
+            .run()
+            .unwrap()
+            .stdout,
+        original
+    );
 }
 
 /// BranchOnly path: when the default branch has no worktree (directory deleted),
