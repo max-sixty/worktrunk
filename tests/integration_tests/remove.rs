@@ -2428,6 +2428,38 @@ fn test_remove_default_branch_refused() {
         assert_cmd_snapshot!("remove_default_branch_refused", cmd);
     });
 
+    let original = test
+        .git_command(&feature_worktree)
+        .args(["rev-parse", "refs/heads/main"])
+        .run()
+        .unwrap()
+        .stdout;
+    settings.bind(|| {
+        let mut cmd = test.wt_command();
+        cmd.args(["remove", "--foreground", "--no-delete-branch", "main"])
+            .current_dir(&feature_worktree);
+        assert_cmd_snapshot!("remove_default_branch_keep", cmd);
+    });
+    assert!(!main_worktree.exists());
+    let repo = worktrunk::git::Repository::at(&feature_worktree).unwrap();
+    assert_eq!(repo.worktree_for_branch("main").unwrap(), None);
+    assert_eq!(
+        test.git_command(&feature_worktree)
+            .args(["rev-parse", "refs/heads/main"])
+            .run()
+            .unwrap()
+            .stdout,
+        original
+    );
+
+    // Restore the checkout to exercise explicit deletion independently of Keep.
+    let added = test
+        .git_command(&feature_worktree)
+        .args(["worktree", "add", main_worktree.to_str().unwrap(), "main"])
+        .run()
+        .unwrap();
+    assert!(added.status.success(), "{added:?}");
+
     // With -D: should succeed (user explicitly force-deletes)
     settings.bind(|| {
         let mut cmd = test.wt_command();
@@ -2436,54 +2468,6 @@ fn test_remove_default_branch_refused() {
 
         assert_cmd_snapshot!("remove_default_branch_force_delete", cmd);
     });
-}
-
-/// A linked default-branch checkout can be removed while retaining its ref.
-#[test]
-fn test_remove_linked_default_branch_keep() {
-    let test = BareRepoTest::new();
-    let main = test.create_worktree("main", "main");
-    test.commit_in(&main, "Initial commit on main");
-    let feature = test.create_worktree("feature", "feature");
-    let original = test
-        .git_command(&feature)
-        .args(["rev-parse", "refs/heads/main"])
-        .run()
-        .unwrap()
-        .stdout;
-
-    let refused = test
-        .wt_command()
-        .current_dir(&feature)
-        .args(["remove", "--foreground", "main"])
-        .output()
-        .unwrap();
-    assert!(!refused.status.success());
-    assert!(main.exists());
-    assert!(String::from_utf8_lossy(&refused.stderr).contains("--no-delete-branch"));
-
-    let removed = test
-        .wt_command()
-        .current_dir(&feature)
-        .args(["remove", "--foreground", "--no-delete-branch", "main"])
-        .output()
-        .unwrap();
-    assert!(
-        removed.status.success(),
-        "{}",
-        String::from_utf8_lossy(&removed.stderr)
-    );
-    assert!(!main.exists());
-    let repo = worktrunk::git::Repository::at(&feature).unwrap();
-    assert_eq!(repo.worktree_for_branch("main").unwrap(), None);
-    assert_eq!(
-        test.git_command(&feature)
-            .args(["rev-parse", "refs/heads/main"])
-            .run()
-            .unwrap()
-            .stdout,
-        original
-    );
 }
 
 /// BranchOnly path: when the default branch has no worktree (directory deleted),
@@ -2507,6 +2491,24 @@ fn test_remove_default_branch_branch_only() {
         cmd.args(["remove", "main"]).current_dir(&feature_worktree);
 
         assert_cmd_snapshot!("remove_default_branch_branch_only_refused", cmd);
+    });
+
+    // Keep prunes the stale registration without claiming self-integration.
+    settings.bind(|| {
+        let mut cmd = test.wt_command();
+        cmd.args(["remove", "--no-delete-branch", "main"])
+            .current_dir(&feature_worktree);
+        assert_cmd_snapshot!("remove_default_branch_stale_keep", cmd);
+    });
+    let repo = worktrunk::git::Repository::at(&feature_worktree).unwrap();
+    assert_eq!(repo.worktree_for_branch("main").unwrap(), None);
+    assert!(repo.branch("main").exists_locally().unwrap());
+
+    // With no checkout or registration, keeping the branch would do nothing.
+    settings.bind(|| {
+        let mut cmd = test.wt_command();
+        cmd.args(["remove", "main"]).current_dir(&feature_worktree);
+        assert_cmd_snapshot!("remove_default_branch_no_entry_refused", cmd);
     });
 
     // With -D: should succeed (force-delete the default branch)

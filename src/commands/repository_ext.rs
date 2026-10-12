@@ -402,11 +402,7 @@ impl RepositoryCliExt for Repository {
             if branch_checked_out_at.is_some() || branch_unborn {
                 (BranchDeletionMode::Keep, None, None)
             } else {
-                let default_branch = self.default_branch();
-                let target_branch = match (&default_branch, &branch_name) {
-                    (Some(db), Some(bn)) if db == bn => None,
-                    _ => default_branch,
-                };
+                let target_branch = self.default_branch();
                 let (integration_reason, target_branch) = match compute_integration_reason(
                     self,
                     snapshot,
@@ -548,6 +544,7 @@ pub(crate) fn is_primary_worktree(repo: &Repository) -> anyhow::Result<bool> {
 /// - `deletion_mode` is `ForceDelete` (skip integration check)
 /// - `branch_name` is `None` (detached HEAD)
 /// - `target_branch` is `None` (no target to check against)
+/// - the branch is the target (self-comparison is not integration)
 ///
 /// When `Some`, the effective target may differ from the local default branch
 /// (e.g., `origin/main` when upstream is ahead).
@@ -570,6 +567,9 @@ pub(crate) fn compute_integration_reason(
         Some(pair) => pair,
         None => return (None, None),
     };
+    if branch == target {
+        return (None, None);
+    }
     // On error, return None (informational only)
     match repo.integration_reason(snapshot, branch, target) {
         Ok((effective_target, reason)) => (reason, Some(effective_target)),
@@ -614,10 +614,6 @@ pub(crate) fn live_sibling_checkout<'a>(
 /// Default-branch deletion requires explicit force; keeping its ref permits
 /// removing a linked checkout or stale registration. `has_worktree` keeps the
 /// refusal advice from suggesting a no-op for a pure branch-only target.
-///
-/// The default branch is the integration target — checking it against itself is
-/// tautological (same logic as `wt list`'s `is_main` guard in
-/// `check_integration_state`).
 pub(crate) fn require_branch_deletion_allowed(
     repo: &Repository,
     branch: &str,
