@@ -96,6 +96,53 @@ impl Repository {
             .map(Vec::as_slice)
     }
 
+    /// Find a registered checkout inside the removal tree, and refuse trees
+    /// containing this repository's common or registration Git storage.
+    /// Reads backlinks freshly without waiting on the registry lock. Directory
+    /// symlinks resolve to their actual locations; missing checkouts are skipped.
+    /// Unrecorded or manually moved checkouts are outside this registry check.
+    pub fn nested_worktree(&self, path: &Path) -> anyhow::Result<Option<PathBuf>> {
+        let root = canonicalize(path).context("Failed to resolve worktree for removal")?;
+        let fresh = Repository::at(self.discovery_path())?;
+        let require_outside_removal = |git_dir: &Path| -> anyhow::Result<()> {
+            if git_dir.starts_with(&root) {
+                anyhow::bail!(
+                    "Cannot remove worktree @ {}; contains a Git directory @ {}",
+                    format_path_for_display(&root),
+                    format_path_for_display(git_dir),
+                );
+            }
+            Ok(())
+        };
+        require_outside_removal(fresh.git_common_dir())?;
+        let mut paths = Vec::new();
+        if !fresh.is_bare()? {
+            paths.push(fresh.repo_path()?.to_path_buf());
+        }
+        for (path, registration) in fresh.worktree_registrations()? {
+            require_outside_removal(&registration.git_dir)?;
+            paths.push(path);
+        }
+        for path in paths {
+            let path = match canonicalize(&path) {
+                Ok(path) => path,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "Failed to resolve worktree @ {}",
+                            format_path_for_display(&path)
+                        )
+                    });
+                }
+            };
+            if path != root && path.starts_with(&root) {
+                return Ok(Some(path));
+            }
+        }
+        Ok(None)
+    }
+
     /// Find the worktree path for a given branch, if one exists.
     ///
     /// A branch normally maps to at most one worktree, but `git worktree add

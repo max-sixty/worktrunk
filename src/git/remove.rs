@@ -503,6 +503,16 @@ pub fn stage_worktree_removal(
         worktree.ensure_clean("remove worktree", branch, true, CleanCheckMode::FullScan)?;
     }
 
+    // Status and daemon shutdown may add a registered checkout or relocate
+    // sibling Git storage inside the removal tree. Force never waives it.
+    if let Some(nested) = repo.nested_worktree(worktree_path)? {
+        anyhow::bail!(
+            "Cannot remove worktree @ {}; contains worktree @ {}",
+            format_path_for_display(worktree_path),
+            format_path_for_display(&nested),
+        );
+    }
+
     // No external command runs between these final topology/owner/lock checks
     // and rename. A replacement must not retarget the old removal.
     require_removal_allowed(&worktree, branch, Some(&git_dir))?;
@@ -535,40 +545,6 @@ fn require_removal_allowed(
         .into());
     }
     Ok(git_dir)
-}
-
-/// Find a registered worktree contained in `worktree_path`, using a fresh
-/// registry read. Ignored nested worktrees are invisible to `ensure_clean`,
-/// but renaming or removing their parent would destroy their independent work.
-/// Canonical paths catch registrations made through symlinks; a missing entry
-/// has no directory to protect, while other resolution errors fail closed.
-///
-/// Called only by merge cleanup: once while deciding whether to remove, then
-/// again after approved pre-remove hooks and before the final removal gates.
-/// Keep this live registry read out of `stage_worktree_removal`: batch prune
-/// staging must not wait for another removal's registry teardown (#3954).
-pub fn nested_worktree(repo: &Repository, worktree_path: &Path) -> anyhow::Result<Option<PathBuf>> {
-    let root =
-        dunce::canonicalize(worktree_path).context("Failed to resolve worktree for removal")?;
-    let fresh_repo = Repository::at(repo.discovery_path())?;
-    for worktree in fresh_repo.list_worktrees()? {
-        let path = match dunce::canonicalize(&worktree.path) {
-            Ok(path) => path,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!(
-                        "Failed to resolve worktree @ {}",
-                        format_path_for_display(&worktree.path)
-                    )
-                });
-            }
-        };
-        if path != root && path.starts_with(&root) {
-            return Ok(Some(path));
-        }
-    }
-    Ok(None)
 }
 
 /// Rename a worktree into `<git-common-dir>/wt/trash/` and prune git metadata.
@@ -837,7 +813,7 @@ mod tests {
         // topology after planning, independently of that cache.
         repo.list_worktrees().unwrap();
         let late = test.add_worktree_at_path("late", &source.join("late"));
-        assert_eq!(nested_worktree(&repo, &source).unwrap(), Some(late));
+        assert_eq!(repo.nested_worktree(&source).unwrap(), Some(late));
     }
 
     #[cfg(unix)]
@@ -849,7 +825,7 @@ mod tests {
         let alias = test.root_path().parent().unwrap().join("source-alias");
         std::os::unix::fs::symlink(&source, &alias).unwrap();
         let repo = Repository::at(test.root_path()).unwrap();
-        assert_eq!(nested_worktree(&repo, &alias).unwrap(), Some(nested));
+        assert_eq!(repo.nested_worktree(&alias).unwrap(), Some(nested));
     }
 
     #[test]
@@ -859,7 +835,7 @@ mod tests {
         let nested = test.add_worktree_at_path("nested", &source.join("nested"));
         std::fs::rename(&nested, test.root_path().parent().unwrap().join("saved")).unwrap();
         let repo = Repository::at(test.root_path()).unwrap();
-        assert_eq!(nested_worktree(&repo, &source).unwrap(), None);
+        assert_eq!(repo.nested_worktree(&source).unwrap(), None);
     }
 
     #[cfg(unix)]
@@ -874,7 +850,7 @@ mod tests {
         // registered checkout is absent. Refuse cleanup rather than skip it.
         std::os::unix::fs::symlink(&nested, &nested).unwrap();
         let repo = Repository::at(test.root_path()).unwrap();
-        let err = nested_worktree(&repo, &source).unwrap_err();
+        let err = repo.nested_worktree(&source).unwrap_err();
         assert!(
             err.to_string().contains("Failed to resolve worktree @"),
             "{err:?}"

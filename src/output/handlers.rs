@@ -2136,12 +2136,11 @@ fn handle_removed_worktree_output(
         execute_pre_remove_hooks_if_needed(&repo, &ctx)?;
     }
 
-    // This read may wait for a registry teardown. Keep it before the final
-    // ownership/lock/dirty gates in the removal core, so edits made during
-    // the wait are checked before staging. Also precede the cd directive:
-    // refusing cleanup must not move the invoking shell.
+    // Keep merge cleanup preflight before the cd directive: refusing cleanup
+    // must not move the invoking shell. The shared staging core repeats the
+    // fresh registry check after status and daemon shutdown.
     if ctx.protect_nested_worktrees
-        && let Some(nested) = worktrunk::git::remove::nested_worktree(&repo, ctx.worktree_path)?
+        && let Some(nested) = repo.nested_worktree(ctx.worktree_path)?
     {
         anyhow::bail!(cformat!(
             "Cannot remove worktree @ <bold>{}</>; contains worktree @ <bold>{}</>",

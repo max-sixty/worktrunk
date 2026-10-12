@@ -3388,3 +3388,166 @@ fn unknown_rebase_identity_blocks_destructive_consumers() {
     repo.prune_worktree_entry(&linked).unwrap();
     assert!(!registration.exists());
 }
+
+#[test]
+fn final_removal_preserves_registered_ignored_nested_checkout() {
+    let mut test = TestRepo::with_initial_commit();
+    std::fs::write(test.root_path().join(".gitignore"), ".storage/\n").unwrap();
+    test.commit("Ignore storage");
+    let outer = test.add_worktree("outer");
+    let inner = test.add_worktree_at_path("inner", &outer.join(".storage/inner"));
+    std::fs::write(inner.join("notes.txt"), "independent work").unwrap();
+    let repo = Repository::at(test.root_path()).unwrap();
+    assert!(repo.worktree_at(&outer).dirty_files().unwrap().is_empty());
+    for force in [false, true] {
+        let error =
+            crate::git::stage_worktree_removal(&repo, &outer, Some("outer"), force).unwrap_err();
+        assert!(error.to_string().contains("contains worktree"), "{error:#}");
+        assert!(outer.join(".git").is_file());
+        assert!(inner.join(".git").is_file());
+        assert_eq!(
+            std::fs::read_to_string(inner.join("notes.txt")).unwrap(),
+            "independent work"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn final_removal_preserves_contained_registration_storage() {
+    for contained in [true, false] {
+        let mut test = TestRepo::with_initial_commit();
+        std::fs::write(test.root_path().join(".gitignore"), ".storage/\n").unwrap();
+        test.commit("Ignore storage");
+        let outer = test.add_worktree("outer");
+        let inner = test.add_worktree("inner");
+        std::fs::write(inner.join("staged.txt"), "staged contents").unwrap();
+        test.run_git_in(&inner, &["add", "staged.txt"]);
+        std::fs::write(inner.join("staged.txt"), "unstaged contents").unwrap();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let registration = repo.worktree_at(&inner).git_dir().unwrap();
+        let storage = if contained {
+            outer.join(".storage/inner-registration")
+        } else {
+            test.root_path().join("external-registration")
+        };
+        std::fs::create_dir_all(storage.parent().unwrap()).unwrap();
+        std::fs::rename(&registration, &storage).unwrap();
+        std::fs::write(
+            storage.join("commondir"),
+            format!("{}\n", repo.git_common_dir().display()),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(&storage, &registration).unwrap();
+        let index = std::fs::read(storage.join("index")).unwrap();
+        assert!(repo.worktree_at(&outer).dirty_files().unwrap().is_empty());
+        let result = crate::git::stage_worktree_removal(&repo, &outer, Some("outer"), true);
+        if contained {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("contains a Git directory")
+            );
+            assert!(outer.join(".git").is_file());
+        } else {
+            assert!(result.unwrap().is_some());
+            assert!(!outer.exists());
+        }
+        assert_eq!(std::fs::read(storage.join("index")).unwrap(), index);
+        assert!(registration.is_symlink());
+        assert_eq!(
+            std::fs::read_to_string(inner.join("staged.txt")).unwrap(),
+            "unstaged contents"
+        );
+        assert!(Repository::at(&inner).unwrap().git_common_dir() == repo.git_common_dir());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn final_removal_allows_ignored_foreign_repository_and_outward_symlink() {
+    let mut test = TestRepo::with_initial_commit();
+    std::fs::write(test.root_path().join(".gitignore"), ".storage/\n").unwrap();
+    test.commit("Ignore storage");
+    let outer = test.add_worktree("outer");
+    let foreign = outer.join(".storage/foreign");
+    test.run_git(&["init", "-b", "main", foreign.to_str().unwrap()]);
+    test.run_git_in(
+        &foreign,
+        &["commit", "--allow-empty", "-m", "Foreign repository"],
+    );
+    let sibling = test.add_worktree("sibling");
+    std::os::unix::fs::symlink(&sibling, outer.join(".storage/sibling-link")).unwrap();
+    let repo = Repository::at(test.root_path()).unwrap();
+    assert!(repo.worktree_at(&outer).dirty_files().unwrap().is_empty());
+    let staged = crate::git::stage_worktree_removal(&repo, &outer, Some("outer"), false)
+        .unwrap()
+        .unwrap();
+    assert!(staged.join(".storage/foreign/.git").is_dir());
+    assert!(staged.join(".storage/sibling-link").is_symlink());
+    assert!(sibling.join(".git").is_file());
+}
+
+#[test]
+fn nested_worktree_refuses_contained_common_git_storage() {
+    let seed = TestRepo::with_initial_commit();
+    std::fs::write(seed.root_path().join(".gitignore"), ".store/\n").unwrap();
+    seed.run_git(&["add", ".gitignore"]);
+    seed.run_git(&["commit", "-m", "ignore moved store"]);
+    let directory = crate::testing::test_tempdir();
+    let original = directory.path().join("bare.git");
+    let outer = directory.path().join("outer");
+    seed.run_git(&[
+        "clone",
+        "--bare",
+        seed.root_path().to_str().unwrap(),
+        original.to_str().unwrap(),
+    ]);
+    seed.run_git_in(
+        &original,
+        &["worktree", "add", "-b", "outer", outer.to_str().unwrap()],
+    );
+    std::fs::write(outer.join("only-history.txt"), "sole unpushed history").unwrap();
+    seed.run_git_in(&outer, &["add", "only-history.txt"]);
+    seed.run_git_in(&outer, &["commit", "-m", "sole history"]);
+    let head = String::from_utf8(
+        seed.git_command()
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&outer)
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let store = outer.join(".store");
+    std::fs::rename(&original, &store).unwrap();
+    std::fs::write(
+        outer.join(".git"),
+        format!("gitdir: {}\n", store.join("worktrees/outer").display()),
+    )
+    .unwrap();
+    let repo = Repository::at(&outer).unwrap();
+    assert!(repo.is_bare().unwrap());
+    let registration = repo.worktree_at(&outer).git_dir().unwrap();
+    let index = std::fs::read(registration.join("index")).unwrap();
+    let error = repo.nested_worktree(&outer).unwrap_err();
+    assert!(
+        error.to_string().contains("contains a Git directory"),
+        "{error:#}"
+    );
+    for force in [false, true] {
+        let error = crate::git::remove::stage_worktree_removal(&repo, &outer, Some("outer"), force)
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("contains a Git directory"),
+            "{error:#}"
+        );
+        assert_eq!(std::fs::read(registration.join("index")).unwrap(), index);
+        assert_eq!(
+            std::fs::read_to_string(outer.join("only-history.txt")).unwrap(),
+            "sole unpushed history"
+        );
+        seed.run_git_in(&outer, &["cat-file", "-e", head.trim()]);
+    }
+}

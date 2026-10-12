@@ -136,8 +136,7 @@ pub fn finish_after_merge(
         };
         eprintln!("{}", info_message(msg));
         false
-    } else if let Some(nested) = worktrunk::git::remove::nested_worktree(repo, &env.worktree_path)?
-    {
+    } else if let Some(nested) = repo.nested_worktree(&env.worktree_path)? {
         eprintln!(
             "{}",
             info_message(format!(
