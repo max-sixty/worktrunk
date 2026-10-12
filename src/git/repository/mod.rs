@@ -1620,8 +1620,8 @@ impl Repository {
     /// |----------------------------|----------------------------|-------------------------------|
     /// | Bare `.git`                | `core.bare = true`         | `git_common_dir` is the repo  |
     /// | Submodule `.git/modules/X` | `core.worktree` set by git | `rev-parse --show-toplevel`   |
-    /// | Separate git dir           | backlink or main discovery | verified main worktree        |
-    /// | Normal `.git`              | verified own `.git`        | `parent(git_common_dir)`      |
+    /// | Separate git dir           | `<common>/gitdir` backlink | `parent(backlink)`            |
+    /// | Normal `.git`              | none of the above          | `parent(git_common_dir)`      |
     ///
     /// Submodules need `core.worktree` because their git data lives in the
     /// parent's `.git/modules/` — the `parent(.git)` rule would point at
@@ -1639,13 +1639,14 @@ impl Repository {
     ///
     /// A repository whose git directory lives outside its work tree
     /// (`--separate-git-dir`) has neither signal, and `parent(git_common_dir)`
-    /// names the store's parent rather than the work tree. Resolve from verified
-    /// main discovery or a repaired backlink; refuse an unknown main location.
+    /// names the store's parent rather than the work tree. The backlink git
+    /// writes there covers it where it exists; see
+    /// `separate_git_dir_work_tree` for when that is.
     ///
     /// # Errors
     ///
-    /// Returns an error if config cannot be read or the main worktree cannot
-    /// be identified, rather than caching a guessed location.
+    /// Returns an error if the bulk config read fails (e.g., git timeout). This
+    /// surfaces the failure early rather than caching a potentially wrong path.
     pub fn repo_path(&self) -> anyhow::Result<&Path> {
         self.cache
             .repo_path
@@ -1669,43 +1670,53 @@ impl Repository {
                     return Ok(super::git_path_from_output(&out.stdout)?);
                 }
 
-                self.resolve_main_worktree().context(
-                    "Cannot determine the main worktree location; run git worktree repair from the main worktree",
-                )
+                if let Some(work_tree) = self.separate_git_dir_work_tree() {
+                    return Ok(work_tree);
+                }
+
+                Ok(self
+                    .git_common_dir
+                    .parent()
+                    .expect("Git directory has no parent")
+                    .to_path_buf())
             })
             .map(|p| p.as_path())
     }
 
-    /// Resolve the main from its reciprocal backlink, discovery in that main
-    /// worktree, or conventional `.git` parent. Git init/clone with a separate
-    /// Git directory do not write the backlink; `git worktree repair` does.
-    /// From a linked checkout, an unrecorded store named `.git` resolves to its
-    /// parent, as Git does; other separate stores need a repaired backlink.
+    /// The work tree a `--separate-git-dir` repository records in its `gitdir`
+    /// backlink, if it has one.
     ///
-    /// Every candidate's own `.git` must resolve to this common directory.
-    /// Direct discovery in the main needs no subprocess. It takes precedence
-    /// over the conventional parent: a separate store can itself be named `.git`.
-    fn resolve_main_worktree(&self) -> Option<PathBuf> {
-        if let Ok(work_tree) = registration_worktree_path(&self.git_common_dir)
-            && Self::git_dir_at(&work_tree).ok().flatten().as_ref() == Some(&self.git_common_dir)
-        {
-            return Some(work_tree);
-        }
-        if Self::git_dir_at(&self.discovery_path)
-            .ok()
-            .flatten()
-            .as_ref()
-            == Some(&self.git_common_dir)
-        {
-            return canonicalize(&self.discovery_path).ok();
-        }
-        if let Ok(work_tree) = self.current_worktree().root()
-            && Self::git_dir_at(&work_tree).ok().flatten().as_ref() == Some(&self.git_common_dir)
-        {
-            return Some(work_tree);
-        }
-        let parent = self.git_common_dir.parent()?;
-        (Self::git_dir_at(parent).ok()?? == self.git_common_dir).then(|| parent.to_path_buf())
+    /// When the git directory lives outside the work tree, the work tree's
+    /// `.git` is a *file* pointing at the store and `parent(git_common_dir)`
+    /// names the store's parent — the wrong answer, and the one
+    /// `git worktree list` gives too, since git derives its main-worktree
+    /// entry by stripping a trailing `/.git` that isn't there (see the
+    /// submodule correction in [`Self::list_worktrees`], which this layout
+    /// trips the same way).
+    ///
+    /// Git's own record of the other direction is `<git-common-dir>/gitdir`,
+    /// holding the path of the work tree's `.git` file — the same format as a
+    /// linked worktree's `.git/worktrees/<name>/gitdir`, down to the relative
+    /// form git writes under `worktree.useRelativePaths`, so
+    /// [`registration_worktree_path`] reads it. Only
+    /// `git worktree repair` writes it; `git init --separate-git-dir` and
+    /// `git clone --separate-git-dir` leave the store with no backlink, so a
+    /// repository that has never been repaired records its work tree nowhere
+    /// and still falls through to `parent(git_common_dir)`. Running
+    /// `git worktree repair` from the work tree is what materializes it.
+    ///
+    /// The backlink is one-way, so it is confirmed rather than trusted:
+    /// [`Self::git_dir_at`] reads the `.git` entry sitting at the work tree it
+    /// names, and only a work tree that points back at this common dir is
+    /// accepted. A backlink left behind by a work tree that has since moved,
+    /// been deleted, or been re-pointed at another repository resolves to
+    /// something else and falls through to `parent(git_common_dir)` — the
+    /// same answer as before, rather than a path that no longer holds this
+    /// repository. That round trip is also why a normal repository or a
+    /// submodule can't misfire here on a stray `gitdir` file.
+    fn separate_git_dir_work_tree(&self) -> Option<PathBuf> {
+        let work_tree = registration_worktree_path(&self.git_common_dir).ok()?;
+        (Self::git_dir_at(&work_tree).ok()?? == self.git_common_dir).then_some(work_tree)
     }
 
     /// Access the bulk git config map, populating on first call.
