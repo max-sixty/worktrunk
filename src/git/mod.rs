@@ -75,7 +75,7 @@ mod test;
 // Heavy operations protected:
 // - git rev-list --count (accesses commit-graph via mmap)
 // - git diff-tree --shortstat (accesses pack files and indexes via mmap)
-use crate::path::canonicalize_with_parents;
+use crate::path::{canonicalize_with_parents, format_path_for_display};
 use crate::sync::Semaphore;
 use std::sync::LazyLock;
 static HEAVY_OPS_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(4));
@@ -833,7 +833,7 @@ impl WorktreeRef {
     }
 }
 
-/// Parsed worktree data from `git worktree list --porcelain`.
+/// Parsed worktree data from `git worktree list --porcelain -z`.
 ///
 /// This is a data record containing metadata about a worktree.
 /// For running commands in a worktree, use [`WorkingTree`] via
@@ -910,62 +910,190 @@ impl WorktreeInfo {
 //
 // Placing them here avoids circular dependencies and keeps them close to WorktreeInfo.
 
-/// The branch a rebase in this git dir is rewriting, from `head-name`.
-fn rebase_branch(git_dir: &Path) -> Option<String> {
-    // Check both rebase-merge and rebase-apply
-    for rebase_dir in ["rebase-merge", "rebase-apply"] {
-        let head_name_path = git_dir.join(rebase_dir).join("head-name");
-        if let Ok(content) = std::fs::read_to_string(head_name_path) {
-            let branch_ref = content.trim();
-            // Strip refs/heads/ prefix if present
-            let branch = branch_ref
-                .strip_prefix("refs/heads/")
-                .unwrap_or(branch_ref)
-                .to_string();
-            return Some(branch);
-        }
-    }
+/// The rebasing branch shown in inventory, from its own Git directory.
+fn rebase_branch(git_dir: &Path) -> anyhow::Result<Option<String>> {
+    use anyhow::Context;
 
-    None
+    // Match Git's operation markers: am shares rebase-apply, but applying
+    // only needs to exist. Its contents do not establish a branch identity.
+    for backend in ["rebase-apply", "rebase-merge"] {
+        let state = git_dir.join(backend);
+        if !state.try_exists().with_context(|| {
+            format!(
+                "Failed to inspect rebase state @ {}",
+                format_path_for_display(&state)
+            )
+        })? {
+            continue;
+        }
+        if backend == "rebase-apply" && state.join("applying").try_exists()? {
+            break;
+        }
+        let path = state.join("head-name");
+        let content = std::fs::read_to_string(&path).with_context(|| {
+            format!(
+                "Failed to read rebase branch @ {}",
+                format_path_for_display(&path)
+            )
+        })?;
+        let head = content.trim_end_matches('\n');
+        if head == "detached HEAD" {
+            break;
+        }
+        let branch = head
+            .strip_prefix("refs/heads/")
+            .filter(|branch| is_valid_branch_name(branch))
+            .with_context(|| {
+                format!("Invalid rebase branch @ {}", format_path_for_display(&path))
+            })?;
+        return Ok(Some(branch.to_owned()));
+    }
+    Ok(None)
 }
 
-/// Finalize worktrees after parsing: a detached worktree mid-rebase takes the
-/// name of the branch it is rebasing.
-///
-/// `git worktree list` reports a rebasing worktree only as `detached`, so each
-/// detached worktree needs its own `git rev-parse --git-dir` to find its rebase
-/// state. [`WorkingTree::git_dirs`] runs those forks concurrently as child
-/// processes rather than on a thread pool: this runs inside the
-/// `list_worktrees` cache initializer, and a pool thread waiting there would
-/// run other pool jobs, one of which could wait on the same cache.
-///
-/// A stale (prunable) entry's rebase state is read from its registration
-/// instead. With its `.git` gone, a `rev-parse` from its path finds nothing
-/// there and walks up to whatever repository encloses the directory — for a
-/// worktree nested in the main one, the main worktree's git dir — and would
-/// name the entry after a rebase that is not its own.
-pub(crate) fn finalize_worktrees(repo: &Repository, worktrees: &mut [WorktreeInfo]) {
-    let (stale, mut detached): (Vec<&mut WorktreeInfo>, Vec<&mut WorktreeInfo>) = worktrees
+fn bisect_branch(git_dir: &Path) -> anyhow::Result<Option<String>> {
+    use anyhow::Context;
+
+    // Bisect detaches HEAD too. BISECT_START holds the original short branch
+    // name, or a full object id when the bisect started from detached HEAD.
+    let log = git_dir.join("BISECT_LOG");
+    if !log.try_exists().with_context(|| {
+        format!(
+            "Failed to inspect bisect state @ {}",
+            format_path_for_display(&log)
+        )
+    })? {
+        return Ok(None);
+    }
+    let path = git_dir.join("BISECT_START");
+    let content = std::fs::read_to_string(&path).with_context(|| {
+        format!(
+            "Failed to read bisect branch @ {}",
+            format_path_for_display(&path)
+        )
+    })?;
+    let head = content.trim_end_matches('\n');
+    if matches!(head.len(), 40 | 64) && head.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Ok(None);
+    }
+    let branch = head.strip_prefix("refs/heads/").unwrap_or(head);
+    anyhow::ensure!(
+        is_valid_branch_name(branch),
+        "Invalid bisect branch @ {}",
+        format_path_for_display(&path)
+    );
+    Ok(Some(branch.to_owned()))
+}
+
+/// Branches Git protects from deletion for this registration. Display identity
+/// remains single-valued, but rebase --update-refs can hold several branches.
+fn held_branches(git_dir: &Path) -> anyhow::Result<std::collections::BTreeSet<String>> {
+    use anyhow::Context;
+
+    let mut branches = std::collections::BTreeSet::new();
+    // HEAD can live in reftable; its compatibility file is not the ref.
+    let args = ["--git-dir=.", "symbolic-ref", "--quiet", "HEAD"];
+    let output = crate::shell_exec::Cmd::new("git")
+        .args(args)
+        .current_dir(git_dir)
+        .scrub_git_discovery_env()
+        .run()
+        .context("Failed to read worktree HEAD")?;
+    match output.status.code() {
+        Some(0) => {
+            let head = std::str::from_utf8(&output.stdout).context("Invalid worktree HEAD")?;
+            if let Some(branch) = head.trim_end_matches('\n').strip_prefix("refs/heads/") {
+                anyhow::ensure!(
+                    is_valid_branch_name(branch),
+                    "Invalid worktree HEAD @ {}",
+                    format_path_for_display(git_dir)
+                );
+                branches.insert(branch.to_owned());
+            }
+        }
+        Some(1) => {} // Detached HEAD.
+        _ => return Err(CommandError::from_failed_output("git", &args, &output).into()),
+    }
+    branches.extend(rebase_branch(git_dir)?);
+    branches.extend(bisect_branch(git_dir)?);
+
+    let path = git_dir.join("rebase-merge/update-refs");
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(branches),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "Failed to read rebase refs @ {}",
+                    format_path_for_display(&path)
+                )
+            });
+        }
+    };
+    // Git's sequencer stores one ref followed by its before and after OIDs.
+    let mut lines = content.lines();
+    while let Some(reference) = lines.next() {
+        for _ in 0..2 {
+            anyhow::ensure!(
+                lines.next().is_some_and(|oid| matches!(oid.len(), 40 | 64)
+                    && oid.bytes().all(|byte| byte.is_ascii_hexdigit())),
+                "Invalid rebase refs @ {}",
+                format_path_for_display(&path)
+            );
+        }
+        if let Some(branch) = reference.strip_prefix("refs/heads/") {
+            anyhow::ensure!(
+                is_valid_branch_name(branch),
+                "Invalid rebase ref @ {}",
+                format_path_for_display(&path)
+            );
+            branches.insert(branch.to_owned());
+        }
+    }
+    Ok(branches)
+}
+
+/// Recover detached operation identities from each checkout's own registration.
+/// A missing or broken gitfile must never redirect discovery into a parent
+/// repository. Inventory leaves unreadable identities detached; branch deletion
+/// independently rejects unknown identities on its strict fresh read.
+pub(crate) fn finalize_worktrees(
+    repo: &Repository,
+    worktrees: &mut [WorktreeInfo],
+) -> anyhow::Result<()> {
+    if !worktrees
+        .iter()
+        .any(|wt| wt.detached && wt.branch.is_none())
+    {
+        return Ok(());
+    }
+    let registrations = repo.worktree_registrations();
+    let main = if repo.is_bare()? {
+        None
+    } else {
+        Some(canonicalize_with_parents(repo.repo_path()?))
+    };
+    for wt in worktrees
         .iter_mut()
         .filter(|wt| wt.detached && wt.branch.is_none())
-        .partition(|wt| wt.is_prunable());
-    for wt in stale {
-        if let Ok((registration, _)) = repo.registration_at(&wt.path) {
-            wt.branch = rebase_branch(&registration);
+    {
+        let path = canonicalize_with_parents(&wt.path);
+        let git_dir = if main.as_deref() == Some(path.as_path()) {
+            Some(repo.git_common_dir())
+        } else {
+            registrations
+                .as_ref()
+                .ok()
+                .and_then(|registrations| registrations.get(&path))
+                .map(PathBuf::as_path)
+        };
+        if let Some(git_dir) = git_dir
+            && let Ok(branch) = rebase_branch(git_dir)
+        {
+            wt.branch = branch;
         }
     }
-    if detached.is_empty() {
-        return;
-    }
-    let trees: Vec<WorkingTree<'_>> = detached
-        .iter()
-        .map(|wt| repo.worktree_at(&wt.path))
-        .collect();
-    for (wt, git_dir) in detached.iter_mut().zip(WorkingTree::git_dirs(&trees)) {
-        if let Ok(git_dir) = git_dir {
-            wt.branch = rebase_branch(&git_dir);
-        }
-    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -41,7 +41,7 @@ fn test_finalize_worktree_with_branch() {
     let test = TestRepo::with_initial_commit();
     let repo = Repository::at(test.root_path()).unwrap();
     let mut worktrees = [wt];
-    finalize_worktrees(&repo, &mut worktrees);
+    finalize_worktrees(&repo, &mut worktrees).unwrap();
     let [finalized] = worktrees;
     assert_eq!(finalized.branch, Some("feature".to_string()));
 }
@@ -62,15 +62,15 @@ fn test_finalize_worktree_detached_with_branch() {
     let test = TestRepo::with_initial_commit();
     let repo = Repository::at(test.root_path()).unwrap();
     let mut worktrees = [wt];
-    finalize_worktrees(&repo, &mut worktrees);
+    finalize_worktrees(&repo, &mut worktrees).unwrap();
     let [finalized] = worktrees;
     assert_eq!(finalized.branch, Some("feature".to_string()));
 }
 
 #[test]
 fn test_finalize_worktree_detached_no_branch() {
-    // A detached worktree at a nonexistent path fails the git-dir lookup,
-    // so the branch stays empty.
+    // An unregistered detached path has an unknown identity. Inventory stays
+    // available, but the entry cannot authorize deletion.
     let wt = WorktreeInfo {
         path: PathBuf::from("/nonexistent/path"),
         head: "abcd1234".to_string(),
@@ -84,7 +84,7 @@ fn test_finalize_worktree_detached_no_branch() {
     let test = TestRepo::with_initial_commit();
     let repo = Repository::at(test.root_path()).unwrap();
     let mut worktrees = [wt];
-    finalize_worktrees(&repo, &mut worktrees);
+    finalize_worktrees(&repo, &mut worktrees).unwrap();
     let [finalized] = worktrees;
     assert_eq!(finalized.branch, None);
 }
@@ -2991,6 +2991,383 @@ fn repo_path_preserves_local_core_worktree_path_bytes() {
     );
     let repo = Repository::at(&main).unwrap();
     assert_eq!(repo.repo_path().unwrap(), expected);
+}
+
+fn paused_linked_rebase(test: &mut TestRepo) -> PathBuf {
+    let linked = test.add_worktree("feature");
+    test.run_git_in(&linked, &["commit", "--allow-empty", "-m", "Feature"]);
+    test.run_git(&["merge", "--ff-only", "feature"]);
+    let paused = test
+        .git_command()
+        .current_dir(&linked)
+        .args(["rebase", "--exec", "false", "HEAD~1"])
+        .run()
+        .unwrap();
+    assert!(!paused.status.success(), "{paused:?}");
+    linked
+}
+
+#[test]
+fn test_finalize_missing_locked_rebase_retains_branch() {
+    use crate::git::{BranchDeletionOutcome, delete_branch_if_safe};
+
+    let mut test = TestRepo::with_initial_commit();
+    let linked = paused_linked_rebase(&mut test);
+    test.run_git(&[
+        "worktree",
+        "lock",
+        "--reason",
+        "detached media",
+        linked.to_str().unwrap(),
+    ]);
+    let linked = dunce::canonicalize(&linked).unwrap();
+    std::fs::remove_dir_all(&linked).unwrap();
+
+    let repo = Repository::at(test.root_path()).unwrap();
+    let wt = repo
+        .list_worktrees()
+        .unwrap()
+        .iter()
+        .find(|wt| wt.path == linked)
+        .unwrap();
+    assert!(wt.detached && wt.locked.is_some() && !wt.is_prunable());
+    assert_eq!(wt.branch.as_deref(), Some("feature"));
+    let result = delete_branch_if_safe(
+        &repo,
+        &repo.capture_refs().unwrap(),
+        "feature",
+        "main",
+        false,
+    )
+    .unwrap();
+    assert!(
+        matches!(result.outcome, BranchDeletionOutcome::RetainedCheckedOut { path } if path == linked)
+    );
+}
+
+#[test]
+fn test_finalize_broken_gitfile_uses_its_own_registration() {
+    let mut test = TestRepo::with_initial_commit();
+    let linked = paused_linked_rebase(&mut test);
+    let gitfile = linked.join(".git");
+    std::fs::write(&gitfile, b"gitdir: nonexistent-target\n").unwrap();
+    let repo = Repository::at(test.root_path()).unwrap();
+    let result = crate::git::delete_branch_if_safe(
+        &repo,
+        &repo.capture_refs().unwrap(),
+        "feature",
+        "main",
+        false,
+    );
+    assert!(matches!(
+        result.unwrap().outcome,
+        crate::git::BranchDeletionOutcome::RetainedCheckedOut { path } if path == linked
+    ));
+}
+
+#[test]
+fn test_finalize_genuine_detached_rebase() {
+    let test = TestRepo::with_initial_commit();
+    test.run_git(&["commit", "--allow-empty", "-m", "Advance"]);
+    test.run_git(&["checkout", "--detach"]);
+    let paused = test
+        .git_command()
+        .args(["rebase", "--exec", "false", "HEAD~1"])
+        .run()
+        .unwrap();
+    assert!(!paused.status.success(), "{paused:?}");
+    assert_eq!(
+        std::fs::read(test.root_path().join(".git/rebase-merge/head-name")).unwrap(),
+        b"detached HEAD\n"
+    );
+    let repo = Repository::at(test.root_path()).unwrap();
+    let wt = &repo.list_worktrees().unwrap()[0];
+    assert!(wt.detached);
+    assert_eq!(wt.branch, None);
+    test.create_branch("unrelated");
+    crate::git::delete_branch_if_safe(
+        &repo,
+        &repo.capture_refs().unwrap(),
+        "unrelated",
+        "HEAD",
+        false,
+    )
+    .unwrap();
+    assert!(!repo.branch("unrelated").exists_locally().unwrap());
+}
+
+#[test]
+fn test_finalize_detached_git_am_without_rebase_branch() {
+    let test = TestRepo::with_initial_commit();
+    std::fs::write(test.root_path().join("conflict.txt"), "base\n").unwrap();
+    test.commit("Base");
+    test.run_git(&["switch", "-c", "patch-source"]);
+    std::fs::write(test.root_path().join("conflict.txt"), "incoming\n").unwrap();
+    test.commit("Incoming");
+    let patch = test
+        .git_command()
+        .args(["format-patch", "-1", "--stdout"])
+        .run()
+        .unwrap();
+    assert!(patch.status.success(), "{patch:?}");
+    test.run_git(&["switch", "main"]);
+    std::fs::write(test.root_path().join("conflict.txt"), "local\n").unwrap();
+    test.commit("Local");
+    test.run_git(&["checkout", "--detach"]);
+    let paused = test
+        .git_command()
+        .arg("am")
+        .stdin_bytes(patch.stdout)
+        .run()
+        .unwrap();
+    assert!(!paused.status.success(), "{paused:?}");
+    let state = test.root_path().join(".git/rebase-apply");
+    assert!(state.join("applying").is_file());
+    assert!(!state.join("head-name").exists());
+    let repo = Repository::at(test.root_path()).unwrap();
+    let wt = &repo.list_worktrees().unwrap()[0];
+    assert!(wt.detached);
+    assert_eq!(wt.branch, None);
+    test.create_branch("unrelated");
+    crate::git::delete_branch_if_safe(
+        &repo,
+        &repo.capture_refs().unwrap(),
+        "unrelated",
+        "HEAD",
+        false,
+    )
+    .unwrap();
+    assert!(!repo.branch("unrelated").exists_locally().unwrap());
+}
+
+#[test]
+fn branch_deletion_refuses_a_registration_omitted_from_inventory() {
+    let mut test = TestRepo::with_initial_commit();
+    let linked = test.add_worktree("feature");
+    let registration = Repository::git_dir_at(&linked).unwrap();
+    let backlink = registration.join("gitdir");
+    std::fs::remove_file(&backlink).unwrap();
+    let selected = test.add_worktree("selected");
+    let selected_registration = Repository::git_dir_at(&selected).unwrap();
+    std::fs::remove_dir_all(&selected).unwrap();
+    let repo = Repository::at(test.root_path()).unwrap();
+    // Selecting/removing another registration does not require the broken
+    // sibling's identity; branch deletion still requires the full topology.
+    assert_eq!(repo.stale_worktree_work(&selected).unwrap(), None);
+    repo.prune_worktree_entry(&selected).unwrap();
+    assert!(!selected_registration.exists());
+    assert!(registration.exists());
+    let listed = repo.list_worktrees().unwrap();
+    assert!(listed.iter().all(|wt| !wt.detached));
+    assert!(
+        listed
+            .iter()
+            .all(|wt| wt.branch.as_deref() != Some("feature"))
+    );
+    for force in [false, true] {
+        assert!(
+            crate::git::delete_branch_if_safe(
+                &repo,
+                &repo.capture_refs().unwrap(),
+                "feature",
+                "main",
+                force,
+            )
+            .is_err()
+        );
+        assert!(repo.branch("feature").exists_locally().unwrap());
+    }
+}
+
+#[test]
+fn unknown_operation_identity_blocks_branch_deletion() {
+    let mut test = TestRepo::with_initial_commit();
+    let linked = paused_linked_rebase(&mut test);
+    let registration = Repository::git_dir_at(&linked).unwrap();
+    let head_name = registration.join("rebase-merge/head-name");
+    std::fs::remove_file(&head_name).unwrap();
+    let repo = Repository::at(test.root_path()).unwrap();
+    let wt = repo
+        .list_worktrees()
+        .unwrap()
+        .iter()
+        .find(|wt| wt.path == linked)
+        .unwrap();
+    assert!(wt.detached && wt.branch.is_none());
+    assert!(
+        crate::git::delete_branch_if_safe(
+            &repo,
+            &repo.capture_refs().unwrap(),
+            "feature",
+            "main",
+            true,
+        )
+        .is_err()
+    );
+    assert!(repo.branch("feature").exists_locally().unwrap());
+}
+
+/// Git protects a named bisect's starting branch, but a bisect begun detached
+/// holds only an object id. The CAS deletion path must preserve that contrast.
+#[test]
+fn branch_deletion_retains_bisect_without_display_alias() {
+    use crate::git::{BranchDeletionOutcome, delete_branch_if_safe};
+    for detached_start in [false, true] {
+        let mut test = TestRepo::with_initial_commit();
+        let linked = test.add_worktree("feature");
+        for index in 0..3 {
+            test.run_git_in(
+                &linked,
+                &["commit", "--allow-empty", "-m", &format!("Advance {index}")],
+            );
+        }
+        test.run_git(&["merge", "--ff-only", "feature"]);
+        if detached_start {
+            test.run_git_in(&linked, &["checkout", "--detach"]);
+        }
+        test.run_git_in(&linked, &["bisect", "start", "HEAD", "HEAD~3"]);
+        let registration = Repository::git_dir_at(&linked).unwrap();
+        assert!(registration.join("BISECT_LOG").is_file());
+        let start = std::fs::read_to_string(registration.join("BISECT_START")).unwrap();
+        assert_eq!(start == "feature\n", !detached_start);
+        let repo = Repository::at(test.root_path()).unwrap();
+        let wt = repo
+            .list_worktrees()
+            .unwrap()
+            .iter()
+            .find(|wt| wt.path == linked)
+            .unwrap();
+        assert!(wt.detached);
+        assert_eq!(wt.branch, None);
+        assert_eq!(repo.worktree_for_branch("feature").unwrap(), None);
+        let result = delete_branch_if_safe(
+            &repo,
+            &repo.capture_refs().unwrap(),
+            "feature",
+            "main",
+            false,
+        )
+        .unwrap();
+        if detached_start {
+            assert!(matches!(
+                result.outcome,
+                BranchDeletionOutcome::Integrated(_)
+            ));
+        } else {
+            assert!(
+                matches!(result.outcome, BranchDeletionOutcome::RetainedCheckedOut { path } if path == linked)
+            );
+        }
+    }
+}
+
+/// Rebase --update-refs holds secondary branches without changing the listed
+/// branch. Once the operation ends, integrated secondary branches can go.
+#[test]
+fn branch_deletion_retains_rebase_update_refs() {
+    use crate::git::{BranchDeletionOutcome, delete_branch_if_safe};
+
+    let mut test = TestRepo::with_initial_commit();
+    let linked = test.add_worktree("stack-2");
+    std::fs::write(linked.join("one"), "one").unwrap();
+    test.run_git_in(&linked, &["add", "one"]);
+    test.run_git_in(&linked, &["commit", "-m", "One"]);
+    test.run_git_in(&linked, &["branch", "stack-1"]);
+    std::fs::write(linked.join("two"), "two").unwrap();
+    test.run_git_in(&linked, &["add", "two"]);
+    test.run_git_in(&linked, &["commit", "-m", "Two"]);
+    test.run_git(&["merge", "--ff-only", "stack-2"]);
+    let paused = test
+        .git_command()
+        .current_dir(&linked)
+        .args([
+            "-c",
+            "rebase.updateRefs=true",
+            "rebase",
+            "--exec",
+            "false",
+            "HEAD~2",
+        ])
+        .run()
+        .unwrap();
+    assert!(!paused.status.success(), "{paused:?}");
+    let registration = Repository::git_dir_at(&linked).unwrap();
+    assert!(
+        std::fs::read_to_string(registration.join("rebase-merge/update-refs"))
+            .unwrap()
+            .lines()
+            .any(|line| line == "refs/heads/stack-1")
+    );
+    let refused = test
+        .git_command()
+        .args(["branch", "-d", "stack-1"])
+        .run()
+        .unwrap();
+    assert!(!refused.status.success(), "{refused:?}");
+
+    let repo = Repository::at(test.root_path()).unwrap();
+    let wt = repo
+        .list_worktrees()
+        .unwrap()
+        .iter()
+        .find(|wt| wt.path == linked)
+        .unwrap();
+    assert!(wt.detached);
+    assert_eq!(wt.branch.as_deref(), Some("stack-2"));
+    let result = delete_branch_if_safe(
+        &repo,
+        &repo.capture_refs().unwrap(),
+        "stack-1",
+        "main",
+        false,
+    )
+    .unwrap();
+    assert!(
+        matches!(result.outcome, BranchDeletionOutcome::RetainedCheckedOut { path } if path == linked)
+    );
+
+    test.run_git_in(&linked, &["rebase", "--abort"]);
+    let result = delete_branch_if_safe(
+        &repo,
+        &repo.capture_refs().unwrap(),
+        "stack-1",
+        "main",
+        false,
+    )
+    .unwrap();
+    assert!(matches!(
+        result.outcome,
+        BranchDeletionOutcome::Integrated(_)
+    ));
+}
+
+/// HEAD's backend storage does not change checkout protection or deletion.
+#[test]
+fn branch_deletion_retains_reftable_checkout() {
+    use crate::git::{BranchDeletionOutcome, delete_branch_if_safe};
+
+    let mut test = TestRepo::with_initial_commit();
+    test.run_git(&["refs", "migrate", "--ref-format=reftable"]);
+    let linked = test.add_worktree("feature");
+    test.create_branch("safe");
+    test.create_branch("forced");
+    let repo = Repository::at(test.root_path()).unwrap();
+    let snapshot = repo.capture_refs().unwrap();
+    let retained = delete_branch_if_safe(&repo, &snapshot, "feature", "main", false).unwrap();
+    assert!(matches!(
+        retained.outcome,
+        BranchDeletionOutcome::RetainedCheckedOut { path } if path == linked
+    ));
+    let safe = delete_branch_if_safe(&repo, &snapshot, "safe", "main", false).unwrap();
+    assert!(matches!(safe.outcome, BranchDeletionOutcome::Integrated(_)));
+    let forced = delete_branch_if_safe(&repo, &snapshot, "forced", "main", true).unwrap();
+    assert!(matches!(
+        forced.outcome,
+        BranchDeletionOutcome::ForceDeleted
+    ));
+    assert!(repo.branch("feature").exists_locally().unwrap());
+    assert!(!repo.branch("safe").exists_locally().unwrap());
+    assert!(!repo.branch("forced").exists_locally().unwrap());
 }
 
 /// Git retains native bytes in a registration id as well as its checkout path.
