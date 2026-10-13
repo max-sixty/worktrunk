@@ -7,6 +7,25 @@ use super::{DefaultBranchName, LineDiff, WorktreeInfo};
 use insta::assert_debug_snapshot;
 use rstest::rstest;
 
+#[test]
+fn git_path_decoders_preserve_content_and_distinguish_terminators() {
+    use super::{git_path_from_file, git_path_from_output};
+    use std::path::Path;
+
+    assert_eq!(
+        git_path_from_output(b"store\nwith spaces \t\n").unwrap(),
+        Path::new("store\nwith spaces \t")
+    );
+    assert_eq!(
+        git_path_from_file(b"store\nwith spaces \t\r\n").unwrap(),
+        Path::new("store\nwith spaces \t")
+    );
+    assert_eq!(
+        git_path_from_output(b"unterminated").unwrap_err().kind(),
+        std::io::ErrorKind::InvalidData
+    );
+}
+
 /// Helper to parse a single worktree from porcelain output
 fn parse_single(input: &str) -> WorktreeInfo {
     let list = WorktreeInfo::parse_porcelain_list_z(input.replace('\n', "\0").as_bytes())

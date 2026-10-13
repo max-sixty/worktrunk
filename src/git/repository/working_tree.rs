@@ -191,20 +191,16 @@ fn sequencer_operation(git_dir: &Path) -> Option<InProgressOperation> {
 pub(super) fn registration_worktree_path(registration: &Path) -> std::io::Result<PathBuf> {
     let content = std::fs::read(registration.join("gitdir"))?;
     let recorded = super::super::git_path_from_file(&content)?;
-    let absolute = if recorded.is_relative() {
+    let mut absolute = if recorded.is_relative() {
         registration.join(recorded)
     } else {
         recorded
     };
     // Git accepts a checkout path directly or its `.git` entry.
-    let checkout = if absolute.file_name() == Some(std::ffi::OsStr::new(".git")) {
-        absolute.parent().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid worktree backlink")
-        })?
-    } else {
-        &absolute
-    };
-    Ok(canonicalize_with_parents(checkout))
+    if absolute.file_name() == Some(std::ffi::OsStr::new(".git")) {
+        absolute.pop();
+    }
+    Ok(canonicalize_with_parents(&absolute))
 }
 
 /// The git operation the worktree whose git dir is `git_dir` is partway
