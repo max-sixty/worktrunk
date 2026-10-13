@@ -3350,17 +3350,16 @@ approved-commands = ["exit 1"]
 /// Bug: cd directive was written before pre-remove hooks ran, so if hooks failed,
 /// the shell would still cd to main_path even though the worktree wasn't removed.
 #[rstest]
-fn test_pre_remove_hook_failure_no_cd_directive(mut repo: TestRepo) {
-    // Create project config with failing hook
-    repo.write_project_config(r#"pre-remove = "exit 1""#);
+#[case::failed_hook("exit 1")]
+#[case::dirty_after_hook("touch late.txt")]
+fn test_pre_remove_hook_failure_no_cd_directive(mut repo: TestRepo, #[case] hook: &str) {
+    repo.write_project_config(&format!("pre-remove = {hook:?}"));
     repo.commit("Add config");
 
     // Pre-approve the command
-    repo.write_test_approvals(
-        r#"[projects."../origin"]
-approved-commands = ["exit 1"]
-"#,
-    );
+    repo.write_test_approvals(&format!(
+        "[projects.\"../origin\"]\napproved-commands = [{hook:?}]\n"
+    ));
 
     // Create a worktree to remove
     let worktree_path = repo.add_worktree("feature-cd-test");
@@ -3375,7 +3374,7 @@ approved-commands = ["exit 1"]
     configure_directive_file(&mut cmd, &cd_path);
     let output = cmd.output().unwrap();
 
-    // Command should have failed (hook failure)
+    // Hook failure or final cleanliness refusal must preserve the shell cwd.
     assert!(
         !output.status.success(),
         "Remove should fail when pre-remove hook fails"
@@ -3394,6 +3393,35 @@ approved-commands = ["exit 1"]
         worktree_path.exists(),
         "Worktree should NOT be removed when hook fails"
     );
+}
+
+#[rstest]
+fn test_nested_worktree_refusal_keeps_current_directory(mut repo: TestRepo) {
+    let outer = repo.add_worktree("outer");
+    fs::write(repo.root_path().join(".git/info/exclude"), ".storage/\n").unwrap();
+    let inner = outer.join(".storage/inner");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "--detach",
+        inner.to_str().unwrap(),
+        "HEAD",
+    ]);
+    let (directives, _guard) = directive_file();
+    let mut command = repo.wt_command();
+    command.current_dir(&outer).args(["remove", "--foreground"]);
+    configure_directive_file(&mut command, &directives);
+    let output = command.output().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("contains worktree"));
+    assert!(
+        fs::read_to_string(directives)
+            .unwrap_or_default()
+            .trim()
+            .is_empty()
+    );
+    assert!(outer.join(".git").is_file());
+    assert!(inner.join(".git").is_file());
 }
 
 #[rstest]

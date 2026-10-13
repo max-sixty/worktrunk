@@ -3391,3 +3391,57 @@ fn stale_worktree_work_preserves_native_registration_arguments() {
     let repo = Repository::at(test.root_path()).unwrap();
     assert_eq!(repo.stale_worktree_work(&checkout).unwrap(), None);
 }
+
+#[test]
+fn nested_worktree_reads_fresh_topology() {
+    let mut test = TestRepo::with_initial_commit();
+    let source = test.add_worktree("source");
+    let repo = Repository::at(test.root_path()).unwrap();
+    // Warm the cache before adding another checkout: the guard must read
+    // topology after planning, independently of that cache.
+    repo.list_worktrees().unwrap();
+    let late = test.add_worktree_at_path("late", &source.join("late"));
+    assert_eq!(repo.nested_worktree(&source).unwrap(), Some(late));
+}
+
+#[cfg(unix)]
+#[test]
+fn nested_worktree_resolves_symlinked_parent() {
+    let mut test = TestRepo::with_initial_commit();
+    let source = test.add_worktree("source");
+    let nested = test.add_worktree_at_path("nested", &source.join("nested"));
+    let alias = test.root_path().parent().unwrap().join("source-alias");
+    std::os::unix::fs::symlink(&source, &alias).unwrap();
+    let repo = Repository::at(test.root_path()).unwrap();
+    assert_eq!(repo.nested_worktree(&alias).unwrap(), Some(nested));
+}
+
+#[test]
+fn nested_worktree_skips_missing_checkout() {
+    let mut test = TestRepo::with_initial_commit();
+    let source = test.add_worktree("source");
+    let nested = test.add_worktree_at_path("nested", &source.join("nested"));
+    std::fs::rename(&nested, test.root_path().parent().unwrap().join("saved")).unwrap();
+    let repo = Repository::at(test.root_path()).unwrap();
+    assert_eq!(repo.nested_worktree(&source).unwrap(), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn nested_worktree_refuses_unresolvable_checkout() {
+    let mut test = TestRepo::with_initial_commit();
+    let source = test.add_worktree("source");
+    let nested = test.add_worktree_at_path("nested", &source.join("nested"));
+    let saved = test.root_path().parent().unwrap().join("saved");
+    std::fs::rename(&nested, &saved).unwrap();
+    // A symlink loop is an actual resolution error, not evidence that the
+    // registered checkout is absent. Refuse cleanup rather than skip it.
+    std::os::unix::fs::symlink(&nested, &nested).unwrap();
+    let repo = Repository::at(test.root_path()).unwrap();
+    let err = repo.nested_worktree(&source).unwrap_err();
+    assert!(
+        err.to_string().contains("Failed to resolve worktree @"),
+        "{err:?}"
+    );
+    assert!(saved.join(".git").exists());
+}

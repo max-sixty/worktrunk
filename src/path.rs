@@ -228,7 +228,7 @@ fn resolve_with_parents(path: &Path) -> PathBuf {
 /// unreachable under the legacy spelling, the reported spelling is one the user
 /// can't `cd` into.
 #[cfg(windows)]
-fn strip_verbatim_disk_prefix(path: PathBuf) -> PathBuf {
+pub(crate) fn strip_verbatim_disk_prefix(path: PathBuf) -> PathBuf {
     use std::ffi::OsString;
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use std::path::{Component, Prefix};
@@ -249,7 +249,7 @@ fn strip_verbatim_disk_prefix(path: PathBuf) -> PathBuf {
 }
 
 #[cfg(not(windows))]
-fn strip_verbatim_disk_prefix(path: PathBuf) -> PathBuf {
+pub(crate) fn strip_verbatim_disk_prefix(path: PathBuf) -> PathBuf {
     path
 }
 

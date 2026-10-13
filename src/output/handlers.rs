@@ -1216,14 +1216,10 @@ pub fn handle_remove_output(
     quiet: bool,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<BranchFate> {
-    handle_remove_output_inner(plan, execution, hook_plan, quiet, false, announcer)
+    handle_remove_output_inner(plan, execution, hook_plan, quiet, announcer)
 }
 
-/// Merge may select a source containing another checkout, including the
-/// invoking worktree. Recheck its topology after pre-remove hooks, before the
-/// removal core's final safety gates. This is merge-specific: ordinary remove
-/// and batch prune retain their concurrent staging without a live registry
-/// read before each rename.
+/// Run merge cleanup through the same removal and containment gates.
 pub fn handle_merge_remove_output(
     plan: &RemovalPlan,
     hook_plan: &ApprovedHookPlan,
@@ -1234,7 +1230,6 @@ pub fn handle_merge_remove_output(
         RemovalExecution::Background(BackgroundFallbackMode::Detached),
         hook_plan,
         false,
-        true,
         announcer,
     )
 }
@@ -1244,7 +1239,6 @@ fn handle_remove_output_inner(
     execution: RemovalExecution,
     hook_plan: &ApprovedHookPlan,
     quiet: bool,
-    protect_nested_worktrees: bool,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<BranchFate> {
     match plan {
@@ -1273,7 +1267,6 @@ fn handle_remove_output_inner(
                 branch_checked_out_at: branch_checked_out_at.as_ref(),
                 hook_plan,
                 execution,
-                protect_nested_worktrees,
             },
             announcer,
         ),
@@ -1803,7 +1796,6 @@ struct WorktreeRemovalContext<'a> {
     /// no `ProjectConfig` snapshot to thread.
     hook_plan: &'a ApprovedHookPlan,
     execution: RemovalExecution,
-    protect_nested_worktrees: bool,
 }
 
 impl WorktreeRemovalContext<'_> {
@@ -1870,8 +1862,7 @@ fn prepare_remove_directory_change(
 ) -> anyhow::Result<()> {
     if changed_directory {
         // Preserve the user's subdirectory position, mirroring `wt switch`
-        // (#3343). The removal hasn't run yet, so the current directory still
-        // exists inside the worktree being removed — if the user is in
+        // (#3343), using the saved shell cwd even after staging — if the user is in
         // `worktree/apps/gateway/` and `main/apps/gateway/` exists, cd there
         // instead of the main worktree root. Falls back to the root when the
         // subdir is absent in the destination or the cwd can't be read.
@@ -1922,6 +1913,7 @@ fn handle_detached_removed_worktree_output(
             remaining_entries: list_remaining_entries(ctx.worktree_path),
             error: err,
         })?;
+        prepare_remove_directory_change(ctx.main_path, ctx.worktree_path, ctx.changed_directory)?;
         let (files, bytes) = output
             .staged_path
             .as_deref()
@@ -1946,7 +1938,7 @@ fn handle_detached_removed_worktree_output(
             ))
         );
 
-        spawn_background_removal(
+        let fate = spawn_background_removal(
             repo,
             ctx.main_path,
             &BackgroundRemoval {
@@ -1962,7 +1954,9 @@ fn handle_detached_removed_worktree_output(
             },
             "detached",
             ctx.background_fallback(),
-        )?
+        )?;
+        prepare_remove_directory_change(ctx.main_path, ctx.worktree_path, ctx.changed_directory)?;
+        fate
     };
 
     // A detached worktree was on no branch, so `{{ branch }}` stays unset for
@@ -2001,6 +1995,7 @@ fn handle_named_removed_worktree_foreground(
         remaining_entries: list_remaining_entries(ctx.worktree_path),
         error: err,
     })?;
+    prepare_remove_directory_change(ctx.main_path, ctx.worktree_path, ctx.changed_directory)?;
     let stats = output
         .staged_path
         .as_deref()
@@ -2052,7 +2047,6 @@ fn handle_named_removed_worktree_background(
     if let Some(shared) = ctx.branch_checked_out_at {
         print_branch_checked_out_elsewhere(branch_name, shared);
     }
-    print_switch_message_if_changed(ctx.changed_directory, ctx.main_path)?;
 
     // Planner predicted retention when the user asked to keep, or when the
     // integration check at planning time returned no reason — `print_hints`
@@ -2077,6 +2071,9 @@ fn handle_named_removed_worktree_background(
         ctx.background_fallback(),
     )?;
 
+    prepare_remove_directory_change(ctx.main_path, ctx.worktree_path, ctx.changed_directory)?;
+    print_switch_message_if_changed(ctx.changed_directory, ctx.main_path)?;
+
     spawn_hooks_after_remove(repo, ctx, Some(branch_name), announcer)?;
     stderr().flush()?;
     fate
@@ -2098,20 +2095,6 @@ fn handle_removed_worktree_output(
         execute_pre_remove_hooks_if_needed(&repo, &ctx)?;
     }
 
-    // This read may wait for a registry teardown. Keep it before the final
-    // ownership/lock/dirty gates in the removal core, so edits made during
-    // the wait are checked before staging. Also precede the cd directive:
-    // refusing cleanup must not move the invoking shell.
-    if ctx.protect_nested_worktrees
-        && let Some(nested) = worktrunk::git::remove::nested_worktree(&repo, ctx.worktree_path)?
-    {
-        anyhow::bail!(cformat!(
-            "Cannot remove worktree @ <bold>{}</>; contains worktree @ <bold>{}</>",
-            format_path_for_display(ctx.worktree_path),
-            format_path_for_display(&nested)
-        ));
-    }
-
     // The pre-rename `ensure_clean` catches a hook-dirtied worktree, and the
     // branch deletion re-decides against fresh refs (`delete_branch_if_safe`'s
     // CAS). The planning-time integration verdict is only for display.
@@ -2123,8 +2106,6 @@ fn handle_removed_worktree_output(
     if matches!(ctx.execution, RemovalExecution::Silent) {
         return remove_removed_worktree_silently(&repo, &ctx, announcer);
     }
-
-    prepare_remove_directory_change(ctx.main_path, ctx.worktree_path, ctx.changed_directory)?;
 
     // Handle detached HEAD case (no branch known)
     let Some(branch_name) = ctx.branch_name else {
