@@ -460,7 +460,8 @@ pub fn build_remove_command(
 ) -> Vec<OsString> {
     let delay = if changed_directory { "sleep 1 && " } else { "" };
     let force = if force_worktree { " --force" } else { "" };
-    let mut script = format!(r#"{delay}git worktree remove{force} -- "$1""#);
+    let mut script =
+        format!(r#"{delay}git -c core.fsmonitor=false worktree remove{force} -- "$1""#);
     if tail.is_some() {
         script.push_str(r#" && shift && "$@""#);
     }

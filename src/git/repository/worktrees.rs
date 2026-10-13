@@ -456,7 +456,14 @@ impl Repository {
         } else {
             self.worktree_at(path).has_initialized_submodules()?
         };
-        let mut args = vec![OsStr::new("worktree"), OsStr::new("remove")];
+        // Staging already stopped fsmonitor; Git's own dirty gate must not
+        // restart it during this direct-removal fallback.
+        let mut args = vec![
+            OsStr::new("-c"),
+            OsStr::new("core.fsmonitor=false"),
+            OsStr::new("worktree"),
+            OsStr::new("remove"),
+        ];
         if use_force {
             args.push(OsStr::new("--force"));
         }
@@ -473,10 +480,11 @@ impl Repository {
             // cleanliness ourselves right before the destructive command —
             // a file modified since the caller's check must still fail
             // closed rather than be silently destroyed.
-            self.worktree_at(path).ensure_clean(
+            self.worktree_at(path).ensure_clean_with_mode(
                 "remove worktree with submodules",
                 None,
                 /* force_hint */ true,
+                super::CleanCheckMode::FullScan,
             )?;
             tracing::debug!("Using --force for worktree removal due to initialized submodules");
         }

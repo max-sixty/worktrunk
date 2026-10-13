@@ -175,6 +175,7 @@ pub use branch::is_valid_branch_name;
 pub use diff::{CommitMessageDetail, PreparedDiff};
 pub use integration::{BranchDiffSpec, IntegrationTargets, select_comparison_base};
 pub use ref_snapshot::RefSnapshot;
+pub(crate) use working_tree::CleanCheckMode;
 pub(super) use working_tree::path_to_logging_context;
 use working_tree::registration_worktree_path;
 pub use working_tree::{InProgressOperation, SafetyBackup, TempIndex, WorkingTree};
@@ -1868,6 +1869,7 @@ impl Repository {
         // The one production git spawn that bypasses `Cmd` (see the daemon
         // rationale above), so it re-applies the test floor by hand.
         crate::shell_exec::apply_hermetic_test_env(&mut cmd);
+        crate::shell_exec::scrub_git_discovery_env_vars(&mut cmd);
         crate::shell_exec::scrub_directive_env_vars(&mut cmd);
         // Trace the daemon launch so it's attributed in the timeline rather than
         // appearing as a gap on the switch hot path. Wait without captured
