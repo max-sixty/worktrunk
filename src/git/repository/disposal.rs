@@ -10,6 +10,9 @@ use anyhow::Context as _;
 use super::Repository;
 use crate::path::format_path_for_display;
 
+pub(in crate::git) const CHECKOUT: &str = "checkout";
+pub(in crate::git) const REGISTRATION: &str = "registration";
+
 pub struct DisposalEntry {
     pub path: PathBuf,
     /// Do not follow symlinks when inspecting or choosing how to remove an entry.
@@ -19,10 +22,9 @@ pub struct DisposalEntry {
 }
 
 impl Repository {
-    /// Containers reserved by removal, distinct from older retained checkout
-    /// payloads whose own files cannot authorize disposal.
+    /// Containers reserved before unregister commits.
     pub(crate) fn worktree_staging_dir(&self) -> PathBuf {
-        self.wt_dir().join("retained/removing")
+        self.wt_dir().join("retained")
     }
 
     /// Put committed disposal in trash before generic recursive cleanup. There,
@@ -35,7 +37,7 @@ impl Repository {
         }
         anyhow::ensure!(
             path.parent() == Some(self.worktree_staging_dir().as_path())
-                && std::fs::symlink_metadata(path.join("registration"))?.is_dir(),
+                && std::fs::symlink_metadata(path.join(REGISTRATION))?.is_dir(),
             "Not a committed removal @ {}",
             format_path_for_display(path)
         );
@@ -97,7 +99,7 @@ impl Repository {
                     if !metadata.is_dir() {
                         continue;
                     }
-                    match std::fs::symlink_metadata(path.join("registration")) {
+                    match std::fs::symlink_metadata(path.join(REGISTRATION)) {
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                         result => {
                             if !result.with_context(context)?.is_dir() {

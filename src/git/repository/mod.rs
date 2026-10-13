@@ -162,7 +162,7 @@ mod branch;
 mod branches;
 mod config;
 mod diff;
-mod disposal;
+pub(in crate::git) mod disposal;
 mod integration;
 mod ref_snapshot;
 mod remotes;

@@ -1443,11 +1443,8 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map(|d| format_relative_time_short(d.as_secs() as i64))
                     .unwrap_or_else(|| "?".to_string());
-                let relative = e
-                    .path
-                    .strip_prefix(&removal_dir)
-                    .context("Disposal entry is outside repository removal storage")?;
-                Ok(vec![relative.to_slash_lossy().into_owned(), age])
+                let relative = e.path.strip_prefix(&removal_dir)?;
+                anyhow::Ok(vec![relative.to_slash_lossy().into_owned(), age])
             })
             .collect::<anyhow::Result<_>>()?;
         let rendered = crate::md_help::render_data_table(&["Entry", "Age"], &rows);

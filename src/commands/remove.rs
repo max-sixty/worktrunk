@@ -359,13 +359,11 @@ fn maybe_reap_result(result: &RemovalPlan, reap_enabled: bool) {
 ///    running interactively and any hooks are configured.
 /// 3. **Dispatch to `handle_remove_output`** per target. For each, the output
 ///    handler runs `pre-remove` hooks in the worktree, then either:
-///    - **Foreground** (`--foreground`): stop fsmonitor → rename into
-///      `.git/wt/trash/<name>-<timestamp>/` → prune metadata → delete branch
-///      → synchronous `remove_dir_all` on the staged directory.
-///    - **Background** (default): stop fsmonitor → rename + prune +
-///      synchronous branch delete → spawn detached `rm -rf` on the staged
-///      directory. Cross-filesystem or locked worktrees fall back to
-///      `git worktree remove` in the detached process.
+///    - **Foreground** (`--foreground`): stage and unregister the checkout,
+///      delete the branch, then clean prepared trash synchronously.
+///    - **Background** (default): the same staging and branch deletion,
+///      with detached trash cleanup. Failed staging falls back to
+///      `git worktree remove`; failed trash preparation defers cleanup.
 /// 4. **Post-remove hooks** run in the background after dispatch.
 /// 5. **Internal sweep** (fire-and-forget, after primary output): stale
 ///    `.git/wt/trash/` entries older than 24 hours are removed by a detached

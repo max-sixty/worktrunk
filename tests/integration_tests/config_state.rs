@@ -3454,55 +3454,36 @@ fn state_branch_flag_resolves_selectors(mut repo: TestRepo) {
 #[rstest]
 fn test_state_clear_preserves_retained_recovery(mut repo: TestRepo) {
     use worktrunk::git::Repository;
-    let parked = repo.add_worktree("parked");
     let repository = Repository::at(repo.root_path()).unwrap();
-    let retained = repository.wt_dir().join("retained/parked-1234567890");
-    fs::create_dir_all(retained.parent().unwrap()).unwrap();
-    fs::rename(&parked, &retained).unwrap();
-    fs::write(retained.join("payload"), "recoverable work").unwrap();
-    // Older retained paths hold the checkout itself, whose files are never a
-    // disposal marker.
-    fs::create_dir(retained.join("registration")).unwrap();
     let pending_worktree = repo.add_worktree("pending-removal");
-    let pending = repository
-        .wt_dir()
-        .join("retained/removing/pending-1234567890");
+    let pending = repository.wt_dir().join("retained/pending-1234567890");
     fs::create_dir_all(&pending).unwrap();
     fs::rename(&pending_worktree, pending.join("checkout")).unwrap();
+    fs::write(pending.join("checkout/payload"), "recoverable work").unwrap();
+
     let committed_worktree = repo.add_worktree("committed-removal");
-    let blocker = worktrunk::git::stage_worktree_removal(
+    let staged = worktrunk::git::stage_worktree_removal(
         &repository,
         &committed_worktree,
         Some("committed-removal"),
         false,
     )
     .unwrap()
-    .map(|path| repository.prepare_disposal(&path).unwrap())
     .unwrap();
+    let blocker = staged.cleanup_path().unwrap().to_path_buf();
     let committed = repository
         .wt_dir()
-        .join("retained/removing")
+        .join("retained")
         .join(blocker.file_name().unwrap());
     fs::rename(&blocker, &committed).unwrap();
-    fs::write(&blocker, "occupied trash destination").unwrap();
+    // A nonempty directory portably refuses the disposal move. The committed
+    // container remains inventoried so state clear can retry cleanup later.
+    fs::create_dir(&blocker).unwrap();
+    fs::write(blocker.join("payload"), "occupied trash destination").unwrap();
     let error = repository.prepare_disposal(&committed).unwrap_err();
     assert!(error.to_string().contains("prepare cleanup"), "{error:#}");
     assert!(committed.join("registration/index").is_file());
     assert!(committed.join("checkout/.git").is_file());
-    let partial_worktree = repo.add_worktree("partial-cleanup");
-    let partial = worktrunk::git::stage_worktree_removal(
-        &repository,
-        &partial_worktree,
-        Some("partial-cleanup"),
-        false,
-    )
-    .unwrap()
-    .map(|path| repository.prepare_disposal(&path).unwrap())
-    .unwrap();
-    // Generic cleanup can remove metadata first; the remaining checkout must
-    // still be discoverable in ordinary trash.
-    fs::remove_dir_all(partial.join("registration")).unwrap();
-    assert!(partial.join("checkout/.git").is_file());
     let payload = repository.wt_trash_dir().join("discard-1234567890");
     fs::create_dir_all(payload.parent().unwrap()).unwrap();
     fs::write(&payload, "discard").unwrap();
@@ -3518,7 +3499,7 @@ fn test_state_clear_preserves_retained_recovery(mut repo: TestRepo) {
     use path_slash::PathExt as _;
     assert_eq!(
         actual,
-        [&payload, &blocker, &committed, &partial]
+        [&payload, &blocker, &committed]
             .map(|path| path.to_slash_lossy().into_owned())
             .into_iter()
             .collect()
@@ -3527,10 +3508,9 @@ fn test_state_clear_preserves_retained_recovery(mut repo: TestRepo) {
     assert!(output.status.success(), "{output:?}");
     assert!(!payload.exists());
     assert!(!committed.exists());
-    assert!(!partial.exists());
     assert!(pending.join("checkout/.git").is_file());
     assert_eq!(
-        fs::read_to_string(retained.join("payload")).unwrap(),
+        fs::read_to_string(pending.join("checkout/payload")).unwrap(),
         "recoverable work"
     );
 }

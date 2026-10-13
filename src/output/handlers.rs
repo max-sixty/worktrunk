@@ -31,7 +31,7 @@ use worktrunk::git::IntegrationReason;
 use worktrunk::git::Repository;
 use worktrunk::git::path_dir_name;
 use worktrunk::git::{
-    BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemoveOptions,
+    BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemoveOptions, StagedRemoval,
     delete_branch_if_safe, execute_branch_deletion, remove_worktree_with_cleanup,
     stage_worktree_removal,
 };
@@ -52,7 +52,7 @@ use super::shell_integration::{
 // Foreground Trash Cleanup
 // ============================================================================
 
-/// Prepare staged disposal, then unlink checkout files with a TTY spinner.
+/// Unlink prepared checkout files with a TTY spinner.
 ///
 /// Used by the foreground path after `remove_worktree_with_cleanup`. The spinner shows
 /// `⠼ Removing N files · X MiB` while the walk proceeds; the returned counts
@@ -62,8 +62,8 @@ use super::shell_integration::{
 /// `Progress::start`) or when verbosity ≥ 1 (verbose mode prefers structured
 /// output over live updates). The walk itself is best-effort — see
 /// [`remove_dir_with_progress`].
-fn cleanup_staged_with_progress(repo: &Repository, staged: &Path) -> (usize, u64) {
-    let Some(staged) = prepare_staged_cleanup(repo, staged) else {
+fn cleanup_staged_with_progress(staged: &StagedRemoval) -> (usize, u64) {
+    let (Some(path), Some(checkout)) = (staged.cleanup_path(), staged.checkout_path()) else {
         return (0, 0);
     };
     let progress = if verbosity() >= 1 {
@@ -72,23 +72,11 @@ fn cleanup_staged_with_progress(repo: &Repository, staged: &Path) -> (usize, u64
         Progress::start("Removing")
     };
     // Report checkout contents, not the Git registration kept alongside them.
-    remove_dir_with_progress(&staged.join("checkout"), &progress);
-    let _ = std::fs::remove_dir_all(&staged);
+    remove_dir_with_progress(&checkout, &progress);
+    let _ = std::fs::remove_dir_all(path);
     let totals = progress.totals();
     progress.finish();
     totals
-}
-
-/// Cleanup is best-effort after unregister commits. A preparation failure must
-/// leave its inventoried container untouched while branch and shell work finish.
-fn prepare_staged_cleanup(repo: &Repository, staged: &Path) -> Option<PathBuf> {
-    match repo.prepare_disposal(staged) {
-        Ok(path) => Some(path),
-        Err(error) => {
-            tracing::debug!(%error, path = %staged.display(), "Deferred committed removal cleanup");
-            None
-        }
-    }
 }
 
 // ============================================================================
@@ -235,8 +223,7 @@ fn execute_instant_removal_or_fallback(
     // (instant on the same filesystem) — the same prelude the synchronous
     // `remove_worktree_with_cleanup` runs. On the fast path the background
     // process is then just an `rm -rf`.
-    if let Some(staged_path) =
-        stage_worktree_removal(repo, worktree_path, branch_name, force_worktree)?
+    if let Some(staged) = stage_worktree_removal(repo, worktree_path, branch_name, force_worktree)?
     {
         if changed_directory {
             // Keep the shell's PWD valid until its cd directive is consumed.
@@ -244,8 +231,8 @@ fn execute_instant_removal_or_fallback(
         }
         // Trash cleanup is independent of branch deletion. Start it before a
         // deletion lock wait, and still attempt deletion if scheduling fails.
-        let cleanup = match prepare_staged_cleanup(repo, &staged_path) {
-            Some(path) => spawn_cleanup(&build_remove_paths_command([&path]), InternalOp::Remove),
+        let cleanup = match staged.cleanup_path() {
+            Some(path) => spawn_cleanup(&build_remove_paths_command([path]), InternalOp::Remove),
             None => Ok(()),
         };
         // Delete branch synchronously now that prune has removed the worktree metadata.
@@ -1939,9 +1926,9 @@ fn handle_detached_removed_worktree_output(
             error: err,
         })?;
         let (files, bytes) = output
-            .staged_path
-            .as_deref()
-            .map(|staged| cleanup_staged_with_progress(repo, staged))
+            .staged_removal
+            .as_ref()
+            .map(cleanup_staged_with_progress)
             .unwrap_or((0, 0));
         let stats_paren = format_stats_paren(files, bytes);
         eprintln!(
@@ -2018,9 +2005,9 @@ fn handle_named_removed_worktree_foreground(
         error: err,
     })?;
     let stats = output
-        .staged_path
-        .as_deref()
-        .map(|staged| cleanup_staged_with_progress(repo, staged))
+        .staged_removal
+        .as_ref()
+        .map(cleanup_staged_with_progress)
         .unwrap_or((0, 0));
 
     // Worktree removal happened even if the subsequent branch deletion failed.
@@ -2178,12 +2165,12 @@ fn remove_removed_worktree_silently(
         force_worktree: ctx.force_worktree,
     };
     let output = remove_worktree_with_cleanup(repo, &snapshot, ctx.worktree_path, options)?;
-    if let Some(staged) = output.staged_path
-        && let Some(staged) = prepare_staged_cleanup(repo, &staged)
+    if let Some(staged) = output.staged_removal
+        && let Some(path) = staged.cleanup_path()
     {
         // Best-effort, same as the fast-path cleanup in the foreground handler
         // but without the TTY spinner (`cleanup_staged_with_progress`).
-        let _ = std::fs::remove_dir_all(&staged);
+        let _ = std::fs::remove_dir_all(path);
     }
 
     // A best-effort deletion's failure is deliberately not narrated here
@@ -2458,7 +2445,7 @@ mod tests {
             std::fs::read_to_string(repo.wt_trash_dir()).unwrap(),
             "occupied trash namespace"
         );
-        let retained = repo.wt_dir().join("retained/removing");
+        let retained = repo.wt_dir().join("retained");
         let container = std::fs::read_dir(retained)
             .unwrap()
             .next()
@@ -2480,7 +2467,7 @@ mod tests {
         let mut test = worktrunk::testing::TestRepo::with_initial_commit();
         let checkout = test.add_worktree("feature");
         let repo = Repository::at(test.root_path()).unwrap();
-        let staging = repo.wt_dir().join("retained/removing");
+        let staging = repo.wt_dir().join("retained");
         std::fs::create_dir_all(staging.parent().unwrap()).unwrap();
         std::fs::write(&staging, "block staging").unwrap();
         let outcome = execute_instant_removal_or_fallback(

@@ -9,6 +9,7 @@ use anyhow::Context as _;
 use color_print::cformat;
 use dunce::canonicalize;
 
+use super::disposal::REGISTRATION;
 use super::working_tree::{
     operation_in_progress_at, path_to_logging_context, registration_worktree_path,
 };
@@ -278,7 +279,7 @@ impl Repository {
             })?;
         // The uniquely created parent owns this absent child. A concurrent
         // janitor sweep before the move only makes it fail, preserving metadata.
-        self.unregister_worktree_entry(path, &garbage.path().join("registration"))?;
+        self.unregister_worktree_entry(path, &garbage.path().join(REGISTRATION))?;
         // Removal has committed. Failed cleanup leaves only disposable metadata
         // in trash, where the janitor can try again later.
         if let Err(error) = garbage.close() {

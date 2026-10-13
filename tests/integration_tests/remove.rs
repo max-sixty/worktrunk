@@ -4212,7 +4212,7 @@ fn test_remove_background_fallback_on_rename_failure(mut repo: TestRepo) {
     // Create a worktree
     let worktree_path = repo.add_worktree("feature-fallback");
 
-    let staged_path = block_retained_rename(&repo, &worktree_path);
+    let staged_path = crate::common::block_retained_rename(&repo, &worktree_path);
 
     // Verify worktree exists before removal
     assert!(
@@ -4252,29 +4252,6 @@ fn test_remove_background_fallback_on_rename_failure(mut repo: TestRepo) {
     let _ = std::fs::remove_file(&staged_path);
 }
 
-/// Block the initial retained staging move for `worktree_path` by pre-creating
-/// a regular file at its deterministic destination. Returns that path so the
-/// caller can clean it up. (On POSIX a directory cannot be renamed onto an
-/// existing file, so `stage_worktree_removal` falls back to legacy removal.)
-fn block_retained_rename(repo: &TestRepo, worktree_path: &std::path::Path) -> std::path::PathBuf {
-    let retained_dir =
-        crate::common::resolve_git_common_dir(repo.root_path()).join("wt/retained/removing");
-    std::fs::create_dir_all(&retained_dir).unwrap();
-    let git_dir = repo
-        .git_command()
-        .args(["rev-parse", "--absolute-git-dir"])
-        .current_dir(worktree_path)
-        .run()
-        .unwrap();
-    assert!(git_dir.status.success(), "{git_dir:?}");
-    let path = std::str::from_utf8(git_dir.stdout.strip_suffix(b"\n").unwrap()).unwrap();
-    let mut staged_name = Path::new(path).file_name().unwrap().to_os_string();
-    staged_name.push(format!("-{}", crate::common::TEST_EPOCH));
-    let staged_path = retained_dir.join(staged_name);
-    std::fs::write(&staged_path, "blocking file").unwrap();
-    staged_path
-}
-
 /// The rename-failure fallback honors `-D`: an unmerged branch is force-deleted
 /// by the Rust child after `git worktree remove` succeeds.
 #[rstest]
@@ -4284,7 +4261,7 @@ fn test_remove_background_fallback_force_delete_branch(mut repo: TestRepo) {
     // `BranchDeletionMode::ForceDelete` arm of the fallback command builder.
     let worktree_path =
         repo.add_worktree_with_commit("feature-force", "f.txt", "content", "unmerged commit");
-    let staged_path = block_retained_rename(&repo, &worktree_path);
+    let staged_path = crate::common::block_retained_rename(&repo, &worktree_path);
 
     let output = repo
         .wt_command()
@@ -4322,7 +4299,7 @@ fn test_remove_background_fallback_force_deletes_flag_like_branch(mut repo: Test
     repo.run_git(&["update-ref", "refs/heads/-x", "HEAD"]);
     repo.run_git_in(&worktree_path, &["symbolic-ref", "HEAD", "refs/heads/-x"]);
     repo.run_git(&["branch", "-D", "flag-like-holder"]);
-    let staged_path = block_retained_rename(&repo, &worktree_path);
+    let staged_path = crate::common::block_retained_rename(&repo, &worktree_path);
 
     let output = repo
         .wt_command()
@@ -4359,7 +4336,7 @@ fn test_remove_background_fallback_detached_worktree(mut repo: TestRepo) {
     repo.commit("initial");
     let worktree_path = repo.add_worktree("feature-detached");
     repo.detach_head_in_worktree("feature-detached");
-    let staged_path = block_retained_rename(&repo, &worktree_path);
+    let staged_path = crate::common::block_retained_rename(&repo, &worktree_path);
 
     let output = repo
         .wt_command()
@@ -6163,7 +6140,7 @@ approved-commands = [{hook:?}]
 "#
     ));
     let removed = repo.add_worktree_at_path(branch, &removed);
-    let staged_path = block_retained_rename(&repo, &removed);
+    let staged_path = crate::common::block_retained_rename(&repo, &removed);
     let output = repo
         .wt_command()
         .args(["remove", "--yes", branch])

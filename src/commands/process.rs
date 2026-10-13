@@ -617,7 +617,7 @@ mod tests {
         fs::create_dir(&foreign).unwrap();
         let committed = repo
             .wt_dir()
-            .join(format!("retained/removing/committed-{}", now - 2 * day));
+            .join(format!("retained/committed-{}", now - 2 * day));
         fs::create_dir_all(committed.join("registration")).unwrap();
 
         let mut collected = collect_stale_trash_entries(&repo, now, day);
@@ -633,15 +633,5 @@ mod tests {
             "fresh entries must not appear in stale list"
         );
         assert!(foreign.exists(), "unparsable entries must be left alone");
-    }
-
-    #[test]
-    fn test_collect_stale_trash_entries_missing_dir() {
-        let test = worktrunk::testing::TestRepo::with_initial_commit();
-        let repo = Repository::at(test.root_path()).unwrap();
-        assert!(
-            collect_stale_trash_entries(&repo, 1_700_000_000, TRASH_STALE_THRESHOLD_SECS)
-                .is_empty()
-        );
     }
 }

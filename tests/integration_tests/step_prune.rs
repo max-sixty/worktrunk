@@ -288,16 +288,7 @@ fn test_prune_detached_worktree_rename_fallback(mut repo: TestRepo) {
     let wt_path = repo.add_worktree("detached-fallback");
     repo.detach_head_in_worktree("detached-fallback");
 
-    // Pre-create a file at the computed staged path so `std::fs::rename`
-    // fails and prune takes the synchronous non-current fallback.
-    let trash_dir = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/trash");
-    std::fs::create_dir_all(&trash_dir).unwrap();
-    let staged_path = trash_dir.join(format!(
-        "{}-{}",
-        wt_path.file_name().unwrap().to_string_lossy(),
-        crate::common::TEST_EPOCH
-    ));
-    std::fs::write(&staged_path, "blocking file to force fallback").unwrap();
+    let staged_path = crate::common::block_retained_rename(&repo, &wt_path);
 
     let output = repo
         .wt_command()
@@ -1797,20 +1788,11 @@ fn test_prune_fallback_config_race_canary(mut repo: TestRepo) {
         ]);
     }
 
-    // Force the fallback for one *non-current* worktree by pre-creating a
-    // file at its computed staged path so `std::fs::rename(worktree → trash)`
-    // fails. Pick one in the middle so integration checks for later refs are
-    // still in flight while the fallback runs.
+    // Block one non-current worktree's reserved container so it takes the
+    // synchronous fallback while integration checks for later refs continue.
     let blocked = names[3].clone();
     let blocked_wt_path = repo.worktree_path(&blocked).to_path_buf();
-    let trash_dir = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/trash");
-    std::fs::create_dir_all(&trash_dir).unwrap();
-    let staged_path = trash_dir.join(format!(
-        "{}-{}",
-        blocked_wt_path.file_name().unwrap().to_string_lossy(),
-        crate::common::TEST_EPOCH
-    ));
-    std::fs::write(&staged_path, "blocking file to force fallback").unwrap();
+    let staged_path = crate::common::block_retained_rename(&repo, &blocked_wt_path);
 
     // Parallel fan-out is the point — do NOT pin RAYON_NUM_THREADS=1.
     let mut cmd = repo.wt_command();
