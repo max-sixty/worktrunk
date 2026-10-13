@@ -1,6 +1,7 @@
 use crate::common::{TEST_EPOCH, TestRepo, repo, repo_with_remote, wt_command};
 use insta::assert_snapshot;
 use rstest::rstest;
+use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -1855,7 +1856,7 @@ fn test_state_get_empty(repo: TestRepo) {
         [36mDIAGNOSTIC[39m @ <PATH>
         [107m [0m (none)
 
-        [36mTRASH[39m @ _REPO_/.git/wt/trash
+        [36mTRASH[39m @ _REPO_/.git/wt
         [107m [0m (none)
         ");
     });
@@ -3446,5 +3447,70 @@ fn state_branch_flag_resolves_selectors(mut repo: TestRepo) {
         "wip",
         "the marker set via @ should read back via the worktree's path: {}",
         String::from_utf8_lossy(&get.stderr)
+    );
+}
+
+/// State clearing removes committed disposal, preserving recoverable checkouts.
+#[rstest]
+fn test_state_clear_preserves_retained_recovery(mut repo: TestRepo) {
+    use worktrunk::git::Repository;
+    let repository = Repository::at(repo.root_path()).unwrap();
+    let pending_worktree = repo.add_worktree("pending-removal");
+    let pending = repository.wt_dir().join("retained/pending-1234567890");
+    fs::create_dir_all(&pending).unwrap();
+    fs::rename(&pending_worktree, pending.join("checkout")).unwrap();
+    fs::write(pending.join("checkout/payload"), "recoverable work").unwrap();
+
+    let committed_worktree = repo.add_worktree("committed-removal");
+    let staged = worktrunk::git::stage_worktree_removal(
+        &repository,
+        &committed_worktree,
+        Some("committed-removal"),
+        false,
+    )
+    .unwrap()
+    .unwrap();
+    let blocker = staged.cleanup_path().unwrap().to_path_buf();
+    let committed = repository
+        .wt_dir()
+        .join("retained")
+        .join(blocker.file_name().unwrap());
+    fs::rename(&blocker, &committed).unwrap();
+    // A nonempty directory portably refuses the disposal move. The committed
+    // container remains inventoried so state clear can retry cleanup later.
+    fs::create_dir(&blocker).unwrap();
+    fs::write(blocker.join("payload"), "occupied trash destination").unwrap();
+    let error = repository.prepare_disposal(&committed).unwrap_err();
+    assert!(error.to_string().contains("prepare cleanup"), "{error:#}");
+    assert!(committed.join("registration/index").is_file());
+    assert!(committed.join("checkout/.git").is_file());
+    let payload = repository.wt_trash_dir().join("discard-1234567890");
+    fs::create_dir_all(payload.parent().unwrap()).unwrap();
+    fs::write(&payload, "discard").unwrap();
+    let output = wt_state_get_json_cmd(&repo).output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let actual: std::collections::BTreeSet<_> = json["trash"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["path"].as_str().unwrap().to_owned())
+        .collect();
+    use path_slash::PathExt as _;
+    assert_eq!(
+        actual,
+        [&payload, &blocker, &committed]
+            .map(|path| path.to_slash_lossy().into_owned())
+            .into_iter()
+            .collect()
+    );
+    let output = wt_state_clear_all_cmd(&repo).output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(!payload.exists());
+    assert!(!committed.exists());
+    assert!(pending.join("checkout/.git").is_file());
+    assert_eq!(
+        fs::read_to_string(pending.join("checkout/payload")).unwrap(),
+        "recoverable work"
     );
 }

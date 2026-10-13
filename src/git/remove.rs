@@ -36,8 +36,12 @@
 //!    daemon is actually gone and force-kills it by PID if it has wedged.
 //!    Without this, a daemon that has stopped answering its socket leaks
 //!    forever once its worktree is removed.
-//! 3. **Fast-path trash staging.** The worktree directory is renamed into
-//!    `<git-common-dir>/wt/trash/<name>-<timestamp>/`. Same-filesystem renames
+//! 3. **Fast-path staging.** The checkout moves into a `wt/retained/` container,
+//!    then its complete Git registration moves beside it. That atomic unregister
+//!    authorizes disposal of the container, which moves to ordinary trash before
+//!    cleanup. Failed unregister leaves the checkout and full registration
+//!    available for repair; a failed trash move leaves committed disposal visible.
+//!    Same-filesystem renames
 //!    are instant metadata operations, so the user's workspace clears
 //!    immediately. The caller is responsible for eventually removing the
 //!    staged path — either synchronously or via a background process.
@@ -91,9 +95,11 @@
 //!     },
 //! )?;
 //!
-//! // Caller cleans up the staged trash entry (sync or background).
-//! if let Some(staged) = output.staged_path {
-//!     let _ = std::fs::remove_dir_all(staged);
+//! // Only prepared trash is exposed for cleanup.
+//! if let Some(staged) = output.staged_removal
+//!     && let Some(trash) = staged.cleanup_path()
+//! {
+//!     let _ = std::fs::remove_dir_all(trash);
 //! }
 //! # Ok::<(), anyhow::Error>(())
 //! ```
@@ -104,6 +110,7 @@ use std::time::Duration;
 use anyhow::Context as _;
 
 use crate::git::repository::WorkingTree;
+use crate::git::repository::disposal::{CHECKOUT, REGISTRATION};
 use crate::git::{ErrorExt, GitError, IntegrationReason, Repository, WorktreeInfo, path_dir_name};
 use crate::path::format_path_for_display;
 use crate::shell_exec::Cmd;
@@ -331,7 +338,7 @@ pub struct RemoveOptions {
     /// fallback.
     ///
     /// Trash staging itself is unconditional and always preserves data (the
-    /// renamed directory can be recovered from `<git-common-dir>/wt/trash/`
+    /// renamed directory can be recovered from the returned staging path
     /// until the caller deletes it).
     pub force_worktree: bool,
 }
@@ -344,16 +351,35 @@ pub struct RemoveOptions {
 /// foreground removal path reports them to the user, the TUI picker ignores
 /// them (best-effort), and external tools can do whatever fits.
 ///
-/// `staged_path` is `Some` only on the fast path. Callers are responsible for
-/// cleaning up the staged directory; `wt remove` does this with a detached
-/// background `rm -rf` so the foreground command returns immediately.
+/// `staged_removal` is `Some` once staging commits. It exposes a cleanup path
+/// only after the container reaches trash; otherwise cleanup is deferred.
 pub struct RemovalOutput {
     pub branch_result: Option<anyhow::Result<BranchDeletionResult>>,
-    /// Path to the staged trash directory on the fast path.
-    ///
-    /// `None` if the fast-path rename failed and the fallback `git worktree
-    /// remove` was used.
-    pub staged_path: Option<PathBuf>,
+    /// `None` when staging fell back to direct `git worktree remove`.
+    pub staged_removal: Option<StagedRemoval>,
+}
+
+/// A committed removal, ready for cleanup or left for the disposal janitor.
+/// Deferred removal exposes no path that a caller could recursively delete.
+#[derive(Debug)]
+pub enum StagedRemoval {
+    Ready(PathBuf),
+    Deferred,
+}
+
+impl StagedRemoval {
+    /// Prepared trash that can be recursively deleted, when cleanup is ready.
+    pub fn cleanup_path(&self) -> Option<&Path> {
+        match self {
+            Self::Ready(path) => Some(path),
+            Self::Deferred => None,
+        }
+    }
+
+    /// Checkout contents for progress reporting, excluding registration metadata.
+    pub fn checkout_path(&self) -> Option<PathBuf> {
+        self.cleanup_path().map(|path| path.join(CHECKOUT))
+    }
 }
 
 /// Remove a worktree with fsmonitor cleanup, fast-path trash staging, and
@@ -375,13 +401,13 @@ pub fn remove_worktree_with_cleanup(
     worktree_path: &Path,
     options: RemoveOptions,
 ) -> anyhow::Result<RemovalOutput> {
-    let staged_path = stage_worktree_removal(
+    let staged_removal = stage_worktree_removal(
         repo,
         worktree_path,
         options.branch.as_deref(),
         options.force_worktree,
     )?;
-    if staged_path.is_none() {
+    if staged_removal.is_none() {
         repo.remove_worktree(worktree_path, options.force_worktree)?;
     }
 
@@ -403,7 +429,7 @@ pub fn remove_worktree_with_cleanup(
 
     Ok(RemovalOutput {
         branch_result,
-        staged_path,
+        staged_removal,
     })
 }
 
@@ -418,11 +444,10 @@ pub fn remove_worktree_with_cleanup(
 /// rather than a sequence each caller re-assembles — the order below is easy
 /// to get subtly wrong, and getting it wrong destroys uncommitted work.
 ///
-/// Returns `Some(staged_path)` when the worktree was renamed into
-/// `<git-common-dir>/wt/trash/`, `None` when the rename failed
-/// (cross-filesystem, permissions, Windows file locking) and the caller must
-/// fall back to a direct `git worktree remove`. Either way the caller owns the
-/// staged directory and must eventually delete it.
+/// Returns `Some` once unregister commits, including when cleanup must be
+/// deferred. Only [`StagedRemoval::cleanup_path`] exposes disposable trash.
+/// Returns `None` when the initial staging move fails (cross-filesystem,
+/// permissions, Windows file locking), requiring direct `git worktree remove`.
 ///
 /// # Why this order
 ///
@@ -458,15 +483,17 @@ pub fn remove_worktree_with_cleanup(
 ///
 /// # Errors
 ///
-/// The ownership, lock, and dirty-worktree gates error. A
-/// failed rename is reported as `None`, not an error, and the daemon stop is
-/// best-effort throughout.
+/// Ownership, lock, and cleanliness refusals return errors. If unregister fails,
+/// the checkout returns to its original path. If rollback also fails,
+/// `WorktreeRemovalPreserved` reports its retained path and keeps the complete
+/// registration for repair. A failed initial rename returns `None`
+/// for direct-removal fallback; daemon shutdown is best-effort.
 pub fn stage_worktree_removal(
     repo: &Repository,
     worktree_path: &Path,
     branch: Option<&str>,
     force_worktree: bool,
-) -> anyhow::Result<Option<PathBuf>> {
+) -> anyhow::Result<Option<StagedRemoval>> {
     let worktree = repo.worktree_at(worktree_path);
     let git_dir = worktree.ensure_holds_this_worktree()?;
 
@@ -518,7 +545,7 @@ pub fn stage_worktree_removal(
 
     stop_fsmonitor_daemon(&repo.worktree_at(worktree_path));
 
-    Ok(rename_into_trash(repo, worktree_path, &git_dir))
+    rename_into_trash(repo, worktree_path, &git_dir)
 }
 
 /// Find a registered worktree contained in `worktree_path`, using a fresh
@@ -555,36 +582,63 @@ pub fn nested_worktree(repo: &Repository, worktree_path: &Path) -> anyhow::Resul
     Ok(None)
 }
 
-/// Rename a worktree into `<git-common-dir>/wt/trash/` and prune git metadata.
-///
-/// Returns `Some(staged_path)` on success, `None` if the rename failed. The
-/// unguarded mutation: [`stage_worktree_removal`] is the only caller, and it
-/// is what places the dirty-worktree gate ahead of this.
-///
-/// The metadata cleanup names this worktree
-/// ([`prune_worktree_entry`](Repository::prune_worktree_entry)) rather than
-/// sweeping the repository, so a sibling worktree whose directory happens to
-/// be absent right now keeps its registration. A locked worktree never reaches
-/// here — [`stage_worktree_removal`] rejects one before the rename.
-fn rename_into_trash(repo: &Repository, worktree_path: &Path, git_dir: &Path) -> Option<PathBuf> {
-    let trash_dir = repo.wt_trash_dir();
-    let _ = std::fs::create_dir_all(&trash_dir);
-    let staged_path = generate_removing_path(&trash_dir, git_dir);
-
-    if std::fs::rename(worktree_path, &staged_path)
-        .inspect_err(|e| {
-            tracing::debug!(error = %e, "Failed to stage worktree into trash, falling back: {e}");
-        })
-        .is_ok()
+/// Reserve the disposal container before moving anything. Its registration
+/// child appears only when unregister commits, authorizing cleanup of the whole
+/// container. Failure preserves the checkout and registration for repair.
+fn rename_into_trash(
+    repo: &Repository,
+    worktree_path: &Path,
+    git_dir: &Path,
+) -> anyhow::Result<Option<StagedRemoval>> {
+    let retained_dir = repo.worktree_staging_dir();
+    if let Err(error) = std::fs::create_dir_all(&retained_dir) {
+        tracing::debug!(%error, "Failed to prepare worktree staging, falling back");
+        return Ok(None);
+    }
+    let container = generate_removing_path(&retained_dir, git_dir);
+    if let Err(error) = std::fs::create_dir(&container) {
+        tracing::debug!(%error, "Failed to reserve worktree staging, falling back");
+        return Ok(None);
+    }
+    let retained_path = container.join(CHECKOUT);
+    if let Err(error) = std::fs::rename(worktree_path, &retained_path) {
+        tracing::debug!(%error, "Failed to stage worktree, falling back");
+        let _ = std::fs::remove_dir(&container);
+        return Ok(None);
+    }
+    if let Err(error) = repo.unregister_worktree_entry(worktree_path, &container.join(REGISTRATION))
     {
-        // The rename moved the directory out from under `worktree_path`,
-        // leaving its registration stale for the prune to delete.
-        if let Err(e) = repo.prune_worktree_entry(worktree_path) {
-            tracing::debug!(error = %e, "Failed to prune worktree entry after rename: {e}");
+        let error = restore_failed_removal(repo, worktree_path, retained_path, error);
+        let _ = std::fs::remove_dir(&container);
+        return Err(error);
+    }
+    // Unregister has committed. A failed trash move defers cleanup without
+    // turning successful removal into an error or exposing retained storage.
+    Ok(Some(match repo.prepare_disposal(&container) {
+        Ok(path) => StagedRemoval::Ready(path),
+        Err(error) => {
+            tracing::debug!(%error, path = %container.display(), "Deferred committed removal cleanup");
+            StagedRemoval::Deferred
         }
-        Some(staged_path)
+    }))
+}
+
+/// Roll back an uncommitted removal; keep the payload aside if its path is occupied.
+fn restore_failed_removal(
+    repo: &Repository,
+    original: &Path,
+    retained: PathBuf,
+    error: anyhow::Error,
+) -> anyhow::Error {
+    if std::fs::rename(&retained, original).is_ok() {
+        error
     } else {
-        None
+        GitError::WorktreeRemovalPreserved {
+            path: retained,
+            git_common_dir: repo.git_common_dir().to_path_buf(),
+            error,
+        }
+        .into()
     }
 }
 
@@ -730,33 +784,103 @@ fn cas_delete_branch_outcome(
 
 /// Generate a staging path for worktree removal.
 ///
-/// Places the staging directory inside `<git-common-dir>/wt/trash/` so it is
-/// hidden from the user's workspace. For the main worktree, `.git/` is on the
-/// same filesystem, so `rename()` is an instant metadata operation. Linked
-/// worktrees on different mount points will get EXDEV and fall back to the
-/// `git worktree remove` path.
+/// Places the staging directory beneath the repository's removal storage so it
+/// is hidden from the user's workspace. Cross-filesystem renames fall back to
+/// `git worktree remove`.
 ///
-/// Format: `<trash-dir>/<name>-<timestamp>`, where `<name>` is the final
+/// Format: `<dir>/<name>-<timestamp>`, where `<name>` is the final
 /// component of the worktree's `git_dir`: its registration id under
 /// `<common>/worktrees/`, which git keeps unique among a repository's
 /// worktrees. The directory's basename is not unique — Codex places every
 /// worktree at `<id>/<repo>` — and two removals sharing a staging path in the
 /// same second would make the second rename fail onto the synchronous
 /// fallback.
-pub(crate) fn generate_removing_path(trash_dir: &Path, git_dir: &Path) -> PathBuf {
+pub(crate) fn generate_removing_path(dir: &Path, git_dir: &Path) -> PathBuf {
     let timestamp = epoch_now();
     let name = git_dir
         .file_name()
         .map(|n| n.to_string_lossy())
         .unwrap_or_default();
-    trash_dir.join(format!("{}-{}", name, timestamp))
+    dir.join(format!("{}-{}", name, timestamp))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git::ErrorExt;
+    use crate::git::error::Diagnostic;
     use crate::testing::TestRepo;
+
+    /// Unregister refusal cannot put recoverable contents into swept trash.
+    #[test]
+    fn staging_failure_keeps_complete_registration_for_repair() {
+        let mut test = TestRepo::with_initial_commit();
+        let worktree = test.add_worktree("feature");
+        let repo = Repository::at(test.root_path()).unwrap();
+        let registration = repo.worktree_at(&worktree).git_dir().unwrap();
+        std::fs::write(worktree.join("payload"), "keep my work").unwrap();
+        std::fs::write(registration.join("ORIG_HEAD"), b"operation bytes\n").unwrap();
+        let saved: Vec<_> = ["HEAD", "commondir", "gitdir", "index", "ORIG_HEAD"]
+            .into_iter()
+            .map(|name| (name, std::fs::read(registration.join(name)).unwrap()))
+            .collect();
+        // Models a lock acquired after the live gate, at the unregister boundary.
+        std::fs::write(registration.join("locked"), "new owner").unwrap();
+        let error = rename_into_trash(&repo, &worktree, &registration).unwrap_err();
+        assert!(error.to_string().contains("locked"), "{error:#}");
+        assert_eq!(
+            std::fs::read_to_string(worktree.join("payload")).unwrap(),
+            "keep my work"
+        );
+        assert!(worktree.join(".git").is_file());
+        // A concurrent occupant can prevent rollback; preserve both checkouts.
+        let retained = repo.wt_dir().join("retained/occupied");
+        std::fs::rename(&worktree, &retained).unwrap();
+        std::fs::create_dir(&worktree).unwrap();
+        std::fs::write(worktree.join("new-occupant"), "preserve occupant").unwrap();
+        let error = restore_failed_removal(&repo, &worktree, retained, error);
+        let Some(GitError::WorktreeRemovalPreserved { path: retained, .. }) =
+            error.downcast_ref::<GitError>()
+        else {
+            panic!("{error:#}");
+        };
+        let retained = retained.clone();
+        assert!(retained.starts_with(repo.wt_dir().join("retained")));
+        assert_eq!(
+            std::fs::read_to_string(retained.join("payload")).unwrap(),
+            "keep my work"
+        );
+        for (name, bytes) in saved {
+            assert_eq!(
+                std::fs::read(registration.join(name)).unwrap(),
+                bytes,
+                "{name}"
+            );
+        }
+        assert!(repo.disposal_entries().unwrap().is_empty());
+        let diagnostic = GitError::WorktreeRemovalFailed {
+            branch: "feature".into(),
+            path: worktree.clone(),
+            error,
+            remaining_entries: Some(vec!["new-occupant".into()]),
+        }
+        .render();
+        assert!(diagnostic.contains("worktree repair"), "{diagnostic}");
+        assert!(
+            diagnostic.contains(retained.to_str().unwrap()),
+            "{diagnostic}"
+        );
+        assert!(
+            !diagnostic.contains("Remaining in directory:"),
+            "{diagnostic}"
+        );
+        std::fs::remove_file(registration.join("locked")).unwrap();
+        test.run_git(&["worktree", "repair", retained.to_str().unwrap()]);
+        test.run_git_in(&retained, &["status", "--porcelain"]);
+        assert_eq!(
+            std::fs::read_to_string(worktree.join("new-occupant")).unwrap(),
+            "preserve occupant",
+        );
+    }
 
     /// A `git worktree lock` must stop the rename even when the caller skipped
     /// `prepare_worktree_removal` (merge used to construct a plan by hand).

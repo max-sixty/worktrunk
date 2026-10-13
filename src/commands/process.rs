@@ -23,7 +23,7 @@ pub enum InternalOp {
     Remove,
     /// Delayed cleanup of the removed current worktree's empty PWD placeholder.
     RemovePlaceholder,
-    /// Background cleanup of stale entries in `.git/wt/trash/`
+    /// Background cleanup of staged worktrees and unregistered metadata
     TrashSweep,
 }
 
@@ -342,7 +342,7 @@ fn spawn_detached_exec_windows(
 ///
 /// Steps:
 ///
-/// 1. [`sweep_stale_trash`] — delete stale `.git/wt/trash/` entries left by
+/// 1. [`sweep_stale_trash`] — delete committed disposal left by
 ///    an interrupted background removal.
 /// 2. [`worktrunk::git::fsmonitor::reap_orphan_fsmonitor_daemons`] — terminate
 ///    `git fsmonitor--daemon` processes whose worktree no longer exists.
@@ -355,14 +355,14 @@ pub fn run_internal_sweep(repo: &Repository) {
     worktrunk::git::fsmonitor::reap_orphan_fsmonitor_daemons(repo);
 }
 
-/// How old a `.git/wt/trash/` entry must be before [`sweep_stale_trash`] deletes it.
+/// How old a committed disposal entry must be before [`sweep_stale_trash`] deletes it.
 pub const TRASH_STALE_THRESHOLD_SECS: u64 = 24 * 60 * 60;
 
-/// Fire-and-forget cleanup of stale entries in `.git/wt/trash/`.
+/// Fire-and-forget cleanup of discarded worktrees and unregistered metadata.
 ///
-/// Worktree removal uses a fast path that renames the worktree into
-/// `.git/wt/trash/<name>-<timestamp>/` and deletes it in a detached background
-/// process. If that process is interrupted (SIGKILL, reboot, disk full), the
+/// Worktree removal stages the checkout alongside its unregistered metadata
+/// and deletes that container in a detached background process. If that
+/// process is interrupted (SIGKILL, reboot, disk full), the
 /// renamed directory is orphaned. `wt remove` calls this function after its
 /// primary user-visible output — so the sweep never delays the progress or
 /// success message — to provide eventual cleanup: entries older than
@@ -372,8 +372,7 @@ pub const TRASH_STALE_THRESHOLD_SECS: u64 = 24 * 60 * 60;
 /// level and otherwise ignored. The sweep is purely additive — the primary
 /// `wt remove` operation proceeds regardless of outcome.
 pub fn sweep_stale_trash(repo: &Repository) {
-    let trash_dir = repo.wt_trash_dir();
-    let stale = collect_stale_trash_entries(&trash_dir, epoch_now(), TRASH_STALE_THRESHOLD_SECS);
+    let stale = collect_stale_trash_entries(repo, epoch_now(), TRASH_STALE_THRESHOLD_SECS);
     if stale.is_empty() {
         return;
     }
@@ -407,37 +406,31 @@ pub fn build_remove_paths_command(
     args
 }
 
-/// Collect paths in `trash_dir` whose embedded timestamp is older than
-/// `threshold_secs` relative to `now`.
-///
-/// Entries whose filename can't be parsed as `<name>-<timestamp>` are skipped —
-/// the sweep only touches directories worktrunk created via
-/// [`worktrunk::git::remove::stage_worktree_removal`].
-fn collect_stale_trash_entries(trash_dir: &Path, now: u64, threshold_secs: u64) -> Vec<PathBuf> {
-    let Ok(read_dir) = fs::read_dir(trash_dir) else {
-        return Vec::new();
+/// Apply the janitor age policy to the same inventory state get/clear use.
+fn collect_stale_trash_entries(repo: &Repository, now: u64, threshold_secs: u64) -> Vec<PathBuf> {
+    let entries = match repo.disposal_entries() {
+        Ok(entries) => entries,
+        Err(error) => {
+            tracing::debug!(%error, "Failed to inspect worktree disposal");
+            return Vec::new();
+        }
     };
-
-    read_dir
-        .filter_map(|entry| entry.ok())
+    entries
+        .into_iter()
         .filter_map(|entry| {
-            let name = entry.file_name();
-            let timestamp = parse_trash_entry_timestamp(name.to_str()?)?;
-            let age = now.saturating_sub(timestamp);
-            (age >= threshold_secs).then(|| entry.path())
+            let timestamp = entry.staged_at?;
+            if now.saturating_sub(timestamp) < threshold_secs {
+                return None;
+            }
+            match repo.prepare_disposal(&entry.path) {
+                Ok(path) => Some(path),
+                Err(error) => {
+                    tracing::debug!(%error, "Failed to prepare disposal cleanup");
+                    None
+                }
+            }
         })
         .collect()
-}
-
-/// Extract the Unix timestamp suffix from a trash entry filename.
-///
-/// Filenames produced by [`worktrunk::git::remove::stage_worktree_removal`]
-/// have the form `<name>-<timestamp>`, where timestamp is a bare unsigned
-/// integer in Unix epoch seconds. The worktree name may contain hyphens, so
-/// splitting from the right and parsing the tail is unambiguous.
-fn parse_trash_entry_timestamp(name: &str) -> Option<u64> {
-    let (_, suffix) = name.rsplit_once('-')?;
-    suffix.parse::<u64>().ok()
 }
 
 /// Remove the empty shell-PWD placeholder after the wrapper consumes its cd directive.
@@ -602,60 +595,43 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_trash_entry_timestamp() {
-        // Simple name with trailing timestamp
-        assert_eq!(
-            parse_trash_entry_timestamp("feature-1700000000"),
-            Some(1700000000)
-        );
-        // Worktree name containing hyphens — split from the right
-        assert_eq!(
-            parse_trash_entry_timestamp("my-project.feature-branch-1700000000"),
-            Some(1700000000)
-        );
-        // Missing separator or non-numeric suffix → None (sweep leaves it alone)
-        assert_eq!(parse_trash_entry_timestamp("no-timestamp"), None);
-        assert_eq!(parse_trash_entry_timestamp("notimestamp"), None);
-        assert_eq!(parse_trash_entry_timestamp(""), None);
-    }
-
-    #[test]
     fn test_collect_stale_trash_entries() {
-        let trash = tempfile::tempdir().unwrap();
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let trash = repo.wt_trash_dir();
+        fs::create_dir_all(&trash).unwrap();
         let now: u64 = 1_700_000_000;
         let day = TRASH_STALE_THRESHOLD_SECS;
 
         // Stale: 2 days old
-        let stale = trash.path().join(format!("feature-old-{}", now - 2 * day));
+        let stale = trash.join(format!("feature-old-{}", now - 2 * day));
         fs::create_dir(&stale).unwrap();
         // Fresh: 1 hour old
-        let fresh = trash.path().join(format!("feature-new-{}", now - 3600));
+        let fresh = trash.join(format!("feature-new-{}", now - 3600));
         fs::create_dir(&fresh).unwrap();
         // Exactly at threshold: 1 day old (inclusive)
-        let boundary = trash.path().join(format!("feature-edge-{}", now - day));
+        let boundary = trash.join(format!("feature-edge-{}", now - day));
         fs::create_dir(&boundary).unwrap();
         // Unparsable: no timestamp suffix — sweep ignores it
-        let foreign = trash.path().join("random-folder");
+        let foreign = trash.join("random-folder");
         fs::create_dir(&foreign).unwrap();
+        let committed = repo
+            .wt_dir()
+            .join(format!("retained/committed-{}", now - 2 * day));
+        fs::create_dir_all(committed.join("registration")).unwrap();
 
-        let mut collected = collect_stale_trash_entries(trash.path(), now, day);
+        let mut collected = collect_stale_trash_entries(&repo, now, day);
         collected.sort();
-        let mut expected = vec![stale, boundary];
+        let prepared = trash.join(committed.file_name().unwrap());
+        let mut expected = vec![stale, boundary, prepared.clone()];
         expected.sort();
         assert_eq!(collected, expected);
+        assert!(!committed.exists());
+        assert!(prepared.join("registration").is_dir());
         assert!(
             fresh.exists(),
             "fresh entries must not appear in stale list"
         );
         assert!(foreign.exists(), "unparsable entries must be left alone");
-    }
-
-    #[test]
-    fn test_collect_stale_trash_entries_missing_dir() {
-        let missing = std::path::PathBuf::from("/nonexistent/wt/trash/path");
-        assert!(
-            collect_stale_trash_entries(&missing, 1_700_000_000, TRASH_STALE_THRESHOLD_SECS)
-                .is_empty()
-        );
     }
 }

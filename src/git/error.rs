@@ -533,6 +533,12 @@ pub enum GitError {
         directory_remains: bool,
         work: StaleWorktreeWork,
     },
+    /// Removal moved the checkout aside but could not safely unregister it.
+    WorktreeRemovalPreserved {
+        path: PathBuf,
+        git_common_dir: PathBuf,
+        error: anyhow::Error,
+    },
     RemoteOnlyBranch {
         branch: String,
         remote: String,
@@ -756,7 +762,8 @@ pub enum GitError {
 impl std::error::Error for GitError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::WorktreeRemovalFailed { error, .. } => Some(error.as_ref()),
+            Self::WorktreeRemovalFailed { error, .. }
+            | Self::WorktreeRemovalPreserved { error, .. } => Some(error.as_ref()),
             _ => None,
         }
     }
@@ -887,6 +894,11 @@ impl GitError {
                     operation_noun(*operation)
                 ),
             },
+
+            GitError::WorktreeRemovalPreserved { path, .. } => cformat!(
+                "Worktree removal stopped; files preserved @ <bold>{}</>",
+                format_path_for_display(path)
+            ),
 
             GitError::RemoteOnlyBranch { branch, remote } => {
                 cformat!("Branch <bold>{branch}</> exists only on remote ({remote}/{branch})")
@@ -1262,6 +1274,24 @@ impl GitError {
                 write!(f, "{}\n{}", error_message(&title), hint_message(hint))
             }
 
+            GitError::WorktreeRemovalPreserved {
+                path,
+                git_common_dir,
+                error,
+            } => {
+                let command = format!(
+                    "git -C {} worktree repair {}",
+                    escape(git_common_dir.to_string_lossy()),
+                    escape(path.to_string_lossy()),
+                );
+                write!(
+                    f,
+                    "{}\n{}",
+                    format_error_block(error_message(self.title()), &format!("{error:#}")),
+                    hint_message(cformat!("To reconnect, run <underline>{command}</>"))
+                )
+            }
+
             GitError::StaleWorktreeHoldsWork {
                 branch,
                 path,
@@ -1398,6 +1428,16 @@ impl GitError {
                 remaining_entries,
                 ..
             } => {
+                // A classified failure owns its diagnostic and recovery hint.
+                // In particular, the original path may now hold another
+                // checkout: listing it must not obscure the preserved path.
+                if let Some(classified) = error
+                    .chain()
+                    .find_map(|cause| cause.downcast_ref::<GitError>())
+                    .filter(|error| matches!(error, GitError::WorktreeRemovalPreserved { .. }))
+                {
+                    return write!(f, "{}", classified.render());
+                }
                 let error = error.display_message();
                 let title = self.title();
                 write!(f, "{}", format_error_block(error_message(&title), &error))?;
