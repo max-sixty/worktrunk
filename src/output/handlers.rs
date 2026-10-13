@@ -362,8 +362,9 @@ fn delete_branch_in_synchronous_fallback(
 /// The worktree has already been removed by the time this runs, so silently
 /// dropping the branch-deletion outcome (the prior behavior) left the user
 /// with no signal that the branch survived. The fast path, the synchronous
-/// fallback, and the detached fallback's known-retained arm (no CAS tail to
-/// append) all route through here so the message is consistent.
+/// fallback, and the detached fallback's known-retained arm (no
+/// branch-deletion child to schedule) all route through here so the message
+/// is consistent.
 ///
 /// - `Ok(RetainedRaced)`: atomic CAS rejected the delete because the ref
 ///   tip moved between integration check and delete (a hook, a concurrent

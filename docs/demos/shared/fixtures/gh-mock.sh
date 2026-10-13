@@ -34,15 +34,10 @@ respond() {
 # same substitution — the two have to agree.
 sanitize() { printf '%s' "${1//\//_}"; }
 
-# wt gates every forge call on `gh --version` then `gh auth status`
-# (`CiToolsStatus::detect`), so both have to succeed before the responses below
-# are ever asked for.
+# wt gates every forge call on `gh --version`, so it has to succeed before the
+# responses below are ever asked for.
 if [[ "${1:-}" == "--version" ]]; then
     echo "gh version 2.63.2 (2024-12-05)"
-    exit 0
-fi
-
-if [[ "${1:-}" == "auth" && "${2:-}" == "status" ]]; then
     exit 0
 fi
 
