@@ -15,7 +15,7 @@ use worktrunk::config::{
     require_config_path, system_config_path,
 };
 use worktrunk::git::remote_ref::azure::azure_devops_extension_installed;
-use worktrunk::git::{ErrorExt, ForgeKind, Repository, WorktrunkError};
+use worktrunk::git::{ErrorExt, ForgeKind, Repository, WorktrunkError, remote_ref};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{
     FileDetectionResult, Shell, ZshStartupScope, probe_zsh_compdef, scan_for_detection_details,
@@ -30,7 +30,7 @@ use crate::cli::{SwitchFormat, version_str};
 use crate::commands::configure_shell::{
     ConfigAction, ConfigureResult, ShellConfigError, scan_shell_configs,
 };
-use crate::commands::list::ci_status::CiToolsStatus;
+use crate::commands::list::ci_status::{auth_host, tool_available};
 use crate::help_pager::show_help_in_pager;
 use crate::llm::test_commit_generation;
 use crate::output;
@@ -584,49 +584,38 @@ fn render_diagnostics(out: &mut String, repo: Option<&Repository>) -> anyhow::Re
     // else remote URL). Outside a repository there is no platform, so this
     // falls through to the hint and the remaining checks still run.
     match repo.and_then(|repo| Some((repo, repo.ci_platform(None)?))) {
-        Some((_, ForgeKind::GitHub)) => {
-            let ci_tools = CiToolsStatus::detect(None)?;
-            render_ci_tool_status(
-                out,
-                "gh",
-                "GitHub",
-                ci_tools.gh_installed,
-                ci_tools.gh_authenticated,
-            );
-        }
-        Some((_, ForgeKind::GitLab)) => {
-            let ci_tools = CiToolsStatus::detect(None)?;
-            render_ci_tool_status(
-                out,
-                "glab",
-                "GitLab",
-                ci_tools.glab_installed,
-                ci_tools.glab_authenticated,
-            );
-        }
-        Some((_, ForgeKind::Gitea)) => {
-            let ci_tools = CiToolsStatus::detect(None)?;
-            render_ci_tool_status(
-                out,
-                "tea",
-                "Gitea",
-                ci_tools.tea_installed,
-                ci_tools.tea_authenticated,
-            );
-        }
-        Some((repo, ForgeKind::AzureDevOps)) => {
-            let ci_tools = CiToolsStatus::detect(None)?;
-            render_ci_tool_status(
-                out,
-                "az",
-                "Azure DevOps",
-                ci_tools.az_installed,
-                ci_tools.az_authenticated,
-            );
+        Some((repo, platform)) => {
+            let tool = platform.cli();
+            let installed = tool_available(tool, &["--version"]);
+            // The host CI status asks about: the primary remote's.
+            let remote_url = repo
+                .primary_remote()
+                .ok()
+                .and_then(|remote| repo.effective_remote_url(&remote));
+            let host = auth_host(repo, remote_url);
+            let authenticated = installed
+                && match &host {
+                    Some(host) => remote_ref::is_authed_for(platform, host)?,
+                    None => false,
+                };
+            let name = match platform {
+                ForgeKind::GitHub => "GitHub",
+                ForgeKind::GitLab => "GitLab",
+                ForgeKind::Gitea => "Gitea",
+                ForgeKind::AzureDevOps => "Azure DevOps",
+            };
+            // Azure CLI logins aren't per host.
+            let login_host = host
+                .as_deref()
+                .filter(|_| platform != ForgeKind::AzureDevOps);
+            render_ci_tool_status(out, tool, name, login_host, installed, authenticated);
             // The whole `az repos` command group ships in the azure-devops
             // extension, so an `az` without it reports no CI status however
             // well it's authenticated — and only the user can install it.
-            if ci_tools.az_installed && !azure_devops_extension_installed(repo.repo_path()?) {
+            if platform == ForgeKind::AzureDevOps
+                && installed
+                && !azure_devops_extension_installed(repo.repo_path()?)
+            {
                 writeln!(
                     out,
                     "{}",
@@ -1189,7 +1178,7 @@ fn render_zsh_compinit_warning(out: &mut String) -> anyhow::Result<()> {
 /// Returns whether the file is missing, so it counts toward the section's
 /// single trailing `wt config shell install` hint.
 fn render_fish_completion_status(out: &mut String, cmd: &str) -> anyhow::Result<bool> {
-    let Ok(completion_path) = Shell::Fish.completion_path(cmd) else {
+    let Ok(completion_path) = worktrunk::shell::fish_completion_path(cmd) else {
         return Ok(false);
     };
     let completion_display = format_path_for_display(&completion_path);
@@ -1673,6 +1662,7 @@ pub(super) fn render_ci_tool_status(
     out: &mut String,
     tool: &str,
     platform: &str,
+    host: Option<&str>,
     installed: bool,
     authenticated: bool,
 ) {
@@ -1682,6 +1672,10 @@ pub(super) fn render_ci_tool_status(
         ))
     } else if authenticated {
         info_message(cformat!("<bold>{tool}</> installed & authenticated"))
+    } else if let Some(host) = host {
+        warning_message(cformat!(
+            "<bold>{tool}</> installed but not authenticated for <bold>{host}</>"
+        ))
     } else {
         warning_message(cformat!("<bold>{tool}</> installed but not authenticated"))
     };

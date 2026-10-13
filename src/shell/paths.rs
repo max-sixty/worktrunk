@@ -55,9 +55,9 @@ fn parse_nu_path(line: &str) -> Option<PathBuf> {
 /// once per process (memoised).
 ///
 /// Returns [`NuDirs::default`] (all `None`) when `nu` is not in PATH or the
-/// query fails. A single `wt config shell install` resolves both the write
-/// target (`completion_path`) and the installed-state candidates
-/// (`config_paths`), which would otherwise each spawn `nu` for the same answer.
+/// query fails. A single `wt config shell install` or `wt config show` resolves
+/// the Nushell candidates (`config_paths`, the uninstall scan, detection) more
+/// than once, which would otherwise each spawn `nu` for the same answer.
 fn nu_dirs() -> NuDirs {
     static CACHE: OnceLock<NuDirs> = OnceLock::new();
     CACHE
@@ -90,46 +90,6 @@ fn nu_dirs() -> NuDirs {
             }
         })
         .clone()
-}
-
-/// Fallback for Nushell's `$nu.data-dir` when `nu` can't be queried.
-///
-/// Mirrors Nushell's own `resolve_xdg_base` (`crates/nu-config/src/resolve.rs`):
-/// `XDG_DATA_HOME` wins on every platform when it is absolute, otherwise
-/// `dirs::data_dir()` (`~/Library/Application Support` on macOS, `%APPDATA%` on
-/// Windows, `~/.local/share` on Linux). Nushell appends `nushell`.
-///
-/// The one XDG read worktrunk still spells out, because it is Nushell's rule
-/// rather than the spec's: etcetera's `Xdg::data_dir()` applies the same
-/// absolute-only filter but falls back to `~/.local/share` everywhere, which is
-/// the wrong directory on macOS and Windows, and the native strategies that get
-/// those right ignore `XDG_DATA_HOME`.
-fn nushell_data_dir_fallback(home: &std::path::Path) -> PathBuf {
-    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-    {
-        return xdg.join("nushell");
-    }
-    dirs::data_dir()
-        .unwrap_or_else(|| home.join(".local").join("share"))
-        .join("nushell")
-}
-
-/// The Nushell vendor-autoload directory worktrunk writes its wrapper to.
-///
-/// Prefers the path `nu` reports (`$nu.vendor-autoload-dirs | last`); otherwise
-/// reconstructs `<data-dir>/vendor/autoload`.
-fn nushell_vendor_autoload_dir(
-    home: &std::path::Path,
-    queried: Option<&std::path::Path>,
-) -> PathBuf {
-    match queried {
-        Some(dir) => dir.to_path_buf(),
-        None => nushell_data_dir_fallback(home)
-            .join("vendor")
-            .join("autoload"),
-    }
 }
 
 /// Legacy `<config-dir>/vendor/autoload` directories where older worktrunk
@@ -165,21 +125,16 @@ fn legacy_nushell_autoload_dirs(
 /// Nushell autoload directories to check for an installed wrapper, in priority
 /// order.
 ///
-/// The first entry is the canonical write target (the current vendor-autoload
-/// dir); the rest are the data-dir fallback and the legacy config-dir locations
-/// kept so install/uninstall can clean up stranded files.
+/// The first entry is the canonical write target (the vendor-autoload dir `nu`
+/// reports); the rest are the legacy config-dir locations kept so
+/// install/uninstall can clean up stranded files. Empty when `nu` can't be
+/// queried: without `nu` there is no Nushell to integrate with.
 pub fn nushell_autoload_candidates(home: &std::path::Path) -> Vec<PathBuf> {
     let dirs = nu_dirs();
-    let mut candidates = vec![nushell_vendor_autoload_dir(
-        home,
-        dirs.vendor_autoload.as_deref(),
-    )];
-    // New-style fallback, in case `nu` was queryable at install time but not now.
-    candidates.push(
-        nushell_data_dir_fallback(home)
-            .join("vendor")
-            .join("autoload"),
-    );
+    let Some(target) = dirs.vendor_autoload else {
+        return Vec::new();
+    };
+    let mut candidates = vec![target];
     candidates.extend(legacy_nushell_autoload_dirs(
         home,
         dirs.default_config.as_deref(),
@@ -313,10 +268,8 @@ pub fn profile_query_interruption(error: &std::io::Error) -> Option<i32> {
 ///
 /// On Windows, returns both PowerShell Core (7+) and Windows PowerShell (5.1) paths.
 /// On Unix, returns the current-user, current-host profile the installed `pwsh`
-/// reports — PowerShell honors `$XDG_CONFIG_HOME` — falling back to the
-/// conventional `~/.config/powershell` location when `pwsh` can't be queried.
-/// Errors only when the query was cancelled, so no caller writes a fallback
-/// profile after Ctrl-C.
+/// reports, and nothing when `pwsh` can't be queried: without `pwsh` there is
+/// no PowerShell to integrate with. Errors only when the query was cancelled.
 pub fn powershell_profile_paths(home: &std::path::Path) -> std::io::Result<Vec<PathBuf>> {
     #[cfg(windows)]
     {
@@ -333,16 +286,12 @@ pub fn powershell_profile_paths(home: &std::path::Path) -> std::io::Result<Vec<P
     }
     #[cfg(not(windows))]
     {
+        let _ = home;
         #[cfg(unix)]
         let queried = queried_powershell_profile()?;
         #[cfg(not(unix))]
         let queried = None;
-        let profile = queried.unwrap_or_else(|| {
-            home.join(".config")
-                .join("powershell")
-                .join("Microsoft.PowerShell_profile.ps1")
-        });
-        Ok(vec![profile])
+        Ok(queried.into_iter().collect())
     }
 }
 
@@ -360,7 +309,7 @@ pub fn powershell_profile_paths(home: &std::path::Path) -> std::io::Result<Vec<P
 /// everywhere else.
 ///
 /// Every path fish itself reads goes through this one function — the wrapper
-/// (`config_paths`) and the completion (`completion_path`) — because they have
+/// (`config_paths`) and the completion (`fish_completion_path`) — because they have
 /// to agree. Resolving the wrapper's directory separately from the completion's
 /// put the wrapper under `~/.config/fish` whenever `$XDG_CONFIG_HOME` pointed
 /// anywhere else, which fish never reads, while the completion landed in the
@@ -378,9 +327,8 @@ pub fn fish_config_dir(home: &std::path::Path) -> PathBuf {
 /// it holds an absolute path, otherwise `$HOME`.
 ///
 /// zsh's rule is `$ZDOTDIR`, or `$HOME` when it is unset. The absolute-only
-/// guard on top is the same one this module already applies to
-/// `$XDG_DATA_HOME` ([`nushell_data_dir_fallback`]) and, through etcetera's
-/// [`Xdg`], to `$XDG_CONFIG_HOME` ([`fish_config_dir`]).
+/// guard on top is the same one etcetera's [`Xdg`] applies to
+/// `$XDG_CONFIG_HOME` ([`fish_config_dir`]).
 ///
 /// A non-absolute value resolves against the current directory, and that
 /// directory is `wt`'s: zsh resolves one against *zsh's* own startup
@@ -441,10 +389,10 @@ pub(super) fn config_paths(shell: super::Shell, cmd: &str) -> Result<Vec<PathBuf
         }
         super::Shell::Nushell => {
             // Nushell autoloads `*.nu` from `$nu.vendor-autoload-dirs`; the last
-            // entry (under `$nu.data-dir`) is the write target. Earlier entries
-            // are fallbacks plus the legacy `<config-dir>/vendor/autoload`
-            // locations older worktrunk wrote to (never autoloaded — issue
-            // #2878), kept so install/uninstall can clean them up.
+            // entry (under `$nu.data-dir`) is the write target. The rest are the
+            // legacy `<config-dir>/vendor/autoload` locations older worktrunk
+            // wrote to (never autoloaded — issue #2878), kept so
+            // install/uninstall can clean them up.
             nushell_autoload_candidates(&home)
                 .into_iter()
                 .map(|autoload_dir| autoload_dir.join(format!("{}.nu", cmd)))
@@ -477,50 +425,14 @@ pub(super) fn legacy_fish_conf_d_path(cmd: &str) -> Result<PathBuf, std::io::Err
         .join(format!("{}.fish", cmd)))
 }
 
-/// Returns the path to the native completion directory for a shell.
-///
-/// The `cmd` parameter affects the completion filename (e.g., `wt.fish` or `git-wt.fish`).
-///
-/// Note: Bash and Zsh use inline lazy completions in the init script.
-/// Only Fish uses a separate completion file at ~/.config/fish/completions/
-/// (installed by `wt config shell install`) that uses $WORKTRUNK_BIN to bypass
-/// the shell function wrapper.
-pub(super) fn completion_path(shell: super::Shell, cmd: &str) -> Result<PathBuf, std::io::Error> {
-    let home = home_dir_required()?;
-
-    // Use etcetera for XDG-compliant paths when available
-    let strategy = choose_base_strategy().ok();
-
-    Ok(match shell {
-        super::Shell::Bash => {
-            // XDG_DATA_HOME defaults to ~/.local/share
-            let data_home = strategy
-                .as_ref()
-                .map(|s| s.data_dir())
-                .unwrap_or_else(|| home.join(".local").join("share"));
-            data_home
-                .join("bash-completion")
-                .join("completions")
-                .join(cmd)
-        }
-        super::Shell::Zsh => home.join(".zfunc").join(format!("_{}", cmd)),
-        super::Shell::Fish => fish_config_dir(&home)
-            .join("completions")
-            .join(format!("{}.fish", cmd)),
-        super::Shell::Nushell => {
-            // Nushell completions are defined inline in the init script.
-            // Return the canonical vendor-autoload path (same as config).
-            let dirs = nu_dirs();
-            nushell_vendor_autoload_dir(&home, dirs.vendor_autoload.as_deref())
-                .join(format!("{}.nu", cmd))
-        }
-        super::Shell::PowerShell => {
-            // PowerShell doesn't use a separate completion file - completions are
-            // registered inline in the profile using Register-ArgumentCompleter
-            // Return a dummy path that won't be used
-            home.join(format!(".{}-powershell-completions", cmd))
-        }
-    })
+/// The completion file worktrunk installs for fish, the one shell whose
+/// completions live in their own file (`<fish config>/completions/<cmd>.fish`).
+/// Bash, Zsh, Nushell and PowerShell register completions inline in the
+/// integration they install.
+pub fn fish_completion_path(cmd: &str) -> Result<PathBuf, std::io::Error> {
+    Ok(fish_config_dir(&home_dir_required()?)
+        .join("completions")
+        .join(format!("{cmd}.fish")))
 }
 
 #[cfg(test)]
@@ -611,29 +523,6 @@ mod tests {
     }
 
     #[test]
-    fn test_nushell_vendor_autoload_dir_prefers_queried() {
-        let home = PathBuf::from("/home/user");
-        let queried = PathBuf::from("/opt/nu/vendor/autoload");
-        assert_eq!(
-            nushell_vendor_autoload_dir(&home, Some(&queried)),
-            queried,
-            "the path nu reports should be used verbatim"
-        );
-    }
-
-    #[test]
-    fn test_nushell_vendor_autoload_dir_fallback_under_data_dir() {
-        let home = PathBuf::from("/home/user");
-        let dir = nushell_vendor_autoload_dir(&home, None);
-        // Fallback must land under `<data-dir>/nushell/vendor/autoload`, never
-        // under the *config* dir (the bug this fixes).
-        assert!(
-            dir.ends_with("nushell/vendor/autoload"),
-            "fallback should be under <data>/nushell/vendor/autoload: {dir:?}"
-        );
-    }
-
-    #[test]
     fn test_legacy_nushell_autoload_dirs_are_config_rooted() {
         let home = PathBuf::from("/home/user");
         let default_config = PathBuf::from("/home/user/.config/nushell");
@@ -661,13 +550,9 @@ mod tests {
         let home = PathBuf::from("/home/user");
         let candidates = nushell_autoload_candidates(&home);
 
-        assert!(!candidates.is_empty(), "must return at least one candidate");
-        // The write target (first entry) is a vendor/autoload directory.
-        assert!(
-            candidates[0].ends_with("vendor/autoload"),
-            "write target should be a vendor/autoload dir: {:?}",
-            candidates[0]
-        );
+        // The write target (first entry) is the directory `nu` reports; without
+        // `nu` there is nothing to integrate with, so no candidates at all.
+        assert_eq!(candidates.first(), nu_dirs().vendor_autoload.as_ref());
         // No duplicates.
         let unique: std::collections::HashSet<_> = candidates.iter().collect();
         assert_eq!(
@@ -675,11 +560,13 @@ mod tests {
             unique.len(),
             "candidates must not contain duplicates: {candidates:?}"
         );
-        // The legacy ~/.config location is always present for cleanup.
-        assert!(
+        // Whenever there is a target, the legacy ~/.config location is there
+        // too, for cleanup.
+        assert_eq!(
             candidates
                 .iter()
                 .any(|p| p == &home.join(".config/nushell/vendor/autoload")),
+            !candidates.is_empty(),
             "legacy ~/.config/nushell location must be a candidate: {candidates:?}"
         );
     }

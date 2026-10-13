@@ -17,8 +17,8 @@ pub use detection::{
     is_shell_integration_line_for_uninstall_any_cmd, scan_for_detection_details,
 };
 pub use paths::{
-    fish_config_dir, home_dir_required, line_based_config_paths, nushell_autoload_candidates,
-    profile_query_interruption,
+    fish_completion_path, fish_config_dir, home_dir_required, line_based_config_paths,
+    nushell_autoload_candidates, profile_query_interruption,
 };
 pub use utils::{
     AncestorShell, ZshStartupScope, ancestor_shell, current_shell, current_shell_name,
@@ -152,18 +152,6 @@ impl Shell {
     /// can clean it up.
     pub fn legacy_fish_conf_d_path(cmd: &str) -> Result<std::path::PathBuf, std::io::Error> {
         paths::legacy_fish_conf_d_path(cmd)
-    }
-
-    /// Returns the path to the native completion directory for this shell.
-    ///
-    /// The `cmd` parameter affects the completion filename (e.g., `wt.fish` or `git-wt.fish`).
-    ///
-    /// Note: Bash and Zsh use inline lazy completions in the init script.
-    /// Only Fish uses a separate completion file at ~/.config/fish/completions/
-    /// (installed by `wt config shell install`) that uses $WORKTRUNK_BIN to bypass
-    /// the shell function wrapper.
-    pub fn completion_path(&self, cmd: &str) -> Result<std::path::PathBuf, std::io::Error> {
-        paths::completion_path(*self, cmd)
     }
 
     /// Returns the line to add to the config file for shell integration.
@@ -458,14 +446,10 @@ mod tests {
 
     #[test]
     fn test_shell_config_paths_returns_paths() {
-        // All shells should return at least one config path
-        let shells = [
-            Shell::Bash,
-            Shell::Zsh,
-            Shell::Fish,
-            Shell::Nushell,
-            Shell::PowerShell,
-        ];
+        // Shells whose paths don't depend on querying an installed shell.
+        // Nushell and Unix PowerShell paths come from `nu` and `pwsh`, and are
+        // empty without them.
+        let shells = [Shell::Bash, Shell::Zsh, Shell::Fish];
         for shell in shells {
             let result = shell.config_paths("wt");
             assert!(result.is_ok(), "Failed to get config paths for {:?}", shell);
@@ -473,32 +457,6 @@ mod tests {
             assert!(
                 !paths.is_empty(),
                 "No config paths returned for {:?}",
-                shell
-            );
-        }
-    }
-
-    #[test]
-    fn test_shell_completion_path_returns_path() {
-        // All shells should return a completion path
-        let shells = [
-            Shell::Bash,
-            Shell::Zsh,
-            Shell::Fish,
-            Shell::Nushell,
-            Shell::PowerShell,
-        ];
-        for shell in shells {
-            let result = shell.completion_path("wt");
-            assert!(
-                result.is_ok(),
-                "Failed to get completion path for {:?}",
-                shell
-            );
-            let path = result.unwrap();
-            assert!(
-                !path.as_os_str().is_empty(),
-                "Empty completion path for {:?}",
                 shell
             );
         }
@@ -540,37 +498,11 @@ mod tests {
     }
 
     #[test]
-    fn test_shell_completion_path_with_custom_prefix() {
-        let prefix = "my-prefix";
-
-        // Bash completion should include prefix in path
-        let bash_path = Shell::Bash.completion_path(prefix).unwrap();
+    fn test_fish_completion_path_with_custom_prefix() {
+        let fish_path = fish_completion_path("my-prefix").unwrap();
         assert!(
-            bash_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.contains("my-prefix")),
-            "Bash completion should include prefix"
-        );
-
-        // Fish completion should include prefix in filename
-        let fish_path = Shell::Fish.completion_path(prefix).unwrap();
-        assert!(
-            fish_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.contains("my-prefix.fish")),
-            "Fish completion should include prefix in filename"
-        );
-
-        // Zsh completion should include prefix
-        let zsh_path = Shell::Zsh.completion_path(prefix).unwrap();
-        assert!(
-            zsh_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.contains("_my-prefix")),
-            "Zsh completion should include underscore prefix"
+            fish_path.ends_with("completions/my-prefix.fish"),
+            "{fish_path:?}"
         );
     }
 

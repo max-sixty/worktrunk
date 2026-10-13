@@ -9,7 +9,7 @@ use worktrunk::git::{GitRemoteUrl, Repository};
 
 use super::{
     CiBranchName, CiSource, CiStatus, PrRef, PrStatus, branch_remote_url, non_interactive_cmd,
-    parse_json, retriable_pr_error,
+    parse_json,
 };
 
 /// Resolve the Azure DevOps context (host, org, project, repository, `--org`
@@ -119,7 +119,7 @@ pub(super) fn detect_azure_pr(
     };
 
     if !output.status.success() {
-        return retriable_pr_error(&output);
+        return Some(PrStatus::error());
     }
 
     let pr_list: Vec<AzPrListEntry> =
@@ -212,7 +212,7 @@ pub(super) fn detect_azure_pipeline(
     };
 
     if !output.status.success() {
-        return retriable_pr_error(&output);
+        return Some(PrStatus::error());
     }
 
     let runs: Vec<AzPipelineRun> =

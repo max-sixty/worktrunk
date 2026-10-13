@@ -911,10 +911,10 @@ The CI column shows the branch's open PR/MR — `#3035` on GitHub, Gitea, and Az
 | `#` red | `"failed"` | One or more checks failed |
 | `#` yellow | `"conflicts"` | Merge conflicts with the target branch |
 | `#` gray | `"no-ci"` | No PR/MR, or no checks configured |
-| `⚠` yellow | `"error"` | CI status could not be fetched (rate limit, network, etc.) |
+| `⚠` yellow | `"error"` | CI status could not be fetched (expired login, rate limit, network, etc.) |
 | `#` magenta | `"changes_requested"` | A reviewer requested changes |
 | `#` cyan | `"pending"` | A review is required (e.g. branch protection) but not yet given |
-| (blank) | `pr` and `checks` absent | Branch never pushed, or no PR/MR and no branch workflow |
+| (blank) | `pr` and `checks` absent | Branch never pushed, forge CLI not logged in to the host, or no PR/MR and no branch workflow |
 
 The two remaining review states have no indicator of their own: `"draft"` only dims the cell and `"approved"` leaves the color unchanged.
 
@@ -2682,6 +2682,23 @@ Hooks, aliases and `step.copy-ignored.exclude` accumulate rather than replace, s
     Config {
         #[command(subcommand)]
         action: ConfigCommand,
+    },
+
+    /// Complete a detached branch deletion after worktree removal.
+    #[command(name = "_delete-branch-if-safe", hide = true)]
+    InternalDeleteBranchIfSafe {
+        #[arg(long, value_parser = non_empty_branch)]
+        branch: String,
+        #[arg(long)]
+        target: String,
+        #[arg(
+            long,
+            required_unless_present = "force_delete",
+            conflicts_with = "force_delete"
+        )]
+        expected_tip: Option<String>,
+        #[arg(long)]
+        force_delete: bool,
     },
 
     /// Run a custom `wt-<name>` command found on PATH.

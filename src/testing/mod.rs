@@ -64,7 +64,7 @@ use crate::git::Repository;
 use crate::shell_exec::{self, Cmd, INHERITED_GIT_PATH_VARS};
 use path_slash::PathExt;
 
-use self::mock_commands::{MockConfig, MockResponse, tea_api_include_stderr};
+use self::mock_commands::{MockConfig, MockResponse, TEA_TEST_LOGINS, tea_api_include_stderr};
 
 /// Path to the `wt` binary built by Cargo, pinned against concurrent builds.
 ///
@@ -2140,7 +2140,7 @@ impl TestRepo {
     /// use `configure_mock_commands()` to add the mock bin to PATH for your commands.
     ///
     /// The mock gh returns:
-    /// - `gh auth status`: exits successfully (0)
+    /// - `gh auth token`: exits successfully (0)
     /// - `gh pr list`: returns empty JSON array (no PRs found)
     ///
     /// This prevents CI detection from blocking tests with network calls.
@@ -2153,9 +2153,9 @@ impl TestRepo {
     /// Use this for `wt config show` tests that need deterministic BINARIES output.
     /// Creates mocks where:
     /// - `gh --version`: succeeds (installed)
-    /// - `gh auth status`: fails (not authenticated)
+    /// - `gh auth token`: fails (not authenticated)
     /// - `glab --version`: succeeds (installed)
-    /// - `glab auth status`: fails (not authenticated)
+    /// - `glab config get token`: prints nothing (not authenticated)
     pub fn setup_mock_ci_tools_unauthenticated(&mut self) {
         let mock_bin = self.temp_dir.path().join("mock-bin");
         std::fs::create_dir_all(&mock_bin).unwrap();
@@ -2169,7 +2169,7 @@ impl TestRepo {
         // glab: installed but not authenticated
         MockConfig::new("glab")
             .version("glab version 1.0.0 (mock)")
-            .command("auth", MockResponse::exit(1))
+            .command("config get token", MockResponse::output(""))
             .write(&mock_bin);
 
         // claude: not installed (don't create mock - which::which won't find it)
@@ -2590,6 +2590,8 @@ impl TestRepo {
             .version("gh version 2.0.0 (mock)")
             .command("auth", MockResponse::exit(0))
             .command("pr", MockResponse::file("pr_data.json"))
+            // A branch with no PR falls back to its commit's check runs: none.
+            .command("api", MockResponse::output("[]"))
             .write(&mock_bin);
 
         // Configure glab mock (fails - no GitLab support)
@@ -2636,7 +2638,7 @@ impl TestRepo {
         // This allows triple-matching "mr view <iid>" to return the correct MR
         let mut mock_config = MockConfig::new("glab")
             .version("glab version 1.0.0 (mock)")
-            .command("auth", MockResponse::exit(0))
+            .command("config get token", MockResponse::output("glpat-mock"))
             .command("mr list", MockResponse::file("mr_list_data.json"));
 
         // Parse MR array and create iid-specific view commands
@@ -2695,7 +2697,7 @@ impl TestRepo {
         // (falls back to exit code 1)
         MockConfig::new("glab")
             .version("glab version 1.0.0 (mock)")
-            .command("auth", MockResponse::exit(0))
+            .command("config get token", MockResponse::output("glpat-mock"))
             .command("mr list", MockResponse::file("mr_list_data.json"))
             // No "mr view" commands - will fall back to default exit code 1
             .command("repo", MockResponse::output(&project_id_response))
@@ -2725,7 +2727,7 @@ impl TestRepo {
         // glab mock: mr list returns empty (no MRs), ci list returns the pipeline
         MockConfig::new("glab")
             .version("glab version 1.0.0 (mock)")
-            .command("auth", MockResponse::exit(0))
+            .command("config get token", MockResponse::output("glpat-mock"))
             .command("mr list", MockResponse::output("[]")) // No MRs - triggers ci list fallback
             .command("repo", MockResponse::output(&project_id_response))
             .command("ci", MockResponse::output(pipeline_json))
@@ -2740,7 +2742,7 @@ impl TestRepo {
 
     /// Set up mock glab that returns a rate limit error on `ci list`.
     ///
-    /// Used to test the `is_retriable_error` path in `detect_gitlab_pipeline`.
+    /// Used to test the failure path in `detect_gitlab_pipeline`.
     /// MR list returns empty (no MRs), so the code falls through to pipeline detection
     /// which then hits the rate limit error.
     pub fn setup_mock_glab_with_ci_rate_limit(&mut self, project_id: Option<u64>) {
@@ -2755,7 +2757,7 @@ impl TestRepo {
         // glab mock: mr list returns empty (no MRs), ci list fails with rate limit
         MockConfig::new("glab")
             .version("glab version 1.0.0 (mock)")
-            .command("auth", MockResponse::exit(0))
+            .command("config get token", MockResponse::output("glpat-mock"))
             .command("mr list", MockResponse::output("[]")) // No MRs - triggers ci list fallback
             .command("repo", MockResponse::output(&project_id_response))
             .command(
@@ -2817,7 +2819,7 @@ impl TestRepo {
     /// Setup mock `az` where `az repos pr list` and/or `az pipelines runs list`
     /// fail with the given stderr (exit code 1).
     ///
-    /// Used to exercise the `is_retriable_error` branches in `detect_azure_pr`
+    /// Used to exercise the failure branches in `detect_azure_pr`
     /// and `detect_azure_pipeline`. A `None` argument makes that command return
     /// an empty JSON array instead of failing.
     pub fn setup_mock_az_with_detection_errors(
@@ -2909,6 +2911,10 @@ impl TestRepo {
         MockConfig::new("tea")
             .version("tea version development (mock)")
             .command(
+                "logins list --output",
+                MockResponse::output(TEA_TEST_LOGINS),
+            )
+            .command(
                 &pulls_path,
                 MockResponse::file("tea_pulls.json")
                     .with_stderr(&tea_api_include_stderr(pulls_status)),
@@ -2917,6 +2923,13 @@ impl TestRepo {
                 &status_path,
                 MockResponse::file("tea_status.json")
                     .with_stderr(&tea_api_include_stderr(status_status)),
+            )
+            // Every other branch's commit has no statuses, so only `head_sha`'s
+            // row reflects `status`.
+            .command(
+                "api --include",
+                MockResponse::output(r#"{"state":"","total_count":0}"#)
+                    .with_stderr(&tea_api_include_stderr("200 OK")),
             )
             .command("_default", MockResponse::exit(1))
             .write(&mock_bin);
@@ -2935,13 +2948,17 @@ impl TestRepo {
     /// Setup mock `tea` where every `tea api` call fails with the given stderr
     /// (exit code 1).
     ///
-    /// Used to exercise the `is_retriable_error` branch in `detect_gitea_pr`.
+    /// Used to exercise the failure branch in `detect_gitea_pr`.
     pub fn setup_mock_tea_with_detection_error(&mut self, stderr: &str) {
         let mock_bin = self.temp_dir.path().join("mock-bin");
         std::fs::create_dir_all(&mock_bin).unwrap();
 
         MockConfig::new("tea")
             .version("tea version development (mock)")
+            .command(
+                "logins list --output",
+                MockResponse::output(TEA_TEST_LOGINS),
+            )
             .command("api", MockResponse::stderr(stderr).with_exit_code(1))
             .command("_default", MockResponse::exit(1))
             .write(&mock_bin);
@@ -2960,7 +2977,7 @@ impl TestRepo {
     /// fails with `stderr` (exit code 1). Assumes the repo's remote points at
     /// `owner/test-repo`.
     ///
-    /// Used to exercise the `is_retriable_error` branch in
+    /// Used to exercise the failure branch in
     /// `fetch_combined_status`.
     pub fn setup_mock_tea_commit_status_error(&mut self, head_sha: &str, stderr: &str) {
         let mock_bin = self.temp_dir.path().join("mock-bin");
@@ -2971,6 +2988,10 @@ impl TestRepo {
         MockConfig::new("tea")
             .version("tea version development (mock)")
             .command(
+                "logins list --output",
+                MockResponse::output(TEA_TEST_LOGINS),
+            )
+            .command(
                 // Keep `&limit=20` in sync with `MAX_PRS_TO_FETCH` in
                 // `src/commands/list/ci_status/mod.rs`.
                 "api --include repos/owner/test-repo/pulls?state=open&limit=20",
@@ -2980,6 +3001,12 @@ impl TestRepo {
                 // `tea` itself failing: no response, so no status line.
                 &format!("api --include repos/owner/test-repo/commits/{head_sha}/status"),
                 MockResponse::stderr(stderr).with_exit_code(1),
+            )
+            // Every other branch's commit has no statuses.
+            .command(
+                "api --include",
+                MockResponse::output(r#"{"state":"","total_count":0}"#)
+                    .with_stderr(&tea_api_include_stderr("200 OK")),
             )
             .command("_default", MockResponse::exit(1))
             .write(&mock_bin);

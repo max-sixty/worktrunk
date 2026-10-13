@@ -1204,8 +1204,7 @@ pub(crate) fn preview_shell_completions(
             continue;
         }
 
-        let completion_path = shell
-            .completion_path(cmd)
+        let completion_path = shell::fish_completion_path(cmd)
             .map_err(|e| format!("Failed to get completion path for {shell}: {e}"))?;
 
         let (action, preimage) = match fs::read(&completion_path) {

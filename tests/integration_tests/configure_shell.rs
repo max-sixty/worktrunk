@@ -1141,6 +1141,7 @@ fn test_powershell_skipped_when_installed_no_profile(repo: TestRepo, temp_home: 
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
+        mock_pwsh_reporting_conventional_profile(&mut cmd, &temp_home);
         cmd.env("SHELL", "/bin/zsh");
         cmd.env("WORKTRUNK_TEST_POWERSHELL_INSTALLED", "1");
         cmd.arg("config")
@@ -1787,6 +1788,7 @@ fn test_uninstall_shell_powershell_removes_integration_line(repo: TestRepo, temp
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
     set_temp_home_env(&mut cmd, temp_home.path());
+    mock_pwsh_reporting_conventional_profile(&mut cmd, &temp_home);
     cmd.args(["config", "shell", "uninstall", "powershell", "--yes"])
         .current_dir(repo.root_path());
 
@@ -1825,6 +1827,20 @@ fn mock_pwsh(
     paths.extend(std::env::split_paths(&path));
     cmd.env("PATH", std::env::join_paths(paths).unwrap());
     mock_bin
+}
+
+/// Put a mock `pwsh` on PATH that reports the conventional
+/// `~/.config/powershell` profile under the temp home, so a test doesn't depend
+/// on a real `pwsh` being installed.
+#[cfg(unix)]
+fn mock_pwsh_reporting_conventional_profile(cmd: &mut std::process::Command, temp_home: &TempDir) {
+    let profile =
+        canonical_temp_home(temp_home).join(".config/powershell/Microsoft.PowerShell_profile.ps1");
+    mock_pwsh(
+        cmd,
+        temp_home,
+        crate::common::mock_commands::MockResponse::output(&format!("{}\n", profile.display())),
+    );
 }
 
 /// The profile `pwsh` reports wins over `~/.config/powershell`: PowerShell
@@ -1883,10 +1899,11 @@ fn test_powershell_profile_follows_runtime(repo: TestRepo, temp_home: TempDir) {
     assert!(!content.contains("config shell init"), "{content}");
 }
 
-/// A `pwsh` that can't answer leaves install on the conventional profile.
+/// A `pwsh` that can't answer has no profile to integrate with, so install
+/// writes none rather than guessing the conventional one.
 #[cfg(unix)]
 #[rstest]
-fn test_powershell_profile_falls_back_when_runtime_fails(repo: TestRepo, temp_home: TempDir) {
+fn test_powershell_profile_absent_when_runtime_fails(repo: TestRepo, temp_home: TempDir) {
     let home = canonical_temp_home(&temp_home);
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
@@ -1900,13 +1917,14 @@ fn test_powershell_profile_falls_back_when_runtime_fails(repo: TestRepo, temp_ho
     cmd.args(["config", "shell", "install", "powershell", "--yes"])
         .current_dir(repo.root_path());
     let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+        !output.status.success() && stderr.contains("No shell config files found"),
+        "{stderr}"
     );
     assert!(
-        home.join(".config/powershell/Microsoft.PowerShell_profile.ps1")
+        !home
+            .join(".config/powershell/Microsoft.PowerShell_profile.ps1")
             .exists()
     );
 }
@@ -3157,68 +3175,6 @@ fn test_uninstall_nushell_cleans_all_candidate_locations(repo: TestRepo, temp_ho
     );
 }
 
-/// Uninstall finds a wrapper under `$XDG_DATA_HOME`, the data-dir candidate
-/// `nushell_data_dir_fallback` derives when `nu` can't be queried.
-///
-/// An absolute `XDG_DATA_HOME` wins over `dirs::data_dir()` on every platform,
-/// matching `nu_path::data_dir`. Only macOS and Windows discriminate: `dirs`
-/// reads the variable itself on Linux, so there the assertion holds with or
-/// without `nushell_data_dir_fallback`'s own branch, while on macOS it
-/// separates `$XDG_DATA_HOME` from `~/Library/Application Support`.
-#[rstest]
-fn test_uninstall_nushell_finds_wrapper_under_xdg_data_home(repo: TestRepo, temp_home: TempDir) {
-    let home = canonical_temp_home(&temp_home);
-    // Distinct from the pinned canonical dir, so the stranded wrapper can only
-    // be found by way of the data-dir candidate.
-    let xdg_data = home.join("xdg-data");
-    let canonical_dir = home.join(".local/share/nushell/vendor/autoload");
-    let canonical = canonical_dir.join("wt.nu");
-
-    let configure = |cmd: &mut std::process::Command| {
-        repo.configure_wt_cmd(cmd);
-        set_temp_home_env(cmd, temp_home.path());
-        cmd.env("XDG_DATA_HOME", &xdg_data);
-        cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &canonical_dir);
-        cmd.env("SHELL", "/bin/nu");
-    };
-
-    // Install to the pinned canonical dir, then strand a copy under
-    // `$XDG_DATA_HOME` — the shape an older worktrunk, or a `nu` that was
-    // queryable at install time and isn't now, leaves behind.
-    let mut install_cmd = wt_command();
-    configure(&mut install_cmd);
-    install_cmd
-        .args(["config", "shell", "install", "nu", "--yes"])
-        .current_dir(repo.root_path());
-    let install_output = install_cmd.output().expect("Failed to execute install");
-    assert!(
-        install_output.status.success(),
-        "Install should succeed:\nstderr: {}",
-        String::from_utf8_lossy(&install_output.stderr)
-    );
-
-    let stranded_dir = xdg_data.join("nushell/vendor/autoload");
-    fs::create_dir_all(&stranded_dir).unwrap();
-    let stranded = stranded_dir.join("wt.nu");
-    fs::copy(&canonical, &stranded).unwrap();
-
-    let mut cmd = wt_command();
-    configure(&mut cmd);
-    cmd.args(["config", "shell", "uninstall", "nu", "--yes"])
-        .current_dir(repo.root_path());
-    let output = cmd.output().expect("Failed to execute uninstall");
-    assert!(
-        output.status.success(),
-        "Uninstall should succeed:\nstderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    assert!(
-        !stranded.exists(),
-        "Wrapper under $XDG_DATA_HOME should be deleted: {stranded:?}"
-    );
-}
-
 /// Test that WORKTRUNK_TEST_POWERSHELL_ENV=1 triggers PowerShell auto-detection.
 /// This simulates the Windows behavior where we detect PowerShell when SHELL is not set.
 #[rstest]
@@ -3236,6 +3192,8 @@ fn test_powershell_env_detection(repo: TestRepo, temp_home: TempDir) {
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
     set_temp_home_env(&mut cmd, temp_home.path());
+    #[cfg(unix)]
+    mock_pwsh_reporting_conventional_profile(&mut cmd, &temp_home);
     // Force PowerShell detection via test env var
     cmd.env("WORKTRUNK_TEST_POWERSHELL_ENV", "1");
     // Set SHELL to something non-PowerShell to ensure we're testing the override
