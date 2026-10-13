@@ -2803,11 +2803,12 @@ fn worktree_inventory_preserves_native_paths_and_lock_reasons() {
     let mut test = TestRepo::with_initial_commit();
     let reason = "keep this checkout\nwith its work";
     let names = [
-        b"checkout\nline\tback\\slash ".as_slice(),
+        (b"checkout\nline\tback\\slash ".as_slice(), false),
         #[cfg(target_os = "linux")]
-        b"checkout-\xff ".as_slice(),
+        (b"checkout-\xff ".as_slice(), false),
+        (b"checkout-direct".as_slice(), true),
     ];
-    for (index, name) in names.into_iter().enumerate() {
+    for (index, (name, direct_backlink)) in names.into_iter().enumerate() {
         let branch = format!("native-{index}");
         let original = test.add_worktree(&branch);
         test.run_git(&[
@@ -2832,6 +2833,16 @@ fn worktree_inventory_preserves_native_paths_and_lock_reasons() {
             checkout
         );
         assert_eq!(Repository::git_dir_at(&checkout).unwrap(), git_dir);
+        if direct_backlink {
+            // Git accepts a direct checkout backlink, trimming trailing whitespace.
+            let mut direct = checkout.clone().into_os_string().into_vec();
+            direct.push(b'\n');
+            std::fs::write(git_dir.join("gitdir"), direct).unwrap();
+            assert_eq!(
+                super::working_tree::registration_worktree_path(&git_dir).unwrap(),
+                checkout
+            );
+        }
 
         let repo = Repository::at(test.root_path()).unwrap();
         let worktrees = repo.list_worktrees().unwrap();
@@ -2845,7 +2856,33 @@ fn worktree_inventory_preserves_native_paths_and_lock_reasons() {
         );
         assert_eq!(wt.locked.as_deref(), Some(reason));
         assert!(wt.path.join(".git").is_file());
+        let working_tree = repo.worktree_at(&checkout);
+        let info = working_tree.prewarm_info().unwrap();
+        assert!(info.is_inside);
+        assert_eq!(info.root.unwrap(), checkout);
+        assert_eq!(working_tree.git_dir().unwrap(), git_dir);
+        assert_eq!(
+            working_tree.branch().unwrap().as_deref(),
+            Some(branch.as_str())
+        );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn git_dir_at_declines_unusable_entries() {
+    use nix::{sys::stat::Mode, unistd::mkfifo};
+
+    let directory = crate::testing::test_tempdir();
+    let entry = directory.path().join(".git");
+    for content in [b"gitdir: \r\n".as_slice(), b"not a gitfile".as_slice()] {
+        std::fs::write(&entry, content).unwrap();
+        assert!(Repository::git_dir_at(directory.path()).is_none());
+    }
+    std::fs::remove_file(&entry).unwrap();
+    // Reading a FIFO would block; discovery must reject it from its file type.
+    mkfifo(&entry, Mode::S_IRUSR | Mode::S_IWUSR).unwrap();
+    assert!(Repository::git_dir_at(directory.path()).is_none());
 }
 
 #[cfg(unix)]
