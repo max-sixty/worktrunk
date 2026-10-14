@@ -795,8 +795,8 @@ def build_target(target: str, args, vhs_binary: str) -> list[str]:
                 demo_sizes.get(output_name, demo_size),
                 vhs_binary,
                 target,
-                args.text,
-                args.snapshot,
+                text_mode=args.text,
+                snapshot_mode=args.snapshot,
             )
             succeeded.append((output_name, elapsed))
         except Exception as e:
@@ -824,8 +824,9 @@ def build_target(target: str, args, vhs_binary: str) -> list[str]:
                         themes,
                         demo_sizes.get(output_name, demo_size),
                         vhs_binary,
-                        args.text,
-                        args.snapshot,
+                        target,
+                        text_mode=args.text,
+                        snapshot_mode=args.snapshot,
                     ): output_name
                     for tape_file, output_name, setup_func in non_tui_demos
                 }

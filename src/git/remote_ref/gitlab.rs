@@ -242,9 +242,19 @@ fn fetch_project_urls(
     Ok((response.ssh_url_to_repo, response.http_url_to_repo))
 }
 
+/// Whether `glab` has a token for `host`.
+///
+/// `glab config get token --host <host>` reads glab's config and its token
+/// environment variables — no network, unlike `glab auth status` — and prints
+/// nothing for a host without a token. Returns `false` if `glab` is not
+/// installed.
+pub fn is_authed_for(host: &str) -> bool {
+    cli_config_value("glab", &["token", "--host", host]).is_some_and(|token| !token.is_empty())
+}
+
 /// Get the git protocol configured in `glab` (GitLab CLI).
 pub fn git_protocol() -> String {
-    cli_config_value("glab", "git_protocol")
+    cli_config_value("glab", &["git_protocol"])
         .filter(|p| p == "ssh" || p == "https")
         .unwrap_or_else(|| "https".to_string())
 }

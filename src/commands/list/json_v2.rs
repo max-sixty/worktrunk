@@ -126,6 +126,8 @@ pub fn schema_document() -> serde_json::Value {
         "title".to_string(),
         "wt list --format=json (schema 2)".into(),
     );
+    // Keep the published schema stable regardless of JSON map storage order.
+    value.sort_all_objects();
     value
 }
 
@@ -333,8 +335,8 @@ pub struct JsonDefaultBranch {
     pub orphan: Option<bool>,
 
     /// How committed content is integrated; absent when determined
-    /// not-integrated, null when undetermined (dirty trees skip the
-    /// expensive checks).
+    /// not-integrated, null when undetermined (a probe timed out or was
+    /// skipped).
     #[serde(skip_serializing_if = "Tri::is_absent")]
     pub integration: Tri<JsonIntegration>,
 

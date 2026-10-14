@@ -27,7 +27,7 @@ metadata:
      ```
      Launch a ci-reporter to monitor `$RUN` to completion (avoid `gh run watch` — it can hang). Fix any failure before continuing.
 3. **Check current version**: Read `version` in `Cargo.toml`
-4. **Review commits**: Check commits since last release to understand scope of changes. Audit the cumulative diff for the data-loss surface (see [Data-Loss Surface Review](#data-loss-surface-review)) before proceeding.
+4. **Review commits**: Check commits since last release to understand scope of changes. Audit the cumulative diff for the data-loss surface (see [Data-Loss Surface Review](#data-loss-surface-review)) and documentation (see [Documentation Review](#documentation-review)).
 5. **Check library API compatibility (advisory)**: Run `cargo semver-checks check-release -p worktrunk` (install with `cargo install cargo-semver-checks --locked` if missing) as a bump-level input, not a compat gate — worktrunk ships breaking library changes freely. If it reports breaking changes, that's fine; under semver the bump must still be minor (pre-1.0) or major (post-1.0). See "Library API Compatibility" below.
 6. **Credit contributors**: Check for external PR authors and issue reporters (see "Credit External Contributors" and "Credit Issue Reporters" below)
 7. **Determine release type**: Pick the bump from the changes (including semver-checks result). Ask the user only if the choice is genuinely ambiguous (see below).
@@ -41,7 +41,7 @@ metadata:
     ```bash
     git reset --soft HEAD~1 && git add -A && git commit -m "Release vX.Y.Z"
     ```
-11. **Merge to main**: push the release branch, open a PR, wait for CI, and merge it. Keep the worktree — the remaining steps run from it. Then move the branch onto the merged tip:
+11. **Merge to main**: complete the documentation review on the final candidate, then push the release branch, open a PR, wait for CI, and merge it. Keep the worktree — the remaining steps run from it. Then move the branch onto the merged tip:
     ```bash
     git fetch origin && git reset --keep origin/main
     ```
@@ -52,6 +52,8 @@ metadata:
     git log --oneline <cut-from-commit>..origin/main
     ```
     Clean means the changelog at `origin/main` documents every user-facing commit listed. With no drift the list is one line, the `Release vX.Y.Z (#NNNN)` squash commit. Review anything else that drifted in during the window and fold what's user-facing into the changelog with a follow-up squash PR, then re-fetch and re-run. The list only grows across passes — the drifted commits stay, joined by the follow-up's own squash commit — so each pass re-checks coverage over a longer list.
+
+    Extend the documentation review to any changes since its reviewed SHA, including corrections and commits that arrived during CI. Record the final reviewed SHA and resolve findings before tagging.
 
     Once clean, tag `origin/main`. The check and the tag then name the same ref, and it's main's tip, so the tag is reachable from `main`:
     ```bash
@@ -92,6 +94,27 @@ Give each a distinct charter. At least two receive no grep and no keyword list, 
 Pool the candidates, dedupe, and analyze each against the data-safety invariants in `AGENTS.md` and the FAQ "What can Worktrunk delete?" inventory: does it preserve data on failure, require explicit consent for destructive ops, and avoid silent side-effect deletion? Mark each real risk / acceptable / needs change, with the reasoning.
 
 Surface the full adjudicated list and get explicit sign-off before tagging. Do not tag a release with an unresolved deletion-surface candidate, even if it looks acceptable.
+
+## Documentation Review
+
+The release reviews all documentation changes since the previous release, including changes already on `main` and edits made during release preparation. Public docs are curated product guidance: each passage should help readers understand or use Worktrunk, with detail proportional to how many readers need it.
+
+Start from the full release diff to inventory documentation wherever it lives:
+
+```bash
+git diff --name-status v<last-version> HEAD
+git diff v<last-version> HEAD
+```
+
+Give an independent reviewer the previous tag, candidate SHA, and complete inventory. Cover site pages, README files, CLI help, configuration and command examples, shipped skills, and release notes. Review canonical sources once and check their generated copies for agreement; `docs/AGENTS.md` defines ownership and sync.
+
+The reviewer reads every changed passage in its surrounding section and checks:
+
+- **Purpose and proportion:** does it change what readers understand or do? Cut redundant explanations and implementation or regression details that belong in tests or PRs. A correctness fix needs prose only when usage changes or an existing claim becomes false.
+- **Clarity and concision:** use concrete, consistent terminology; introduce concepts before relying on them; rewrite definitions in place rather than layering caveats. Shortening must preserve necessary instructions and qualifications.
+- **Accuracy and usability:** verify claims against behavior and examples against their commands. Check links and read affected rendered sections as a reader encounters them.
+
+For each finding, give the location, reader impact, and a concrete replacement or deletion. Apply corrections in the canonical source, regenerate mirrors, and run the checks in `docs/AGENTS.md`. Have the reviewer check the corrected passages before closing findings. Record the reviewed range and SHA, coverage, findings, and their disposition in the release review; unresolved findings block tagging. Changelog claims and credits also receive the verification below.
 
 ## CHANGELOG Review
 

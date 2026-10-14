@@ -7,7 +7,7 @@ use worktrunk::config::UserConfig;
 use worktrunk::git::{Repository, WorkingTree};
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, println, progress_message,
-    success_message,
+    success_message, suggest_command,
 };
 
 use super::super::command_approval::{
@@ -81,6 +81,28 @@ pub fn handle_squash(
     let _ = crate::output::prompt_commit_generation(&mut config);
 
     let env = CommandEnv::for_action(config)?;
+    handle_squash_in(
+        &env,
+        target,
+        yes,
+        hooks,
+        stage,
+        announcer,
+        pre_approved_guidance,
+    )
+}
+
+/// Run the squash in the caller's already-selected environment. Reusing it
+/// keeps the source worktree and the approved project-config cache consistent.
+pub fn handle_squash_in(
+    env: &CommandEnv,
+    target: Option<&str>,
+    yes: bool,
+    hooks: HookGate,
+    stage: Option<StageMode>,
+    announcer: &mut HookAnnouncer<'_>,
+    pre_approved_guidance: PreApprovedGuidance,
+) -> anyhow::Result<SquashResult> {
     let repo = &env.repo;
     // Rewriting history under a half-finished operation is never what the user
     // meant, and mid-rebase HEAD is detached — so this runs ahead of the branch
@@ -264,8 +286,27 @@ pub fn handle_squash(
     // Back up working-tree changes before the squash commit absorbs them
     if has_staged {
         let backup_message = format!("{} → {} (squash)", current_branch, span_target);
-        let sha = wt.create_safety_backup(&backup_message)?;
-        eprintln!("{}", hint_message(format!("Backup created @ {sha}")));
+        let backup = wt.create_safety_backup(&backup_message)?;
+        let short_sha = repo.short_sha(&backup.sha)?;
+        eprintln!(
+            "{}",
+            hint_message(cformat!(
+                "Backup created @ <underline>{}</> ({short_sha})",
+                backup.ref_name
+            ))
+        );
+        let recovery_branch = format!("recovery/{short_sha}");
+        let command = suggest_command(
+            "switch",
+            &[&recovery_branch],
+            &["--create", "--base", &backup.sha, "--no-hooks"],
+        );
+        eprintln!(
+            "{}",
+            hint_message(cformat!(
+                "To recover in a new worktree, run <underline>{command}</>"
+            ))
+        );
     }
 
     // Get commit subjects and bodies for the squash message
@@ -287,6 +328,7 @@ pub fn handle_squash(
         .unwrap_or("repo");
 
     let commit_message = crate::llm::SquashInputs {
+        worktree: &wt,
         target_branch: &span_target,
         merge_base: &merge_base,
         commit_details: &commit_details,
@@ -519,6 +561,7 @@ fn preview_squash(
     let staging_index = temp_index.as_ref();
 
     let inputs = crate::llm::SquashInputs {
+        worktree: &wt,
         target_branch: &span_target,
         merge_base: &merge_base,
         commit_details: &commit_details,

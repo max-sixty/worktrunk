@@ -1,0 +1,9 @@
+---
+source: tests/integration_tests/remove.rs
+expression: "String::from_utf8_lossy(&removal.stderr)"
+---
+[36m◎[39m [36mRemoving [1mcorrupt-index[22m worktree...[39m
+[33m▲[39m [33mCannot list uncommitted changes; discarding worktree contents (--force):[39m
+[107m [0m fatal: _REPO_/.git/worktrees/repo.corrupt-index/index: index file smaller than expected
+[32m✓[39m [32mRemoved [1mcorrupt-index[22m worktree (--force)[39m [90m(4 files · [BYTES] B[39m[90m)[39m
+[2m↳[22m [2mBranch integrated (same commit as [4mmain[24m, [2m_[22m); retained with [4m--no-delete-branch[24m[22m

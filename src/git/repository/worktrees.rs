@@ -1,6 +1,7 @@
 //! Worktree management operations for Repository.
 
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
@@ -40,9 +41,9 @@ impl Repository {
             .get_or_try_init(|| {
                 let stdout = {
                     let _registry = self.worktree_registry_read();
-                    self.run_command(&["worktree", "list", "--porcelain"])?
+                    self.run_command_bytes(&["worktree", "list", "--porcelain", "-z"])?
                 };
-                let raw_worktrees = WorktreeInfo::parse_porcelain_list(&stdout)?;
+                let raw_worktrees = WorktreeInfo::parse_porcelain_list_z(&stdout)?;
                 let mut worktrees: Vec<_> =
                     raw_worktrees.into_iter().filter(|wt| !wt.bare).collect();
 
@@ -298,10 +299,9 @@ impl Repository {
         // The registration is a git dir in its own right, so its index is read
         // against its `HEAD` without the working tree git can no longer find.
         // Both commands answer with exit 0 or 1; anything else is a failure.
-        let registration_arg = registration.to_string_lossy();
         let git = |args: &[&str]| -> anyhow::Result<(bool, String)> {
-            let mut all = vec!["--git-dir", registration_arg.as_ref()];
-            all.extend_from_slice(args);
+            let mut all = vec![OsStr::new("--git-dir"), registration.as_os_str()];
+            all.extend(args.iter().map(OsStr::new));
             let output = self
                 .with_object_store_env(
                     Cmd::new("git")
@@ -309,8 +309,7 @@ impl Repository {
                         .context(path_to_logging_context(path))
                         .scrub_git_discovery_env(),
                 )
-                .run()
-                .with_context(|| format!("Failed to execute: git {}", all.join(" ")))?;
+                .run()?;
             match output.status.code() {
                 Some(0 | 1) => Ok((
                     output.status.success(),
@@ -340,7 +339,7 @@ impl Repository {
             .filter_map(Result::ok)
             .map(|entry| entry.path())
             .find_map(|registration| {
-                let recorded = registration_worktree_path(&registration)?;
+                let recorded = registration_worktree_path(&registration).ok()?;
                 paths_match(&recorded, path).then_some((registration, recorded))
             })
             .with_context(|| format!("No worktree registered @ {}", format_path_for_display(path)))
@@ -376,24 +375,16 @@ impl Repository {
     /// user-requested `force`, the user opted into destructive removal, so no
     /// re-check.)
     pub fn remove_worktree(&self, path: &std::path::Path, force: bool) -> anyhow::Result<()> {
-        let path_str = path.to_str().ok_or_else(|| {
-            anyhow::Error::from(GitError::Other {
-                message: format!(
-                    "Worktree path contains invalid UTF-8: {}",
-                    format_path_for_display(path)
-                ),
-            })
-        })?;
         let use_force = if force {
             true
         } else {
             self.worktree_at(path).has_initialized_submodules()?
         };
-        let mut args = vec!["worktree", "remove"];
+        let mut args = vec![OsStr::new("worktree"), OsStr::new("remove")];
         if use_force {
-            args.push("--force");
+            args.push(OsStr::new("--force"));
         }
-        args.push(path_str);
+        args.push(path.as_os_str());
 
         // The synthesized-force cleanliness check and destructive command are
         // one critical section. If this waited for another registry teardown

@@ -673,7 +673,7 @@ pub fn handle_logs_list(format: SwitchFormat) -> anyhow::Result<()> {
     let mut out = String::new();
     render_all_log_sections(&mut out, &repo)?;
 
-    show_help_in_pager(&out, true);
+    show_help_in_pager(&out, true)?;
     Ok(())
 }
 
@@ -723,7 +723,7 @@ pub fn handle_logs_profile(file: Option<PathBuf>, format: SwitchFormat) -> anyho
     if format == SwitchFormat::Json {
         print_json(&profile)?;
     } else {
-        show_help_in_pager(&profile.render_text(&source), true);
+        show_help_in_pager(&profile.render_text(&source), true)?;
     }
     Ok(())
 }
@@ -1459,7 +1459,7 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
         writeln!(out, "{}", rendered.trim_end())?;
     }
 
-    show_help_in_pager(&out, true);
+    show_help_in_pager(&out, true)?;
 
     Ok(())
 }
@@ -1492,7 +1492,7 @@ fn handle_cache_get_table(repo: &Repository) -> anyhow::Result<()> {
     writeln!(out)?;
     render_hints_section(&mut out, repo)?;
 
-    show_help_in_pager(&out, true);
+    show_help_in_pager(&out, true)?;
 
     Ok(())
 }
