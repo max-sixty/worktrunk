@@ -217,7 +217,7 @@
         },
         "integration": {
           "$ref": "#/$defs/Nullable_JsonIntegration",
-          "description": "How committed content is integrated; absent when determined\nnot-integrated, null when undetermined (dirty trees skip the\nexpensive checks)."
+          "description": "How committed content is integrated; absent when determined\nnot-integrated, null when undetermined (a probe timed out or was\nskipped)."
         },
         "merge_conflicts": {
           "description": "A merge into the default branch would conflict based on committed\ncontent and tracked worktree changes (local `merge-tree` simulation);\nnull while unresolved.",

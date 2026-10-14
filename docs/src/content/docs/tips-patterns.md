@@ -63,7 +63,12 @@ Cloning a bare repo into `<project>/.git` puts all worktrees under one directory
 ```bash
 git clone --bare <url> myproject/.git
 cd myproject
+git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+git fetch origin
+git remote set-head origin --auto
 ```
+
+The fetch refspec creates remote-tracking branches such as `origin/main`; `git remote set-head` records the remote's default branch.
 
 With `worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"`, worktrees become subdirectories of `myproject/`:
 
@@ -109,7 +114,7 @@ Now `wt switch --create feature` creates `myproject/feature/`.
 The project config (`.config/wt.toml`) must live inside a worktree — the bare `.git` directory has no tracked files. Once the first worktree exists, create it from there:
 
 ```bash
-cd myproject/main
+wt switch main
 wt config create --project
 ```
 
@@ -274,7 +279,7 @@ To scope environment variables to a worktree — a tool's package path, a profil
 
 ```sh
 # .envrc
-export MY_PACKAGES_PATH="$PWD/.packages"
+export MY_PACKAGES_PATH="$(expand_path .packages)"
 ```
 
 Run `direnv allow` once per worktree to trust the file ([getting started](https://direnv.net/#getting-started)). After that, switching into a worktree loads the env; switching out unloads it.

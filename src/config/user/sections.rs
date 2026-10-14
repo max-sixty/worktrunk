@@ -415,6 +415,13 @@ pub struct SwitchPickerConfig {
     /// Example: `pager = "delta --paging=never"`
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pager: Option<String>,
+
+    /// Show the preview panel when the picker opens (default: true)
+    ///
+    /// With `preview = false` the picker opens list-only; `Alt-p` still
+    /// toggles the preview.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview: Option<bool>,
 }
 
 impl SwitchPickerConfig {
@@ -422,12 +429,18 @@ impl SwitchPickerConfig {
     pub fn pager(&self) -> Option<&str> {
         self.pager.as_deref()
     }
+
+    /// Show the preview panel when the picker opens (default: true)
+    pub fn preview(&self) -> bool {
+        self.preview.unwrap_or(true)
+    }
 }
 
 impl Merge for SwitchPickerConfig {
     fn merge_with(&self, other: &Self) -> Self {
         Self {
             pager: other.pager.clone().or_else(|| self.pager.clone()),
+            preview: other.preview.or(self.preview),
         }
     }
 }

@@ -68,7 +68,7 @@
 use color_print::cformat;
 
 use super::command_executor::PreparedStep;
-use super::hook_filter::HookSource;
+use worktrunk::config::HookSource;
 
 /// A pipeline step with source information, for pipeline-aware execution.
 ///

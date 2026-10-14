@@ -64,7 +64,8 @@ exit_code: 0
 ----- stderr -----
 [2m○[22m Skipping pre-commit hooks (--no-hooks)
 [36m◎[39m [36mSquashing 2 commits & tracked changes into a single commit [90m(3 files, [32m+3[39m[39m[90m)[39m...[39m
-[2m↳[22m [2mBackup created @ 91a335e[22m
+[2m↳[22m [2mBackup created @ [4mrefs/wt-backup/feature[24m (6f7dfd4)[22m
+[2m↳[22m [2mTo recover in a new worktree, run [4mwt switch --create --base 6f7dfd42f267cc3012b438ad75c616e7b3b9f10d --no-hooks recovery/6f7dfd4[24m[22m
 [36m◎[39m [36mGenerating squash commit message...[39m
 [107m [0m [1msquash: combined commits[22m
 [32m✓[39m [32mSquashed @ [HASH][39m

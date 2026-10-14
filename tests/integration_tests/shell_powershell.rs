@@ -180,3 +180,41 @@ wt list
          stdout: {stdout}\nstderr: {stderr}",
     );
 }
+
+/// The installed `pwsh` decides where install writes on Unix: with
+/// `XDG_CONFIG_HOME` pointing away from `~/.config`, the profile lands where
+/// PowerShell loads it.
+#[cfg(unix)]
+#[test]
+fn test_install_uses_profile_reported_by_pwsh() {
+    let repo = crate::common::TestRepo::standard();
+    let temp_home = crate::common::temp_home();
+    let home = crate::common::canonical_temp_home(&temp_home);
+    let custom_config = home.join("custom-config");
+
+    let mut cmd = crate::common::wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    crate::common::set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("XDG_CONFIG_HOME", &custom_config);
+    cmd.env("WORKTRUNK_TEST_POWERSHELL_ENV", "1");
+    cmd.args(["config", "shell", "install", "powershell", "--yes"])
+        .current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let profile = custom_config.join("powershell/Microsoft.PowerShell_profile.ps1");
+    let content = std::fs::read_to_string(&profile).unwrap();
+    assert!(
+        content.contains("wt config shell init powershell"),
+        "{content}"
+    );
+    assert!(
+        !home
+            .join(".config/powershell/Microsoft.PowerShell_profile.ps1")
+            .exists()
+    );
+}

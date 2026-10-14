@@ -1,6 +1,7 @@
 //! Worktree management operations for Repository.
 
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
@@ -18,9 +19,7 @@ use super::{
 use crate::git::{CommandError, PlumbingDiff, WorktreeId, finalize_worktrees, is_bare_repo_dir};
 use crate::path::{format_path_for_display, paths_match};
 use crate::shell_exec::Cmd;
-use crate::styling::{
-    eprintln, format_with_gutter, hint_message, suggest_command, warning_message,
-};
+use crate::styling::{eprintln, format_with_gutter, hint_message, warning_message};
 
 impl Repository {
     /// List all worktrees for this repository.
@@ -42,9 +41,9 @@ impl Repository {
             .get_or_try_init(|| {
                 let stdout = {
                     let _registry = self.worktree_registry_read();
-                    self.run_command(&["worktree", "list", "--porcelain"])?
+                    self.run_command_bytes(&["worktree", "list", "--porcelain", "-z"])?
                 };
-                let raw_worktrees = WorktreeInfo::parse_porcelain_list(&stdout)?;
+                let raw_worktrees = WorktreeInfo::parse_porcelain_list_z(&stdout)?;
                 let mut worktrees: Vec<_> =
                     raw_worktrees.into_iter().filter(|wt| !wt.bare).collect();
 
@@ -300,10 +299,9 @@ impl Repository {
         // The registration is a git dir in its own right, so its index is read
         // against its `HEAD` without the working tree git can no longer find.
         // Both commands answer with exit 0 or 1; anything else is a failure.
-        let registration_arg = registration.to_string_lossy();
         let git = |args: &[&str]| -> anyhow::Result<(bool, String)> {
-            let mut all = vec!["--git-dir", registration_arg.as_ref()];
-            all.extend_from_slice(args);
+            let mut all = vec![OsStr::new("--git-dir"), registration.as_os_str()];
+            all.extend(args.iter().map(OsStr::new));
             let output = self
                 .with_object_store_env(
                     Cmd::new("git")
@@ -311,8 +309,7 @@ impl Repository {
                         .context(path_to_logging_context(path))
                         .scrub_git_discovery_env(),
                 )
-                .run()
-                .with_context(|| format!("Failed to execute: git {}", all.join(" ")))?;
+                .run()?;
             match output.status.code() {
                 Some(0 | 1) => Ok((
                     output.status.success(),
@@ -335,14 +332,14 @@ impl Repository {
     ///
     /// Unreadable siblings (an entry another process is deleting) are not
     /// this one, so they are passed over rather than failing the lookup.
-    fn registration_at(&self, path: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
+    pub(crate) fn registration_at(&self, path: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
         let registrations = self.git_common_dir().join("worktrees");
         std::fs::read_dir(&registrations)
             .with_context(|| format!("Failed to read {}", format_path_for_display(&registrations)))?
             .filter_map(Result::ok)
             .map(|entry| entry.path())
             .find_map(|registration| {
-                let recorded = registration_worktree_path(&registration)?;
+                let recorded = registration_worktree_path(&registration).ok()?;
                 paths_match(&recorded, path).then_some((registration, recorded))
             })
             .with_context(|| format!("No worktree registered @ {}", format_path_for_display(path)))
@@ -378,24 +375,16 @@ impl Repository {
     /// user-requested `force`, the user opted into destructive removal, so no
     /// re-check.)
     pub fn remove_worktree(&self, path: &std::path::Path, force: bool) -> anyhow::Result<()> {
-        let path_str = path.to_str().ok_or_else(|| {
-            anyhow::Error::from(GitError::Other {
-                message: format!(
-                    "Worktree path contains invalid UTF-8: {}",
-                    format_path_for_display(path)
-                ),
-            })
-        })?;
         let use_force = if force {
             true
         } else {
             self.worktree_at(path).has_initialized_submodules()?
         };
-        let mut args = vec!["worktree", "remove"];
+        let mut args = vec![OsStr::new("worktree"), OsStr::new("remove")];
         if use_force {
-            args.push("--force");
+            args.push(OsStr::new("--force"));
         }
-        args.push(path_str);
+        args.push(path.as_os_str());
 
         // The synthesized-force cleanliness check and destructive command are
         // one critical section. If this waited for another registry teardown
@@ -828,7 +817,7 @@ pub(crate) fn worktree_paths_for_branch(worktrees: &[WorktreeInfo], branch: &str
 ///
 /// The all-at-once counterpart to `worktree_paths_for_branch`, for callers
 /// classifying the whole list rather than resolving one branch — `wt list`
-/// flags each affected row with `⚑` so the ambiguity is visible before a
+/// flags each affected row with `⚐` so the ambiguity is visible before a
 /// command resolves the branch and warns.
 pub fn duplicated_branches(worktrees: &[WorktreeInfo]) -> HashSet<&str> {
     let mut seen = HashSet::new();
@@ -878,7 +867,8 @@ fn warn_duplicate_checkout(branch: &str, paths: &[PathBuf]) {
         // removes exactly the worktree named and retains the branch the others
         // still hold, so it's safe to suggest for a duplicate.
         for extra in &paths[1..] {
-            let cmd = suggest_command("remove", &[&format_path_for_display(extra)], &[]);
+            // Already shell-ready; `suggest_command` would escape it again.
+            let cmd = format!("wt remove {}", format_path_for_display(extra));
             eprintln!(
                 "{}",
                 hint_message(cformat!("To drop a duplicate, run <underline>{cmd}</>"))

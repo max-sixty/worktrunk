@@ -110,8 +110,9 @@ impl Repository {
     /// this `Repository` instance (shared across clones via `Arc`).
     ///
     /// `commit_sha` on each entry is a snapshot at scan time. Code that
-    /// needs a current SHA for a ref must resolve through a `RefSnapshot`
-    /// captured at the moment of read, not through this inventory. The
+    /// needs a current SHA for a ref must resolve through
+    /// [`Repository::capture_refs`] at the moment of read, not through this
+    /// inventory or a snapshot built from it. The
     /// inventory itself is used for branch listing and upstream-tracking
     /// metadata, stable for the duration of a command that runs no hook.
     /// A hook runs inside the command, so one that touches refs leaves the
@@ -194,8 +195,8 @@ impl Repository {
     /// (first-scan-wins cell vs. fresh snapshot).
     ///
     /// `commit_sha` is a snapshot at scan time — callers that need a
-    /// current SHA must resolve through a [`crate::git::RefSnapshot`]
-    /// captured at the moment of the read, not through this list.
+    /// current SHA must resolve through [`Repository::capture_refs`] at the
+    /// moment of the read, not through this list.
     pub(super) fn scan_local_branch_records(&self) -> anyhow::Result<Vec<LocalBranch>> {
         let output = self.run_command(&["for-each-ref", LOCAL_BRANCH_FORMAT, "refs/heads/"])?;
         let mut branches: Vec<LocalBranch> =

@@ -95,7 +95,9 @@ pub fn approvals_path() -> Option<PathBuf> {
 /// that save approvals and need a concrete path.
 pub fn require_approvals_path() -> Result<PathBuf, ConfigError> {
     approvals_path().ok_or_else(|| {
-        ConfigError("Cannot determine approvals path. Set $HOME or $XDG_CONFIG_HOME".to_string())
+        ConfigError::Message(
+            "Cannot determine approvals path. Set $HOME or $XDG_CONFIG_HOME".to_string(),
+        )
     })
 }
 
@@ -125,19 +127,14 @@ impl Approvals {
     /// Load approvals from a specific file path.
     fn load_from_file(path: &Path) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(path).map_err(|e| {
-            ConfigError(format!(
+            ConfigError::Message(format!(
                 "Failed to read approvals file {}: {}",
                 format_path_for_display(path),
                 e
             ))
         })?;
-        let approvals: Self = toml::from_str(&content).map_err(|e| {
-            ConfigError(format!(
-                "Failed to parse approvals file {}: {}",
-                format_path_for_display(path),
-                e
-            ))
-        })?;
+        let approvals: Self = toml::from_str(&content)
+            .map_err(|e| ConfigError::Parse(super::ConfigParseError::approvals(path, e)))?;
         Ok(approvals)
     }
 
@@ -172,8 +169,9 @@ impl Approvals {
     /// Save approvals to a specific file path.
     pub fn save_to(&self, path: &Path) -> Result<(), ConfigError> {
         let parent = save_parent(path);
-        std::fs::create_dir_all(parent)
-            .map_err(|e| ConfigError(format!("Failed to create approvals directory: {e}")))?;
+        std::fs::create_dir_all(parent).map_err(|e| {
+            ConfigError::Message(format!("Failed to create approvals directory: {e}"))
+        })?;
 
         let mut doc = toml_edit::DocumentMut::new();
 
@@ -203,7 +201,7 @@ impl Approvals {
         };
 
         write_atomically(path, &output)
-            .map_err(|e| ConfigError(format!("Failed to write approvals file: {e}")))?;
+            .map_err(|e| ConfigError::Message(format!("Failed to write approvals file: {e}")))?;
 
         Ok(())
     }
@@ -327,7 +325,7 @@ impl Approvals {
     /// Extract approved-commands from a specific config file.
     pub(crate) fn load_from_config_file(config_path: &Path) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(config_path).map_err(|e| {
-            ConfigError(format!(
+            ConfigError::Message(format!(
                 "Failed to read config file {}: {}",
                 format_path_for_display(config_path),
                 e
@@ -335,10 +333,10 @@ impl Approvals {
         })?;
 
         let config: super::UserConfig = toml::from_str(&content).map_err(|e| {
-            ConfigError(format!(
-                "Failed to parse config file {}: {}",
-                format_path_for_display(config_path),
-                e
+            ConfigError::Parse(super::ConfigParseError::new(
+                crate::config::ConfigFileKind::User,
+                config_path,
+                e,
             ))
         })?;
 
@@ -372,7 +370,7 @@ impl Approvals {
         approvals_path: &Path,
     ) -> Result<(), ConfigError> {
         if project.contains('*') {
-            return Err(ConfigError(format!(
+            return Err(ConfigError::Message(format!(
                 "Cannot save approvals for `{project}`: `*` in the identifier reads as a \
                  pattern, so the entry would apply to every repository it matches"
             )));
@@ -791,6 +789,26 @@ approved-commands = ["npm test"]
         assert!(loaded.is_command_approved("github.com/user/repo", "npm test"));
     }
 
+    /// Failure to create the approvals directory must leave the blocking file
+    /// untouched and must not report that any approvals were saved.
+    #[test]
+    fn test_save_to_blocked_parent_preserves_file() {
+        let dir = TempDir::new().unwrap();
+        let parent = dir.path().join("blocked");
+        std::fs::write(&parent, "keep this file").unwrap();
+        let path = parent.join("approvals.toml");
+
+        let err = Approvals::default().save_to(&path).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("Failed to create approvals directory"),
+            "{err}"
+        );
+        assert_eq!(std::fs::read_to_string(parent).unwrap(), "keep this file");
+        assert!(!path.exists());
+    }
+
     #[cfg(unix)]
     #[test]
     fn test_save_failure_preserves_existing_file() {
@@ -1016,7 +1034,7 @@ approved-commands = ["npm install"]
         std::fs::write(&path, "this is { not valid toml").unwrap();
         let err = Approvals::load_from_file(&path).unwrap_err();
         assert!(
-            err.to_string().contains("Failed to parse approvals file"),
+            err.to_string().contains("Approvals @"),
             "Expected parse error, got: {}",
             err
         );
@@ -1036,7 +1054,7 @@ approved-commands = ["npm test"]
         .unwrap();
         let err = Approvals::load_from_file(&path).unwrap_err();
         assert!(
-            err.to_string().contains("Failed to parse approvals file"),
+            err.to_string().contains("Approvals @"),
             "Expected parse error, got: {}",
             err
         );
@@ -1056,7 +1074,7 @@ approved-command = ["npm test"]
         .unwrap();
         let err = Approvals::load_from_file(&path).unwrap_err();
         assert!(
-            err.to_string().contains("Failed to parse approvals file"),
+            err.to_string().contains("Approvals @"),
             "Expected parse error, got: {}",
             err
         );
@@ -1069,7 +1087,7 @@ approved-command = ["npm test"]
         std::fs::write(&config_path, "not { valid toml here").unwrap();
         let err = Approvals::load_from_config_file(&config_path).unwrap_err();
         assert!(
-            err.to_string().contains("Failed to parse config file"),
+            err.to_string().contains("User config @"),
             "Expected parse error, got: {}",
             err
         );

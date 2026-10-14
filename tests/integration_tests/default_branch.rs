@@ -169,14 +169,17 @@ fn test_get_default_branch_no_remote(repo: TestRepo) {
 
 #[rstest]
 fn test_get_default_branch_with_custom_remote(mut repo: TestRepo) {
-    repo.setup_custom_remote("upstream", "main");
+    // Remove origin (fixture has it) so upstream becomes the primary remote,
+    // and point upstream's HEAD at a branch local inference wouldn't pick.
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.run_git(&["branch", "develop"]);
+    repo.setup_custom_remote("upstream", "develop");
 
-    // Test that we can get the default branch from a custom remote
     let branch = Repository::at(repo.root_path())
         .unwrap()
         .default_branch()
         .unwrap();
-    assert_eq!(branch, "main");
+    assert_eq!(branch, "develop");
 }
 
 /// Git permits remote names that begin with `-`. They must remain operands in
@@ -217,10 +220,10 @@ fn test_primary_remote_detects_custom_remote(mut repo: TestRepo) {
 
 #[rstest]
 fn test_primary_remote_skips_includeif_lines(repo: TestRepo) {
-    // `git config --get-regexp remote\..+\.url` uses an unanchored regex, so it matches
-    // any config key containing "remote.<something>.url" — not just actual remote entries.
-    // For example, `includeIf.hasconfig:remote.*.url:...` keys match and can appear before
-    // the first real remote URL. primary_remote() must skip these non-remote lines.
+    // primary_remote() scans every config key for a remote URL. Keys like
+    // `includeIf.hasconfig:remote.*.url:...` contain "remote.<something>.url" without
+    // being remote entries, and can appear before the first real remote URL.
+    // primary_remote() must skip these non-remote lines.
     //
     // We prepend an includeIf section to the local .git/config so it appears before the
     // [remote "origin"] section in git's output (git emits config entries in file order
@@ -228,8 +231,7 @@ fn test_primary_remote_skips_includeif_lines(repo: TestRepo) {
     let git_config = repo.root_path().join(".git/config");
     let original = fs::read_to_string(&git_config).unwrap();
     let patched = format!(
-        "[includeIf \"hasconfig:remote.*.url:https://github.com/example/other.git\"]\n\
-         \tpath = /dev/null\n{}",
+        "[includeIf \"hasconfig:remote.*.url:https://github.com/example/other.git\"]\n\tpath = /dev/null\n{}",
         original
     );
     fs::write(&git_config, patched).unwrap();
@@ -530,13 +532,21 @@ fn test_effective_remote_url_nonexistent_remote(repo: TestRepo) {
     assert!(git_repo.effective_remote_url("nonexistent").is_none());
 }
 
-/// Test effective_remote_url: result is cached (same value on repeated calls).
+/// Test effective_remote_url: the first lookup is cached, so a URL change made
+/// afterwards isn't seen through the same `Repository`.
 #[rstest]
 fn test_effective_remote_url_is_cached(repo: TestRepo) {
     let git_repo = Repository::at(repo.root_path()).unwrap();
     let first = git_repo.effective_remote_url("origin");
-    let second = git_repo.effective_remote_url("origin");
-    assert_eq!(first, second);
+    assert!(first.is_some());
+
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://example.com/changed/repo.git",
+    ]);
+    assert_eq!(git_repo.effective_remote_url("origin"), first);
 }
 
 /// Test find_remote_for_repo: resolves through insteadOf to match owner/repo.

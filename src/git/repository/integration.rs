@@ -151,8 +151,8 @@ pub(in crate::git) enum MergeTreeOutcome {
 
 impl Repository {
     /// Check if `base_sha` is an ancestor of `head_sha`, taking commit SHAs
-    /// directly. Hits the persistent SHA-keyed cache without going through
-    /// the (stale-prone) ambient ref→SHA cache.
+    /// directly. Hits the persistent SHA-keyed cache without resolving any
+    /// ref names.
     ///
     /// Callers that hold SHAs (e.g., from a `RefSnapshot` or a
     /// `BranchRef.commit_sha`) should prefer this form.
@@ -175,9 +175,9 @@ impl Repository {
     /// For orphan branches (no common ancestor with target), returns true since all
     /// their changes are unique.
     ///
-    /// Bypasses the ambient ref→SHA cache so callers holding SHAs from a
-    /// [`RefSnapshot`] (or `BranchRef.commit_sha`) can short-circuit to the
-    /// persistent SHA-keyed cache directly.
+    /// Takes commit SHAs, so callers holding SHAs from a [`RefSnapshot`] (or
+    /// `BranchRef.commit_sha`) go straight to the persistent SHA-keyed cache
+    /// without resolving ref names.
     pub fn has_added_changes_by_sha(
         &self,
         branch_sha: &str,
@@ -406,8 +406,9 @@ impl Repository {
     /// capped at [`PATCH_ID_SCAN_MAX_COMMITS`].
     ///
     /// Returns `Ok(true)` if a matching squash-merge commit is found on the target,
-    /// `Ok(false)` otherwise (including when the target history is too deep to scan,
-    /// or when patch-id computation fails — both conservative).
+    /// `Ok(false)` otherwise (including when the target history is too deep to
+    /// scan — conservative). A failing git command propagates as `Err`; the
+    /// caller treats that as no match.
     fn is_squash_merged_via_patch_id(&self, branch: &str, target: &str) -> anyhow::Result<bool> {
         let Some(merge_base) = self.merge_base(target, branch)? else {
             return Ok(false);
@@ -616,9 +617,10 @@ impl Repository {
     /// Selects the base via the shared [`select_comparison_base`] rule
     /// ([`IntegrationTargets::primary`] else the raw local default), so the
     /// preview panes and the `wt list` columns can't pick different bases.
-    /// Captures a [`RefSnapshot`] on first call unless already primed via
-    /// [`Self::prime_comparison_base`]; safe in the read-only preview contexts
-    /// that use it (wt doesn't move refs there). Fully local — no network.
+    /// Builds a [`RefSnapshot`] from the branch inventories on first call
+    /// unless already primed via [`Self::prime_comparison_base`]; safe in the
+    /// read-only preview contexts that use it (wt doesn't move refs there).
+    /// Fully local — no network.
     fn comparison_base(&self) -> Option<&ComparisonBase> {
         self.cache
             .comparison_base
@@ -641,12 +643,12 @@ impl Repository {
     fn resolve_comparison_base(&self) -> Option<ComparisonBase> {
         // No default branch → no comparison base; skip the ref scan entirely.
         self.default_branch()?;
-        let snapshot = self.capture_refs().ok()?;
+        let snapshot = self.inventory_snapshot(None).ok()?;
         self.comparison_base_from(&snapshot)
     }
 
     /// Resolve the comparison base from a captured snapshot. The shared core of
-    /// the lazy [`Self::resolve_comparison_base`] (captures its own snapshot)
+    /// the lazy [`Self::resolve_comparison_base`] (builds its own snapshot)
     /// and [`Self::prime_comparison_base`] (reuses the collector's), so both
     /// select the base by the same [`select_comparison_base`] rule.
     fn comparison_base_from(&self, snapshot: &RefSnapshot) -> Option<ComparisonBase> {
@@ -810,7 +812,10 @@ impl Repository {
             return Ok(None);
         };
         let target_sha = self.resolve_to_commit_sha(target_branch)?;
-        match self.merge_base("HEAD", &upstream)? {
+        let head = self
+            .current_worktree()
+            .run_command(&["rev-parse", "HEAD"])?;
+        match self.merge_base(head.trim(), &upstream)? {
             Some(fork_point) if !self.is_ancestor_by_sha(&fork_point, &target_sha)? => {
                 Ok(Some(upstream))
             }
