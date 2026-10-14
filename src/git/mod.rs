@@ -2,6 +2,47 @@
 
 use std::path::{Path, PathBuf};
 
+fn git_path_from_bytes(bytes: &[u8]) -> std::io::Result<PathBuf> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        Ok(PathBuf::from(std::ffi::OsString::from_vec(bytes.to_vec())))
+    }
+    #[cfg(not(unix))]
+    {
+        // Windows accepts Git's forward slashes; preserve its output spelling.
+        std::str::from_utf8(bytes)
+            .map(PathBuf::from)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+    }
+}
+
+/// Decode one path from Git output, preserving bytes before its final LF.
+fn git_path_from_output(bytes: &[u8]) -> std::io::Result<PathBuf> {
+    let path = bytes.strip_suffix(b"\n").ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Unterminated Git path output",
+        )
+    })?;
+    git_path_from_bytes(path)
+}
+
+/// Gitfiles and backlinks terminate paths with CR/LF, unlike command output.
+fn git_path_from_file(bytes: &[u8]) -> std::io::Result<PathBuf> {
+    let mut path = bytes;
+    while matches!(path.last(), Some(b'\n' | b'\r')) {
+        path = &path[..path.len() - 1];
+    }
+    if path.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Empty Git path",
+        ));
+    }
+    git_path_from_bytes(path)
+}
+
 // Submodules
 mod ci_platform;
 mod diff;
@@ -827,7 +868,7 @@ impl WorktreeInfo {
 
     /// Build the canonical worktree subject for this inventory entry.
     pub fn worktree_ref(&self) -> WorktreeRef {
-        // `branch` is the short form produced by `parse_porcelain_list` (one
+        // `branch` is the short form produced by `parse_porcelain_list_z` (one
         // `refs/heads/` prefix stripped). Re-qualifying it in the worktree
         // constructor preserves even a pathological branch literally named
         // `refs/heads/foo` as `refs/heads/refs/heads/foo`.

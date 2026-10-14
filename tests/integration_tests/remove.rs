@@ -4273,17 +4273,23 @@ fn test_remove_background_fallback_on_rename_failure(mut repo: TestRepo) {
 fn block_staged_rename(repo: &TestRepo, worktree_path: &std::path::Path) -> std::path::PathBuf {
     let trash_dir = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/trash");
     std::fs::create_dir_all(&trash_dir).unwrap();
-    let staged_path = trash_dir.join(format!(
-        "{}-{}",
-        worktree_path.file_name().unwrap().to_string_lossy(),
-        crate::common::TEST_EPOCH
-    ));
+    let git_dir = repo
+        .git_command()
+        .args(["rev-parse", "--absolute-git-dir"])
+        .current_dir(worktree_path)
+        .run()
+        .unwrap();
+    assert!(git_dir.status.success(), "{git_dir:?}");
+    let path = std::str::from_utf8(git_dir.stdout.strip_suffix(b"\n").unwrap()).unwrap();
+    let mut staged_name = Path::new(path).file_name().unwrap().to_os_string();
+    staged_name.push(format!("-{}", crate::common::TEST_EPOCH));
+    let staged_path = trash_dir.join(staged_name);
     std::fs::write(&staged_path, "blocking file").unwrap();
     staged_path
 }
 
 /// The rename-failure fallback honors `-D`: an unmerged branch is force-deleted
-/// in the legacy `git worktree remove && git branch -D` command.
+/// by the Rust child after `git worktree remove` succeeds.
 #[rstest]
 fn test_remove_background_fallback_force_delete_branch(mut repo: TestRepo) {
     repo.commit("initial");
@@ -5420,8 +5426,8 @@ fn test_remove_json_branch_outcome_distinguishes_requested_retention(mut repo: T
 /// The detached legacy fallback also corrects a broken deletion promise.
 ///
 /// When the rename-into-trash fast path fails, the removal falls back to a
-/// detached `git worktree remove`, and the branch deletion becomes a CAS
-/// shell tail — built in the foreground. A `pre-remove` hook that advances
+/// detached `git worktree remove`, followed by the Rust branch-deletion child
+/// planned in the foreground. A `pre-remove` hook that advances
 /// the branch makes the integration re-check decline the tail, so the branch
 /// definitively survives while the progress message already promised
 /// "worktree & branch". That survival must be warned and reported, exactly as
@@ -5910,7 +5916,7 @@ fn test_force_remove_with_corrupt_index_reports_unreadable_status(mut repo: Test
             let removal = repo
                 .git_command()
                 .args(["worktree", "remove", "--force"])
-                .arg(worktree.to_string_lossy())
+                .arg(&worktree)
                 .run()
                 .unwrap();
             assert!(
@@ -6102,4 +6108,105 @@ fn test_force_remove_interrupted_status_preserves_worktrees(
     assert!(!stderr.contains("Discarding"));
     assert!(!stderr.contains("discarding"));
     assert!(!stderr.contains("Removing later-worktree"));
+}
+
+/// The child uses the invoking checkout's target and retains a moved tip,
+/// even when the replacement commit is integrated into that target.
+#[test]
+fn test_detached_delete_child_captured_target_and_tip() {
+    let mut repo = TestRepo::with_initial_commit();
+    let original = repo.git_output(&["rev-parse", "HEAD"]);
+    let invoking = repo.add_worktree("invoking");
+    repo.commit_in_worktree(&invoking, "new.txt", "new content", "new commit");
+    let target = repo.git_output(&["rev-parse", "invoking"]);
+    repo.run_git(&["branch", "feature", &target]);
+
+    let run_child = |tip: &str| {
+        repo.wt_command()
+            .args([
+                "_delete-branch-if-safe",
+                "--branch=feature",
+                &format!("--target={target}"),
+                &format!("--expected-tip={tip}"),
+            ])
+            .output()
+            .unwrap()
+    };
+    // The child runs from main, whose HEAD is behind the invoking target.
+    let output = run_child(&target);
+    assert!(output.status.success(), "{output:?}");
+    assert_branch_exists(
+        &repo,
+        "feature",
+        false,
+        &String::from_utf8_lossy(&output.stderr),
+    );
+
+    repo.run_git(&["branch", "feature", &original]);
+    repo.run_git(&["update-ref", "refs/heads/feature", &target, &original]);
+    let output = run_child(&original);
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("moved during deletion"),
+        "{output:?}"
+    );
+    assert_eq!(repo.git_output(&["rev-parse", "feature"]), target);
+}
+
+/// A detached fallback must preserve a new checkout even when its path looks
+/// like a porcelain status field. Branches and checkout paths remain argv data.
+#[cfg(unix)]
+#[rstest]
+fn test_detached_fallback_native_arguments_and_fresh_checkout(mut repo: TestRepo) {
+    use shell_escape::unix::escape;
+
+    let branch = "feature;touch${IFS}PWNED";
+    let parent = repo.root_path().parent().unwrap().to_path_buf();
+    let survivor = parent.join("survivor\nprunable");
+    let removed = parent.join("checkout '$(touch PWNED)");
+    let hook = format!(
+        "git worktree add --force {} {}",
+        escape(survivor.to_str().unwrap().into()),
+        escape(branch.into()),
+    );
+    repo.write_project_config(&format!("pre-remove = {hook:?}"));
+    repo.commit("Add config");
+    repo.write_test_approvals(&format!(
+        r#"[projects."../origin"]
+approved-commands = [{hook:?}]
+"#
+    ));
+    let removed = repo.add_worktree_at_path(branch, &removed);
+    let staged_path = block_staged_rename(&repo, &removed);
+    let output = repo
+        .wt_command()
+        .args(["remove", "--yes", branch])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let log = crate::common::resolve_git_common_dir(repo.root_path())
+        .join("wt/logs")
+        .join(worktrunk::path::sanitize_for_filename(branch))
+        .join("internal/remove.log");
+    let completion = format!(
+        "detached child retained the new checkout; log {} initially {:?}; blocker {}; foreground {output:?}",
+        log.display(),
+        fs::read_to_string(&log),
+        staged_path.display(),
+    );
+    crate::common::wait_for(&completion, || {
+        fs::read_to_string(&log).is_ok_and(|text| text.contains("checked out @"))
+    });
+    assert!(!removed.exists());
+    assert_branch_exists(
+        &repo,
+        branch,
+        true,
+        &String::from_utf8_lossy(&output.stderr),
+    );
+    assert_not_orphaned(&repo, &survivor, "detached child completed");
+    assert!(!repo.root_path().join("PWNED").exists());
+    assert!(!parent.join("PWNED").exists());
+    let _ = fs::remove_file(staged_path);
 }

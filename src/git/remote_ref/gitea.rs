@@ -1,8 +1,8 @@
 //! Gitea PR backend using the `tea` CLI. It also hosts the `tea`-facing helpers
 //! other modules share: [`api_status`] (how every caller separates a failed
-//! request from a resource), [`is_authed_for`], and [`has_any_login`] — read by the
-//! switch dispatcher and the CI-status backend, so a change to one of them is
-//! not local.
+//! request from a resource) and [`is_authed_for`] — read by the switch
+//! dispatcher, `wt config show`, and the CI-status backend, so a change to one
+//! of them is not local.
 //!
 //! ## Reading the HTTP status
 //!
@@ -314,19 +314,14 @@ pub fn fork_remote_url(host: &str, owner: &str, repo: &str) -> String {
 
 /// Whether `tea` has a login configured for `host`.
 ///
-/// Used by the switch dispatcher for ambiguous forge hosts. Login discovery is
-/// local-only; the shared login probe below owns that contract.
+/// Login discovery is local-only; the shared login probe below owns that
+/// contract.
 pub fn is_authed_for(host: &str) -> anyhow::Result<bool> {
     Ok(load_logins()?.iter().any(|login| {
         login.ssh_host.eq_ignore_ascii_case(host)
             || extract_host_from_html_url(&login.url)
                 .is_ok_and(|login_host| login_host.eq_ignore_ascii_case(host))
     }))
-}
-
-/// Whether `tea` has any login configured, for host-agnostic diagnostics.
-pub fn has_any_login() -> anyhow::Result<bool> {
-    Ok(!load_logins()?.is_empty())
 }
 
 /// The login-list JSON carries display fields, with no authentication tokens.
@@ -338,7 +333,7 @@ struct TeaLogin {
 
 /// Ask tea to read its own local config, including its platform-specific paths
 /// and legacy fallback. Unlike API login lookup, `logins list` does not
-/// refresh OAuth tokens or contact the server. Both auth consumers use this
+/// refresh OAuth tokens or contact the server. [`is_authed_for`] uses this
 /// command so config discovery and YAML parsing remain tea's responsibility.
 ///
 /// An absent or failing CLI means no known login, matching the auth probes for

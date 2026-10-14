@@ -229,7 +229,6 @@ supports-hyperlinks = "3"
 home = "0.5.12"
 humantime = { version = "2.2", optional = true }
 once_cell = "1.21.4"
-dirs = "7.0"
 normalize-path = "0.2.1"
 path-slash = "0.2"
 pathdiff = "0.2"
@@ -334,6 +333,10 @@ nix = { version = "0.31.3", default-features = false, features = ["event", "fs",
 signal-hook = "0.4.1"
 # Safe FIONREAD snapshots bound cancellation drains even with continuous writers.
 rustix = "1.1.4"
+
+[target.'cfg(windows)'.dependencies]
+# The localized Documents folder that holds PowerShell profiles.
+dirs = "7.0"
 
 [build-dependencies]
 vergen-gitcl = { version = "10.0.0", features = ["build"] }

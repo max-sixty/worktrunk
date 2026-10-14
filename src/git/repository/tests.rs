@@ -26,46 +26,6 @@ fn alternate_object_directory_uses_git_c_style_quoting() {
 }
 
 #[test]
-fn test_parse_worktree_list() {
-    let output = "worktree /path/to/main
-HEAD abcd1234
-branch refs/heads/main
-
-worktree /path/to/feature
-HEAD efgh5678
-branch refs/heads/feature
-
-";
-
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
-    let [main_wt, feature_wt]: [WorktreeInfo; 2] = worktrees.try_into().unwrap();
-
-    assert_eq!(main_wt.path, PathBuf::from("/path/to/main"));
-    assert_eq!(main_wt.head, "abcd1234");
-    assert_eq!(main_wt.branch, Some("main".to_string()));
-    assert!(!main_wt.bare);
-    assert!(!main_wt.detached);
-
-    assert_eq!(feature_wt.path, PathBuf::from("/path/to/feature"));
-    assert_eq!(feature_wt.head, "efgh5678");
-    assert_eq!(feature_wt.branch, Some("feature".to_string()));
-}
-
-#[test]
-fn test_parse_detached_worktree() {
-    let output = "worktree /path/to/detached
-HEAD abcd1234
-detached
-
-";
-
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
-    let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
-    assert!(wt.detached);
-    assert_eq!(wt.branch, None);
-}
-
-#[test]
 fn test_finalize_worktree_with_branch() {
     // Worktree with a branch should not be modified
     let wt = WorktreeInfo {
@@ -206,33 +166,6 @@ fn test_finalize_worktree_stale_reads_its_own_rebase() {
     assert!(nested.detached && rebasing.detached);
     assert_eq!(nested.branch, None);
     assert_eq!(rebasing.branch.as_deref(), Some("feature"));
-}
-
-#[test]
-fn test_parse_locked_worktree() {
-    let output = "worktree /path/to/locked
-HEAD abcd1234
-branch refs/heads/main
-locked reason for lock
-
-";
-
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
-    let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
-    assert_eq!(wt.locked, Some("reason for lock".to_string()));
-}
-
-#[test]
-fn test_parse_bare_worktree() {
-    let output = "worktree /path/to/bare
-HEAD abcd1234
-bare
-
-";
-
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
-    let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
-    assert!(wt.bare);
 }
 
 #[test]
@@ -408,36 +341,6 @@ fn test_resolved_worktree_none_branch() {
 }
 
 #[test]
-fn test_worktree_locked_empty_reason() {
-    let output = "worktree /path/to/locked
-HEAD abcd1234
-branch refs/heads/main
-locked
-
-";
-
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
-    let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
-    // Empty lock reason should still be recorded
-    assert_eq!(wt.locked, Some(String::new()));
-}
-
-#[test]
-fn test_worktree_prunable() {
-    let output = "worktree /path/to/prunable
-HEAD abcd1234
-detached
-prunable gitdir file points to non-existent location
-
-";
-
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
-    let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
-    assert!(wt.prunable.is_some());
-    assert!(wt.prunable.as_ref().unwrap().contains("non-existent"));
-}
-
-#[test]
 fn test_parse_multiple_worktrees() {
     let output = "worktree /main
 HEAD 1111111111111111111111111111111111111111
@@ -457,7 +360,8 @@ detached
 
 ";
 
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let worktrees =
+        WorktreeInfo::parse_porcelain_list_z(output.replace('\n', "\0").as_bytes()).unwrap();
     let [main_wt, feature_a, feature_b, detached_wt]: [WorktreeInfo; 4] =
         worktrees.try_into().unwrap();
     assert_eq!(main_wt.branch, Some("main".to_string()));
@@ -2148,7 +2052,8 @@ HEAD efgh5678
 detached
 
 ";
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let worktrees =
+        WorktreeInfo::parse_porcelain_list_z(output.replace('\n', "\0").as_bytes()).unwrap();
 
     // The duplicated branch yields both paths, in git's listing order — the
     // first is what resolution uses, the rest are what the warning surfaces.
@@ -2844,9 +2749,8 @@ fn list_worktrees_names_the_work_tree_of_a_separate_git_dir_repo() {
 fn repo_path_declines_a_stale_separate_git_dir_backlink() {
     // The backlink is one-way, so `repo_path` confirms it: a work tree that
     // has moved away leaves a `gitdir` file naming a path that no longer
-    // points back. Falling through to `parent(git_common_dir)` returns the
-    // pre-#4235 answer rather than a path that doesn't hold this repository.
-    use super::{Repository, canonicalize};
+    // points back. Decline it and retain the conventional parent fallback.
+    use super::Repository;
 
     let (_tmp, store, work_tree) = build_separate_git_dir_layout();
     let moved = work_tree.with_file_name("moved");
@@ -2861,11 +2765,7 @@ fn repo_path_declines_a_stale_separate_git_dir_backlink() {
     assert!(out.status.success(), "git init failed");
 
     let repo = Repository::at(&store).unwrap();
-    assert_eq!(
-        canonicalize(repo.repo_path().unwrap()).unwrap(),
-        canonicalize(store.parent().unwrap()).unwrap(),
-        "a backlink whose work tree no longer points back must not be used"
-    );
+    assert_eq!(repo.repo_path().unwrap(), store.parent().unwrap());
 }
 
 #[test]
@@ -2893,4 +2793,261 @@ fn repo_path_follows_a_relative_separate_git_dir_backlink() {
         work_tree,
         "a relative backlink must resolve against the store, not the cwd"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn worktree_inventory_preserves_native_paths_and_lock_reasons() {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    let mut test = TestRepo::with_initial_commit();
+    let reason = "keep this checkout\nwith its work";
+    let names = [
+        (b"checkout\nline\tback\\slash ".as_slice(), false),
+        #[cfg(target_os = "linux")]
+        (b"checkout-\xff ".as_slice(), false),
+        (b"checkout-direct".as_slice(), true),
+    ];
+    for (index, (name, direct_backlink)) in names.into_iter().enumerate() {
+        let branch = format!("native-{index}");
+        let original = test.add_worktree(&branch);
+        test.run_git(&[
+            "worktree",
+            "lock",
+            "--reason",
+            reason,
+            original.to_str().unwrap(),
+        ]);
+        let git_dir = Repository::git_dir_at(&original).unwrap();
+        let checkout = test
+            .root_path()
+            .parent()
+            .unwrap()
+            .join(std::ffi::OsString::from_vec(name.to_vec()));
+        std::fs::rename(&original, &checkout).unwrap();
+        let mut backlink = checkout.join(".git").into_os_string().into_vec();
+        backlink.push(b'\n');
+        std::fs::write(git_dir.join("gitdir"), backlink).unwrap();
+        assert_eq!(
+            super::working_tree::registration_worktree_path(&git_dir).unwrap(),
+            checkout
+        );
+        assert_eq!(Repository::git_dir_at(&checkout).unwrap(), git_dir);
+        if direct_backlink {
+            // Git accepts a direct checkout backlink, trimming trailing whitespace.
+            let mut direct = checkout.clone().into_os_string().into_vec();
+            direct.push(b'\n');
+            std::fs::write(git_dir.join("gitdir"), direct).unwrap();
+            assert_eq!(
+                super::working_tree::registration_worktree_path(&git_dir).unwrap(),
+                checkout
+            );
+        }
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let worktrees = repo.list_worktrees().unwrap();
+        let wt = worktrees
+            .iter()
+            .find(|wt| wt.branch.as_deref() == Some(&branch))
+            .unwrap();
+        assert_eq!(
+            wt.path.as_os_str().as_bytes(),
+            checkout.as_os_str().as_bytes()
+        );
+        assert_eq!(wt.locked.as_deref(), Some(reason));
+        assert!(wt.path.join(".git").is_file());
+        let working_tree = repo.worktree_at(&checkout);
+        let info = working_tree.prewarm_info().unwrap();
+        assert!(info.is_inside);
+        assert_eq!(info.root.unwrap(), checkout);
+        assert_eq!(working_tree.git_dir().unwrap(), git_dir);
+        assert_eq!(
+            working_tree.branch().unwrap().as_deref(),
+            Some(branch.as_str())
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn git_dir_at_declines_unusable_entries() {
+    use nix::{sys::stat::Mode, unistd::mkfifo};
+
+    let directory = crate::testing::test_tempdir();
+    let entry = directory.path().join(".git");
+    for content in [b"gitdir: \r\n".as_slice(), b"not a gitfile".as_slice()] {
+        std::fs::write(&entry, content).unwrap();
+        assert!(Repository::git_dir_at(directory.path()).is_none());
+    }
+    std::fs::remove_file(&entry).unwrap();
+    // Reading a FIFO would block; discovery must reject it from its file type.
+    mkfifo(&entry, Mode::S_IRUSR | Mode::S_IWUSR).unwrap();
+    assert!(Repository::git_dir_at(directory.path()).is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn git_dir_at_preserves_native_gitfile_target() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let test = TestRepo::with_initial_commit();
+    let target = test
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("store\twith\nwhitespace  ");
+    let neighbor = test
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("store\twith\nwhitespace");
+    let child = test.root_path().parent().unwrap().join("gitfile");
+    let output = test
+        .git_command()
+        .arg("clone")
+        .arg(test.root_path())
+        .arg(&child)
+        .run()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    std::fs::rename(child.join(".git"), &target).unwrap();
+    std::fs::create_dir(&neighbor).unwrap();
+    let output = test
+        .git_command()
+        .current_dir(&neighbor)
+        .args(["init", "--bare"])
+        .run()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_ne!(
+        dunce::canonicalize(&target).unwrap(),
+        dunce::canonicalize(&neighbor).unwrap()
+    );
+    // CRLF is a Git terminator; the trailing spaces belong to the path.
+    let mut content = b"gitdir: ".to_vec();
+    content.extend_from_slice(target.as_os_str().as_bytes());
+    content.extend_from_slice(b"\r\n");
+    std::fs::write(child.join(".git"), content).unwrap();
+    assert_eq!(
+        Repository::git_dir_at(&child).unwrap(),
+        dunce::canonicalize(&target).unwrap()
+    );
+    let output = test
+        .git_command()
+        .current_dir(&child)
+        .args(["rev-parse", "--absolute-git-dir"])
+        .run()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "Git must accept the real gitfile: {output:?}"
+    );
+    let mut expected = dunce::canonicalize(target)
+        .unwrap()
+        .as_os_str()
+        .as_bytes()
+        .to_vec();
+    expected.push(b'\n');
+    assert_eq!(output.stdout, expected);
+}
+
+#[cfg(unix)]
+#[test]
+fn prewarm_preserves_native_common_directory_paths() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let seed = TestRepo::with_initial_commit();
+    let names = [
+        b"bare\ntrue\nstore\nHEAD".as_slice(),
+        b"bare  ".as_slice(),
+        #[cfg(target_os = "linux")]
+        b"bare-\xff  ".as_slice(),
+    ];
+    for name in names {
+        let directory = crate::testing::test_tempdir();
+        let prefix = directory.path().join("bare");
+        let initial = directory.path().join("initial");
+        for target in [&prefix, &initial] {
+            seed.run_git(&[
+                "clone",
+                "--bare",
+                seed.root_path().to_str().unwrap(),
+                target.to_str().unwrap(),
+            ]);
+        }
+        let store = directory
+            .path()
+            .join(std::ffi::OsString::from_vec(name.to_vec()));
+        std::fs::rename(&initial, &store).unwrap();
+        let child = store.join("subdirectory");
+        std::fs::create_dir(&child).unwrap();
+        let expected = dunce::canonicalize(&store).unwrap();
+        assert_ne!(expected, dunce::canonicalize(&prefix).unwrap());
+        for discovery in [&store, &child] {
+            Repository::prewarm_at(discovery);
+            let repo = Repository::at(discovery).unwrap();
+            assert_eq!(repo.git_common_dir(), expected);
+            assert!(repo.is_bare().unwrap());
+            assert_eq!(repo.repo_path().unwrap(), expected);
+            assert_eq!(
+                repo.current_worktree().root().unwrap(),
+                dunce::canonicalize(discovery).unwrap()
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn repo_path_preserves_local_core_worktree_path_bytes() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let seed = TestRepo::with_initial_commit();
+    let directory = crate::testing::test_tempdir();
+    let main = directory.path().join("configured main\n\t  ");
+    let store = directory.path().join("store");
+    seed.run_git(&[
+        "clone",
+        "--separate-git-dir",
+        store.to_str().unwrap(),
+        seed.root_path().to_str().unwrap(),
+        main.to_str().unwrap(),
+    ]);
+    seed.run_git_in(&store, &["config", "core.worktree", main.to_str().unwrap()]);
+    let oracle = seed
+        .git_command()
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(&store)
+        .run()
+        .unwrap();
+    assert!(oracle.status.success());
+    let expected = dunce::canonicalize(&main).unwrap();
+    assert_eq!(
+        oracle.stdout.strip_suffix(b"\n").unwrap(),
+        expected.as_os_str().as_bytes()
+    );
+    let repo = Repository::at(&main).unwrap();
+    assert_eq!(repo.repo_path().unwrap(), expected);
+}
+
+/// Git retains native bytes in a registration id as well as its checkout path.
+#[cfg(target_os = "linux")]
+#[test]
+fn stale_worktree_work_preserves_native_registration_arguments() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let test = TestRepo::with_initial_commit();
+    let checkout = test
+        .home_path()
+        .join(std::ffi::OsString::from_vec(b"feature-\xff".to_vec()));
+    let output = test
+        .git_command()
+        .args(["worktree", "add", "-b", "feature"])
+        .arg(&checkout)
+        .run()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    std::fs::remove_dir_all(&checkout).unwrap();
+    let repo = Repository::at(test.root_path()).unwrap();
+    assert_eq!(repo.stale_worktree_work(&checkout).unwrap(), None);
 }

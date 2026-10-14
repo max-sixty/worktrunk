@@ -16,7 +16,7 @@ use super::layout::LinkStyle;
 use anstyle::{AnsiColor, Color, Style};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use worktrunk::git::{BranchRef, RefType, Repository, parse_owner_repo};
+use worktrunk::git::{BranchRef, GitRemoteUrl, RefType, Repository, parse_owner_repo};
 use worktrunk::shell_exec::Cmd;
 use worktrunk::utils::epoch_now;
 
@@ -166,6 +166,13 @@ fn branch_owner_repo(repo: &Repository, branch: &CiBranchName) -> Option<(String
     parse_owner_repo(&branch_remote_url(repo, branch)?)
 }
 
+/// The host a forge CLI authenticates against for `remote_url`: the configured
+/// `forge.hostname` when set, else the URL's host.
+pub(crate) fn auth_host(repo: &Repository, remote_url: Option<String>) -> Option<String> {
+    repo.forge_hostname()
+        .or_else(|| Some(GitRemoteUrl::parse(&remote_url?)?.host().to_string()))
+}
+
 /// Resolve the effective URL for a branch's remote without parsing.
 ///
 /// Resolution chain:
@@ -187,64 +194,6 @@ fn branch_remote_url(repo: &Repository, branch: &CiBranchName) -> Option<String>
         repo.branch(&branch.name).push_remote_url().or_else(|| {
             let remote = repo.primary_remote().ok()?;
             repo.effective_remote_url(&remote)
-        })
-    }
-}
-
-/// Status of CI tools availability
-#[derive(Debug, Clone, Copy)]
-pub struct CiToolsStatus {
-    /// gh is installed (can run --version)
-    pub gh_installed: bool,
-    /// gh is installed and authenticated
-    pub gh_authenticated: bool,
-    /// glab is installed (can run --version)
-    pub glab_installed: bool,
-    /// glab is installed and authenticated
-    pub glab_authenticated: bool,
-    /// tea is installed (can run --version)
-    pub tea_installed: bool,
-    /// tea is installed and has a login configured
-    pub tea_authenticated: bool,
-    /// az is installed (can run --version)
-    pub az_installed: bool,
-    /// az is installed and authenticated (logged in)
-    pub az_authenticated: bool,
-}
-
-impl CiToolsStatus {
-    /// Check which CI tools are available
-    ///
-    /// If `gitlab_host` is provided, checks glab auth status against that specific
-    /// host instead of the default. This is important for self-hosted GitLab instances
-    /// where the default host (gitlab.com) may be unreachable.
-    pub fn detect(gitlab_host: Option<&str>) -> anyhow::Result<Self> {
-        let gh_installed = tool_available("gh", &["--version"]);
-        let gh_authenticated = gh_installed && tool_available("gh", &["auth", "status"]);
-        let glab_installed = tool_available("glab", &["--version"]);
-        let glab_authenticated = glab_installed
-            && if let Some(host) = gitlab_host {
-                tool_available("glab", &["auth", "status", "--hostname", host])
-            } else {
-                tool_available("glab", &["auth", "status"])
-            };
-        let tea_installed = tool_available("tea", &["--version"]);
-        // The shared tea login probe reads local config through `logins list`.
-        let tea_authenticated =
-            tea_installed && worktrunk::git::remote_ref::gitea::has_any_login()?;
-        let az_installed = tool_available("az", &["--version"]);
-        // `az account show` exits non-zero when logged out — works whether or not
-        // the azure-devops extension is installed.
-        let az_authenticated = az_installed && tool_available("az", &["account", "show"]);
-        Ok(Self {
-            gh_installed,
-            gh_authenticated,
-            glab_installed,
-            glab_authenticated,
-            tea_installed,
-            tea_authenticated,
-            az_installed,
-            az_authenticated,
         })
     }
 }

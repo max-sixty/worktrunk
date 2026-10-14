@@ -66,6 +66,7 @@ fn setup_mock_gh_with_api_data(
 
     let mut gh = MockConfig::new("gh")
         .version("gh version 2.0.0 (mock)")
+        .command("auth token", MockResponse::exit(0))
         .command("pr list", MockResponse::output(pr_json));
 
     for (command, response) in api_responses {
@@ -994,15 +995,51 @@ fn list_line(stdout: &str, branch: &str) -> String {
 }
 
 /// A failed PR/MR list shows the error indicator whatever the CLI printed, here
-/// an authentication failure that no retry would change.
+/// an authentication failure that no retry would change — when the CLI holds a
+/// login for the host. Without one, the cell stays blank: the user isn't using
+/// that CLI here. `gh` reports a missing login with exit code 4; `glab` is asked
+/// for a token for the remote's host.
 #[rstest]
-#[case::github("gh", "pr list", "https://github.com/test-owner/test-repo.git")]
-#[case::gitlab("glab", "mr list", "https://gitlab.com/test-group/test-project.git")]
-fn test_list_full_failed_pr_list_shows_error(
+#[case::github(
+    "gh",
+    "pr list",
+    "https://github.com/test-owner/test-repo.git",
+    1,
+    ("auth token", MockResponse::exit(0)),
+    true
+)]
+#[case::github_logged_out(
+    "gh",
+    "pr list",
+    "https://github.com/test-owner/test-repo.git",
+    4,
+    ("auth token", MockResponse::exit(0)),
+    false
+)]
+#[case::gitlab(
+    "glab",
+    "mr list",
+    "https://gitlab.com/test-group/test-project.git",
+    1,
+    ("config get token", MockResponse::output("glpat-mock")),
+    true
+)]
+#[case::gitlab_logged_out(
+    "glab",
+    "mr list",
+    "https://gitlab.com/test-group/test-project.git",
+    1,
+    ("config get token", MockResponse::output("")),
+    false
+)]
+fn test_list_full_failed_pr_list(
     mut repo: TestRepo,
     #[case] tool: &str,
     #[case] list_command: &str,
     #[case] remote_url: &str,
+    #[case] list_exit_code: i32,
+    #[case] login: (&str, MockResponse),
+    #[case] shows_error: bool,
 ) {
     repo.run_git(&["remote", "set-url", "origin", remote_url]);
     repo.add_worktree("feature");
@@ -1010,12 +1047,14 @@ fn test_list_full_failed_pr_list_shows_error(
 
     let mock_bin = repo.root_path().join("mock-bin");
     std::fs::create_dir_all(&mock_bin).unwrap();
+    let (login_command, login_response) = login;
     MockConfig::new(tool)
         .version(&format!("{tool} version 2.0.0 (mock)"))
         .command(
             list_command,
-            MockResponse::stderr("HTTP 401: Bad credentials").with_exit_code(1),
+            MockResponse::stderr("HTTP 401: Bad credentials").with_exit_code(list_exit_code),
         )
+        .command(login_command, login_response)
         .command("_default", MockResponse::output("[]"))
         .write(&mock_bin);
 
@@ -1024,7 +1063,11 @@ fn test_list_full_failed_pr_list_shows_error(
     let output = cmd.output().unwrap();
     assert!(output.status.success(), "wt list should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(list_line(&stdout, "feature").contains('⚠'), "{stdout}");
+    assert_eq!(
+        list_line(&stdout, "feature").contains('⚠'),
+        shows_error,
+        "{stdout}"
+    );
 }
 
 /// The Gitea commit-status lookup is by SHA too, so an unpushed head skips it
