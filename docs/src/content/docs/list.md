@@ -22,7 +22,7 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 
 ## Full mode
 
-`--full` adds the two columns that reach off-machine: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail, over the network) and [LLM-generated summaries](#llm-summaries) of each branch's changes.
+`--full` adds the two columns that reach off-machine: [CI status](#ci-status) (forge pipeline pass/fail, over the network) and [LLM-generated summaries](#llm-summaries) of each branch's changes.
 
 ## Examples
 
@@ -119,10 +119,10 @@ The CI column shows the branch's open PR/MR — `#3035` on GitHub, Gitea, and Az
 | <span style='color:#a00'>#</span> red | `"failed"` | One or more checks failed |
 | <span style='color:#a60'>#</span> yellow | `"conflicts"` | Merge conflicts with the target branch |
 | <span style='color:#888'>#</span> gray | `"no-ci"` | No PR/MR, or no checks configured |
-| <span style='color:#a60'>⚠</span> yellow | `"error"` | CI status could not be fetched (rate limit, network, etc.) |
+| <span style='color:#a60'>⚠</span> yellow | `"error"` | CI status could not be fetched (expired login, rate limit, network, etc.) |
 | <span style='color:#a0a'>#</span> magenta | `"changes_requested"` | A reviewer requested changes |
 | <span style='color:#0aa'>#</span> cyan | `"pending"` | A review is required (e.g. branch protection) but not yet given |
-| (blank) | `pr` and `checks` absent | Branch never pushed, or no PR/MR and no branch workflow |
+| (blank) | `pr` and `checks` absent | Branch never pushed, forge CLI not logged in to the host, or no PR/MR and no branch workflow |
 
 The two remaining review states have no indicator of their own: `"draft"` only dims the cell and `"approved"` leaves the color unchanged.
 

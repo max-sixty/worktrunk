@@ -62,8 +62,8 @@ exit_code: 0
 ----- stdout -----
 {
   "name": "eval",
-  "result": "12107",
-  "template": "{{ branch | hash_port }}"
+  "template": "{{ branch | hash_port }}",
+  "result": "12107"
 }
 
 ----- stderr -----

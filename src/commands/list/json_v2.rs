@@ -126,6 +126,8 @@ pub fn schema_document() -> serde_json::Value {
         "title".to_string(),
         "wt list --format=json (schema 2)".into(),
     );
+    // Keep the published schema stable regardless of JSON map storage order.
+    value.sort_all_objects();
     value
 }
 

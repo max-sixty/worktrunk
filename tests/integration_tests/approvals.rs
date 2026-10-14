@@ -817,3 +817,35 @@ fn test_approvals_malformed_file(repo: TestRepo, #[case] args: &[&str]) {
         contents
     );
 }
+
+/// `--yes` approves without reading `approvals.toml`, so a malformed file must
+/// not abort a command run with it — the same rule `wt switch` and `wt remove`
+/// follow through their hook plans. The file stays untouched.
+#[rstest]
+#[case::hook(&["hook", "pre-merge", "--yes"])]
+#[case::alias(&["--yes", "mark"])]
+fn test_yes_ignores_malformed_approvals_file(repo: TestRepo, #[case] args: &[&str]) {
+    let contents = "[projects\n";
+    fs::write(repo.test_approvals_path(), contents).unwrap();
+    repo.write_project_config(
+        r#"pre-merge = "echo ran > marker.txt"
+
+[aliases]
+mark = "echo ran > marker.txt"
+"#,
+    );
+    repo.commit("Add project commands");
+
+    let output = repo.wt_command().args(args).output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt {} failed: {}",
+        args.join(" "),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(repo.root_path().join("marker.txt").exists());
+    assert_eq!(
+        fs::read_to_string(repo.test_approvals_path()).unwrap(),
+        contents
+    );
+}

@@ -66,6 +66,7 @@ fn setup_mock_gh_with_api_data(
 
     let mut gh = MockConfig::new("gh")
         .version("gh version 2.0.0 (mock)")
+        .command("auth token", MockResponse::exit(0))
         .command("pr list", MockResponse::output(pr_json));
 
     for (command, response) in api_responses {
@@ -960,6 +961,132 @@ fn test_list_full_with_branch_fallback_using_fork_pushremote(mut repo: TestRepo)
     );
 }
 
+/// A branch whose head is on no remote gets no lookup by commit SHA: the
+/// forge has no such commit and answers with an error, which would otherwise
+/// show the error indicator on ordinary unpushed work. A pushed branch against
+/// the same failing lookup is the control.
+#[rstest]
+fn test_list_full_skips_commit_checks_for_unpushed_head(mut repo: TestRepo) {
+    setup_github_repo_with_feature(&mut repo);
+    // feature-a is one commit ahead of every remote-tracking ref.
+    repo.run_git(&["update-ref", "refs/remotes/origin/feature-a", "feature-a~1"]);
+
+    // No PRs, and every `gh api` check-runs lookup fails.
+    let mock_bin = setup_mock_gh_with_api_data(&repo, "[]", &[]);
+
+    let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+    configure_mock_ci_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!list_line(&stdout, "feature-a").contains('⚠'), "{stdout}");
+    assert!(list_line(&stdout, "feature-b").contains('⚠'), "{stdout}");
+}
+
+/// The `wt list --full` line for `branch`, ANSI-stripped.
+fn list_line(stdout: &str, branch: &str) -> String {
+    stdout
+        .ansi_strip()
+        .lines()
+        .find(|line| line.contains(&format!(" {branch} ")))
+        .unwrap_or_else(|| panic!("expected a {branch} line\nstdout:\n{stdout}"))
+        .to_string()
+}
+
+/// A failed PR/MR list shows the error indicator whatever the CLI printed, here
+/// an authentication failure that no retry would change — when the CLI holds a
+/// login for the host. Without one, the cell stays blank: the user isn't using
+/// that CLI here. `gh` reports a missing login with exit code 4; `glab` is asked
+/// for a token for the remote's host.
+#[rstest]
+#[case::github(
+    "gh",
+    "pr list",
+    "https://github.com/test-owner/test-repo.git",
+    1,
+    ("auth token", MockResponse::exit(0)),
+    true
+)]
+#[case::github_logged_out(
+    "gh",
+    "pr list",
+    "https://github.com/test-owner/test-repo.git",
+    4,
+    ("auth token", MockResponse::exit(0)),
+    false
+)]
+#[case::gitlab(
+    "glab",
+    "mr list",
+    "https://gitlab.com/test-group/test-project.git",
+    1,
+    ("config get token", MockResponse::output("glpat-mock")),
+    true
+)]
+#[case::gitlab_logged_out(
+    "glab",
+    "mr list",
+    "https://gitlab.com/test-group/test-project.git",
+    1,
+    ("config get token", MockResponse::output("")),
+    false
+)]
+fn test_list_full_failed_pr_list(
+    mut repo: TestRepo,
+    #[case] tool: &str,
+    #[case] list_command: &str,
+    #[case] remote_url: &str,
+    #[case] list_exit_code: i32,
+    #[case] login: (&str, MockResponse),
+    #[case] shows_error: bool,
+) {
+    repo.run_git(&["remote", "set-url", "origin", remote_url]);
+    repo.add_worktree("feature");
+    setup_tracking_for_all_branches(&repo, "origin");
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    std::fs::create_dir_all(&mock_bin).unwrap();
+    let (login_command, login_response) = login;
+    MockConfig::new(tool)
+        .version(&format!("{tool} version 2.0.0 (mock)"))
+        .command(
+            list_command,
+            MockResponse::stderr("HTTP 401: Bad credentials").with_exit_code(list_exit_code),
+        )
+        .command(login_command, login_response)
+        .command("_default", MockResponse::output("[]"))
+        .write(&mock_bin);
+
+    let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+    configure_mock_ci_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        list_line(&stdout, "feature").contains('⚠'),
+        shows_error,
+        "{stdout}"
+    );
+}
+
+/// The Gitea commit-status lookup is by SHA too, so an unpushed head skips it
+/// (the pushed `test_list_full_with_gitea_commit_status_tea_failure` is the
+/// control: the same failing lookup shows the error indicator).
+#[rstest]
+fn test_list_full_gitea_skips_commit_status_for_unpushed_head(mut repo: TestRepo) {
+    let head_sha = setup_gitea_repo_with_feature(&mut repo);
+    repo.run_git(&["update-ref", "refs/remotes/origin/feature", "feature~1"]);
+    repo.setup_mock_tea_commit_status_error(&head_sha, "Error: connection refused");
+
+    let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+    repo.configure_mock_commands(&mut cmd);
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!list_line(&stdout, "feature").contains('⚠'), "{stdout}");
+}
+
 // =============================================================================
 // GitLab error path tests
 // =============================================================================
@@ -994,8 +1121,8 @@ fn test_list_full_with_gitlab_mr_view_failure(mut repo: TestRepo) {
 
 /// Test that rate limit errors in `glab ci list` show error status (not NoCI).
 ///
-/// This exercises the `is_retriable_error` check in `detect_gitlab_pipeline`,
-/// which is the fallback path when no MR exists for a branch.
+/// This exercises the failure branch in `detect_gitlab_pipeline`, which is
+/// the fallback path when no MR exists for a branch.
 #[rstest]
 fn test_list_full_with_gitlab_ci_rate_limit(mut repo: TestRepo) {
     setup_gitlab_repo_with_feature(&mut repo);
@@ -1249,11 +1376,10 @@ fn test_list_full_with_azure_no_ci(mut repo: TestRepo) {
     run_azure_ci_status_test(&mut repo, "azure_no_ci", "[]", "[]");
 }
 
-/// A retriable error from `az repos pr list` (e.g., HTTP 429) surfaces as an
-/// error indicator rather than NoCI (exercises the `is_retriable_error` branch
-/// in `detect_azure_pr`).
+/// A failed `az repos pr list` (e.g., HTTP 429) surfaces as an error indicator
+/// rather than NoCI (exercises the failure branch in `detect_azure_pr`).
 #[rstest]
-fn test_list_full_with_azure_pr_list_retriable_error(mut repo: TestRepo) {
+fn test_list_full_with_azure_pr_list_error(mut repo: TestRepo) {
     setup_azure_repo_with_feature(&mut repo);
     repo.setup_mock_az_with_detection_errors(
         Some("ERROR: HTTP error 429: Too Many Requests"),
@@ -1264,15 +1390,15 @@ fn test_list_full_with_azure_pr_list_retriable_error(mut repo: TestRepo) {
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
         repo.configure_mock_commands(&mut cmd);
-        assert_cmd_snapshot!("azure_pr_list_retriable_error", cmd);
+        assert_cmd_snapshot!("azure_pr_list_error", cmd);
     });
 }
 
-/// A retriable error from `az pipelines runs list` surfaces as an error
-/// indicator (exercises the `is_retriable_error` branch in
-/// `detect_azure_pipeline`, reached when no PR exists for the branch).
+/// A failed `az pipelines runs list` surfaces as an error indicator (exercises
+/// the failure branch in `detect_azure_pipeline`, reached when no PR exists
+/// for the branch).
 #[rstest]
-fn test_list_full_with_azure_pipeline_retriable_error(mut repo: TestRepo) {
+fn test_list_full_with_azure_pipeline_error(mut repo: TestRepo) {
     setup_azure_repo_with_feature(&mut repo);
     repo.setup_mock_az_with_detection_errors(
         None,
@@ -1283,7 +1409,7 @@ fn test_list_full_with_azure_pipeline_retriable_error(mut repo: TestRepo) {
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
         repo.configure_mock_commands(&mut cmd);
-        assert_cmd_snapshot!("azure_pipeline_retriable_error", cmd);
+        assert_cmd_snapshot!("azure_pipeline_error", cmd);
     });
 }
 
@@ -1334,9 +1460,7 @@ fn run_gitea_ci_status_test(
 
 /// Gitea's `APIError` body, which the API returns in place of the resource
 /// whenever a request fails — and which `tea api` copies to stdout with exit 0,
-/// since it never reads the HTTP status. The message is a 500's wrapped
-/// internal error (Gitea passes it through for an admin token), so
-/// `is_retriable_error` recognizes the cause.
+/// since it never reads the HTTP status.
 const GITEA_API_ERROR_BODY: &str = r#"{
     "message": "pq: dial tcp 10.0.0.5:5432: connect: connection refused",
     "url": "https://gitea.example.com/api/swagger"
@@ -1407,8 +1531,7 @@ fn test_list_full_with_gitea_no_ci(mut repo: TestRepo) {
     );
 }
 
-/// A Gitea 500 whose `APIError` body names a retriable cause surfaces as an
-/// error indicator rather than NoCI. `tea api` exits 0 here — it copies the
+/// A Gitea 500 surfaces as an error indicator rather than NoCI. `tea api` exits 0 here — it copies the
 /// response body through whatever the status — so the status line `--include`
 /// puts on stderr is what separates this from a PR list.
 #[rstest]
@@ -1439,26 +1562,8 @@ fn test_list_full_with_gitea_commit_status_error_body(mut repo: TestRepo) {
     );
 }
 
-/// A 500 the message of which Gitea blanked still reaches the cell as an error.
-/// The status is the whole basis: the body says nothing, so the text sniff that
-/// used to decide had nothing to match and painted the same blank cell as a
-/// healthy branch with no CI.
-#[rstest]
-fn test_list_full_with_gitea_blanked_500(mut repo: TestRepo) {
-    let head_sha = setup_gitea_repo_with_feature(&mut repo);
-    run_gitea_ci_status_test(
-        &mut repo,
-        "gitea_blanked_500",
-        &head_sha,
-        ("500 Internal Server Error", GITEA_BLANK_ERROR_BODY),
-        ("200 OK", r#"{"state":"","total_count":0}"#),
-    );
-}
-
-/// A 404 is the other half of that: also an error, also carrying no useful
-/// text, but nothing a later `wt list` would answer differently — so the cell
-/// stays blank rather than showing an indicator that never clears. Pairs with
-/// the 500 above; between them the status is doing the deciding, not the body.
+/// A 4xx is a failure like a 5xx: whatever the status, a failed call shows the
+/// error indicator rather than a blank cell.
 #[rstest]
 fn test_list_full_with_gitea_not_found(mut repo: TestRepo) {
     let head_sha = setup_gitea_repo_with_feature(&mut repo);
@@ -1506,7 +1611,7 @@ fn gitea_ci_status_stderr(repo: &mut TestRepo, head_sha: &str, pulls: (&str, &st
 /// now read by what accompanied them. A 500 whose message Gitea blanked says
 /// nothing about being an error, and a proxy's HTML page isn't Gitea's shape at
 /// all; both reach the PR list as errors on the strength of the status line
-/// alone, and the CI cell stays blank because neither carries retriable text.
+/// alone, before any body is parsed.
 /// The 200 case is the control: it pins where the warning does belong, and
 /// keeps the others from passing merely because nothing logs at all.
 ///
@@ -1535,11 +1640,10 @@ fn test_list_full_gitea_parse_warning_is_reserved_for_unknown_bodies(
 }
 
 /// `tea` itself failing on `tea api .../pulls` surfaces as an error indicator
-/// rather than NoCI (exercises the `is_retriable_error` branch in
-/// `detect_gitea_pr`). A transport failure is the case that does exit non-zero,
+/// rather than NoCI (exercises the failure branch in `detect_gitea_pr`). A transport failure is the case that does exit non-zero,
 /// and `tea` names it on stderr.
 #[rstest]
-fn test_list_full_with_gitea_retriable_error(mut repo: TestRepo) {
+fn test_list_full_with_gitea_tea_failure(mut repo: TestRepo) {
     setup_gitea_repo_with_feature(&mut repo);
     repo.setup_mock_tea_with_detection_error(
         r#"Error: Get "https://gitea.example.com/api/v1/repos/owner/test-repo/pulls": dial tcp 10.0.0.5:443: connect: connection refused"#,
@@ -1549,15 +1653,15 @@ fn test_list_full_with_gitea_retriable_error(mut repo: TestRepo) {
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
         repo.configure_mock_commands(&mut cmd);
-        assert_cmd_snapshot!("gitea_retriable_error", cmd);
+        assert_cmd_snapshot!("gitea_tea_failure", cmd);
     });
 }
 
-/// A retriable error from the commit-status lookup (when no PR exists for the
-/// branch) surfaces as an error indicator (exercises the `is_retriable_error`
-/// branch in `fetch_combined_status`, reached via `detect_gitea_commit_status`).
+/// A failed commit-status lookup (when no PR exists for the branch) surfaces
+/// as an error indicator (exercises the failure branch in
+/// `fetch_combined_status`, reached via `detect_gitea_commit_status`).
 #[rstest]
-fn test_list_full_with_gitea_commit_status_retriable_error(mut repo: TestRepo) {
+fn test_list_full_with_gitea_commit_status_tea_failure(mut repo: TestRepo) {
     let head_sha = setup_gitea_repo_with_feature(&mut repo);
     repo.setup_mock_tea_commit_status_error(
         &head_sha,
@@ -1568,7 +1672,7 @@ fn test_list_full_with_gitea_commit_status_retriable_error(mut repo: TestRepo) {
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
         repo.configure_mock_commands(&mut cmd);
-        assert_cmd_snapshot!("gitea_commit_status_retriable_error", cmd);
+        assert_cmd_snapshot!("gitea_commit_status_tea_failure", cmd);
     });
 }
 

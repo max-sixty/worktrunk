@@ -1115,6 +1115,46 @@ pager = 'echo PROJECT-PAGER; cat'
     );
 }
 
+/// `[switch.picker] preview = false` opens the picker list-only, and `alt-p`
+/// still reveals the preview (its controls line is part of the preview content).
+#[rstest]
+fn test_switch_picker_preview_hidden_by_config(repo: TestRepo) {
+    repo.write_test_config(
+        r#"[switch.picker]
+preview = false
+"#,
+    );
+
+    let env_vars = repo.test_env_vars();
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+    );
+
+    let hidden = screen_text(&parser);
+    send_input_awaiting_content(&writer, &rx, &mut parser, "\x1bp", Some("Enter: switch"));
+    let shown = screen_text(&parser);
+    let exit_code = abort_and_exit_code(child, writer, rx);
+    assert_valid_abort_exit_code(exit_code);
+
+    assert!(
+        !hidden.contains("Enter: switch"),
+        "the preview should start hidden:\n{hidden}"
+    );
+    assert!(
+        shown.contains("Enter: switch"),
+        "alt-p should reveal the preview:\n{shown}"
+    );
+}
+
 /// The completed diff proves pager selection has finished before checking that
 /// an interactive fallback was not launched. All cases run from outside -C.
 #[cfg(unix)]
