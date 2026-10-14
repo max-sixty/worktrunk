@@ -373,8 +373,8 @@ impl tracing::field::Visit for JsonFieldVisitor {
 /// `ts`/`tid` from the runtime *only if the event did not carry them* (a
 /// `[wt-trace]` record sets its own, captured at the precise event moment; a
 /// bridged `log::*` line carries neither, so it gets the emission-time values),
-/// and stamps the metadata `level`. Field order is serde_json's default
-/// (sorted) -- irrelevant to a machine reader.
+/// and stamps the metadata `level`. Fields retain insertion order, which is
+/// irrelevant to a machine reader.
 fn event_json(event: &Event<'_>) -> String {
     let mut visitor = JsonFieldVisitor::default();
     event.record(&mut visitor);
@@ -966,7 +966,7 @@ mod tests {
     /// `event_json` serializes whatever typed fields an event carries, then
     /// stamps `level` and fills `ts`/`tid` only when the event omitted them.
     /// Drives real events through a capture layer (the only way to obtain a
-    /// `tracing::Event`). Keys land in serde_json's sorted order.
+    /// `tracing::Event`). Keys retain insertion order.
     #[test]
     fn event_json_serializes_structured_and_freeform_events() {
         use std::sync::{Arc, Mutex};
@@ -1015,10 +1015,20 @@ mod tests {
         });
         let lines = lines.lock().unwrap();
 
-        // Structured record: rich, keys sorted, `level` stamped, ts/tid kept.
+        // Structured record: rich, `level` stamped, ts/tid kept.
         assert_eq!(
-            lines[0],
-            r#"{"cmd":"git status","context":"worktree","dur_us":12300,"kind":"cmd_completed","level":"debug","ok":true,"seq":1,"tid":3,"ts":100}"#
+            serde_json::from_str::<serde_json::Value>(&lines[0]).expect("valid JSON"),
+            serde_json::json!({
+                "cmd": "git status",
+                "context": "worktree",
+                "dur_us": 12300,
+                "kind": "cmd_completed",
+                "level": "debug",
+                "ok": true,
+                "seq": 1,
+                "tid": 3,
+                "ts": 100,
+            })
         );
 
         // Embedded quote round-trips losslessly.

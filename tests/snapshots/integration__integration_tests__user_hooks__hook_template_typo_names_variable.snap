@@ -1,10 +1,11 @@
 ---
-source: tests/integration_tests/ci_status.rs
+source: tests/integration_tests/user_hooks.rs
 info:
   program: wt
   args:
-    - list
-    - "--full"
+    - hook
+    - pre-merge
+    - "--yes"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
@@ -54,16 +55,12 @@ info:
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 1
 ----- stdout -----
-  [1mBranch[0m     [1mStatus[0m      [1mHEAD±[0m     [1mmain↕[0m    [1mmain…±[0m    [1mRemote⇅[0m  [1mCI[0m     [1mPath[0m               [1mCommit[0m    [1mAge[0m  [1mMessage[0m
-@ main           [2m^[22m[2m|[22m                                      [2m|[0m     [33m⚠[0m      .                  [2m05a4a45[0m   [2m16h[0m  [2mInitial commit[0m
-+ feature-a      [2m↑[22m[2m|[22m                [32m↑1[0m        [32m+1[0m          [2m|[0m     [33m⚠[0m      ../repo.feature-a  [2m1b87d47[0m   [2m16h[0m  [2mAdd feature-a file[0m
-+ feature-b      [2m↑[22m[2m|[22m                [32m↑1[0m        [32m+1[0m          [2m|[0m     [33m⚠[0m      ../repo.feature-b  [2mf62940f[0m   [2m16h[0m  [2mAdd feature-b file[0m
-+ feature-c      [2m↑[22m[2m|[22m                [32m↑1[0m        [32m+1[0m          [2m|[0m     [33m⚠[0m      ../repo.feature-c  [2m345c7c9[0m   [2m16h[0m  [2mAdd feature-c file[0m
-+ feature        [2m↑[22m[2m|[22m                [32m↑1[0m        [32m+1[0m          [2m|[0m     [33m⚠[0m      ../repo.feature    [2m9c1e078[0m    [2m1d[0m  [2mfeat: gitea feature[0m
 
 ----- stderr -----
-
-[2m○[22m [2mShowing 5 worktrees, 4 ahead[0m
+[31m✗[39m [31mFailed to expand pre-merge user hook: undefined variable brnch @ line 1[39m
+[107m [0m echo {{ brnch }}
+[2m↳[22m [2mDid you mean [4mbranch[24m?[22m
+[2m↳[22m [2mAvailable variables: [4margs[24m, [4mbranch[24m, [4mcommit[24m, [4mcwd[24m, [4mdefault_branch[24m, [4mhook_type[24m, [4mprimary_worktree_path[24m, [4mremote[24m, [4mremote_url[24m, [4mrepo[24m, [4mrepo_path[24m, [4mshort_commit[24m, [4mtarget[24m, [4mtarget_worktree_path[24m, [4mupstream[24m, [4mworktree_name[24m, [4mworktree_path[24m[22m

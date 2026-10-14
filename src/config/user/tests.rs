@@ -1119,11 +1119,14 @@ fn test_switch_picker_config_accessor_methods() {
 
     let config = SwitchPickerConfig::default();
     assert!(config.pager().is_none());
+    assert!(config.preview());
 
     let config = SwitchPickerConfig {
         pager: Some("delta --paging=never".to_string()),
+        preview: Some(false),
     };
     assert_eq!(config.pager(), Some("delta --paging=never"));
+    assert!(!config.preview());
 }
 
 #[test]
@@ -1131,10 +1134,12 @@ fn test_switch_picker_config_parse_toml() {
     let content = r#"
 [switch.picker]
 pager = "delta --paging=never"
+preview = false
 "#;
     let config: UserConfig = toml::from_str(content).unwrap();
     let picker = config.switch.picker.as_ref().unwrap();
     assert_eq!(picker.pager.as_deref(), Some("delta --paging=never"));
+    assert_eq!(picker.preview, Some(false));
 }
 
 #[test]
@@ -1143,13 +1148,16 @@ fn test_switch_picker_merge() {
 
     let base = SwitchPickerConfig {
         pager: Some("delta".to_string()),
+        preview: Some(false),
     };
     let override_config = SwitchPickerConfig {
         pager: None, // Fall back to base
+        preview: Some(true),
     };
 
     let merged = base.merge_with(&override_config);
     assert_eq!(merged.pager.as_deref(), Some("delta"));
+    assert_eq!(merged.preview, Some(true));
 }
 
 #[test]
@@ -1160,11 +1168,15 @@ fn test_switch_config_merge() {
     let base = SwitchConfig {
         picker: Some(SwitchPickerConfig {
             pager: Some("delta".to_string()),
+            ..Default::default()
         }),
         ..Default::default()
     };
     let other = SwitchConfig {
-        picker: Some(SwitchPickerConfig { pager: None }),
+        picker: Some(SwitchPickerConfig {
+            pager: None,
+            ..Default::default()
+        }),
         ..Default::default()
     };
     let merged = base.merge_with(&other);
@@ -1320,6 +1332,7 @@ fn test_switch_picker_project_override() {
         switch: SwitchConfig {
             picker: Some(SwitchPickerConfig {
                 pager: Some("delta".to_string()),
+                ..Default::default()
             }),
             ..Default::default()
         },
@@ -1332,6 +1345,7 @@ fn test_switch_picker_project_override() {
             switch: SwitchConfig {
                 picker: Some(SwitchPickerConfig {
                     pager: Some("bat".to_string()),
+                    ..Default::default()
                 }),
                 ..Default::default()
             },
@@ -1394,6 +1408,7 @@ fn test_resolved_config_for_project() {
         switch: SwitchConfig {
             picker: Some(SwitchPickerConfig {
                 pager: Some("less".to_string()),
+                ..Default::default()
             }),
             ..Default::default()
         },

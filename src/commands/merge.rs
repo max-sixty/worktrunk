@@ -143,9 +143,9 @@ fn approve_merge_plan(
     let project_config = repo.load_project_config()?;
     let mut builder = HookPlanBuilder::new(project_config.as_ref(), config, pid);
     builder.add(feature_root, &feature_hooks);
-    // `post-merge` runs in the destination, and `post-switch` lands the user
-    // there (the feature worktree is removed) — both still selected from the
-    // source worktree's config.
+    // `post-merge` runs in the destination. `post-switch` runs there too when
+    // removing the source moves the invoking shell (the source is the current
+    // worktree). Both are still selected from the source worktree's config.
     builder.add(destination_path, &[HookType::PostMerge]);
     if will_switch {
         builder.add(destination_path, &[HookType::PostSwitch]);

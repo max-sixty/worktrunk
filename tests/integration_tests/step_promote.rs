@@ -317,6 +317,12 @@ fn test_promote_bare_repo_with_worktrees() {
         ],
     );
 
+    // The push below starts a detached `git maintenance run --auto` in the
+    // bare repo, whose worktree-prune task can delete `worktrees/<name>` while
+    // `git worktree add` is still creating it. receive-pack drops the
+    // `GIT_CONFIG_*` env, so only the repo's own config can turn it off.
+    run_git(&bare_repo, &["config", "maintenance.auto", "false"]);
+
     // Create a commit via a temporary clone
     run_git(
         temp_dir.path(),

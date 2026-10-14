@@ -23,6 +23,7 @@ mod error;
 mod expansion;
 mod hooks;
 mod project;
+mod template_analysis;
 #[cfg(test)]
 mod test;
 mod unknown_tree;

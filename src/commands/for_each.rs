@@ -7,10 +7,10 @@
 //!
 //! # Design Notes
 //!
-//! The `step` subcommand grouping is not fully satisfying. Current state:
-//!
-//! - `commit`, `squash`, `rebase`, `push` — merge workflow steps (single-worktree)
-//! - `for-each` — utility to run commands across all worktrees (multi-worktree)
+//! The `step` subcommand grouping is not fully satisfying. It holds the merge
+//! workflow's single-worktree steps (`commit`, `squash`, `rebase`, `push`)
+//! alongside unrelated utilities, including `for-each`, the one that runs a
+//! command across all worktrees.
 //!
 //! These don't naturally belong together. Options considered:
 //!

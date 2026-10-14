@@ -1829,7 +1829,14 @@ pub fn handle_picker(
         state
             .initial_layout
             .dimensions_for(term_width, term_height, num_items_estimate);
-    let preview_window_spec = state.initial_layout.spec_for(preview_dims);
+    let mut preview_window_spec = state.initial_layout.spec_for(preview_dims);
+    // `[switch.picker] preview = false` opens list-only. skim's `hidden`
+    // modifier is the same flag `alt-p:toggle-preview` flips, so the toggle
+    // reveals the pane at the size computed above. Background pre-rendering
+    // still runs, so the first reveal is as warm as an always-shown preview.
+    if !config.switch_picker.preview() {
+        preview_window_spec.push_str(":hidden");
+    }
 
     // When summary generation is unavailable, prime the Summary cache with
     // config guidance instead of showing a perpetual "Generating…" placeholder.

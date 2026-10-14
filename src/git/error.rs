@@ -23,6 +23,7 @@
 
 use crate::config::HookSource;
 use std::borrow::Cow;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use color_print::cformat;
@@ -213,7 +214,7 @@ impl CommandError {
     /// Build from the captured `Output` of a non-zero exit.
     pub fn from_failed_output(
         program: impl Into<String>,
-        args: &[impl AsRef<str>],
+        args: &[impl AsRef<OsStr>],
         output: &std::process::Output,
     ) -> Self {
         let stderr = String::from_utf8_lossy(&output.stderr).replace('\r', "\n");
@@ -224,7 +225,10 @@ impl CommandError {
         let signal = None;
         Self {
             program: program.into(),
-            args: args.iter().map(|s| s.as_ref().to_string()).collect(),
+            args: args
+                .iter()
+                .map(|s| s.as_ref().to_string_lossy().into_owned())
+                .collect(),
             stderr,
             stdout,
             exit_code: output.status.code(),
@@ -2636,6 +2640,19 @@ mod tests {
         };
         assert_snapshot!(err.render(), @"[31m✗[39m [31m[1mpre-merge user:lint[22m failed (exit code 1)[39m");
 
+        // Silent errors produce empty output
+        assert_eq!(format!("{}", WorktrunkError::CommandNotApproved), "");
+        assert_eq!(
+            format!("{}", WorktrunkError::AlreadyDisplayed { exit_code: 1 }),
+            ""
+        );
+    }
+
+    // An unnamed hook failure renders its template through `format_bash_with_gutter`,
+    // whose output is highlighted only with the feature on.
+    #[cfg(feature = "syntax-highlighting")]
+    #[test]
+    fn snapshot_unnamed_hook_failure_shows_template() {
         let err = WorktrunkError::HookCommandFailed {
             hook_type: HookType::PreCreate,
             source: HookSource::User,
@@ -2649,13 +2666,6 @@ mod tests {
           echo test
           setup failed
         ");
-
-        // Silent errors produce empty output
-        assert_eq!(format!("{}", WorktrunkError::CommandNotApproved), "");
-        assert_eq!(
-            format!("{}", WorktrunkError::AlreadyDisplayed { exit_code: 1 }),
-            ""
-        );
     }
 
     #[test]

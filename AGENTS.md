@@ -94,9 +94,13 @@ codecov/patch is a merge gate even if GitHub marks it optional. Fix real gaps; d
 
 ### Use Existing Dependencies
 
-Check Cargo.toml and installed APIs before writing a utility. Prefer path_slash for path normalization, shell_escape for shell quoting, color_print for ANSI styling, and MiniJinja's undeclared_variables for template variables. Let dependencies own their own rules.
+Check Cargo.toml and installed APIs before writing a utility. Prefer path_slash for path normalization, shell_escape for shell quoting, color_print for ANSI styling, and MiniJinja's undeclared_variables for template variables.
 
 Name pure accessors as bare nouns, erroring preconditions require_*, network calls fetch_*, and file loads load_*; avoid get_*.
+
+### Other Tools Own Their Conventions
+
+Where another tool owns a convention, such as its config location, file format, URL syntax, or error reporting, ask that tool or a library that implements its rules instead of encoding them in Worktrunk: `nu` reports its own directories, and `gh auth token --hostname` reports whether a host is authenticated. Worktrunk's role is the standard uses of those conventions. Where neither the tool nor a library answers, support the standard case and remove rather than refine: an input that only misbehaves outside standard use is a reason to stop reading it, and a tool that isn't installed has nothing to integrate with, so needs no fallback table.
 
 ### System Docstrings
 

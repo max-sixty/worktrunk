@@ -21,7 +21,7 @@ use std::process::Command;
 /// The pin lives here rather than in `STATIC_TEST_ENV_VARS`, which would reach
 /// every child and add a line to the `env:` block of all 996 snapshots that
 /// record one, to make deterministic the ~12 that show this summary.
-/// `copy_ignored_reports_a_full_copy` pins the opposite branch.
+/// `copy_ignored_reports_an_ordinary_copy` pins the opposite branch.
 fn pin_reflink(mut cmd: Command, reflinked: bool) -> Command {
     cmd.env("WORKTRUNK_TEST_REFLINK", if reflinked { "1" } else { "0" });
     cmd
@@ -124,13 +124,13 @@ fn test_copy_ignored_no_worktreeinclude(mut repo: TestRepo) {
     ));
 }
 
-/// What an ext4 or NTFS user sees: no reflink, so every byte is written out and
-/// the summary says so instead of repeating the line it would print on APFS.
+/// An ordinary-copy API does not expose internal filesystem acceleration, so
+/// the summary reports its counts without asserting a physical disk cost.
 ///
 /// Every other snapshot in this file pins the reflinked branch, so the two
 /// together cover both wordings on all three CI platforms.
 #[rstest]
-fn test_copy_ignored_reports_a_full_copy(mut repo: TestRepo) {
+fn test_copy_ignored_reports_an_ordinary_copy(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
     fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
     fs::write(repo.root_path().join(".gitignore"), ".env\n").unwrap();
@@ -1339,8 +1339,7 @@ fn test_copy_ignored_error_includes_path_file(mut repo: TestRepo) {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("creating copy staging directory for")
-            && stderr.contains("repo.feature/.env"),
+        stderr.contains("preparing copy @") && stderr.contains("repo.feature/.env"),
         "Error should identify the failing destination directory, got: {stderr}"
     );
     assert_eq!(

@@ -516,14 +516,14 @@ Without `.worktreeinclude`, the command is a no-op (it reports that nothing was 
 
 ### Copy-on-write
 
-Files are reflinked where the filesystem supports it: APFS (macOS), btrfs and XFS (Linux), ReFS (Windows). A reflinked copy shares the source's disk blocks until one side writes. For a 14GB `target/` directory:
+Files use reflinks when supported by the filesystem and operating system. A reflinked copy shares the source's disk blocks until one side writes. For a 14GB `target/` directory:
 
 | Command | Time | Disk |
 |---------|------|------|
 | `cp -R` (full copy) | 2m | 14GB |
 | `cp -Rc` / `wt step copy-ignored` | 20s | ~0 |
 
-On ext4 and NTFS, which have no reflink, every file is copied in full; the summary says `(reflinked, no extra disk)` or `(full copy)`.
+The summary identifies confirmed reflinks as `(reflinked, no extra disk)`.
 
 Reflinks are per file (like `cp -Rc`), so copy time scales with file count.
 
