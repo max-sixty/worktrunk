@@ -3635,6 +3635,20 @@ fn is_leap_year(year: i64) -> bool {
 mod tests {
     use super::*;
 
+    /// A permission fixture may be skipped only when creation is permitted;
+    /// a malformed fixture must fail rather than masquerading as elevated privileges.
+    #[cfg(unix)]
+    #[test]
+    fn test_permission_probe_distinguishes_writes_from_fixture_errors() {
+        let dir = test_tempdir();
+        assert!(!permissions_restrict_writes(dir.path()));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+        let missing = dir.path().join("missing directory");
+        let failure = std::panic::catch_unwind(|| permissions_restrict_writes(&missing));
+        assert!(failure.is_err());
+        assert!(!missing.exists());
+    }
+
     /// A harness-built `git` reaches local paths and nothing else, so no test
     /// can make an unbounded connect to whatever host a fixture URL names
     /// (see [`GIT_ALLOWED_PROTOCOLS`]).

@@ -847,63 +847,86 @@ mod tests {
         assert_eq!(fs::read_dir(out.path()).unwrap().count(), 1);
     }
 
-    /// Unsupported exclusive publication retains no-clobber semantics, copied
-    /// content/time, and leaves forced publication errors as failures.
+    /// Unsupported exclusive publication preserves a file's content/time and
+    /// a dangling symlink's relative target, refuses competing destinations,
+    /// and leaves forced publication errors as failures.
     #[test]
     fn test_unsupported_publication_creates_exclusively() {
         let dir = crate::testing::test_tempdir();
         let dest = dir.path().join("destination");
         let stamp = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_735_776_000);
-        for (force, occupied) in [(false, false), (false, true), (true, false)] {
-            let temp = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
-            fs::write(temp.path(), b"prepared bytes").unwrap();
-            set_modified(temp.path(), stamp);
-            let prepared_path = temp.path().to_path_buf();
-            if occupied {
-                fs::write(&dest, b"racing bytes").unwrap();
-            }
-            #[cfg(unix)]
-            let unsupported = io::Error::from(rustix::io::Errno::NOTSUP);
-            #[cfg(not(unix))]
-            let unsupported = io::Error::from(ErrorKind::Unsupported);
-            let unsupported_kind = unsupported.kind();
-            let result = finish_publication(
-                Err(tempfile::PathPersistError {
-                    error: unsupported,
-                    path: temp.into_temp_path(),
-                }),
-                &dest,
-                force,
-            );
-            match result {
-                Ok(PublishedLeaf::Created { path, data }) => {
-                    assert!(!force && !occupied);
-                    assert_ne!(data, DataCopy::Neither);
-                    assert_eq!(fs::read(&dest).unwrap(), b"prepared bytes");
-                    assert_eq!(fs::metadata(&dest).unwrap().modified().unwrap(), stamp);
-                    remove_owned_path(path).unwrap();
-                    fs::remove_file(&dest).unwrap();
+        #[cfg(unix)]
+        let source_types = [false, true];
+        #[cfg(not(unix))]
+        let source_types = [false];
+        for source_link in source_types {
+            for (force, occupied) in [(false, false), (false, true), (true, false)] {
+                let temp = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
+                let temp = if source_link {
+                    let path = temp.into_temp_path();
+                    fs::remove_file(&path).unwrap();
+                    create_symlink(Path::new("missing relative target"), &path, &path).unwrap();
+                    path
+                } else {
+                    fs::write(temp.path(), b"prepared bytes").unwrap();
+                    set_modified(temp.path(), stamp);
+                    temp.into_temp_path()
+                };
+                let prepared_path = temp.to_path_buf();
+                if occupied {
+                    fs::write(&dest, b"racing bytes").unwrap();
                 }
-                Err(error) => {
-                    assert_eq!(
-                        error.error.kind(),
-                        if force {
-                            unsupported_kind
+                #[cfg(unix)]
+                let unsupported = io::Error::from(rustix::io::Errno::NOTSUP);
+                #[cfg(not(unix))]
+                let unsupported = io::Error::from(ErrorKind::Unsupported);
+                let unsupported_kind = unsupported.kind();
+                let result = finish_publication(
+                    Err(tempfile::PathPersistError {
+                        error: unsupported,
+                        path: temp,
+                    }),
+                    &dest,
+                    force,
+                );
+                match result {
+                    Ok(PublishedLeaf::Created { path, data }) => {
+                        assert!(!force && !occupied);
+                        if source_link {
+                            assert_eq!(data, DataCopy::Neither);
+                            assert_eq!(
+                                fs::read_link(&dest).unwrap(),
+                                Path::new("missing relative target")
+                            );
                         } else {
-                            ErrorKind::AlreadyExists
+                            assert_ne!(data, DataCopy::Neither);
+                            assert_eq!(fs::read(&dest).unwrap(), b"prepared bytes");
+                            assert_eq!(fs::metadata(&dest).unwrap().modified().unwrap(), stamp);
                         }
-                    );
-                    remove_owned_path(error.path).unwrap();
-                    if occupied {
-                        assert_eq!(fs::read(&dest).unwrap(), b"racing bytes");
+                        remove_owned_path(path).unwrap();
                         fs::remove_file(&dest).unwrap();
-                    } else {
-                        assert!(!dest.exists());
                     }
+                    Err(error) => {
+                        assert_eq!(
+                            error.error.kind(),
+                            if force {
+                                unsupported_kind
+                            } else {
+                                ErrorKind::AlreadyExists
+                            }
+                        );
+                        remove_owned_path(error.path).unwrap();
+                        if occupied {
+                            assert_eq!(fs::read(&dest).unwrap(), b"racing bytes");
+                            fs::remove_file(&dest).unwrap();
+                        } else {
+                            assert!(!dest.exists());
+                        }
+                    }
+                    Ok(PublishedLeaf::Renamed) => panic!("unsupported rename succeeded"),
                 }
-                Ok(PublishedLeaf::Renamed) => panic!("unsupported rename succeeded"),
+                assert!(prepared_path.symlink_metadata().is_err());
             }
-            assert!(!prepared_path.exists());
         }
     }
 

@@ -122,13 +122,13 @@ mod tests {
     use windows_sys::Win32::Security::Authorization::{
         ConvertSecurityDescriptorToStringSecurityDescriptorW,
         ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo, SDDL_REVISION_1,
-        SE_FILE_OBJECT, SetSecurityInfo,
+        SE_FILE_OBJECT, SetNamedSecurityInfoW,
     };
     use windows_sys::Win32::Security::{
         DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, OWNER_SECURITY_INFORMATION,
         PROTECTED_DACL_SECURITY_INFORMATION,
     };
-    use windows_sys::Win32::Storage::FileSystem::{READ_CONTROL, WRITE_DAC};
+    use windows_sys::Win32::Storage::FileSystem::READ_CONTROL;
 
     fn security(path: &Path) -> String {
         let file = OpenOptions::new()
@@ -179,18 +179,14 @@ mod tests {
         }
     }
 
-    fn direct_child_permissions(parent: &Path) {
+    fn direct_child_permissions(path: &Path) {
         // OWNER RIGHTS full control propagates normally. Everyone's read ACE
         // reaches direct files only, exposing the old extra-directory staging.
         let sddl: Vec<u16> = "D:P(A;OICI;FA;;;OW)(A;OINP;FR;;;WD)"
             .encode_utf16()
             .chain([0])
             .collect();
-        let file = OpenOptions::new()
-            .access_mode(WRITE_DAC)
-            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-            .open(parent)
-            .unwrap();
+        let name: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
         let mut descriptor = std::ptr::null_mut();
         let mut present = 0;
         let mut defaulted = 0;
@@ -200,7 +196,7 @@ mod tests {
             reason = "Establish real Windows direct-child ACL inheritance in a disposable fixture"
         )]
         // SAFETY: descriptor is owned until its ACL has been applied; all output
-        // pointers are valid and the directory handle remains open throughout.
+        // pointers are valid and the filename stays null-terminated during the call.
         unsafe {
             assert_ne!(
                 ConvertStringSecurityDescriptorToSecurityDescriptorW(
@@ -218,25 +214,26 @@ mod tests {
                 0
             );
             assert_ne!(present, 0);
-            assert_eq!(
-                SetSecurityInfo(
-                    file.as_raw_handle(),
-                    SE_FILE_OBJECT,
-                    DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                    acl,
-                    std::ptr::null_mut()
-                ),
-                0
+            let status = SetNamedSecurityInfoW(
+                name.as_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                acl,
+                std::ptr::null_mut(),
             );
             LocalFree(descriptor);
+            assert_eq!(
+                status,
+                0,
+                "setting protected fixture DACL @ {}: {}",
+                path.display(),
+                io::Error::from_raw_os_error(status as i32)
+            );
         }
     }
 
-    /// Preparation must inherit as a normal direct copy, without retaining old
-    /// destination security. A native control reproduces the extra-generation
-    /// loss before comparing the actual producer and published files.
     /// Replacing a directory symlink operates on the leaf; neither old nor
     /// new directory contents may be deleted or rewritten.
     #[test]
@@ -276,6 +273,9 @@ mod tests {
         }));
     }
 
+    /// Preparation must inherit as a normal direct copy, without retaining old
+    /// destination security. A native control reproduces the extra-generation
+    /// loss before comparing the actual producer and published files.
     #[test]
     fn copied_leaf_inherits_from_final_parent() {
         let dir = crate::testing::test_tempdir();
