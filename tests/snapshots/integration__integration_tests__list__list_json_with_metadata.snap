@@ -290,7 +290,7 @@ exit_code: 0
     "is_current": false,
     "is_previous": false,
     "statusline": "locked-feature  \u001b[33m⊞\u001b[39m\u001b[2m_\u001b[22m",
-    "symbols": "_⊞"
+    "symbols": "⊞_"
   }
 ]
 

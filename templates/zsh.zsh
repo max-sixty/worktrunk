@@ -27,28 +27,28 @@ if command -v {{ cmd }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
         local cd_file exit_code=0
         cd_file="$(mktemp)"
 
-        # --source: use cargo run (builds from source)
+        local -a execution=("${WORKTRUNK_BIN:-{{ cmd }}}" "${args[@]}")
         if [[ "$use_source" == true ]]; then
-            WORKTRUNK_DIRECTIVE_CD_FILE="$cd_file" \
-                cargo run --bin {{ cmd }} --quiet -- "${args[@]}" || exit_code=$?
-        else
-            WORKTRUNK_DIRECTIVE_CD_FILE="$cd_file" \
-                command "${WORKTRUNK_BIN:-{{ cmd }}}" "${args[@]}" || exit_code=$?
+            execution=(cargo run --bin {{ cmd }} --quiet -- "${args[@]}")
         fi
-
-        # cd file holds a raw path (no shell escaping needed).
-        # `builtin cd` bypasses any user `cd` alias or function (e.g. zoxide's
-        # `alias cd=__zoxide_z`) that would otherwise be substituted into this
-        # function body when it's defined. See #2643.
-        if [[ -s "$cd_file" ]]; then
-            builtin cd -- "$(<"$cd_file")"
-            local cd_exit=$?
-            if [[ $exit_code -eq 0 ]]; then
-                exit_code=$cd_exit
+        {
+            WORKTRUNK_DIRECTIVE_CD_FILE="$cd_file" command "${execution[@]}"
+        } always {
+            exit_code=$?
+            # cd file holds a raw path (no shell escaping needed).
+            # `builtin cd` bypasses any user `cd` alias or function (e.g. zoxide's
+            # `alias cd=__zoxide_z`) that would otherwise be substituted into this
+            # function body when it's defined. See #2643.
+            if [[ -s "$cd_file" ]]; then
+                builtin cd -- "$(<"$cd_file")"
+                local cd_exit=$?
+                if [[ $exit_code -eq 0 ]]; then
+                    exit_code=$cd_exit
+                fi
             fi
-        fi
 
-        command rm -f "$cd_file"
+            command rm -f "$cd_file"
+        } || :
         return "$exit_code"
     }
 

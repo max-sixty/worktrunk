@@ -29,20 +29,22 @@ pub(crate) mod step;
 pub(crate) mod template_vars;
 pub(crate) mod worktree;
 
+use worktrunk::utils::did_you_mean;
+
 pub(crate) use alias::{
     AliasMap, HelpContext, alias_names_for_suggestions, augment_help, load_aliases, step_alias,
     try_alias,
 };
 pub(crate) use config::{
     add_approvals, clear_approvals, handle_alias_dry_run, handle_alias_show, handle_cache_clear,
-    handle_cache_get, handle_claude_approve_enter_worktree, handle_claude_install,
-    handle_claude_install_statusline, handle_claude_uninstall, handle_codex_install,
-    handle_codex_uninstall, handle_config_create, handle_config_show, handle_config_update,
-    handle_hints_clear, handle_hints_get, handle_logs_list, handle_logs_profile,
-    handle_omp_install, handle_omp_uninstall, handle_opencode_install, handle_opencode_uninstall,
-    handle_pi_install, handle_pi_uninstall, handle_state_clear, handle_state_clear_all,
-    handle_state_get, handle_state_set, handle_state_show, handle_vars_clear, handle_vars_get,
-    handle_vars_list, handle_vars_set, list_approvals,
+    handle_cache_get, handle_claude_approve_enter_worktree, handle_claude_hook,
+    handle_claude_install, handle_claude_install_statusline, handle_claude_uninstall,
+    handle_codex_install, handle_codex_uninstall, handle_config_create, handle_config_show,
+    handle_config_update, handle_hints_clear, handle_hints_get, handle_logs_list,
+    handle_logs_profile, handle_omp_install, handle_omp_uninstall, handle_opencode_install,
+    handle_opencode_uninstall, handle_pi_install, handle_pi_uninstall, handle_state_clear,
+    handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show,
+    handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set, list_approvals,
 };
 pub(crate) use configure_shell::{
     handle_configure_shell, handle_show_theme, handle_unconfigure_shell,
@@ -91,29 +93,6 @@ pub(crate) fn format_command_label(command_type: &str, name: Option<&str>) -> St
         Some(name) => cformat!("Running {command_type} <bold>{name}</>"),
         None => format!("Running {command_type}"),
     }
-}
-
-/// Return candidates similar to `query`, sorted by descending Jaro–Winkler
-/// similarity, filtered by `score > 0.7`, and deduplicated while preserving
-/// order. The 0.7 threshold matches clap's internal `did_you_mean` so
-/// wt-synthesized "unrecognized subcommand" tips read identically to clap's
-/// native output — keep them aligned if clap ever changes it.
-pub(crate) fn did_you_mean(
-    query: &str,
-    candidates: impl IntoIterator<Item = String>,
-) -> Vec<String> {
-    let mut scored: Vec<(f64, String)> = candidates
-        .into_iter()
-        .map(|candidate| (strsim::jaro_winkler(query, &candidate), candidate))
-        .filter(|(score, _)| *score > 0.7)
-        .collect();
-    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    let mut seen = std::collections::HashSet::new();
-    scored
-        .into_iter()
-        .filter(|(_, n)| seen.insert(n.clone()))
-        .map(|(_, n)| n)
-        .collect()
 }
 
 /// Return visible subcommand names of `parent` plus `alias_names`, filtered to

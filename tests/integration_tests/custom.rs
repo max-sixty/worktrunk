@@ -297,7 +297,7 @@ fn custom_subcommand_alias_propagates_non_fatal_git_failure() {
         .ansi_strip()
         .into_owned();
     assert!(
-        stderr.contains("git rev-parse --git-common-dir failed (exit 1)"),
+        stderr.contains("git rev-parse --git-common-dir failed (exit code 1)"),
         "git's own failure should surface: {stderr}"
     );
     assert!(

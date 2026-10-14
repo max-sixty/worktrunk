@@ -169,7 +169,7 @@ pub fn parse_hook_type(name: &str) -> anyhow::Result<HookType> {
         "post-remove" => Ok(HookType::PostRemove),
         other => {
             let candidates = HOOK_TYPE_NAMES.iter().map(|s| s.to_string());
-            let suggestions = crate::commands::did_you_mean(other, candidates);
+            let suggestions = worktrunk::utils::did_you_mean(other, candidates);
             if let Some(suggestion) = suggestions.first() {
                 bail!("unknown hook type: `{other}` (did you mean `{suggestion}`?)");
             }

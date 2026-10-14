@@ -38,7 +38,7 @@ use worktrunk::git::{
 
 use super::ci_status::{CiSource, CiStatus, PrStatus, ReviewState};
 use super::custom_columns::ResolvedCustomColumn;
-use super::json_output::{JsonDiff, format_raw_symbols};
+use super::json_output::JsonDiff;
 use super::model::{BranchScope, Collected, ItemKind, ListItem, MainState, WorktreeData};
 
 /// Tri-state field encoding the absence rule (see module docs).
@@ -126,6 +126,8 @@ pub fn schema_document() -> serde_json::Value {
         "title".to_string(),
         "wt list --format=json (schema 2)".into(),
     );
+    // Keep the published schema stable regardless of JSON map storage order.
+    value.sort_all_objects();
     value
 }
 
@@ -333,8 +335,8 @@ pub struct JsonDefaultBranch {
     pub orphan: Option<bool>,
 
     /// How committed content is integrated; absent when determined
-    /// not-integrated, null when undetermined (dirty trees skip the
-    /// expensive checks).
+    /// not-integrated, null when undetermined (a probe timed out or was
+    /// skipped).
     #[serde(skip_serializing_if = "Tri::is_absent")]
     pub integration: Tri<JsonIntegration>,
 
@@ -704,7 +706,7 @@ impl JsonItemV2 {
                 .status_symbols
                 .main_state
                 .and_then(JsonMainState::from_main_state),
-            symbols: Some(format_raw_symbols(&item.status_symbols)).filter(|s| !s.is_empty()),
+            symbols: Some(item.status_symbols.format_raw()).filter(|s| !s.is_empty()),
             statusline: item.statusline.clone(),
             columns,
         };

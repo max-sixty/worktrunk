@@ -148,6 +148,10 @@ pub enum FixtureRecipe {
         /// Additional remote-tracking refs.
         #[arg(default_value_t = 0)]
         remote_tracking_refs: usize,
+        /// Linked worktrees on a detached HEAD, counted within the linked
+        /// worktrees.
+        #[arg(default_value_t = 0)]
+        detached_worktrees: usize,
     },
     /// Pinned rust-lang/rust corpus with heterogeneous history-spread state.
     Imported,
@@ -161,6 +165,7 @@ impl FixtureRecipe {
             linked_worktrees,
             branchless_branches: GENERATED_DEFAULT_BRANCHES,
             remote_tracking_refs: 0,
+            detached_worktrees: 0,
         }
     }
 
@@ -181,11 +186,13 @@ impl FixtureRecipe {
                 linked_worktrees,
                 branchless_branches,
                 remote_tracking_refs,
+                detached_worktrees,
             } => {
                 build_generated_repo_at(
                     linked_worktrees,
                     branchless_branches,
                     remote_tracking_refs,
+                    detached_worktrees,
                     base_path,
                 );
             }
@@ -1167,6 +1174,8 @@ fn append_line(path: &Path, rel: &str, line: &str) {
 /// 2. staged + unstaged + untracked (full dirty mix)
 /// 3. clean, sitting exactly at base
 ///
+/// The last `detached_worktrees` of them then detach HEAD in place.
+///
 /// Branch states cycle by index % 4 (states 0 and 2 fork at a checkpoint that
 /// slides from the oldest base commit toward the tip as the index grows, so
 /// fork depth fans out across the whole history — the GH #461 deep-divergence
@@ -1181,8 +1190,13 @@ fn build_generated_repo_at(
     linked_worktrees: usize,
     branchless_branches: usize,
     remote_tracking_refs: usize,
+    detached_worktrees: usize,
     repo: &Path,
 ) {
+    assert!(
+        detached_worktrees <= linked_worktrees,
+        "{detached_worktrees} detached worktrees exceed {linked_worktrees} linked worktrees"
+    );
     const FILES: usize = 50;
     // Deep enough that fork points spread across history give the
     // `%(ahead-behind)` walk real commits to traverse (GH #461 shape).
@@ -1253,6 +1267,15 @@ fn build_generated_repo_at(
     run_git(&repo, &["gc", "-q"]);
 
     add_heterogeneous_worktrees(&repo, linked_worktrees, &base_tip);
+
+    // Detach the last worktrees at their own commit, the shape a mid-rebase or
+    // scratch checkout leaves. Detaching after creation keeps each worktree's
+    // rotation state, consecutive indices spread the detached ones across that
+    // rotation, and each `wt-*` branch stays behind as a branch-only row.
+    for j in linked_worktrees - detached_worktrees..linked_worktrees {
+        let wt = linked_worktree_path(&repo, &format!("wt-{j:04}"));
+        run_git(&wt, &["checkout", "-q", "--detach"]);
+    }
 }
 
 /// Add linked worktrees in the canonical four-state rotation.
@@ -1631,6 +1654,7 @@ mod tests {
             linked_worktrees: N,
             branchless_branches: N,
             remote_tracking_refs: 0,
+            detached_worktrees: 0,
         }
         .create();
         let repo = fixture.path().to_path_buf();
@@ -1839,8 +1863,10 @@ mod tests {
     }
 
     /// The generated fixture's population contract. Either local dimension may
-    /// be zero, and the requested remote-tracking refs are additive to the
-    /// `origin/main` and `origin/HEAD` pair every generated fixture carries.
+    /// be zero, the requested remote-tracking refs are additive to the
+    /// `origin/main` and `origin/HEAD` pair every generated fixture carries,
+    /// and detached worktrees are a subset of the linked worktrees whose
+    /// branches remain.
     #[test]
     fn generated_fixture_preserves_each_population() {
         let refs = |repo: &Path, glob: &str| {
@@ -1848,20 +1874,23 @@ mod tests {
                 .lines()
                 .count()
         };
-        // `git worktree list` always includes the main worktree itself.
-        let linked = |repo: &Path| {
+        let porcelain_lines = |repo: &Path, prefix: &str| {
             capture_git(repo, &["worktree", "list", "--porcelain"])
                 .lines()
-                .filter(|l| l.starts_with("worktree "))
+                .filter(|l| l.starts_with(prefix))
                 .count()
-                - 1
         };
+        // `git worktree list` always includes the main worktree itself.
+        let linked = |repo: &Path| porcelain_lines(repo, "worktree ") - 1;
+        let detached = |repo: &Path| porcelain_lines(repo, "detached");
 
-        // Cover each local zero once and add remote refs to one fixture.
+        // Cover each local zero once, and add remote refs and a detached
+        // worktree to one fixture.
         let fixture = FixtureRecipe::Generated {
             linked_worktrees: 3,
             branchless_branches: 0,
             remote_tracking_refs: 5,
+            detached_worktrees: 1,
         }
         .create();
         let repo = fixture.path().to_path_buf();
@@ -1869,11 +1898,24 @@ mod tests {
         assert_eq!(refs(&repo, "refs/heads/wt-*"), 3);
         assert_eq!(refs(&repo, "refs/remotes/origin/remote-only-*"), 5);
         assert_eq!(linked(&repo), 3);
+        assert_eq!(detached(&repo), 1);
+        let detached_wt = fixture.worktree_path("wt-0002");
+        assert_eq!(
+            capture_git(&detached_wt, &["rev-parse", "--abbrev-ref", "HEAD"]),
+            "HEAD",
+            "the last linked worktree is the detached one"
+        );
+        assert_eq!(
+            status_lines(&detached_wt),
+            [" M src/file_2.rs", "?? untracked_2.txt", "M  src/file_1.rs"],
+            "a detached worktree keeps its rotation state"
+        );
 
         let fixture = FixtureRecipe::Generated {
             linked_worktrees: 0,
             branchless_branches: 3,
             remote_tracking_refs: 0,
+            detached_worktrees: 0,
         }
         .create();
         let repo = fixture.path().to_path_buf();
@@ -1881,6 +1923,7 @@ mod tests {
         assert_eq!(refs(&repo, "refs/heads/wt-*"), 0, "no worktree branches");
         assert_eq!(refs(&repo, "refs/remotes/origin/remote-only-*"), 0);
         assert_eq!(linked(&repo), 0);
+        assert_eq!(detached(&repo), 0);
     }
 
     /// [`add_diverged_backdrop`]'s own wiring — the half of the prune fixture

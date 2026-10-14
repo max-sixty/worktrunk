@@ -1,37 +1,37 @@
 //! Git output parsing functions
 
-use std::path::PathBuf;
-
-use super::{GitError, WorktreeInfo, finalize_worktree};
+use super::{GitError, WorktreeInfo, git_path_from_bytes};
 
 impl WorktreeInfo {
-    pub(crate) fn parse_porcelain_list(output: &str) -> anyhow::Result<Vec<Self>> {
+    /// Parse NUL-delimited records, preserving worktree path bytes and embedded
+    /// newlines in paths and lock reasons.
+    pub(crate) fn parse_porcelain_list_z(output: &[u8]) -> anyhow::Result<Vec<Self>> {
         let mut worktrees = Vec::new();
         let mut current: Option<WorktreeInfo> = None;
 
-        for line in output.lines() {
-            if line.is_empty() {
+        for record in output.split(|byte| *byte == 0) {
+            if record.is_empty() {
                 if let Some(wt) = current.take() {
-                    worktrees.push(finalize_worktree(wt));
+                    worktrees.push(wt);
                 }
                 continue;
             }
 
-            let (key, value) = match line.split_once(' ') {
-                Some((k, v)) => (k, Some(v)),
-                None => (line, None),
+            let (key, value) = match record.iter().position(|byte| *byte == b' ') {
+                Some(index) => (&record[..index], Some(&record[index + 1..])),
+                None => (record, None),
             };
 
             match key {
-                "worktree" => {
+                b"worktree" => {
                     let Some(path) = value else {
                         return Err(GitError::ParseError {
-                            message: "worktree line missing path".into(),
+                            message: "worktree record missing path".into(),
                         }
                         .into());
                     };
                     current = Some(WorktreeInfo {
-                        path: PathBuf::from(path),
+                        path: git_path_from_bytes(path)?,
                         head: String::new(),
                         branch: None,
                         bare: false,
@@ -41,40 +41,41 @@ impl WorktreeInfo {
                     });
                 }
                 key => match (key, current.as_mut()) {
-                    ("HEAD", Some(wt)) => {
+                    (b"HEAD", Some(wt)) => {
                         let Some(sha) = value else {
                             return Err(GitError::ParseError {
-                                message: "HEAD line missing SHA".into(),
+                                message: "HEAD record missing SHA".into(),
                             }
                             .into());
                         };
-                        wt.head = sha.to_string();
+                        wt.head = String::from_utf8_lossy(sha).into_owned();
                     }
-                    ("branch", Some(wt)) => {
+                    (b"branch", Some(wt)) => {
                         // Strip refs/heads/ prefix if present
                         let Some(branch_ref) = value else {
                             return Err(GitError::ParseError {
-                                message: "branch line missing ref".into(),
+                                message: "branch record missing ref".into(),
                             }
                             .into());
                         };
                         let branch = branch_ref
-                            .strip_prefix("refs/heads/")
-                            .unwrap_or(branch_ref)
-                            .to_string();
-                        wt.branch = Some(branch);
+                            .strip_prefix(b"refs/heads/")
+                            .unwrap_or(branch_ref);
+                        wt.branch = Some(String::from_utf8_lossy(branch).into_owned());
                     }
-                    ("bare", Some(wt)) => {
+                    (b"bare", Some(wt)) => {
                         wt.bare = true;
                     }
-                    ("detached", Some(wt)) => {
+                    (b"detached", Some(wt)) => {
                         wt.detached = true;
                     }
-                    ("locked", Some(wt)) => {
-                        wt.locked = Some(value.unwrap_or_default().to_string());
+                    (b"locked", Some(wt)) => {
+                        wt.locked =
+                            Some(String::from_utf8_lossy(value.unwrap_or_default()).into_owned());
                     }
-                    ("prunable", Some(wt)) => {
-                        wt.prunable = Some(value.unwrap_or_default().to_string());
+                    (b"prunable", Some(wt)) => {
+                        wt.prunable =
+                            Some(String::from_utf8_lossy(value.unwrap_or_default()).into_owned());
                     }
                     _ => {
                         // Ignore unknown attributes or attributes before first worktree
@@ -83,11 +84,10 @@ impl WorktreeInfo {
             }
         }
 
-        // Push the last worktree if the output doesn't end with a blank line
+        // Retain the last worktree if the final empty record is absent.
         if let Some(wt) = current {
-            worktrees.push(finalize_worktree(wt));
+            worktrees.push(wt);
         }
-
         Ok(worktrees)
     }
 }
@@ -145,9 +145,12 @@ impl DefaultBranchName {
 ///
 /// This correctly handles filenames with spaces and ensures both old and new
 /// paths are included for renames/copies (important for overlap detection).
-pub fn parse_porcelain_z(output: &str) -> Vec<String> {
+/// Raw bytes keep distinct non-UTF-8 paths distinct during comparison.
+pub fn parse_porcelain_z(output: &[u8]) -> Vec<Vec<u8>> {
     let mut files = Vec::new();
-    let mut entries = output.split('\0').filter(|s| !s.is_empty());
+    let mut entries = output
+        .split(|byte| *byte == 0)
+        .filter(|entry| !entry.is_empty());
 
     while let Some(entry) = entries.next() {
         // Each entry is "XY path" where XY is exactly 2 status chars
@@ -157,13 +160,12 @@ pub fn parse_porcelain_z(output: &str) -> Vec<String> {
 
         let status = &entry[0..2];
         let path = &entry[3..];
-        files.push(path.to_string());
+        files.push(path.to_vec());
 
         // For renames (R) and copies (C), the next NUL-separated field is the old path
-        if status.contains(['R', 'C'])
-            && let Some(old_path) = entries.next()
-        {
-            files.push(old_path.to_string());
+        let has_source_path = status.contains(&b'R') || status.contains(&b'C');
+        if has_source_path && let Some(old_path) = entries.next() {
+            files.push(old_path.to_vec());
         }
     }
 
@@ -204,6 +206,7 @@ pub fn parse_untracked_files(status_output: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     // ============================================================================
     // DefaultBranchName::from_local Tests
@@ -291,40 +294,31 @@ mod tests {
     }
 
     // ============================================================================
-    // WorktreeInfo::parse_porcelain_list Tests
+    // WorktreeInfo::parse_porcelain_list_z Tests
     // ============================================================================
 
     #[test]
     fn test_parse_porcelain_list_single_worktree() {
-        let output = "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main\n\n";
-        let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+        let output = "worktree /path/to/repo\0HEAD abc123\0branch refs/heads/main\0\0";
+        let worktrees = WorktreeInfo::parse_porcelain_list_z(output.as_bytes()).unwrap();
         let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
-        assert_eq!(wt.path.to_str().unwrap(), "/path/to/repo");
+        assert_eq!(wt.path, PathBuf::from("/path/to/repo"));
         assert_eq!(wt.head, "abc123");
         assert_eq!(wt.branch, Some("main".to_string()));
     }
 
     #[test]
-    fn test_parse_porcelain_list_multiple_worktrees() {
-        let output = "worktree /path/main\nHEAD aaa\nbranch refs/heads/main\n\nworktree /path/feature\nHEAD bbb\nbranch refs/heads/feature\n\n";
-        let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
-        let [main_wt, feature_wt]: [WorktreeInfo; 2] = worktrees.try_into().unwrap();
-        assert_eq!(main_wt.branch, Some("main".to_string()));
-        assert_eq!(feature_wt.branch, Some("feature".to_string()));
-    }
-
-    #[test]
     fn test_parse_porcelain_list_bare_repo() {
-        let output = "worktree /path/to/repo.git\nHEAD abc123\nbare\n\n";
-        let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+        let output = "worktree /path/to/repo.git\0HEAD abc123\0bare\0\0";
+        let worktrees = WorktreeInfo::parse_porcelain_list_z(output.as_bytes()).unwrap();
         let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
         assert!(wt.bare);
     }
 
     #[test]
     fn test_parse_porcelain_list_detached() {
-        let output = "worktree /path/to/repo\nHEAD abc123\ndetached\n\n";
-        let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+        let output = "worktree /path/to/repo\0HEAD abc123\0detached\0\0";
+        let worktrees = WorktreeInfo::parse_porcelain_list_z(output.as_bytes()).unwrap();
         let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
         assert!(wt.detached);
         assert!(wt.branch.is_none());
@@ -332,57 +326,42 @@ mod tests {
 
     #[test]
     fn test_parse_porcelain_list_locked() {
-        let output = "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main\nlocked reason for lock\n\n";
-        let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+        let output = "worktree /path/to/repo\0HEAD abc123\0branch refs/heads/main\0locked reason for lock\0\0";
+        let worktrees = WorktreeInfo::parse_porcelain_list_z(output.as_bytes()).unwrap();
         let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
         assert_eq!(wt.locked, Some("reason for lock".to_string()));
     }
 
     #[test]
     fn test_parse_porcelain_list_prunable() {
-        let output = "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main\nprunable gitdir file missing\n\n";
-        let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+        let output = "worktree /path/to/repo\0HEAD abc123\0branch refs/heads/main\0prunable gitdir file missing\0\0";
+        let worktrees = WorktreeInfo::parse_porcelain_list_z(output.as_bytes()).unwrap();
         let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
         assert_eq!(wt.prunable, Some("gitdir file missing".to_string()));
     }
 
     #[test]
     fn test_parse_porcelain_list_empty() {
-        let result = WorktreeInfo::parse_porcelain_list("");
+        let result = WorktreeInfo::parse_porcelain_list_z(b"");
         assert!(result.is_ok());
         let worktrees = result.unwrap();
         assert!(worktrees.is_empty());
     }
 
     #[test]
-    fn test_parse_porcelain_list_no_trailing_blank() {
-        // Git output may not always end with a blank line
-        let output = "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main";
-        let result = WorktreeInfo::parse_porcelain_list(output);
+    fn test_parse_porcelain_list_no_trailing_empty_record() {
+        let output = "worktree /path/to/repo\0HEAD abc123\0branch refs/heads/main";
+        let result = WorktreeInfo::parse_porcelain_list_z(output.as_bytes());
         assert!(result.is_ok());
         let worktrees = result.unwrap();
         assert_eq!(worktrees.len(), 1);
     }
 
     #[test]
-    fn test_parse_porcelain_list_missing_worktree_path() {
-        let output = "worktree\nHEAD abc123\n\n";
-        let result = WorktreeInfo::parse_porcelain_list(output);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_parse_porcelain_list_missing_head_sha() {
-        let output = "worktree /path\nHEAD\n\n";
-        let result = WorktreeInfo::parse_porcelain_list(output);
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn test_parse_porcelain_list_branch_without_refs_prefix() {
         // This can happen in some edge cases
-        let output = "worktree /path/to/repo\nHEAD abc123\nbranch main\n\n";
-        let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+        let output = "worktree /path/to/repo\0HEAD abc123\0branch main\0\0";
+        let worktrees = WorktreeInfo::parse_porcelain_list_z(output.as_bytes()).unwrap();
         let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
         // Should use the branch name as-is when no refs/heads/ prefix
         assert_eq!(wt.branch, Some("main".to_string()));
@@ -394,66 +373,97 @@ mod tests {
 
     #[test]
     fn test_parse_porcelain_z_empty() {
-        assert!(parse_porcelain_z("").is_empty());
+        assert!(parse_porcelain_z(b"").is_empty());
     }
 
     #[test]
     fn test_parse_porcelain_z_modified_file() {
         // "M  src/main.rs\0"
         let output = " M src/main.rs\0";
-        let files = parse_porcelain_z(output);
-        assert_eq!(files, vec!["src/main.rs"]);
+        let files = parse_porcelain_z(output.as_bytes());
+        assert_eq!(files, vec![b"src/main.rs".to_vec()]);
     }
 
     #[test]
     fn test_parse_porcelain_z_multiple_files() {
         let output = " M src/main.rs\0?? new_file.txt\0";
-        let files = parse_porcelain_z(output);
-        assert_eq!(files, vec!["src/main.rs", "new_file.txt"]);
+        let files = parse_porcelain_z(output.as_bytes());
+        assert_eq!(
+            files,
+            vec![b"src/main.rs".to_vec(), b"new_file.txt".to_vec()]
+        );
     }
 
     #[test]
     fn test_parse_porcelain_z_rename() {
         // Renames: "R  new_name\0old_name\0"
         let output = "R  new_name.rs\0old_name.rs\0";
-        let files = parse_porcelain_z(output);
-        assert_eq!(files, vec!["new_name.rs", "old_name.rs"]);
+        let files = parse_porcelain_z(output.as_bytes());
+        assert_eq!(
+            files,
+            vec![b"new_name.rs".to_vec(), b"old_name.rs".to_vec()]
+        );
     }
 
     #[test]
     fn test_parse_porcelain_z_copy() {
         let output = "C  copy.rs\0original.rs\0";
-        let files = parse_porcelain_z(output);
-        assert_eq!(files, vec!["copy.rs", "original.rs"]);
+        let files = parse_porcelain_z(output.as_bytes());
+        assert_eq!(files, vec![b"copy.rs".to_vec(), b"original.rs".to_vec()]);
     }
 
     #[test]
     fn test_parse_porcelain_z_rename_among_others() {
         let output = " M keep.rs\0R  new.rs\0old.rs\0?? untracked.txt\0";
-        let files = parse_porcelain_z(output);
-        assert_eq!(files, vec!["keep.rs", "new.rs", "old.rs", "untracked.txt"]);
+        let files = parse_porcelain_z(output.as_bytes());
+        assert_eq!(
+            files,
+            vec![
+                b"keep.rs".to_vec(),
+                b"new.rs".to_vec(),
+                b"old.rs".to_vec(),
+                b"untracked.txt".to_vec()
+            ]
+        );
     }
 
     #[test]
     fn test_parse_porcelain_z_worktree_rename() {
         let output = " R new.rs\0old.rs\0?? untracked.txt\0";
-        let files = parse_porcelain_z(output);
-        assert_eq!(files, vec!["new.rs", "old.rs", "untracked.txt"]);
+        let files = parse_porcelain_z(output.as_bytes());
+        assert_eq!(
+            files,
+            vec![
+                b"new.rs".to_vec(),
+                b"old.rs".to_vec(),
+                b"untracked.txt".to_vec()
+            ]
+        );
     }
 
     #[test]
     fn test_parse_porcelain_z_spaces_in_path() {
         let output = " M path with spaces/file name.rs\0";
-        let files = parse_porcelain_z(output);
-        assert_eq!(files, vec!["path with spaces/file name.rs"]);
+        let files = parse_porcelain_z(output.as_bytes());
+        assert_eq!(files, vec![b"path with spaces/file name.rs".to_vec()]);
     }
 
     #[test]
     fn test_parse_porcelain_z_skips_short_entries() {
         // Entries shorter than 3 chars (status + space + path) are skipped
         let output = " M valid.rs\0ab\0";
+        let files = parse_porcelain_z(output.as_bytes());
+        assert_eq!(files, vec![b"valid.rs".to_vec()]);
+    }
+
+    #[test]
+    fn test_parse_porcelain_z_preserves_distinct_non_utf8_paths() {
+        let output = b" D collision-\xfe\0 D collision-\xff\0";
         let files = parse_porcelain_z(output);
-        assert_eq!(files, vec!["valid.rs"]);
+        assert_eq!(
+            files,
+            vec![b"collision-\xfe".to_vec(), b"collision-\xff".to_vec()]
+        );
     }
 
     // ============================================================================

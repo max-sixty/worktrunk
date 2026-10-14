@@ -187,15 +187,15 @@ To copy instead of move, add `git stash apply --index --quiet` right after the p
 # ~/.config/worktrunk/config.toml
 [aliases]
 hook-log = '''
-tail -f "$(wt config state logs --format=json | jq -r --arg name "{{ name | sanitize_hash }}" --arg kind "{{ kind }}" '
+tail -f "$(wt config state logs --format=json | jq -r --arg branch {{ branch }} --arg name {{ name | sanitize_hash }} --arg kind {{ kind }} '
   .hook_output[]
-  | select(.branch == "{{ branch | sanitize_hash }}" and .hook_type == $kind and .name == $name)
+  | select([.branch, .hook_type, .name] == [$branch, $kind, $name])
   | .path
 ' | head -1)"
 '''
 ```
 
-Run with `wt hook-log --kind=post-start --name=server` to tail the log for the `server` hook on the current branch. `--kind` picks the hook type; the branch is pulled from the current worktree via `{{ branch }}`. `sanitize_hash` rewrites `branch` and `name` to filesystem-safe forms with a hash suffix that keeps distinct originals unique (the same transformation Worktrunk applies on disk), so the alias resolves the right log even when either contains characters like `/`.
+Run with `wt hook-log --kind=post-start --name=server` to tail the log for the `server` hook on the current branch. `--kind` picks the hook type; the branch is pulled from the current worktree via `{{ branch }}`. `branch` in the JSON is the branch name itself, while `name` is the hook name as it appears on disk; `sanitize_hash` applies the same transformation to `{{ name }}`, so the alias resolves the right log even when the hook name contains characters like `/`.
 
 ## Custom subcommands
 
@@ -214,6 +214,7 @@ Arguments pass through verbatim, stdio is inherited, and the child's exit code p
 
 - [`worktrunk-sync`](https://github.com/pablospe/worktrunk-sync): rebases stacked worktree branches in the dependency order inferred from git history. Install with `cargo install worktrunk-sync`, then run as `wt sync`.
 - [`workz`](https://github.com/rohansx/workz): provisions the current worktree with a collision-free port range plus its own database and Docker Compose project, merged into `.env.local`, so parallel worktrees don't clash. Install with `cargo install workz`, drop its [`wt-workz`](https://github.com/rohansx/workz/blob/main/examples/wt-workz) adapter on `PATH`, then run as `wt workz`.
+- [`wt-tui`](https://github.com/marcusjihansson/worktrunk-tui): a terminal dashboard of every worktree with live updates, cross-worktree search, and diff and log previews; create, merge, remove, and prune run through `wt` behind confirmation dialogs. Install with `cargo install --git https://github.com/marcusjihansson/worktrunk-tui`, then run as `wt tui`.
 
 ## Reference: hooks vs. aliases
 
@@ -231,7 +232,7 @@ Aside from the differences below, hooks and aliases behave the same.
 | Source discrimination | `user:` / `project:` / `user:name` / `project:name` filter syntax | Run user first, then project; no filter syntax |
 | `--help` | `wt hook --help` lists hook types; `wt hook <type> --help` shows flags and arguments for that type | The template body is the documentation: `wt <alias> --help` redirects to `wt config alias show` / `dry-run`. `wt --help` and `wt step --help` list configured aliases alongside built-in commands |
 | Inspection | `wt hook show [type] [--expanded]` | `wt config alias show <name>` / `wt config alias dry-run <name>` |
-| Stdin | All template variables as JSON (parse with `json.load(sys.stdin)`) | Inherits parent stdin (pipes pass through; interactive TUIs like `wt switch` keep the tty) |
+| Stdin | See [Interactive hooks](/hook/#interactive-hooks) | Serial steps inherit parent stdin |
 | Template-context extras | `hook_type`, `hook_name`, per-type operation vars (`base`, `target`, `pr_number`, …) | `args` on top of the shared base variables |
 
 </details>

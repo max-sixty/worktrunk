@@ -85,6 +85,7 @@ fn generated_prune_fixture() -> FixtureRepo {
         linked_worktrees: 0,
         branchless_branches: 0,
         remote_tracking_refs: 0,
+        detached_worktrees: 0,
     }
     .create();
     add_prune_populations(fixture.path(), MERGED, UNMERGED);

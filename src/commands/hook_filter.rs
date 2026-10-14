@@ -1,33 +1,6 @@
 //! Hook filter types for command filtering by source and name.
-//!
-//! These types are shared between `hooks.rs` (command preparation/execution)
-//! and `command_approval.rs` (approval flow). Re-exported from `hooks.rs`
-//! for backward compatibility.
 
-/// Whether a hook or alias body came from user config or project config.
-///
-/// Drives approval and source-qualified filtering.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    serde::Serialize,
-    serde::Deserialize,
-    strum::Display,
-    strum::EnumString,
-)]
-#[serde(rename_all = "kebab-case")]
-#[strum(serialize_all = "kebab-case")]
-pub enum HookSource {
-    /// User config (~/.config/worktrunk/config.toml). No approval required.
-    User,
-    /// Project config (.config/wt.toml). Approval is handled at the gate.
-    Project,
-}
+use worktrunk::config::HookSource;
 
 /// A parsed name filter, optionally scoped to a specific source.
 ///

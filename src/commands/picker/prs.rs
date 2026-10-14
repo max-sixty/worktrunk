@@ -530,7 +530,7 @@ fn spawn_pr_previews(
         orchestrator,
         spawn_gen,
         row_id,
-        entry.kind,
+        move |_| Some(kind),
         entry.number,
         entry.updated_at.clone(),
         width,
@@ -538,16 +538,17 @@ fn spawn_pr_previews(
 }
 
 /// Spawn the background `comments` fetch keyed by canonical row identity, fetching through
-/// the given forge `kind`.
+/// the forge kind `resolve_kind` returns inside the spawned job.
 ///
-/// The single comments-fetch path for both row types: a `--prs` row passes its
-/// structured PR/MR reference and `entry.kind` (both already resolved from the
-/// forge in the listing call); a worktree row goes through
-/// [`spawn_worktree_comments_fetch`], which resolves `kind` from the repo's
-/// platform. The [`PickerRowId`] enum keeps forge and Git identities in
-/// separate variants. A failed fetch caches a terminal [`pr_unavailable_pane`]
-/// (not `None`), so the tab never strands on its loading placeholder — see
-/// [`spawn_pr_previews`] and [`PreviewOrchestrator::spawn_compute`].
+/// The single comments-fetch path for both row types: a `--prs` row returns its
+/// `entry.kind` (already resolved from the forge in the listing call); a worktree
+/// row goes through [`spawn_worktree_comments_fetch`], which resolves it from the
+/// repo's platform. A `None` kind caches the terminal
+/// [`comments_unsupported_forge_pane`]. The [`PickerRowId`] enum keeps forge and
+/// Git identities in separate variants. A failed fetch caches a terminal
+/// [`pr_unavailable_pane`] (not `None`), so the tab never strands on its loading
+/// placeholder — see [`spawn_pr_previews`] and
+/// [`PreviewOrchestrator::spawn_compute`].
 ///
 /// `updated_at` is the GitHub PR's `updatedAt` content signature (riding the
 /// forge call the picker already made), used to disk-cache the rendered pane so
@@ -558,12 +559,15 @@ fn spawn_comments_fetch(
     orchestrator: &PreviewOrchestrator,
     spawn_gen: &SpawnGeneration,
     row_id: PickerRowId,
-    kind: RefType,
+    resolve_kind: impl FnOnce(&Repository) -> Option<RefType> + Send + 'static,
     number: u32,
     updated_at: Option<String>,
     width: usize,
 ) {
     orchestrator.spawn_compute(spawn_gen, (row_id, PreviewMode::Comments), move |repo| {
+        let Some(kind) = resolve_kind(repo) else {
+            return Some(comments_unsupported_forge_pane());
+        };
         Some(
             compute_pr_comments(repo, kind, number, updated_at.as_deref(), width)
                 .unwrap_or_else(|| pr_unavailable_pane("comments")),
@@ -580,7 +584,9 @@ fn spawn_comments_fetch(
 /// on any other forge comments aren't listable (the same forges `--prs` declines
 /// in [`fetch_open_prs`]), so the tab caches a terminal "not available" pane
 /// rather than shelling out to the wrong CLI or spinning on a loading placeholder
-/// forever. `ci_platform` reads the cached remote URL — no network.
+/// forever. `ci_platform` makes no network call, but its first call forks
+/// `git remote get-url`, so it runs in the spawned job: the caller is the
+/// collect thread (`on_skeleton`, `on_update`), and the task pool waits on it.
 pub(super) fn spawn_worktree_comments_fetch(
     orchestrator: &PreviewOrchestrator,
     spawn_gen: &SpawnGeneration,
@@ -589,22 +595,14 @@ pub(super) fn spawn_worktree_comments_fetch(
     updated_at: Option<String>,
     width: usize,
 ) {
-    let kind = match orchestrator.repo().ci_platform(None) {
-        Some(forge @ (ForgeKind::GitHub | ForgeKind::GitLab)) => forge.ref_type(),
-        _ => {
-            orchestrator.fill_external(
-                spawn_gen,
-                (row_id, PreviewMode::Comments),
-                comments_unsupported_forge_pane(),
-            );
-            return;
-        }
-    };
     spawn_comments_fetch(
         orchestrator,
         spawn_gen,
         row_id,
-        kind,
+        |repo| match repo.ci_platform(None) {
+            Some(forge @ (ForgeKind::GitHub | ForgeKind::GitLab)) => Some(forge.ref_type()),
+            _ => None,
+        },
         number,
         updated_at,
         width,

@@ -1653,7 +1653,7 @@ pub fn handle_picker(
     let is_preview_bench = std::env::var_os("WORKTRUNK_PREVIEW_BENCH").is_some();
     let skip_tui = is_dry_run || is_preview_bench;
     if !skip_tui && !std::io::stdin().is_terminal() {
-        anyhow::bail!("Interactive picker requires an interactive terminal");
+        return Err(worktrunk::git::GitError::InteractivePickerRequiresTerminal.into());
     }
     worktrunk::trace::instant("Picker started");
 
@@ -1829,7 +1829,14 @@ pub fn handle_picker(
         state
             .initial_layout
             .dimensions_for(term_width, term_height, num_items_estimate);
-    let preview_window_spec = state.initial_layout.spec_for(preview_dims);
+    let mut preview_window_spec = state.initial_layout.spec_for(preview_dims);
+    // `[switch.picker] preview = false` opens list-only. skim's `hidden`
+    // modifier is the same flag `alt-p:toggle-preview` flips, so the toggle
+    // reveals the pane at the size computed above. Background pre-rendering
+    // still runs, so the first reveal is as warm as an always-shown preview.
+    if !config.switch_picker.preview() {
+        preview_window_spec.push_str(":hidden");
+    }
 
     // When summary generation is unavailable, prime the Summary cache with
     // config guidance instead of showing a perpetual "Generating…" placeholder.
@@ -2204,6 +2211,7 @@ pub fn handle_picker(
             identifier: &identifier,
             create: should_create,
             base: None,
+            path: None,
             clobber: false,
             verify: true,
             yes: false,
@@ -2903,6 +2911,7 @@ pub mod tests {
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
+            detached_worktree: None,
         };
         AltXRemover::do_removal(&repo, &result, &Approvals::default()).unwrap();
 
@@ -2927,6 +2936,7 @@ pub mod tests {
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
+            detached_worktree: None,
         };
         AltXRemover::do_removal(&repo, &result, &Approvals::default()).unwrap();
 
@@ -2957,6 +2967,7 @@ pub mod tests {
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
+            detached_worktree: None,
         };
         AltXRemover::do_removal(&repo, &result, &Approvals::default()).unwrap();
 
@@ -2987,6 +2998,7 @@ pub mod tests {
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
+            detached_worktree: None,
         };
         AltXRemover::do_removal(&repo, &result, &Approvals::default()).unwrap();
 
@@ -3913,6 +3925,7 @@ pub mod tests {
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
+            detached_worktree: None,
         };
         assert_eq!(
             super::removal_failure_subject(&branch_only),
@@ -4373,6 +4386,7 @@ pub mod tests {
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
+            detached_worktree: None,
         };
         assert!(super::removal_target_still_present(&repo, &present_branch));
 
@@ -4383,6 +4397,7 @@ pub mod tests {
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
+            detached_worktree: None,
         };
         assert!(!super::removal_target_still_present(&repo, &gone_branch));
     }
@@ -4404,6 +4419,7 @@ pub mod tests {
                 target_branch: None,
                 integration_reason: integration,
                 branch_checked_out_at: None,
+                detached_worktree: None,
             }
         };
 

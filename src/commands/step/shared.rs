@@ -46,7 +46,7 @@ pub(super) fn print_dry_run(
         message_block = format_with_gutter(&formatted, None),
     );
 
-    crate::help_pager::show_help_in_pager(&out, true);
+    crate::help_pager::show_help_in_pager(&out, true)?;
     Ok(())
 }
 
@@ -130,7 +130,11 @@ pub(super) fn list_and_filter_ignored_entries(
         };
         ignored_entries
             .into_iter()
-            .filter(|(path, is_dir)| include_matcher.matched(path, *is_dir).is_ignore())
+            .filter(|(path, is_dir)| {
+                include_matcher
+                    .matched_path_or_any_parents(relative_entry(path, worktree_path), *is_dir)
+                    .is_ignore()
+            })
             .collect()
     } else {
         ignored_entries
@@ -162,11 +166,12 @@ pub(super) fn list_and_filter_ignored_entries(
         .into_iter()
         .filter(|(path, is_dir)| {
             // Skip entries matching configured exclude patterns
-            if let Some(ref matcher) = exclude_matcher {
-                let relative = path.strip_prefix(worktree_path).unwrap_or(path.as_path());
-                if matcher.matched(relative, *is_dir).is_ignore() {
-                    return false;
-                }
+            if let Some(ref matcher) = exclude_matcher
+                && matcher
+                    .matched_path_or_any_parents(relative_entry(path, worktree_path), *is_dir)
+                    .is_ignore()
+            {
+                return false;
             }
             // Skip built-in excluded directories (.jj, .hg, .worktrees, etc.)
             if *is_dir
@@ -187,6 +192,18 @@ pub(super) fn list_and_filter_ignored_entries(
                 .any(|wt_path| wt_path != worktree_path && wt_path.starts_with(path))
         })
         .collect())
+}
+
+/// An entry's path relative to its worktree, for gitignore matching.
+///
+/// Matching walks the entry's parents (`matched_path_or_any_parents`) because
+/// `git ls-files --directory` lists an ignored file individually when its
+/// directory also holds tracked files, so a `config/` pattern has to reach
+/// `config/local.yml` through its parent, as it would in a `.gitignore`.
+/// Every entry is `worktree_path.join(..)` (see `list_ignored_entries`), so the
+/// strip always succeeds.
+fn relative_entry<'a>(path: &'a Path, worktree_path: &Path) -> &'a Path {
+    path.strip_prefix(worktree_path).unwrap_or(path)
 }
 
 /// List ignored entries using git ls-files
@@ -225,18 +242,34 @@ fn list_ignored_entries(
         return Err(worktrunk::git::CommandError::from_failed_output("git", &args, &output).into());
     }
 
-    // Parse output: NUL-separated entries; directories end with /
-    let entries = String::from_utf8_lossy(&output.stdout)
-        .split('\0')
+    // Git's -z output contains path bytes, which need not be UTF-8 on Unix.
+    let entries = output
+        .stdout
+        .split(|&byte| byte == 0)
         .filter(|entry| !entry.is_empty())
         .map(|entry| {
-            let is_dir = entry.ends_with('/');
-            let path = worktree_path.join(entry.trim_end_matches('/'));
-            (path, is_dir)
+            let (relative, is_dir) = match entry.strip_suffix(b"/") {
+                Some(relative) => (relative, true),
+                None => (entry, false),
+            };
+            (worktree_path.join(path_from_git_bytes(relative)), is_dir)
         })
         .collect();
 
     Ok(entries)
+}
+
+#[cfg(unix)]
+fn path_from_git_bytes(bytes: &[u8]) -> PathBuf {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    OsString::from_vec(bytes.to_vec()).into()
+}
+
+#[cfg(not(unix))]
+fn path_from_git_bytes(bytes: &[u8]) -> PathBuf {
+    String::from_utf8_lossy(bytes).into_owned().into()
 }
 
 #[cfg(test)]

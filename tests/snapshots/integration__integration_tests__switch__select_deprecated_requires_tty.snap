@@ -60,3 +60,4 @@ exit_code: 1
 ----- stderr -----
 [33m▲[39m [33mwt select is deprecated; use [1mwt switch[22m instead[39m
 [31m✗[39m [31mInteractive picker requires an interactive terminal[39m
+[2m↳[22m [2mTo switch to a branch, run [4mwt switch <branch>[24m[22m

@@ -114,6 +114,20 @@ pub fn fetch_info(
     }
 }
 
+/// Whether `forge`'s CLI holds a login for `host`.
+///
+/// Each CLI answers from its own local state, so the answer needs no network
+/// and a lost connection never reads as logged out. Azure CLI logins aren't
+/// per host, so `host` doesn't apply to Azure DevOps.
+pub fn is_authed_for(forge: ForgeKind, host: &str) -> anyhow::Result<bool> {
+    Ok(match forge {
+        ForgeKind::GitHub => github::is_authed_for(host),
+        ForgeKind::GitLab => gitlab::is_authed_for(host),
+        ForgeKind::Gitea => gitea::is_authed_for(host)?,
+        ForgeKind::AzureDevOps => azure::is_logged_in(),
+    })
+}
+
 /// Get the fetch ref path for a forge PR/MR.
 pub fn ref_path(forge: ForgeKind, number: u32) -> String {
     match forge {
@@ -200,9 +214,11 @@ pub(super) fn extract_host_from_html_url(html_url: &str) -> anyhow::Result<Strin
         .with_context(|| format!("Failed to parse host from PR URL: {html_url}"))
 }
 
-pub(super) fn cli_config_value(tool: &str, key: &str) -> Option<String> {
+/// `<tool> config get <args>`, trimmed; `None` if the CLI can't answer.
+pub(super) fn cli_config_value(tool: &str, args: &[&str]) -> Option<String> {
     Cmd::new(tool)
-        .args(["config", "get", key])
+        .args(["config", "get"])
+        .args(args.iter().copied())
         .run()
         .ok()
         .filter(|output| output.status.success())

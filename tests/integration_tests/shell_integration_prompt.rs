@@ -296,6 +296,125 @@ fn test_process_tree_unsupported_shell_overrides_shell_env(repo: TestRepo) {
     );
 }
 
+/// A PowerShell profile query that INT/TERM cancels while `wt switch` computes
+/// its shell warning stops the command there: no further shell probes (the
+/// all-shell scan asks `nu` for its autoload dirs) and no later hints.
+#[cfg(unix)]
+#[rstest]
+#[case::sigint("INT", 130)]
+#[case::sigterm("TERM", 143)]
+fn test_switch_stops_after_cancelled_powershell_query(
+    mut repo: TestRepo,
+    #[case] signal: &str,
+    #[case] exit_code: i32,
+) {
+    use crate::common::mock_commands::{MockConfig, MockResponse, mock_calls};
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::CommandExt;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    let mock_bin = repo.mock_bin_path().unwrap();
+    let pwsh = mock_bin.join("pwsh");
+    fs::write(&pwsh, format!("#!/bin/sh\nkill -{signal} $$\n")).unwrap();
+    fs::set_permissions(&pwsh, fs::Permissions::from_mode(0o755)).unwrap();
+    MockConfig::new("nu")
+        .command("_default", MockResponse::output("[]\n"))
+        .write(mock_bin);
+
+    let call_log = tempfile::TempDir::new().unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.env("WORKTRUNK_TEST_PARENT_SHELL", "pwsh")
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
+        .arg0("wt")
+        .args(["switch", "--create", "feature"])
+        .stdin(std::process::Stdio::null());
+    let output = cmd.output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        crate::common::shell_exit_code(&output.status),
+        Some(exit_code),
+        "{stderr}"
+    );
+    assert_eq!(mock_calls(call_log.path(), "nu"), Vec::<String>::new());
+    assert!(
+        !stderr.contains("To customize worktree locations"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("Cannot change directory"), "{stderr}");
+}
+
+/// With a current shell other than PowerShell, the first profile query is the
+/// install offer's all-shell scan. Cancelling it stops the switch before the
+/// `--execute` program runs; a query that merely fails (a plain exit 130)
+/// falls back and the program runs.
+#[cfg(unix)]
+#[rstest]
+#[case::sigint("kill -INT $$", 130, false)]
+#[case::sigterm("kill -TERM $$", 143, false)]
+#[case::ordinary_failure("exit 130", 0, true)]
+fn test_switch_offer_after_powershell_query(
+    mut repo: TestRepo,
+    #[case] pwsh_body: &str,
+    #[case] exit_code: i32,
+    #[case] executed: bool,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::CommandExt;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    let pwsh = repo.mock_bin_path().unwrap().join("pwsh");
+    fs::write(&pwsh, format!("#!/bin/sh\n{pwsh_body}\n")).unwrap();
+    fs::set_permissions(&pwsh, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let marker = repo.root_path().join("executed");
+    let mut cmd = repo.wt_command();
+    cmd.env("WORKTRUNK_TEST_PARENT_SHELL", "zsh")
+        .arg0("wt")
+        .args(["switch", "--create", "feature", "--execute", "touch", "--"])
+        .arg(&marker)
+        .stdin(std::process::Stdio::null());
+    let output = cmd.output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        crate::common::shell_exit_code(&output.status),
+        Some(exit_code),
+        "{stderr}"
+    );
+    assert_eq!(marker.exists(), executed, "{stderr}");
+}
+
+/// An ordinary shell scan failure — an rc path that can't be read as a file —
+/// reads as "not configured": the switch completes and runs `--execute`.
+#[cfg(unix)]
+#[rstest]
+fn test_switch_continues_after_failed_shell_scan(repo: TestRepo) {
+    use crate::common::set_temp_home_env;
+    use std::os::unix::process::CommandExt;
+
+    let temp_home = tempfile::TempDir::new().unwrap();
+    fs::create_dir(temp_home.path().join(".bashrc")).unwrap();
+
+    let marker = repo.root_path().join("executed");
+    let mut cmd = repo.wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_TEST_PARENT_SHELL", "bash")
+        .arg0("wt")
+        .args(["switch", "--create", "feature", "--execute", "touch", "--"])
+        .arg(&marker)
+        .stdin(std::process::Stdio::null());
+    let output = cmd.output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("Cannot change directory — shell integration not installed"),
+        "{stderr}"
+    );
+    assert!(marker.exists(), "{stderr}");
+}
+
 // PTY-based tests for interactive scenarios
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 mod pty_tests {
@@ -491,7 +610,12 @@ mod pty_tests {
     }
 
     #[rstest]
-    fn test_first_run_preserves_completion_created_after_preview(repo: TestRepo) {
+    #[case(false)]
+    #[case(true)]
+    fn test_first_run_completion_preview_controls_write(
+        repo: TestRepo,
+        #[case] created_after_preview: bool,
+    ) {
         let temp_home = TempDir::new().unwrap();
         fs::write(temp_home.path().join(".bashrc"), "# empty bashrc\n").unwrap();
         fs::create_dir_all(temp_home.path().join(".config/fish/functions")).unwrap();
@@ -510,12 +634,21 @@ mod pty_tests {
         let user_content = b"# user completion\r\n";
 
         let (output, exit_code) = exec_cmd_in_pty_prompted_with(cmd, &["y\n"], "[y/N", move |_| {
-            fs::create_dir_all(callback_path.parent().unwrap()).unwrap();
-            fs::write(&callback_path, user_content).unwrap();
+            if created_after_preview {
+                fs::create_dir_all(callback_path.parent().unwrap()).unwrap();
+                fs::write(&callback_path, user_content).unwrap();
+            }
         });
 
         assert_eq!(exit_code, 0, "switch should still succeed:\n{output}");
-        assert_eq!(fs::read(completion).unwrap(), user_content);
+        if created_after_preview {
+            assert_eq!(fs::read(completion).unwrap(), user_content);
+        } else {
+            assert!(
+                completion.is_file(),
+                "the accepted offer must install fish completions"
+            );
+        }
     }
 
     /// Test: User requests preview with ? then declines
@@ -694,17 +827,37 @@ mod commit_generation_prompt_tests {
     use std::path::{Path, PathBuf};
     use tempfile::TempDir;
 
-    fn setup_fake_claude(temp_home: &Path) -> PathBuf {
-        // Create a fake claude executable that does nothing
+    fn setup_fake_tool(temp_home: &Path, tool: &str) -> PathBuf {
+        // Create a fake LLM executable that does nothing
         let bin_dir = temp_home.join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
-        let claude_path = bin_dir.join("claude");
-        fs::write(&claude_path, "#!/bin/sh\nexit 0\n").unwrap();
+        let tool_path = bin_dir.join(tool);
+        fs::write(&tool_path, "#!/bin/sh\nexit 0\n").unwrap();
         // Make executable
-        let mut perms = fs::metadata(&claude_path).unwrap().permissions();
+        let mut perms = fs::metadata(&tool_path).unwrap().permissions();
         perms.set_mode(0o755);
-        fs::set_permissions(&claude_path, perms).unwrap();
+        fs::set_permissions(&tool_path, perms).unwrap();
         bin_dir
+    }
+
+    fn run_codex_prompt(repo: &TestRepo, temp_home: &Path, answers: &[&str]) -> String {
+        let bin_dir = setup_fake_tool(temp_home, "codex");
+        let test_file = repo.root_path().join("test.txt");
+        fs::write(&test_file, "test content\n").unwrap();
+        repo.run_git(&["add", "test.txt"]);
+
+        let mut env_vars = repo.test_env_vars();
+        let path = crate::common::setup_minimal_path_with_git(&bin_dir);
+        env_vars.push(("PATH".to_string(), path));
+
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["step", "commit"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home),
+        );
+        exec_cmd_in_pty_prompted(cmd, answers, "[y/N").0
     }
 
     /// Test: No LLM tool available, prompt is skipped and skip flag is set
@@ -747,7 +900,7 @@ mod commit_generation_prompt_tests {
     #[rstest]
     fn test_user_declines_llm_prompt(repo: TestRepo) {
         let temp_home = TempDir::new().unwrap();
-        let bin_dir = setup_fake_claude(temp_home.path());
+        let bin_dir = setup_fake_tool(temp_home.path(), "claude");
 
         // Stage a change
         let test_file = repo.root_path().join("test.txt");
@@ -788,7 +941,7 @@ mod commit_generation_prompt_tests {
     #[rstest]
     fn test_user_accepts_llm_prompt(repo: TestRepo) {
         let temp_home = TempDir::new().unwrap();
-        let bin_dir = setup_fake_claude(temp_home.path());
+        let bin_dir = setup_fake_tool(temp_home.path(), "claude");
 
         // Stage a change
         let test_file = repo.root_path().join("test.txt");
@@ -825,11 +978,94 @@ mod commit_generation_prompt_tests {
         );
     }
 
+    #[rstest]
+    fn test_user_accepts_codex_prompt(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        let output = run_codex_prompt(&repo, temp_home.path(), &["y\n"]);
+
+        assert!(output.contains("Added to user config"), "{output}");
+        assert!(output.contains("Created Codex instructions"), "{output}");
+        assert!(
+            output.contains("the saved Codex command requires it"),
+            "{output}"
+        );
+        let config_content = fs::read_to_string(repo.test_config_path()).unwrap();
+        assert!(config_content.contains("model_instructions_file"));
+        assert_eq!(
+            fs::read(
+                temp_home
+                    .path()
+                    .join(".codex/worktrunk-commit-instructions.txt")
+            )
+            .unwrap(),
+            b"."
+        );
+    }
+
+    #[rstest]
+    fn test_codex_preview_then_decline_does_not_create_instructions(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        let output = run_codex_prompt(&repo, temp_home.path(), &["?\n", "n\n"]);
+
+        assert!(
+            output.contains("creates a one-character file there if absent"),
+            "{output}"
+        );
+        assert!(
+            !temp_home
+                .path()
+                .join(".codex/worktrunk-commit-instructions.txt")
+                .exists()
+        );
+        let config_content = fs::read_to_string(repo.test_config_path()).unwrap_or_default();
+        assert!(!config_content.contains("model_instructions_file"));
+    }
+
+    #[rstest]
+    fn test_codex_prompt_reuses_existing_instructions(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        let instructions = temp_home
+            .path()
+            .join(".codex/worktrunk-commit-instructions.txt");
+        fs::create_dir_all(instructions.parent().unwrap()).unwrap();
+        fs::write(&instructions, "Existing instructions").unwrap();
+
+        let output = run_codex_prompt(&repo, temp_home.path(), &["y\n"]);
+
+        assert!(!output.contains("Created Codex instructions"), "{output}");
+        assert!(
+            output.contains("the saved Codex command requires it"),
+            "{output}"
+        );
+        assert_eq!(
+            fs::read_to_string(&instructions).unwrap(),
+            "Existing instructions"
+        );
+        let config_content = fs::read_to_string(repo.test_config_path()).unwrap();
+        assert!(config_content.contains("model_instructions_file"));
+    }
+
+    #[rstest]
+    fn test_codex_prompt_file_creation_failure_does_not_save_command(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        fs::write(temp_home.path().join(".codex"), "not a directory").unwrap();
+
+        let output = run_codex_prompt(&repo, temp_home.path(), &["y\n"]);
+
+        assert!(
+            output.contains("Codex setup failed: Failed to create"),
+            "{output}"
+        );
+        assert!(output.contains(".codex"), "{output}");
+        let config_content = fs::read_to_string(repo.test_config_path()).unwrap_or_default();
+        assert!(!config_content.contains("model_instructions_file"));
+    }
+
     /// Test: User requests preview (?)
     #[rstest]
     fn test_user_requests_preview(repo: TestRepo) {
         let temp_home = TempDir::new().unwrap();
-        let bin_dir = setup_fake_claude(temp_home.path());
+        let bin_dir = setup_fake_tool(temp_home.path(), "claude");
 
         // Stage a change
         let test_file = repo.root_path().join("test.txt");
@@ -867,7 +1103,7 @@ mod commit_generation_prompt_tests {
     #[rstest]
     fn test_user_accepts_but_save_fails_shows_manual_hint(repo: TestRepo) {
         let temp_home = TempDir::new().unwrap();
-        let bin_dir = setup_fake_claude(temp_home.path());
+        let bin_dir = setup_fake_tool(temp_home.path(), "claude");
 
         // Stage a change
         let test_file = repo.root_path().join("test.txt");
