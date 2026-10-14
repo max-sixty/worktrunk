@@ -49,7 +49,7 @@ expression: render_cases(cases)
 [31m✗[39m [31mCannot remove worktree after merge: [1mfeature-auth[22m has uncommitted changes[39m
 [107m [0m  M auth.rs
 [107m [0m ?? .DS_Store
-[2m↳[22m [2mCommit or stash changes first[22m
+[2m↳[22m [2mCommit or run [4mgit stash -u[24m in the dirty worktree first[22m
 
 ## branch already exists
 

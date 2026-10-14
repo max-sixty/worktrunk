@@ -7,7 +7,62 @@
 use crate::common::progressive_output::{ProgressiveCaptureOptions, capture_progressive_output};
 use crate::common::pty::{build_pty_command, exec_cmd_in_pty};
 use crate::common::{TestRepo, repo, wt_bin};
+use ansi_str::AnsiStr;
 use rstest::rstest;
+
+/// Loading footers describe the inventory separately from the displayed rows,
+/// both before results arrive and as rows fill in. Capture the complete PTY
+/// stream so even a fast run must exercise its initial loading footer.
+#[test]
+fn test_list_progressive_loading_footer() {
+    let mut repo = TestRepo::standard_main_only();
+    repo.add_worktree("feature-a");
+    repo.add_worktree("feature-b");
+    for branch in ["branch-a", "branch-b"] {
+        repo.run_git(&["branch", branch]);
+    }
+
+    for (height, expected) in [
+        (30, "○ 3 worktrees, 2 branches — loading details…"),
+        (
+            9,
+            "○ 3 worktrees, 2 branches — first 3 of 5 shown — loading details…",
+        ),
+    ] {
+        let pair = crate::common::open_pty_with_size(height, 150);
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["list", "--progressive", "--branches"],
+            repo.root_path(),
+            &repo.test_env_vars(),
+            None,
+        );
+        let mut child = pair.slave.spawn_command(cmd).unwrap();
+        drop(pair.slave);
+        let reader = pair.master.try_clone_reader().unwrap();
+        let writer = pair.master.take_writer().unwrap();
+        let (raw, exit_code) =
+            crate::common::pty::read_pty_output(reader, writer, pair.master, &mut child);
+        assert_eq!(exit_code, 0);
+        let output = raw.ansi_strip();
+        let loading_footers: Vec<_> = output
+            .lines()
+            .filter(|line| line.contains("loading details…"))
+            .map(|line| &line[line.find('○').unwrap()..])
+            .collect();
+        assert!(
+            !loading_footers.is_empty(),
+            "initial footer missing: {output}"
+        );
+        for footer in loading_footers {
+            assert_eq!(footer.trim_end(), expected);
+        }
+        assert!(
+            output.contains("Showing 3 worktrees, 2 branches"),
+            "final summary missing: {output}"
+        );
+    }
+}
 
 /// Tests progressive rendering with multiple worktrees.
 /// Verifies: headers appear immediately, dots decrease over time, all worktrees visible.

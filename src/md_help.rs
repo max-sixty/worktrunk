@@ -519,11 +519,9 @@ fn colorize_status_symbols(text: &str) -> String {
     result = replace_dim(result, "↻", warning);
     result = replace_dim(result, "✗", warning);
 
-    // Worktree state: Prunable/Locked (yellow), the irregular-mapping flag
-    // (dim yellow)
+    // Worktree state: Prunable/Locked (yellow)
     result = replace_dim(result, "⊟", warning);
     result = replace_dim(result, "⊞", warning);
-    result = replace_dim(result, "⚑", warning.dimmed());
 
     // CI legend samples: replace dimmed `#` followed by a color name
     let dimmed_hash = format!("{dim}#{dim:#}");

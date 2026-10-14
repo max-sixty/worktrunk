@@ -54,13 +54,45 @@ Usage: [1m[36mwt config shell[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
   [1m[36mshow-theme[0m  Show output theme samples
 
 [1m[32mOptions:[0m
-  [1m[36m-h[0m, [1m[36m--help[0m  Print help
+  [1m[36m-h[0m, [1m[36m--help[0m
+          Print help (see a summary with '-h')
 
 [1m[32mGlobal Options:[0m
-  [1m[36m-C[0m[36m [0m[36m<path>[0m                Working directory for this command
-      [1m[36m--config[0m[36m [0m[36m<path>[0m      User config file path
-      [1m[36m--config-set[0m[36m [0m[36m<toml>[0m  Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
-  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m         Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to apply the same level everywhere — including shell completion, which no flag can reach
-  [1m[36m-y[0m, [1m[36m--yes[0m                Skip approval prompts
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
+          Working directory for this command
+
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
+          User config file path
+
+      [1m[36m--config-set[0m[36m [0m[36m<toml>[0m
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to apply the same level everywhere — including shell completion, which no flag can reach
+
+  [1m[36m-y[0m, [1m[36m--yes[0m
+          Skip approval prompts
+
+A subprocess cannot change its parent shell's directory. Shell integration defines a function that runs the Worktrunk binary, then changes the shell's directory when the command requests it. It also enables tab completion.
+
+[1m[32mSetup[0m
+
+[107m [0m [2m[0m[2m[34mwt[0m[2m config shell install[0m
+
+Start a new shell after installation to load the wrapper. Invoke [2mwt[0m by name. Running a binary path or [2mgit wt[0m bypasses the wrapper, so the shell's directory stays unchanged.
+
+- [2mwt config shell install --help[0m — installation options
+- [2mwt config shell init --help[0m — manual setup
+- [2mwt config shell uninstall[0m — remove the integration
+
+[1m[32mCheck the current shell[0m
+
+[107m [0m [2m[0m[2m[34mwt[0m[2m config show[0m
+
+The SHELL INTEGRATION section reports whether the wrapper is active in the current session. Installation and activation are separate: a configured shell can still be running without the wrapper until its config is reloaded.
+
+In bash, zsh, or fish, [2mtype wt[0m checks that [2mwt[0m resolves to a function. In PowerShell, [2mGet-Command wt -All[0m lists the Function and Application definitions.
+
+See worktrunk.dev/shell-integration for warning messages, installed files, and wrapper behavior.
 
 ----- stderr -----

@@ -49,7 +49,7 @@ Commands:
   switch  Switch to a worktree; create if needed
   list    List worktrees and their status
   remove  Remove worktree; delete branch if merged
-  merge   Merge current branch into the target branch
+  merge   Merge a branch into the target branch
   step    Run individual operations
   hook    Run configured hooks
   config  Manage user & project configs

@@ -203,7 +203,10 @@ jobs:
       env:
         PR_HEAD: ${{ github.event.pull_request.head.sha }}
       run: |
-        git fetch --no-tags --depth=200 origin main
+        # `origin/main` is already complete from the full checkout above. A
+        # `git fetch --depth=N` here would graft main's history at N commits
+        # and make the repo shallow, so a PR branched further back would have
+        # no merge-base.
         sha=$(git merge-base origin/main "$PR_HEAD")
         echo "sha=$sha" >> "$GITHUB_OUTPUT"
         echo "merge-base with origin/main: $sha"

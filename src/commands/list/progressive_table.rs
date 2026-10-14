@@ -229,6 +229,11 @@ impl ProgressiveTable {
         Ok(())
     }
 
+    /// Number of data rows displayed during progressive rendering.
+    pub fn visible_row_count(&self) -> usize {
+        self.row_count
+    }
+
     /// Print all lines to stdout, followed by the prompt-reserve rows.
     fn print_all(&self) -> std::io::Result<()> {
         let mut stdout = stdout();

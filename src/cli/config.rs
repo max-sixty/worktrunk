@@ -33,7 +33,7 @@ pub enum ConfigShellCommand {
 
 ## Manual setup
 
-Add one line to the shell config:
+For bash, fish, zsh, and PowerShell, add the matching line to the shell config. For Nushell, run the command to save the wrapper in its autoload directory.
 
 Bash (~/.bashrc):
 ```console
@@ -50,9 +50,14 @@ Zsh (~/.zshrc):
 eval "$(wt config shell init zsh)"
 ```
 
-Nushell [experimental] — save to vendor autoload directory:
+Nushell 0.113+ [experimental] — save to vendor autoload directory:
 ```console
 $ wt config shell init nu | save -f ($nu.vendor-autoload-dirs | last | path join wt.nu)
+```
+
+PowerShell ($PROFILE):
+```powershell
+Invoke-Expression (& wt config shell init powershell | Out-String)
 ```"#
     )]
     Init {
@@ -71,7 +76,7 @@ $ wt config shell init nu | save -f ($nu.vendor-autoload-dirs | last | path join
 
     /// Write shell integration to config files
     #[command(
-        after_long_help = r#"Detects existing shell config files and adds the integration line.
+        after_long_help = r#"Appends an initialization line to bash, zsh, and PowerShell config files. For fish and Nushell, it replaces the autoloaded wrapper file; fish also gets a separate completion file. See [worktrunk.dev/shell-integration](/shell-integration/#files-created) for their locations.
 
 ## Examples
 
@@ -108,7 +113,7 @@ Use --yes to skip confirmation."#
 
     /// Remove shell integration from config files
     #[command(
-        after_long_help = r#"Removes shell integration lines from config files.
+        after_long_help = r#"Removes Worktrunk initialization lines from bash, zsh, and PowerShell config files, and Worktrunk wrapper and completion files for fish and Nushell.
 
 ## Examples
 
@@ -548,7 +553,11 @@ Skips gracefully if the statusline is already configured."#
     )]
     InstallStatusline,
 
-    /// Internal: the plugin's PermissionRequest hook, reading its payload from stdin
+    /// Internal: the plugin's hook command, reading Claude Code's hook payload from stdin
+    #[command(hide = true)]
+    Hook,
+
+    /// Internal: the PermissionRequest hook of plugin copies that predate `hook`
     #[command(hide = true, name = "approve-enter-worktree")]
     ApproveEnterWorktree,
 }
@@ -622,6 +631,36 @@ $ wt config alias dry-run deploy -- --env=staging
 #[derive(Subcommand)]
 pub enum ConfigCommand {
     /// Shell integration setup
+    #[command(
+        after_long_help = r#"A subprocess cannot change its parent shell's directory. Shell integration defines a function that runs the Worktrunk binary, then changes the shell's directory when the command requests it. It also enables tab completion.
+
+## Setup
+
+```console
+$ wt config shell install
+```
+
+Start a new shell after installation to load the wrapper. Invoke `wt` by name. Running a binary path or `git wt` bypasses the wrapper, so the shell's directory stays unchanged.
+
+- `wt config shell install --help` — installation options
+- `wt config shell init --help` — manual setup
+- `wt config shell uninstall` — remove the integration
+
+## Check the current shell
+
+```console
+$ wt config show
+```
+
+The SHELL INTEGRATION section reports whether the wrapper is active in the current session. Installation and activation are separate: a configured shell can still be running without the wrapper until its config is reloaded.
+
+In bash, zsh, or fish, `type wt` checks that `wt` resolves to a function. In PowerShell, `Get-Command wt -All` lists the Function and Application definitions.
+
+See [worktrunk.dev/shell-integration](/shell-integration/) for warning messages, installed files, and wrapper behavior.
+<!-- subdoc: init -->
+<!-- subdoc: install -->
+<!-- subdoc: uninstall -->"#
+    )]
     Shell {
         #[command(subcommand)]
         action: ConfigShellCommand,
@@ -661,7 +700,7 @@ $ wt config show --full
 ```
 
 This tests:
-- **CI tool status** — Whether `gh` (GitHub) or `glab` (GitLab) is installed and authenticated
+- **CI tool status** — Whether the CLI for the repository's forge (`gh`, `glab`, `tea`, or `az`) is installed and authenticated
 - **Commit generation** — Whether the LLM command can generate commit messages
 - **Version check** — Whether a newer version is available on GitHub"#
     )]
@@ -814,7 +853,7 @@ $ wt config alias dry-run deploy -- --env=staging
 ## Supported tools
 
 - **claude** — Claude Code plugin (activity tracking + statusline)
-- **codex** — Codex plugin (Worktrunk configuration skill)
+- **codex** — Codex plugin (activity tracking + Worktrunk configuration skill)
 - **omp** — oh-my-pi hook (activity tracking)
 - **opencode** — OpenCode plugin (activity tracking)
 - **pi** — Pi extension (activity tracking)
@@ -912,7 +951,7 @@ pub enum StateCommand {
 - **Previous branch**: Previous branch for `wt switch -`
 - **Branch markers**: User-defined branch notes
 - **Vars**: Custom variables per branch
-- **CI status**: Cached GitHub/GitLab CI status per branch (30-60s TTL)
+- **CI status**: Cached forge CI status per branch (30-60s TTL)
 - **Summaries**: Cached LLM-generated branch summaries (shown in `wt list --full` and `wt switch` preview)
 - **Git commands cache**: Cached merge-tree, ancestry, diff-stat, and `wt switch` preview results
 - **Hints**: One-time hints that have been shown
@@ -955,7 +994,7 @@ untouched."#)]
 
 ## What's cached
 
-- **CI status** — GitHub/GitLab CI per branch (30–60s TTL), shown in [`wt list`](/list/#ci-status)
+- **CI status** — forge CI per branch (30–60s TTL), shown in [`wt list`](/list/#ci-status)
 - **Summaries** — LLM-generated branch summaries (`wt list --full`, `wt switch` preview)
 - **Git commands** — cached merge-tree, ancestry, diff-stat, and `wt switch` preview results
 - **Hints** — one-time hints already shown in this repo
@@ -1073,7 +1112,7 @@ Hook output lives in per-branch subtrees under `.git/wt/logs/{branch}/`:
 | Background hooks | `{branch}/{source}/{hook-type}/{name}.log` |
 | Background removal | `{branch}/internal/remove.log` |
 
-All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the background and produce log files. Source is `user` or `project`. Branch and hook names are sanitized for filesystem safety. Same operation on same branch overwrites the previous log. Removing a branch clears its subtree; orphans from deleted branches can be swept with `wt config state logs clear`.
+All `post-*` hooks (post-start, post-switch, post-commit, post-merge, post-remove) run in the background and produce log files. Source is `user` or `project`. Branch and hook names are sanitized for filesystem safety. Same operation on same branch overwrites the previous log. Removing a branch clears its subtree; orphans from deleted branches can be swept with `wt config state logs clear`.
 
 ### Diagnostic files
 
@@ -1092,7 +1131,7 @@ All logs are stored in `.git/wt/logs/` (in the main worktree's git directory). A
 
 ## Structured output
 
-`wt config state logs --format=json` emits three arrays — `command_log`, `hook_output`, `diagnostic`. Each entry carries a `file` (relative), `path` (absolute), `size`, and `modified_at` (unix seconds). Hook-output entries additionally expose `branch`, `source` (`user` / `project` / `internal`), `hook_type` (the `post-*` kind, or `null` for internal ops), and `name`. Filter with `jq` to pick out a specific entry.
+`wt config state logs --format=json` emits three arrays — `command_log`, `hook_output`, `diagnostic`. Each entry carries a `file` (relative), `path` (absolute), `size`, and `modified_at` (unix seconds). Hook-output entries additionally expose `branch`, `source` (`user` / `project` / `internal`), `hook_type` (the `post-*` kind, or `null` for internal ops), and `name`. `branch` is the branch name, or `null` when no local branch writes to that log directory (e.g. the branch was deleted). `name` is the hook name as it appears in the log path, which differs from the configured name only when that contains characters unsafe in a filename. Filter with `jq` to pick out a specific entry.
 
 ## Examples
 
@@ -1108,12 +1147,12 @@ $ tail -5 .git/wt/logs/commands.jsonl | jq .
 
 Path to one hook log (e.g. the `post-start` `server` hook for the current branch):
 ```console
-$ wt config state logs --format=json | jq -r '.hook_output[] | select(.source == "user" and .hook_type == "post-start" and (.name | startswith("server"))) | .path'
+$ wt config state logs --format=json | jq -r --arg branch "$(git branch --show-current)" '.hook_output[] | select([.branch, .source, .hook_type, .name] == [$branch, "user", "post-start", "server"]) | .path'
 ```
 
 Logs for a specific branch:
 ```console
-$ wt config state logs --format=json | jq '.hook_output[] | select(.branch | startswith("feature"))'
+$ wt config state logs --format=json | jq '.hook_output[] | select(.branch == "feature/auth")'
 ```
 
 Clear all logs:
@@ -1194,7 +1233,7 @@ wt list
 ## Use cases
 
 - **Work status** — `🚧` WIP, `✅` ready for review, `🔥` urgent
-- **Agent tracking** — The [Claude Code](/claude-code/) plugin sets markers automatically
+- **Agent tracking** — [Agent plugins](/claude-code/) set markers automatically
 - **Notes** — Any short text: `"blocked"`, `"needs tests"`
 
 ## Storage
@@ -1489,14 +1528,14 @@ List all log files:
 $ wt config state logs
 ```
 
-Get the absolute path of one post-start hook log for the current branch (use `jq` to filter):
+Get the absolute path of the current branch's `server` post-start hook log:
 ```console
-$ wt config state logs --format=json | jq -r '.hook_output[] | select(.source == "user" and .hook_type == "post-start" and (.name | startswith("server"))) | .path'
+$ wt config state logs --format=json | jq -r --arg branch "$(git branch --show-current)" '.hook_output[] | select([.branch, .source, .hook_type, .name] == [$branch, "user", "post-start", "server"]) | .path'
 ```
 
 Stream that log with `tail -f`:
 ```console
-$ tail -f "$(wt config state logs --format=json | jq -r '.hook_output[] | select(.source == "user" and .hook_type == "post-start" and (.name | startswith("server"))) | .path' | head -1)"
+$ tail -f "$(wt config state logs --format=json | jq -r --arg branch "$(git branch --show-current)" '.hook_output[] | select([.branch, .source, .hook_type, .name] == [$branch, "user", "post-start", "server"]) | .path')"
 ```
 
 Logs for a background worktree removal (internal op):
@@ -1506,7 +1545,7 @@ $ wt config state logs --format=json | jq '.hook_output[] | select(.source == "i
 
 Logs for a specific branch:
 ```console
-$ wt config state logs --format=json | jq '.hook_output[] | select(.branch | startswith("feature"))'
+$ wt config state logs --format=json | jq '.hook_output[] | select(.branch == "feature/auth")'
 ```"#
     )]
     Get,
@@ -1733,7 +1772,7 @@ $ wt config state vars clear --all
 
 Clear all keys for a specific branch:
 ```console
-$ wt config state vars clear env --branch=feature
+$ wt config state vars clear --all --branch=feature
 ```"#)]
     Clear {
         /// Key to clear (required unless --all)

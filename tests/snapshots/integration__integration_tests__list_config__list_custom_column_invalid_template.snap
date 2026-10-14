@@ -58,5 +58,7 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mFailed to expand list.custom-columns.Ticket: undefined value: `branhc`[39m
+[31m✗[39m [31mFailed to expand list.custom-columns.Ticket: undefined variable branhc[39m
+[107m [0m {{ branhc }}
+[2m↳[22m [2mDid you mean [4mbranch[24m?[22m
 [2m↳[22m [2mAvailable variables: [4mbranch[24m, [4mgit.branch.<key>[24m, [4mvars.<key>[24m, [4mworktree_name[24m, [4mworktree_path[24m[22m

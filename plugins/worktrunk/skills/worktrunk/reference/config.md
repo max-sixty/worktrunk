@@ -155,7 +155,7 @@ command = "codex exec -m gpt-6-luna -c model_reasoning_effort='none' -c project_
 
 ```toml
 [commit.generation]
-command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"
+command = "opencode run -m anthropic/claude-haiku-5-5 --variant fast"
 ```
 
 ### llm
@@ -169,7 +169,7 @@ command = "llm -m claude-haiku-4.5"
 
 ```toml
 [commit.generation]
-command = "aichat -m claude:claude-haiku-4.5"
+command = "aichat -m claude:claude-haiku-4.5 --code"
 ```
 
 See [LLM commits docs](https://worktrunk.dev/llm-commits/) for setup and [Custom prompt templates](#custom-prompt-templates) for template customization.
@@ -310,6 +310,7 @@ cd = true          # Change directory after switching (--no-cd to skip)
 
 [switch.picker]
 pager = "delta --paging=never"   # Example: override git's core.pager for diff preview
+preview = true                   # Show the preview panel on open (Alt-p toggles)
 ```
 
 ### Step
@@ -337,7 +338,7 @@ Aliases defined here apply to all projects. For project-specific aliases, use th
 
 User config can include a `[projects]` table for project-specific settings — worktree layout, setting overrides, anything else — separate from the [project config](https://worktrunk.dev/config/#project-configuration) shared with teammates.
 
-Entries are keyed by project identifier — `<host>/<owner>/<repo>` derived from the primary remote URL (no `.git` suffix), or the canonical repo path when there is no remote. Run `wt config show` inside the repo to see the identifier for the current project; it appears in the `PROJECT CONFIG` section as `Identifier: …`.
+Entries are keyed by project identifier — `<host>/<owner>/<repo>` derived from the primary remote URL (no `.git` suffix; an explicit port other than SSH's default 22 stays with the host, as in `gitlab.example.com:2222/team/project`), or the canonical repo path when there is no remote. Run `wt config show` inside the repo to see the identifier for the current project; it appears in the `PROJECT CONFIG` section as `Identifier: …`.
 
 Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first. See [how the layers rank](https://worktrunk.dev/config/#precedence).
 
@@ -366,7 +367,7 @@ forge.platform = "gitlab"
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 ```
 
-Every matching entry applies, least- to most-specific, following the rule above: a more specific entry — `git.company.example/platform/*` over `git.company.example/*` — wins where both set the same setting, while hooks and aliases from every matching entry all run, least-specific first. A literal key is the most specific of all; specificity is the count of non-`*` characters in the key. End a host-wide key with `/*` — a bare `git.company.example*` also covers hosts whose names merely start with that string.
+Every matching entry applies, least- to most-specific, following the rule above: a more specific entry — `git.company.example/platform/*` over `git.company.example/*` — wins where both set the same setting, while hooks and aliases from every matching entry all run, least-specific first. A literal key is the most specific of all; specificity is the count of non-`*` characters in the key. End a host-wide key with `/*` — a bare `git.company.example*` also covers hosts whose names merely start with that string. A remote on a non-default SSH port carries the port in its identifier, so its host-wide key is `git.company.example:2222/*`.
 
 Entries in `approvals.toml` match the same way, so a hand-written pattern entry approves its commands for every repository it covers.
 
@@ -609,19 +610,11 @@ Aliases defined here are shared with teammates. For personal aliases, use the [u
 
 # Shell Integration
 
-Worktrunk needs shell integration to change directories when switching worktrees. Install with:
-
-```console
-$ wt config shell install
-```
-
-For manual setup, see `wt config shell init --help`.
-
-Without shell integration, `wt switch` prints the target directory but cannot `cd` into it.
+See [`wt config shell`](#wt-config-shell) for setup, activation, and current-shell diagnostics.
 
 ### First-run prompts
 
-On first run without shell integration, Worktrunk offers to install it. On first commit without LLM configuration, it offers to configure a detected tool (`claude`, `codex`). Declining sets `skip-shell-integration-prompt` or `skip-commit-generation-prompt` automatically.
+On first run without shell integration, Worktrunk offers to install it. On first commit without LLM configuration, it offers to configure a detected tool (`claude`, `codex`, `opencode`). Declining sets `skip-shell-integration-prompt` or `skip-commit-generation-prompt` automatically.
 
 # Other
 
@@ -657,7 +650,6 @@ $ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 | `WORKTRUNK_CONFIG_PATH` | Override user config file location |
 | `WORKTRUNK_SYSTEM_CONFIG_PATH` | Override system config file location |
 | `WORKTRUNK_PROJECT_CONFIG_PATH` | Override project config file location (defaults to `.config/wt.toml`); relative paths resolve from the worktree root |
-| `XDG_CONFIG_DIRS` | Colon-separated system config directories (default: `/etc/xdg`) |
 | `WORKTRUNK_MAX_CONCURRENT_COMMANDS` | Max parallel git commands (default: 32). Lower if hitting file descriptor limits. |
 | `WORKTRUNK_VERBOSE` | Verbosity level (`0`/`1`/`2`), like `-v`/`-vv` but applied everywhere — including shell completion, which no flag can reach |
 | `RUST_LOG` | Logging directive (e.g. `worktrunk=debug`); overrides the verbosity baseline for what reaches stderr |
@@ -736,6 +728,213 @@ Global Options:
 
 # Subcommands
 
+## wt config shell
+
+Shell integration setup.
+
+A subprocess cannot change its parent shell's directory. Shell integration defines a function that runs the Worktrunk binary, then changes the shell's directory when the command requests it. It also enables tab completion.
+
+### Setup
+
+```console
+$ wt config shell install
+```
+
+Start a new shell after installation to load the wrapper. Invoke `wt` by name. Running a binary path or `git wt` bypasses the wrapper, so the shell's directory stays unchanged.
+
+- `wt config shell install --help` — installation options
+- `wt config shell init --help` — manual setup
+- `wt config shell uninstall` — remove the integration
+
+### Check the current shell
+
+```console
+$ wt config show
+```
+
+The SHELL INTEGRATION section reports whether the wrapper is active in the current session. Installation and activation are separate: a configured shell can still be running without the wrapper until its config is reloaded.
+
+In bash, zsh, or fish, `type wt` checks that `wt` resolves to a function. In PowerShell, `Get-Command wt -All` lists the Function and Application definitions.
+
+See [worktrunk.dev/shell-integration](https://worktrunk.dev/shell-integration/) for warning messages, installed files, and wrapper behavior.
+
+### Command reference
+
+```
+wt config shell - Shell integration setup
+
+Usage: wt config shell [OPTIONS] <COMMAND>
+
+Commands:
+  init        Generate shell integration code
+  install     Write shell integration to config files
+  uninstall   Remove shell integration from config files
+  show-theme  Show output theme samples
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## wt config shell init
+
+Generate shell integration code.
+
+Outputs shell code for `eval` or sourcing. Most users should run `wt config shell install` instead, which adds this automatically.
+
+### Manual setup
+
+For bash, fish, zsh, and PowerShell, add the matching line to the shell config. For Nushell, run the command to save the wrapper in its autoload directory.
+
+Bash (~/.bashrc):
+```console
+$ eval "$(wt config shell init bash)"
+```
+
+Fish (~/.config/fish/config.fish):
+```fish
+wt config shell init fish | source
+```
+
+Zsh (~/.zshrc):
+```zsh
+eval "$(wt config shell init zsh)"
+```
+
+Nushell 0.113+ [experimental] — save to vendor autoload directory:
+```console
+$ wt config shell init nu | save -f ($nu.vendor-autoload-dirs | last | path join wt.nu)
+```
+
+PowerShell ($PROFILE):
+```powershell
+Invoke-Expression (& wt config shell init powershell | Out-String)
+```
+
+### Command reference
+
+```
+wt config shell init - Generate shell integration code
+
+Usage: wt config shell init [OPTIONS] <bash|fish|nu|zsh|powershell>
+
+Arguments:
+  <bash|fish|nu|zsh|powershell>
+          Shell to generate code for
+
+          [possible values: bash, fish, nu, zsh, powershell]
+
+Options:
+      --cmd <CMD>
+          Command name for shell integration (defaults to binary name)
+
+          Use this to create shell integration for an alternate command name. For example,
+          --cmd=git-wt creates a git-wt shell function instead of wt, useful on Windows where wt
+          conflicts with Windows Terminal.
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## wt config shell install
+
+Write shell integration to config files.
+
+Appends an initialization line to bash, zsh, and PowerShell config files. For fish and Nushell, it replaces the autoloaded wrapper file; fish also gets a separate completion file. See [worktrunk.dev/shell-integration](https://worktrunk.dev/shell-integration/#files-created) for their locations.
+
+### Examples
+
+Install for all detected shells:
+```console
+$ wt config shell install
+```
+
+Install for specific shell only:
+```console
+$ wt config shell install zsh
+```
+
+Shows proposed changes and waits for confirmation before modifying any files.
+Use --yes to skip confirmation.
+
+### Command reference
+
+```
+wt config shell install - Write shell integration to config files
+
+Usage: wt config shell install [OPTIONS] [bash|fish|nu|zsh|powershell]
+
+Arguments:
+  [bash|fish|nu|zsh|powershell]
+          Shell to install (default: all)
+
+          [possible values: bash, fish, nu, zsh, powershell]
+
+Options:
+      --dry-run
+          Show what would be changed
+
+      --cmd <CMD>
+          Command name for shell integration (defaults to binary name)
+
+          Use this to create shell integration for an alternate command name. For example,
+          --cmd=git-wt creates a git-wt shell function instead of wt, useful on Windows where wt
+          conflicts with Windows Terminal.
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## wt config shell uninstall
+
+Remove shell integration from config files.
+
+Removes Worktrunk initialization lines from bash, zsh, and PowerShell config files, and Worktrunk wrapper and completion files for fish and Nushell.
+
+### Examples
+
+Uninstall from all shells:
+```console
+$ wt config shell uninstall
+```
+
+Uninstall from specific shell only:
+```console
+$ wt config shell uninstall zsh
+```
+
+Skip confirmation prompt:
+```console
+$ wt config shell uninstall --yes
+```
+
+### Version tolerance
+
+Uninstall removes every worktrunk-managed integration it finds, regardless of:
+- Binary name it was installed under (`wt`, `git-wt`, …)
+- Minor syntax variations between versions
+
+### Command reference
+
+```
+wt config shell uninstall - Remove shell integration from config files
+
+Usage: wt config shell uninstall [OPTIONS] [bash|fish|nu|zsh|powershell]
+
+Arguments:
+  [bash|fish|nu|zsh|powershell]
+          Shell to uninstall (default: all)
+
+          [possible values: bash, fish, nu, zsh, powershell]
+
+Options:
+      --dry-run
+          Show what would be changed
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
 ## wt config show
 
 Show configuration files & locations.
@@ -753,7 +952,7 @@ $ wt config show --full
 ```
 
 This tests:
-- **CI tool status** — Whether `gh` (GitHub) or `glab` (GitLab) is installed and authenticated
+- **CI tool status** — Whether the CLI for the repository's forge (`gh`, `glab`, `tea`, or `az`) is installed and authenticated
 - **Commit generation** — Whether the LLM command can generate commit messages
 - **Version check** — Whether a newer version is available on GitHub
 
@@ -1029,7 +1228,7 @@ View or drop worktrunk's regenerable caches in one place. Everything here is reb
 
 ### What's cached
 
-- **CI status** — GitHub/GitLab CI per branch (30–60s TTL), shown in [`wt list`](https://worktrunk.dev/list/#ci-status)
+- **CI status** — forge CI per branch (30–60s TTL), shown in [`wt list`](https://worktrunk.dev/list/#ci-status)
 - **Summaries** — LLM-generated branch summaries (`wt list --full`, `wt switch` preview)
 - **Git commands** — cached merge-tree, ancestry, diff-stat, and `wt switch` preview results
 - **Hints** — one-time hints already shown in this repo
@@ -1155,7 +1354,7 @@ Hook output lives in per-branch subtrees under `.git/wt/logs/{branch}/`:
 | Background hooks | `{branch}/{source}/{hook-type}/{name}.log` |
 | Background removal | `{branch}/internal/remove.log` |
 
-All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the background and produce log files. Source is `user` or `project`. Branch and hook names are sanitized for filesystem safety. Same operation on same branch overwrites the previous log. Removing a branch clears its subtree; orphans from deleted branches can be swept with `wt config state logs clear`.
+All `post-*` hooks (post-start, post-switch, post-commit, post-merge, post-remove) run in the background and produce log files. Source is `user` or `project`. Branch and hook names are sanitized for filesystem safety. Same operation on same branch overwrites the previous log. Removing a branch clears its subtree; orphans from deleted branches can be swept with `wt config state logs clear`.
 
 #### Diagnostic files
 
@@ -1174,7 +1373,7 @@ All logs are stored in `.git/wt/logs/` (in the main worktree's git directory). A
 
 ### Structured output
 
-`wt config state logs --format=json` emits three arrays — `command_log`, `hook_output`, `diagnostic`. Each entry carries a `file` (relative), `path` (absolute), `size`, and `modified_at` (unix seconds). Hook-output entries additionally expose `branch`, `source` (`user` / `project` / `internal`), `hook_type` (the `post-*` kind, or `null` for internal ops), and `name`. Filter with `jq` to pick out a specific entry.
+`wt config state logs --format=json` emits three arrays — `command_log`, `hook_output`, `diagnostic`. Each entry carries a `file` (relative), `path` (absolute), `size`, and `modified_at` (unix seconds). Hook-output entries additionally expose `branch`, `source` (`user` / `project` / `internal`), `hook_type` (the `post-*` kind, or `null` for internal ops), and `name`. `branch` is the branch name, or `null` when no local branch writes to that log directory (e.g. the branch was deleted). `name` is the hook name as it appears in the log path, which differs from the configured name only when that contains characters unsafe in a filename. Filter with `jq` to pick out a specific entry.
 
 ### Examples
 
@@ -1190,12 +1389,12 @@ $ tail -5 .git/wt/logs/commands.jsonl | jq .
 
 Path to one hook log (e.g. the `post-start` `server` hook for the current branch):
 ```console
-$ wt config state logs --format=json | jq -r '.hook_output[] | select(.source == "user" and .hook_type == "post-start" and (.name | startswith("server"))) | .path'
+$ wt config state logs --format=json | jq -r --arg branch "$(git branch --show-current)" '.hook_output[] | select([.branch, .source, .hook_type, .name] == [$branch, "user", "post-start", "server"]) | .path'
 ```
 
 Logs for a specific branch:
 ```console
-$ wt config state logs --format=json | jq '.hook_output[] | select(.branch | startswith("feature"))'
+$ wt config state logs --format=json | jq '.hook_output[] | select(.branch == "feature/auth")'
 ```
 
 Clear all logs:
@@ -1248,7 +1447,7 @@ $ wt list
 ### Use cases
 
 - **Work status** — `🚧` WIP, `✅` ready for review, `🔥` urgent
-- **Agent tracking** — The [Claude Code](https://worktrunk.dev/claude-code/) plugin sets markers automatically
+- **Agent tracking** — [Agent plugins](https://worktrunk.dev/claude-code/) set markers automatically
 - **Notes** — Any short text: `"blocked"`, `"needs tests"`
 
 ### Storage

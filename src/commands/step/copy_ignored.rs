@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 use anyhow::Context;
 use color_print::cformat;
@@ -256,6 +257,10 @@ pub fn step_copy_ignored(
         Progress::start("Copying")
     };
 
+    // One mtime for everything this run copies, taken before the first file
+    // lands — see `worktrunk::copy` for why build caches need it.
+    let stamp = Some(SystemTime::now());
+
     for (src_entry, is_dir) in &entries_to_copy {
         let relative = src_entry
             .strip_prefix(&source_path)
@@ -264,11 +269,15 @@ pub fn step_copy_ignored(
 
         if *is_dir {
             // A pure copy deletes no source, so the skip count has nothing to guard.
-            let _skipped =
-                copy_dir_recursive(src_entry, &dest_entry, Some(&dest_path), force, &progress)
-                    .with_context(|| {
-                        format!("copying directory {}", format_path_for_display(relative))
-                    })?;
+            let _skipped = copy_dir_recursive(
+                src_entry,
+                &dest_entry,
+                Some(&dest_path),
+                force,
+                stamp,
+                &progress,
+            )
+            .with_context(|| format!("copying directory {}", format_path_for_display(relative)))?;
         } else {
             if let Some(parent) = dest_entry.parent() {
                 fs::create_dir_all(parent).with_context(|| {
@@ -278,7 +287,8 @@ pub fn step_copy_ignored(
                     )
                 })?;
             }
-            if let Some((bytes, data)) = copy_leaf(src_entry, &dest_entry, Some(&dest_path), force)?
+            if let Some((bytes, data)) =
+                copy_leaf(src_entry, &dest_entry, Some(&dest_path), force, stamp)?
             {
                 progress.record(bytes, data);
             }
