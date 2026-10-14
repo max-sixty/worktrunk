@@ -27,7 +27,7 @@ metadata:
      ```
      Launch a ci-reporter to monitor `$RUN` to completion (avoid `gh run watch` — it can hang). Fix any failure before continuing.
 3. **Check current version**: Read `version` in `Cargo.toml`
-4. **Review commits**: Check commits since last release to understand scope of changes. Audit the cumulative diff for the data-loss surface (see [Data-Loss Surface Review](#data-loss-surface-review)) before proceeding.
+4. **Review commits**: Check commits since last release to understand scope of changes. Audit the cumulative diff for the data-loss surface (see [Data-Loss Surface Review](#data-loss-surface-review)) and documentation (see [Documentation Review](#documentation-review)).
 5. **Check library API compatibility (advisory)**: Run `cargo semver-checks check-release -p worktrunk` (install with `cargo install cargo-semver-checks --locked` if missing) as a bump-level input, not a compat gate — worktrunk ships breaking library changes freely. If it reports breaking changes, that's fine; under semver the bump must still be minor (pre-1.0) or major (post-1.0). See "Library API Compatibility" below.
 6. **Credit contributors**: Check for external PR authors and issue reporters (see "Credit External Contributors" and "Credit Issue Reporters" below)
 7. **Determine release type**: Pick the bump from the changes (including semver-checks result). Ask the user only if the choice is genuinely ambiguous (see below).
@@ -41,7 +41,7 @@ metadata:
     ```bash
     git reset --soft HEAD~1 && git add -A && git commit -m "Release vX.Y.Z"
     ```
-11. **Merge to main**: push the release branch, open a PR, wait for CI, and merge it. Keep the worktree — the remaining steps run from it. Then move the branch onto the merged tip:
+11. **Merge to main**: complete the documentation review on the final candidate, then push the release branch, open a PR, wait for CI, and merge it. Keep the worktree — the remaining steps run from it. Then move the branch onto the merged tip:
     ```bash
     git fetch origin && git reset --keep origin/main
     ```
@@ -52,6 +52,8 @@ metadata:
     git log --oneline <cut-from-commit>..origin/main
     ```
     Clean means the changelog at `origin/main` documents every user-facing commit listed. With no drift the list is one line, the `Release vX.Y.Z (#NNNN)` squash commit. Review anything else that drifted in during the window and fold what's user-facing into the changelog with a follow-up squash PR, then re-fetch and re-run. The list only grows across passes — the drifted commits stay, joined by the follow-up's own squash commit — so each pass re-checks coverage over a longer list.
+
+    Extend the documentation review to any changes since its reviewed SHA, including corrections and commits that arrived during CI. Record the final reviewed SHA and resolve findings before tagging.
 
     Once clean, tag `origin/main`. The check and the tag then name the same ref, and it's main's tip, so the tag is reachable from `main`:
     ```bash
@@ -89,9 +91,30 @@ Give each a distinct charter. At least two receive no grep and no keyword list, 
 
 ### Analyze: adjudicate each candidate
 
-Pool the candidates, dedupe, and analyze each against the data-safety invariants in `CLAUDE.md` and the FAQ "What can Worktrunk delete?" inventory: does it preserve data on failure, require explicit consent for destructive ops, and avoid silent side-effect deletion? Mark each real risk / acceptable / needs change, with the reasoning.
+Pool the candidates, dedupe, and analyze each against the data-safety invariants in `AGENTS.md` and the FAQ "What can Worktrunk delete?" inventory: does it preserve data on failure, require explicit consent for destructive ops, and avoid silent side-effect deletion? Mark each real risk / acceptable / needs change, with the reasoning.
 
 Surface the full adjudicated list and get explicit sign-off before tagging. Do not tag a release with an unresolved deletion-surface candidate, even if it looks acceptable.
+
+## Documentation Review
+
+The release reviews all documentation changes since the previous release, including changes already on `main` and edits made during release preparation. Public docs are curated product guidance: each passage should help readers understand or use Worktrunk, with detail proportional to how many readers need it.
+
+Start from the full release diff to inventory documentation wherever it lives:
+
+```bash
+git diff --name-status v<last-version> HEAD
+git diff v<last-version> HEAD
+```
+
+Give an independent reviewer the previous tag, candidate SHA, and complete inventory. Cover site pages, README files, CLI help, configuration and command examples, shipped skills, and release notes. Review canonical sources once and check their generated copies for agreement; `docs/AGENTS.md` defines ownership and sync.
+
+The reviewer reads every changed passage in its surrounding section and checks:
+
+- **Purpose and proportion:** does it change what readers understand or do? Cut redundant explanations and implementation or regression details that belong in tests or PRs. A correctness fix needs prose only when usage changes or an existing claim becomes false.
+- **Clarity and concision:** use concrete, consistent terminology; introduce concepts before relying on them; rewrite definitions in place rather than layering caveats. Shortening must preserve necessary instructions and qualifications.
+- **Accuracy and usability:** verify claims against behavior and examples against their commands. Check links and read affected rendered sections as a reader encounters them.
+
+For each finding, give the location, reader impact, and a concrete replacement or deletion. Apply corrections in the canonical source, regenerate mirrors, and run the checks in `docs/AGENTS.md`. Have the reviewer check the corrected passages before closing findings. Record the reviewed range and SHA, coverage, findings, and their disposition in the release review; unresolved findings block tagging. Changelog claims and credits also receive the verification below.
 
 ## CHANGELOG Review
 
@@ -152,10 +175,12 @@ awk '/^## /{if (f) exit; f=1} f' CHANGELOG.md \
 **Good:** "Removed `.pi/` from the default excludes list; users who need it can add it via `[step.copy-ignored]`."
 **Bad:** "Removed `.pi/` — a sledgehammer fix from an unrelated debugging session that has no place as a project-agnostic default."
 
-**Name the conditions a bug needed, so the entry carries its magnitude.** A correctness or data-loss entry reads as though it fired for everyone unless it says what it took. These are usually narrow — a non-default git config, a command run from a particular place, a change of a particular shape — and naming each condition lets a reader decide in one pass whether it reached them. Join the conditions with "and": "X set *and* run from Y" is a corner case, while "X or Y" reads as two common triggers. Establish each one by reproducing against the previous release's binary rather than reading it off the diff — a condition assumed is a condition the entry overstates, and overstating a data-loss bug is its own kind of inaccuracy.
+**Match a fix's prominence to its reach.** Readers skim the bold headlines, so the headline, and whether the fix has a bullet of its own, tell them how big it was before they read any body text. A correctness or data-loss fix usually needed narrow conditions — a non-default git config, a command run from a particular place, a change of a particular shape. Put them in the headline and the consequence in the body: a headline that states the consequence tells every reader it could have been them, and conditions arriving after it don't undo that. Join the conditions with "and": "X set *and* run from Y" is a corner case, while "X or Y" reads as two common triggers. Establish each one by reproducing against the previous release's binary rather than reading it off the diff — a condition assumed is a condition the entry overstates, and overstating a data-loss bug is its own kind of inaccuracy.
 
-**Good:** "`diff.relative` set *and* the command run from a subdirectory the branch's changes sat entirely outside"
-**Bad:** "`diff.relative` could hide a branch's changes from the integration check"
+**Good:** "**Submodules with an `ignore` setting**: when `submodule.<name>.ignore` hid uncommitted changes inside a submodule, `wt remove` read the worktree as clean and removed it with them."
+**Bad:** "**`wt remove` no longer deletes submodule changes hidden by config**: with `submodule.<name>.ignore` set *and* uncommitted changes inside a submodule, …" — every condition is there, but the headline has already announced a data-loss bug to every reader.
+
+A fix of near-zero reader interest (see the ordering rule above) — a name starting with `-`, a non-UTF-8 path, one platform with an unusual environment — gets no bullet of its own. Fold these into a closing bullet such as "Fixes for unusual setups" that names each case in a clause. A section of separate bold fixes reads as that many ways the tool broke, whatever their bodies say.
 
 ### Credit External Contributors
 
@@ -277,6 +302,10 @@ Also check:
 - Are there user-facing changes NOT covered by these entries?
 - Verify each "thanks @..." attribution (right person, right role — author vs reporter)
 - Within each section, is any entry ranked above one that more readers will notice?
+- Read each headline alone, as a skimming reader does. Flag one that states the
+  consequence (what was lost or broken) rather than the situation it needed, and a
+  fix almost no reader will notice that has its own bullet rather than a clause in
+  a closing roll-up.
 
 Report format:
 - Entry: [entry text]
@@ -288,7 +317,7 @@ Report format:
 
 **The pass ends on a clean run, not on the first run's findings.** A rewrite the verifier suggests has no more evidence behind it than one you wrote yourself, and an entry you edit while the pass runs is in the same state — both leave that entry unverified. Re-run over the section as it now stands, and finalize only once a run comes back clean.
 
-`evals/README.md` beside this skill holds four entries from a shipped release, three of them wrong, for scoring a change to this template against what the last wording missed.
+`evals/README.md` beside this skill holds four entries from a shipped release, three of them wrong, for scoring a change to this template against what the last wording missed, and a drafting case for the prominence rule.
 
 **If verification finds problems:** Escalate to the user. Show them the subagent's findings and ask how to proceed. Don't attempt to resolve ambiguous changelog entries autonomously — the user knows the intent behind their changes better than you do.
 
@@ -325,11 +354,11 @@ Recommendation: Minor release (0.3.0) — new features, no breaking changes
 - **Second digit** (0.1.0 → 0.2.0): Backward incompatible changes
 - **Third digit** (0.1.0 → 0.1.1): Everything else
 
-Current project status: maturing mode (see [CLAUDE.md › Project Status](../../../CLAUDE.md)). External interfaces — the config file format (`wt.toml`, user config) and CLI flags/arguments — carry compatibility weight, so breaks there need justification (a real improvement, not cleanup) and prefer deprecation warnings over silent breaks. Everything else, including the internal and library APIs, stays flexible: worktrunk ships breaking library changes freely and bumps the version each time, putting no weight on the existing internal APIs.
+Current project status: maturing mode (see [AGENTS.md › Project Status](../../../AGENTS.md)). External interfaces — the config file format (`wt.toml`, user config) and CLI flags/arguments — carry compatibility weight, so breaks there need justification (a real improvement, not cleanup) and prefer deprecation warnings over silent breaks. Everything else, including the internal and library APIs, stays flexible: worktrunk ships breaking library changes freely and bumps the version each time, putting no weight on the existing internal APIs.
 
 ## Library API Compatibility
 
-Worktrunk is a CLI tool. The `[lib]` crate in `Cargo.toml` does expose a public API, but it is **not a compatibility surface** — per [CLAUDE.md › Project Status](../../../CLAUDE.md) there are no Rust library compatibility concerns, and the project ships breaking library changes freely, bumping the version each time (see the "Breaking library API" entries in `CHANGELOG.md`). Downstream crates are expected to pin.
+Worktrunk is a CLI tool. The `[lib]` crate in `Cargo.toml` does expose a public API, but it is **not a compatibility surface** — per [AGENTS.md › Project Status](../../../AGENTS.md) there are no Rust library compatibility concerns, and the project ships breaking library changes freely, bumping the version each time (see the "Breaking library API" entries in `CHANGELOG.md`). Downstream crates are expected to pin.
 
 `cargo-semver-checks` is therefore an **advisory bump-level input**, not a gate that commits us to keeping the API stable for downstream crates. It compares the current public API against the last version published to crates.io and reports semver-relevant changes — a useful signal for choosing the bump:
 

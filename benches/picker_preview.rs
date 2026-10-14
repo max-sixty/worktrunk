@@ -24,7 +24,7 @@
 // launches and before any JSON serialization / stderr drain. The PTY route
 // (option 2 from the task: "spawn → first interactive-ready point") would
 // require a TTY harness; the documented nextest/SIGTTOU pain on
-// `shell-integration-tests` (see project `CLAUDE.md`) makes that a follow-up
+// `shell-integration-tests` (see project `AGENTS.md`) makes that a follow-up
 // rather than a prerequisite. The headless path captures the initial pool
 // workload, which is the variable the optimization work in #2662 / #2683 /
 // #2685 / #2704 actually pushes on.

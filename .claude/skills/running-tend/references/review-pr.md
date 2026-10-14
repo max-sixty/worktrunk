@@ -46,11 +46,11 @@ On a match:
 
 **Testing:**
 
-- Do the tests follow the project's testing conventions (see tests/CLAUDE.md)?
+- Do the tests follow the project's testing conventions (see tests/AGENTS.md)?
 
-**CLAUDE.md compliance:**
+**AGENTS.md compliance:**
 
-- Review the CLAUDE.md sections relevant to the changed code and flag
+- Review the AGENTS.md sections relevant to the changed code and flag
   deviations — code quality, error handling, command execution, data safety,
   system docstrings, etc.
 
@@ -62,6 +62,34 @@ When a PR changes behavior, check that related documentation still matches:
   describe what the code does? (These are the primary sources for doc pages.)
 - Do inline TOML comments in config examples match the actual behavior?
 - If a new feature was added, does the relevant help text mention it?
+
+**Documentation cruft:**
+
+LLM-generated PRs tend to add doc sentences that teach a reader nothing: a note
+that the edge case a fix covers now works, or a restatement of what the
+surrounding text already implies. For each added doc sentence, ask what a reader
+learns that they wouldn't already assume, and how many readers need it. When the
+answer is nothing, ask for its removal in the review rather than approving past
+it.
+
+**Proportionality and the canonical approach:**
+
+A correct diff is not yet an approval. Approve only when the change leaves the
+codebase better, weighing the code it adds against how many users the fix
+reaches:
+
+- A rare corner case fixed with a lot of new code — a new helper or parser, a
+  parameter threaded through many call sites, a new error-handling branch — is
+  not a clear win. Name the cost, and the smaller alternative if you see one,
+  such as reusing an existing parser or reading an already-cached value.
+- Special-casing one error, variant, or input where the underlying problem is
+  general suggests the fix sits at the wrong layer. Ask whether it should be
+  handled generally.
+- Before accepting new machinery, find how the codebase already solves the same
+  problem, and ask the author to reuse that rather than add a second copy.
+
+When one of these holds, submit `COMMENT` naming it rather than `APPROVE`, even
+after every correctness finding is closed.
 
 **Duplication search patterns (Rust-specific):**
 

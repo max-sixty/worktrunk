@@ -155,7 +155,7 @@
           # tests/ fixtures (prebuilt _git/ trees, .sh scripts, no-extension
           # git database files). Default features only — shell-integration-
           # tests wants a PTY and more shells than this derivation carries;
-          # the devShell below is where that set lives (see tests/CLAUDE.md →
+          # the devShell below is where that set lives (see tests/AGENTS.md →
           # "Feature Flags, Not Runtime Skipping").
           worktrunk-tests = craneLib.cargoTest (
             commonArgs

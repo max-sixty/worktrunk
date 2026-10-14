@@ -185,7 +185,7 @@ pub fn list_approvals(format: SwitchFormat) -> anyhow::Result<()> {
 
     // Human-oriented sectioned output, plausibly more than a screen — page it
     // like `wt hook show`. The helper TTY-detects, so piping stays plain.
-    crate::help_pager::show_help_in_pager(&out, true);
+    crate::help_pager::show_help_in_pager(&out, true)?;
 
     Ok(())
 }

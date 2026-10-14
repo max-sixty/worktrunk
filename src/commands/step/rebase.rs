@@ -16,8 +16,8 @@ pub enum RebaseResult {
 }
 
 /// Handle shared rebase workflow (used by `wt step rebase` and `wt merge`)
-pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
-    let repo = Repository::current()?;
+pub fn handle_rebase(repo: &Repository, target: Option<&str>) -> anyhow::Result<RebaseResult> {
+    let wt = repo.current_worktree();
 
     // Refuse before reading ancestry: a worktree stopped mid-rebase has HEAD
     // detached on a linear extension of the target, so the up-to-date check
@@ -40,10 +40,10 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
     }
 
     // Check if this is a fast-forward or true rebase
+    let head_sha = wt.run_command(&["rev-parse", "HEAD"])?.trim().to_string();
     let merge_base = repo
-        .merge_base("HEAD", &integration_target)?
+        .merge_base(&head_sha, &integration_target)?
         .context("Cannot rebase: no common ancestor with target branch")?;
-    let head_sha = repo.run_command(&["rev-parse", "HEAD"])?.trim().to_string();
     let is_fast_forward = merge_base == head_sha;
 
     // Only show progress for true rebases (fast-forwards are instant)
@@ -57,7 +57,7 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
     // `--no-update-refs` overrides `rebase.updateRefs`, which would also move
     // other local branches stacked in the rebased range; a worktree's rebase
     // rewrites only its own branch.
-    let rebase_result = repo.run_command(&[
+    let rebase_result = wt.run_command(&[
         "rebase",
         "--no-update-refs",
         "--end-of-options",
@@ -99,7 +99,7 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
 /// A forwarded Ctrl-C/SIGTERM kills git mid-rebase and leaves the worktree in
 /// `REBASING` state, which is otherwise indistinguishable from a merge
 /// conflict. The interrupt is surfaced as `Interrupted` *before* the conflict
-/// check, per the signal-handling policy in `CLAUDE.md`: otherwise a user who
+/// check, per the signal-handling policy in `AGENTS.md`: otherwise a user who
 /// aborts `wt merge` gets conflict-resolution guidance and a non-130 exit code
 /// instead of a clean interrupt. When the kill left the worktree mid-rebase,
 /// the interrupt carries a recovery hint — git ran in capture mode, so none
@@ -140,9 +140,9 @@ mod tests {
 
     fn child_exit(code: i32, signal: Option<i32>) -> anyhow::Error {
         WorktrunkError::ChildProcessExited {
+            cancellation: None,
             code,
-            message: "rebase failed".to_string(),
-            signal,
+            physical_signal: signal,
         }
         .into()
     }

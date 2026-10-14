@@ -24,7 +24,7 @@ use anyhow::Context as _;
 use color_print::cformat;
 use std::sync::{Mutex, OnceLock};
 
-use worktrunk::git::WorktrunkError;
+use worktrunk::git::{ErrorExt, WorktrunkError};
 use worktrunk::shell_exec::Cmd;
 use worktrunk::shell_exec::{
     DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_EXEC_FILE_ENV_VAR, RETIRED_DIRECTIVE_FILE_ENV_VAR,
@@ -362,6 +362,9 @@ pub fn execute(argv: Vec<String>, dir: &Path) -> anyhow::Result<()> {
 /// Preserve a user program's status without printing wt's own error afterward.
 fn suppress_child_exit_message(result: anyhow::Result<()>) -> anyhow::Result<()> {
     if let Err(err) = result {
+        if let Some(signal) = err.interrupt_signal() {
+            return Err(WorktrunkError::Interrupted { signal, hint: None }.into());
+        }
         if let Some(WorktrunkError::ChildProcessExited { code, .. }) =
             err.downcast_ref::<WorktrunkError>()
         {

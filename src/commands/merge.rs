@@ -1,3 +1,7 @@
+//! Merge resolves its source once, then carries that context through every
+//! mutation and hook. The invoking worktree is tracked separately: removing
+//! another source must not emit a shell directory change or a post-switch hook.
+
 use std::path::Path;
 
 use anyhow::Context;
@@ -5,6 +9,7 @@ use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::{MergeConfig, UserConfig};
 use worktrunk::git::Repository;
+use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{eprintln, info_message};
 
 use crate::output::print_json;
@@ -71,6 +76,7 @@ pub struct ResolvedMergeFlags {
 /// the six boolean flags; `stage` is the same shape but for stage mode.
 pub struct MergeOptions<'a> {
     pub target: Option<&'a str>,
+    pub branch: Option<&'a str>,
     pub flags: MergeFlagOverrides,
     pub yes: bool,
     pub stage: Option<super::commit::StageMode>,
@@ -80,8 +86,8 @@ pub struct MergeOptions<'a> {
 /// Build the frozen [`ApprovedHookPlan`] for the merge's covered hooks, gating
 /// every project command once.
 ///
-/// Every hook selects its commands from the invoking worktree's
-/// `.config/wt.toml` — `repo`'s cwd, the feature worktree `wt merge` ran in.
+/// Every hook selects its commands from the source worktree's
+/// `.config/wt.toml` — `repo`'s cwd, including when selected with `--branch`.
 /// The *anchor* — the executor's plan lookup key — is the worktree each hook
 /// runs in:
 ///
@@ -102,10 +108,10 @@ fn approve_merge_plan(
     feature_root: &Path,
     destination_path: &Path,
     project_id: &str,
-    commit: bool,
     verify: bool,
     will_remove: bool,
-    squash_enabled: bool,
+    will_switch: bool,
+    will_create_commit: bool,
     yes: bool,
 ) -> anyhow::Result<Option<ApprovedHookPlan>> {
     let pid = Some(project_id);
@@ -124,8 +130,7 @@ fn approve_merge_plan(
     // are listed only so the single prompt is complete; their anchor is never
     // looked up.
     let mut feature_hooks = Vec::new();
-    let will_create_commit = repo.current_worktree().is_dirty()? || squash_enabled;
-    if commit && will_create_commit {
+    if will_create_commit {
         feature_hooks.push(HookType::PreCommit);
         feature_hooks.push(HookType::PostCommit);
     }
@@ -138,11 +143,11 @@ fn approve_merge_plan(
     let project_config = repo.load_project_config()?;
     let mut builder = HookPlanBuilder::new(project_config.as_ref(), config, pid);
     builder.add(feature_root, &feature_hooks);
-    // `post-merge` runs in the destination, and `post-switch` lands the user
-    // there (the feature worktree is removed) — both still selected from the
-    // invoking worktree's config.
+    // `post-merge` runs in the destination. `post-switch` runs there too when
+    // removing the source moves the invoking shell (the source is the current
+    // worktree). Both are still selected from the source worktree's config.
     builder.add(destination_path, &[HookType::PostMerge]);
-    if will_remove {
+    if will_switch {
         builder.add(destination_path, &[HookType::PostSwitch]);
     }
 
@@ -150,6 +155,45 @@ fn approve_merge_plan(
 }
 
 pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
+    // Load config once, run LLM setup prompt if committing, then reuse config
+    let mut config = UserConfig::load().context("Failed to load config")?;
+    if opts.flags.commit.unwrap_or(true) {
+        // One-time LLM setup prompt (errors logged internally; don't block merge)
+        let _ = crate::output::prompt_commit_generation(&mut config);
+    }
+
+    let invoking_repo = Repository::current()?;
+    let env = match opts.branch {
+        Some(selector) => CommandEnv::for_selector(config, selector)?,
+        None => CommandEnv::for_action(config)?,
+    };
+    // Compare actual worktree identity, not whether a selector was supplied:
+    // --branch @ and a path naming the current worktree retain normal cleanup.
+    // A bare invocation has no current worktree and cannot require a cd.
+    let source_is_current = invoking_repo.current_worktree().root()? == env.worktree_path;
+    let result = merge_in(opts, &env, source_is_current);
+    if source_is_current {
+        result
+    } else {
+        result.inspect_err(|_| {
+            // Typed Git diagnostics render without anyhow context. Keep the
+            // source visible even for rebase conflicts and interruptions.
+            eprintln!(
+                "{}",
+                info_message(cformat!(
+                    "Merge source @ <bold>{}</>",
+                    format_path_for_display(&env.worktree_path)
+                ))
+            );
+        })
+    }
+}
+
+fn merge_in(
+    opts: MergeOptions<'_>,
+    env: &CommandEnv,
+    source_is_current: bool,
+) -> anyhow::Result<()> {
     let json_mode = opts.format == crate::cli::SwitchFormat::Json;
     let MergeOptions {
         target,
@@ -158,15 +202,6 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         stage,
         ..
     } = opts;
-
-    // Load config once, run LLM setup prompt if committing, then reuse config
-    let mut config = UserConfig::load().context("Failed to load config")?;
-    if flags.commit.unwrap_or(true) {
-        // One-time LLM setup prompt (errors logged internally; don't block merge)
-        let _ = crate::output::prompt_commit_generation(&mut config);
-    }
-
-    let env = CommandEnv::for_action(config)?;
     let repo = &env.repo;
     let config = &env.config;
     // Cache current worktree for multiple queries
@@ -264,7 +299,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // Where `post-merge` / `post-remove` / `post-switch` run: the target
     // branch's worktree if it exists, else the primary worktree. Mirrors
     // `finish_after_merge`'s destination resolution. (Config is resolved from
-    // the invoking worktree, not here — see `approve_merge_plan`.)
+    // the source worktree, not here — see `approve_merge_plan`.)
     let destination_path = match &target_worktree_path {
         Some(path) => path.clone(),
         None => repo.home_path()?,
@@ -276,6 +311,15 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // pre-remove/post-remove hooks in the batch approval prompt.
     let on_target = current_branch == target_branch;
     let remove_requested = remove && !on_target;
+    // Freeze the commit decision before approval so every later gate agrees
+    // with the hooks shown to the user. Squash owns its commit decision and
+    // staging, so it does not need this extra index simulation.
+    let has_committable_changes = if commit && !squash_enabled {
+        current_wt.has_committable_changes(stage_mode)?
+    } else {
+        false
+    };
+    let will_create_commit = squash_enabled || has_committable_changes;
 
     // Build and approve the frozen hook plan once, at the gate. Every covered
     // hook (`pre-merge` / `post-merge` / `pre-remove` / `post-remove` /
@@ -291,10 +335,10 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         &feature_root,
         &destination_path,
         &project_id,
-        commit,
         verify,
         remove_requested,
-        squash_enabled,
+        remove_requested && source_is_current,
+        will_create_commit,
         yes,
     )?;
     let approved = plan.is_some();
@@ -341,7 +385,6 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // The project commit-append is gated independently of hook approval:
     // declining it drops only the append, never the (possibly already-approved)
     // hooks. Mirrors the standalone `wt step commit` path via the shared gate.
-    let will_create_commit = current_wt.is_dirty()? || squash_enabled;
     let llm_configured = env
         .config
         .commit_generation(Some(&project_id))
@@ -354,21 +397,17 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let guidance = super::step::PreApprovedGuidance::Resolved(project_append);
 
     // Handle uncommitted changes (skip if --no-commit) - track whether commit occurred
-    let committed = if commit && current_wt.is_dirty()? {
-        if squash_enabled {
-            false // Squash path handles staging and committing
-        } else {
-            let ctx = env.context(yes);
-            let mut options = CommitOptions::new(&ctx);
-            options.target_branch = Some(&target_branch);
-            options.hooks = commit_hooks;
-            options.stage_mode = stage_mode;
-            options.show_no_squash_note = true;
-            options.guidance = guidance.clone();
+    let committed = if has_committable_changes {
+        let ctx = env.context(yes);
+        let mut options = CommitOptions::new(&ctx);
+        options.target_branch = Some(&target_branch);
+        options.hooks = commit_hooks;
+        options.stage_mode = stage_mode;
+        options.show_no_squash_note = true;
+        options.guidance = guidance.clone();
 
-            let _ = options.commit(&mut announcer)?;
-            true // Committed directly
-        }
+        let _ = options.commit(&mut announcer)?;
+        true // Committed directly
     } else {
         false // No dirty changes or --no-commit
     };
@@ -378,7 +417,8 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // --no-hooks vs declined-approval distinction.
     let squashed = if squash_enabled {
         matches!(
-            super::step::handle_squash(
+            super::step::squash::handle_squash_in(
+                env,
                 Some(&target_branch),
                 yes,
                 commit_hooks,
@@ -396,7 +436,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let rebased = if rebase {
         // Auto-rebase onto target
         matches!(
-            super::step::handle_rebase(Some(&target_branch))?,
+            super::step::handle_rebase(repo, Some(&target_branch))?,
             super::step::RebaseResult::Rebased { .. }
         )
     } else {
@@ -408,7 +448,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             .run_command(&["rev-parse", "--verify", "--end-of-options", &target_ref])?
             .trim()
             .to_string();
-        let source_sha = repo
+        let source_sha = current_wt
             .run_command(&["rev-parse", "--verify", "HEAD"])?
             .trim()
             .to_string();
@@ -445,19 +485,25 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     });
     if !ff {
         // Create a merge commit on the target branch via commit-tree + update-ref
-        handle_no_ff_merge(Some(&target_branch), operations, &current_branch)?;
+        handle_no_ff_merge(repo, Some(&target_branch), operations, &current_branch)?;
     } else {
         // Fast-forward push to target branch
-        handle_push(Some(&target_branch), PushKind::MergeFastForward, operations)?;
+        handle_push(
+            repo,
+            Some(&target_branch),
+            PushKind::MergeFastForward,
+            operations,
+        )?;
     }
 
     let removed = finish_after_merge(
         repo,
         config,
-        &env,
+        env,
         &mut announcer,
         FinishAfterMergeArgs {
             current_branch: &current_branch,
+            source_is_current,
             target_branch: &target_branch,
             target_worktree_path: target_worktree_path.as_deref(),
             remove,

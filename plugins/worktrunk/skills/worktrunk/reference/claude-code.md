@@ -7,11 +7,9 @@ Worktrunk ships a plugin for each supported agent CLI. What a plugin provides de
 | Configuration skill | ✓ | ✓ | ✓ |  |  |  | ✓ |
 | Activity tracking (🤖/💬 in `wt list`) | ✓ | ✓\* | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Worktree isolation | ✓ |  |  |  |  |  |  |
-| `/wt-switch-create` skill† | ✓ |  |  |  |  |  |  |
+| `/wt-switch-create` skill | ✓ |  |  |  |  |  |  |
 
 \* Cursor activity tracking applies to local IDE and CLI sessions. Cloud Agents run in a remote checkout and have no editor-lifetime `sessionEnd` event, so they do not update the marker shown by a developer machine's `wt list`.
-
-† Cursor, Codex, and Gemini also load the `/wt-switch-create` skill from the shared skill set, but none lets a skill change the session's working directory, so it does nothing there.
 
 The configuration skill is documentation the agent reads to help set up LLM commits, hooks, and troubleshooting. Activity tracking shows which worktrees have running sessions. Worktree isolation needs worktree-lifecycle hooks, which only Claude Code exposes, so Cursor, Codex, OpenCode, Pi, oh-my-pi, and Gemini users invoke `wt switch --create` and `wt remove` directly.
 

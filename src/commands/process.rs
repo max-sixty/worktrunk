@@ -1,4 +1,5 @@
 use anyhow::Context;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
 #[cfg(windows)]
@@ -8,7 +9,7 @@ use worktrunk::git::{HookType, Repository};
 use worktrunk::path::{format_path_for_display, sanitize_for_filename};
 use worktrunk::utils::epoch_now;
 
-use crate::commands::hook_filter::HookSource;
+use worktrunk::config::HookSource;
 
 // ==================== Hook Log Specification ====================
 
@@ -20,6 +21,8 @@ use crate::commands::hook_filter::HookSource;
 pub enum InternalOp {
     /// Background worktree removal (`wt remove` in background mode)
     Remove,
+    /// Delayed cleanup of the removed current worktree's empty PWD placeholder.
+    RemovePlaceholder,
     /// Background cleanup of stale entries in `.git/wt/trash/`
     TrashSweep,
 }
@@ -104,35 +107,6 @@ impl HookLog {
     }
 }
 
-/// Get the separator needed before closing brace in POSIX shell command grouping.
-/// Returns empty string if command already ends with newline or semicolon.
-fn posix_command_separator(command: &str) -> &'static str {
-    if command.ends_with('\n') || command.ends_with(';') {
-        ""
-    } else {
-        ";"
-    }
-}
-
-/// Build the POSIX-shell payload for a detached spawn that pipes optional
-/// `context_json` into `command`'s stdin. With a JSON context, wraps the
-/// command in a `printf '%s' '…' | { …; }` group so the inner command receives
-/// the JSON verbatim and pipeline parsing isn't perturbed by `&&`/`||` inside
-/// `command`. Without one, returns `command` unchanged. Shared by the Unix
-/// path and the Windows Git-Bash branch — both feed POSIX shells, so the JSON
-/// is POSIX-single-quote-escaped regardless of host.
-fn build_printf_pipe_command(command: &str, context_json: Option<&str>) -> String {
-    match context_json {
-        Some(json) => format!(
-            "printf '%s' {} | {{ {}{} }}",
-            shell_escape::unix::escape(json.into()),
-            command,
-            posix_command_separator(command)
-        ),
-        None => command.to_string(),
-    }
-}
-
 /// Create the log directory and file for a detached process.
 ///
 /// Returns `(log_path, log_file)`. Shared by `spawn_detached` and
@@ -182,154 +156,36 @@ fn create_detach_log(
 pub fn spawn_detached(
     repo: &Repository,
     worktree_path: &Path,
-    command: &str,
+    args: &[OsString],
     branch: &str,
     hook_log: &HookLog,
-    context_json: Option<&str>,
-) -> anyhow::Result<std::path::PathBuf> {
-    let (log_path, log_file) = create_detach_log(repo, branch, hook_log)?;
-
-    tracing::debug!(
-        command = %command,
-        "$ {} (detached, logging to {})",
-        command,
-        log_path.file_name().unwrap_or_default().to_string_lossy()
-    );
-
-    #[cfg(unix)]
-    {
-        let low_priority = matches!(hook_log, HookLog::Internal(_) | HookLog::Shared(_));
-        spawn_detached_unix(worktree_path, command, log_file, context_json, low_priority)?;
-    }
-
-    #[cfg(windows)]
-    {
-        spawn_detached_windows(worktree_path, command, log_file, context_json)?;
-    }
-
-    Ok(log_path)
-}
-
-#[cfg(unix)]
-fn spawn_detached_unix(
-    worktree_path: &Path,
-    command: &str,
-    log_file: fs::File,
-    context_json: Option<&str>,
-    low_priority: bool,
-) -> anyhow::Result<()> {
-    use std::os::unix::process::CommandExt;
-
-    let full_command = build_printf_pipe_command(command, context_json);
-
-    // Wrap in braces so `&` backgrounds the entire compound command.
-    // Without braces, `cmd1 && cmd2; cmd3 &` parses as two statements:
-    // `cmd1 && cmd2` (foreground) then `cmd3 &` (background) — the semicolon
-    // has lower precedence than `&`, so only the last segment is backgrounded.
-    let shell_cmd = format!(
-        "{{ {}{} }} &",
-        full_command,
-        posix_command_separator(&full_command)
-    );
-
-    // Detachment via process_group(0): puts the spawned shell in its own process group.
-    // When the controlling PTY closes, SIGHUP is sent to the foreground process group.
-    // Since our process is in a different group, it doesn't receive the signal.
-    //
-    // For low-priority ops (internal cleanup), wrap the shell via
-    // `worktrunk::priority::command`. The policy is inherited by the backgrounded
-    // command and its grandchildren.
-    let mut cmd = worktrunk::priority::command("sh", low_priority);
-    cmd.arg("-c")
-        .arg(&shell_cmd)
-        .current_dir(worktree_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(
-            log_file
-                .try_clone()
-                .context("Failed to clone log file handle")?,
-        ))
-        .stderr(Stdio::from(log_file))
-        .process_group(0); // New process group, not in PTY's foreground group
-    // Prevent hooks from writing to the directive file
-    worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
-    let mut child = cmd.spawn().context("Failed to spawn detached process")?;
-
-    // Wait for sh to exit (immediate, doesn't block on background command)
-    child
-        .wait()
-        .context("Failed to wait for detachment shell")?;
-
-    Ok(())
-}
-
-#[cfg(windows)]
-fn spawn_detached_windows(
-    worktree_path: &Path,
-    command: &str,
-    log_file: fs::File,
-    context_json: Option<&str>,
-) -> anyhow::Result<()> {
-    use std::os::windows::process::CommandExt;
-    use worktrunk::shell_exec::ShellConfig;
-
-    // CREATE_NEW_PROCESS_GROUP: Creates new process group (0x00000200)
-    // CREATE_NO_WINDOW: Creates process without console window (0x08000000)
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-    let shell = ShellConfig::get()?;
-
-    // Build the command based on shell type
-    let mut cmd = if shell.is_posix {
-        // Git Bash available - use same syntax as Unix
-        let full_command = build_printf_pipe_command(command, context_json);
-        shell.command(&full_command)
-    } else {
-        // PowerShell fallback
-        let full_command = match context_json {
-            Some(json) => {
-                // PowerShell single-quote escaping:
-                // - Single quotes prevent variable expansion ($) and are literal
-                // - Backticks are literal in single quotes (NOT escape characters)
-                // - Only single quotes need doubling (`'` → `''`)
-                // See: https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_quoting_rules
-                let escaped_json = json.replace('\'', "''");
-                // Pipe JSON to the command via PowerShell script block
-                format!("'{}' | & {{ {} }}", escaped_json, command)
-            }
-            None => command.to_string(),
-        };
-        shell.command(&full_command)
-    };
-
-    cmd.current_dir(worktree_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(
-            log_file
-                .try_clone()
-                .context("Failed to clone log file handle")?,
-        ))
-        .stderr(Stdio::from(log_file))
-        .creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
-    // Prevent hooks from writing to the directive file
-    worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
-    cmd.spawn().context("Failed to spawn detached process")?;
-
-    // Windows: Process is fully detached with a hidden window via CREATE_NO_WINDOW flag,
-    // no need to wait (unlike Unix which waits for the outer shell)
-
-    Ok(())
+) -> anyhow::Result<PathBuf> {
+    let shell = worktrunk::shell_exec::ShellConfig::get()?;
+    let args: Vec<_> = shell
+        .args
+        .iter()
+        .map(OsString::from)
+        .chain(args.iter().cloned())
+        .collect();
+    spawn_detached_exec(
+        repo,
+        worktree_path,
+        &shell.executable,
+        &args,
+        branch,
+        hook_log,
+        &[],
+    )
 }
 
 /// Spawn a detached background process by executing a binary directly.
 ///
 /// Unlike [`spawn_detached`] (which wraps a shell command in `sh -c`), this
-/// spawns the executable without an intermediate shell. Stdin bytes are written
-/// to the child's stdin pipe and then the pipe is closed.
+/// spawns the executable without an intermediate shell. Complete input is
+/// prepared by [`worktrunk::shell_exec::buffered_stdin`] before spawn.
 ///
 /// Used for structured child processes like `wt hook run-pipeline` where the parent
-/// passes data via stdin rather than through a temp file or shell arguments.
+/// passes data via stdin rather than through shell arguments.
 ///
 /// When `hook_log` is [`HookLog::Hook`], the spawn is treated as a background
 /// hook pipeline: the child (and every process it later spawns) receives
@@ -340,7 +196,7 @@ pub fn spawn_detached_exec(
     repo: &Repository,
     worktree_path: &Path,
     program: &Path,
-    args: &[&str],
+    args: &[impl AsRef<OsStr>],
     branch: &str,
     hook_log: &HookLog,
     stdin_bytes: &[u8],
@@ -351,7 +207,7 @@ pub fn spawn_detached_exec(
         program = %program.display(),
         "$ {} {} (detached, logging to {})",
         program.display(),
-        args.join(" "),
+        args.iter().map(|arg| arg.as_ref().to_string_lossy()).collect::<Vec<_>>().join(" "),
         log_path.file_name().unwrap_or_default().to_string_lossy()
     );
 
@@ -401,20 +257,22 @@ fn set_background_hook_env(cmd: &mut std::process::Command, is_background_hook: 
 fn spawn_detached_exec_unix(
     worktree_path: &Path,
     program: &Path,
-    args: &[&str],
+    args: &[impl AsRef<OsStr>],
     log_file: fs::File,
     stdin_bytes: &[u8],
     low_priority: bool,
     is_background_hook: bool,
 ) -> anyhow::Result<()> {
-    use std::io::Write;
     use std::os::unix::process::CommandExt;
 
     // See [`worktrunk::priority`] for the priority-lowering rationale.
     let mut cmd = worktrunk::priority::command(program, low_priority);
     cmd.args(args)
         .current_dir(worktree_path)
-        .stdin(Stdio::piped())
+        .stdin(
+            worktrunk::shell_exec::buffered_stdin(stdin_bytes)
+                .context("Failed to prepare detached input")?,
+        )
         .stdout(Stdio::from(
             log_file
                 .try_clone()
@@ -424,12 +282,7 @@ fn spawn_detached_exec_unix(
         .process_group(0);
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
     set_background_hook_env(&mut cmd, is_background_hook);
-    let mut child = cmd.spawn().context("Failed to spawn detached process")?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        // Ignore BrokenPipe — child may exit before reading all input.
-        let _ = stdin.write_all(stdin_bytes);
-    }
+    worktrunk::shell_exec::spawn(&mut cmd).context("Failed to spawn detached process")?;
 
     Ok(())
 }
@@ -438,12 +291,11 @@ fn spawn_detached_exec_unix(
 fn spawn_detached_exec_windows(
     worktree_path: &Path,
     program: &Path,
-    args: &[&str],
+    args: &[impl AsRef<OsStr>],
     log_file: fs::File,
     stdin_bytes: &[u8],
     is_background_hook: bool,
 ) -> anyhow::Result<()> {
-    use std::io::Write;
     use std::os::windows::process::CommandExt;
 
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
@@ -452,7 +304,10 @@ fn spawn_detached_exec_windows(
     let mut cmd = Command::new(program);
     cmd.args(args)
         .current_dir(worktree_path)
-        .stdin(Stdio::piped())
+        .stdin(
+            worktrunk::shell_exec::buffered_stdin(stdin_bytes)
+                .context("Failed to prepare detached input")?,
+        )
         .stdout(Stdio::from(
             log_file
                 .try_clone()
@@ -462,11 +317,7 @@ fn spawn_detached_exec_windows(
         .creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
     set_background_hook_env(&mut cmd, is_background_hook);
-    let mut child = cmd.spawn().context("Failed to spawn detached process")?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(stdin_bytes);
-    }
+    worktrunk::shell_exec::spawn(&mut cmd).context("Failed to spawn detached process")?;
 
     Ok(())
 }
@@ -487,7 +338,7 @@ fn spawn_detached_exec_windows(
 /// `git worktree list`, and a classified orphan a `SIGTERM`→`SIGKILL` wait
 /// bounded by `REAP_KILL_DEADLINE` — both flat in the daemon count too (see
 /// the `internal-sweep` / `enumerate-fsmonitor-daemons` trace spans and
-/// benches/CLAUDE.md § Recording `wt remove` / `wt step prune` staging).
+/// benches/AGENTS.md § Recording `wt remove` / `wt step prune` staging).
 ///
 /// Steps:
 ///
@@ -527,7 +378,7 @@ pub fn sweep_stale_trash(repo: &Repository) {
         return;
     }
 
-    let command = build_trash_sweep_command(&stale);
+    let command = build_remove_paths_command(&stale);
 
     // The sweep is repo-wide (not branch-scoped), so it logs to a top-level
     // shared file alongside `commands.jsonl` and `trace.log`. The branch
@@ -538,23 +389,22 @@ pub fn sweep_stale_trash(repo: &Repository) {
         &command,
         "",
         &HookLog::Shared(InternalOp::TrashSweep),
-        None,
     ) {
-        tracing::debug!(error = %e, "Failed to spawn stale trash sweep: {e}");
+        tracing::debug!(error = %format!("{e:#}"), "Failed to spawn stale trash sweep");
     }
 }
 
-/// Build the `rm -rf -- …` command that [`sweep_stale_trash`] hands to
-/// [`spawn_detached`]. All entries are joined into a single invocation so the
-/// sweep spawns one background process regardless of how many stale entries
-/// exist; each path is POSIX-escaped so directories with spaces or shell
-/// metacharacters round-trip safely through the wrapping `sh -c`.
-fn build_trash_sweep_command(paths: &[PathBuf]) -> String {
-    let escaped: Vec<String> = paths
-        .iter()
-        .map(|p| shell_escape::unix::escape(p.to_string_lossy().as_ref().into()).into_owned())
-        .collect();
-    format!("rm -rf -- {}", escaped.join(" "))
+/// Shell argv: a fixed script, its `$0`, then native path arguments.
+/// Paths are never interpolated into shell source.
+pub fn build_remove_paths_command(
+    paths: impl IntoIterator<Item = impl AsRef<OsStr>>,
+) -> Vec<OsString> {
+    let mut args = vec![
+        OsString::from(r#"exec rm -rf -- "$@""#),
+        OsString::from("wt"),
+    ];
+    args.extend(paths.into_iter().map(|path| path.as_ref().to_os_string()));
+    args
 }
 
 /// Collect paths in `trash_dir` whose embedded timestamp is older than
@@ -590,200 +440,35 @@ fn parse_trash_entry_timestamp(name: &str) -> Option<u64> {
     suffix.parse::<u64>().ok()
 }
 
-/// Build shell command for background removal of a staged (renamed) worktree.
-///
-/// This is used after the worktree has been renamed to a staging path,
-/// git metadata has been pruned, and the branch has been deleted synchronously.
-///
-/// When `changed_directory` is true — the shell is cd-ing away from the removed
-/// worktree — a placeholder directory is created at `original_path` so the shell's
-/// working directory remains valid until the wrapper has processed the `cd`
-/// directive. Without this, shells that validate `$env.PWD` (notably Nushell)
-/// emit errors between binary exit and the `cd`. The background command then
-/// waits for the shell wrapper before cleaning up the placeholder.
-///
-/// When `changed_directory` is false, no placeholder exists, so the background
-/// command just removes the staged directory directly.
-///
-/// # Design alternatives evaluated (2026-04)
-///
-/// Two weaknesses in the current design prompted an investigation:
-///
-/// 1. **Silent `rmdir` failure.** If anything lands in the placeholder
-///    during the 1-second sleep (e.g., macOS `.DS_Store`, a filesystem
-///    race, an editor saving against the old path), `rmdir` fails silently
-///    because of `2>/dev/null`, and the empty directory at `original_path`
-///    lingers forever. This was the root cause of an intermittent
-///    `test_bare_repo_merge_workflow` flake.
-/// 2. **"Create then delete" placeholder lifecycle.** wt creates an empty
-///    directory that the background shell removes one second later; its
-///    only purpose is keeping `$PWD` valid for shells (notably Nushell)
-///    that stat it between wt's exit and the wrapper's `cd`.
-///
-/// Two alternatives were prototyped and reviewed; neither was adopted.
-///
-/// ## Option A — Fully deferred cleanup with a pending-removal marker
-///
-/// Sync phase shrinks to: write a `PendingRemoval` marker under
-/// `<git-common-dir>/wt/pending/`, spawn detached `wt internal
-/// finish-removal <marker>`, exit. The detached process sleeps 1 second,
-/// then does rename + prune + `branch -D` + `rm -rf` + marker delete —
-/// the work that today happens synchronously. Concurrent operations
-/// (e.g., `wt switch --create <same-branch>` within the 1-second window)
-/// check for matching markers and force-finish the cleanup inline via a
-/// `finish_blocking_for` helper. Crashed cleanup processes are reclaimed
-/// by extending the existing `sweep_stale_trash` path with a
-/// `sweep_stale_pending` variant.
-///
-/// Benefits: eliminates the placeholder lifecycle entirely (the original
-/// path never disappears during wt's execution, so `$PWD` stays valid
-/// "for free"); no `rmdir` silent-failure mode; marker-based
-/// coordination on the recreate race.
-///
-/// Drawbacks surfaced by Codex review:
-///
-/// - **Data safety (P1).** The clean-check runs sync but the rename
-///   runs ~1 second later. Writes to existing files during that window
-///   (editor save, background build) are silently renamed into trash
-///   and `rm -rf`'d. Today's sync rename keeps that window
-///   microsecond-wide. Mitigation: revalidate cleanliness in the
-///   finisher and bail on dirty — but that turns "remove" into a silent
-///   no-op visible only in log files.
-/// - **Hook timing (P2).** `spawn_hooks_after_remove` runs right after
-///   the sync phase returns. In the deferred design, `post-remove`
-///   hooks fire while `git worktree list` still reports the worktree
-///   and the branch still exists, contrary to the hook's documented
-///   contract. Fix: move hook invocation into the finisher.
-/// - **Retained-branch coordination (P1).** The marker's `branch` field
-///   must be recorded independently of the `delete_branch` flag, or
-///   `finish_blocking_for(Some("feature"), ..)` misses markers whose
-///   branch was retained (`--no-delete-branch`, unmerged safe-delete).
-/// - **Complexity cost.** New module (`src/commands/pending.rs`), new
-///   hidden CLI subcommand (`wt internal finish-removal`), sweep
-///   recovery, coordination calls in `plan_switch`,
-///   `validate_worktree_creation`, and `handle_remove_command`. ~450
-///   lines of new code plus tests.
-///
-/// ## Option B — Sync rename + `rm -rf` instead of `rmdir`
-///
-/// Keep the current sync phase (rename + prune + `branch -D` + create
-/// placeholder), add the pending-removal marker + coordination hooks,
-/// and in this function substitute `rm -rf <placeholder>` for
-/// `rmdir <placeholder> 2>/dev/null`.
-///
-/// Benefits: fixes the flake's root cause (silent-failure mode gone);
-/// inherits marker-based coordination; keeps the data-safety window at
-/// microseconds; keeps hook timing correct.
-///
-/// Drawbacks:
-///
-/// - Doesn't eliminate the "create then delete" placeholder pattern —
-///   just makes its cleanup robust.
-/// - Introduces a narrow new window: if something writes to the
-///   placeholder during the 1-second sleep, `rm -rf` deletes it.
-///   Today's silent `rmdir` accidentally preserves such writes as
-///   orphaned leftovers (ugly but data-preserving). Mitigation:
-///   revalidate emptiness in the finisher and skip `rm -rf` on
-///   non-empty placeholders — turns that accidental preservation into a
-///   deliberate invariant.
-///
-/// ## Decision
-///
-/// Neither was adopted. The flaky test was fixed at the test layer by
-/// teaching `wait_for_worktree_removed` to accept "gone or empty
-/// placeholder" as the success condition — matching what
-/// `assert_worktree_removed` already documents. If flakiness resurfaces
-/// or the visible-placeholder aesthetic becomes a real friction point,
-/// Option B is the low-risk path forward: strictly dominates main
-/// except for the narrow write-into-placeholder edge case, and reuses
-/// most of the pending-module work from Option A.
-pub fn build_remove_command_staged(
-    staged_path: &std::path::Path,
-    original_path: &std::path::Path,
-    changed_directory: bool,
-) -> String {
-    use shell_escape::unix::escape;
-
-    let staged_path_str = staged_path.to_string_lossy();
-    let staged_escaped = escape(staged_path_str.as_ref().into());
-
-    if changed_directory {
-        let original_path_str = original_path.to_string_lossy();
-        let original_escaped = escape(original_path_str.as_ref().into());
-
-        // sleep 1: give the shell wrapper time to cd away before removing the placeholder.
-        // rmdir: remove the empty placeholder (safe — only removes empty directories).
-        // rm -rf: remove the staged worktree contents.
-        // Use -- to prevent option parsing for paths starting with -
-        format!(
-            "sleep 1 && rmdir -- {} 2>/dev/null; rm -rf -- {}",
-            original_escaped, staged_escaped
-        )
-    } else {
-        // No placeholder to clean up — just remove the staged directory.
-        format!("rm -rf -- {}", staged_escaped)
-    }
+/// Remove the empty shell-PWD placeholder after the wrapper consumes its cd directive.
+/// `rmdir` preserves any files written into the original path.
+pub fn build_remove_placeholder_command(path: &Path) -> Vec<OsString> {
+    vec![
+        r#"sleep 1 && rmdir -- "$1" 2>/dev/null"#.into(),
+        "wt".into(),
+        path.as_os_str().into(),
+    ]
 }
 
-/// Build shell command for background worktree removal (legacy path).
-///
-/// This is the fallback for when rename-based removal fails (e.g., cross-filesystem)
-/// or for foreground mode where `git worktree remove` provides better error messages.
-///
-/// `branch_to_delete` is the branch to delete after removing the worktree.
-/// Pass `None` for detached HEAD or when branch should be retained.
-/// This decision is computed upfront (checking if branch is merged) before spawning the background process.
-///
-/// `force_worktree` adds `--force` to `git worktree remove`, allowing removal
-/// even when the worktree contains untracked files (like build artifacts).
-///
-/// When `changed_directory` is true, a 1-second delay runs first so the shell
-/// wrapper can cd away before the directory is removed. When false (removing a
-/// non-current worktree), the removal runs immediately.
+/// Fallback when staging fails. Only flags and sequencing enter the script;
+/// the checkout remains a separate process argument.
 pub fn build_remove_command(
-    worktree_path: &std::path::Path,
-    branch_to_delete: Option<&str>,
+    path: &Path,
     force_worktree: bool,
     changed_directory: bool,
-) -> String {
-    use shell_escape::unix::escape;
-
-    let worktree_path_str = worktree_path.to_string_lossy();
-    let worktree_escaped = escape(worktree_path_str.as_ref().into());
-
-    let force_flag = if force_worktree { " --force" } else { "" };
-
-    // The fsmonitor daemon is stopped (and force-killed if wedged) synchronously
-    // in the Rust foreground by `stop_fsmonitor_daemon`, before this command is
-    // built — see `spawn_background_removal`. The detached process only does the
-    // `git worktree remove` / `rm -rf`.
-    //
-    // When removing the current worktree, delay so the shell wrapper can cd away
-    // before the directory is removed. The primary fix for the "shell-init: error
-    // retrieving current directory" race is in the fish wrapper (using builtins
-    // instead of subprocesses to read the directive), but this provides defense in
-    // depth for other shells and edge cases.
-    let prefix = if changed_directory {
-        "sleep 1 && ".to_string()
-    } else {
-        String::new()
-    };
-
-    match branch_to_delete {
-        Some(branch_name) => {
-            let branch_escaped = escape(branch_name.into());
-            format!(
-                "{}git worktree remove{} {} && git branch -D {}",
-                prefix, force_flag, worktree_escaped, branch_escaped
-            )
-        }
-        None => {
-            format!(
-                "{}git worktree remove{} {}",
-                prefix, force_flag, worktree_escaped
-            )
-        }
+    tail: Option<&[OsString]>,
+) -> Vec<OsString> {
+    let delay = if changed_directory { "sleep 1 && " } else { "" };
+    let force = if force_worktree { " --force" } else { "" };
+    let mut script = format!(r#"{delay}git worktree remove{force} -- "$1""#);
+    if tail.is_some() {
+        script.push_str(r#" && shift && "$@""#);
     }
+    let mut args = vec![script.into(), "wt".into(), path.as_os_str().into()];
+    if let Some(tail) = tail {
+        args.extend_from_slice(tail);
+    }
+    args
 }
 
 #[cfg(test)]
@@ -851,130 +536,25 @@ mod tests {
     }
 
     #[test]
-    fn test_posix_command_separator() {
-        // Commands ending with newline don't need separator
-        assert_eq!(posix_command_separator("echo hello\n"), "");
-
-        // Commands ending with semicolon don't need separator
-        assert_eq!(posix_command_separator("echo hello;"), "");
-
-        // Commands without trailing newline/semicolon need separator
-        assert_eq!(posix_command_separator("echo hello"), ";");
-
-        // Empty command needs separator
-        assert_eq!(posix_command_separator(""), ";");
-
-        // Commands with internal newlines but not trailing
-        assert_eq!(posix_command_separator("echo\nhello"), ";");
-
-        // Commands with internal semicolons but not trailing
-        assert_eq!(posix_command_separator("echo; hello"), ";");
-    }
-
-    #[test]
-    fn test_build_remove_command() {
-        use std::path::PathBuf;
-
-        let path = PathBuf::from("/tmp/test-worktree");
-
-        // changed_directory=true: sleep before removal
-        assert_snapshot!(build_remove_command(&path, None, false, true), @"sleep 1 && git worktree remove /tmp/test-worktree");
-        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, true), @"sleep 1 && git worktree remove /tmp/test-worktree && git branch -D feature-branch");
-
-        // changed_directory=false: no sleep
-        assert_snapshot!(build_remove_command(&path, None, false, false), @"git worktree remove /tmp/test-worktree");
-        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, false), @"git worktree remove /tmp/test-worktree && git branch -D feature-branch");
-
-        // With force flag
-        assert_snapshot!(build_remove_command(&path, None, true, true), @"sleep 1 && git worktree remove --force /tmp/test-worktree");
-
-        // Shell escaping for special characters
-        let special_path = PathBuf::from("/tmp/test worktree");
-        assert_snapshot!(build_remove_command(&special_path, Some("feature/branch"), false, true), @"sleep 1 && git worktree remove '/tmp/test worktree' && git branch -D feature/branch");
-    }
-
-    #[test]
-    fn test_build_remove_command_staged() {
-        let staged_path = PathBuf::from("/tmp/repo/.git/wt/trash/my-project.feature-1234567890");
-        let original_path = PathBuf::from("/tmp/my-project.feature");
-
-        // changed_directory=true: placeholder cleanup before rm -rf
-        assert_snapshot!(build_remove_command_staged(&staged_path, &original_path, true), @"sleep 1 && rmdir -- /tmp/my-project.feature 2>/dev/null; rm -rf -- /tmp/repo/.git/wt/trash/my-project.feature-1234567890");
-
-        // changed_directory=false: just rm -rf, no placeholder
-        assert_snapshot!(build_remove_command_staged(&staged_path, &original_path, false), @"rm -rf -- /tmp/repo/.git/wt/trash/my-project.feature-1234567890");
-
-        // Shell escaping for special characters (space in path)
-        let special_path = PathBuf::from("/tmp/repo/.git/wt/trash/test worktree-123");
-        let special_original = PathBuf::from("/tmp/test worktree");
-        assert_snapshot!(build_remove_command_staged(&special_path, &special_original, true), @"sleep 1 && rmdir -- '/tmp/test worktree' 2>/dev/null; rm -rf -- '/tmp/repo/.git/wt/trash/test worktree-123'");
-    }
-
-    #[test]
-    fn test_build_printf_pipe_command() {
-        // No JSON context: command passes through unchanged.
-        assert_snapshot!(
-            build_printf_pipe_command("echo hi", None),
-            @"echo hi"
-        );
-
-        // With JSON: command wrapped in a printf-pipe group. The JSON is
-        // POSIX-single-quote-escaped, the closing `}` is preceded by `;`
-        // because the command doesn't already end with one.
-        assert_snapshot!(
-            build_printf_pipe_command("jq .", Some(r#"{"branch":"main"}"#)),
-            @r#"printf '%s' '{"branch":"main"}' | { jq .; }"#
-        );
-
-        // Command that already ends in a semicolon: separator suppressed.
-        assert_snapshot!(
-            build_printf_pipe_command("jq .;", Some(r#"{"k":"v"}"#)),
-            @r#"printf '%s' '{"k":"v"}' | { jq .; }"#
-        );
-
-        // JSON containing characters POSIX shells treat specially must end up
-        // inside single quotes so command substitution doesn't fire inside the
-        // detached `sh -c` wrapping the spawn. The embedded single quote uses
-        // the standard `'\''` idiom. Regression guard for
-        // shell_escape::escape vs unix::escape on Windows.
-        assert_snapshot!(
-            build_printf_pipe_command("jq .", Some(r#"{"x":"$(echo pwned)","y":"a'b"}"#)),
-            @r#"printf '%s' '{"x":"$(echo pwned)","y":"a'\''b"}' | { jq .; }"#
-        );
-    }
-
-    #[test]
-    fn test_build_trash_sweep_command() {
-        // Empty list still produces a well-formed command — the caller
-        // (`sweep_stale_trash`) bails before we get here, but the helper itself
-        // must not panic on an empty slice.
-        assert_snapshot!(build_trash_sweep_command(&[]), @"rm -rf -- ");
-
-        // Plain paths — joined with spaces, no quoting.
-        let paths = [
-            PathBuf::from("/tmp/repo/.git/wt/trash/feature-1700000000"),
-            PathBuf::from("/tmp/repo/.git/wt/trash/bugfix-1700000100"),
-        ];
-        assert_snapshot!(
-            build_trash_sweep_command(&paths),
-            @"rm -rf -- /tmp/repo/.git/wt/trash/feature-1700000000 /tmp/repo/.git/wt/trash/bugfix-1700000100"
-        );
-
-        // Shell metacharacters — POSIX single-quote escaping isolates each path
-        // so the wrapping `sh -c` reads them as literal arguments. The embedded
-        // single quote uses the standard `'\''` idiom. This is the regression
-        // guard for the platform/MSYSTEM-sensitive `shell_escape::escape` we
-        // replaced: under cmd.exe quoting `$(echo pwned)` would still execute
-        // when spliced into a POSIX shell.
-        let nasty = [
-            PathBuf::from("/tmp/trash/with space-1"),
-            PathBuf::from("/tmp/trash/$(echo pwned)-2"),
-            PathBuf::from("/tmp/trash/a'b-3"),
-        ];
-        assert_snapshot!(
-            build_trash_sweep_command(&nasty),
-            @"rm -rf -- '/tmp/trash/with space-1' '/tmp/trash/$(echo pwned)-2' '/tmp/trash/a'\\''b-3'"
-        );
+    fn removal_arguments_do_not_interpret_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let name = if cfg!(windows) {
+            "with space-$(echo PWNED)"
+        } else {
+            "with space-'$(echo PWNED)\n"
+        };
+        let path = tmp.path().join(name);
+        fs::create_dir(&path).unwrap();
+        fs::write(path.join("payload"), "keep exact target").unwrap();
+        let args = build_remove_paths_command([&path]);
+        let shell = worktrunk::shell_exec::ShellConfig::get().unwrap();
+        let output = worktrunk::shell_exec::Cmd::new(shell.executable.to_str().unwrap())
+            .args(&shell.args)
+            .args(&args)
+            .run()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert!(!path.exists());
     }
 
     #[test]

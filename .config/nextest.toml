@@ -8,7 +8,7 @@ nextest-version = "0.9.118"
 # run this same suite and would silently disagree. Environment belongs in the
 # hermetic latch (`shell_exec::enable_hermetic_test_env`) and
 # `.cargo/config.toml`, behavior in the fixture. See
-# tests/CLAUDE.md → One Result Per Test, Whatever Runs It.
+# tests/AGENTS.md → One Result Per Test, Whatever Runs It.
 
 [profile.default]
 slow-timeout = { period = "180s", terminate-after = 1 }

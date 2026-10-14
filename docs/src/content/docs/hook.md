@@ -79,7 +79,7 @@ A string is a single command:
 pre-start = "npm install"
 ```
 
-A table is multiple commands that run concurrently:
+A table names commands. With multiple keys, they run concurrently:
 
 ```toml
 # .config/wt.toml
@@ -260,21 +260,29 @@ The `worktree_path_of_branch` function returns the filesystem path of a worktree
 setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path }}"
 ```
 
-## JSON context
+## Interactive hooks
 
-Hooks receive all template variables as JSON on stdin, enabling complex logic that templates can't express. Variables that are unset in a template are absent from the JSON too, so read the optional ones with a default — `branch` has none in a detached worktree:
+Hooks can prompt when run serially in the foreground, as in this `pre-start` hook:
 
 ```toml
 # .config/wt.toml
 [pre-start]
-setup = "python3 scripts/pre-start-setup.py"
+trust = "gum confirm 'trust this worktree?' && mise trust"
+```
+
+Logic that templates can't express belongs in a script, with the values it needs passed as arguments:
+
+```toml
+# .config/wt.toml
+[post-start]
+setup = "python3 scripts/post-start-setup.py {{ branch }} {{ repo }}"
 ```
 
 ```python
-# scripts/pre-start-setup.py
-import json, sys, subprocess
-ctx = json.load(sys.stdin)
-if ctx.get('branch', '').startswith('feature/') and 'backend' in ctx['repo']:
+# scripts/post-start-setup.py
+import subprocess, sys
+branch, repo = sys.argv[1], sys.argv[2]
+if branch.startswith('feature/') and 'backend' in repo:
     subprocess.run(['make', 'seed-db'])
 ```
 

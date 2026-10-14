@@ -62,3 +62,5 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mRemoving [1mfeature-dirty-unmerged[22m worktree (--force) & branch in background (--force-delete)[39m
+[33m▲[39m [33mDiscarding uncommitted changes (--force):[39m
+[107m [0m ?? untracked.txt

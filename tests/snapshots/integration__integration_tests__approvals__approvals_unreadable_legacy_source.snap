@@ -1,0 +1,6 @@
+---
+source: tests/integration_tests/approvals.rs
+expression: "String::from_utf8_lossy(&output.stderr)"
+---
+[31m✗[39m [31mFailed to load approvals[39m
+[107m [0m Failed to read config file [APPROVALS_SOURCE]: stream did not contain valid UTF-8

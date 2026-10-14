@@ -34,7 +34,7 @@
       "reason": "config path resolution"
     },
     {
-      "path": "CLAUDE.md",
+      "path": "AGENTS.md",
       "reason": "Project Commands Run Only After Approval"
     }
   ],

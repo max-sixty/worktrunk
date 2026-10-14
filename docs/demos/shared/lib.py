@@ -1271,10 +1271,8 @@ def prepare_demo_repo(env: DemoEnv, repo_root: Path, hooks_config: str = None):
     if hooks_config is None:
         hooks_config = '[pre-merge]\ntest = "cargo nextest run"\n'
     (env.repo / ".config" / "wt.toml").write_text(hooks_config)
-    claude_md_dir = env.repo / ".claude"
-    claude_md_dir.mkdir(exist_ok=True)
-    (claude_md_dir / "CLAUDE.md").write_text("# Acme App\n\nRust project. Run `cargo test` for tests.\n")
-    git(["-C", str(env.repo), "add", ".config/wt.toml", ".claude/CLAUDE.md"])
+    (env.repo / "AGENTS.md").write_text("# Acme App\n\nRust project. Run `cargo test` for tests.\n")
+    git(["-C", str(env.repo), "add", ".config/wt.toml", "AGENTS.md"])
     commit_dated(env.repo, "Add project hooks", "5d")
     git(["-C", str(env.repo), "push", "-q"])
 

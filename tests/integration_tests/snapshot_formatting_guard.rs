@@ -27,7 +27,7 @@
 //! When the host-path rule fails: add a redaction — env values go in
 //! `add_standard_env_redactions`, path arguments are covered by the
 //! `.args[]` redaction in `add_repo_and_worktree_path_filters` (both in
-//! `tests/common/mod.rs`); see tests/CLAUDE.md "Snapshot env drift".
+//! `tests/common/mod.rs`); see tests/AGENTS.md "Snapshot env drift".
 
 use crate::common::source_scan::visit_files;
 use ansi_str::AnsiStr;
@@ -167,7 +167,7 @@ fn test_no_host_specific_paths_in_snapshots() {
              These churn whenever the snapshot is regenerated on another machine.\n\
              Add a redaction: env values in `add_standard_env_redactions`, path\n\
              arguments via the `.args[]` redaction in `add_repo_and_worktree_path_filters`\n\
-             (tests/common/mod.rs); see tests/CLAUDE.md \"Snapshot env drift\".\n\
+             (tests/common/mod.rs); see tests/AGENTS.md \"Snapshot env drift\".\n\
              Deliberate example paths use the fake users in FAKE_USERS.",
             violations.len(),
             violations.join("\n"),

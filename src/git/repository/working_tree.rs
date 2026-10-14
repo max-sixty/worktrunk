@@ -17,6 +17,14 @@ use crate::git::{CommandError, PlumbingDiff};
 
 const TEMP_INDEX_PREFIX: &str = "worktrunk-temp-index-";
 
+/// A squash safety backup: an immutable snapshot of the index and the ref
+/// whose reflog retains it. The backup commit's parent is the pre-squash HEAD.
+#[derive(Debug)]
+pub struct SafetyBackup {
+    pub sha: String,
+    pub ref_name: String,
+}
+
 #[derive(Debug)]
 struct NumstatEntry {
     diff: LineDiff,
@@ -162,29 +170,80 @@ fn sequencer_operation(git_dir: &Path) -> Option<InProgressOperation> {
     }
 }
 
-/// The working tree a `<common>/worktrees/<id>` registration records, read from
-/// its `gitdir` file.
+/// The working tree a `gitdir` file records, read from the directory holding it.
 ///
 /// The file holds the path of that working tree's `.git`, absolute or relative to
-/// the registration directory — git writes the relative form under
+/// the directory it sits in — git writes the relative form under
 /// `worktree.useRelativePaths` and resolves either, so both are ordinary. Its
 /// parent is the working tree, which is the half of git's `validate_worktree`
 /// that reads from the registration side.
+///
+/// Two directories hold one: a `<common>/worktrees/<id>` registration, and the
+/// common dir itself when `git worktree repair` has written the main worktree's
+/// backlink there (`Repository::separate_git_dir_work_tree`). The format is the
+/// same, so one reader answers for both.
 ///
 /// Resolved through [`canonicalize_with_parents`], which normalizes the `..`
 /// chain a relative entry leaves behind even though the directory it names may
 /// no longer exist — the case the caller is usually asking about, and the path it
 /// then shows the user. Normalizing rewrites spellings only, so it cannot make
 /// two directories compare equal.
-fn registration_worktree_path(registration: &Path) -> Option<PathBuf> {
-    let content = std::fs::read_to_string(registration.join("gitdir")).ok()?;
-    let recorded = PathBuf::from(content.trim());
-    let absolute = if recorded.is_relative() {
+pub(super) fn registration_worktree_path(registration: &Path) -> std::io::Result<PathBuf> {
+    let content = std::fs::read(registration.join("gitdir"))?;
+    let recorded = super::super::git_path_from_file(&content)?;
+    let mut absolute = if recorded.is_relative() {
         registration.join(recorded)
     } else {
         recorded
     };
-    absolute.parent().map(canonicalize_with_parents)
+    // Git accepts a checkout path directly or its `.git` entry.
+    if absolute.file_name() == Some(std::ffi::OsStr::new(".git")) {
+        absolute.pop();
+    }
+    Ok(canonicalize_with_parents(&absolute))
+}
+
+/// The git operation the worktree whose git dir is `git_dir` is partway
+/// through, if any.
+///
+/// Reads the state files git writes under that git dir, in the order
+/// [`git status`](https://git-scm.com/docs/git-status) consults them, so the
+/// answer tracks what git itself calls "in progress". Takes the git dir rather
+/// than a worktree because a stale worktree's registration is still asked,
+/// after its `.git` file — the usual route to that dir — has gone.
+pub(super) fn operation_in_progress_at(git_dir: &Path) -> Option<InProgressOperation> {
+    if git_dir.join("MERGE_HEAD").exists() {
+        return Some(InProgressOperation::Merge);
+    }
+
+    // `rebase-merge` (interactive/merge backend) and `rebase-apply` (am
+    // backend, also used by `git am`) are mutually exclusive; either one
+    // means commits are mid-replay.
+    if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
+        return Some(InProgressOperation::Rebase);
+    }
+
+    if git_dir.join("CHERRY_PICK_HEAD").exists() {
+        return Some(InProgressOperation::CherryPick);
+    }
+
+    if git_dir.join("REVERT_HEAD").exists() {
+        return Some(InProgressOperation::Revert);
+    }
+
+    // The two `_HEAD` files above exist only while a single pick is
+    // stopped: resolving one with `git commit` instead of `--continue`
+    // removes it and leaves the rest of the sequence queued, which git
+    // still reports as in progress.
+    if let Some(operation) = sequencer_operation(git_dir) {
+        return Some(operation);
+    }
+
+    if git_dir.join("BISECT_LOG").exists() {
+        return Some(InProgressOperation::Bisect);
+    }
+
+    None
 }
 
 /// Typed snapshot returned by [`WorkingTree::prewarm_info`].
@@ -201,7 +260,8 @@ fn registration_worktree_path(registration: &Path) -> Option<PathBuf> {
 ///
 /// When `is_inside` is false every other field is `None` — nothing else ran.
 /// When `is_inside` is true, `root` lands unconditionally and `git_dir` lands
-/// unless canonicalization failed. `current_branch` is only populated when
+/// unless canonicalization failed or the batch framing was ambiguous.
+/// `current_branch` is only populated when
 /// the whole batch succeeded; on unborn HEAD it stays `None` and the
 /// per-accessor fallback paths handle the symbolic-ref lookup.
 #[derive(Debug, Clone, Default)]
@@ -212,11 +272,11 @@ pub struct WorkingTreeGitInfo {
     /// Canonicalized top-level directory. Always `Some` when `is_inside`.
     pub root: Option<PathBuf>,
     /// Canonicalized git directory (may differ from common dir in linked
-    /// worktrees). `Some` when `is_inside` and canonicalization succeeded.
+    /// worktrees). `None` when canonicalization or batch framing failed.
     pub git_dir: Option<PathBuf>,
     /// Current branch: outer `Some(Some(name))` on a branch, `Some(None)`
     /// detached. `None` when HEAD was unresolvable (unborn branch) or outside
-    /// a work tree.
+    /// a work tree, or the batch framing was ambiguous.
     pub current_branch: Option<Option<String>>,
 }
 
@@ -283,14 +343,18 @@ impl<'a> WorkingTree<'a> {
 
     /// Run a git command in this worktree and return stdout.
     pub fn run_command(&self, args: &[&str]) -> anyhow::Result<String> {
+        Ok(String::from_utf8_lossy(&self.run_command_bytes(args)?).into_owned())
+    }
+
+    /// Run a git command in this worktree and return stdout without decoding paths.
+    pub fn run_command_bytes(&self, args: &[&str]) -> anyhow::Result<Vec<u8>> {
         let output = self.run_command_output(args)?;
 
         if !output.status.success() {
             return Err(CommandError::from_failed_output("git", args, &output).into());
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        Ok(stdout)
+        Ok(output.stdout)
     }
 
     /// Run a git command in this worktree and return the raw Output.
@@ -310,16 +374,20 @@ impl<'a> WorkingTree<'a> {
     /// applies env mutations in call order. Repo-level
     /// [`Repository::run_command`] keeps the inherited context on purpose.
     pub fn run_command_output(&self, args: &[&str]) -> anyhow::Result<std::process::Output> {
-        self.repo
-            .with_object_store_env(
-                Cmd::new("git")
-                    .args(args.iter().copied())
-                    .current_dir(&self.path)
-                    .context(path_to_logging_context(&self.path))
-                    .scrub_git_discovery_env(),
-            )
+        self.git_command(args)
             .run()
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))
+    }
+
+    /// The `git` command [`Self::run_command_output`] runs, unexecuted.
+    fn git_command(&self, args: &[&str]) -> Cmd {
+        self.repo.with_object_store_env(
+            Cmd::new("git")
+                .args(args.iter().copied())
+                .current_dir(&self.path)
+                .context(path_to_logging_context(&self.path))
+                .scrub_git_discovery_env(),
+        )
     }
 
     // =========================================================================
@@ -339,7 +407,7 @@ impl<'a> WorkingTree<'a> {
     ///
     /// `--show-toplevel` and `--git-dir` succeed even on unborn branches —
     /// rev-parse prints them before HEAD errors — so `root`/`git_dir` are
-    /// cached whenever we're inside a work tree. `current_branch` is only
+    /// cached unless a newline makes the batch framing ambiguous. `current_branch` is only
     /// populated when the whole batch succeeded, so [`Self::branch`]'s
     /// `symbolic-ref` fallback still handles genuine unborn HEADs. On unborn
     /// the symbolic-full-name line lands as a fallback literal "HEAD", which
@@ -381,60 +449,60 @@ impl<'a> WorkingTree<'a> {
             "--symbolic-full-name",
             "HEAD",
         ])?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut lines = stdout.lines();
-
-        let is_inside = lines.next().is_some_and(|s| s.trim() == "true");
+        let is_inside = output.stdout.starts_with(b"true\n");
         if !is_inside {
             return Ok(WorkingTreeGitInfo::default());
         }
-
-        // `root` and `git_dir` are safe to cache whenever their lines landed,
-        // because any failure in the batch is from HEAD — which comes after.
-        // `--show-toplevel` always emits a line when `is_inside=true`; if
-        // canonicalize of that line fails (e.g., pathological filesystem
-        // state), fall back to `self.path` which is already canonicalized by
-        // `worktree_at` and guaranteed inside the work tree.
-        let raw_toplevel = lines.next().unwrap_or("").trim();
-        let canonical = canonicalize(PathBuf::from(raw_toplevel)).unwrap_or(self.path.clone());
-        super::WORKTREE_ROOTS
-            .entry(self.path.clone())
-            .or_insert_with(|| canonical.clone());
-        let root = Some(canonical);
-
-        let git_dir = lines.next().and_then(|raw| {
-            let path = PathBuf::from(raw.trim());
+        let Some(fields) = super::rev_parse_fields(&output, 4) else {
+            return Ok(WorkingTreeGitInfo {
+                is_inside,
+                root: Some(self.root()?),
+                ..WorkingTreeGitInfo::default()
+            });
+        };
+        let mut fields = fields.into_iter().skip(1);
+        let root = if let Some(root) = fields
+            .next()
+            .and_then(|raw| canonicalize(super::git_path_from_bytes(raw).ok()?).ok())
+        {
+            super::WORKTREE_ROOTS
+                .entry(self.path.clone())
+                .or_insert_with(|| root.clone());
+            root
+        } else {
+            self.root()?
+        };
+        let git_dir = fields.next().and_then(|raw| {
+            let path = super::git_path_from_bytes(raw).ok()?;
             let absolute = if path.is_relative() {
-                self.path.join(&path)
+                self.path.join(path)
             } else {
                 path
             };
-            let resolved = canonicalize(&absolute).ok()?;
+            let resolved = canonicalize(absolute).ok()?;
             super::GIT_DIRS
                 .entry(self.path.clone())
                 .or_insert_with(|| resolved.clone());
             Some(resolved)
         });
-
-        // The `--symbolic-full-name HEAD` line is only trustworthy when the
-        // batch succeeded. On unborn HEAD the line lands but is the literal
-        // "HEAD" fallback — we can't tell that from detached HEAD without the
-        // exit status.
         let current_branch = if output.status.success() {
-            lines.next().map(|raw| {
-                let branch = raw.trim().strip_prefix("refs/heads/").map(str::to_owned);
-                super::CURRENT_BRANCHES
-                    .entry(self.path.clone())
-                    .or_insert_with(|| branch.clone());
-                branch
-            })
+            fields
+                .next()
+                .and_then(|raw| std::str::from_utf8(raw).ok())
+                .map(|raw| {
+                    let branch = raw.strip_prefix("refs/heads/").map(str::to_owned);
+                    super::CURRENT_BRANCHES
+                        .entry(self.path.clone())
+                        .or_insert_with(|| branch.clone());
+                    branch
+                })
         } else {
             None
         };
 
         Ok(WorkingTreeGitInfo {
             is_inside: true,
-            root,
+            root: Some(root),
             git_dir,
             current_branch,
         })
@@ -484,15 +552,10 @@ impl<'a> WorkingTree<'a> {
     }
 
     /// The tree-ish the index is compared against for staged changes: HEAD,
-    /// or the empty tree on an unborn branch.
-    ///
-    /// Porcelain `git diff --cached` picks this itself; plumbing
-    /// (`diff-index --cached`) needs it spelled out.
+    /// or the empty tree on an unborn branch. Plumbing (`diff-index --cached`)
+    /// needs this spelled out; porcelain `git diff --cached` picks it itself.
     pub fn index_base(&self) -> anyhow::Result<String> {
-        match self.head_sha()? {
-            Some(head) => Ok(head),
-            None => Ok(self.repo.empty_tree_sha()?.to_string()),
-        }
+        self.repo.index_base_for(self.head_sha()?)
     }
 
     /// Return cached `git status --porcelain` output for this worktree.
@@ -542,10 +605,16 @@ impl<'a> WorkingTree<'a> {
     /// 3. Users who use skip-worktree are power users who understand the implications
     /// 4. A warning wouldn't prevent data loss anyway — it's informational only
     ///
-    /// Untracked files are always included, regardless of the user's
-    /// `status.showUntrackedFiles` display preference.
+    /// Untracked files and dirty submodules are always included, regardless of
+    /// the user's `status.showUntrackedFiles` or `submodule.<name>.ignore`
+    /// display preferences.
     pub fn is_dirty(&self) -> anyhow::Result<bool> {
-        let stdout = self.run_command(&["status", "--porcelain", "--untracked-files=normal"])?;
+        let stdout = self.run_command(&[
+            "status",
+            "--porcelain",
+            "--untracked-files=normal",
+            "--ignore-submodules=none",
+        ])?;
         Ok(!stdout.trim().is_empty())
     }
 
@@ -556,7 +625,12 @@ impl<'a> WorkingTree<'a> {
     /// [`GitError::UncommittedChanges`] in [`Self::ensure_clean`]. The same
     /// caveats as [`Self::is_dirty`] apply (skip-worktree files are invisible).
     pub fn dirty_files(&self) -> anyhow::Result<Vec<String>> {
-        let stdout = self.run_command(&["status", "--porcelain", "--untracked-files=normal"])?;
+        let stdout = self.run_command(&[
+            "status",
+            "--porcelain",
+            "--untracked-files=normal",
+            "--ignore-submodules=none",
+        ])?;
         Ok(stdout.lines().map(str::to_owned).collect())
     }
 
@@ -576,9 +650,9 @@ impl<'a> WorkingTree<'a> {
         match super::WORKTREE_ROOTS.entry(self.path.clone()) {
             Entry::Occupied(e) => Ok(e.get().clone()),
             Entry::Vacant(e) => match self
-                .run_command(&["rev-parse", "--show-toplevel"])
+                .run_command_bytes(&["rev-parse", "--show-toplevel"])
                 .ok()
-                .map(|s| PathBuf::from(s.trim()))
+                .and_then(|bytes| super::super::git_path_from_output(&bytes).ok())
                 .and_then(|p| canonicalize(&p).ok())
             {
                 Some(root) => Ok(e.insert(root).clone()),
@@ -596,21 +670,61 @@ impl<'a> WorkingTree<'a> {
         match super::GIT_DIRS.entry(self.path.clone()) {
             Entry::Occupied(e) => Ok(e.get().clone()),
             Entry::Vacant(e) => {
-                let stdout = self.run_command(&["rev-parse", "--git-dir"])?;
-                let path = PathBuf::from(stdout.trim());
-
-                // Always canonicalize to resolve symlinks (e.g., /var -> /private/var on macOS)
-                let absolute_path = if path.is_relative() {
-                    self.path.join(&path)
-                } else {
-                    path
-                };
-                let resolved =
-                    canonicalize(&absolute_path).context("Failed to resolve git directory")?;
-
-                Ok(e.insert(resolved).clone())
+                let stdout = self.run_command_bytes(&["rev-parse", "--git-dir"])?;
+                Ok(e.insert(self.resolve_git_dir(&stdout)?).clone())
             }
         }
+    }
+
+    /// [`Self::git_dir`] for several worktrees, forking the uncached
+    /// `git rev-parse --git-dir` lookups concurrently through
+    /// [`Cmd::run_concurrently`]. Results are in input order.
+    pub fn git_dirs(worktrees: &[WorkingTree<'_>]) -> Vec<anyhow::Result<PathBuf>> {
+        const ARGS: [&str; 2] = ["rev-parse", "--git-dir"];
+        let cached: Vec<Option<PathBuf>> = worktrees
+            .iter()
+            .map(|wt| super::GIT_DIRS.get(&wt.path).map(|e| e.value().clone()))
+            .collect();
+        let cmds: Vec<Cmd> = worktrees
+            .iter()
+            .zip(&cached)
+            .filter(|(_, cached)| cached.is_none())
+            .map(|(wt, _)| wt.git_command(&ARGS))
+            .collect();
+        let mut fetched = Cmd::run_concurrently(&cmds).into_iter();
+        worktrees
+            .iter()
+            .zip(cached)
+            .map(|(wt, cached)| {
+                if let Some(git_dir) = cached {
+                    return Ok(git_dir);
+                }
+                let output = fetched
+                    .next()
+                    .context("run_concurrently returned fewer results than commands")??;
+                if !output.status.success() {
+                    return Err(CommandError::from_failed_output("git", &ARGS, &output).into());
+                }
+                let git_dir = wt.resolve_git_dir(&output.stdout)?;
+                Ok(super::GIT_DIRS
+                    .entry(wt.path.clone())
+                    .or_insert(git_dir)
+                    .clone())
+            })
+            .collect()
+    }
+
+    /// Canonicalize `git rev-parse --git-dir` output run in this worktree.
+    fn resolve_git_dir(&self, stdout: &[u8]) -> anyhow::Result<PathBuf> {
+        let path = super::super::git_path_from_output(stdout)?;
+
+        // Always canonicalize to resolve symlinks (e.g., /var -> /private/var on macOS)
+        let absolute_path = if path.is_relative() {
+            self.path.join(&path)
+        } else {
+            path
+        };
+        canonicalize(&absolute_path).context("Failed to resolve git directory")
     }
 
     /// Reason recorded by `git worktree lock`, if this worktree is locked.
@@ -638,46 +752,11 @@ impl<'a> WorkingTree<'a> {
         }
     }
 
-    /// The git operation this worktree is partway through, if any.
-    ///
-    /// Reads the state files git writes under the worktree's git dir, in the
-    /// order [`git status`](https://git-scm.com/docs/git-status) consults them,
-    /// so the answer tracks what git itself calls "in progress".
+    /// The git operation this worktree is partway through, if any, read from
+    /// the state files git writes under its git dir in the order
+    /// [`git status`](https://git-scm.com/docs/git-status) consults them.
     pub fn operation_in_progress(&self) -> anyhow::Result<Option<InProgressOperation>> {
-        let git_dir = self.git_dir()?;
-
-        if git_dir.join("MERGE_HEAD").exists() {
-            return Ok(Some(InProgressOperation::Merge));
-        }
-
-        // `rebase-merge` (interactive/merge backend) and `rebase-apply` (am
-        // backend, also used by `git am`) are mutually exclusive; either one
-        // means commits are mid-replay.
-        if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
-            return Ok(Some(InProgressOperation::Rebase));
-        }
-
-        if git_dir.join("CHERRY_PICK_HEAD").exists() {
-            return Ok(Some(InProgressOperation::CherryPick));
-        }
-
-        if git_dir.join("REVERT_HEAD").exists() {
-            return Ok(Some(InProgressOperation::Revert));
-        }
-
-        // The two `_HEAD` files above exist only while a single pick is
-        // stopped: resolving one with `git commit` instead of `--continue`
-        // removes it and leaves the rest of the sequence queued, which git
-        // still reports as in progress.
-        if let Some(operation) = sequencer_operation(&git_dir) {
-            return Ok(Some(operation));
-        }
-
-        if git_dir.join("BISECT_LOG").exists() {
-            return Ok(Some(InProgressOperation::Bisect));
-        }
-
-        Ok(None)
+        Ok(operation_in_progress_at(&self.git_dir()?))
     }
 
     /// Paths the index still records as unmerged.
@@ -824,14 +903,18 @@ impl<'a> WorkingTree<'a> {
     /// two cover different halves of "the directory no longer holds this
     /// worktree": prunable is the half git notices, this is the half it does
     /// not.
-    pub fn ensure_holds_this_worktree(&self) -> anyhow::Result<()> {
+    ///
+    /// Returns the git dir that answers for this worktree: the common dir for
+    /// the main worktree, its registration under `<common>/worktrees/`
+    /// otherwise.
+    pub fn ensure_holds_this_worktree(&self) -> anyhow::Result<PathBuf> {
         let common_dir = self.repo.git_common_dir();
         // A git dir that can't be resolved at all is the strongest form of "not
         // this worktree": nothing there answers for it. Treating that as a
         // refusal keeps the failure closed.
         let git_dir = Repository::git_dir_at(&self.path);
         if git_dir.as_deref() == Some(common_dir) {
-            return Ok(());
+            return Ok(common_dir.to_path_buf());
         }
 
         // Where the occupant's own registration says it lives. `None` when there
@@ -839,15 +922,16 @@ impl<'a> WorkingTree<'a> {
         // different repository, or its registration here has lost its `gitdir`
         // file.
         let registrations = common_dir.join("worktrees");
-        let occupant_registered_at = git_dir
-            .filter(|git_dir| git_dir.parent() == Some(registrations.as_path()))
+        let registration = git_dir.filter(|dir| dir.parent() == Some(registrations.as_path()));
+        let occupant_registered_at = registration
             .as_deref()
-            .and_then(registration_worktree_path);
-        if occupant_registered_at
-            .as_deref()
-            .is_some_and(|recorded| crate::path::paths_match(recorded, &self.path))
+            .and_then(|entry| registration_worktree_path(entry).ok());
+        if let Some(registration) = registration
+            && occupant_registered_at
+                .as_deref()
+                .is_some_and(|recorded| crate::path::paths_match(recorded, &self.path))
         {
-            return Ok(());
+            return Ok(registration);
         }
 
         Err(GitError::WorktreePathNotOurs {
@@ -1052,6 +1136,23 @@ impl<'a> WorkingTree<'a> {
         }
     }
 
+    /// Determine whether staging with `mode` would leave content to commit.
+    ///
+    /// Staging modes are evaluated against a temporary index so staged and
+    /// unstaged changes combine exactly as `git add` would, without modifying
+    /// the user's index.
+    pub fn has_committable_changes(&self, mode: crate::config::StageMode) -> anyhow::Result<bool> {
+        match mode {
+            crate::config::StageMode::None => self.has_staged_changes(),
+            crate::config::StageMode::All | crate::config::StageMode::Tracked => {
+                let base = self.index_base()?;
+                let index = self.temp_index()?;
+                index.stage(mode)?;
+                index.has_staged_changes(&base)
+            }
+        }
+    }
+
     /// Check whether this worktree has initialized submodules.
     ///
     /// Uses `git submodule status --recursive` and parses its stable single-character
@@ -1061,15 +1162,23 @@ impl<'a> WorkingTree<'a> {
         Ok(has_initialized_submodules_from_status(&output))
     }
 
-    /// Create a safety backup of current working tree state without affecting the working tree.
+    /// Back up the index, as a squash is about to commit it, to `refs/wt-backup/<branch>`.
     ///
-    /// This creates a backup commit containing all changes (staged, unstaged, and untracked files)
-    /// and stores it in a custom ref (`refs/wt-backup/<branch>`). This creates a reflog entry
-    /// for recovery without polluting the stash list. The working tree remains unchanged.
+    /// Writes the index as a commit whose parent is `HEAD`, so one commit holds
+    /// both the branch tip being rewritten and the changes the squash sweeps in,
+    /// and records it in the ref's reflog. Unstaged and untracked files are not
+    /// captured; the squash leaves them in place. The index, the working tree and
+    /// the stash list are untouched.
     ///
-    /// Users can find safety backups with: `git reflog show refs/wt-backup/<branch>`
+    /// Plumbing throughout, so no config hides part of the index: `git stash
+    /// create` honors `submodule.<name>.ignore=all` and sees nothing in a staged
+    /// gitlink bump. The backup commit is never signed.
     ///
-    /// Returns the short SHA of the backup commit.
+    /// To recover, `git reflog show refs/wt-backup/<branch>` lists the backups;
+    /// `git read-tree <sha>` restores that index, `git checkout <sha> -- .` also
+    /// restores the files, and `<sha>^` is the branch tip before the squash.
+    ///
+    /// Returns the backup commit's SHA and the ref retaining it.
     ///
     /// # Example
     /// ```no_run
@@ -1077,24 +1186,25 @@ impl<'a> WorkingTree<'a> {
     ///
     /// let repo = Repository::current()?;
     /// let wt = repo.current_worktree();
-    /// let sha = wt.create_safety_backup("feature → main (squash)")?;
-    /// println!("Backup created: {}", sha);
+    /// let backup = wt.create_safety_backup("feature → main (squash)")?;
+    /// println!("Backup created: {}", backup.sha);
     /// # Ok::<(), anyhow::Error>(())
     /// ```
-    pub fn create_safety_backup(&self, message: &str) -> anyhow::Result<String> {
-        // Create a backup commit using git stash create (without storing it in the stash list)
+    pub fn create_safety_backup(&self, message: &str) -> anyhow::Result<SafetyBackup> {
+        let tree = self.run_command(&["write-tree"])?;
         let backup_sha = self
-            .run_command(&["stash", "create", "--include-untracked"])?
+            .run_command(&[
+                "commit-tree",
+                "--no-gpg-sign",
+                tree.trim(),
+                "-p",
+                "HEAD",
+                "-m",
+                message,
+            ])
+            .context("Failed to create backup commit")?
             .trim()
             .to_string();
-
-        // Validate that we got a SHA back
-        if backup_sha.is_empty() {
-            return Err(GitError::Other {
-                message: "git stash create returned empty SHA - no changes to backup".into(),
-            }
-            .into());
-        }
 
         // Get current branch name to use in the ref name
         let stdout = self.run_command(&["rev-parse", "--symbolic-full-name", "HEAD"])?;
@@ -1118,7 +1228,10 @@ impl<'a> WorkingTree<'a> {
         ])
         .context("Failed to create backup ref")?;
 
-        self.repo().short_sha(&backup_sha)
+        Ok(SafetyBackup {
+            sha: backup_sha,
+            ref_name,
+        })
     }
 }
 
@@ -1138,7 +1251,8 @@ impl<'a> WorkingTree<'a> {
 /// the working-tree conflict task (write-tree of tracked changes, for
 /// merge-conflict probing), `wt step diff` (diff vs target merge-base with
 /// untracked), `wt step commit --dry-run` (mirror its `--stage` mode without
-/// changing the user's index), and the `wt switch` unified/working preview tabs.
+/// changing the user's index), `wt merge` (check whether its `--stage` mode
+/// would produce a commit), and the `wt switch` unified/working preview tabs.
 pub struct TempIndex {
     temp: tempfile::TempPath,
     worktree_root: PathBuf,
@@ -1185,6 +1299,25 @@ impl TempIndex {
             .map(|output| output.trim().to_string())
     }
 
+    fn has_staged_changes(&self, base: &str) -> anyhow::Result<bool> {
+        let args = PlumbingDiff::Index.args(&[
+            "--cached",
+            "--ita-invisible-in-index",
+            "--quiet",
+            "--end-of-options",
+            base,
+        ]);
+        let output = self
+            .command(args.iter().copied())
+            .run()
+            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
+        match output.status.code() {
+            Some(0) => Ok(false),
+            Some(1) => Ok(true),
+            _ => Err(CommandError::from_failed_output("git", &args, &output).into()),
+        }
+    }
+
     /// Register untracked files in the temporary index without adding their
     /// contents. A following `git diff <base>` can then include those files as
     /// new while preserving the user's real index and staging state. If the
@@ -1210,17 +1343,28 @@ impl TempIndex {
     }
 
     /// Register an exact NUL-separated set of untracked paths as intent-to-add.
+    ///
+    /// The paths are file names from `ls-files`, not pathspecs, so
+    /// `GIT_LITERAL_PATHSPECS` keeps a name like `:x` from parsing as magic and
+    /// `b[1].txt` from matching as a glob. Git refuses the literal setting
+    /// alongside the glob and icase ones, so a user's exported
+    /// `GIT_GLOB_PATHSPECS` or `GIT_ICASE_PATHSPECS` is dropped for this call.
     fn register_untracked_paths(&self, paths: Vec<u8>) -> anyhow::Result<()> {
-        self.run_command_output_with_input(
-            [
-                "add",
-                "--intent-to-add",
-                "--sparse",
-                "--pathspec-from-file=-",
-                "--pathspec-file-nul",
-            ],
-            paths,
-        )?;
+        let args = [
+            "add",
+            "--intent-to-add",
+            "--sparse",
+            "--pathspec-from-file=-",
+            "--pathspec-file-nul",
+        ]
+        .map(String::from);
+        let command = self
+            .command(args.iter().cloned())
+            .env_remove("GIT_GLOB_PATHSPECS")
+            .env_remove("GIT_ICASE_PATHSPECS")
+            .env("GIT_LITERAL_PATHSPECS", "1")
+            .stdin_bytes(paths);
+        run_checked(command, &args)?;
         Ok(())
     }
 
@@ -1254,26 +1398,8 @@ impl TempIndex {
         &self,
         args: impl IntoIterator<Item = impl Into<String>>,
     ) -> anyhow::Result<std::process::Output> {
-        self.run_command_output_with_input(args, Vec::new())
-    }
-
-    fn run_command_output_with_input(
-        &self,
-        args: impl IntoIterator<Item = impl Into<String>>,
-        stdin: Vec<u8>,
-    ) -> anyhow::Result<std::process::Output> {
         let args: Vec<String> = args.into_iter().map(Into::into).collect();
-        let mut command = self.command(args.iter().cloned());
-        if !stdin.is_empty() {
-            command = command.stdin_bytes(stdin);
-        }
-        let output = command
-            .run()
-            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
-        if !output.status.success() {
-            return Err(CommandError::from_failed_output("git", &args, &output).into());
-        }
-        Ok(output)
+        run_checked(self.command(args.iter().cloned()), &args)
     }
 
     /// Build a `git` command pointed at this temp index.
@@ -1290,7 +1416,7 @@ impl TempIndex {
     pub(super) fn command<I, S>(&self, args: I) -> Cmd
     where
         I: IntoIterator<Item = S>,
-        S: Into<String>,
+        S: AsRef<std::ffi::OsStr>,
     {
         let command = Cmd::new("git")
             .args(args)
@@ -1305,6 +1431,17 @@ impl TempIndex {
             None => command,
         }
     }
+}
+
+/// Run a `git` command built from `args`, turning a non-zero exit into an error.
+fn run_checked(command: Cmd, args: &[String]) -> anyhow::Result<std::process::Output> {
+    let output = command
+        .run()
+        .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
+    if !output.status.success() {
+        return Err(CommandError::from_failed_output("git", args, &output).into());
+    }
+    Ok(output)
 }
 
 #[cfg(test)]
@@ -1395,6 +1532,73 @@ mod tests {
         assert!(
             repo.current_worktree().has_staged_changes().unwrap(),
             "a staged gitlink must stay visible through submodule.<name>.ignore"
+        );
+    }
+
+    #[test]
+    fn has_committable_changes_matches_stage_modes_without_mutating_index() {
+        let test = TestRepo::with_initial_commit();
+        std::fs::write(test.root_path().join("tracked.txt"), "base\n").unwrap();
+        test.run_git(&["add", "tracked.txt"]);
+        test.run_git(&["commit", "-m", "add tracked file"]);
+        std::fs::write(test.root_path().join("tracked.txt"), "changed\n").unwrap();
+        std::fs::write(test.root_path().join("untracked.txt"), "new\n").unwrap();
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let worktree = repo.current_worktree();
+        assert!(
+            worktree
+                .has_committable_changes(crate::config::StageMode::Tracked)
+                .unwrap()
+        );
+        assert!(
+            worktree
+                .has_committable_changes(crate::config::StageMode::All)
+                .unwrap()
+        );
+        assert!(
+            !worktree
+                .has_committable_changes(crate::config::StageMode::None)
+                .unwrap(),
+            "temporary staging must not modify the real index"
+        );
+
+        test.run_git(&["add", "tracked.txt"]);
+        assert!(
+            worktree
+                .has_committable_changes(crate::config::StageMode::None)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn has_committable_changes_all_ignores_dirty_submodule_contents() {
+        let test = TestRepo::with_initial_commit();
+        let sub_source = test.root_path().parent().unwrap().join("sub-source");
+        std::fs::create_dir_all(&sub_source).unwrap();
+        test.run_git_in(&sub_source, &["init", "-b", "main"]);
+        std::fs::write(sub_source.join("sub.txt"), "base\n").unwrap();
+        test.run_git_in(&sub_source, &["add", "sub.txt"]);
+        test.run_git_in(&sub_source, &["commit", "-m", "sub init"]);
+        test.run_git(&[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            sub_source.to_str().unwrap(),
+            "submod",
+        ]);
+        test.run_git(&["commit", "-m", "add submodule"]);
+        std::fs::write(test.root_path().join("submod/sub.txt"), "dirty\n").unwrap();
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let worktree = repo.current_worktree();
+        assert!(worktree.is_dirty().unwrap());
+        assert!(
+            !worktree
+                .has_committable_changes(crate::config::StageMode::All)
+                .unwrap(),
+            "dirty submodule contents cannot be staged in the parent repository"
         );
     }
 
@@ -1558,11 +1762,8 @@ mod tests {
 
         for branch in ["a/b", "a-b"] {
             test.run_git(&["switch", "-c", branch]);
-            // Modify the tracked file so `git stash create` picks up changes.
-            std::fs::write(test.root_path().join("file.txt"), branch).unwrap();
             wt.create_safety_backup(&format!("{branch} (squash)"))
                 .unwrap();
-            test.run_git(&["checkout", "--", "file.txt"]);
             test.run_git(&["switch", "main"]);
         }
 
@@ -1763,6 +1964,28 @@ mod tests {
                 .working_tree_diff_stats_with_untracked()
                 .unwrap(),
             LineDiff::default()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn working_tree_diff_stats_with_untracked_counts_pathspec_magic_names() {
+        // `ls-files` reports names verbatim; registering them must not read
+        // `:x` as pathspec magic or `[1]` as a glob.
+        let test = TestRepo::with_initial_commit();
+        for name in [":x", "b[1].txt", "*"] {
+            std::fs::write(test.root_path().join(name), "one\ntwo\n").unwrap();
+        }
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        assert_eq!(
+            repo.current_worktree()
+                .working_tree_diff_stats_with_untracked()
+                .unwrap(),
+            LineDiff {
+                added: 6,
+                deleted: 0
+            }
         );
     }
 

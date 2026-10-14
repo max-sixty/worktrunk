@@ -5,9 +5,7 @@ use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
 use worktrunk::config::CommitGenerationConfig;
-use worktrunk::git::{
-    CommandError, CommitMessageDetail, ErrorExt, Repository, TempIndex, WorkingTree,
-};
+use worktrunk::git::{CommandError, CommitMessageDetail, ErrorExt, TempIndex, WorkingTree};
 use worktrunk::shell_exec::{Cmd, ShellConfig};
 
 use minijinja::Environment;
@@ -843,6 +841,7 @@ pub(crate) fn build_commit_prompt(
 /// whole set to `build`, and the three call sites pass the same values in the
 /// same order, which is exactly where a transposed pair goes unnoticed.
 pub(crate) struct SquashInputs<'a> {
+    pub worktree: &'a WorkingTree<'a>,
     pub target_branch: &'a str,
     pub merge_base: &'a str,
     pub commit_details: &'a [CommitMessageDetail],
@@ -899,8 +898,7 @@ impl SquashInputs<'_> {
     /// The diff spans everything the one resulting commit records — the commits
     /// since `merge_base` plus any working-tree changes folded in with them.
     pub(crate) fn prompt(&self) -> anyhow::Result<String> {
-        let repo = Repository::current()?;
-        let wt = repo.current_worktree();
+        let wt = self.worktree;
 
         // Diff `merge_base` against the index, because the index is what the
         // squash commits: `handle_squash` stages the working tree before
@@ -914,7 +912,7 @@ impl SquashInputs<'_> {
         // matches `HEAD` and the two spans are the same diff, so this needs no
         // second path. It also matches the stats `handle_squash` prints for the
         // same commit.
-        let squashed = staged_diff(&wt, self.staging_index, self.merge_base);
+        let squashed = staged_diff(wt, self.staging_index, self.merge_base);
         let diff_output = squashed.capture(["--patch"])?;
         let diff_stat = squashed.capture(["--stat"])?;
 

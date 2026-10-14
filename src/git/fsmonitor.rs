@@ -66,7 +66,7 @@ use super::WorkingTree;
 
 /// Basename of every fsmonitor IPC socket. Also the exact string `lsof`
 /// prints when the socket's directory has been deleted (orphan class 1).
-const IPC_SOCKET_NAME: &str = "fsmonitor--daemon.ipc";
+pub(crate) const IPC_SOCKET_NAME: &str = "fsmonitor--daemon.ipc";
 
 /// How long to wait for `SIGTERM`'d daemons to exit before escalating to
 /// `SIGKILL`. Bounded so the sweep can never stall `wt`. Daemons are wedged

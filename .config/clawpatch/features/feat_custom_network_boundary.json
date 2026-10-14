@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "featureId": "feat_custom_network_boundary",
   "title": "Local-first network-access boundary",
-  "summary": "Worktrunk is local-first: the network is touched only when the user asked for it. The audit keys on the calling command, not a fixed blocklist — an egress (`git fetch`, `git ls-remote`, `gh`, `glab`, `az`, HTTP) is a violation when it sits in a fast command or a synchronous hot path (a shell prompt) that cannot absorb the latency, or in a background TTL-cache refresh. A foreground command the user runs and waits on may reach the wire for the activity it was asked to perform, and must still paint its first frame from local data — network-derived detail streams in behind it. Sanctioned activities: CI status (`wt list --full`, `wt list statusline`, and plain `wt list` when `[list] columns` names `ci`); the interactive `wt switch` picker, the most forgiving home for forge data because its lifetime is bounded by the user rather than the job — per-row CI status, the per-row `gh pr view --json comments` / `glab api …/notes` that fills a row's `comments` tab, and the `gh pr list` / `glab mr list` plus per-row previews behind `wt switch --prs`; branch-summary and commit-message generation (`commit.generation` commands); PR/MR resolution (`wt switch pr:`/`mr:`); and the `wt config show --full` version check; plus the one detection-helper exception — the first `Repository::default_branch()` per repo may fall through to `git ls-remote`, caching into `worktrunk.default-branch`. Silent lookup fallthroughs (alias dispatch, hook context build, recovery) must stay local. See CLAUDE.md > Network Access.",
+  "summary": "Worktrunk is local-first: the network is touched only when the user asked for it. The audit keys on the calling command, not a fixed blocklist — an egress (`git fetch`, `git ls-remote`, `gh`, `glab`, `az`, HTTP) is a violation when it sits in a fast command or a synchronous hot path (a shell prompt) that cannot absorb the latency, or in a background TTL-cache refresh. A foreground command the user runs and waits on may reach the wire for the activity it was asked to perform, and must still paint its first frame from local data — network-derived detail streams in behind it. Sanctioned activities: CI status (`wt list --full`, `wt list statusline`, and plain `wt list` when `[list] columns` names `ci`); the interactive `wt switch` picker, the most forgiving home for forge data because its lifetime is bounded by the user rather than the job — per-row CI status, the per-row `gh pr view --json comments` / `glab api …/notes` that fills a row's `comments` tab, and the `gh pr list` / `glab mr list` plus per-row previews behind `wt switch --prs`; branch-summary and commit-message generation (`commit.generation` commands); PR/MR resolution (`wt switch pr:`/`mr:`); and the `wt config show --full` version check; plus the one detection-helper exception — the first `Repository::default_branch()` per repo may fall through to `git ls-remote`, caching into `worktrunk.default-branch`. Silent lookup fallthroughs (alias dispatch, hook context build, recovery) must stay local. See AGENTS.md > Network Access.",
   "kind": "library",
   "source": "manual",
   "confidence": "high",
@@ -46,7 +46,7 @@
       "reason": "alias dispatch must resolve locally, no fallthrough to the wire"
     },
     {
-      "path": "CLAUDE.md",
+      "path": "AGENTS.md",
       "reason": "Network Access policy and the default_branch detection-helper exception"
     }
   ],

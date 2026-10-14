@@ -191,13 +191,15 @@ Generate commit messages automatically during merge. Requires an external CLI to
 
 [32mCodex[0m
 
+Create [2m~/.codex/worktrunk-commit-instructions.txt[0m containing just [2m.[0m (no newline). Accepting Worktrunk's first-run Codex setup creates the file for you.
+
 [107m [0m [2m[36m[commit.generation][0m
-[107m [0m [2mcommand = [0m[2m[32m"codex exec -m gpt-5.6-luna -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"[0m
+[107m [0m [2mcommand = [0m[2m[32m"codex exec -m gpt-6-luna -c model_reasoning_effort='none' -c project_doc_max_bytes=0 -c skills.max_context_tokens=1 -c agents.enabled=false -c features.goals=false -c web_search=disabled -c 'model_instructions_file=\"~/.codex/worktrunk-commit-instructions.txt\"' -c features.shell_tool=false -c features.unified_exec=false -c features.apps=false -c features.plugins=false --ephemeral --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"[0m
 
 [32mOpenCode[0m
 
 [107m [0m [2m[36m[commit.generation][0m
-[107m [0m [2mcommand = [0m[2m[32m"opencode run -m anthropic/claude-haiku-4.5 --variant fast"[0m
+[107m [0m [2mcommand = [0m[2m[32m"opencode run -m anthropic/claude-haiku-5-5 --variant fast"[0m
 
 [32mllm[0m
 
@@ -207,7 +209,7 @@ Generate commit messages automatically during merge. Requires an external CLI to
 [32maichat[0m
 
 [107m [0m [2m[36m[commit.generation][0m
-[107m [0m [2mcommand = [0m[2m[32m"aichat -m claude:claude-haiku-4.5"[0m
+[107m [0m [2mcommand = [0m[2m[32m"aichat -m claude:claude-haiku-4.5 --code"[0m
 
 See LLM commits docs for setup and Custom prompt templates for template customization.
 
@@ -334,6 +336,7 @@ Persistent flag values for [2mwt remove[0m. Override on command line as needed
 [107m [0m 
 [107m [0m [2m[36m[switch.picker][0m
 [107m [0m [2mpager = [0m[2m[32m"delta --paging=never"[0m[2m   [0m[2m# Example: override git's core.pager for diff preview[0m
+[107m [0m [2mpreview = [0m[2m[33mtrue[0m[2m                   [0m[2m# Show the preview panel on open (Alt-p toggles)[0m
 
 [32mStep[0m
 
@@ -356,7 +359,7 @@ Aliases defined here apply to all projects. For project-specific aliases, use th
 
 User config can include a [2m[projects][0m table for project-specific settings — worktree layout, setting overrides, anything else — separate from the project config shared with teammates.
 
-Entries are keyed by project identifier — [2m<host>/<owner>/<repo>[0m derived from the primary remote URL (no [2m.git[0m suffix), or the canonical repo path when there is no remote. Run [2mwt config show[0m inside the repo to see the identifier for the current project; it appears in the [2mPROJECT CONFIG[0m section as [2mIdentifier: …[0m.
+Entries are keyed by project identifier — [2m<host>/<owner>/<repo>[0m derived from the primary remote URL (no [2m.git[0m suffix; an explicit port other than SSH's default 22 stays with the host, as in [2mgitlab.example.com:2222/team/project[0m), or the canonical repo path when there is no remote. Run [2mwt config show[0m inside the repo to see the identifier for the current project; it appears in the [2mPROJECT CONFIG[0m section as [2mIdentifier: …[0m.
 
 Scalar values (like [2mworktree-path[0m) replace the global value; everything else (hooks, aliases, etc.) appends, global first. See how the layers rank.
 
@@ -382,7 +385,7 @@ A key containing [2m*[0m matches any run of characters, [2m/[0m included, so
 [107m [0m [2mworktree-path = [0m[2m[32m".worktrees/{{ branch | sanitize }}"[0m
 
 Every matching entry applies, least- to most-specific, following the rule above: a more specific entry — [2mgit.company.example/platform/*[0m over [2mgit.company.example/*[0m — wins where both set the same setting, while hooks and aliases from every matching entry all run, least-specific first. A literal key is the most specific of all; specificity is the count of non-[2m*[0m characters in the key. End a host-wide key with [2m/*[0m — a bare [2mgit.company.example*[0m also covers hosts whose names merely start with that 
-string.
+string. A remote on a non-default SSH port carries the port in its identifier, so its host-wide key is [2mgit.company.example:2222/*[0m.
 
 Entries in [2mapprovals.toml[0m match the same way, so a hand-written pattern entry approves its commands for every repository it covers.
 
@@ -596,17 +599,11 @@ Aliases defined here are shared with teammates. For personal aliases, use the us
 
 [32mSHELL INTEGRATION[0m
 
-Worktrunk needs shell integration to change directories when switching worktrees. Install with:
-
-[107m [0m [2m[0m[2m[34mwt[0m[2m config shell install[0m
-
-For manual setup, see [2mwt config shell init --help[0m.
-
-Without shell integration, [2mwt switch[0m prints the target directory but cannot [2mcd[0m into it.
+See [2mwt config shell[0m for setup, activation, and current-shell diagnostics.
 
 [32mFirst-run prompts[0m
 
-On first run without shell integration, Worktrunk offers to install it. On first commit without LLM configuration, it offers to configure a detected tool ([2mclaude[0m, [2mcodex[0m). Declining sets [2mskip-shell-integration-prompt[0m or [2mskip-commit-generation-prompt[0m automatically.
+On first run without shell integration, Worktrunk offers to install it. On first commit without LLM configuration, it offers to configure a detected tool ([2mclaude[0m, [2mcodex[0m, [2mopencode[0m). Declining sets [2mskip-shell-integration-prompt[0m or [2mskip-commit-generation-prompt[0m automatically.
 
 [32mOTHER[0m
 
@@ -640,7 +637,6 @@ Override the LLM command in CI to use a mock:
  [2mWORKTRUNK_CONFIG_PATH[0m             Override user config file location                                                                                 
  [2mWORKTRUNK_SYSTEM_CONFIG_PATH[0m      Override system config file location                                                                               
  [2mWORKTRUNK_PROJECT_CONFIG_PATH[0m     Override project config file location (defaults to [2m.config/wt.toml[0m); relative paths resolve from the worktree root 
- [2mXDG_CONFIG_DIRS[0m                   Colon-separated system config directories (default: [2m/etc/xdg[0m)                                                      
  [2mWORKTRUNK_MAX_CONCURRENT_COMMANDS[0m Max parallel git commands (default: 32). Lower if hitting file descriptor limits.                                  
  [2mWORKTRUNK_VERBOSE[0m                 Verbosity level ([2m0[0m/[2m1[0m/[2m2[0m), like [2m-v[0m/[2m-vv[0m but applied everywhere — including shell completion, which no flag can reach  
  [2mRUST_LOG[0m                          Logging directive (e.g. [2mworktrunk=debug[0m); overrides the verbosity baseline for what reaches stderr                 

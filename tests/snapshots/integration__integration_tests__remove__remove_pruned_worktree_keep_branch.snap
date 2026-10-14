@@ -60,4 +60,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m Worktree directory missing for [1mfeature-pruned-keep[22m; pruned
+[32m✓[39m [32mPruned stale worktree for [1mfeature-pruned-keep[22m[39m

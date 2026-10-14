@@ -1,15 +1,17 @@
 @echo off
-rem Windows counterpart of the `bash "$PLUGIN_ROOT/hooks/wt.sh"` that the Unix
-rem hook commands lead with: it finds Git Bash by path, then runs wt.sh through
-rem it, so every integration resolves the worktrunk binary through that one
-rem script.
-rem
-rem Codex runs hook commands through `cmd.exe /C` on Windows, where a bare
-rem `bash` resolves through PATH to System32\bash.exe -- the WSL launcher, not
-rem Git Bash -- and in a sandboxed session refuses to start at all (#4007). Only
-rem the bare name is the problem, so this resolves bash.exe the way find_git_bash
-rem does in src/shell_exec.rs and changes nothing else.
+rem Windows hook entrypoint: find Git Bash by installation path, avoiding the
+rem System32\bash.exe WSL launcher (#4007), then run the shared wt.sh.
 rem Usage: wt.cmd [args...]
+rem
+rem Codex uses the session shell, so commandWindows must parse in cmd and both
+rem PowerShell editions (#4239). `cmd /d /c call "${PLUGIN_ROOT}\hooks\wt.cmd"`
+rem starts with a command rather than a PowerShell string expression. `call`
+rem avoids cmd's initial-quote stripping; /d disables AutoRun for this cmd hop.
+rem The outer cmd, if Codex uses one, still runs its own AutoRun. A cmd-session
+rem lookup of the bare `cmd` can also resolve an executable in the project cwd.
+rem
+rem Always exit 0: markers are best-effort, and cmd's `|| exit /b 0` cannot live
+rem in the cross-shell command string. Diagnostics still go to stderr.
 rem
 rem Every branch here is a bare `goto` or `call`: `if <cond> <cmd1> & <cmd2>`
 rem runs cmd2 unconditionally, and `if <cond> <cmd1> || <cmd2>` tests the `if`
@@ -20,34 +22,31 @@ rem hands each hook the session env snapshot, so an inherited BASH would name
 rem what every event runs.
 set "BASH="
 
-rem git.exe installs at Git\cmd\git.exe or Git\bin\git.exe, and bash.exe at
-rem Git\bin\bash.exe or Git\usr\bin\bash.exe. The lookup uses `where`'s `$var:`
-rem prefix, which searches the directories named in that variable and nowhere
-rem else: a bare `where git.exe` searches the current directory first, as cmd's
-rem own bare-name lookup does, and a hook's current directory is the user's
-rem project -- so a `git.exe` committed to a repo would otherwise choose the
-rem bash every event runs. `where` itself is spelled absolutely for the same
-rem reason: cmd resolves that name from the current directory too.
-for /f "delims=" %%I in ('"%SystemRoot%\System32\where.exe" "$PATH:git.exe" 2^>nul') do if not defined BASH call :derive "%%~dpI"
-
-rem A git.exe PATH doesn't name, or names through a shim outside its install:
-rem the system-wide default, then the per-user one an install without admin
-rem rights writes (#1259).
-if not defined BASH call :accept "%ProgramFiles%\Git\bin\bash.exe"
-if not defined BASH call :accept "%LOCALAPPDATA%\Programs\Git\bin\bash.exe"
+rem Ask Git for its runtime path so PATH shims resolve to the installation
+rem they launch. Ignore GIT_EXEC_PATH in the query: it overrides the installed
+rem helper path. The hook itself keeps the caller's environment.
+rem cmd's PATH modifier finds the first git.exe on PATH without consulting
+rem the project directory or spawning another command interpreter for lookup.
+for %%I in (git.exe) do if not "%%~$PATH:I"=="" call :derive "%%~$PATH:I"
 
 if not defined BASH goto :missing
 
 "%BASH%" "%~dp0wt.sh" %*
-exit /b %ERRORLEVEL%
+exit /b 0
 
-rem %1 is a Git install's cmd\ or bin\ directory, with the trailing separator
-rem `%~dpI` leaves on. Git\bin\bash.exe first, as find_git_bash does: it is the
-rem wrapper that sets up the MSYS environment for a caller outside Git Bash,
-rem which is what puts `uname` and friends within reach of wt.sh.
+rem Git for Windows reports <install>/<runtime>/libexec/git-core. The bin
+rem wrapper sets up MSYS for wt.sh; usr/bin is the runtime Bash itself.
 :derive
-call :accept "%~1..\bin\bash.exe"
-if not defined BASH call :accept "%~1..\usr\bin\bash.exe"
+for /f "delims=" %%I in ('set "GIT_EXEC_PATH=" ^& "%~1" --exec-path 2^>nul') do call :runtime "%%I"
+goto :eof
+
+:runtime
+rem Normalize Git's forward slashes before matching its runtime suffix.
+set "GIT_RUNTIME=%~1"
+set "GIT_RUNTIME=%GIT_RUNTIME:/=\%"
+if /i not "%GIT_RUNTIME:~-17%"=="\libexec\git-core" goto :eof
+call :accept "%GIT_RUNTIME%\..\..\..\bin\bash.exe"
+if not defined BASH call :accept "%GIT_RUNTIME%\..\..\..\usr\bin\bash.exe"
 goto :eof
 
 :accept
@@ -56,4 +55,4 @@ goto :eof
 
 :missing
 echo worktrunk: Git for Windows is required but bash.exe was not found. Install from https://git-scm.com/download/win 1>&2
-exit /b 1
+exit /b 0

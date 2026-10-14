@@ -42,12 +42,8 @@
       "reason": "[wt-trace] timing instrumentation"
     },
     {
-      "path": "CLAUDE.md",
-      "reason": "Benchmarks & Traces; Repository Caching"
-    },
-    {
-      "path": "benches/CLAUDE.md",
-      "reason": "benchmark filter map and expected numbers"
+      "path": "benches/AGENTS.md",
+      "reason": "benchmark workflow and trace analysis"
     }
   ],
   "tests": [
