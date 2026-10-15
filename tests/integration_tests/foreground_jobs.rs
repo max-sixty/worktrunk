@@ -645,7 +645,10 @@ while count < {keys}:
 fn startup_interrupt_preserves_already_started_child_cleanup(repo: TestRepo) {
     let mut commands = vec![
         "a000 = 'exec python3 worker.py'".to_string(),
-        "a001 = 'while [ ! -f worker-info ]; do :; done; kill -STOP \"$PPID\"; printf ready > paused-admitted; while :; do :; done'".to_string(),
+        // Stop wt at once: waiting on the worker's startup lets wt spawn every
+        // later command first.
+        "a001 = 'kill -STOP \"$PPID\"; printf ready > paused-admitted; while :; do :; done'"
+            .to_string(),
     ];
     commands.extend((2..120).map(|index| {
         format!("a{index:03} = 'printf ready > admitted-{index:03}; while :; do :; done'")
