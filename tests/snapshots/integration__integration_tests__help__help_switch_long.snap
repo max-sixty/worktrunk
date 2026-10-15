@@ -233,6 +233,8 @@ The CI column shows each row's PR/MR CI and review status, the same as [2mwt li
  [2mAlt-p[0m         Toggle preview panel                                                     
  [2mCtrl-u[0m/[2mCtrl-d[0m Scroll preview up/down                                                   
 
+On macOS, [2mAlt[0m is the Option key; the terminal needs to send it as Meta (e.g. Terminal.app's Use Option as Meta key).
+
 The filter matches each row's branch, path, and — when it has a PR/MR — the PR/MR's number, title, and author. Typing [36m+[0m narrows to linked worktrees, and [2m@[0m to the current worktree.
 
 [1mPreview tabs:[0m
