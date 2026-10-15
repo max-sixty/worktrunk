@@ -148,14 +148,14 @@ Without [2m.worktreeinclude[0m, the command is a no-op (it reports that nothin
 
 [1m[32mCopy-on-write[0m
 
-Files are reflinked where the filesystem supports it: APFS (macOS), btrfs and XFS (Linux), ReFS (Windows). A reflinked copy shares the source's disk blocks until one side writes. For a 14GB [2mtarget/[0m directory:
+Files use reflinks when supported by the filesystem and operating system. A reflinked copy shares the source's disk blocks until one side writes. For a 14GB [2mtarget/[0m directory:
 
             Command            Time Disk 
  ───────────────────────────── ──── ──── 
  [2mcp -R[0m (full copy)             2m   14GB 
  [2mcp -Rc[0m / [2mwt step copy-ignored[0m 20s  ~0   
 
-On ext4 and NTFS, which have no reflink, every file is copied in full; the summary says [2m(reflinked, no extra disk)[0m or [2m(full copy)[0m.
+The summary identifies confirmed reflinks as [2m(reflinked, no extra disk)[0m.
 
 Reflinks are per file (like [2mcp -Rc[0m), so copy time scales with file count.
 

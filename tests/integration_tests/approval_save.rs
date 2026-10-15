@@ -585,10 +585,7 @@ fn test_permission_error_prevents_save() {
         fs::set_permissions(approvals_dir, readonly_perms).unwrap();
     }
 
-    // Test if permissions actually restrict us (skip if running as root)
-    // Root can write to read-only directories, so the test would be meaningless
-    let test_file = approvals_dir.join("test_write");
-    if fs::write(&test_file, "test").is_ok() {
+    if !worktrunk::testing::permissions_restrict_writes(approvals_dir) {
         // Running as root or permissions don't work
         // Restore write permissions and skip test
         #[cfg(unix)]
@@ -596,7 +593,6 @@ fn test_permission_error_prevents_save() {
             let writable_perms = Permissions::from_mode(0o755);
             fs::set_permissions(approvals_dir, writable_perms).unwrap();
         }
-        eprintln!("Skipping permission test - running with elevated privileges");
         return;
     }
 

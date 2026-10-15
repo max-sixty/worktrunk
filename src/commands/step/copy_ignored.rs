@@ -302,9 +302,10 @@ pub fn step_copy_ignored(
         // `entries` mirrors dry-run: the top-level units selected for copy
         // (files and dirs). `files` counts the actual leaves written
         // (recursive + skipping pre-existing files), `bytes` sums their size,
-        // and `reflinked`/`written` split those leaves by whether the
-        // filesystem shared the source's extents. `insert_empty_counts` carries
-        // all four through the exits that copy nothing, so a consumer never
+        // and `reflinked`/`written` split the explicit clone and ordinary
+        // copy API paths; native acceleration of ordinary copies is opaque.
+        // `insert_empty_counts` carries all four through the exits that copy
+        // nothing, so a consumer never
         // branches on a key's presence.
         let entries: Vec<_> = entries_to_copy
             .iter()

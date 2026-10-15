@@ -9,6 +9,12 @@
 //! the CPU on a background operation. Directory trees are walked iteratively
 //! (no recursion) then copied in a single parallel pass.
 //!
+//! A leaf is prepared at an exclusively created sibling path, then published
+//! by rename. No-force publication refuses an occupied name; filesystems
+//! without exclusive rename use exclusive creation instead. Force replaces
+//! only a completed leaf atomically. Failed copies never remove existing destination data.
+//! Windows uses the final parent so files inherit ordinary direct-child ACLs.
+//!
 //! Callers that want low-priority I/O (e.g. `step_copy_ignored`) should call
 //! [`crate::priority::lower_current_process`] before starting work.
 //!
@@ -18,13 +24,10 @@
 //! [`Progress::totals`]. Non-interactive callers pass [`Progress::disabled`]
 //! to skip the spinner; counting still happens.
 //!
-//! Each record carries a [`DataCopy`] saying whether the filesystem shared the
-//! source's extents or wrote the bytes out, so a caller can report what the
-//! copy actually cost on disk. `reflink_or_copy` returns that for free: `None`
-//! when the platform's clone syscall succeeded, `Some(bytes)` when it fell
-//! through to `fs::copy`. The signal is exact per file but says only that a
-//! clone did not happen, never why — an unsupported filesystem and a
-//! cross-device copy are indistinguishable here.
+//! Each record classifies the explicit copy API: a successful clone is
+//! [`DataCopy::Reflinked`], a regular copy is [`DataCopy::Written`]. Filesystems
+//! may accelerate ordinary copies internally; their physical I/O is opaque.
+//! Windows uses the standard CopyFile API, including its native ReFS acceleration.
 //!
 //! A caller can pass a `stamp` to give every copied regular file the same
 //! modification time. Without one, a file keeps whatever time its copy left it:
@@ -51,14 +54,17 @@ use rayon::prelude::*;
 use crate::path::{canonicalize_with_parents, format_path_for_display};
 use crate::progress::{DataCopy, Progress};
 
+#[cfg(windows)]
+mod windows;
+
 /// Pins the reflink classification so snapshot tests can assert the summary
-/// line: `1` reports every copied file as reflinked, `0` as written in full.
+/// line: `1` reports every copied file as reflinked, `0` as an ordinary copy.
 ///
 /// Whether a clone succeeds is a property of the filesystem under the test's
 /// temp directory, and CI spans APFS, ext4, and NTFS — so without this seam no
 /// single snapshot could hold on all three, and the branch a given run took
-/// would be invisible. It overrides only the label; the copy itself still
-/// attempts a reflink and behaves identically either way.
+/// would be invisible. It overrides only the classification, leaving each
+/// platform's copy behavior unchanged.
 static FORCED_DATA_COPY: LazyLock<Option<DataCopy>> =
     LazyLock::new(
         || match std::env::var("WORKTRUNK_TEST_REFLINK").as_deref() {
@@ -83,76 +89,93 @@ fn classify_copy(fallback: Option<u64>) -> DataCopy {
     }
 }
 
-/// `reflink_copy::reflink_or_copy`, also falling back to a byte copy when the
-/// clone is rejected with `PermissionDenied`.
-///
-/// The crate passes `PermissionDenied` straight through, but some filesystems
-/// answer `FICLONE` with `EPERM` rather than `EOPNOTSUPP` (#4433), where
-/// `cp --reflink=auto` copies the file anyway. A genuine permission problem on
-/// the source or destination fails the retry with the same error. The crate
-/// removes a destination it created before returning the error, so the retry
-/// goes through [`copy_to_new_file`] rather than `fs::copy`, which would
-/// overwrite a file another process put there in between.
+/// Each provider leaves creation and cleanup with an owner that can account
+/// for partial output. macOS clonefile is atomic; Linux FICLONE works on our
+/// owned FD. Windows' ordinary CopyFile API owns its native ReFS acceleration.
 fn reflink_or_copy(src: &Path, dest: &Path) -> io::Result<Option<u64>> {
-    fall_back_on_rejected_reflink(reflink_copy::reflink_or_copy(src, dest), || {
-        copy_to_new_file(src, dest)
-    })
-}
-
-/// Byte-copy `src` to `dest` without ever replacing something already there,
-/// failing with `AlreadyExists` if `dest` is occupied, and give it the source's
-/// permissions.
-///
-/// The bytes go to a temp file beside `dest`, which is then persisted with a
-/// no-clobber rename, so `dest` only ever appears complete. A failed copy
-/// cleans up only that temp file — never `dest`, which another process may
-/// have created meanwhile — and a cleanup that fails is reported rather than
-/// leaving a stray file behind silently.
-fn copy_to_new_file(src: &Path, dest: &Path) -> io::Result<u64> {
-    let mut reader = fs::File::open(src)?;
-    let permissions = reader.metadata()?.permissions();
-    // A bare filename's parent is `Some("")`, which no directory call accepts.
-    let dir = dest
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let mut temp = tempfile::Builder::new()
-        .prefix(".wt-tmp.")
-        .suffix(".tmp")
-        .tempfile_in(dir)?;
-    let copied = io::copy(&mut reader, &mut temp)
-        .and_then(|bytes| temp.as_file().set_permissions(permissions).map(|()| bytes));
-    match copied {
-        Ok(bytes) => match temp.persist_noclobber(dest) {
-            Ok(_) => Ok(bytes),
-            Err(e) => Err(discard_temp(e.file, e.error)),
-        },
-        Err(e) => Err(discard_temp(temp, e)),
+    #[cfg(target_os = "macos")]
+    {
+        fall_back_on_rejected_reflink(reflink_copy::reflink(src, dest).map(|()| None), || {
+            copy_to_new_file(src, dest)
+        })
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let source = fs::File::open(src)?;
+        let permissions = source.metadata()?.permissions();
+        with_new_file(dest, |file| {
+            match rustix::fs::ioctl_ficlone(&file, &source) {
+                Ok(()) => {
+                    file.set_permissions(permissions)?;
+                    Ok(None)
+                }
+                Err(error) => {
+                    tracing::debug!("reflink rejected ({error}), falling back to a byte copy");
+                    drop(file);
+                    fs::copy(src, dest).map(Some)
+                }
+            }
+        })
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        copy_to_new_file(src, dest).map(Some)
     }
 }
 
-/// Remove a temp file after `err`, returning `err` — or, if the removal itself
-/// fails, an error naming the file left behind.
-fn discard_temp(temp: tempfile::NamedTempFile, err: io::Error) -> io::Error {
-    let path = temp.path().to_path_buf();
-    match temp.close() {
-        Ok(()) => err,
+/// Exclusively claim a new leaf before the platform's truncating copy.
+#[cfg(any(not(target_os = "linux"), test))]
+fn copy_to_new_file(src: &Path, dest: &Path) -> io::Result<u64> {
+    with_new_file(dest, |file| {
+        drop(file);
+        fs::copy(src, dest)
+    })
+}
+
+/// Own an exclusively created path through preparation, reporting cleanup errors.
+fn with_new_file<T>(dest: &Path, fill: impl FnOnce(fs::File) -> io::Result<T>) -> io::Result<T> {
+    let file = fs::File::create_new(dest)?;
+    let mut path = tempfile::TempPath::try_from_path(dest)?;
+    match fill(file) {
+        Ok(value) => {
+            path.disable_cleanup(true);
+            Ok(value)
+        }
+        Err(error) => Err(discard_path(path, error)),
+    }
+}
+
+/// Remove only the owned leaf, reporting any failure rather than hiding it in Drop.
+fn remove_owned_path(mut path: tempfile::TempPath) -> io::Result<()> {
+    #[cfg(windows)]
+    let result = windows::remove_leaf(&path);
+    #[cfg(not(windows))]
+    let result = fs::remove_file(&path);
+    path.disable_cleanup(true);
+    result
+}
+
+/// Cleanup failures remain errors even when publication lost to another writer.
+fn discard_path(path: tempfile::TempPath, error: io::Error) -> io::Error {
+    let display_path = format_path_for_display(&path);
+    match remove_owned_path(path) {
+        Ok(()) => error,
         Err(cleanup) => io::Error::other(format!(
-            "{err}; also failed to remove temporary file {}: {cleanup}",
-            path.display()
+            "{error}; also failed to remove created file @ {display_path}: {cleanup}",
         )),
     }
 }
 
-/// The decision half of [`reflink_or_copy`], split out because no CI
-/// filesystem rejects a clone with `EPERM`.
+/// A missing source or occupied output is definitive; other clone failures
+/// (including EPERM, #4433) can still allow an ordinary copy.
+#[cfg(any(target_os = "macos", test))]
 fn fall_back_on_rejected_reflink(
     result: io::Result<Option<u64>>,
     copy: impl FnOnce() -> io::Result<u64>,
 ) -> io::Result<Option<u64>> {
     match result {
-        Err(e) if e.kind() == ErrorKind::PermissionDenied => {
-            tracing::debug!("reflink rejected ({e}), falling back to a byte copy");
+        Err(error) if !matches!(error.kind(), ErrorKind::NotFound | ErrorKind::AlreadyExists) => {
+            tracing::debug!("reflink rejected ({error}), falling back to a byte copy");
             copy().map(Some)
         }
         result => result,
@@ -179,15 +202,13 @@ static COPY_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
 /// [`DataCopy::Neither`]: its content is a path, so there are no extents either
 /// to share or to write, and counting it on either side would make a tree full
 /// of symlinks read as a partial reflink failure. When `force` is true,
-/// existing entries are removed before copying.
+/// existing entries are replaced only after the copy is complete.
 ///
-/// The vanished-source skip never costs the destination a file: the source is
-/// stat'd before `force` removes anything, so a source that is already gone
-/// leaves the destination untouched. A source that disappears in the narrower
-/// window between that stat and the copy is an error only when `force` had
-/// already removed an existing destination — silently reporting a skip would
-/// leave a hole where a file used to be. Where there was nothing to remove,
-/// that window is a skip like any other.
+/// Each leaf is prepared beside its destination. Publishing it
+/// atomically replaces the destination with `force`, or refuses a destination
+/// that another writer created without it. If exclusive rename is unsupported,
+/// a new destination is created exclusively and can be visible during copying. Failed or vanished sources leave
+/// the destination untouched; temporary contents are removed on return.
 ///
 /// The vanished-source skips log at debug, so `wt -vv` explains a short file
 /// count; the idempotent destination-already-exists skip stays silent.
@@ -216,11 +237,8 @@ pub fn copy_leaf(
     if !force && dest.symlink_metadata().is_ok() {
         return Ok(None);
     }
-    // Stat the source before `force` removes the destination: the source can
-    // vanish between the caller's directory walk and this copy — e.g. a
-    // concurrent build rewriting `target/`. Skip rather than fail the whole
-    // batch over one file that's no longer there, and skip without having
-    // deleted the destination we can no longer replace.
+    // The source can vanish between the caller's walk and this copy, e.g. a
+    // concurrent build rewriting target/. No destination is removed on a skip.
     let src_meta = match src.symlink_metadata() {
         Ok(meta) => meta,
         Err(e) if e.kind() == ErrorKind::NotFound => {
@@ -228,83 +246,194 @@ pub fn copy_leaf(
             return Ok(None);
         }
         Err(e) => {
-            return Err(
-                anyhow::Error::from(e).context(format!("reading metadata for {}", src.display()))
-            );
+            return Err(anyhow::Error::from(e).context(format!(
+                "reading metadata for {}",
+                format_path_for_display(src)
+            )));
         }
     };
 
-    // Only a destination we actually removed can be left as a hole, so that —
-    // not `force` — is what the late-window arms below guard on. A destination
-    // re-created by a racing writer lands on the `AlreadyExists` arm (regular
-    // files); for a symlink source `create_symlink` reports it as an error.
-    let dest_removed = force && remove_if_exists(dest)?;
-
-    let is_symlink = src_meta.file_type().is_symlink();
-    let bytes = src_meta.len();
-
-    let data = if is_symlink {
-        let target = match fs::read_link(src) {
-            Ok(target) => target,
-            // The source vanished after the stat above. If `force` removed a
-            // destination, it is already gone, so this has to stay loud.
-            Err(e) if e.kind() == ErrorKind::NotFound && !dest_removed => {
-                tracing::debug!(path = %src.display(), "skipping vanished symlink source: {}", src.display());
-                return Ok(None);
-            }
-            Err(e) => {
-                return Err(
-                    anyhow::Error::from(e).context(format!("reading symlink {}", src.display()))
-                );
-            }
-        };
-        create_symlink(&target, src, dest)?;
-        DataCopy::Neither
-    } else {
-        match reflink_or_copy(src, dest) {
-            Ok(fallback) => {
-                // Preserve file permissions (especially the execute bit) —
-                // needed on Linux, skipped on macOS.
-                //
-                // On btrfs/XFS, reflink (FICLONE ioctl) clones data extents
-                // only — the destination gets umask-based permissions, losing
-                // execute bits. std::fs::copy's fallback preserves permissions
-                // via fchmod, creating an asymmetry in reflink_or_copy.
-                //
-                // On macOS/APFS, clonefile() already preserves the source's
-                // mode bits, so this chmod is redundant — skip it to save a
-                // syscall per file.
-                //
-                // Refs: ioctl_ficlonerange(2), LWN Articles/331808
-                #[cfg(all(unix, not(target_os = "macos")))]
-                {
-                    fs::set_permissions(dest, src_meta.permissions())
-                        .context("setting destination file permissions")?;
-                }
-                if let Some(stamp) = stamp {
-                    set_modified(dest, stamp);
-                }
-                FORCED_DATA_COPY.unwrap_or(classify_copy(fallback))
-            }
-            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
-                tracing::debug!(path = %dest.display(), "skipping existing destination: {}", dest.display());
-                return Ok(None);
-            }
-            // Same window as the `read_link` arm — and broader than a vanished
-            // source, since `reflink_or_copy` also reports `NotFound` when the
-            // destination's parent is missing. Both callers create the parent
-            // first, so that case is latent; once `force` has removed a
-            // destination it errors either way.
-            Err(e) if e.kind() == ErrorKind::NotFound && !dest_removed => {
+    let result = PreparedLeaf::new(src, dest, &src_meta, stamp);
+    let prepared = match result {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            // The dependency may rewrite a vanished source's error kind on
+            // fallback. Inspect the source itself, rather than confusing a
+            // missing destination parent with a vanished source.
+            if src
+                .symlink_metadata()
+                .is_err_and(|error| error.kind() == ErrorKind::NotFound)
+            {
                 tracing::debug!(path = %src.display(), "skipping vanished source: {}", src.display());
                 return Ok(None);
             }
-            Err(e) => {
-                return Err(anyhow::Error::from(e).context(format!("copying {}", src.display())));
-            }
+            return Err(error);
         }
     };
-    Ok(Some((bytes, data)))
+    prepared.persist(dest, force)
+}
+
+/// An exclusively created sibling leaf owned until atomic publication.
+struct PreparedLeaf {
+    path: tempfile::TempPath,
+    bytes: u64,
+    data: DataCopy,
+}
+
+impl PreparedLeaf {
+    fn new(
+        src: &Path,
+        dest: &Path,
+        metadata: &fs::Metadata,
+        stamp: Option<SystemTime>,
+    ) -> anyhow::Result<Self> {
+        let parent = dest
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        dest.file_name()
+            .context("copy destination has no filename")?;
+        let is_link = metadata.file_type().is_symlink();
+        anyhow::ensure!(
+            is_link || metadata.is_file(),
+            "copy source is not a file or symlink: {}",
+            format_path_for_display(src)
+        );
+        let target = if is_link {
+            Some(
+                fs::read_link(src)
+                    .with_context(|| format!("reading symlink {}", format_path_for_display(src)))?,
+            )
+        } else {
+            None
+        };
+        let leaf = tempfile::Builder::new()
+            .prefix(".wt-copy-")
+            .make_in(parent, |path| {
+                if let Some(target) = &target {
+                    create_symlink(target, src, path)?;
+                    Ok(DataCopy::Neither)
+                } else {
+                    let fallback = reflink_or_copy(src, path)?;
+                    Ok(FORCED_DATA_COPY.unwrap_or(classify_copy(fallback)))
+                }
+            })
+            .with_context(|| format!("preparing copy @ {}", format_path_for_display(dest)))?;
+        let (data, path) = leaf.into_parts();
+        if !is_link && let Some(stamp) = stamp {
+            set_modified(&path, stamp);
+        }
+        Ok(Self {
+            path,
+            bytes: metadata.len(),
+            data,
+        })
+    }
+
+    fn persist(self, dest: &Path, force: bool) -> anyhow::Result<Option<(u64, DataCopy)>> {
+        match persist_leaf(self.path, dest, force) {
+            Ok(PublishedLeaf::Renamed) => Ok(Some((self.bytes, self.data))),
+            Ok(PublishedLeaf::Created { path, data }) => {
+                let display_path = format_path_for_display(&path);
+                remove_owned_path(path)
+                    .with_context(|| format!("removing prepared copy @ {display_path}"))?;
+                Ok(Some((self.bytes, data)))
+            }
+            Err(error) => {
+                let error = discard_path(error.path, error.error);
+                if !force && error.kind() == ErrorKind::AlreadyExists {
+                    Ok(None)
+                } else {
+                    Err(anyhow::Error::from(error).context(format!(
+                        "publishing copied file @ {}",
+                        format_path_for_display(dest)
+                    )))
+                }
+            }
+        }
+    }
+}
+
+enum PublishedLeaf {
+    Renamed,
+    Created {
+        path: tempfile::TempPath,
+        data: DataCopy,
+    },
+}
+
+fn persist_leaf(
+    path: tempfile::TempPath,
+    dest: &Path,
+    force: bool,
+) -> Result<PublishedLeaf, tempfile::PathPersistError> {
+    #[cfg(windows)]
+    let result = {
+        let mut path = path;
+        match windows::publish_leaf(&path, dest, force) {
+            Ok(()) => {
+                path.disable_cleanup(true);
+                Ok(())
+            }
+            Err(error) => Err(tempfile::PathPersistError { error, path }),
+        }
+    };
+    #[cfg(not(windows))]
+    let result = if force {
+        path.persist(dest)
+    } else {
+        path.persist_noclobber(dest)
+    };
+    finish_publication(result, dest, force)
+}
+
+/// macOS ENOTSUP and EOPNOTSUPP are different errnos; std maps only the
+/// latter to Unsupported, while exFAT exclusive rename returns ENOTSUP.
+fn publication_unsupported(error: &io::Error) -> bool {
+    #[cfg(unix)]
+    if rustix::io::Errno::from_io_error(error) == Some(rustix::io::Errno::NOTSUP) {
+        return true;
+    }
+    error.kind() == ErrorKind::Unsupported
+}
+
+/// exFAT and other filesystems can lack both exclusive rename and hard links.
+/// Only an unsupported no-force publication falls back to exclusive creation;
+/// the completed prepared source remains owned until that copy has finished.
+fn finish_publication(
+    result: Result<(), tempfile::PathPersistError>,
+    dest: &Path,
+    force: bool,
+) -> Result<PublishedLeaf, tempfile::PathPersistError> {
+    match result {
+        Ok(()) => Ok(PublishedLeaf::Renamed),
+        Err(mut error) if !force && publication_unsupported(&error.error) => {
+            let created = (|| {
+                let metadata = error.path.symlink_metadata()?;
+                if metadata.file_type().is_symlink() {
+                    create_symlink(&fs::read_link(&error.path)?, &error.path, dest)?;
+                    Ok(DataCopy::Neither)
+                } else {
+                    let fallback = reflink_or_copy(&error.path, dest)?;
+                    if let Ok(modified) = metadata.modified() {
+                        set_modified(dest, modified);
+                    }
+                    Ok(FORCED_DATA_COPY.unwrap_or(classify_copy(fallback)))
+                }
+            })();
+            match created {
+                Ok(data) => Ok(PublishedLeaf::Created {
+                    path: error.path,
+                    data,
+                }),
+                Err(created) => {
+                    error.error = created;
+                    Err(error)
+                }
+            }
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Set a copied file's modification time, best-effort: the contents are already
@@ -317,7 +446,7 @@ fn set_modified(path: &Path, stamp: SystemTime) {
     #[cfg(windows)]
     let file = {
         use std::os::windows::fs::OpenOptionsExt;
-        const FILE_WRITE_ATTRIBUTES: u32 = 0x0100;
+        use windows_sys::Win32::Storage::FileSystem::FILE_WRITE_ATTRIBUTES;
         fs::OpenOptions::new()
             .access_mode(FILE_WRITE_ATTRIBUTES)
             .open(path)
@@ -358,7 +487,7 @@ struct CopyLeaf {
 /// are skipped for idempotent usage.
 ///
 /// When `force` is true, existing files and symlinks at the destination are
-/// removed before copying.
+/// replaced atomically after copying.
 ///
 /// Sources that disappear mid-walk — a concurrent build rewriting the tree —
 /// are skipped rather than failing the batch: a subdirectory that vanishes
@@ -368,7 +497,7 @@ struct CopyLeaf {
 /// of the source's. Every such skip logs at debug (`wt -vv`). The tree's own
 /// root is the exception: the caller named it, so its absence is an error.
 ///
-/// Returns how many of the entries the walk collected to copy were not copied.
+/// Returns how many entries were skipped during copying or permission restoration.
 /// A pure copy ignores it; a caller that deletes the source afterwards must
 /// refuse on a non-zero count, since the source still holds content the
 /// destination never received. A non-regular file is dropped at classification
@@ -423,13 +552,16 @@ pub fn copy_dir_recursive(
                 continue;
             }
             Err(e) => {
-                return Err(anyhow::Error::from(e)
-                    .context(format!("reading directory {}", src_dir.display())));
+                return Err(anyhow::Error::from(e).context(format!(
+                    "reading directory {}",
+                    format_path_for_display(&src_dir)
+                )));
             }
         };
 
-        fs::create_dir_all(&dest_dir)
-            .with_context(|| format!("creating directory {}", dest_dir.display()))?;
+        fs::create_dir_all(&dest_dir).with_context(|| {
+            format!("creating directory {}", format_path_for_display(&dest_dir))
+        })?;
         #[cfg(unix)]
         dirs_for_perms.push((src_dir.clone(), dest_dir.clone()));
 
@@ -443,8 +575,10 @@ pub fn copy_dir_recursive(
                     continue;
                 }
                 Err(e) => {
-                    return Err(anyhow::Error::from(e)
-                        .context(format!("reading metadata for {}", entry.path().display())));
+                    return Err(anyhow::Error::from(e).context(format!(
+                        "reading metadata for {}",
+                        format_path_for_display(&entry.path())
+                    )));
                 }
             };
             let src_path = entry.path();
@@ -453,6 +587,13 @@ pub fn copy_dir_recursive(
             if file_type.is_dir() {
                 dir_stack.push((src_path, dest_path, false));
             } else if file_type.is_file() || file_type.is_symlink() {
+                // An idempotent copy needs no staging space, including in a
+                // read-only destination. Publication still checks atomically
+                // for a writer that arrives after this walk.
+                if !force && dest_path.symlink_metadata().is_ok() {
+                    skipped += 1;
+                    continue;
+                }
                 leaves.push(CopyLeaf {
                     src: src_path,
                     dest: dest_path,
@@ -496,50 +637,46 @@ pub fn copy_dir_recursive(
                 continue;
             }
             Err(e) => {
-                return Err(anyhow::Error::from(e)
-                    .context(format!("reading permissions for {}", src_dir.display())));
+                return Err(anyhow::Error::from(e).context(format!(
+                    "reading permissions for {}",
+                    format_path_for_display(src_dir)
+                )));
             }
         };
-        fs::set_permissions(dest_dir, src_perms)
-            .with_context(|| format!("setting permissions on {}", dest_dir.display()))?;
+        fs::set_permissions(dest_dir, src_perms).with_context(|| {
+            format!(
+                "setting permissions on {}",
+                format_path_for_display(dest_dir)
+            )
+        })?;
     }
 
     Ok(skipped)
 }
 
-/// Remove a file, ignoring "not found" errors. Reports whether one was removed,
-/// which is what tells `copy_leaf` whether a later skip would leave a hole.
-fn remove_if_exists(path: &Path) -> anyhow::Result<bool> {
-    if let Err(e) = fs::remove_file(path) {
-        anyhow::ensure!(e.kind() == ErrorKind::NotFound, e);
-        return Ok(false);
-    }
-    Ok(true)
-}
-
 /// Create a symlink, handling platform differences.
-fn create_symlink(target: &Path, src_path: &Path, dest_path: &Path) -> anyhow::Result<()> {
+fn create_symlink(target: &Path, src_path: &Path, dest_path: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         let _ = src_path; // Used on Windows to determine symlink type
-        std::os::unix::fs::symlink(target, dest_path)
-            .with_context(|| format!("creating symlink {}", dest_path.display()))?;
+        std::os::unix::fs::symlink(target, dest_path)?;
     }
     #[cfg(windows)]
     {
         let is_dir = src_path.metadata().map(|m| m.is_dir()).unwrap_or(false);
         if is_dir {
-            std::os::windows::fs::symlink_dir(target, dest_path)
-                .with_context(|| format!("creating symlink {}", dest_path.display()))?;
+            std::os::windows::fs::symlink_dir(target, dest_path)?;
         } else {
-            std::os::windows::fs::symlink_file(target, dest_path)
-                .with_context(|| format!("creating symlink {}", dest_path.display()))?;
+            std::os::windows::fs::symlink_file(target, dest_path)?;
         }
     }
     #[cfg(not(any(unix, windows)))]
     {
         let _ = (target, src_path, dest_path);
-        anyhow::bail!("symlink creation not supported on this platform");
+        return Err(std::io::Error::new(
+            ErrorKind::Unsupported,
+            "symlink creation not supported on this platform",
+        ));
     }
     Ok(())
 }
@@ -547,29 +684,6 @@ fn create_symlink(target: &Path, src_path: &Path, dest_path: &Path) -> anyhow::R
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_remove_if_exists_nonexistent() {
-        // NotFound is silently ignored, and reported as "nothing removed"
-        assert!(!remove_if_exists(Path::new("/nonexistent/file")).unwrap());
-    }
-
-    #[test]
-    fn test_remove_if_exists_reports_removal() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("file");
-        fs::write(&file, b"contents").unwrap();
-
-        assert!(remove_if_exists(&file).unwrap());
-        assert!(!file.exists());
-    }
-
-    #[test]
-    fn test_remove_if_exists_not_a_file() {
-        // Trying to remove a directory with remove_file produces a non-NotFound error
-        let dir = std::env::temp_dir();
-        assert!(remove_if_exists(&dir).is_err());
-    }
 
     #[test]
     fn test_copy_leaf_skips_vanished_source() {
@@ -630,7 +744,7 @@ mod tests {
     #[test]
     fn test_reflink_rejected_with_eperm_falls_back_to_copy() {
         // Some filesystems reject FICLONE with EPERM rather than EOPNOTSUPP
-        // (#4433); `reflink_or_copy` returns that without trying `fs::copy`.
+        // (#4433); a byte copy can still succeed.
         let rejected = Err(io::Error::from(ErrorKind::PermissionDenied));
         let result = fall_back_on_rejected_reflink(rejected, || Ok(42));
         assert_eq!(result.unwrap(), Some(42));
@@ -659,10 +773,7 @@ mod tests {
 
     #[test]
     fn test_rejected_reflink_fallback_does_not_overwrite_racing_destination() {
-        // The crate removes the destination it created before returning
-        // `PermissionDenied`; a file another process puts there before the
-        // byte copy must survive, and the `AlreadyExists` it causes is what
-        // `copy_leaf` skips on.
+        // Exclusive fallback creation preserves a name occupied before the byte copy.
         let temp = tempfile::tempdir().unwrap();
         let src = temp.path().join("src");
         let dest = temp.path().join("dest");
@@ -675,7 +786,7 @@ mod tests {
         });
         assert_eq!(result.unwrap_err().kind(), ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&dest).unwrap(), "racer");
-        // The no-clobber persist removed its temp file.
+        // No temporary output was created.
         assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 2);
     }
 
@@ -709,9 +820,7 @@ mod tests {
         );
         assert!(dest.symlink_metadata().is_err());
 
-        // A copy that fails partway leaves nothing at the destination and no
-        // temp file. On Unix a directory opens as a file, so the read is what
-        // fails.
+        // A failed platform copy leaves neither a destination nor its temporary file.
         #[cfg(unix)]
         {
             let src_dir = temp.path().join("dir");
@@ -738,12 +847,113 @@ mod tests {
         assert_eq!(fs::read_dir(out.path()).unwrap().count(), 1);
     }
 
+    /// Unsupported exclusive publication preserves a file's content/time and
+    /// a dangling symlink's relative target, refuses competing destinations,
+    /// and leaves forced publication errors as failures.
     #[test]
-    fn test_discard_temp_reports_cleanup_failure() {
+    fn test_unsupported_publication_creates_exclusively() {
+        let dir = crate::testing::test_tempdir();
+        let dest = dir.path().join("destination");
+        let stamp = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_735_776_000);
+        #[cfg(unix)]
+        let source_types = [false, true];
+        #[cfg(not(unix))]
+        let source_types = [false];
+        for source_link in source_types {
+            for (force, occupied) in [(false, false), (false, true), (true, false)] {
+                let temp = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
+                let temp = if source_link {
+                    let path = temp.into_temp_path();
+                    fs::remove_file(&path).unwrap();
+                    create_symlink(Path::new("missing relative target"), &path, &path).unwrap();
+                    path
+                } else {
+                    fs::write(temp.path(), b"prepared bytes").unwrap();
+                    set_modified(temp.path(), stamp);
+                    temp.into_temp_path()
+                };
+                let prepared_path = temp.to_path_buf();
+                if occupied {
+                    fs::write(&dest, b"racing bytes").unwrap();
+                }
+                #[cfg(unix)]
+                let unsupported = io::Error::from(rustix::io::Errno::NOTSUP);
+                #[cfg(not(unix))]
+                let unsupported = io::Error::from(ErrorKind::Unsupported);
+                let unsupported_kind = unsupported.kind();
+                let result = finish_publication(
+                    Err(tempfile::PathPersistError {
+                        error: unsupported,
+                        path: temp,
+                    }),
+                    &dest,
+                    force,
+                );
+                match result {
+                    Ok(PublishedLeaf::Created { path, data }) => {
+                        assert!(!force && !occupied);
+                        if source_link {
+                            assert_eq!(data, DataCopy::Neither);
+                            assert_eq!(
+                                fs::read_link(&dest).unwrap(),
+                                Path::new("missing relative target")
+                            );
+                        } else {
+                            assert_ne!(data, DataCopy::Neither);
+                            assert_eq!(fs::read(&dest).unwrap(), b"prepared bytes");
+                            assert_eq!(fs::metadata(&dest).unwrap().modified().unwrap(), stamp);
+                        }
+                        remove_owned_path(path).unwrap();
+                        fs::remove_file(&dest).unwrap();
+                    }
+                    Err(error) => {
+                        assert_eq!(
+                            error.error.kind(),
+                            if force {
+                                unsupported_kind
+                            } else {
+                                ErrorKind::AlreadyExists
+                            }
+                        );
+                        remove_owned_path(error.path).unwrap();
+                        if occupied {
+                            assert_eq!(fs::read(&dest).unwrap(), b"racing bytes");
+                            fs::remove_file(&dest).unwrap();
+                        } else {
+                            assert!(!dest.exists());
+                        }
+                    }
+                    Ok(PublishedLeaf::Renamed) => panic!("unsupported rename succeeded"),
+                }
+                assert!(prepared_path.symlink_metadata().is_err());
+            }
+        }
+    }
+
+    /// Failed cloning or metadata preparation can leave bytes in the owned
+    /// output; cleanup must cover that partial file before returning the error.
+    #[test]
+    fn test_partial_preparation_failure_cleans_owned_file() {
+        use std::io::Write;
+        let dir = crate::testing::test_tempdir();
+        let dest = dir.path().join("partial");
+        let result: io::Result<()> = with_new_file(&dest, |mut file| {
+            file.write_all(b"partial bytes")?;
+            Err(io::Error::from(ErrorKind::PermissionDenied))
+        });
+        assert_eq!(result.unwrap_err().kind(), ErrorKind::PermissionDenied);
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn test_discard_path_reports_cleanup_failure() {
         let dir = tempfile::tempdir().unwrap();
 
         let temp = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
-        let err = discard_temp(temp, io::Error::from(ErrorKind::AlreadyExists));
+        let err = discard_path(
+            temp.into_temp_path(),
+            io::Error::from(ErrorKind::AlreadyExists),
+        );
         assert_eq!(err.kind(), ErrorKind::AlreadyExists);
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
 
@@ -753,10 +963,13 @@ mod tests {
         {
             let temp = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
             fs::remove_file(temp.path()).unwrap();
-            let err = discard_temp(temp, io::Error::from(ErrorKind::AlreadyExists));
+            let err = discard_path(
+                temp.into_temp_path(),
+                io::Error::from(ErrorKind::AlreadyExists),
+            );
             assert!(
                 err.to_string()
-                    .contains("also failed to remove temporary file"),
+                    .contains("also failed to remove created file"),
                 "{err}"
             );
         }
@@ -764,15 +977,31 @@ mod tests {
 
     #[test]
     fn test_copy_leaf_force_replaces_existing_destination() {
-        // The counterpart: with `force` the destination is removed and the
-        // source copied over it, reporting the source's byte count.
+        // Force publishes the complete source even over a read-only file.
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("src");
         let dest = dir.path().join("dest");
         fs::write(&src, b"source content").unwrap();
         fs::write(&dest, b"pre-existing content").unwrap();
+        let original_permissions = fs::metadata(&dest).unwrap().permissions();
+        let mut readonly = original_permissions.clone();
+        readonly.set_readonly(true);
+        fs::set_permissions(&dest, readonly).unwrap();
 
-        let result = copy_leaf(&src, &dest, None, true, None).unwrap();
+        // Preparation failure must preserve even a read-only destination.
+        let directory = dir.path().join("uncopyable directory");
+        fs::create_dir(&directory).unwrap();
+        let failed = copy_leaf(&directory, &dest, None, true, None);
+        let retained = fs::read(&dest).unwrap();
+        let retained_readonly = fs::metadata(&dest).unwrap().permissions().readonly();
+        let result = copy_leaf(&src, &dest, None, true, None);
+        // Restore before assertions so Windows can clean up on regression.
+        fs::set_permissions(&dest, original_permissions).unwrap();
+
+        assert!(failed.is_err());
+        assert_eq!(retained, b"pre-existing content");
+        assert!(retained_readonly);
+        let result = result.unwrap();
 
         // Only the byte half is asserted: whether the copy reflinked depends on
         // the filesystem under the temp dir, which varies across CI runners.
@@ -921,24 +1150,29 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     #[test]
     fn test_copy_leaf_stamps_a_read_only_file() {
         // A read-only source copies to a read-only destination; setting its
         // time must not need write access to it.
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("src");
         let dest = dir.path().join("dest");
         fs::write(&src, b"content").unwrap();
-        fs::set_permissions(&src, fs::Permissions::from_mode(0o444)).unwrap();
+        let original_permissions = fs::metadata(&src).unwrap().permissions();
+        let mut readonly = original_permissions.clone();
+        readonly.set_readonly(true);
+        fs::set_permissions(&src, readonly).unwrap();
         let stamp = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
 
         copy_leaf(&src, &dest, None, false, Some(stamp)).unwrap();
 
         let meta = fs::metadata(&dest).unwrap();
+        // Restore before assertions so Windows can remove both files even if
+        // the copied mode or timestamp regresses.
+        fs::set_permissions(&src, original_permissions.clone()).unwrap();
+        fs::set_permissions(&dest, original_permissions).unwrap();
         assert_eq!(meta.modified().unwrap(), stamp);
-        assert_eq!(meta.permissions().mode() & 0o777, 0o444);
+        assert!(meta.permissions().readonly());
     }
 
     #[test]
@@ -958,5 +1192,275 @@ mod tests {
             "error should name the failing operation and path, got: {err:#}"
         );
         assert!(!dest.exists());
+    }
+
+    /// Failed filesystem operations retain their cause and quote paths that
+    /// contain spaces, including failures before any data can be copied.
+    #[cfg(unix)]
+    #[test]
+    fn test_copy_errors_quote_paths_and_retain_io_causes() {
+        let dir = crate::testing::test_tempdir();
+        let blocker = dir.path().join("file as parent");
+        fs::write(&blocker, b"existing data").unwrap();
+        let invalid_source = blocker.join("child");
+        let dest = dir.path().join("destination");
+        let metadata_error = copy_leaf(&invalid_source, &dest, None, false, None).unwrap_err();
+        assert!(metadata_error.downcast_ref::<std::io::Error>().is_some());
+        assert_eq!(
+            metadata_error.to_string(),
+            format!("reading metadata for '{}'", invalid_source.display())
+        );
+        assert!(!dest.exists());
+
+        let src = dir.path().join("source");
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("data"), b"data").unwrap();
+        let invalid_dest = blocker.join("destination");
+        let directory_error = copy_dir_recursive(
+            &src,
+            &invalid_dest,
+            None,
+            false,
+            None,
+            &Progress::disabled(),
+        )
+        .unwrap_err();
+        assert!(directory_error.downcast_ref::<std::io::Error>().is_some());
+        assert_eq!(
+            directory_error.to_string(),
+            format!("creating directory '{}'", invalid_dest.display())
+        );
+
+        let source_file = src.join("source file");
+        fs::write(&source_file, b"source data").unwrap();
+        let copy_error = copy_leaf(&source_file, &invalid_dest, None, false, None).unwrap_err();
+        assert!(copy_error.downcast_ref::<std::io::Error>().is_some());
+        assert_eq!(
+            copy_error.to_string(),
+            format!("preparing copy @ '{}'", invalid_dest.display())
+        );
+        assert_eq!(fs::read(&source_file).unwrap(), b"source data");
+
+        let source_link = src.join("source link");
+        std::os::unix::fs::symlink(&source_file, &source_link).unwrap();
+        let link_error = copy_leaf(&source_link, &invalid_dest, None, false, None).unwrap_err();
+        assert!(link_error.downcast_ref::<std::io::Error>().is_some());
+        assert_eq!(
+            link_error.to_string(),
+            format!("preparing copy @ '{}'", invalid_dest.display())
+        );
+        assert_eq!(fs::read_link(&source_link).unwrap(), source_file);
+        assert_eq!(fs::read(&blocker).unwrap(), b"existing data");
+    }
+
+    /// Failed publication keeps the source and an occupied destination directory.
+    #[test]
+    fn test_copy_publication_failure_keeps_directory() {
+        use path_slash::PathExt;
+
+        for recursive in [false, true] {
+            let dir = crate::testing::test_tempdir();
+            let src = dir.path().join("source tree");
+            let dest = dir.path().join("destination tree");
+            let src_file = src.join("blocked file");
+            let occupied = dest.join("blocked file");
+            fs::create_dir(&src).unwrap();
+            fs::create_dir_all(&occupied).unwrap();
+            fs::write(&src_file, b"source data").unwrap();
+            fs::write(occupied.join("protected"), b"existing data").unwrap();
+
+            let error = if recursive {
+                copy_dir_recursive(&src, &dest, None, true, None, &Progress::disabled())
+                    .unwrap_err()
+            } else {
+                copy_leaf(&src_file, &occupied, None, true, None).unwrap_err()
+            };
+
+            assert!(error.downcast_ref::<std::io::Error>().is_some());
+            assert_eq!(
+                error.to_string(),
+                format!("publishing copied file @ '{}'", occupied.to_slash_lossy())
+            );
+            assert_eq!(fs::read(&src_file).unwrap(), b"source data");
+            assert_eq!(
+                fs::read(occupied.join("protected")).unwrap(),
+                b"existing data"
+            );
+            let names: Vec<_> = fs::read_dir(&dest)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect();
+            assert_eq!(names, ["blocked file"]);
+        }
+    }
+
+    /// A destination failure is an error, while a failed forced copy leaves
+    /// the existing destination intact.
+    #[cfg(unix)]
+    #[test]
+    fn test_copy_failure_keeps_existing_data() {
+        let dir = crate::testing::test_tempdir();
+        let src = dir.path().join("source file");
+        fs::write(&src, b"source data").unwrap();
+        let missing_parent = dir.path().join("missing parent/destination");
+        assert!(copy_leaf(&src, &missing_parent, None, false, None).is_err());
+        assert_eq!(fs::read(&src).unwrap(), b"source data");
+
+        let dest = dir.path().join("existing destination");
+        fs::write(&dest, b"existing data").unwrap();
+        let uncopyable = dir.path().join("uncopyable directory");
+        fs::create_dir(&uncopyable).unwrap();
+        let result = copy_leaf(&uncopyable, &dest, None, true, None);
+        assert!(result.is_err());
+        assert_eq!(fs::read(&dest).unwrap(), b"existing data");
+        assert_eq!(fs::read(&src).unwrap(), b"source data");
+
+        let protected = dir.path().join("protected");
+        fs::write(&protected, b"protected data").unwrap();
+        let link = dir.path().join("existing link");
+        std::os::unix::fs::symlink(&protected, &link).unwrap();
+        let result = copy_leaf(&uncopyable, &link, None, true, None);
+        assert!(result.is_err());
+        assert_eq!(fs::read_link(&link).unwrap(), protected);
+        assert_eq!(fs::read(&link).unwrap(), b"protected data");
+        assert!(fs::read_dir(dir.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".wt-copy-")
+        }));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_copy_leaf_publishes_beyond_windows_max_path() {
+        let dir = crate::testing::test_tempdir();
+        let src = dir.path().join("source");
+        fs::write(&src, b"source data").unwrap();
+        let mut parent = dir.path().join("destination");
+        for _ in 0..8 {
+            parent.push("a directory with a long name");
+        }
+        fs::create_dir_all(&parent).unwrap();
+        let dest = parent.join("copied file");
+        assert!(dest.as_os_str().len() > 260);
+
+        assert!(copy_leaf(&src, &dest, None, false, None).unwrap().is_some());
+        assert_eq!(fs::read(&dest).unwrap(), b"source data");
+        assert!(fs::read_dir(&parent).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".wt-copy-")
+        }));
+    }
+
+    /// Losing publication preserves the later writer and cleans a read-only
+    /// prepared file on every platform, including Windows.
+    #[test]
+    fn test_prepared_readonly_copy_preserves_competing_file() {
+        let dir = crate::testing::test_tempdir();
+        let src = dir.path().join("source");
+        let dest = dir.path().join("destination");
+        fs::write(&src, b"source data").unwrap();
+        let original_permissions = fs::metadata(&src).unwrap().permissions();
+        let mut readonly = original_permissions.clone();
+        readonly.set_readonly(true);
+        fs::set_permissions(&src, readonly).unwrap();
+        let prepared =
+            PreparedLeaf::new(&src, &dest, &src.symlink_metadata().unwrap(), None).unwrap();
+        let staging = prepared.path.to_path_buf();
+        fs::write(&dest, b"competing data").unwrap();
+
+        let result = prepared.persist(&dest, false);
+        fs::set_permissions(&src, original_permissions).unwrap();
+
+        assert!(result.unwrap().is_none());
+        assert_eq!(fs::read(&dest).unwrap(), b"competing data");
+        assert_eq!(fs::read(&src).unwrap(), b"source data");
+        assert!(
+            !staging.exists(),
+            "failed publication must clean readonly staging"
+        );
+    }
+
+    /// Preparation never grants permission to overwrite a later writer's
+    /// leaf, including symlinks whose targets must not be touched by fallback.
+    #[cfg(unix)]
+    #[test]
+    fn test_prepared_copy_preserves_competing_destinations() {
+        use std::os::unix::fs::symlink;
+
+        for source_link in [false, true] {
+            for destination_link in [false, true] {
+                let dir = crate::testing::test_tempdir();
+                let src = dir.path().join("source");
+                if source_link {
+                    symlink("missing relative target", &src).unwrap();
+                } else {
+                    fs::write(&src, b"source data").unwrap();
+                }
+                let dest = dir.path().join("destination");
+                let protected = dir.path().join("protected");
+                fs::write(&protected, b"existing data").unwrap();
+                let prepared =
+                    PreparedLeaf::new(&src, &dest, &src.symlink_metadata().unwrap(), None).unwrap();
+                let staging = prepared.path.to_path_buf();
+                // A real writer occupies the final name after preparation.
+                if destination_link {
+                    symlink(&protected, &dest).unwrap();
+                } else {
+                    fs::write(&dest, b"existing data").unwrap();
+                }
+                assert!(prepared.persist(&dest, false).unwrap().is_none());
+                assert_eq!(fs::read(&dest).unwrap(), b"existing data");
+                assert_eq!(fs::read(&protected).unwrap(), b"existing data");
+                assert_eq!(
+                    dest.symlink_metadata().unwrap().is_symlink(),
+                    destination_link
+                );
+                assert!(!staging.exists());
+            }
+        }
+    }
+
+    /// Forced publication replaces the leaf rather than following it, and
+    /// preserves a relative dangling link when that is the source.
+    #[cfg(unix)]
+    #[test]
+    fn test_forced_copy_replaces_symlink_without_following_it() {
+        use std::os::unix::fs::symlink;
+
+        let dir = crate::testing::test_tempdir();
+        let src = dir.path().join("source");
+        let protected = dir.path().join("protected");
+        let dest = dir.path().join("destination");
+        fs::write(&src, b"source data").unwrap();
+        fs::write(&protected, b"existing data").unwrap();
+        symlink(&protected, &dest).unwrap();
+        assert!(copy_leaf(&src, &dest, None, true, None).unwrap().is_some());
+        assert!(!dest.symlink_metadata().unwrap().is_symlink());
+        assert_eq!(fs::read(&dest).unwrap(), b"source data");
+        assert_eq!(fs::read(&protected).unwrap(), b"existing data");
+
+        let link = dir.path().join("broken source");
+        symlink("missing relative target", &link).unwrap();
+        assert!(copy_leaf(&link, &dest, None, true, None).unwrap().is_some());
+        assert_eq!(
+            fs::read_link(&dest).unwrap(),
+            Path::new("missing relative target")
+        );
+        assert_eq!(fs::read(&protected).unwrap(), b"existing data");
+        let mut names: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            ["broken source", "destination", "protected", "source"]
+        );
     }
 }

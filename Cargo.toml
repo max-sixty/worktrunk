@@ -243,10 +243,7 @@ urlencoding = "2.1"
 gix-url = "0.40"
 regex = "1.12.3"
 ignore = "0.4"
-reflink-copy = "0.1"
-# Atomic, no-overwrite rename (renameat2 / renamex_np / MoveFileExW) for
-# `--clobber` backups — closes the check-then-rename TOCTOU. Keeps the FFI
-# (and its `unsafe`) out of this crate.
+# Exclusive rename for --clobber backups and Windows copy publication.
 renamore = "0.3"
 dashmap = "6.2.1"
 fs2 = "0.4.3"
@@ -332,11 +329,22 @@ open = { version = "5.3", optional = true }
 nix = { version = "0.31.3", default-features = false, features = ["event", "fs", "poll", "process", "signal"] }
 signal-hook = "0.4.1"
 # Safe FIONREAD snapshots bound cancellation drains even with continuous writers.
-rustix = "1.1.4"
+rustix = { version = "1.1.4", features = ["fs"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Atomic clonefile creation preserves source file metadata.
+reflink-copy = "0.1.30"
 
 [target.'cfg(windows)'.dependencies]
+# Atomic copied-file replacement must retain attributes while replacing a
+# read-only destination; std's rename doesn't request that Windows flag.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Wdk_Storage_FileSystem"] }
 # The localized Documents folder that holds PowerShell profiles.
 dirs = "7.0"
+
+[target.'cfg(windows)'.dev-dependencies]
+# Native copy inheritance regressions inspect disposable Windows file ACLs.
+windows-sys = { version = "0.61", features = ["Win32_Security_Authorization"] }
 
 [build-dependencies]
 vergen-gitcl = { version = "10.0.0", features = ["build"] }
@@ -385,7 +393,7 @@ harness = false
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage)"] }
-# Native signal inspection and coverage flushing permit scoped runtime calls.
+# Native calls permit scoped exceptions with a documented safety contract.
 unsafe_code = "deny"
 
 # The profile that 'dist' will build with

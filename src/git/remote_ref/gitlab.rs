@@ -77,6 +77,7 @@ pub(super) fn fetch_mr_info(mr_number: u32, repo: &Repository) -> anyhow::Result
             ForgeKind::GitLab.ref_type(),
             format!("glab api failed for MR !{}", mr_number),
             &output,
+            None,
         ));
     }
 
@@ -229,6 +230,7 @@ fn fetch_project_urls(
             ForgeKind::GitLab.ref_type(),
             format!("glab api failed for {} project {}", role, project_id),
             &output,
+            None,
         ));
     }
 

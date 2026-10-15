@@ -21,7 +21,7 @@ use std::process::Command;
 /// The pin lives here rather than in `STATIC_TEST_ENV_VARS`, which would reach
 /// every child and add a line to the `env:` block of all 996 snapshots that
 /// record one, to make deterministic the ~12 that show this summary.
-/// `copy_ignored_reports_a_full_copy` pins the opposite branch.
+/// `copy_ignored_reports_an_ordinary_copy` pins the opposite branch.
 fn pin_reflink(mut cmd: Command, reflinked: bool) -> Command {
     cmd.env("WORKTRUNK_TEST_REFLINK", if reflinked { "1" } else { "0" });
     cmd
@@ -124,13 +124,13 @@ fn test_copy_ignored_no_worktreeinclude(mut repo: TestRepo) {
     ));
 }
 
-/// What an ext4 or NTFS user sees: no reflink, so every byte is written out and
-/// the summary says so instead of repeating the line it would print on APFS.
+/// An ordinary-copy API does not expose internal filesystem acceleration, so
+/// the summary reports its counts without asserting a physical disk cost.
 ///
 /// Every other snapshot in this file pins the reflinked branch, so the two
 /// together cover both wordings on all three CI platforms.
 #[rstest]
-fn test_copy_ignored_reports_a_full_copy(mut repo: TestRepo) {
+fn test_copy_ignored_reports_an_ordinary_copy(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
     fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
     fs::write(repo.root_path().join(".gitignore"), ".env\n").unwrap();
@@ -1254,10 +1254,8 @@ fn test_copy_ignored_directory_with_symlinks(mut repo: TestRepo) {
     assert_eq!(fs::read_link(&link).unwrap().to_str().unwrap(), "data.txt");
 }
 
-/// Test that copy errors include file paths in the message (GitHub issue #1084)
-///
-/// Tests both the directory recursive copy error path (copy_dir_recursive)
-/// and the top-level file copy error path (step_copy_ignored main loop).
+/// Recursive copy failures identify the destination where staging failed
+/// (GitHub issue #1084), while preserving the source and destination data.
 #[cfg(unix)]
 #[rstest]
 fn test_copy_ignored_error_includes_path_directory(mut repo: TestRepo) {
@@ -1276,8 +1274,12 @@ fn test_copy_ignored_error_includes_path_directory(mut repo: TestRepo) {
     let dest_sub = feature_path.join("target").join("sub");
     fs::create_dir_all(&dest_sub).unwrap();
     fs::set_permissions(&dest_sub, fs::Permissions::from_mode(0o555)).unwrap();
+    if !worktrunk::testing::permissions_restrict_writes(&dest_sub) {
+        fs::set_permissions(&dest_sub, fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
 
-    // Copy should fail — error message should mention the file path
+    // Copy should fail at staging in the read-only destination directory.
     let output = repo
         .wt_command()
         .args(["step", "copy-ignored"])
@@ -1291,12 +1293,18 @@ fn test_copy_ignored_error_includes_path_directory(mut repo: TestRepo) {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("copying"),
-        "Error should mention the file path, got: {stderr}"
+        stderr.contains("copying directory") && stderr.contains("repo.feature/target/sub"),
+        "Error should identify the failing destination directory, got: {stderr}"
     );
+    assert_eq!(
+        fs::read(target_dir.join("sub/file.txt")).unwrap(),
+        b"content"
+    );
+    assert!(!dest_sub.join("file.txt").exists());
 }
 
-/// Test that top-level file copy errors include file paths (GitHub issue #1084)
+/// Top-level file copy failures identify the destination where staging failed
+/// (GitHub issue #1084).
 ///
 /// This exercises the error path in the main copy loop (not copy_dir_recursive).
 #[cfg(unix)]
@@ -1310,9 +1318,13 @@ fn test_copy_ignored_error_includes_path_file(mut repo: TestRepo) {
     fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
     fs::write(repo.root_path().join(".gitignore"), ".env\n").unwrap();
 
-    // Make the destination worktree root read-only so reflink_or_copy fails
-    // with PermissionDenied (not AlreadyExists)
+    // Make the destination worktree root read-only so staging fails with
+    // PermissionDenied before any file is copied.
     fs::set_permissions(&feature_path, fs::Permissions::from_mode(0o555)).unwrap();
+    if !worktrunk::testing::permissions_restrict_writes(&feature_path) {
+        fs::set_permissions(&feature_path, fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
 
     let output = repo
         .wt_command()
@@ -1327,9 +1339,14 @@ fn test_copy_ignored_error_includes_path_file(mut repo: TestRepo) {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("copying") && stderr.contains(".env"),
-        "Error should mention the file path, got: {stderr}"
+        stderr.contains("preparing copy @") && stderr.contains("repo.feature/.env"),
+        "Error should identify the failing destination directory, got: {stderr}"
     );
+    assert_eq!(
+        fs::read(repo.root_path().join(".env")).unwrap(),
+        b"SECRET=value"
+    );
+    assert!(!feature_path.join(".env").exists());
 }
 
 /// Test that nested file copy errors mention the parent directory creation failure
@@ -1359,6 +1376,10 @@ fn test_copy_ignored_error_nested_file_parent_creation(mut repo: TestRepo) {
 
     // Make feature worktree root read-only so create_dir_all("cache/") fails
     fs::set_permissions(&feature_path, fs::Permissions::from_mode(0o555)).unwrap();
+    if !worktrunk::testing::permissions_restrict_writes(&feature_path) {
+        fs::set_permissions(&feature_path, fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
 
     let output = repo
         .wt_command()
@@ -1514,6 +1535,18 @@ fn test_copy_ignored_preserves_directory_permissions(mut repo: TestRepo) {
     );
     // Check permissions BEFORE restoring for cleanup
     let dest_readonly_mode = fs::metadata(&dest_readonly).unwrap().permissions().mode() & 0o777;
+    let dest_names: Vec<_> = fs::read_dir(&dest_readonly)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    // A repeated no-force copy must not need staging space inside the
+    // already complete, now read-only destination.
+    let repeated = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
     // Restore for cleanup
     fs::set_permissions(&readonly_dir, fs::Permissions::from_mode(0o755)).unwrap();
     if dest_readonly.exists() {
@@ -1522,6 +1555,12 @@ fn test_copy_ignored_preserves_directory_permissions(mut repo: TestRepo) {
     assert_eq!(
         dest_readonly_mode, 0o555,
         "Read-only directory permissions should be preserved (expected 0555, got {dest_readonly_mode:04o})"
+    );
+    assert_eq!(dest_names, ["data"], "staging must be removed before chmod");
+    assert!(
+        repeated.status.success(),
+        "idempotent copy into read-only directory: {}",
+        String::from_utf8_lossy(&repeated.stderr)
     );
 }
 

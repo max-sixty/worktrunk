@@ -219,15 +219,10 @@ fn test_approval_prompt_permission_error(repo: TestRepo) {
         perms.set_mode(0o555); // Read + execute only
         fs::set_permissions(&approvals_dir, perms).unwrap();
 
-        // Test if permissions actually restrict us (skip if running as root)
-        let test_file = approvals_dir.join("test_write");
-        if fs::write(&test_file, "test").is_ok() {
-            // Running as root - restore permissions and skip test
-            let _ = fs::remove_file(&test_file);
+        if !worktrunk::testing::permissions_restrict_writes(&approvals_dir) {
             let mut perms = fs::metadata(&approvals_dir).unwrap().permissions();
             perms.set_mode(0o755);
             fs::set_permissions(&approvals_dir, perms).unwrap();
-            eprintln!("Skipping permission test - running with elevated privileges");
             return;
         }
     }

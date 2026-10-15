@@ -831,9 +831,7 @@ approved-commands = ["npm test"]
 
         std::fs::set_permissions(&approvals_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
         let _restore = WritableOnDrop(approvals_dir.clone());
-        let test_file = approvals_dir.join("test_write");
-        if std::fs::write(&test_file, "test").is_ok() {
-            let _ = std::fs::remove_file(test_file);
+        if !crate::testing::permissions_restrict_writes(&approvals_dir) {
             return;
         }
 
