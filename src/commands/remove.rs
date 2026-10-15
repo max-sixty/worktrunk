@@ -518,12 +518,12 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                     return Ok(());
                 }
 
-                // Approve hooks (only if we have valid plans). Each removed
-                // worktree's `pre-remove` / `post-remove` is approved against
-                // that worktree's config, and its `post-switch` against the
-                // worktree the user lands in — see `approve_remove` above.
+                // Approve hooks (only if we have valid plans): `pre-remove` /
+                // `post-remove` anchored at each removed worktree and
+                // `post-switch` at each destination, all selected from the
+                // invoking worktree's config — see `approve_remove` above.
                 // (`destination_targets` is mostly the primary worktree
-                // repeated; the helper dedups by template.)
+                // repeated; the helper dedups destinations by path.)
                 let all_plans = || {
                     plans
                         .others
