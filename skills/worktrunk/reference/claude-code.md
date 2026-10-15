@@ -2,16 +2,16 @@
 
 Worktrunk ships a plugin for each supported agent CLI. What a plugin provides depends on the hooks that CLI exposes:
 
-| Capability | Claude Code | Cursor | Codex | OpenCode | Pi | oh-my-pi | Gemini CLI |
+| Capability | Claude Code | Codex | Cursor | OpenCode | Gemini CLI | Pi | oh-my-pi |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| Configuration skill | ✓ | ✓ | ✓ |  |  |  | ✓ |
-| Activity tracking (🤖/💬 in `wt list`) | ✓ | ✓\* | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Configuration skill | ✓ | ✓ | ✓ |  | ✓ |  |  |
+| Activity tracking (🤖/💬 in `wt list`) | ✓ | ✓ | ✓\* | ✓ | ✓ | ✓ | ✓ |
 | Worktree isolation | ✓ |  |  |  |  |  |  |
 | `/wt-switch-create` skill | ✓ |  |  |  |  |  |  |
 
 \* Cursor activity tracking applies to local IDE and CLI sessions. Cloud Agents run in a remote checkout and have no editor-lifetime `sessionEnd` event, so they do not update the marker shown by a developer machine's `wt list`.
 
-The configuration skill is documentation the agent reads to help set up LLM commits, hooks, and troubleshooting. Activity tracking shows which worktrees have running sessions. Worktree isolation needs worktree-lifecycle hooks, which only Claude Code exposes, so Cursor, Codex, OpenCode, Pi, oh-my-pi, and Gemini users invoke `wt switch --create` and `wt remove` directly.
+The configuration skill is documentation the agent reads to help set up LLM commits, hooks, and troubleshooting. Activity tracking shows which worktrees have running sessions. Worktree isolation needs worktree-lifecycle hooks, which only Claude Code exposes, so Codex, Cursor, OpenCode, Gemini, Pi, and oh-my-pi users invoke `wt switch --create` and `wt remove` directly.
 
 ## Installation
 
@@ -63,6 +63,14 @@ wt config plugins opencode install
 
 This writes the activity-tracking plugin to OpenCode's global plugins directory, `~/.config/opencode/plugins/worktrunk.ts` (honoring `$OPENCODE_CONFIG_DIR` and `$XDG_CONFIG_HOME`). `wt config plugins opencode uninstall` removes it.
 
+### Gemini CLI
+
+```bash
+gemini extensions install https://github.com/max-sixty/worktrunk
+```
+
+Gemini loads the extension natively from the repository, so there is no `wt` wrapper. `gemini extensions uninstall worktrunk` removes it.
+
 ### Pi
 
 ```bash
@@ -78,14 +86,6 @@ wt config plugins omp install
 ```
 
 oh-my-pi (`omp`) is a Pi-derived agent with its own config root and hook API, so it takes a separate command. This writes the activity hook to `~/.omp/agent/hooks/pre/worktrunk.ts`. Named `$OMP_PROFILE` or `$PI_PROFILE` profiles use `~/.omp/profiles/<profile>/agent`, `$PI_CONFIG_DIR` changes the `.omp` config root, and `$PI_CODING_AGENT_DIR` overrides the agent directory for the default profile. `wt config plugins omp uninstall` removes the hook.
-
-### Gemini CLI
-
-```bash
-gemini extensions install https://github.com/max-sixty/worktrunk
-```
-
-Gemini loads the extension natively from the repository, so there is no `wt` wrapper. `gemini extensions uninstall worktrunk` removes it.
 
 ## Configuration skill
 
