@@ -18,7 +18,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use color_print::cformat;
-use minijinja::value::{Enumerator, Object, ObjectRepr, StringInput};
+use minijinja::value::{Enumerator, Object, ObjectRepr, Serde, StringInput};
 use minijinja::{Environment, ErrorKind, State, UndefinedBehavior, Value};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -1066,7 +1066,7 @@ pub fn validate_template(
     // Inject vars as empty map so {{ vars.key | default(...) }} doesn't error
     context.insert(
         "vars".to_string(),
-        minijinja::Value::from_serialize(std::collections::BTreeMap::<String, String>::new()),
+        minijinja::Value::from(std::collections::BTreeMap::<String, String>::new()),
     );
     // In alias and hook scopes, inject `args` as an empty sequence so
     // `{{ args }}`, `{{ args[0] | default(...) }}`, `{{ args | length }}`,
@@ -1177,7 +1177,13 @@ pub fn expand_template_with(
     let mut env = template_environment(repo);
     if escape_mode != ShellEscapeMode::Literal {
         // Preserve trailing newlines in templates (important for multiline shell commands)
-        env.set_keep_trailing_newline(true);
+        let syntax = env
+            .syntax()
+            .to_builder()
+            .keep_trailing_newline(true)
+            .build()
+            .map_err(|e| build_template_error(&e, template, name, Vec::new()))?;
+        env.set_syntax(syntax);
 
         // Shell-escape values at output time, not before template rendering.
         // This ensures filters (sanitize, sanitize_db, etc.) operate on raw values
@@ -1315,12 +1321,12 @@ pub fn vars_map_to_value(entries: &std::collections::BTreeMap<String, String>) -
             let value = serde_json::from_str::<serde_json::Value>(v)
                 .ok()
                 .filter(|j| j.is_object() || j.is_array())
-                .map(|j| Value::from_serialize(&j))
+                .map(|j| Value::from(Serde(j)))
                 .unwrap_or_else(|| Value::from(v.clone()));
             (k.as_str(), value)
         })
         .collect();
-    Value::from_serialize(&vars_map)
+    Value::from(vars_map)
 }
 
 /// A stand-in for the `vars` / `git.branch` maps that answers every key
@@ -1798,18 +1804,36 @@ mod tests {
     fn test_undefined_namespace_values_do_not_name_unreached_typos() {
         let test = test_repo();
         let vars = HashMap::from([("branch", "main"), ("args", "[]")]);
-        for template in [
-            "{{ args[0] }}{{ brnch }}",
-            "{{ vars.missing }}{{ brnch }}",
-            "{% if optional %}{{ brnch }}{% endif %}{{ vars.missing }}",
-            "{% set local = brnch %}{{ local }}",
-            "{{ brnch if branch else other_missing }}",
-            "{{ branch | replace(brnch, '-') }}",
-            "{% if false %}{{ brnch }}{% endif %}{% set brnch = vars.missing %}{{ brnch }}",
-            "{% if false %}{{ brnch }}{% endif %}{% with brnch = vars.missing %}{{ brnch }}{% endwith %}",
-            "{% if false %}{{ brnch }}{% endif %}{% for brnch in [vars.missing] %}{{ brnch }}{% endfor %}",
-            "{% if false %}{{ brnch }}{% endif %}{% for brnch, other in [[vars.missing, 1]] %}{{ brnch }}{% endfor %}",
-            "{% if false %}{{ brnch }}{% endif %}{% set captured %}{% set brnch = vars.missing %}{{ brnch }}{% endset %}",
+        for (template, undefined) in [
+            ("{{ args[0] }}{{ brnch }}", "args[0]"),
+            ("{{ vars.missing }}{{ brnch }}", "vars.missing"),
+            (
+                "{% if optional %}{{ brnch }}{% endif %}{{ vars.missing }}",
+                "vars.missing",
+            ),
+            ("{% set local = brnch %}{{ local }}", "brnch"),
+            ("{{ brnch if branch else other_missing }}", "brnch"),
+            ("{{ branch | replace(brnch, '-') }}", "brnch"),
+            (
+                "{% if false %}{{ brnch }}{% endif %}{% set brnch = vars.missing %}{{ brnch }}",
+                "vars.missing",
+            ),
+            (
+                "{% if false %}{{ brnch }}{% endif %}{% with brnch = vars.missing %}{{ brnch }}{% endwith %}",
+                "vars.missing",
+            ),
+            (
+                "{% if false %}{{ brnch }}{% endif %}{% for brnch in [vars.missing] %}{{ brnch }}{% endfor %}",
+                "vars.missing",
+            ),
+            (
+                "{% if false %}{{ brnch }}{% endif %}{% for brnch, other in [[vars.missing, 1]] %}{{ brnch }}{% endfor %}",
+                "vars.missing",
+            ),
+            (
+                "{% if false %}{{ brnch }}{% endif %}{% set captured %}{% set brnch = vars.missing %}{{ brnch }}{% endset %}",
+                "vars.missing",
+            ),
         ] {
             let err = expand_template(
                 template,
@@ -1819,9 +1843,17 @@ mod tests {
                 "test",
             )
             .unwrap_err();
-            assert_eq!(
-                err.message,
-                "Failed to expand test: undefined value @ line 1"
+            // MiniJinja names the undefined expression only when the
+            // environment's debug flag is on, which defaults to
+            // `debug_assertions`; accept either exact form.
+            let named = format!(
+                "Failed to expand test: undefined value: `{undefined}` is undefined @ line 1"
+            );
+            let unnamed = "Failed to expand test: undefined value @ line 1";
+            assert!(
+                err.message == named || err.message == unnamed,
+                "{template}: {}",
+                err.message
             );
             assert_eq!(err.suggestion, None);
         }

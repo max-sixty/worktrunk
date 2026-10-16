@@ -384,6 +384,40 @@ fn test_switch_create_with_remote_only_base(#[from(repo_with_remote)] repo: Test
     );
 }
 
+/// A default branch that is a remote-tracking ref with no local branch of the
+/// same name (git-p4 keeps its mainline only as `p4/master`) is the base for
+/// `--create`, not the current HEAD. Regression test for GitHub issue #4481.
+#[rstest]
+fn test_switch_create_from_remote_tracking_default_branch(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    // `origin/release` exists only as a remote-tracking ref.
+    repo.run_git(&["branch", "release"]);
+    repo.run_git(&["push", "origin", "release"]);
+    repo.run_git(&["branch", "-D", "release"]);
+    repo.run_git(&["config", "worktrunk.default-branch", "origin/release"]);
+
+    // Move HEAD past the default branch so the two bases differ.
+    repo.run_git(&["commit", "--allow-empty", "-m", "unrelated work"]);
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "probe", "--no-cd"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(
+        repo.git_output(&["rev-parse", "probe"]),
+        repo.git_output(&["rev-parse", "origin/release"]),
+        "probe should be created from the default branch, not HEAD"
+    );
+}
+
 /// `--create` from a remote tracking branch sets the new branch's upstream only
 /// when the two share a name. Otherwise the branch created from `origin/release`
 /// tracks `origin/release`, and a bare `git push` under `push.default = upstream`

@@ -699,14 +699,16 @@ fn resolve_switch_target(
         }
     }
 
-    // Compute base branch for creation. When the cached default branch
-    // no longer resolves locally, return None and let the downstream
-    // StaleDefaultBranch error emerge at the actual use site.
+    // Compute base branch for creation. The default branch is a base like any
+    // `--base` value, so any ref that resolves to a commit qualifies — a
+    // remote-tracking default such as git-p4's `p4/master` has no local
+    // branch (#4481). When the cached default no longer resolves, return None
+    // and create from HEAD.
     let base_branch = if create {
         resolved_base.or_else(|| {
             repo.resolve_target_branch(None)
                 .ok()
-                .filter(|b| repo.branch(b).exists_locally().unwrap_or(false))
+                .filter(|b| repo.ref_exists(b).unwrap_or(false))
         })
     } else {
         None
