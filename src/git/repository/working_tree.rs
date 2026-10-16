@@ -3,6 +3,8 @@
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, bail};
 use dashmap::mapref::entry::Entry;
@@ -16,6 +18,101 @@ use super::{GitError, LineDiff, Repository};
 use crate::git::{CommandError, PlumbingDiff};
 
 const TEMP_INDEX_PREFIX: &str = "worktrunk-temp-index-";
+
+/// Reclaim an orphan this old even while a live process holds its PID, which
+/// is what PID reuse looks like from here. No worktrunk command holds a temp
+/// index for anything approaching a day, so this only ever catches a name
+/// whose original owner is long gone.
+const STALE_TEMP_INDEX_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// The `tempfile` prefix for a temp index owned by `pid`, giving every file
+/// [`sweep_orphaned_temp_indexes`] must judge the identity of its creator.
+fn temp_index_prefix_for(pid: u32) -> String {
+    format!("{TEMP_INDEX_PREFIX}{pid}-")
+}
+
+/// The PID out of a `worktrunk-temp-index-<pid>-<random>` file name, or
+/// `None` for any name worktrunk did not create.
+///
+/// Git's own `<name>.lock` sibling keeps the prefix and PID, so it parses too
+/// and is reclaimed alongside the index it belongs to.
+fn temp_index_owner_pid(file_name: &str) -> Option<u32> {
+    file_name
+        .strip_prefix(TEMP_INDEX_PREFIX)?
+        .split_once('-')?
+        .0
+        .parse()
+        .ok()
+}
+
+/// Whether `pid` still exists.
+///
+/// Signal 0 performs existence and permission checking without delivering
+/// anything: `Ok` or `EPERM` means the process is there, `ESRCH` that it is
+/// not. A zombie reports as alive, which only delays a sweep to the next run.
+#[cfg(unix)]
+fn process_is_alive(pid: u32) -> bool {
+    match nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None) {
+        Ok(()) | Err(nix::errno::Errno::EPERM) => true,
+        Err(_) => false,
+    }
+}
+
+/// Without `nix` off Unix, treat every PID as live and let
+/// [`STALE_TEMP_INDEX_MAX_AGE`] do the reclaiming. Sparing a file is the
+/// safe direction, and Windows kills a console child far less readily.
+#[cfg(not(unix))]
+fn process_is_alive(_pid: u32) -> bool {
+    true
+}
+
+/// Delete temp indexes in `dir` whose creating process is gone.
+///
+/// [`TempIndex`]'s `Drop` is the primary cleanup and covers every ordinary
+/// exit, but it cannot run under `SIGKILL` — and a host that renders the
+/// statusline in the background kills a slow `wt list statusline` as a matter
+/// of course, superseding it on the next refresh. Each orphan is a full copy
+/// of the repository index, so on a machine running many such sessions they
+/// accumulate without bound: the report behind this sweep measured 52,786
+/// files and 127 GB of them in `/tmp` over three days.
+///
+/// Only worktrunk's own files are candidates — the name must carry
+/// [`TEMP_INDEX_PREFIX`] and a parseable PID — so a foreign temp file in a
+/// shared directory is never touched. A candidate goes when its PID is gone,
+/// or when it is older than [`STALE_TEMP_INDEX_MAX_AGE`].
+///
+/// Best-effort, like [`crate::cache::sweep_lru`]: every error is logged at
+/// debug and ignored, because the next `wt` invocation sweeps again. A file
+/// that vanishes mid-sweep is the owner's own `Drop` winning the race, which
+/// is the outcome this exists to produce.
+fn sweep_orphaned_temp_indexes(dir: &Path, is_alive: impl Fn(u32) -> bool) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let now = SystemTime::now();
+    for entry in entries.filter_map(Result::ok) {
+        let name = entry.file_name();
+        let Some(pid) = name.to_str().and_then(temp_index_owner_pid) else {
+            continue;
+        };
+        let expired = entry
+            .metadata()
+            .ok()
+            .and_then(|metadata| metadata.modified().ok())
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age >= STALE_TEMP_INDEX_MAX_AGE);
+        if is_alive(pid) && !expired {
+            continue;
+        }
+        let path = entry.path();
+        match std::fs::remove_file(&path) {
+            Ok(()) => tracing::debug!(pid, "temp index: swept orphan {}", path.display()),
+            Err(error) => {
+                tracing::debug!("temp index: failed to sweep {}: {error}", path.display());
+            }
+        }
+    }
+}
 
 /// A squash safety backup: an immutable snapshot of the index and the ref
 /// whose reflog retains it. The backup commit's parent is the pre-squash HEAD.
@@ -1055,13 +1152,24 @@ impl<'a> WorkingTree<'a> {
         // a shared system temp directory. A missing `<gitdir>/index` is
         // semantically an empty index (nothing staged), so only that case
         // closes and removes the 0-byte file before Git creates a valid index.
+        let prefix = temp_index_prefix_for(std::process::id());
         let mut builder = tempfile::Builder::new();
-        builder.prefix(TEMP_INDEX_PREFIX);
+        builder.prefix(&prefix);
+        // Orphans only come from other processes, so one sweep per process
+        // reclaims them all. `wt list` calls this once per worktree, in
+        // parallel; the first caller sweeps and the rest don't wait on it.
+        static SWEPT_SYSTEM_TEMP: AtomicBool = AtomicBool::new(false);
+        if !SWEPT_SYSTEM_TEMP.swap(true, Ordering::Relaxed) {
+            sweep_orphaned_temp_indexes(&std::env::temp_dir(), process_is_alive);
+        }
         let mut temp_file = match builder.tempfile() {
             Ok(file) => file,
-            Err(temp_error) => builder.tempfile_in(&git_dir).context(format!(
-                "Failed to create temporary index in the system temp directory or Git directory; system temp error: {temp_error}"
-            ))?,
+            Err(temp_error) => {
+                sweep_orphaned_temp_indexes(&git_dir, process_is_alive);
+                builder.tempfile_in(&git_dir).context(format!(
+                    "Failed to create temporary index in the system temp directory or Git directory; system temp error: {temp_error}"
+                ))?
+            }
         };
         let mut real_index_file = match std::fs::File::open(&real_index) {
             Ok(file) => Some(file),
@@ -1447,6 +1555,10 @@ fn run_checked(command: Cmd, args: &[String]) -> anyhow::Result<std::process::Ou
 #[cfg(test)]
 mod tests {
     use super::has_initialized_submodules_from_status;
+    use super::{
+        Duration, Path, STALE_TEMP_INDEX_MAX_AGE, SystemTime, sweep_orphaned_temp_indexes,
+        temp_index_owner_pid, temp_index_prefix_for,
+    };
     use crate::git::{LineDiff, Repository};
     use crate::shell_exec::Cmd;
     use crate::testing::TestRepo;
@@ -1600,6 +1712,109 @@ mod tests {
                 .unwrap(),
             "dirty submodule contents cannot be staged in the parent repository"
         );
+    }
+
+    #[test]
+    fn temp_index_owner_pid_reads_worktrunk_names_only() {
+        let prefix = temp_index_prefix_for(4242);
+        assert_eq!(temp_index_owner_pid(&format!("{prefix}AbC123")), Some(4242));
+        // Git's lock sibling keeps the prefix, so it is reclaimable too.
+        assert_eq!(
+            temp_index_owner_pid(&format!("{prefix}AbC123.lock")),
+            Some(4242)
+        );
+        // Anything else in a shared temp directory belongs to someone else.
+        assert_eq!(temp_index_owner_pid(".tmpAbC123"), None);
+        assert_eq!(temp_index_owner_pid("worktrunk-temp-index-nope"), None);
+        assert_eq!(temp_index_owner_pid("index"), None);
+    }
+
+    #[test]
+    fn sweep_reclaims_dead_owners_and_spares_everything_else() {
+        // The leak this sweep exists for: a statusline killed with SIGKILL
+        // never runs TempIndex's Drop, stranding a full copy of the index.
+        let dir = tempfile::tempdir().unwrap();
+        let orphan = dir
+            .path()
+            .join(format!("{}xxxxxx", temp_index_prefix_for(1)));
+        let orphan_lock = dir
+            .path()
+            .join(format!("{}yyyyyy.lock", temp_index_prefix_for(1)));
+        let live = dir
+            .path()
+            .join(format!("{}zzzzzz", temp_index_prefix_for(2)));
+        let foreign = dir.path().join(".tmpSomeoneElse");
+        for path in [&orphan, &orphan_lock, &live, &foreign] {
+            std::fs::write(path, b"DIRC").unwrap();
+        }
+
+        sweep_orphaned_temp_indexes(dir.path(), |pid| pid != 1);
+
+        assert!(!orphan.exists(), "a dead owner's index is reclaimed");
+        assert!(!orphan_lock.exists(), "so is its lock sibling");
+        assert!(live.exists(), "a live owner's index is left alone");
+        assert!(foreign.exists(), "a foreign temp file is never touched");
+    }
+
+    #[test]
+    fn sweep_reclaims_an_aged_orphan_whose_pid_was_reused() {
+        // A recycled PID reads as alive forever, so age is the backstop.
+        let dir = tempfile::tempdir().unwrap();
+        let aged = dir
+            .path()
+            .join(format!("{}xxxxxx", temp_index_prefix_for(1)));
+        std::fs::write(&aged, b"DIRC").unwrap();
+        let long_ago = SystemTime::now() - STALE_TEMP_INDEX_MAX_AGE - Duration::from_secs(60);
+        std::fs::File::options()
+            .write(true)
+            .open(&aged)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(long_ago))
+            .unwrap();
+
+        sweep_orphaned_temp_indexes(dir.path(), |_| true);
+
+        assert!(!aged.exists(), "an aged orphan goes despite a live PID");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn process_is_alive_tells_a_live_pid_from_a_reaped_one() {
+        use super::process_is_alive;
+        assert!(process_is_alive(std::process::id()));
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        assert!(!process_is_alive(pid), "a reaped child's PID is gone");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn sweep_survives_an_orphan_it_cannot_remove() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let orphan = dir
+            .path()
+            .join(format!("{}xxxxxx", temp_index_prefix_for(1)));
+        std::fs::write(&orphan, b"DIRC").unwrap();
+        let read_only = std::fs::Permissions::from_mode(0o555);
+        std::fs::set_permissions(dir.path(), read_only).unwrap();
+        // Root ignores directory permissions, so there the remove succeeds.
+        let is_root = std::fs::write(dir.path().join("probe"), b"").is_ok();
+
+        sweep_orphaned_temp_indexes(dir.path(), |_| false);
+
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(
+            is_root || orphan.exists(),
+            "a failed remove is logged and skipped"
+        );
+    }
+
+    #[test]
+    fn sweep_tolerates_a_missing_directory() {
+        // Best-effort: an unreadable temp dir must not fail temp_index().
+        sweep_orphaned_temp_indexes(Path::new("/nonexistent/wt/sweep"), |_| false);
     }
 
     #[test]
