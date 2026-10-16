@@ -19,6 +19,8 @@
 //! current worktree is removed last, after the fan-out, because its removal
 //! cd's the shell to the primary.
 
+use crate::commands::command_executor::ForegroundStdin;
+
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -351,7 +353,12 @@ fn try_remove(
     } else {
         RemovalExecution::Background(BackgroundFallbackMode::SynchronousForNonCurrent)
     };
-    let fate = handle_remove_output(&plan, execution, ctx.hook_plan, true, &mut announcer)?;
+    let stdin = if needs_write {
+        ForegroundStdin::Inherit
+    } else {
+        ForegroundStdin::Closed
+    };
+    let fate = handle_remove_output(&plan, execution, stdin, ctx.hook_plan, true, &mut announcer)?;
     announcer.flush()?;
     let branch_deleted = fate.deleted();
     // A branch-only candidate that kept its branch removed nothing at all —
