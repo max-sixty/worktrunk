@@ -1,0 +1,68 @@
+{
+  "title": "Take a change from a new worktree to main",
+  "order_mode": "fixed",
+  "cta_label": "Install Worktrunk",
+  "cta_url": "https://worktrunk.dev/#install",
+  "steps": [
+    {
+      "title": "See every worktree at once",
+      "body": "One row per worktree: docs is a commit ahead of main, and experiment has uncommitted changes (!). @ marks where you are.",
+      "kind": "command",
+      "match_mode": "exact",
+      "pattern": "wt list",
+      "output_contains": "Showing 3 worktrees",
+      "require_success": true,
+      "optional": false
+    },
+    {
+      "title": "Start a worktree for a new change",
+      "body": "--create makes the branch and its worktree together and moves your shell into it: one command in place of git worktree add plus a cd.",
+      "kind": "command",
+      "match_mode": "exact",
+      "pattern": "wt switch --create raise-price",
+      "output_contains": "Created branch",
+      "require_success": true,
+      "optional": false
+    },
+    {
+      "title": "Make the change",
+      "body": "Edit a file as you or an agent would. The other worktrees don't see it.",
+      "kind": "command",
+      "match_mode": "exact",
+      "pattern": "sed -i 's/19\\/month/24\\/month/' pricing.txt",
+      "output_contains": null,
+      "require_success": true,
+      "optional": false
+    },
+    {
+      "title": "See the change in the list",
+      "body": "raise-price now shows ! for uncommitted changes and +1 -1 for the lines changed.",
+      "kind": "command",
+      "match_mode": "exact",
+      "pattern": "wt list",
+      "output_contains": "Showing 4 worktrees",
+      "require_success": true,
+      "optional": false
+    },
+    {
+      "title": "Merge it into main",
+      "body": "No git commit needed: wt merge commits the change, rebases onto main if needed, fast-forwards main, removes the worktree and branch, and brings your shell back to main.",
+      "kind": "command",
+      "match_mode": "exact",
+      "pattern": "wt merge",
+      "output_contains": "Merged to",
+      "require_success": true,
+      "optional": false
+    },
+    {
+      "title": "Jump to another worktree",
+      "body": "wt switch with no branch opens a picker: type to filter, move with the arrow keys, Enter to switch, Esc to leave.",
+      "kind": "command",
+      "match_mode": "exact",
+      "pattern": "wt switch",
+      "output_contains": null,
+      "require_success": false,
+      "optional": true
+    }
+  ]
+}
