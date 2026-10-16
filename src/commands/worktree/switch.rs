@@ -32,7 +32,7 @@ use worktrunk::styling::{
 use super::resolve::{compute_worktree_path, offer_bare_repo_worktree_path_fix};
 use super::types::{CreationMethod, RefIdentity, SwitchBranchInfo, SwitchPlan, SwitchResult};
 use crate::cli::{SwitchArgs, SwitchFormat};
-use crate::commands::backup::back_up_clobbered_path_now;
+use crate::commands::backup::{back_up_clobbered_path_now, require_safe_clobber_target};
 use crate::commands::command_approval::approve_hooks;
 use crate::commands::command_executor::FailureStrategy;
 use crate::commands::command_executor::{CommandContext, build_hook_context};
@@ -746,6 +746,7 @@ fn validate_worktree_creation(
     path: &Path,
     clobber: bool,
     method: &CreationMethod,
+    explicit_path: bool,
 ) -> anyhow::Result<bool> {
     // For regular switches without --create, validate branch exists
     if let CreationMethod::Regular {
@@ -791,6 +792,7 @@ fn validate_worktree_creation(
     if !path.exists() {
         return Ok(false);
     }
+    require_safe_clobber_target(repo, path, explicit_path)?;
     if clobber {
         return Ok(true);
     }
@@ -991,11 +993,9 @@ fn plan_switch(
 
     // Phase 3: Compute expected path (only needed for create). `--path`
     // replaces the template outright.
+    let explicit_path = requested_path.is_some();
     let expected_path = match requested_path {
-        Some(path) => {
-            reject_path_overlapping_worktrees(repo, &path)?;
-            path
-        }
+        Some(path) => path,
         None => compute_worktree_path(repo, target.selector.token(), config)?,
     };
 
@@ -1006,6 +1006,7 @@ fn plan_switch(
         &expected_path,
         clobber,
         &target.method,
+        explicit_path,
     )?;
 
     // Phase 5: Return the plan
@@ -1017,41 +1018,6 @@ fn plan_switch(
         needs_clobber_backup,
         new_previous,
     })
-}
-
-/// Refuse a `--path` directory that holds a worktree or the repository, or
-/// that sits inside one.
-///
-/// Such a directory always exists, so `validate_worktree_creation` would
-/// otherwise offer `--clobber`, which moves it aside: `--path ..` would move
-/// the repository itself, and `--path src` a tracked directory of the current
-/// worktree. The template never produces these; a typed path easily does. A
-/// directory that does not exist yet is left alone — nesting a new worktree
-/// inside another is git's call, not a clobber.
-fn reject_path_overlapping_worktrees(repo: &Repository, requested: &Path) -> anyhow::Result<()> {
-    let Ok(requested) = canonicalize(requested) else {
-        return Ok(());
-    };
-    let registered = repo.list_worktrees()?.iter().map(|wt| wt.path.as_path());
-    for existing in registered.chain([repo.git_common_dir()]) {
-        let existing = canonicalize(existing).unwrap_or_else(|_| existing.to_path_buf());
-        if existing == requested {
-            continue;
-        }
-        let relation = if existing.starts_with(&requested) {
-            "contains"
-        } else if requested.starts_with(&existing) {
-            "is inside"
-        } else {
-            continue;
-        };
-        let requested = format_path_for_display(&requested);
-        let existing = format_path_for_display(&existing);
-        bail!(cformat!(
-            "<bold>--path {requested}</> {relation} <bold>{existing}</>; choose a directory outside the repository and its worktrees"
-        ));
-    }
-    Ok(())
 }
 
 /// Preserve the filesystem spelling Git and downstream commands can operate
@@ -1119,7 +1085,7 @@ fn execute_switch(
                 // name. A name already taken (a same-second clobber, or one
                 // that raced in after planning) is never overwritten — the move
                 // falls back to the next free `-N` name.
-                let backup_path = back_up_clobbered_path_now(&worktree_path)?;
+                let backup_path = back_up_clobbered_path_now(repo, &worktree_path)?;
 
                 let path_display = worktrunk::path::format_path_for_display(&worktree_path);
                 let backup_display = worktrunk::path::format_path_for_display(&backup_path);

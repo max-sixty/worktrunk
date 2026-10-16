@@ -8845,6 +8845,88 @@ fn test_switch_path_rejects_directory_overlapping_repo(repo: TestRepo) {
     assert!(repo.root_path().join(".git").exists());
 }
 
+/// A bare Git directory has no worktree occupant to prevent clobber. The
+/// explicit path and a sibling template resolving to it must both refuse.
+#[rstest]
+#[case::explicit(true)]
+#[case::template(false)]
+fn test_switch_path_never_moves_git_common_dir(#[case] explicit: bool) {
+    let repo = TestRepo::with_initial_commit();
+    repo.write_test_config(r#"worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}""#);
+    let git_dir = repo.home_path().join("git-data");
+    repo.run_git(&["clone", "--bare", ".", git_dir.to_str().unwrap()]);
+    let mut command = repo.wt_command();
+    command
+        .current_dir(&git_dir)
+        .args(["switch", "--create", "git-data", "--clobber"]);
+    if explicit {
+        command.arg("--path").arg(git_dir.join("."));
+    }
+    let output = command.output().unwrap();
+    assert!(!output.status.success(), "explicit={explicit}: {output:?}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        insta::assert_snapshot!("switch_path_git_common_dir", stderr);
+    });
+    assert!(git_dir.join("HEAD").is_file());
+}
+
+/// The documented in-repository template can clobber a stale ignored directory.
+#[rstest]
+fn test_switch_clobbers_stale_ignored_template_directory(repo: TestRepo) {
+    repo.write_test_config(r#"worktree-path = ".worktrees/{{ branch | sanitize }}""#);
+    std::fs::write(repo.root_path().join(".git/info/exclude"), ".worktrees/\n").unwrap();
+    let stale = repo.root_path().join(".worktrees/feature");
+    std::fs::create_dir_all(&stale).unwrap();
+    std::fs::write(stale.join("keep.txt"), "stale contents").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "feature", "--clobber", "--yes"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(stale.join(".git").is_file());
+    let backup = std::fs::read_dir(stale.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("feature.bak.")
+        })
+        .expect("stale directory must be backed up");
+    assert_eq!(
+        std::fs::read_to_string(backup.join("keep.txt")).unwrap(),
+        "stale contents"
+    );
+
+    // A template must not move tracked content out of the containing worktree.
+    let docs = repo.root_path().join("docs");
+    std::fs::create_dir(&docs).unwrap();
+    std::fs::write(docs.join("guide.md"), "tracked docs").unwrap();
+    repo.run_git(&["add", "docs/guide.md"]);
+    repo.run_git(&["commit", "-m", "Track docs"]);
+    repo.write_test_config(r#"worktree-path = "{{ branch | sanitize }}""#);
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "docs", "--clobber", "--yes"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("contains tracked files"),
+        "{output:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(docs.join("guide.md")).unwrap(),
+        "tracked docs"
+    );
+    assert!(!docs.join(".git").exists());
+}
+
 /// Invalid branch names are rejected before worktree creation.
 #[rstest]
 #[case::space("bad name")]

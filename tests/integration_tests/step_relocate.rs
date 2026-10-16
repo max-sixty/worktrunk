@@ -534,6 +534,66 @@ fn test_relocate_clobber_backs_up(repo: TestRepo) {
     assert!(backup_exists, "Backup directory should exist");
 }
 
+/// A template destination cannot clobber the bare Git store during relocation.
+#[rstest]
+fn test_relocate_clobber_preserves_bare_git_store(repo: TestRepo) {
+    repo.write_test_config(r#"worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}""#);
+    let git_dir = repo.home_path().join("git-data");
+    let checkout = repo.home_path().join("wrong-location");
+    repo.run_git(&["clone", "--bare", ".", git_dir.to_str().unwrap()]);
+    repo.run_git_in(
+        &git_dir,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "git-data",
+            checkout.to_str().unwrap(),
+        ],
+    );
+
+    for (clobber, other_branch) in [(false, "other"), (true, "other-clobber")] {
+        let other_checkout = repo.home_path().join(format!("wrong-{other_branch}"));
+        repo.run_git_in(
+            &git_dir,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                other_branch,
+                other_checkout.to_str().unwrap(),
+            ],
+        );
+        let mut command = repo.wt_command();
+        command.current_dir(&checkout).args([
+            "step",
+            "relocate",
+            "--format=json",
+            "git-data",
+            other_branch,
+        ]);
+        if clobber {
+            command.arg("--clobber");
+        }
+        let output = command.output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("is the repository's Git directory"),
+            "{output:?}"
+        );
+        assert!(!stderr.contains("To backup blocking paths"), "{output:?}");
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["skipped"][0]["branch"], "git-data");
+        assert_eq!(result["skipped"][0]["reason"], "target_protected");
+        assert_eq!(result["entries"][0]["branch"], other_branch);
+        assert!(repo.home_path().join(other_branch).join(".git").is_file());
+        assert!(!other_checkout.exists());
+        assert!(git_dir.join("HEAD").is_file());
+        assert!(checkout.join(".git").is_file());
+    }
+}
+
 /// Regression: when the computed backup path already exists, relocate
 /// --clobber falls back to the next free `-N` name rather than overwriting it.
 /// (Matches the `wt switch --clobber` contract — see
