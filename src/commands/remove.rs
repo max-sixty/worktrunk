@@ -20,7 +20,7 @@ use crate::output::{BackgroundFallbackMode, RemovalExecution, handle_remove_outp
 
 use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use super::hooks::HookAnnouncer;
-use super::repository_ext::RepositoryCliExt;
+use super::repository_ext::{RepositoryCliExt, is_primary_worktree};
 use super::worktree::{BranchFate, RemovalPlan, compute_worktree_path};
 use super::{RemoveTarget, flag_pair};
 
@@ -450,6 +450,9 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
             let branches = args.branches;
 
             if branches.is_empty() {
+                if !delete_branch && repo.is_bare()? && is_primary_worktree(&repo)? {
+                    anyhow::bail!("Cannot remove the primary worktree without an explicit target");
+                }
                 // Single worktree removal: validate FIRST, then approve, then execute
                 let current_path = repo
                     .current_worktree()

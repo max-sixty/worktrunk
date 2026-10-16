@@ -35,8 +35,8 @@ use crate::commands::context::CommandEnv;
 use crate::commands::hook_plan::{ApprovedHookPlan, register_planned};
 use crate::commands::hooks::HookAnnouncer;
 use crate::commands::repository_ext::{
-    check_not_default_branch, compute_integration_reason, is_primary_worktree,
-    live_sibling_checkout,
+    compute_integration_reason, is_primary_worktree, live_sibling_checkout,
+    require_branch_deletion_allowed,
 };
 use crate::commands::template_vars::TemplateVars;
 use crate::output::{handle_merge_remove_output, post_hook_display_path, pre_hook_display_path};
@@ -112,7 +112,7 @@ pub fn finish_after_merge(
 
     // Finish worktree unless removal is disabled or blocked.
     // Guards are shared with `wt remove`: is_primary_worktree (Phase 2) and
-    // check_not_default_branch (Phase 3) are the same helpers both paths use.
+    // require_branch_deletion_allowed (Phase 3) are the same helpers both paths use.
     let removed = if !remove {
         eprintln!("{}", info_message("Worktree preserved (--no-remove)"));
         false
@@ -148,7 +148,12 @@ pub fn finish_after_merge(
         false
     } else {
         // Phase 3: reject removing default branch (merge always uses SafeDelete).
-        check_not_default_branch(repo, current_branch, &BranchDeletionMode::SafeDelete)?;
+        require_branch_deletion_allowed(
+            repo,
+            current_branch,
+            &BranchDeletionMode::SafeDelete,
+            true,
+        )?;
 
         let current_wt = repo.current_worktree();
         current_wt.ensure_clean("remove worktree after merge", Some(current_branch), false)?;

@@ -281,7 +281,14 @@ impl RepositoryCliExt for Repository {
             Resolved::BranchOnly { branch, .. } => Some(branch.as_str()),
         };
         if let Some(branch) = branch_name {
-            check_not_default_branch(self, branch, &deletion_mode)?;
+            let has_worktree = !matches!(
+                &resolved,
+                Resolved::BranchOnly {
+                    pruned_from: None,
+                    ..
+                }
+            );
+            require_branch_deletion_allowed(self, branch, &deletion_mode, has_worktree)?;
         }
         // An orphan worktree's branch is unborn until its first commit: it has
         // no ref, so there is nothing for the removal to delete.
@@ -395,11 +402,7 @@ impl RepositoryCliExt for Repository {
             if branch_checked_out_at.is_some() || branch_unborn {
                 (BranchDeletionMode::Keep, None, None)
             } else {
-                let default_branch = self.default_branch();
-                let target_branch = match (&default_branch, &branch_name) {
-                    (Some(db), Some(bn)) if db == bn => None,
-                    _ => default_branch,
-                };
+                let target_branch = self.default_branch();
                 let (integration_reason, target_branch) = match compute_integration_reason(
                     self,
                     snapshot,
@@ -527,8 +530,8 @@ impl RepositoryCliExt for Repository {
 /// Check if the current worktree is the primary worktree (should not be removed).
 ///
 /// Returns true for the main worktree in normal repos and the default branch
-/// worktree in bare repos. Used by `wt merge` to skip removal silently, and
-/// by `prepare_worktree_removal` Phase 2 (which errors instead of skipping).
+/// worktree in bare repos. Merge cleanup skips it; `wt remove` requires an
+/// explicit target before removing a bare repository's primary checkout.
 pub(crate) fn is_primary_worktree(repo: &Repository) -> anyhow::Result<bool> {
     let current_root = repo.current_worktree().root()?;
     let primary = repo.primary_worktree()?;
@@ -541,6 +544,7 @@ pub(crate) fn is_primary_worktree(repo: &Repository) -> anyhow::Result<bool> {
 /// - `deletion_mode` is `ForceDelete` (skip integration check)
 /// - `branch_name` is `None` (detached HEAD)
 /// - `target_branch` is `None` (no target to check against)
+/// - the branch is the target (self-comparison is not integration)
 ///
 /// When `Some`, the effective target may differ from the local default branch
 /// (e.g., `origin/main` when upstream is ahead).
@@ -563,6 +567,9 @@ pub(crate) fn compute_integration_reason(
         Some(pair) => pair,
         None => return (None, None),
     };
+    if branch == target {
+        return (None, None);
+    }
     // On error, return None (informational only)
     match repo.integration_reason(snapshot, branch, target) {
         Ok((effective_target, reason)) => (reason, Some(effective_target)),
@@ -604,19 +611,21 @@ pub(crate) fn live_sibling_checkout<'a>(
     })
 }
 
-/// Reject removing the default branch unless force-delete is set.
-///
-/// The default branch is the integration target — checking it against itself is
-/// tautological (same logic as `wt list`'s `is_main` guard in
-/// `check_integration_state`).
-pub(crate) fn check_not_default_branch(
+/// Default-branch deletion requires explicit force; keeping its ref permits
+/// removing a linked checkout or stale registration. `has_worktree` keeps the
+/// refusal advice from suggesting a no-op for a pure branch-only target.
+pub(crate) fn require_branch_deletion_allowed(
     repo: &Repository,
     branch: &str,
     deletion_mode: &BranchDeletionMode,
+    has_worktree: bool,
 ) -> anyhow::Result<()> {
-    if !deletion_mode.is_force() && repo.default_branch().as_deref() == Some(branch) {
-        return Err(GitError::CannotRemoveDefaultBranch {
+    if *deletion_mode == BranchDeletionMode::SafeDelete
+        && repo.default_branch().as_deref() == Some(branch)
+    {
+        return Err(GitError::CannotDeleteDefaultBranch {
             branch: branch.to_string(),
+            has_worktree,
         }
         .into());
     }
