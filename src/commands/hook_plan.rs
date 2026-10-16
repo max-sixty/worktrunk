@@ -25,7 +25,7 @@
 //! hold no [`ProjectConfig`] and call no `load_project_config()` for the
 //! covered hook types — re-derivation is a compile error, not a review check.
 //! The `Repository` an executor still holds is used only for *rendering*
-//! ([`render_planned`] takes the frozen [`CommandConfig`] list, never config),
+//! ([`prepare_selected`] takes the frozen [`CommandConfig`] list, never config),
 //! so it cannot re-select.
 //!
 //! The frozen unit is the *selected, source-tagged [`CommandConfig`] list* per
@@ -51,10 +51,9 @@ use worktrunk::git::add_hook_skip_hint;
 
 use super::command_approval::approve_command_batch;
 use super::command_executor::{
-    CommandContext, FailureStrategy, PipelineKind, execute_pipeline_foreground, prepare_steps,
+    CommandContext, FailureStrategy, PipelineKind, execute_pipeline_foreground,
 };
-use super::hook_announcement::SourcedStep;
-use super::hooks::{HookAnnouncer, into_source_groups, sourced_steps_to_foreground};
+use super::hooks::{HookAnnouncer, prepare_selected, sourced_steps_to_foreground};
 use super::project_config::{ApprovableCommand, Phase};
 use worktrunk::config::HookSource;
 
@@ -340,28 +339,6 @@ impl ApprovedHookPlan {
     }
 }
 
-/// Render the frozen selection into source-tagged steps. Takes the frozen
-/// `CommandConfig` list, never config — re-selection is impossible. `ctx`'s
-/// `Repository` is used only for template expansion.
-fn render_planned(
-    entries: &[(HookSource, CommandConfig)],
-    ctx: &CommandContext<'_>,
-    extra_vars: &[(&str, &str)],
-    hook_type: HookType,
-) -> anyhow::Result<Vec<SourcedStep>> {
-    let mut out = Vec::new();
-    for (source, cfg) in entries {
-        let steps = prepare_steps(cfg, ctx, extra_vars, hook_type, *source)?.validated()?;
-        for step in steps {
-            out.push(SourcedStep {
-                step,
-                source: *source,
-            });
-        }
-    }
-    Ok(out)
-}
-
 /// Foreground execution of a covered hook from the approved plan.
 ///
 /// Replaces `execute_hook` for `pre-merge` / `pre-remove` / `pre-start`. The
@@ -382,7 +359,7 @@ pub fn execute_planned_hook(
     failure_strategy: FailureStrategy,
     display_path: Option<&Path>,
 ) -> anyhow::Result<()> {
-    let sourced = render_planned(plan.lookup(hook_type, anchor), ctx, extra_vars, hook_type)?;
+    let sourced = prepare_selected(plan.lookup(hook_type, anchor), ctx, extra_vars, hook_type)?;
     if sourced.is_empty() {
         return Ok(());
     }
@@ -400,7 +377,7 @@ pub fn execute_planned_hook(
 ///
 /// The plan-backed counterpart of `HookAnnouncer::register`: steps are
 /// rendered from the frozen selection and added via the announcer's existing
-/// config-free `add_groups`, with no `load_project_config()` at execution.
+/// config-free `add_steps`, with no `load_project_config()` at execution.
 ///
 /// `anchor` is the worktree the hook runs in — the lookup key into the frozen
 /// plan (see [`execute_planned_hook`]).
@@ -413,9 +390,9 @@ pub fn register_planned(
     extra_vars: &[(&str, &str)],
     display_path: Option<&Path>,
 ) -> anyhow::Result<()> {
-    let sourced = render_planned(plan.lookup(hook_type, anchor), ctx, extra_vars, hook_type)
+    let sourced = prepare_selected(plan.lookup(hook_type, anchor), ctx, extra_vars, hook_type)
         .context("failed to render planned hooks")?;
-    announcer.add_groups(ctx, hook_type, display_path, into_source_groups(sourced));
+    announcer.add_steps(ctx, hook_type, display_path, sourced);
     Ok(())
 }
 
