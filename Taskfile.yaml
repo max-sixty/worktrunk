@@ -72,10 +72,10 @@ tasks:
             # installs: apt resolves the PowerShell .deb's dependencies from
             # these lists too.
             if ! command -v zsh &> /dev/null || ! command -v fish &> /dev/null \
-                || ! command -v jq &> /dev/null || ! command -v lsof &> /dev/null \
+                || ! command -v lsof &> /dev/null \
                 || ! command -v pwsh &> /dev/null; then
                 apt-get update -qq
-                apt-get install -y -qq zsh fish jq lsof
+                apt-get install -y -qq zsh fish lsof
             fi
             # PowerShell isn't in Debian's repos. Install the release .deb
             # rather than the tarball: pwsh aborts at startup without libicu,
@@ -103,11 +103,10 @@ tasks:
             rm -rf "$TEMP"
             echo "nu installed"
         fi
-        # The shells the feature drives, plus the `jq` its Claude-hook tests
-        # pipe the hook payload through. Run each rather than looking for it
+        # The shells the feature drives. Run each rather than looking for it
         # on PATH, because a pwsh missing its libicu is on PATH and aborts at
         # startup anyway.
-        for tool in bash zsh fish nu pwsh jq; do
+        for tool in bash zsh fish nu pwsh; do
             "$tool" --version > /dev/null 2>&1 || { echo "Error: $tool not usable"; exit 1; }
             echo "$tool available"
         done
