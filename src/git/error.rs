@@ -2372,6 +2372,9 @@ mod tests {
         }
         .into();
         assert_eq!(err.interrupt_signal(), Some(15));
+        let err = err.context(WorktrunkError::AlreadyDisplayed { exit_code: 143 });
+        assert_eq!(err.interrupt_signal(), Some(15));
+        assert_eq!(err.exit_code(), Some(143));
 
         // An already-classified interrupt stays one (idempotence for loops
         // that re-check errors bubbling through them).
