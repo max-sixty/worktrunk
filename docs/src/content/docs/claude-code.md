@@ -1,19 +1,21 @@
 ---
 title: "Agent Integration"
-description: "Worktrunk plugins for Claude Code, Codex, OpenCode, Pi, oh-my-pi, and Gemini CLI: a configuration skill, wt list activity tracking, and Claude-only worktree isolation."
+description: "Worktrunk plugins for Claude Code, Codex, Cursor, OpenCode, Gemini CLI, Pi, and oh-my-pi: configuration skills, wt list activity tracking, and Claude-only worktree isolation."
 sidebar:
   order: 21
 ---
 Worktrunk ships a plugin for each supported agent CLI. What a plugin provides depends on the hooks that CLI exposes:
 
-| Capability | Claude Code | Codex | OpenCode | Pi | oh-my-pi | Gemini CLI |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|
-| Configuration skill | ✓ | ✓ |  |  |  | ✓ |
-| Activity tracking (🤖/💬 in `wt list`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Worktree isolation | ✓ |  |  |  |  |  |
-| `/wt-switch-create` skill | ✓ |  |  |  |  |  |
+| Capability | Claude Code | Codex | Cursor | OpenCode | Gemini CLI | Pi | oh-my-pi |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| Configuration skill | ✓ | ✓ | ✓ |  | ✓ |  |  |
+| Activity tracking (🤖/💬 in `wt list`) | ✓ | ✓ | ✓\* | ✓ | ✓ | ✓ | ✓ |
+| Worktree isolation | ✓ |  |  |  |  |  |  |
+| `/wt-switch-create` skill | ✓ |  |  |  |  |  |  |
 
-The configuration skill is documentation the agent reads to help set up LLM commits, hooks, and troubleshooting. Activity tracking shows which worktrees have running sessions. Worktree isolation needs worktree-lifecycle hooks, which only Claude Code exposes, so Codex, OpenCode, Pi, oh-my-pi, and Gemini users invoke `wt switch --create` and `wt remove` directly. Codex tracks activity through its own `Stop` and `SessionEnd` hooks.
+\* Cursor activity tracking applies to local IDE and CLI sessions. Cloud Agents run in a remote checkout and have no editor-lifetime `sessionEnd` event, so they do not update the marker shown by a developer machine's `wt list`.
+
+The configuration skill is documentation the agent reads to help set up LLM commits, hooks, and troubleshooting. Activity tracking shows which worktrees have running sessions. Worktree isolation needs worktree-lifecycle hooks, which only Claude Code exposes, so Codex, Cursor, OpenCode, Gemini, Pi, and oh-my-pi users invoke `wt switch --create` and `wt remove` directly.
 
 ## Installation
 
@@ -47,6 +49,16 @@ codex plugin add worktrunk@worktrunk
 
 `wt config plugins codex uninstall` removes the plugin and its marketplace entry.
 
+### Cursor
+
+Register the Worktrunk marketplace:
+
+```bash
+agent plugin marketplace add https://github.com/max-sixty/worktrunk
+```
+
+Then install **Worktrunk** from **Cursor Settings → Plugins**. Cursor's CLI can register and remove marketplaces, but plugin installation is currently interactive, so there is no `wt config plugins cursor` wrapper that could truthfully complete the install. Remove the marketplace with `agent plugin marketplace remove worktrunk`.
+
 ### OpenCode
 
 ```bash
@@ -54,6 +66,14 @@ wt config plugins opencode install
 ```
 
 This writes the activity-tracking plugin to OpenCode's global plugins directory, `~/.config/opencode/plugins/worktrunk.ts` (honoring `$OPENCODE_CONFIG_DIR` and `$XDG_CONFIG_HOME`). `wt config plugins opencode uninstall` removes it.
+
+### Gemini CLI
+
+```bash
+gemini extensions install https://github.com/max-sixty/worktrunk
+```
+
+Gemini loads the extension natively from the repository, so there is no `wt` wrapper. `gemini extensions uninstall worktrunk` removes it.
 
 ### Pi
 
@@ -71,14 +91,6 @@ wt config plugins omp install
 
 oh-my-pi (`omp`) is a Pi-derived agent with its own config root and hook API, so it takes a separate command. This writes the activity hook to `~/.omp/agent/hooks/pre/worktrunk.ts`. Named `$OMP_PROFILE` or `$PI_PROFILE` profiles use `~/.omp/profiles/<profile>/agent`, `$PI_CONFIG_DIR` changes the `.omp` config root, and `$PI_CODING_AGENT_DIR` overrides the agent directory for the default profile. `wt config plugins omp uninstall` removes the hook.
 
-### Gemini CLI
-
-```bash
-gemini extensions install https://github.com/max-sixty/worktrunk
-```
-
-Gemini loads the extension natively from the repository, so there is no `wt` wrapper. `gemini extensions uninstall worktrunk` removes it.
-
 ## Configuration skill
 
 With the `/worktrunk` skill, the agent can help with:
@@ -88,7 +100,7 @@ With the `/worktrunk` skill, the agent can help with:
 - Configuring worktree path templates
 - Fixing shell integration issues
 
-Claude Code is designed to load the skill automatically when it detects worktrunk-related questions.
+Claude Code and Cursor load the skill automatically when they detect worktrunk-related questions.
 
 ## Activity tracking
 
@@ -112,7 +124,7 @@ $ wt list
 - 🤖 — agent is working
 - 💬 — agent is waiting or idle
 
-Every plugin clears the marker when a session ends. A stale marker can remain if the agent process is killed before its session-end hook runs. In every case, `wt config state marker clear` removes a marker manually.
+Local plugins clear the marker when a session ends. A stale marker can remain if the agent process is killed before its session-end hook runs. In every case, `wt config state marker clear` removes a marker manually.
 
 ### Manual status markers
 
@@ -133,6 +145,39 @@ Activity tracking is not plugin-specific. The plugins above only call `wt` on th
 | Session starts, or the agent resumes work | `wt config state marker set "🤖"` |
 | Agent finishes a turn and waits for input | `wt config state marker set "💬"` |
 | Session ends | `wt config state marker clear` |
+
+## Cursor worktrees
+
+For Worktrunk's full lifecycle behavior, let Worktrunk create the linked worktree and launch Cursor there:
+
+```bash
+wt switch --create -x agent feature/auth
+```
+
+This applies Worktrunk's path template, command approvals, and pre-start/post-start hooks. Cursor does not expose worktree-create or worktree-remove interception hooks, and a skill cannot relocate the current chat into a new Worktrunk worktree.
+
+Cursor's `/worktree`, Agents Window, and `agent --worktree` commands instead create Cursor-owned worktrees under Cursor's path and retention policy. A project that intentionally uses that path can opt into Worktrunk's start hooks with a checked-in setup file:
+
+```json title=".cursor/worktrees.json"
+{
+  "setup-worktree-unix": [
+    "wt hook pre-start --foreground",
+    "wt hook post-start --foreground"
+  ],
+  "setup-worktree-windows": [
+    "git-wt hook pre-start --foreground",
+    "git-wt hook post-start --foreground"
+  ]
+}
+```
+
+Worktrunk still requires explicit approval for project-defined commands. Cursor's non-interactive setup fails rather than running an unapproved command; review and approve the commands first with `wt config approvals add`. An agent must not approve them on the user's behalf.
+
+This bridge is narrower than Claude Code isolation:
+
+- Cursor chooses the worktree path and branch lifecycle.
+- Cursor deletion has no matching event, so `pre-remove` and `post-remove` do not run.
+- Cursor's automatic cleanup can remove externally created worktrees, including Worktrunk-created ones, when the machine-wide worktree cap is exceeded.
 
 ## Worktree isolation (Claude Code only)
 
