@@ -78,16 +78,16 @@ pub use sections::{
 /// identifies which layer failed so callers can emit targeted diagnostics
 /// (file errors with line/col vs env-var attribution).
 ///
-/// Strict loading treats the first issue as fatal; best-effort
-/// [`UserConfig::load_with_warnings()`] returns all issues alongside the
-/// usable config.
+/// Strict loading treats the first issue other than a rejected env-var
+/// override as fatal; best-effort [`UserConfig::load_with_warnings()`]
+/// returns all issues alongside the usable config.
 #[derive(Debug)]
 pub enum LoadError {
     /// A file parser failed, retaining its source and raw diagnosis.
     File(super::ConfigParseError),
-    /// Config files parsed cleanly; applying env-var overrides failed.
-    /// `vars` lists the exact `WORKTRUNK_*` env vars that were parsed
-    /// as `(name, value)` pairs.
+    /// An env-var override setting was rejected; other settings' overrides
+    /// may still apply. `vars` lists the `WORKTRUNK_*` env vars forming the
+    /// rejected setting as `(name, value)` pairs.
     Env {
         err: String,
         vars: Vec<(String, String)>,
@@ -675,10 +675,18 @@ impl UserConfig {
 
     /// Like [`load()`](Self::load), but returns a [`LoadError`] that
     /// distinguishes file-level parse failures (with line/col) from
-    /// env-var override failures.
+    /// `--config-set` and validation failures.
+    ///
+    /// A rejected env-var override is not an error: like the tolerant load,
+    /// the setting falls back to the file layers and the other overrides
+    /// still apply. Its warning is emitted at startup by the user-config
+    /// prewarm, so every command reports it the same way.
     pub(crate) fn load_with_cause() -> Result<Self, LoadError> {
         let (config, warnings) = Self::load_with_warnings();
-        if let Some(err) = warnings.into_iter().next() {
+        if let Some(err) = warnings
+            .into_iter()
+            .find(|warning| !matches!(warning, LoadError::Env { .. }))
+        {
             return Err(err);
         }
         Ok(config)
