@@ -1588,6 +1588,7 @@ fn run_pre_switch_hooks(
     config: &UserConfig,
     target_branch: &str,
     ref_target: Option<&ResolvedTarget>,
+    create: bool,
     yes: bool,
 ) -> anyhow::Result<()> {
     let current_wt = repo.current_worktree();
@@ -1596,14 +1597,32 @@ fn run_pre_switch_hooks(
     // pre-switch hook receives has to name the same branch the switch goes on
     // to resolve, normalization included. A `pr:`/`mr:` argument is already
     // past that point — the forge answered with the branch name itself.
-    let resolved_target = match ref_target {
-        Some(target) => target.selector.token().to_string(),
+    let selector = match ref_target {
+        Some(target) => Some(target.selector.clone()),
+        // `--create` names a branch that doesn't exist yet, never a path —
+        // the same reading `resolve_switch_target` gives it.
         None => repo
             .expand_selector(target_branch)
-            .map(|s| s.token().to_string())
-            .unwrap_or_else(|_| target_branch.to_string()),
+            .ok()
+            .map(|s| if create { s.branch_only() } else { s }),
     };
-    let pre_ctx = CommandContext::new(repo, config, Some(&resolved_target), &current_path, yes);
+    // The same worktree ladder `plan_switch` runs, so a worktree named by its
+    // path — which is how the picker names one — describes the destination
+    // just as its branch name would (issue #4492). A detached destination has
+    // no branch, which leaves `branch` and `target` unset.
+    let (dest_branch, dest_path) = match selector.as_ref().map(|s| repo.resolve_selector(s)) {
+        Some(Ok(ResolvedWorktree::Worktree { path, branch, .. })) => (branch, Some(path)),
+        _ => (
+            Some(
+                selector
+                    .as_ref()
+                    .map_or(target_branch, |s| s.token())
+                    .to_string(),
+            ),
+            None,
+        ),
+    };
+    let pre_ctx = CommandContext::new(repo, config, dest_branch.as_deref(), &current_path, yes);
 
     let pre_switch_approved = approve_hooks(&pre_ctx, &[HookType::PreSwitch])?;
     if pre_switch_approved {
@@ -1615,18 +1634,25 @@ fn run_pre_switch_hooks(
         // matching `branch` and what `wt hook pre-switch` already renders
         // there (issue #4009).
         let base_branch = current_wt.branch().ok().flatten();
-        let dest_path = repo.worktree_for_branch(&resolved_target).ok().flatten();
 
         let ref_identity = ref_target.and_then(|t| t.ref_identity.as_ref());
         let mut vars = TemplateVars::new()
             .with_base(base_branch.as_deref(), &current_path)
-            .with_target(&resolved_target)
+            .with_target_opt(dest_branch.as_deref())
             .with_pr(
                 ref_identity.map(|id| id.number),
                 ref_identity.map(|id| id.url.as_str()),
             );
         if let Some(p) = dest_path.as_deref() {
             vars = vars.with_target_worktree_path(p).with_active_worktree(p);
+            // Without a branch, `commit` would otherwise read HEAD where the
+            // hook runs — the source worktree.
+            if dest_branch.is_none()
+                && let Ok(Some(commit)) = repo.worktree_at(p).head_sha()
+                && let Ok(short) = repo.short_sha(&commit)
+            {
+                vars = vars.with_active_commit(&commit, &short);
+            }
         }
         let extra_vars = vars.as_extra_vars();
 
@@ -1884,7 +1910,7 @@ impl SwitchPipeline<'_> {
         // against. `yes` is the single switch-wide flag, so the picker (no
         // `--yes`) and the argument path gate `pre-switch` hooks identically.
         if verify && !is_recovered {
-            run_pre_switch_hooks(repo, config, identifier, ref_target.as_ref(), yes)?;
+            run_pre_switch_hooks(repo, config, identifier, ref_target.as_ref(), create, yes)?;
         }
 
         // Capture source (base) worktree identity BEFORE the switch, for
