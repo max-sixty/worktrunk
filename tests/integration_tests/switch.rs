@@ -5927,6 +5927,46 @@ fn test_switch_pr_gitea_fork(#[from(repo_with_remote)] repo: TestRepo) {
     );
 }
 
+/// A renamed base repository can resolve through the API while no configured
+/// remote matches its current owner. The recovery hint must retain Gitea's
+/// canonical clone URL rather than reconstructing it from the PR's web URL.
+#[rstest]
+fn test_switch_pr_gitea_missing_remote_uses_api_clone_url(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/old-owner/test-repo.git",
+    ]);
+
+    let tea_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "head": {
+            "label": "contributor:feature-fix",
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}, "clone_url": "http://gitea.example.com:3000/gitea/contributor/test-repo.git"}
+        },
+        "base": {
+            "label": "main",
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "http://gitea.example.com:3000/gitea/owner/test-repo.git"}
+        },
+        "html_url": "https://gitea.example.com/owner/test-repo/pulls/42"
+    }"#;
+    let mock_bin = setup_mock_tea(&repo, "200 OK", tea_response);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_missing_remote_uses_api_clone_url", cmd);
+    });
+}
+
 /// A missing PR reaches the user as Gitea's own message.
 ///
 /// `tea api` exits 0 for every HTTP response, so the 404 arrives as a

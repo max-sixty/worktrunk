@@ -20,7 +20,6 @@ use std::env;
 use std::io::{self, IsTerminal, Read};
 use std::path::{Component, Path, PathBuf};
 
-use ansi_str::AnsiStr;
 use anyhow::{Context, Result};
 use worktrunk::git::{Repository, WorkingTree, WorktreeId};
 use worktrunk::styling::{
@@ -797,16 +796,7 @@ pub fn run(format: StatuslineFormat) -> Result<()> {
     if let Some(worktree) = &worktree
         && worktree.git_dir().is_ok()
     {
-        let git_segments = git_status_segments(worktree)?;
-
-        // In claude-code mode, skip a branch already visible in the directory name.
-        let git_segments = if let Some(ref dir) = dir_str {
-            filter_redundant_branch(git_segments, dir)
-        } else {
-            git_segments
-        };
-
-        segments.extend(git_segments);
+        segments.extend(git_status_segments(worktree, dir_str.as_deref())?);
     }
 
     // Model name (claude-code mode only) - priority 1 (same as Branch).
@@ -993,42 +983,53 @@ fn run_json() -> Result<()> {
     }
 }
 
-/// Omit a branch already shown as delimited text in the visible directory name.
-/// This depends on what the host displays, not on the configured path template:
-/// worktrees may have custom names, and the host may be showing a subdirectory.
-fn filter_redundant_branch(segments: Vec<StatuslineSegment>, dir: &str) -> Vec<StatuslineSegment> {
+/// Omit a branch visible in a directory whose configured path still names it.
+/// Keep it when the checkout no longer matches that configured path, and in
+/// the main worktree, whose name was never derived from its current branch.
+fn filter_redundant_branch(
+    segments: Vec<StatuslineSegment>,
+    dir: &str,
+    repo: &Repository,
+    branch: &str,
+    path: &Path,
+) -> Vec<StatuslineSegment> {
     use super::list::columns::ColumnKind;
 
-    // Find the branch segment by its column kind (not priority, which could be shared)
-    if let Some(branch_seg) = segments.iter().find(|s| s.kind == Some(ColumnKind::Branch)) {
-        // Strip ANSI codes in case branch becomes styled in future
-        let raw_branch = branch_seg.content.ansi_strip();
-        // Normalize branch name for comparison (slashes become dashes in paths).
-        let normalized_branch = worktrunk::config::sanitize_branch_name(&raw_branch);
-        let name = dir.rsplit('/').next().unwrap_or(dir);
-        let shows_branch = name.match_indices(&normalized_branch).any(|(start, _)| {
-            let end = start + normalized_branch.len();
-            let before = name[..start].chars().next_back();
-            let after = name[end..].chars().next();
-            before.is_none_or(|c| !c.is_alphanumeric())
-                && after.is_none_or(|c| !c.is_alphanumeric())
-        });
-
-        if shows_branch {
-            return segments
-                .into_iter()
-                .filter(|s| s.kind != Some(ColumnKind::Branch))
-                .collect();
-        }
+    let linked_worktree = repo
+        .repo_path()
+        .is_ok_and(|repo_path| !worktrunk::path::paths_match(path, repo_path));
+    let expected_path = linked_worktree
+        && super::worktree::compute_worktree_path(repo, branch, repo.user_config())
+            .is_ok_and(|expected| worktrunk::path::paths_match(path, &expected));
+    if expected_path && directory_shows_branch(dir, branch) {
+        return segments
+            .into_iter()
+            .filter(|s| s.kind != Some(ColumnKind::Branch))
+            .collect();
     }
 
     segments
 }
 
+/// Check only the final displayed component; parent names may be abbreviated.
+fn directory_shows_branch(dir: &str, branch: &str) -> bool {
+    let normalized_branch = worktrunk::config::sanitize_branch_name(branch);
+    let name = dir.rsplit('/').next().unwrap_or(dir);
+    name.match_indices(&normalized_branch).any(|(start, _)| {
+        let end = start + normalized_branch.len();
+        let before = name[..start].chars().next_back();
+        let after = name[end..].chars().next();
+        before.is_none_or(|c| !c.is_alphanumeric()) && after.is_none_or(|c| !c.is_alphanumeric())
+    })
+}
+
 /// Get git status as prioritized segments for the current worktree.
 ///
 /// CI status and the dev-server URL render as underlined OSC 8 hyperlinks.
-fn git_status_segments(worktree: &WorkingTree) -> Result<Vec<StatuslineSegment>> {
+fn git_status_segments(
+    worktree: &WorkingTree,
+    visible_dir: Option<&str>,
+) -> Result<Vec<StatuslineSegment>> {
     use super::list::columns::ColumnKind;
 
     let repo = worktree.repo();
@@ -1058,12 +1059,22 @@ fn git_status_segments(worktree: &WorkingTree) -> Result<Vec<StatuslineSegment>>
 
     // Never empty: the branch segment is unconditional, so there is no
     // emptier case to fall back to.
-    Ok(item.format_statusline_segments())
+    let segments = item.format_statusline_segments();
+    // Deduplicate only an inventory worktree whose default branch was already
+    // resolved above. A foreign directory's fallback must not start detection
+    // (which may contact a remote) just to decide whether to hide its branch.
+    Ok(match (visible_dir, item.branch(), item.worktree_path()) {
+        (Some(dir), Some(branch), Some(path)) => {
+            filter_redundant_branch(segments, dir, repo, branch, path)
+        }
+        _ => segments,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ansi_str::AnsiStr;
 
     #[test]
     fn test_format_directory_fish_style() {
@@ -1189,14 +1200,7 @@ mod tests {
         #[case] branch: &str,
         #[case] keeps_branch: bool,
     ) {
-        use super::super::list::columns::ColumnKind;
-
-        let segments = vec![StatuslineSegment::from_column(
-            branch.to_owned(),
-            ColumnKind::Branch,
-        )];
-        let filtered = filter_redundant_branch(segments, dir);
-        assert_eq!(!filtered.is_empty(), keeps_branch);
+        assert_eq!(!directory_shows_branch(dir, branch), keeps_branch);
     }
 
     /// Width fitting must never cut inside a linked segment's OSC 8 sequence.
