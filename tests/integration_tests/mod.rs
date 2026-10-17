@@ -30,6 +30,7 @@ pub mod e2e_shell_post_start;
 pub mod eval;
 pub mod for_each;
 pub mod foreground_jobs;
+pub mod git_config_source;
 pub mod git_error_display;
 pub mod help;
 pub mod hook_show;
