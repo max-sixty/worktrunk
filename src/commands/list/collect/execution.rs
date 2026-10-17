@@ -2,7 +2,7 @@
 //!
 //! Contains the flat parallelism infrastructure:
 //! - `WorkItem` - unit of work for the thread pool
-//! - `TaskKind::compute()` - route each task to its computation
+//! - `TaskKind::compute()` (in `tasks.rs`) - route each task to its computation
 //! - `work_items_for_worktree()` / `work_items_for_branch()` - generate work items
 //! - `ExpectedResults` - track expected results for timeout diagnostics
 //! - `seed_skipped_task_defaults()` - conservative sentinels for skipped tasks
@@ -93,7 +93,7 @@ pub(crate) struct ExpectedResults {
 
 impl ExpectedResults {
     /// Record that we expect a result of the given kind for the given item.
-    /// Called internally by `TaskSpawner::spawn()`.
+    /// Called by `work_items_for_worktree()` / `work_items_for_branch()`.
     pub fn expect(&self, item_idx: usize, kind: TaskKind) {
         let mut inner = self.inner.lock().unwrap();
         if inner.len() <= item_idx {
@@ -127,7 +127,7 @@ impl ExpectedResults {
 /// `refresh_status_symbols` keeps gates at `None` while their inputs are
 /// unloaded, which renders as the `·` placeholder. For tasks that will
 /// *never* run (a task no rendered column needs, unborn item missing
-/// commit-dependent tasks, prunable worktree), seeding a conservative
+/// commit-dependent tasks), seeding a conservative
 /// default up front lets the gate resolve normally instead of showing `·`
 /// forever.
 ///
@@ -247,9 +247,7 @@ pub(super) fn seed_unborn_main_state(item: &mut ListItem) {
 ///
 /// Prunable worktrees have lost their directory or its `.git`, so no task
 /// can run for them. Without this seeding, every gate would stay `None`
-/// forever and the cell would render as seven `·` placeholders. This
-/// helper replaces the runtime fallback in `refresh_status_symbols`
-/// (introduced as a shim in step 4) with spawn-time seeding.
+/// forever and the cell would render as seven `·` placeholders.
 pub(super) fn seed_prunable_item(item: &mut ListItem) {
     use super::super::model::{
         Divergence, MainState, OperationState, StatusSymbols, WorktreeState,
@@ -405,7 +403,7 @@ pub fn work_items_for_worktree(
     // URL status health check task (if we have a URL). Only this single
     // work item is queued per item — the immediate `UrlStatus` placeholder
     // was already sent through the drain channel above (never written to
-    // `item.url` directly; see the module docstring), so this task needs no
+    // `item.url` directly; see the `work_items_for_worktree` docstring), so this task needs no
     // additional placeholder send.
     if include_url && ctx.item_url.is_some() {
         expected_results.expect(item_idx, TaskKind::UrlStatus);

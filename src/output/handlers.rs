@@ -2219,7 +2219,7 @@ fn remove_removed_worktree_silently(
 /// `redirect_stdout_to_stderr` controls whether the child's stdout is merged
 /// onto wt's stderr (`true`) or passed through unchanged (`false`).
 ///
-/// - Hooks and `for-each` pass `true`: their output is decoration around
+/// - Hooks pass `true`: their output is decoration around
 ///   wt's own stderr messages, and merging keeps "Running …" / progress lines
 ///   ordered with the child's own writes.
 /// - Aliases pass `false`: `wt <alias>` is a user-defined command and its

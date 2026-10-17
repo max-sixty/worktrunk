@@ -422,7 +422,9 @@ fn test_prune_orphan_branches(mut repo: TestRepo) {
     repo.create_branch("orphan-b");
 
     // Create an unmerged branch (has a unique commit via worktree, then remove worktree)
-    repo.add_worktree_with_commit("unmerged-orphan", "u.txt", "data", "unique commit");
+    let unmerged_path =
+        repo.add_worktree_with_commit("unmerged-orphan", "u.txt", "data", "unique commit");
+    repo.run_git(&["worktree", "remove", unmerged_path.to_str().unwrap()]);
 
     // Far-future epoch: branches appear ~5 years old, passing the default 1d guard
     let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--yes"], None);
@@ -430,6 +432,9 @@ fn test_prune_orphan_branches(mut repo: TestRepo) {
     cmd.env("RAYON_NUM_THREADS", "1"); // deterministic output order
 
     assert_cmd_snapshot!(cmd);
+
+    // The unmerged orphan has a unique commit, so prune keeps it
+    repo.run_git(&["rev-parse", "--verify", "refs/heads/unmerged-orphan"]);
 }
 
 /// Orphan branches (no worktree) respect the min-age guard via reflog timestamps.
