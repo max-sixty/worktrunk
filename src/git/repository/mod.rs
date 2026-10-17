@@ -437,11 +437,7 @@ impl ResolvedWorktree {
 /// So the producers state it. A token nobody touched may name a path
 /// ([`Selector::literal`]). One an earlier step produced may not
 /// ([`Selector::rewritten_to`]) — a shortcut expansion, a `pr:`/`mr:` lookup, a
-/// stripped remote prefix, a default branch read from cache. Neither does one
-/// that names a branch by construction ([`Selector::branch_only`]), which is
-/// `wt switch --create <name>`: nothing rewrote the argument, but it names a
-/// branch that does not exist yet, so a directory sitting at that spelling is
-/// not what the user meant.
+/// stripped remote prefix, a default branch read from cache.
 #[derive(Debug, Clone)]
 pub struct Selector {
     token: String,
@@ -463,14 +459,6 @@ impl Selector {
         Self {
             token: token.into(),
             may_name_path: false,
-        }
-    }
-
-    /// Take the path arm off a token that names a branch by construction.
-    pub fn branch_only(self) -> Self {
-        Self {
-            may_name_path: false,
-            ..self
         }
     }
 

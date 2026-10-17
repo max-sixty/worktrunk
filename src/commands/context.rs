@@ -59,13 +59,7 @@ impl CommandEnv {
     /// named by path expands `{{ branch }}` to the branch checked out there.
     pub fn for_selector(config: UserConfig, selector: &str) -> anyhow::Result<Self> {
         let repo = Repository::current()?;
-        let worktree_path = repo.require_worktree(selector)?;
-        // Re-read the branch off the resolved worktree rather than the
-        // selector, which may have been the path. The lookup is against the
-        // cached worktree list `require_worktree` just walked.
-        let branch = repo
-            .worktree_at_path(&worktree_path)?
-            .and_then(|(_, branch)| branch);
+        let (worktree_path, branch) = repo.require_worktree(selector)?;
 
         Ok(Self {
             repo: Repository::at(&worktree_path)?,

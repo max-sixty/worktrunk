@@ -197,6 +197,18 @@ pub fn canonical_temp_home(temp_home: &TempDir) -> std::path::PathBuf {
     dunce::canonicalize(temp_home.path()).unwrap()
 }
 
+/// Check out `branch` a second time at `<repo>.<suffix>`, the state only
+/// `--force` can produce.
+pub fn add_force_duplicate(repo: &TestRepo, branch: &str, suffix: &str) -> std::path::PathBuf {
+    let dup = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(format!("repo.{suffix}"));
+    repo.run_git(&["worktree", "add", "--force", dup.to_str().unwrap(), branch]);
+    dup
+}
+
 /// Repo with remote tracking set up.
 ///
 /// Builds on the `repo` fixture, adding a "remote" for the default branch.

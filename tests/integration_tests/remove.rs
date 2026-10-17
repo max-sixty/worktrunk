@@ -1,9 +1,9 @@
 #[cfg(unix)]
 use crate::common::temp_home;
 use crate::common::{
-    BareRepoTest, SLEEP_FOR_ABSENCE_CHECK, TestRepo, TestRepoBase, configure_directive_file,
-    directive_file, make_snapshot_cmd, repo, repo_with_remote, setup_snapshot_settings,
-    setup_temp_snapshot_settings, wt_command,
+    BareRepoTest, SLEEP_FOR_ABSENCE_CHECK, TestRepo, TestRepoBase, add_force_duplicate,
+    configure_directive_file, directive_file, make_snapshot_cmd, repo, repo_with_remote,
+    setup_snapshot_settings, setup_temp_snapshot_settings, wt_command,
 };
 use ansi_str::AnsiStr;
 use insta::assert_snapshot;
@@ -5600,18 +5600,6 @@ fn test_remove_merged_locally_when_upstream_diverged(#[from(repo_with_remote)] r
 // out. The survivor is left at a null OID with an unresolvable `HEAD`, so every
 // test here asserts on the survivor's `HEAD`, not just on the branch.
 // ============================================================================
-
-/// Check out `branch` a second time at `<repo>.<suffix>`, the state only
-/// `--force` can produce.
-fn add_force_duplicate(repo: &TestRepo, branch: &str, suffix: &str) -> std::path::PathBuf {
-    let dup = repo
-        .root_path()
-        .parent()
-        .unwrap()
-        .join(format!("repo.{suffix}"));
-    repo.run_git(&["worktree", "add", "--force", dup.to_str().unwrap(), branch]);
-    dup
-}
 
 /// Assert `worktree` still resolves `HEAD` to a commit — the corruption a
 /// deleted-but-checked-out branch leaves behind.

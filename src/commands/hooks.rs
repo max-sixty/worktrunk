@@ -695,6 +695,8 @@ pub(crate) fn sourced_steps_to_foreground(
 /// The announcement shows the worktree path when commands run somewhere other
 /// than the user's cwd ([`crate::output::pre_hook_display_path`] — pre-hooks
 /// and manual `wt hook` invocations both run with the user still at cwd).
+///
+/// Returns whether any hook ran.
 pub(crate) fn run_hooks_foreground(
     ctx: &CommandContext,
     user_config: Option<&CommandConfig>,
@@ -703,7 +705,7 @@ pub(crate) fn run_hooks_foreground(
     extra_vars: &[(&str, &str)],
     name_filters: &[String],
     failure_strategy: FailureStrategy,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let sourced_steps = prepare_and_check(
         ctx,
         user_config,
@@ -714,7 +716,7 @@ pub(crate) fn run_hooks_foreground(
     )?;
 
     if sourced_steps.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
 
     let kind = PipelineKind::Hook {
@@ -729,7 +731,8 @@ pub(crate) fn run_hooks_foreground(
         ctx.repo,
         ctx.worktree_path,
         failure_strategy,
-    )
+    )?;
+    Ok(true)
 }
 
 /// Run a single hook type in the foreground for an operation (merge, switch,
@@ -744,12 +747,14 @@ pub(crate) fn run_hooks_foreground(
 /// Project config comes from `ctx.repo.load_project_config()` — see the
 /// module-level "Which `.config/wt.toml` a hook reads" docs for which worktree
 /// `ctx.repo` is rooted at per hook type.
+///
+/// Returns whether any hook ran.
 pub(crate) fn execute_hook(
     ctx: &CommandContext,
     hook_type: HookType,
     extra_vars: &[(&str, &str)],
     failure_strategy: FailureStrategy,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let project_config = ctx.repo.load_project_config()?;
     let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
     run_hooks_foreground(

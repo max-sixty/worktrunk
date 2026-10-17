@@ -8,7 +8,7 @@ use anyhow::{Context, bail};
 use color_print::cformat;
 use path_slash::PathExt as _;
 use worktrunk::copy::{copy_dir_recursive, copy_leaf};
-use worktrunk::git::Repository;
+use worktrunk::git::{Repository, duplicated_branches};
 use worktrunk::path::format_path_for_display;
 use worktrunk::progress::Progress;
 use worktrunk::styling::{eprintln, hint_message, info_message, success_message, warning_message};
@@ -184,36 +184,28 @@ pub enum PromoteResult {
     AlreadyInMain(String),
 }
 
-/// Resolve the branch to promote.
+/// Resolve the worktree to promote, and its branch.
 ///
-/// An explicit argument goes through the worktree selector, so the branch can be
-/// named by its worktree's path as well as by name. With no argument: from the
-/// main worktree, restore the default branch; from a linked worktree, promote
-/// the current branch.
-fn resolve_target_branch(branch: Option<&str>, repo: &Repository) -> anyhow::Result<String> {
+/// An explicit argument goes through the worktree selector, so it can name the
+/// branch or its worktree's path. With no argument: from the main worktree,
+/// restore the default branch (`^`); from a linked worktree, promote the
+/// current one (`@`).
+fn resolve_target(branch: Option<&str>, repo: &Repository) -> anyhow::Result<(PathBuf, String)> {
     use worktrunk::git::GitError;
 
-    if let Some(b) = branch {
-        // Promoting swaps two branches between worktrees, so a detached
-        // worktree has nothing to swap in.
-        return repo.require_selected_branch(b, "promote");
-    }
-
-    let current_wt = repo.current_worktree();
-    if !current_wt.is_linked()? {
-        // From main worktree with no args: restore default branch
-        repo.default_branch()
-            .ok_or_else(|| anyhow::anyhow!("Could not determine default branch"))
-    } else {
-        // From other worktree with no args: promote current branch
-        current_wt.branch()?.ok_or_else(|| {
-            GitError::DetachedHead {
-                action: Some("promote".into()),
-                worktree: None,
-            }
-            .into()
-        })
-    }
+    let selector = match branch {
+        Some(b) => b,
+        None if repo.current_worktree().is_linked()? => "@",
+        None => "^",
+    };
+    let (path, branch) = repo.require_worktree(selector)?;
+    // Promoting swaps two branches between worktrees, so a detached worktree
+    // has nothing to swap in.
+    let branch = branch.ok_or_else(|| GitError::DetachedHead {
+        action: Some("promote".into()),
+        worktree: Some(path.clone()),
+    })?;
+    Ok((path, branch))
 }
 
 /// Bail if a leftover staging dir exists from a previous interrupted promote —
@@ -336,24 +328,31 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
             worktree: Some(main_path.clone()),
         })?;
 
-    // Resolve the branch to promote (default_branch computed lazily, only when needed)
-    let target_branch = resolve_target_branch(branch, &repo)?;
+    let (target_path, target_branch) = resolve_target(branch, &repo)?;
 
     // Check if target is already in main worktree
     if target_branch == main_branch {
         return Ok(PromoteResult::AlreadyInMain(target_branch));
     }
 
-    // Find the worktree with the target branch
-    let target_wt = worktrees
-        .iter()
-        .skip(1) // Skip main worktree
-        .find(|wt| wt.branch.as_deref() == Some(&target_branch))
-        .ok_or_else(|| GitError::WorktreeNotFound {
-            branch: target_branch.clone(),
-        })?;
-
-    let target_path = &target_wt.path;
+    // The exchange checks each branch out in the other worktree, which git
+    // refuses while a third worktree holds it — and by then both worktrees are
+    // detached. Worktrunk never creates such a duplicate, but `git worktree
+    // add --force` can.
+    let duplicated = duplicated_branches(worktrees);
+    for branch in [&main_branch, &target_branch] {
+        if duplicated.contains(branch.as_str()) {
+            let paths: Vec<_> = worktrees
+                .iter()
+                .filter(|wt| wt.branch.as_ref() == Some(branch))
+                .map(|wt| format_path_for_display(&wt.path).to_string())
+                .collect();
+            return Err(anyhow::anyhow!(paths.join("\n")).context(cformat!(
+                "Cannot promote: <bold>{branch}</> is checked out in {} worktrees",
+                paths.len()
+            )));
+        }
+    }
 
     // Bail early if a leftover staging dir exists from a previous interrupted promote —
     // checked before `ensure_clean` so users see the recovery path first.
@@ -362,7 +361,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
 
     // Ensure both worktrees are clean
     let main_working_tree = repo.worktree_at(main_path);
-    let target_working_tree = repo.worktree_at(target_path);
+    let target_working_tree = repo.worktree_at(&target_path);
 
     main_working_tree.ensure_clean("promote", Some(&main_branch), false)?;
     target_working_tree.ensure_clean("promote", Some(&target_branch), false)?;
@@ -379,8 +378,12 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     let no_excludes: &[String] = &[];
     let main_entries =
         list_and_filter_ignored_entries(main_path, &main_branch, &worktree_paths, no_excludes)?;
-    let target_entries =
-        list_and_filter_ignored_entries(target_path, &target_branch, &worktree_paths, no_excludes)?;
+    let target_entries = list_and_filter_ignored_entries(
+        &target_path,
+        &target_branch,
+        &worktree_paths,
+        no_excludes,
+    )?;
 
     // Move gitignored files to staging BEFORE branch exchange.
     // `git switch` silently overwrites ignored files that collide with tracked
@@ -390,7 +393,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
             &repo,
             main_path,
             &main_entries,
-            target_path,
+            &target_path,
             &target_entries,
         )
         .context(format!(
@@ -418,7 +421,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
             staging_dir,
             main_path,
             &main_entries,
-            target_path,
+            &target_path,
             &target_entries,
         )
         .context(format!(
@@ -436,7 +439,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         "{}",
         success_message(cformat!(
             "Promoted: main worktree now has <bold>{target_branch}</>; {} now has <bold>{main_branch}</>",
-            worktrunk::path::format_path_for_display(target_path)
+            worktrunk::path::format_path_for_display(&target_path)
         ))
     );
     if swapped > 0 {

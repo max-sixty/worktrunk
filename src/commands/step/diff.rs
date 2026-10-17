@@ -27,7 +27,7 @@ pub fn step_diff(
     extra_args: &[String],
 ) -> anyhow::Result<()> {
     let repo = match branch {
-        Some(b) => Repository::at(&Repository::current()?.require_worktree(b)?)?,
+        Some(b) => Repository::at(Repository::current()?.require_worktree(b)?.0)?,
         None => Repository::current()?,
     };
     let wt = repo.current_worktree();

@@ -1,8 +1,8 @@
 use crate::common::{
-    SLEEP_FOR_ABSENCE_CHECK, TestRepo, configure_directive_file, directive_file, make_snapshot_cmd,
-    make_snapshot_cmd_with_global_flags, repo, repo_with_remote, set_temp_home_env,
-    setup_home_snapshot_settings, setup_snapshot_settings, temp_home, wait_for_file_content,
-    wt_command,
+    SLEEP_FOR_ABSENCE_CHECK, TestRepo, add_force_duplicate, configure_directive_file,
+    directive_file, make_snapshot_cmd, make_snapshot_cmd_with_global_flags, repo, repo_with_remote,
+    set_temp_home_env, setup_home_snapshot_settings, setup_snapshot_settings, temp_home,
+    wait_for_file_content, wt_command,
 };
 use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
@@ -8492,6 +8492,39 @@ fn test_switch_with_relative_worktree_paths(repo: TestRepo) {
 
     // Verify switching to the relative-path worktree works
     snapshot_switch("switch_to_relative_paths", &repo, &["relative-test"]);
+}
+
+/// `@` names the worktree the command runs in, by path, so it reaches the
+/// checkouts its branch name can't: the second copy of a branch checked out
+/// twice, and a detached worktree.
+#[rstest]
+#[case::second_checkout(false)]
+#[case::detached(true)]
+fn test_switch_at_names_the_current_worktree(mut repo: TestRepo, #[case] detached: bool) {
+    repo.add_worktree("feature");
+    let current = if detached {
+        repo.detach_head_in_worktree("feature");
+        repo.worktrees["feature"].clone()
+    } else {
+        add_force_duplicate(&repo, "feature", "feature-copy")
+    };
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "@", "--no-cd", "--yes", "--format=json"])
+        .current_dir(&current)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["action"], "already_at");
+    let path = std::path::Path::new(json["path"].as_str().unwrap());
+    assert_eq!(path.file_name(), current.file_name());
 }
 
 // -- JSON format tests --
