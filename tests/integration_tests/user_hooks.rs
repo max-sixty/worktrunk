@@ -4016,6 +4016,75 @@ capture = "echo 'target={{ target }} target_wt={{ target_worktree_path }} wt_pat
     );
 }
 
+/// Regression test for #4492: a worktree path selects the same worktree as its
+/// branch name, so the pre-switch vars must describe that destination too.
+/// The picker passes paths, so every picker switch takes this route.
+#[rstest]
+fn test_pre_switch_vars_with_path_argument(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+    let feature_name = feature_path.file_name().unwrap().to_string_lossy();
+
+    repo.write_test_config(
+        r#"[pre-switch]
+capture = "echo 'branch={{ branch }} target={{ target }} wt_name={{ worktree_name }} target_wt={% if target_worktree_path %}set{% endif %} commit={% if commit %}set{% endif %}' > pre_switch_path.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["switch", feature_path.to_str().unwrap(), "--yes"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content = fs::read_to_string(repo.root_path().join("pre_switch_path.txt")).unwrap();
+    assert_eq!(
+        content.trim(),
+        format!("branch=feature target=feature wt_name={feature_name} target_wt=set commit=set"),
+    );
+}
+
+/// A detached worktree is reachable only by path. Its pre-switch vars leave
+/// `branch`/`target` unset and take `commit` from the destination's HEAD, not
+/// the source's.
+#[rstest]
+fn test_pre_switch_vars_with_detached_path_argument(mut repo: TestRepo) {
+    let detached_path = repo.add_worktree("detached");
+    repo.commit_in_worktree(&detached_path, "file.txt", "content", "detached commit");
+    repo.detach_head_in_worktree("detached");
+    let detached_sha = repo.head_sha_in(&detached_path);
+
+    repo.write_test_config(
+        r#"[pre-switch]
+capture = "echo 'branch={% if branch is defined %}{{ branch }}{% else %}unset{% endif %} target={% if target is defined %}{{ target }}{% else %}unset{% endif %} commit={{ commit }}' > pre_switch_detached_path.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["switch", detached_path.to_str().unwrap(), "--yes"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content =
+        fs::read_to_string(repo.root_path().join("pre_switch_detached_path.txt")).unwrap();
+    assert_eq!(
+        content.trim(),
+        format!("branch=unset target=unset commit={detached_sha}"),
+    );
+}
+
 /// Post-remove: target/target_worktree_path point to where user ends up.
 #[rstest]
 fn test_post_remove_has_target_vars(mut repo: TestRepo) {
