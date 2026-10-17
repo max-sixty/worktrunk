@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use color_print::cformat;
 use normalize_path::NormalizePath;
+use path_slash::PathExt as _;
 use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 use worktrunk::path::{format_path_for_display, paths_match};
@@ -175,11 +176,19 @@ pub fn offer_bare_repo_worktree_path_fix(
         .and_then(|n| n.to_str())
         .unwrap_or("project");
 
-    // Use the actual branch being switched to in example paths. Calling
-    // `sanitize_branch_name` keeps the displayed example aligned with what
-    // the `sanitize` Jinja filter applies inside `BARE_REPO_WORKTREE_PATH`.
+    // Use the actual branch being switched to in example paths. The bad
+    // example is where the configured template puts it, shown relative to
+    // the project's parent when it lands there. Calling
+    // `sanitize_branch_name` keeps the good example aligned with what the
+    // `sanitize` Jinja filter applies inside `BARE_REPO_WORKTREE_PATH`.
+    let bad_path = compute_worktree_path(repo, branch, config)?;
+    let example_bad = repo_path
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|root| bad_path.strip_prefix(root).ok())
+        .map(|rel| rel.to_slash_lossy().into_owned())
+        .unwrap_or_else(|| format_path_for_display(&bad_path).to_string());
     let sanitized = worktrunk::config::sanitize_branch_name(branch);
-    let example_bad = format!("{parent_name}/{repo_name}.{sanitized}");
     let example_good = format!("{parent_name}/{sanitized}");
 
     let config_path_display = worktrunk::config::config_path_for_display();
