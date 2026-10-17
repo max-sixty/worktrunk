@@ -1570,6 +1570,41 @@ fn test_prune_pre_remove_needs_approval(mut repo: TestRepo) {
     );
 }
 
+/// Approval hints compare the effective config source: an absolute override
+/// shares hooks across worktrees, while a relative override follows each root.
+#[rstest]
+#[case::absolute("prune_approval_absolute_project_config", true)]
+#[case::relative("prune_approval_relative_project_config", false)]
+fn test_prune_approval_project_config_override(
+    mut repo: TestRepo,
+    #[case] snapshot_name: &str,
+    #[case] absolute: bool,
+) {
+    let wt_path = repo.add_worktree("merged");
+    repo.commit("Advance default branch");
+    let config_name = "shared-hooks.toml";
+    let config_path = repo.root_path().join(config_name);
+    std::fs::write(&config_path, "pre-remove = \"exit 89\"\n").unwrap();
+    let override_path = if absolute {
+        config_path
+    } else {
+        config_name.into()
+    };
+
+    let mut cmd = make_snapshot_cmd(
+        &repo,
+        "step",
+        &["prune", "--foreground", "--min-age=0s"],
+        None,
+    );
+    cmd.env("WORKTRUNK_PROJECT_CONFIG_PATH", override_path);
+    assert_cmd_snapshot!(snapshot_name, cmd);
+    assert!(
+        wt_path.exists(),
+        "the unapproved worktree must remain in place"
+    );
+}
+
 /// An unmerged worktree is outside prune's removal set, so the `pre-remove` it
 /// would run is never part of the approval gate.
 #[rstest]

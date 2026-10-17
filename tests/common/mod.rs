@@ -639,6 +639,10 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
     settings.add_redaction(".env.PWD", "[PWD]");
     // Mock commands directory (temp path for mock gh/glab binaries)
     settings.add_redaction(".env.WORKTRUNK_TEST_MOCK_CONFIG_DIR", "[TEST_MOCK_CONFIG]");
+    settings.add_redaction(
+        ".env.WORKTRUNK_TEST_MOCK_CALL_LOG_DIR",
+        "[TEST_MOCK_CALL_LOG]",
+    );
     // Nushell vendor-autoload override (temp path pinned by shell-integration tests)
     settings.add_redaction(
         ".env.WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR",

@@ -322,7 +322,10 @@ fn print_config_action_result(action: &ConfigAction, message: String) {
 /// - Restart hint for current shell
 ///
 /// Used by both `wt config shell install` and the interactive prompt after `wt switch`.
-pub fn print_shell_install_result(scan_result: &crate::commands::configure_shell::ScanResult) {
+pub fn print_shell_install_result(
+    scan_result: &crate::commands::configure_shell::ScanResult,
+    cmd: &str,
+) {
     // Count shells that became (more) configured
     let shells_configured_count = scan_result
         .configured
@@ -410,10 +413,18 @@ pub fn print_shell_install_result(scan_result: &crate::commands::configure_shell
     }
 
     // Zsh compinit advisory
-    if scan_result.zsh_needs_compinit {
+    if scan_result.zsh_needs_compinit
+        && let Some(result) = scan_result
+            .configured
+            .iter()
+            .find(|result| result.shell == Shell::Zsh)
+    {
+        let path = format_path_for_display(&result.path);
         eprintln!(
             "{}",
-            warning_message("Completions require compinit; add to ~/.zshrc before the wt line:",)
+            warning_message(format!(
+                "Completions require compinit; add to {path} before the {cmd} line:"
+            ))
         );
         eprintln!(
             "{}",
@@ -554,7 +565,7 @@ pub fn prompt_shell_integration(
     let install_result = apply_confirmed_shell_config(scan, None, binary_name)
         .map_err(|e| e.context("Failed to configure shell integration"))?;
 
-    print_shell_install_result(&install_result);
+    print_shell_install_result(&install_result, binary_name);
 
     Ok(true)
 }

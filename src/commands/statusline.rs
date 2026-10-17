@@ -799,7 +799,7 @@ pub fn run(format: StatuslineFormat) -> Result<()> {
     {
         let git_segments = git_status_segments(worktree)?;
 
-        // In claude-code mode, skip branch segment if directory matches worktrunk template
+        // In claude-code mode, skip a branch already visible in the directory name.
         let git_segments = if let Some(ref dir) = dir_str {
             filter_redundant_branch(git_segments, dir)
         } else {
@@ -993,7 +993,9 @@ fn run_json() -> Result<()> {
     }
 }
 
-/// Filter out branch segment if directory already shows it via worktrunk template.
+/// Omit a branch already shown as delimited text in the visible directory name.
+/// This depends on what the host displays, not on the configured path template:
+/// worktrees may have custom names, and the host may be showing a subdirectory.
 fn filter_redundant_branch(segments: Vec<StatuslineSegment>, dir: &str) -> Vec<StatuslineSegment> {
     use super::list::columns::ColumnKind;
 
@@ -1001,12 +1003,18 @@ fn filter_redundant_branch(segments: Vec<StatuslineSegment>, dir: &str) -> Vec<S
     if let Some(branch_seg) = segments.iter().find(|s| s.kind == Some(ColumnKind::Branch)) {
         // Strip ANSI codes in case branch becomes styled in future
         let raw_branch = branch_seg.content.ansi_strip();
-        // Normalize branch name for comparison (slashes become dashes in paths)
+        // Normalize branch name for comparison (slashes become dashes in paths).
         let normalized_branch = worktrunk::config::sanitize_branch_name(&raw_branch);
-        let pattern = format!(".{normalized_branch}");
+        let name = dir.rsplit('/').next().unwrap_or(dir);
+        let shows_branch = name.match_indices(&normalized_branch).any(|(start, _)| {
+            let end = start + normalized_branch.len();
+            let before = name[..start].chars().next_back();
+            let after = name[end..].chars().next();
+            before.is_none_or(|c| !c.is_alphanumeric())
+                && after.is_none_or(|c| !c.is_alphanumeric())
+        });
 
-        if dir.ends_with(&pattern) {
-            // Directory already shows branch via worktrunk template, skip branch segment
+        if shows_branch {
             return segments
                 .into_iter()
                 .filter(|s| s.kind != Some(ColumnKind::Branch))
@@ -1166,24 +1174,29 @@ mod tests {
         assert!(ClaudeCodeContext::parse("{invalid}").is_none());
     }
 
-    #[test]
-    fn test_branch_deduplication_with_slashes() {
-        // Simulate the actual scenario:
-        // - Directory: ~/w/insta.claude-fix-snapshot-merge-conflicts-xyz
-        // - Branch: claude/fix-snapshot-merge-conflicts-xyz
-        let dir = "~/w/insta.claude-fix-snapshot-merge-conflicts-xyz";
-        let branch = "claude/fix-snapshot-merge-conflicts-xyz";
+    #[rstest::rstest]
+    #[case("~/w/repo.feature", "feature", false)]
+    #[case("~/w/feature", "feature", false)]
+    #[case("~/w/repo-feature", "feature", false)]
+    #[case("~/w/feature-repo", "feature", false)]
+    #[case("~/w/repo.claude-fix", "claude/fix", false)]
+    #[case("~/w/repo-featured", "feature", true)]
+    #[case("~/w/repo-misfeature", "feature", true)]
+    #[case("~/w/repo.feature/src", "feature", true)]
+    #[case("~/w/checkout", "feature", true)]
+    fn test_branch_deduplication(
+        #[case] dir: &str,
+        #[case] branch: &str,
+        #[case] keeps_branch: bool,
+    ) {
+        use super::super::list::columns::ColumnKind;
 
-        let normalized_branch = worktrunk::config::sanitize_branch_name(branch);
-        let pattern = format!(".{normalized_branch}");
-
-        assert!(
-            dir.ends_with(&pattern),
-            "Directory '{}' should end with pattern '{}' (normalized from branch '{}')",
-            dir,
-            pattern,
-            branch
-        );
+        let segments = vec![StatuslineSegment::from_column(
+            branch.to_owned(),
+            ColumnKind::Branch,
+        )];
+        let filtered = filter_redundant_branch(segments, dir);
+        assert_eq!(!filtered.is_empty(), keeps_branch);
     }
 
     /// Width fitting must never cut inside a linked segment's OSC 8 sequence.

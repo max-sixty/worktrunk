@@ -597,7 +597,7 @@ fn handle_config_shell_command(action: ConfigShellCommand, yes: bool) -> anyhow:
         } => {
             // Auto-write to shell config files and completions
             let cmd = cmd.unwrap_or_else(binary_name);
-            handle_configure_shell(shell, yes, dry_run, cmd)
+            handle_configure_shell(shell, yes, dry_run, cmd.clone())
                 .map_err(anyhow::Error::from)
                 .and_then(|scan_result| {
                     // Exit with error if no shells configured
@@ -613,7 +613,7 @@ fn handle_config_shell_command(action: ConfigShellCommand, yes: bool) -> anyhow:
                     if dry_run {
                         return Ok(());
                     }
-                    crate::output::print_shell_install_result(&scan_result);
+                    crate::output::print_shell_install_result(&scan_result, &cmd);
                     Ok(())
                 })
         }
