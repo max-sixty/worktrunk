@@ -46,8 +46,24 @@ fn test_for_each_no_args_error(repo: TestRepo) {
 
 #[rstest]
 fn test_for_each_with_detached_head(mut repo: TestRepo) {
-    repo.add_worktree("detached-test");
+    // A generic directory name needs its location even without a collision.
+    let lone_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("solo")
+        .join("worktrunk");
+    repo.add_worktree_at_path("detached-test", &lone_path);
     repo.detach_head_in_worktree("detached-test");
+
+    // A detached checkout and an off-template branch can share a directory name.
+    for name in ["a", "on-branch"] {
+        let path = repo.root_path().parent().unwrap().join(name).join("repo");
+        repo.add_worktree_at_path(name, &path);
+        if name != "on-branch" {
+            repo.detach_head_in_worktree(name);
+        }
+    }
 
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,

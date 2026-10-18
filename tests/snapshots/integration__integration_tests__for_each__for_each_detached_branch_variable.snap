@@ -64,7 +64,7 @@ exit_code: 0
 ----- stderr -----
 [36m◎[39m [36mRunning in [1mmain[22m...[39m
 [0mBranch: [main]
-[36m◎[39m [36mRunning in [1mrepo.detached-test[22m (detached)...[39m
+[36m◎[39m [36mRunning in [1m_REPO_.detached-test[22m (detached)...[39m
 [0mBranch: []
 [36m◎[39m [36mRunning in [1mfeature-a[22m...[39m
 [0mBranch: [feature-a]

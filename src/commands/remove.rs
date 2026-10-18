@@ -74,7 +74,7 @@ impl RemovePlans {
 /// weaker association than the rest of the module draws — the template records
 /// where a worktree *would* go, not that this one belongs to that branch, and
 /// [`is_worktree_at_expected_path`] returns false for a detached worktree while
-/// [`worktree_display_name`] renders one as `dir_name (detached)` without
+/// [`worktree_display_name`] renders one as `path (detached)` without
 /// consulting the template at all. That weakness is why this only ever adds a
 /// line: a mention that occasionally points at a coincidence costs nothing,
 /// where a refusal built on the same inference would block work.

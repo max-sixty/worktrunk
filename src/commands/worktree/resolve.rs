@@ -87,8 +87,10 @@ pub fn is_worktree_at_expected_path(
 ///
 /// Returns styled content with branch names bolded:
 /// - If branch is consistent with worktree location: just the branch name (bolded)
-/// - If branch differs from expected location: `dir_name (on **branch**)` (both bolded)
-/// - If detached HEAD: `dir_name (detached)` (dir_name bolded)
+/// - If branch differs from expected location: `branch @ path` (both bolded)
+/// - If detached HEAD: `path (detached)` (path bolded)
+///
+/// Paths use the full display path, including home-directory abbreviation.
 ///
 /// "Consistent" means the worktree path matches `compute_worktree_path(branch)`,
 /// which returns repo root for default branch and templated path for others.
@@ -97,17 +99,17 @@ pub fn worktree_display_name(
     repo: &Repository,
     config: &UserConfig,
 ) -> String {
-    let dir_name = wt.dir_name();
+    let path = format_path_for_display(&wt.path);
 
     match &wt.branch {
         Some(branch) => {
             if is_worktree_at_expected_path(wt, repo, config) {
                 cformat!("<bold>{branch}</>")
             } else {
-                cformat!("<bold>{dir_name}</> (on <bold>{branch}</>)")
+                cformat!("<bold>{branch}</> @ <bold>{path}</>")
             }
         }
-        None => cformat!("<bold>{dir_name}</> (detached)"),
+        None => cformat!("<bold>{path}</> (detached)"),
     }
 }
 
