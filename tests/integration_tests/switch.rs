@@ -3714,14 +3714,37 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         "html_url": "https://github.com/owner/test-repo/pull/42"
     }"#;
 
-    let mock_bin = setup_mock_gh_for_pr(&repo, gh_response);
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    // The CLI supplies the protocol; record its arguments to verify that the
+    // lookup selects the API host rather than a global preference.
+    MockConfig::new("gh")
+        .command("api", MockResponse::output(gh_response))
+        .command("config get git_protocol", MockResponse::output("ssh\n"))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    let call_log = tempfile::tempdir().unwrap();
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
+        cmd.env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path());
         assert_cmd_snapshot!("switch_pr_fork", cmd);
     });
+    let calls = fs::read_to_string(call_log.path().join("gh.calls")).unwrap();
+    assert_eq!(
+        calls
+            .lines()
+            .find(|line| line.starts_with("config get git_protocol")),
+        Some("config get git_protocol --host github.com")
+    );
+    assert_eq!(
+        repo.git_output(&["config", "branch.feature-fix.pushRemote"])
+            .trim(),
+        "git@github.com:contributor/test-repo.git"
+    );
 }
 
 /// A failed fork `pr:N` switch leaves a branch it did not create alone.
@@ -5732,12 +5755,12 @@ fn test_switch_pr_gitea_create_conflict(#[from(repo_with_remote)] repo: TestRepo
         "head": {
             "label": "feature-auth",
             "ref": "feature-auth",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}
         },
         "base": {
             "label": "main",
             "ref": "main",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}
         },
         "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
     }"#;
@@ -5805,12 +5828,12 @@ fn test_switch_pr_gitea_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) 
         "head": {
             "label": "feature-auth",
             "ref": "feature-auth",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}
         },
         "base": {
             "label": "main",
             "ref": "main",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}
         },
         "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
     }"#;
@@ -5879,12 +5902,12 @@ fn test_switch_pr_gitea_fork(#[from(repo_with_remote)] repo: TestRepo) {
         "head": {
             "label": "contributor:feature-fix",
             "ref": "feature-fix",
-            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}, "clone_url": "http://gitea.example.com:3000/gitea/contributor/test-repo.git"}
         },
         "base": {
             "label": "main",
             "ref": "main",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}
         },
         "html_url": "https://gitea.example.com/owner/test-repo/pulls/42"
     }"#;
@@ -5896,6 +5919,51 @@ fn test_switch_pr_gitea_fork(#[from(repo_with_remote)] repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_gitea_fork", cmd);
+    });
+    assert_eq!(
+        repo.git_output(&["config", "branch.feature-fix.pushRemote"])
+            .trim(),
+        "http://gitea.example.com:3000/gitea/contributor/test-repo.git"
+    );
+}
+
+/// A renamed base repository can resolve through the API while no configured
+/// remote matches its current owner. The recovery hint must retain Gitea's
+/// canonical clone URL rather than reconstructing it from the PR's web URL.
+#[rstest]
+fn test_switch_pr_gitea_missing_remote_uses_api_clone_url(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/old-owner/test-repo.git",
+    ]);
+
+    let tea_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "head": {
+            "label": "contributor:feature-fix",
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}, "clone_url": "http://gitea.example.com:3000/gitea/contributor/test-repo.git"}
+        },
+        "base": {
+            "label": "main",
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "http://gitea.example.com:3000/gitea/owner/test-repo.git"}
+        },
+        "html_url": "https://gitea.example.com/owner/test-repo/pulls/42"
+    }"#;
+    let mock_bin = setup_mock_tea(&repo, "200 OK", tea_response);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_missing_remote_uses_api_clone_url", cmd);
     });
 }
 
@@ -5974,12 +6042,12 @@ fn test_switch_pr_gitea_forge_platform(#[from(repo_with_remote)] repo: TestRepo)
         "head": {
             "label": "feature-auth",
             "ref": "feature-auth",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://git.internal.example.com/owner/test-repo.git"}
         },
         "base": {
             "label": "main",
             "ref": "main",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://git.internal.example.com/owner/test-repo.git"}
         },
         "html_url": "https://git.internal.example.com/owner/test-repo/pulls/101"
     }"#;
@@ -6146,12 +6214,12 @@ fn test_switch_pr_self_hosted_tea_authed_dispatches_to_gitea(
         "head": {
             "label": "feature-auth",
             "ref": "feature-auth",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://forge.selfhosted.test/owner/test-repo.git"}
         },
         "base": {
             "label": "main",
             "ref": "main",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://forge.selfhosted.test/owner/test-repo.git"}
         },
         "html_url": "https://forge.selfhosted.test/owner/test-repo/pulls/101"
     }"#;
@@ -6444,12 +6512,12 @@ fn test_switch_pr_gitea_no_source_branch(#[from(repo_with_remote)] repo: TestRep
         "head": {
             "label": "",
             "ref": "",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}
         },
         "base": {
             "label": "main",
             "ref": "main",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}
         },
         "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
     }"#;
@@ -6488,7 +6556,7 @@ fn test_switch_pr_gitea_deleted_fork(#[from(repo_with_remote)] repo: TestRepo) {
         "base": {
             "label": "main",
             "ref": "main",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}
         },
         "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
     }"#;
@@ -6611,9 +6679,9 @@ fn test_switch_pr_gitea_no_status_line(#[from(repo_with_remote)] repo: TestRepo)
                 "user": {"login": "alice"},
                 "state": "open",
                 "head": {"label": "feature", "ref": "feature",
-                         "repo": {"name": "test-repo", "owner": {"login": "owner"}}},
+                         "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}},
                 "base": {"label": "main", "ref": "main",
-                         "repo": {"name": "test-repo", "owner": {"login": "owner"}}},
+                         "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}},
                 "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
             }"#,
             ),
@@ -7757,6 +7825,13 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         "https://gitlab.com/owner/test-repo.git",
     ]);
 
+    repo.run_git(&[
+        "config",
+        "--add",
+        &format!("url.{}.insteadOf", bare_url),
+        "git@gitlab.com:owner/test-repo.git",
+    ]);
+
     // Set up mock glab with separate responses for MR API and project APIs.
     // Mock playback supports compound keys like "api projects/456" to match
     // different API paths.
@@ -7804,15 +7879,30 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
             "api projects/123",
             MockResponse::output(target_project_response),
         )
+        .command("config get git_protocol", MockResponse::output("ssh\n"))
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
 
+    let call_log = tempfile::tempdir().unwrap();
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
+        cmd.env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path());
         assert_cmd_snapshot!("switch_mr_fork", cmd);
     });
+    let calls = fs::read_to_string(call_log.path().join("glab.calls")).unwrap();
+    assert_eq!(
+        calls
+            .lines()
+            .find(|line| line.starts_with("config get git_protocol")),
+        Some("config get git_protocol --host gitlab.com")
+    );
+    assert_eq!(
+        repo.git_output(&["config", "branch.feature-fix.pushRemote"])
+            .trim(),
+        "git@gitlab.com:contributor/test-repo.git"
+    );
 }
 
 /// A failing `glab api projects/<id>` surfaces glab's own verdict.
