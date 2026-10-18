@@ -1071,7 +1071,7 @@ Enables `wt switch -` to return to the previous worktree, similar to `cd -` or `
 
 ## How it works
 
-Updated automatically on every `wt switch`. Stored in git config as `worktrunk.history`.
+Updated automatically on every `wt switch`. Stored in git config as `worktrunk.history`, with the worktree's path in `worktrunk.history-path`.
 
 Without a subcommand, runs `get`. Use `set` to override or `clear` to reset."#
     )]

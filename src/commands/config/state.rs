@@ -25,7 +25,7 @@
 //! (`handle_cache_get`) and dropped by `wt config state cache clear`
 //! (`handle_cache_clear`), which needs no prompt:
 //!
-//! - Previous branch (git config `worktrunk.history`)
+//! - Previous branch (git config `worktrunk.history`, with `worktrunk.history-path`)
 //! - CI status cache (`.git/wt/cache/ci-status/`, plus the PR-number width
 //!   ratchet in `.git/wt/cache/pr-number/`)
 //! - Summary cache (`.git/wt/cache/summary/`)
@@ -915,7 +915,7 @@ pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> any
             );
         }
         "previous-branch" => {
-            repo.set_switch_previous(Some(&value))?;
+            repo.set_switch_previous(&value)?;
             eprintln!(
                 "{}",
                 success_message(cformat!("Set previous branch to <bold>{value}</>"))
@@ -973,7 +973,7 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
             }
         }
         "previous-branch" => {
-            if repo.unset_config("worktrunk.history")? {
+            if repo.clear_switch_previous()? {
                 eprintln!("{}", success_message("Cleared previous branch"));
             } else {
                 eprintln!("{}", info_message("No previous branch to clear"));
@@ -1142,7 +1142,7 @@ fn clear_default_branch_reported(repo: &Repository) -> anyhow::Result<bool> {
 }
 
 fn clear_previous_branch_reported(repo: &Repository) -> anyhow::Result<bool> {
-    if repo.unset_config("worktrunk.history")? {
+    if repo.clear_switch_previous()? {
         eprintln!("{}", success_message("Cleared previous branch"));
         return Ok(true);
     }

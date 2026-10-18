@@ -962,8 +962,12 @@ fn plan_switch(
     clobber: bool,
     config: &UserConfig,
 ) -> anyhow::Result<SwitchPlan> {
-    // Record current branch for `wt switch -` support
-    let new_previous = repo.current_worktree().branch().ok().flatten();
+    // Record the worktree being left, for `wt switch -`
+    let current = repo.current_worktree();
+    let new_previous = match (current.root(), current.branch()) {
+        (Ok(root), Ok(branch)) => Some((root, branch)),
+        _ => None,
+    };
 
     if base.is_some() && !create {
         eprintln!(
@@ -1123,8 +1127,8 @@ fn execute_switch(
             // Only update switch history when actually switching worktrees.
             // Updating on AlreadyAt would corrupt `wt switch -` by recording
             // the current branch as "previous" even though no switch occurred.
-            if !already_at_worktree {
-                let _ = repo.set_switch_previous(new_previous.as_deref());
+            if !already_at_worktree && let Some((path, branch)) = &new_previous {
+                let _ = repo.record_switch_source(path, branch.as_deref());
             }
 
             let result = if already_at_worktree {
@@ -1395,7 +1399,9 @@ fn execute_switch(
             }
 
             // Record successful switch in history
-            let _ = repo.set_switch_previous(new_previous.as_deref());
+            if let Some((path, branch)) = &new_previous {
+                let _ = repo.record_switch_source(path, branch.as_deref());
+            }
 
             Ok((
                 SwitchResult::Created {

@@ -478,11 +478,13 @@ impl Repository {
     ///
     /// Resolution order:
     /// 1. `@` — the current worktree, matched by path so detached HEAD resolves
-    /// 2. `-` / `^` — the previous / default branch, then as a branch below
-    /// 3. a branch with a worktree
-    /// 4. a path naming a registered worktree — absolute, `~`-relative, or
+    /// 2. `-` — the worktree `wt switch` last left, by the path it recorded
+    ///    (see [`switch_previous_worktree`](Self::switch_previous_worktree))
+    /// 3. `-` / `^` — the previous / default branch, then as a branch below
+    /// 4. a branch with a worktree
+    /// 5. a path naming a registered worktree — absolute, `~`-relative, or
     ///    relative to `-C` (see [`resolve_input_path`])
-    /// 5. otherwise the branch alone, which may or may not exist
+    /// 6. otherwise the branch alone, which may or may not exist
     ///
     /// A path that named no worktree lands in `BranchOnly` or
     /// `NoWorktreeAtPath` — [`resolve_selector`](Self::resolve_selector)
@@ -499,9 +501,9 @@ impl Repository {
     /// [`usable_worktree_for_branch`](Self::usable_worktree_for_branch)'s job,
     /// which the commands that go on to run there call instead.
     pub fn resolve_worktree(&self, name: &str) -> anyhow::Result<ResolvedWorktree> {
-        // `@` is the only selector that resolves by path rather than by name,
-        // which is what lets it answer in a detached worktree — where the
-        // branch expansion `expand_selector` would apply has nothing to return.
+        // `@` and `-` resolve by path rather than by name, which is what lets
+        // them answer for a detached worktree — where the branch expansion
+        // `expand_selector` would apply has nothing to return.
         let name = normalize_selector(name);
         if name == "@" {
             // If worktree_root fails (e.g., in bare repo directory), give a clear error
@@ -520,6 +522,11 @@ impl Repository {
                 .iter()
                 .find(|wt| wt.id() == current_id)
                 .and_then(|wt| wt.branch.clone());
+            return Ok(ResolvedWorktree::worktree(path, branch));
+        }
+        if name == "-"
+            && let Some((path, branch)) = self.switch_previous_worktree()?
+        {
             return Ok(ResolvedWorktree::worktree(path, branch));
         }
 

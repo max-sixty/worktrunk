@@ -8617,6 +8617,61 @@ fn test_switch_at_names_the_current_worktree(mut repo: TestRepo, #[case] detache
     assert_eq!(path.file_name(), current.file_name());
 }
 
+/// Run `wt switch <args>` from `dir` with `--format=json` and return the
+/// path it lands in.
+fn switch_json_path(repo: &TestRepo, dir: &std::path::Path, args: &[&str]) -> std::path::PathBuf {
+    let output = repo
+        .wt_command()
+        .args(["switch", "--no-cd", "--yes", "--format=json"])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    std::path::PathBuf::from(json["path"].as_str().unwrap())
+}
+
+/// `wt switch -` returns to the worktree it left, by path, so it reaches the
+/// checkouts a branch name can't: the second copy of a branch checked out
+/// twice, and a detached worktree.
+#[rstest]
+#[case::second_checkout(false)]
+#[case::detached(true)]
+fn test_switch_previous_returns_to_the_worktree_left(mut repo: TestRepo, #[case] detached: bool) {
+    repo.add_worktree("feature");
+    let left = if detached {
+        repo.detach_head_in_worktree("feature");
+        repo.worktrees["feature"].clone()
+    } else {
+        add_force_duplicate(&repo, "feature", "feature-copy")
+    };
+
+    switch_json_path(&repo, &left, &["main"]);
+    let back = switch_json_path(&repo, repo.root_path(), &["-"]);
+    assert_eq!(back.file_name(), left.file_name());
+}
+
+/// The recorded path stands only while it still holds the recorded branch.
+/// When it doesn't — the worktree has since checked out something else, or an
+/// older wt recorded a newer branch without a path — `-` names the branch.
+#[rstest]
+fn test_switch_previous_falls_back_to_the_branch(mut repo: TestRepo) {
+    let feature = repo.add_worktree("feature");
+    repo.add_worktree("other");
+
+    switch_json_path(&repo, &feature, &["main"]);
+    // An older wt switching from `other` writes only the branch.
+    repo.run_git(&["config", "worktrunk.history", "other"]);
+
+    let back = switch_json_path(&repo, repo.root_path(), &["-"]);
+    assert_eq!(back.file_name(), repo.worktrees["other"].file_name());
+}
+
 // -- JSON format tests --
 
 #[rstest]

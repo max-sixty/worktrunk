@@ -658,11 +658,11 @@ fn test_switch_previous_roundtrip() {
     // Populate the cache first to hit the in-memory update branch.
     let _ = r.is_bare();
     assert_eq!(r.switch_previous(), None);
-    r.set_switch_previous(Some("feature-a")).unwrap();
+    r.set_switch_previous("feature-a").unwrap();
     assert_eq!(r.switch_previous(), Some("feature-a".to_string()));
-    // `None` is a no-op — doesn't clear.
-    r.set_switch_previous(None).unwrap();
-    assert_eq!(r.switch_previous(), Some("feature-a".to_string()));
+    assert!(r.clear_switch_previous().unwrap());
+    assert_eq!(r.switch_previous(), None);
+    assert!(!r.clear_switch_previous().unwrap());
 }
 
 /// `primary_remote_url` composes `primary_remote` + `remote_url`,
