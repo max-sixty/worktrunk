@@ -753,16 +753,20 @@ fn test_config_show_zsh_compinit_warning(mut repo: TestRepo, temp_home: TempDir)
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(global_config_dir.join("config.toml"), "").unwrap();
 
-    // Create .zshrc WITHOUT compinit - completions won't work
+    // Use a custom zsh config directory so the advisory must name the same
+    // file as the integration detector.
+    let zdotdir = canonical_temp_home(&temp_home).join("zsh-config");
+    fs::create_dir_all(&zdotdir).unwrap();
     fs::write(
-        temp_home.path().join(".zshrc"),
+        zdotdir.join(".zshrc"),
         r#"# wt integration but no compinit!
 if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)"; fi
 "#,
     )
     .unwrap();
 
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    let mut settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.add_redaction(".env.ZDOTDIR", "[TEST_ZDOTDIR]");
     settings.bind(|| {
         let mut cmd = repo.wt_command();
         // Force compinit warning for deterministic tests across environments
@@ -770,6 +774,7 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
+        cmd.env("ZDOTDIR", &zdotdir);
 
         assert_cmd_snapshot!(cmd);
     });

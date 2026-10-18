@@ -2061,16 +2061,14 @@ fn test_bare_repo_worktree_path_warning_uses_configured_template() {
     );
 }
 
-/// Symbolic identifiers (-, @, pr:N) are passed before branch resolution, so
-/// the example paths in the prompt would show the raw symbol. The function
-/// must return early without prompting.
+/// A shortcut resolves before the bare-repo warning, so its example path names
+/// the branch the shortcut stands for rather than the raw symbol.
 #[test]
-fn test_bare_repo_worktree_path_prompt_skipped_for_symbolic_identifier() {
+fn test_bare_repo_worktree_path_warning_names_resolved_shortcut() {
     let test = setup_unconfigured_nested_bare_repo();
     let main_worktree = test.project_path().join("main");
 
-    // `@` means HEAD — resolves to `main`, which already exists. The prompt
-    // must not appear because `@` is a symbolic form.
+    // `@` is the current worktree, on `main`.
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
     cmd.args(["switch", "@"]).current_dir(&main_worktree);
@@ -2078,12 +2076,12 @@ fn test_bare_repo_worktree_path_prompt_skipped_for_symbolic_identifier() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !stderr.contains("Configure worktree-path"),
-        "Prompt should not appear for symbolic identifier '@', got: {stderr}"
+        stderr.contains("worktrees will be at") && stderr.contains(".git.main"),
+        "Warning should name the resolved branch `main`, got: {stderr}"
     );
     assert!(
-        !stderr.contains("Bare repo at"),
-        "Warning should not appear for symbolic identifier '@', got: {stderr}"
+        !stderr.contains(".git.@"),
+        "Warning should not name the raw `@`, got: {stderr}"
     );
 }
 

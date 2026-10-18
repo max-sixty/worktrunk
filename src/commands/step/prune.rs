@@ -371,15 +371,15 @@ fn try_remove(
 
 /// One candidate skipped because its project hooks aren't yet approved.
 /// Carries enough context for the end-of-run hint to print a per-candidate
-/// `wt -C <path> remove` line and annotate candidates whose own
-/// `.config/wt.toml` differs from the invoking worktree's (so the user knows
-/// `wt config approvals add` from current can't approve their hooks).
+/// `wt -C <path> remove` line and annotate candidates whose resolved project
+/// config differs from the invoking worktree's (so the user knows `wt config
+/// approvals add` from current can't approve their hooks).
 struct SkippedApproval {
     /// `Some` for candidates whose plan removes a worktree (the only
     /// `(approval required)` source — branch-only plans and stale-detached
     /// entries run no hooks).
     path: Option<PathBuf>,
-    /// True when the candidate's `.config/wt.toml` doesn't match the
+    /// True when the candidate's resolved project config doesn't match the
     /// invoking worktree's bytes — `wt config approvals add` from current
     /// approves only invoking's templates, so this candidate needs the
     /// per-worktree `wt -C <path> remove` form to surface its own hooks.
@@ -1167,7 +1167,7 @@ pub fn step_prune(
     };
     // The invoking worktree's project-config bytes — load once so the per-
     // candidate "(different hooks on branch)" annotation in the skip hint
-    // can compare each candidate's own `.config/wt.toml` against this
+    // can compare each candidate's resolved project config against this
     // baseline. Byte-equal is approximate (whitespace differences flag too)
     // but the result drives a hint, not behavior.
     let invoking_project_bytes = repo
@@ -1324,8 +1324,11 @@ pub fn step_prune(
                             .to_string();
                     let _ = job_tx.send(RemovalJob::PrintSkip(line));
                     let differs = path.as_deref().is_some_and(|wt_path| {
-                        let candidate_bytes =
-                            std::fs::read(wt_path.join(".config").join("wt.toml")).ok();
+                        let candidate_bytes = Repository::at(wt_path)
+                            .and_then(|candidate_repo| candidate_repo.project_config_path())
+                            .ok()
+                            .flatten()
+                            .and_then(|p| std::fs::read(p).ok());
                         candidate_bytes != invoking_project_bytes
                     });
                     skipped_approval.push(SkippedApproval { path, differs });
@@ -1445,7 +1448,7 @@ struct ApprovalHintBlock {
 /// Build the headline+gutter pairs for `(approval required)` skips: a
 /// `wt config approvals add` block listing the unapproved templates from the
 /// invoking worktree's config, and a per-worktree `wt -C <path> remove` block
-/// for the skipped candidates. Candidates whose own `.config/wt.toml` differs
+/// for the skipped candidates. Candidates whose resolved project config differs
 /// from the invoking worktree get a `(different hooks on branch)` annotation —
 /// `wt config approvals add` from current approves only current's templates,
 /// so the per-worktree form is the only path for them.

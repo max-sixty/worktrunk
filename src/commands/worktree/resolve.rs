@@ -133,6 +133,7 @@ fn template_references_repo_name(template: &str) -> bool {
 /// When a bare repo lives at a hidden path like `.git` or `.bare`, the `{{ repo }}`
 /// template variable resolves to that directory name, producing broken worktree paths.
 /// This function detects the situation and offers to set a project-level override.
+/// `branch` is the branch the switch resolved to, which the example paths show.
 ///
 /// Returns `true` if config was modified (caller should use the updated config).
 pub fn offer_bare_repo_worktree_path_fix(
@@ -141,13 +142,6 @@ pub fn offer_bare_repo_worktree_path_fix(
     branch: &str,
 ) -> anyhow::Result<bool> {
     if !repo.is_bare()? {
-        return Ok(false);
-    }
-
-    // Symbolic identifiers (-, @, ^, pr:N, mr:N) haven't been resolved to a real
-    // branch name yet, so the example paths would be misleading. Skip the prompt;
-    // it will surface on the next switch with a concrete branch name.
-    if branch == "-" || branch == "@" || branch == "^" || branch.contains(':') {
         return Ok(false);
     }
 

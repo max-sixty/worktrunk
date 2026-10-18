@@ -170,7 +170,7 @@ pub fn gather_candidates(
     } else {
         let mut selected: Vec<WorktreeInfo> = Vec::new();
         for arg in filter_branches {
-            let path = repo.require_worktree(arg)?;
+            let (path, _) = repo.require_worktree(arg)?;
             let Some(wt) = worktrees.iter().find(|wt| paths_match(&path, &wt.path)) else {
                 // Resolved, but pruned out above: its directory or `.git` is
                 // gone, so there is nothing to move.
