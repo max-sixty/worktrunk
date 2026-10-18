@@ -964,10 +964,7 @@ fn plan_switch(
 ) -> anyhow::Result<SwitchPlan> {
     // Record the worktree being left, for `wt switch -`
     let current = repo.current_worktree();
-    let new_previous = match (current.root(), current.branch()) {
-        (Ok(root), Ok(branch)) => Some((root, branch)),
-        _ => None,
-    };
+    let new_previous = current.root().ok().zip(current.branch().ok());
 
     if base.is_some() && !create {
         eprintln!(

@@ -8656,9 +8656,9 @@ fn test_switch_previous_returns_to_the_worktree_left(mut repo: TestRepo, #[case]
     assert_eq!(back.file_name(), left.file_name());
 }
 
-/// The recorded path stands only while it still holds the recorded branch.
-/// When it doesn't — the worktree has since checked out something else, or an
-/// older wt recorded a newer branch without a path — `-` names the branch.
+/// The recorded path stands only while a worktree there still holds the
+/// recorded branch. When an older wt has since recorded a different branch
+/// without a path, `-` names that branch.
 #[rstest]
 fn test_switch_previous_falls_back_to_the_branch(mut repo: TestRepo) {
     let feature = repo.add_worktree("feature");
@@ -8670,6 +8670,31 @@ fn test_switch_previous_falls_back_to_the_branch(mut repo: TestRepo) {
 
     let back = switch_json_path(&repo, repo.root_path(), &["-"]);
     assert_eq!(back.file_name(), repo.worktrees["other"].file_name());
+}
+
+/// When the worktree left has since been removed, `-` names its branch, which
+/// creates a worktree for it again.
+#[rstest]
+fn test_switch_previous_after_its_worktree_is_removed(mut repo: TestRepo) {
+    let feature = repo.add_worktree("feature");
+
+    switch_json_path(&repo, &feature, &["main"]);
+    repo.run_git(&["worktree", "remove", feature.to_str().unwrap()]);
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "-", "--no-cd", "--yes", "--format=json"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["action"], "created");
+    assert_eq!(json["branch"], "feature");
 }
 
 // -- JSON format tests --
