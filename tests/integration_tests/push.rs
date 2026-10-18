@@ -125,8 +125,8 @@ fn test_push_dirty_target_overlap_ignores_tag_named_like_target(mut repo: TestRe
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success(), "push should refuse: {stderr}");
     assert!(
-        stderr.contains("conflict.txt"),
-        "error should name the overlapping file: {stderr}"
+        stderr.contains("conflicting uncommitted changes") && stderr.contains("conflict.txt"),
+        "the overlap check should refuse and name the file: {stderr}"
     );
     let main_contents = std::fs::read_to_string(repo.root_path().join("conflict.txt")).unwrap();
     assert_eq!(main_contents, "old content");
