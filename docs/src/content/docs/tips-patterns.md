@@ -529,6 +529,27 @@ mc = '''WORKTRUNK_COMMIT__GENERATION__COMMAND='f=$(mktemp); printf "\n\n" > "$f"
 
 Then `wt mc` opens an editor for the commit message while plain `wt merge` continues to use the LLM.
 
+### Optional structural merge driver
+
+[Weave](https://github.com/Ataraxy-Labs/weave) is an optional Git merge driver
+that merges supported source files by functions, classes, and keys. After
+installing Weave and its driver, enable it from a worktree:
+
+```bash
+weave setup --local
+git check-attr merge -- path/to/source.py
+```
+
+`--local` uses Git's local attributes instead of modifying `.gitattributes`.
+Treat this as repository-wide configuration: linked worktrees share the Git
+configuration and local attributes. It is not isolated to the invoking branch.
+
+Continue using `wt merge` normally. The driver participates in Git's merge
+machinery during the rebase step; it does not replace Worktrunk's pipeline,
+fast-forward checks, or pre-merge tests. Conflicts it cannot resolve still stop
+the operation. Review the resulting diff and keep tests enabled: a clean
+structural merge does not establish runtime correctness.
+
 ### Monitor hook logs
 
 Follow background hook output:
