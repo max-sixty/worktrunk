@@ -126,6 +126,16 @@ failure, not a broken link:
 When in doubt, post a comment on the failed run summarizing the diagnosis and
 wait — don't open a PR.
 
+## CI Fix: A Failed Scheduled Nightly Already Has Its Issue
+
+When a scheduled `nightly` run fails, its `create-issue-on-nightly-failure` job opens (or updates) an open `Nightly tests failed` issue labelled `ci`, and `tend-triage` diagnoses it there. That issue is the tracker for the failure. The `ci-fix:` title search in `/tend-ci-runner:ci-fix` cannot find it, so look it up by title before filing anything:
+
+```bash
+gh issue list --state open --label ci --search '"Nightly tests failed" in:title' --json number,title
+```
+
+Post the diagnosis on that issue, unless a comment there already covers it, instead of opening a `ci-fix:` issue, transient or durable. A fix PR closes it with `Fixes #<n>`.
+
 ## Applying GitHub Suggestions
 
 Apply the literal suggestion only — change the lines it covers, nothing more.
