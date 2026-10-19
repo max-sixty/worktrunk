@@ -204,11 +204,11 @@ fn test_eval_commit_matches_head_sha(repo: TestRepo) {
     );
 }
 
-/// `expected_worktree_path` renders the `worktree-path` template for a branch
+/// `expected_worktree_path_of_branch` renders the `worktree-path` template for a branch
 /// even when another branch occupies that path, which is where
 /// `worktree_path_of_branch` comes back empty.
 #[rstest]
-fn test_eval_expected_worktree_path(repo: TestRepo) {
+fn test_eval_expected_worktree_path_of_branch(repo: TestRepo) {
     repo.write_test_config(
         "worktree-path = \"{{ repo_path }}/../{{ repo }}.wt.{{ branch | sanitize }}\"\n",
     );
@@ -225,7 +225,7 @@ fn test_eval_expected_worktree_path(repo: TestRepo) {
         .args([
             "step",
             "eval",
-            "{{ expected_worktree_path('feature/x') }}|{{ worktree_path_of_branch('feature/x') }}|{{ expected_worktree_path('main') }}",
+            "{{ expected_worktree_path_of_branch('feature/x') }}|{{ worktree_path_of_branch('feature/x') }}|{{ expected_worktree_path_of_branch('main') }}",
         ])
         .output()
         .unwrap();
@@ -243,20 +243,25 @@ fn test_eval_expected_worktree_path(repo: TestRepo) {
     assert_eq!(file_name(parts[2]), repo_name);
 }
 
-/// A `worktree-path` template that calls `expected_worktree_path` errors
+/// A `worktree-path` template that calls `expected_worktree_path_of_branch` errors
 /// instead of recursing.
 #[rstest]
-fn test_eval_expected_worktree_path_in_worktree_path_template(repo: TestRepo) {
-    repo.write_test_config("worktree-path = \"{{ expected_worktree_path(branch) }}\"\n");
+fn test_eval_expected_worktree_path_of_branch_in_worktree_path_template(repo: TestRepo) {
+    repo.write_test_config("worktree-path = \"{{ expected_worktree_path_of_branch(branch) }}\"\n");
     let output = repo
         .wt_command()
-        .args(["step", "eval", "{{ expected_worktree_path('feature') }}"])
+        .args([
+            "step",
+            "eval",
+            "{{ expected_worktree_path_of_branch('feature') }}",
+        ])
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
     assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("expected_worktree_path cannot be used in the worktree-path template"),
+        String::from_utf8_lossy(&output.stderr).contains(
+            "expected_worktree_path_of_branch cannot be used in the worktree-path template"
+        ),
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
