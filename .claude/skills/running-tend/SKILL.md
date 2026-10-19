@@ -134,7 +134,7 @@ When a scheduled `nightly` run fails, its `create-issue-on-nightly-failure` job 
 gh issue list --state open --label ci --search '"Nightly tests failed" in:title' --json number,title
 ```
 
-Post the diagnosis on that issue, unless a comment there already covers it, instead of opening a `ci-fix:` issue, transient or durable. A fix PR closes it with `Fixes #<n>`.
+Post a durable diagnosis on that issue, unless a comment there already covers it, instead of opening a `ci-fix:` tracking issue. A fix PR closes it with `Fixes #<n>`. A transient diagnosis still files its closed `tend-outage` tracker, since the repeat-occurrence escalation in `/tend-ci-runner:ci-fix` counts only those.
 
 ## Applying GitHub Suggestions
 
