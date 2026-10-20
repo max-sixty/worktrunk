@@ -881,13 +881,10 @@ mod tests {
         // A child that a concurrent test forks while `holder` is open inherits
         // the lock until it execs, so a drain can still find it held for an
         // instant and leave the deletion to that phantom holder.
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        drain_trash(&trash).unwrap();
-        while !staged_trash_entries(&trash).is_empty() && std::time::Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(10));
+        crate::testing::wait_for("a drain to delete the staged entries", || {
             drain_trash(&trash).unwrap();
-        }
-        assert!(staged_trash_entries(&trash).is_empty());
+            staged_trash_entries(&trash).is_empty()
+        });
         assert!(foreign.exists());
         assert!(staged_trash_entries(&temp.path().join("missing")).is_empty());
     }

@@ -2192,15 +2192,10 @@ mod tests {
         assert!(contender.try_lock_exclusive().is_err());
         drop(locked);
         // A child that a concurrent test forks while `locked` is open inherits
-        // the lock until it execs, so retry briefly rather than expect the
-        // first attempt to win.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        let mut relocked = contender.try_lock_exclusive();
-        while relocked.is_err() && std::time::Instant::now() < deadline {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-            relocked = contender.try_lock_exclusive();
-        }
-        relocked.unwrap();
+        // the lock until it execs, so the release can take an instant to land.
+        worktrunk::testing::wait_for("the rc lock to be released", || {
+            contender.try_lock_exclusive().is_ok()
+        });
     }
 
     #[test]
