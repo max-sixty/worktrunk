@@ -2191,6 +2191,13 @@ mod tests {
             .unwrap();
         assert!(contender.try_lock_exclusive().is_err());
         drop(locked);
+        // A child that a concurrent test forks while `locked` is open inherits
+        // the lock until it execs, so retry briefly rather than expect the
+        // first attempt to win.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while contender.try_lock_exclusive().is_err() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         contender.try_lock_exclusive().unwrap();
     }
 
