@@ -15,7 +15,8 @@ use worktrunk::styling::{eprintln, hint_message, info_message, success_message, 
 
 use super::shared::list_and_filter_ignored_entries;
 
-/// Move a file or directory, falling back to copy+delete on cross-device errors.
+/// Move without replacing an existing destination, falling back to copy+delete
+/// on cross-device errors. A skipped copy keeps the source.
 fn move_entry(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
     // Ensure parent directory exists
     if let Some(parent) = dest.parent() {
@@ -23,8 +24,8 @@ fn move_entry(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
             .context(format!("creating parent directory for {}", dest.display()))?;
     }
 
-    match fs::rename(src, dest) {
-        Ok(()) => Ok(()),
+    match renamore::rename_exclusive_fallback(src, dest) {
+        Ok(_) => Ok(()),
         Err(e) if e.kind() == ErrorKind::CrossesDevices => copy_and_remove(src, dest, is_dir),
         Err(e) => Err(anyhow::Error::from(e).context(format!(
             "moving {} to {}",
@@ -42,9 +43,9 @@ fn move_entry(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
 /// refusing over one would abort a promote after the branch exchange.
 fn copy_and_remove(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
     let skipped = if is_dir {
-        copy_dir_recursive(src, dest, None, true, None, &Progress::disabled())?
+        copy_dir_recursive(src, dest, None, false, None, &Progress::disabled())?
     } else {
-        usize::from(copy_leaf(src, dest, None, true, None)?.is_none())
+        usize::from(copy_leaf(src, dest, None, false, None)?.is_none())
     };
     if skipped > 0 {
         bail!(
@@ -65,8 +66,7 @@ const PROMOTE_STAGING_DIR: &str = "staging/promote";
 
 /// Move gitignored files from both worktrees into a staging directory.
 ///
-/// Called BEFORE the branch exchange because `git switch` silently overwrites
-/// ignored files that collide with tracked files on the target branch.
+/// Staged files follow their branch; excluded metadata stays in its worktree.
 ///
 /// Returns the staging directory path and the count of entries staged.
 fn stage_ignored(
@@ -118,52 +118,46 @@ fn stage_ignored(
     Ok((staging_dir, count))
 }
 
-/// Distribute staged files to their new worktrees after a branch exchange.
-///
-/// B's original files (in staging/b) go to worktree A (which now has B's branch).
-/// A's original files (in staging/a) go to worktree B (which now has A's branch).
+/// Return staged files to their owners, using exchanged paths after success
+/// or original paths after rollback. Existing destinations are never replaced.
 fn distribute_staged(
     staging_dir: &Path,
     path_a: &Path,
     entries_a: &[(PathBuf, bool)],
     path_b: &Path,
     entries_b: &[(PathBuf, bool)],
+    exchanged: bool,
 ) -> anyhow::Result<usize> {
-    let staging_a = staging_dir.join("a");
-    let staging_b = staging_dir.join("b");
     let mut count = 0;
-
-    // Move B's staged entries → A (A now has B's branch)
-    for (src_entry, is_dir) in entries_b {
-        let relative = src_entry
-            .strip_prefix(path_b)
-            .context("entry not under worktree B")?;
-        let staging_entry = staging_b.join(relative);
-        let dest_entry = path_a.join(relative);
-        if fs::symlink_metadata(&staging_entry).is_ok() {
-            move_entry(&staging_entry, &dest_entry, *is_dir)
-                .context(format!("distributing {}", relative.display()))?;
-            count += 1;
+    for (slot, original, destination, entries) in [
+        (
+            "a",
+            path_a,
+            if exchanged { path_b } else { path_a },
+            entries_a,
+        ),
+        (
+            "b",
+            path_b,
+            if exchanged { path_a } else { path_b },
+            entries_b,
+        ),
+    ] {
+        for (src_entry, is_dir) in entries {
+            let relative = src_entry
+                .strip_prefix(original)
+                .context("staged entry not under its original worktree")?;
+            let staging_entry = staging_dir.join(slot).join(relative);
+            if fs::symlink_metadata(&staging_entry).is_ok() {
+                move_entry(&staging_entry, &destination.join(relative), *is_dir)
+                    .context(format!("distributing {}", relative.display()))?;
+                count += 1;
+            }
         }
     }
 
-    // Move A's staged entries → B (B now has A's branch)
-    for (src_entry, is_dir) in entries_a {
-        let relative = src_entry
-            .strip_prefix(path_a)
-            .context("entry not under worktree A")?;
-        let staging_entry = staging_a.join(relative);
-        let dest_entry = path_b.join(relative);
-        if fs::symlink_metadata(&staging_entry).is_ok() {
-            move_entry(&staging_entry, &dest_entry, *is_dir)
-                .context(format!("distributing {}", relative.display()))?;
-            count += 1;
-        }
-    }
-
-    // Clean up staging directory (best-effort — files are already distributed)
+    // Clean up staging directory (best-effort — files are already distributed).
     let _ = fs::remove_dir_all(staging_dir);
-
     Ok(count)
 }
 
@@ -217,8 +211,7 @@ fn check_leftover_staging(staging_path: &Path) -> anyhow::Result<()> {
     }
     let display = staging_path.to_slash_lossy();
     Err(anyhow::anyhow!(
-        "Files may need manual recovery from: {display}\n\
-         Remove it to retry: rm -rf \"{display}\""
+        "Recover files from {display} before removing the staging directory to retry"
     )
     .context("Found leftover staging directory from an interrupted promote"))
 }
@@ -252,11 +245,9 @@ fn print_promote_announcement(is_restoring: bool, default_branch: Option<&str>) 
 /// Exchange branches between two worktrees.
 ///
 /// Steps: detach target → detach main → switch main → switch target.
-/// Both worktrees must be clean (verified by caller). Failure here is
-/// near-impossible given the preconditions (`ensure_clean` passed, branches
-/// exist, detach released locks); if it does happen, the caller surfaces the
-/// error and the worktrees may be left in a detached state for the user to
-/// resolve manually.
+/// Both worktrees must be clean (verified by caller). Git refuses tracked files
+/// that would overwrite ignored metadata left in either worktree. The caller
+/// restores original branches and staged files if an exchange is refused.
 fn exchange_branches(
     main_wt: &worktrunk::git::WorkingTree<'_>,
     main_branch: &str,
@@ -268,12 +259,22 @@ fn exchange_branches(
         (main_wt, &["switch", "--detach"], "detach main"),
         (
             main_wt,
-            &["switch", "--end-of-options", target_branch],
+            &[
+                "switch",
+                "--no-overwrite-ignore",
+                "--end-of-options",
+                target_branch,
+            ],
             "switch main",
         ),
         (
             target_wt,
-            &["switch", "--end-of-options", main_branch],
+            &[
+                "switch",
+                "--no-overwrite-ignore",
+                "--end-of-options",
+                main_branch,
+            ],
             "switch target",
         ),
     ];
@@ -385,9 +386,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         no_excludes,
     )?;
 
-    // Move gitignored files to staging BEFORE branch exchange.
-    // `git switch` silently overwrites ignored files that collide with tracked
-    // files on the target branch — staging them first prevents data loss.
+    // Stage ignored files before switching; excluded metadata stays in place.
     let staged = if !main_entries.is_empty() || !target_entries.is_empty() {
         let (dir, count) = stage_ignored(
             &repo,
@@ -396,24 +395,61 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
             &target_path,
             &target_entries,
         )
-        .context(format!(
-            "Failed to stage ignored files. Already-staged files may be recoverable from: {}",
-            staging_path.to_slash_lossy()
-        ))?;
+        .map_err(|error| {
+            match distribute_staged(
+                &staging_path,
+                main_path,
+                &main_entries,
+                target_path,
+                &target_entries,
+                false,
+            ) {
+                Ok(_) => error,
+                Err(restore) => error.context(format!(
+                    "Failed to restore staged files: {restore:#}. Recover files from: {}",
+                    staging_path.to_slash_lossy()
+                )),
+            }
+        })?;
         if count > 0 { Some((dir, count)) } else { None }
     } else {
         None
     };
 
     // Exchange branches (detach both, then switch to swapped branches).
-    // Failure is near-impossible (both worktrees verified clean, branches exist).
-    // If it somehow fails, stale staging detection recovers on next run.
-    exchange_branches(
+    if let Err(error) = exchange_branches(
         &main_working_tree,
         &main_branch,
         &target_working_tree,
         &target_branch,
-    )?;
+    ) {
+        let restore = exchange_branches(
+            &main_working_tree,
+            &target_branch,
+            &target_working_tree,
+            &main_branch,
+        )
+        .and_then(|()| {
+            if let Some((dir, _)) = &staged {
+                distribute_staged(
+                    dir,
+                    main_path,
+                    &main_entries,
+                    target_path,
+                    &target_entries,
+                    false,
+                )?;
+            }
+            Ok(())
+        });
+        return Err(match restore {
+            Ok(()) => error,
+            Err(restore) => error.context(format!(
+                "Could not restore original worktrees: {restore:#}. Recover staged files from: {}",
+                staging_path.to_slash_lossy()
+            )),
+        });
+    }
 
     // Distribute staged files to their new worktrees (after branch exchange)
     let swapped = if let Some((ref staging_dir, _)) = staged {
@@ -423,6 +459,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
             &main_entries,
             &target_path,
             &target_entries,
+            true,
         )
         .context(format!(
             "Failed to distribute staged files. Staged files may be recoverable from: {}",
@@ -473,6 +510,19 @@ mod tests {
 
         assert!(!src.exists());
         assert_eq!(fs::read_to_string(&dest).unwrap(), "content");
+    }
+
+    /// Rollback must not replace a file created after the original was staged.
+    #[test]
+    fn test_move_entry_preserves_an_occupied_destination() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("staged.txt");
+        let dest = tmp.path().join("new.txt");
+        fs::write(&src, "original").unwrap();
+        fs::write(&dest, "new occupant").unwrap();
+        assert!(move_entry(&src, &dest, false).is_err());
+        assert_eq!(fs::read_to_string(&src).unwrap(), "original");
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "new occupant");
     }
 
     #[test]
@@ -553,8 +603,7 @@ mod tests {
         // A socket has no content the destination can be short of, so it does
         // not hold up the move. Refusing over one would strand real content:
         // `distribute_staged` runs after the branch exchange, and a promote
-        // that dies there leaves the staged files behind a `check_leftover_
-        // staging` refusal whose remedy deletes them.
+        // that dies there would need manual staging recovery.
         let tmp = tempfile::tempdir().unwrap();
         let src = tmp.path().join("srcdir");
         let dest = tmp.path().join("destdir");
