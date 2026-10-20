@@ -956,6 +956,34 @@ pub fn template_environment(repo: &Repository) -> Environment<'static> {
             .unwrap_or_default()
     });
 
+    // Register expected_worktree_path_of_branch: where `wt switch --create` would put a
+    // branch's worktree, whether or not one exists there. Rendering the
+    // `worktree-path` template re-enters this environment, so a template
+    // that calls the function errors rather than recursing.
+    let repo_clone = repo.clone();
+    env.add_function(
+        "expected_worktree_path_of_branch",
+        move |branch: String| -> Result<String, minijinja::Error> {
+            thread_local! {
+                static IN_EXPECTED_WORKTREE_PATH_OF_BRANCH: std::cell::Cell<bool> =
+                    const { std::cell::Cell::new(false) };
+            }
+            if IN_EXPECTED_WORKTREE_PATH_OF_BRANCH.replace(true) {
+                return Err(minijinja::Error::new(
+                    ErrorKind::InvalidOperation,
+                    "expected_worktree_path_of_branch cannot be used in the worktree-path template",
+                ));
+            }
+            let result = repo_clone
+                .user_config()
+                .expected_worktree_path(&repo_clone, &branch);
+            IN_EXPECTED_WORKTREE_PATH_OF_BRANCH.set(false);
+            result
+                .map(|p| to_posix_path(&p.to_string_lossy()))
+                .map_err(|e| minijinja::Error::new(ErrorKind::InvalidOperation, format!("{e:#}")))
+        },
+    );
+
     env
 }
 
@@ -1133,6 +1161,8 @@ pub fn validate_template(
 /// # Functions
 /// - `worktree_path_of_branch(branch)` — Look up the filesystem path of a branch's worktree
 ///   Returns empty string if branch has no worktree.
+/// - `expected_worktree_path_of_branch(branch)` — Where `wt switch` expects the branch's worktree,
+///   from the `worktree-path` template. Returns the path whether or not it exists.
 ///
 /// The `name` parameter appears in error messages to help identify which template failed.
 pub fn expand_template(

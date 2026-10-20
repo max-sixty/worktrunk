@@ -4,10 +4,14 @@
 //! project by merging global settings with project-specific overrides.
 
 use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
+
+use normalize_path::NormalizePath;
 
 use crate::config::HooksConfig;
 use crate::config::commands::CommandConfig;
 use crate::config::expansion::expand_template;
+use crate::path::format_path_for_display;
 use crate::shell_exec::ShellEscapeMode;
 
 use super::UserConfig;
@@ -270,5 +274,48 @@ impl UserConfig {
             "worktree-path",
         )
         .map(|p| shellexpand::tilde(&p).into_owned())?)
+    }
+
+    /// Compute the expected worktree path for a branch name.
+    ///
+    /// For the default branch, returns the repo root (main worktree location).
+    /// For other branches, applies the `worktree-path` template from config.
+    ///
+    /// Uses cached values from Repository for `default_branch` and `is_bare`.
+    pub fn expected_worktree_path(
+        &self,
+        repo: &crate::git::Repository,
+        branch: &str,
+    ) -> anyhow::Result<PathBuf> {
+        let repo_root = repo.repo_path()?;
+        let default_branch = repo.default_branch().unwrap_or_default();
+        let is_bare = repo.is_bare()?;
+
+        // Default branch lives at repo root (main worktree), not a templated path.
+        // Exception: bare repos have no main worktree, so all branches use templated paths.
+        if !is_bare && branch == default_branch {
+            return Ok(repo_root.to_path_buf());
+        }
+
+        let repo_name = repo_root
+            .file_name()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Repository path has no filename: {}",
+                    format_path_for_display(repo_root)
+                )
+            })?
+            .to_str()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Repository path contains invalid UTF-8: {}",
+                    format_path_for_display(repo_root)
+                )
+            })?;
+
+        let project = repo.project_identifier().ok();
+        let expanded_path = self.format_path(repo_name, branch, repo, project.as_deref())?;
+
+        Ok(repo_root.join(expanded_path).normalize())
     }
 }

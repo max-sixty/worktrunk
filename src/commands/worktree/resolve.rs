@@ -9,7 +9,6 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 
 use color_print::cformat;
-use normalize_path::NormalizePath;
 use path_slash::PathExt as _;
 use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
@@ -31,36 +30,7 @@ pub fn compute_worktree_path(
     branch: &str,
     config: &UserConfig,
 ) -> anyhow::Result<PathBuf> {
-    let repo_root = repo.repo_path()?;
-    let default_branch = repo.default_branch().unwrap_or_default();
-    let is_bare = repo.is_bare()?;
-
-    // Default branch lives at repo root (main worktree), not a templated path.
-    // Exception: bare repos have no main worktree, so all branches use templated paths.
-    if !is_bare && branch == default_branch {
-        return Ok(repo_root.to_path_buf());
-    }
-
-    let repo_name = repo_root
-        .file_name()
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Repository path has no filename: {}",
-                format_path_for_display(repo_root)
-            )
-        })?
-        .to_str()
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Repository path contains invalid UTF-8: {}",
-                format_path_for_display(repo_root)
-            )
-        })?;
-
-    let project = repo.project_identifier().ok();
-    let expanded_path = config.format_path(repo_name, branch, repo, project.as_deref())?;
-
-    Ok(repo_root.join(expanded_path).normalize())
+    config.expected_worktree_path(repo, branch)
 }
 
 /// Check if a worktree is at its expected path based on config template.
