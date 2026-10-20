@@ -55,25 +55,20 @@
 //!    - [`ForceDelete`](BranchDeletionMode::ForceDelete): run `branch -D`
 //!      without the integration check.
 //!
-//! # The dirty-worktree gate follows git
+//! # The dirty-worktree gate
 //!
-//! Under `core.fsmonitor` the daemon answers step 1's `git status`, so a
-//! daemon returning a stale clean answer would let removal delete uncommitted
-//! work. That is git's own line, not a gap in `wt`: `git worktree remove`
-//! refuses a dirty worktree off the same daemon-served status, and on detected
-//! event loss the builtin daemon forces a client rescan or exits. A stale
-//! clean answer therefore requires an *undetected* loss, which lies to the
-//! user's own `git status` in that worktree just as readily.
-//!
-//! Matching git is the decision. Scoping `-c core.fsmonitor=` to that one call
-//! would make `wt` stricter than the command it replaces, and would restore
-//! the full re-stat the ordering above avoids — the dominant per-removal cost
-//! at rust-lang/rust scale. (`--no-optional-locks` is not that knob: it
-//! governs index-lock acquisition, and git still queries the daemon under it.)
+//! Under `core.fsmonitor` the daemon answers step 1's `git status`, as it
+//! answers `git worktree remove`'s. That first gate refuses a dirty worktree
+//! cheaply and leaves its daemon running.
 //!
 //! Stopping the daemon is `wt`'s own step, not git's, and it opens a window
-//! git's gate never has: writes during the shutdown. Closing that window
-//! takes one re-stat after the stop, paid only where fsmonitor is configured.
+//! git's gate never has: writes during the shutdown. So with fsmonitor
+//! configured the gate runs again after the stop, rescanning without the
+//! daemon, and that rescan is what a clean removal passes. It costs one full
+//! re-stat per removal where fsmonitor is configured, and also catches a
+//! stale clean answer from the daemon, which makes `wt` stricter there than
+//! `git worktree remove`. (`--no-optional-locks` cannot replace the rescan: it
+//! governs index-lock acquisition, and git still queries the daemon under it.)
 //!
 //! # Example
 //!
@@ -436,14 +431,11 @@ pub fn remove_worktree_with_cleanup(
 ///
 /// # Why this order
 ///
-/// The gate runs **before** the daemon stop because the fsmonitor daemon
-/// serves its `git status`; stopping first would force a full re-stat, the
-/// dominant per-removal cost on a large repo. That the gate therefore trusts
-/// the daemon is a deliberate match to `git worktree remove`, whose own gate
-/// trusts it identically — see "The dirty-worktree gate follows git" in the
-/// [module-level docs](self) for why that is the decision and not a gap.
-/// What the daemon cannot cover is a write during its own shutdown, so with
-/// fsmonitor configured the gate runs once more after the stop, rescanning.
+/// The gate runs **before** the daemon stop so a dirty worktree is refused off
+/// the daemon's cheap answer, with its daemon left running. With fsmonitor
+/// configured it runs once more after the stop, rescanning, to catch writes
+/// during the shutdown — see "The dirty-worktree gate" in the
+/// [module-level docs](self).
 ///
 /// The daemon stop runs **before** the rename because on Windows the daemon
 /// holds a handle on the worktree that would fail it, and git's graceful stop
