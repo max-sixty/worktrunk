@@ -185,6 +185,14 @@ Variables use dot access and the `default` filter for missing keys. JSON object/
 dev = "ENV={{ vars.env | default('development') }} npm start -- --port {{ vars.config.port | default('3000') }}"
 ```
 
+The `tojson` filter renders a whole object or array as JSON, for commands that take JSON input:
+
+```toml
+# .config/wt.toml
+[post-start]
+seed = "curl -X POST localhost:3000/seed -d {{ vars.config | tojson }}"
+```
+
 ## Worktrunk filters
 
 Templates support Jinja2 filters for transforming values:
