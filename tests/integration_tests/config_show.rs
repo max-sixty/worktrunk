@@ -99,7 +99,7 @@ fn test_config_show_rejects_invalid_approvals_file(repo: TestRepo) {
 fn test_config_show_hides_fully_approved_commands(repo: TestRepo) {
     repo.write_project_config("pre-start = \"npm install\"\n");
     let project = repo.repo.project_identifier().unwrap();
-    let project = toml::Value::String(project).to_string();
+    let project = toml::Value::String(project.to_string()).to_string();
     fs::write(
         repo.test_approvals_path(),
         format!("[projects.{project}]\napproved-commands = [\"npm install\"]\n"),
@@ -753,16 +753,20 @@ fn test_config_show_zsh_compinit_warning(mut repo: TestRepo, temp_home: TempDir)
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(global_config_dir.join("config.toml"), "").unwrap();
 
-    // Create .zshrc WITHOUT compinit - completions won't work
+    // Use a custom zsh config directory so the advisory must name the same
+    // file as the integration detector.
+    let zdotdir = canonical_temp_home(&temp_home).join("zsh-config");
+    fs::create_dir_all(&zdotdir).unwrap();
     fs::write(
-        temp_home.path().join(".zshrc"),
+        zdotdir.join(".zshrc"),
         r#"# wt integration but no compinit!
 if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)"; fi
 "#,
     )
     .unwrap();
 
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    let mut settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.add_redaction(".env.ZDOTDIR", "[TEST_ZDOTDIR]");
     settings.bind(|| {
         let mut cmd = repo.wt_command();
         // Force compinit warning for deterministic tests across environments
@@ -770,6 +774,7 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
+        cmd.env("ZDOTDIR", &zdotdir);
 
         assert_cmd_snapshot!(cmd);
     });
@@ -2199,8 +2204,8 @@ pre-start = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
     );
 }
 
-/// With -v flag, the brief deprecation warning includes the mv command hint
-/// and template expansion logs are shown
+/// With -v flag, template expansion logs appear alongside the deprecation
+/// warnings
 #[rstest]
 fn test_deprecated_template_variables_verbose_shows_content(repo: TestRepo, temp_home: TempDir) {
     // Write config with deprecated variables
@@ -2795,7 +2800,7 @@ fn test_config_show_gemini_extension_installed(mut repo: TestRepo, temp_home: Te
 /// override the harness sets, so the production `which::which` PATH lookup is
 /// otherwise never exercised. `setup_mock_clis_on_path()` drops the overrides
 /// and prepends real mock executables, so this single run covers the
-/// PATH-detection path for all five AI CLIs at once.
+/// PATH-detection path for all six AI CLIs at once.
 #[rstest]
 fn test_config_show_clis_detected_via_path(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
@@ -3092,7 +3097,7 @@ fn test_opencode_install_ignores_relative_xdg_config_home(temp_home: TempDir) {
 }
 
 /// Install prompt declined (no `--yes`, piped stdin → empty → declined).
-/// Exercises the `return Ok(())` branch at lines 83-84 of opencode.rs.
+/// Exercises the declined-prompt branch of `install_file_plugin` in config/mod.rs.
 #[rstest]
 fn test_opencode_install_prompt_declined(temp_home: TempDir) {
     let settings = setup_home_snapshot_settings(&temp_home);
@@ -3115,7 +3120,7 @@ fn test_opencode_install_prompt_declined(temp_home: TempDir) {
 }
 
 /// Uninstall prompt declined (no `--yes`, piped stdin → empty → declined).
-/// Exercises the `return Ok(())` branch at lines 129-130 of opencode.rs.
+/// Exercises the declined-prompt branch of `uninstall_file_plugin` in config/mod.rs.
 #[rstest]
 fn test_opencode_uninstall_prompt_declined(temp_home: TempDir) {
     // Pre-install the plugin so we reach the prompt
@@ -3661,7 +3666,8 @@ fn test_config_show_runs_real_ancestry_walk(mut repo: TestRepo, temp_home: TempD
     );
 }
 
-/// Test that deprecated [commit-generation] section shows warning and creates migration file
+/// Test that deprecated [commit-generation] section shows warning and that
+/// `wt config update` migrates it in place
 #[rstest]
 fn test_deprecated_commit_generation_section_shows_warning(repo: TestRepo, temp_home: TempDir) {
     // Write user config with deprecated [commit-generation] section
@@ -6203,21 +6209,11 @@ fn test_wt_sh_ignores_an_inherited_wt(repo: TestRepo) {
     );
 }
 
-/// `where git.exe` searches the current directory before it searches PATH, and
-/// cmd resolves a bare `git.exe` the same way — so with the lookup unscoped, a
-/// `git.exe` committed to a repo decides which `bash.exe` every prompt,
-/// permission request, stop, and session end runs, since the hook runs with the
-/// user's project as its current directory. `wt.sh` carries no such surface:
-/// `command -v` consults PATH only.
-///
-/// Neither decoy planted here is a valid executable, which is what makes the
-/// shim's choice observable: the version line can only be printed by the real
-/// bash the pinned PATH leads to. Taking the decoy `git.exe` would derive the
-/// `bash.exe` beside it — planted so that the wrong branch *resolves* rather
-/// than falling through to the standard install locations and passing anyway.
+/// Never execute a project's git.exe when finding the PATH installation.
 #[cfg(windows)]
 #[rstest]
 fn test_shim_ignores_a_git_in_the_current_directory(repo: TestRepo) {
+    use crate::common::mock_commands::{MockConfig, mock_calls};
     use std::os::windows::process::CommandExt;
 
     let shim =
@@ -6229,17 +6225,12 @@ fn test_shim_ignores_a_git_in_the_current_directory(repo: TestRepo) {
     fs::create_dir_all(&path_dir).unwrap();
     fs::copy(crate::common::wt_bin(), path_dir.join("git-wt.exe")).unwrap();
 
-    // ...and the decoys: a `git.exe` in the directory the hook runs from, plus
-    // the `bash.exe` the shim would derive from it (`<cwd>\..\bin\bash.exe`).
     let project = repo.root_path().join("project");
     fs::create_dir_all(&project).unwrap();
-    fs::write(project.join("git.exe"), b"not an executable").unwrap();
-    fs::create_dir_all(repo.root_path().join("bin")).unwrap();
-    fs::write(
-        repo.root_path().join("bin").join("bash.exe"),
-        b"not an executable",
-    )
-    .unwrap();
+    MockConfig::new("git")
+        .command("--exec-path", MockResponse::output("not-an-install"))
+        .write(&project);
+    let call_log = TempDir::new().unwrap();
 
     let mut cmd = std::process::Command::new("cmd.exe");
     repo.configure_wt_cmd(&mut cmd);
@@ -6247,6 +6238,8 @@ fn test_shim_ignores_a_git_in_the_current_directory(repo: TestRepo) {
         .arg("/C")
         .raw_arg(format!("\"\"{}\" --version\"", shim.display()))
         .env("PATH", pinned_windows_path(&[path_dir]))
+        .env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", &project)
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
         .env_remove("WORKTRUNK_BIN")
         .current_dir(&project)
         .output()
@@ -6263,113 +6256,11 @@ fn test_shim_ignores_a_git_in_the_current_directory(repo: TestRepo) {
         output.status,
         String::from_utf8_lossy(&output.stderr)
     );
+    assert!(mock_calls(call_log.path(), "git").is_empty());
 }
 
-/// The scoping above is only as good as the command doing it. `where` is not a
-/// cmd built-in — it is `System32\where.exe` — so cmd resolves that name the
-/// way it resolves any other: current directory first, then PATH. A `where`
-/// committed to a repo therefore picks the `git.exe` that picks the `bash.exe`
-/// every prompt, permission request, stop, and session end runs, which is the
-/// surface `$PATH:` closes one level down.
-///
-/// The decoy is a `.bat` rather than an inert `where.exe`, and it names a Git
-/// install whose `bin\bash.exe` exists, because both are what make the wrong
-/// answer *observable*: a decoy that cannot run leaves the lookup empty, and a
-/// decoy install without a `bash.exe` falls through — either way the shim
-/// reaches `%ProgramFiles%\Git\bin\bash.exe`, which resolves on any Windows
-/// box, and the test would pass on the unscoped shim for the wrong reason.
-/// Reaching `:derive` with a decoy instead leaves `BASH` set and unrunnable.
-///
-/// The probe below pins the premise separately, so this cannot go green
-/// because the planted `where` was never the one cmd would have chosen.
-#[cfg(windows)]
-#[rstest]
-fn test_shim_ignores_a_where_in_the_current_directory(repo: TestRepo) {
-    use std::os::windows::process::CommandExt;
-
-    let shim =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins/worktrunk/hooks/wt.cmd");
-
-    // The only worktrunk the shim is allowed to find: a real one, in a
-    // directory on the PATH this test pins.
-    let path_dir = repo.root_path().join("path-dir");
-    fs::create_dir_all(&path_dir).unwrap();
-    fs::copy(crate::common::wt_bin(), path_dir.join("git-wt.exe")).unwrap();
-
-    // The decoy Git install the planted `where` names. `:derive` takes
-    // `<install>\cmd\` and accepts `<install>\bin\bash.exe`, so that file has
-    // to exist for the wrong branch to win rather than fall through.
-    let decoy = repo.root_path().join("decoy-git");
-    fs::create_dir_all(decoy.join("bin")).unwrap();
-    fs::write(decoy.join("bin").join("bash.exe"), b"not an executable").unwrap();
-
-    // ...and the lookup that names it, in the directory the hook runs from.
-    // `.bat` is enough to shadow `System32\where.exe`: cmd tries every PATHEXT
-    // extension in one directory before it moves to the next.
-    let project = repo.root_path().join("project");
-    fs::create_dir_all(&project).unwrap();
-    let decoy_git = decoy.join("cmd").join("git.exe");
-    fs::write(
-        project.join("where.bat"),
-        format!("@echo {}\r\n", decoy_git.display()),
-    )
-    .unwrap();
-
-    // The premise, checked directly: without it the decoy is never consulted
-    // and every assertion below would hold on the unscoped shim too.
-    let mut probe = std::process::Command::new("cmd.exe");
-    repo.configure_wt_cmd(&mut probe);
-    let probe_output = probe
-        .arg("/C")
-        .raw_arg("\"where $PATH:git.exe\"")
-        .env("PATH", pinned_windows_path(&[]))
-        .current_dir(&project)
-        .output()
-        .unwrap();
-    let probed = String::from_utf8_lossy(&probe_output.stdout);
-    assert!(
-        probed.contains("decoy-git"),
-        "a `where.bat` in the current directory must shadow System32's `where.exe`, \
-         or this test pins nothing; got {probed:?}"
-    );
-
-    let mut cmd = std::process::Command::new("cmd.exe");
-    repo.configure_wt_cmd(&mut cmd);
-    let output = cmd
-        .arg("/C")
-        .raw_arg(format!("\"\"{}\" --version\"", shim.display()))
-        .env("PATH", pinned_windows_path(&[path_dir]))
-        .env_remove("WORKTRUNK_BIN")
-        .current_dir(&project)
-        .output()
-        .unwrap();
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        output.status.success() && stdout.trim_start().starts_with("wt "),
-        "the shim must run System32's `where.exe`, not one from the current \
-         directory; got {}\nstdout:\n{stdout}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-/// The two scoping tests above see only the *wrong* bash: they go red because
-/// the shim picks a decoy. Neither sees a lookup that finds nothing at all — a
-/// mis-quoted `for /f`, a `where` spelling cmd cannot run — because the shim
-/// then falls through to `%ProgramFiles%\Git\bin\bash.exe`, which resolves on
-/// any Windows box, and every assertion still holds. So the derive branch is
-/// the one route to a bash that nothing observes.
-///
-/// This takes the fallbacks away: `ProgramFiles` and `LOCALAPPDATA` point at an
-/// empty directory, leaving `:derive` as the only way to a bash, so the
-/// `%SystemRoot%\System32\where.exe` line has to return the Git install — under
-/// the quoting `for /f` wraps it in — for the shim to reach `wt.sh` at all.
-///
-/// Both variables reach a real hook: Codex's strictest `inherit = "core"`
-/// policy keeps `SYSTEMROOT`, `PROGRAMFILES` and `LOCALAPPDATA`
-/// (`WINDOWS_CORE_ENV_VARS` in `codex-rs/protocol/src/shell_environment.rs`),
-/// and `scrub_non_inheritable_env_vars` drops only auth-token names.
+/// The hook must use Git's installed runtime, even if GIT_EXEC_PATH names a
+/// different helper directory. Run through cmd's real for/f quoting.
 #[cfg(windows)]
 #[rstest]
 fn test_shim_derives_bash_from_the_git_on_path(repo: TestRepo) {
@@ -6384,9 +6275,8 @@ fn test_shim_derives_bash_from_the_git_on_path(repo: TestRepo) {
     fs::create_dir_all(&path_dir).unwrap();
     fs::copy(crate::common::wt_bin(), path_dir.join("git-wt.exe")).unwrap();
 
-    // Where the two standard-install fallbacks now point: no Git under either.
-    let no_git = repo.root_path().join("no-git");
-    fs::create_dir_all(&no_git).unwrap();
+    let helper_override = repo.root_path().join("other-helpers");
+    fs::create_dir_all(&helper_override).unwrap();
 
     let mut cmd = std::process::Command::new("cmd.exe");
     repo.configure_wt_cmd(&mut cmd);
@@ -6394,8 +6284,7 @@ fn test_shim_derives_bash_from_the_git_on_path(repo: TestRepo) {
         .arg("/C")
         .raw_arg(format!("\"\"{}\" --version\"", shim.display()))
         .env("PATH", pinned_windows_path(&[path_dir]))
-        .env("ProgramFiles", &no_git)
-        .env("LOCALAPPDATA", &no_git)
+        .env("GIT_EXEC_PATH", &helper_override)
         .env_remove("WORKTRUNK_BIN")
         .current_dir(repo.root_path())
         .output()
@@ -6404,8 +6293,8 @@ fn test_shim_derives_bash_from_the_git_on_path(repo: TestRepo) {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success() && stdout.trim_start().starts_with("wt "),
-        "the shim must derive Git Bash from the git.exe PATH names, with no install \
-         default left to fall back on; got {}\nstdout:\n{stdout}\nstderr:\n{}",
+        "the shim must query the installed Git runtime, ignoring GIT_EXEC_PATH; \
+         got {}\nstdout:\n{stdout}\nstderr:\n{}",
         output.status,
         String::from_utf8_lossy(&output.stderr)
     );

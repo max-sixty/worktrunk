@@ -3,7 +3,6 @@
 use anstyle::{AnsiColor, Color, Color as AnsiStyleColor, Style};
 use crossterm::style::Attribute;
 use termimad::{CompoundStyle, MadSkin, TableBorderChars};
-use unicode_width::UnicodeWidthStr;
 
 use worktrunk::styling::{
     DEFAULT_HELP_WIDTH, format_bash_with_gutter, format_bash_with_gutter_chopped, format_toml,
@@ -47,10 +46,12 @@ enum CodeBlocks {
     Flush,
 }
 
-/// Render markdown in help text to ANSI with minimal styling (green headers only)
+/// Render markdown in help text to ANSI: green headers, inline formatting,
+/// dimmed rules, colored status symbols, and fenced code quoted in the house
+/// gutter.
 ///
-/// If `width` is provided, prose text is wrapped to that width. Tables, code blocks,
-/// and headers are never wrapped (tables need full-width rows for alignment).
+/// If `width` is provided, prose and tables wrap to that width. Headers are
+/// never wrapped.
 pub(crate) fn render_markdown_in_help_with_width(help: &str, width: Option<usize>) -> String {
     render_markdown(help, width, CodeBlocks::Gutter)
 }
@@ -290,9 +291,9 @@ fn render_code_block(
     }
 }
 
-/// Render a markdown table using termimad (for help text, no indent)
+/// Render a markdown table from help text using termimad
 fn render_table(lines: &[&str], max_width: Option<usize>) -> String {
-    render_table_with_termimad(lines, "", max_width)
+    render_table_with_termimad(lines, max_width)
 }
 
 /// Render a table from headers and rows using termimad.
@@ -311,13 +312,13 @@ pub(crate) fn render_data_table(headers: &[&str], rows: &[Vec<String>]) -> Strin
     lines.push(&separator);
     lines.extend(row_lines.iter().map(|s| s.as_str()));
 
-    render_table_with_termimad(&lines, "", None)
+    render_table_with_termimad(&lines, None)
 }
 
 /// Render a markdown table using termimad
 ///
 /// Termimad handles column width calculation, cell wrapping, and alignment.
-fn render_table_with_termimad(lines: &[&str], indent: &str, max_width: Option<usize>) -> String {
+fn render_table_with_termimad(lines: &[&str], max_width: Option<usize>) -> String {
     if lines.is_empty() {
         return String::new();
     }
@@ -330,25 +331,8 @@ fn render_table_with_termimad(lines: &[&str], indent: &str, max_width: Option<us
         .collect();
     let markdown = processed.join("\n");
 
-    // Determine width for termimad (subtract indent)
-    let width = max_width
-        .map(|w| w.saturating_sub(indent.width()))
-        .unwrap_or(DEFAULT_HELP_WIDTH);
-
-    let skin = help_table_skin();
-    let rendered = skin.text(&markdown, Some(width)).to_string();
-
-    // Add indent to each line
-    if indent.is_empty() {
-        rendered
-    } else {
-        rendered
-            .lines()
-            .map(|line| format!("{indent}{line}"))
-            .collect::<Vec<_>>()
-            .join("\n")
-            + "\n"
-    }
+    let width = max_width.unwrap_or(DEFAULT_HELP_WIDTH);
+    help_table_skin().text(&markdown, Some(width)).to_string()
 }
 
 /// Unescape pipe characters in markdown table cells: `\|` -> `|`
@@ -372,7 +356,7 @@ fn unescape_table_pipes(line: &str) -> String {
 /// via `cmd.get_after_long_help()`, process it ourselves, then combine. This requires
 /// restructuring since `cmd` is consumed by `try_get_matches_from_mut`.
 ///
-/// Current workaround: Use plain URLs in cli.rs (terminals auto-link `https://...`),
+/// Current workaround: Use plain URLs in src/cli/mod.rs (terminals auto-link `https://...`),
 /// transform to markdown links for web docs in `post_process_for_html()`.
 fn strip_markdown_links(line: &str) -> String {
     let mut result = String::new();
@@ -484,7 +468,7 @@ fn render_inline_formatting(line: &str) -> String {
 
 /// Add colors to status symbols in help text (matching wt list output colors)
 fn colorize_status_symbols(text: &str) -> String {
-    // Define semantic styles matching src/commands/list/model/status_symbols.rs StatusSymbols::styled_symbols
+    // Define semantic styles matching src/commands/list/model/status_symbols.rs StatusSymbols::symbols
     let error = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::Red)));
     let warning = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::Yellow)));
     let success = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::Green)));

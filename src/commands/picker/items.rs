@@ -1794,27 +1794,20 @@ impl PickerRow {
         // freeze the dim/bright styling at the SHA main pointed at when
         // the picker started, instead of the current SHA. The
         // `log_cache_dim_split_tracks_main_advance` test pins this
-        // contract.
-        //
-        // (`Repository::merge_base` is correctness-safe — it re-resolves
-        // ref names through an uncached `git rev-parse` before hitting
-        // its SHA-keyed cache — but it'd cost an extra subprocess per
-        // render on cache miss, with no win since each item's head is
-        // unique.)
+        // contract. `Repository::merge_base` is safe here: it re-resolves
+        // ref names through an uncached `git rev-parse` before hitting its
+        // SHA-keyed cache.
         //
         // Error handling note: this code runs in an interactive preview
         // pane. Silent fallbacks beat disruptive errors during navigation;
         // the preview is supplementary, users can still select worktrees
         // even if a probe fails.
-        let Ok(merge_base_output) =
-            repo.run_command(&["merge-base", "--end-of-options", &default_branch, head])
-        else {
+        let Ok(merge_base) = repo.merge_base(&default_branch, head) else {
             return (
                 cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits\n"),
                 false,
             );
         };
-        let merge_base = merge_base_output.trim();
         let is_default_branch = branch == default_branch;
         let log_limit_str = log_limit.to_string();
 
@@ -1825,7 +1818,7 @@ impl PickerRow {
         let unique_commits: Option<HashSet<String>> = if is_default_branch {
             // On default branch: no dimming (None means show everything bright)
             None
-        } else {
+        } else if let Some(merge_base) = merge_base {
             // On feature branch: get commits unique to this branch
             // rev-list A...B --right-only gives commits reachable from B but not A
             let range = format!("{}...{}", merge_base, head);
@@ -1834,6 +1827,9 @@ impl PickerRow {
                 .map(|out| out.lines().map(String::from).collect())
                 .unwrap_or_default();
             Some(commits) // Some(empty) means dim everything
+        } else {
+            // Orphan branch: no common ancestor, so every commit is its own
+            None
         };
 
         // Cacheable: the raw `git log --graph` output plus per-commit
@@ -3503,6 +3499,30 @@ mod tests {
         assert!(
             super::preview_cache::read_log(&repo, item.head(), 100, 24).is_none(),
             "different width still misses"
+        );
+    }
+
+    #[test]
+    fn log_orphan_shows_its_commits() {
+        // An orphan branch shares no history with the default branch, so
+        // `git merge-base` exits 1. That is "no common ancestor", not a
+        // failure: every commit is the branch's own and shows bright.
+        let (t, repo) = repo_with_main();
+        repo.run_command(&["checkout", "--orphan", "orphan-feature"])
+            .unwrap();
+        repo.run_command(&["rm", "-rf", "."]).unwrap();
+        std::fs::write(t.path().join("orphan.txt"), "orphan\n").unwrap();
+        repo.run_command(&["add", "orphan.txt"]).unwrap();
+        repo.run_command(&["commit", "-m", "orphan root"]).unwrap();
+        let item = item_at(&repo, "orphan-feature");
+        let output = PickerRow::compute_log_preview(&repo, &item, 80, 24).0;
+        let subject_line = output
+            .lines()
+            .find(|l| l.contains("orphan root"))
+            .unwrap_or_else(|| panic!("orphan log should list its commit, got: {output:?}"));
+        assert!(
+            subject_line.contains("\x1b[1;32m"),
+            "orphan commit should be bright, got: {subject_line:?}"
         );
     }
 

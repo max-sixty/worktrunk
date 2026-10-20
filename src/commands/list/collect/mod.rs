@@ -1747,14 +1747,20 @@ pub fn collect(
         .and(integration_targets.clone());
     options.snapshot = snapshot;
 
-    // Update is_previous on items
-    if let Some(prev) = previous_branch.as_deref() {
-        for item in &mut all_items {
-            if item.branch() == Some(prev)
-                && let Some(wt_data) = item.worktree_data_mut()
-            {
-                wt_data.is_previous = true;
-            }
+    // Update is_previous on items: the worktree `wt switch -` returns to,
+    // by its recorded path, or else every worktree of the previous branch.
+    let previous_path = repo
+        .switch_previous_worktree()
+        .ok()
+        .flatten()
+        .map(|(path, _)| path);
+    for item in &mut all_items {
+        let is_previous = match &previous_path {
+            Some(path) => item.worktree_path() == Some(path.as_path()),
+            None => previous_branch.is_some() && item.branch() == previous_branch.as_deref(),
+        };
+        if is_previous && let Some(wt_data) = item.worktree_data_mut() {
+            wt_data.is_previous = true;
         }
     }
 

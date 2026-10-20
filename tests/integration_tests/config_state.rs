@@ -2577,6 +2577,24 @@ fn test_vars_set_and_get(repo: TestRepo) {
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "staging");
 }
 
+/// Without `--branch`, state commands act on `@`. In a detached worktree that
+/// refuses without naming the worktree, since it's the one the user is in.
+#[rstest]
+fn test_vars_set_in_detached_worktree(mut repo: TestRepo) {
+    let worktree = repo.add_worktree("feature");
+    repo.detach_head_in_worktree("feature");
+
+    let output = wt_state_cmd(&repo, "vars", "set", &["env=staging"])
+        .current_dir(&worktree)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [31m✗[39m [31mCannot set variable: not on a branch (detached HEAD)[39m
+    [2m↳[22m [2mTo switch to a branch, run [4mgit switch <branch>[24m[22m
+    ");
+}
+
 #[rstest]
 fn test_vars_set_json_value(repo: TestRepo) {
     let json = r#"{"port":3000,"debug":true}"#;

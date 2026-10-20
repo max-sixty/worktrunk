@@ -56,7 +56,7 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET][0m
 
 [1m[32mOptions:[0m
   [1m[36m-b[0m, [1m[36m--branch[0m[36m [0m[36m<BRANCH>[0m
-          Branch to merge from (defaults to current worktree)
+          Branch to merge (defaults to the current branch)
 
       [1m[36m--no-squash[0m
           Skip commit squashing
@@ -112,7 +112,7 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET][0m
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
-Unlike [2mgit merge[0m, this merges the source branch into the target branch — not the target into current. Similar to clicking "Merge pull request" on GitHub, but locally. The source defaults to the current branch; the target defaults to the default branch.
+Unlike [2mgit merge[0m, this merges a source branch into the target branch, not the target into the current branch. Similar to clicking "Merge pull request" on GitHub, but locally. The source defaults to the current branch ([2m--branch[0m names another); the target defaults to the default branch.
 
 [1m[32mExamples[0m
 
@@ -167,7 +167,7 @@ Preserve the exact clean commit graph and tip:
 [2mwt merge[0m runs these steps:
 
 1. [1mCommit[0m — Pre-commit hooks run, then uncommitted changes are committed. Post-commit hooks run in the background. This step is skipped when squashing (the default) — changes are staged during the squash step instead. With [2m--no-squash[0m, this is the only commit step.
-2. [1mSquash[0m — Combines all commits since target into one (like GitHub's "Squash and merge"). Pre-commit hooks run before staging; post-commit hooks run in the background after committing. Use [2m--stage[0m to control what gets staged: [2mall[0m (default), [2mtracked[0m, or [2mnone[0m. Working-tree changes swept into the squash are backed up first to [2mrefs/wt-backup/<branch>[0m; see [2mwt step squash[0m for recovery. With [2m--no-squash[0m, individual commits are preserved.
+2. [1mSquash[0m — Combines all commits since target into one (like GitHub's "Squash and merge"). Pre-commit hooks see the staged changes, and their edits are staged into the squash commit; post-commit hooks run in the background after committing. Use [2m--stage[0m to control what gets staged: [2mall[0m (default), [2mtracked[0m, or [2mnone[0m. Working-tree changes swept into the squash are backed up first to [2mrefs/wt-backup/<branch>[0m; see [2mwt step squash[0m for recovery. With [2m--no-squash[0m, individual commits are preserved.
 3. [1mRebase[0m — Rebases onto target, skipping when nothing needs replaying ([2mwt step rebase[0m gives the conditions). A conflict stops the merge with the rebase left open in the worktree, to resolve or abort. With [2m--no-rebase[0m, the graph produced by earlier commit/squash steps is preserved and the target must be able to fast-forward to its tip.
 4. [1mPre-merge hooks[0m — Hooks run after rebase, before merge. Failures abort. See [2mwt hook[0m.
 5. [1mMerge[0m — Fast-forward merge to the target branch ([2mwt step push[0m). With [2m--no-ff[0m, a merge commit is created instead — semi-linear history after the default rebase, while explicit [2m--no-rebase[0m preserves the graph produced by earlier steps before adding the merge commit. Non-fast-forward merges are rejected.

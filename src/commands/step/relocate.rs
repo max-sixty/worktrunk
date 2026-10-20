@@ -100,7 +100,7 @@ pub fn step_relocate(
         use super::super::command_approval::approve_commit_template_append;
         use super::super::command_executor::CommandContext;
         let project_id = repo.project_identifier().ok();
-        let commit_config = config.commit_generation(project_id.as_deref());
+        let commit_config = config.commit_generation(project_id.as_ref());
         if commit_config.is_configured() {
             let ctx = CommandContext::new(&repo, &config, None, &repo_path, false);
             approve_commit_template_append(&ctx)?

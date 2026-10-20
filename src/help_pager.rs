@@ -92,7 +92,7 @@ fn pipe_through_pager(pager_cmd: &str, help_text: &str) -> Result<bool> {
     match Cmd::shell(pager_cmd)
         .stdin_bytes(help_text.as_bytes())
         .env("LESS", less_flags)
-        .forward_signals()
+        .hand_off_terminal()
         .stream()
     {
         Ok(()) => Ok(true),

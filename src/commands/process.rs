@@ -1,4 +1,5 @@
 use anyhow::Context;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
 #[cfg(windows)]
@@ -6,7 +7,6 @@ use std::process::Command;
 use std::process::Stdio;
 use worktrunk::git::{HookType, Repository};
 use worktrunk::path::{format_path_for_display, sanitize_for_filename};
-use worktrunk::utils::epoch_now;
 
 use worktrunk::config::HookSource;
 
@@ -106,20 +106,6 @@ impl HookLog {
     }
 }
 
-/// Get the separator needed before closing brace in POSIX shell command grouping.
-/// Returns empty string if command already ends with newline or semicolon.
-///
-/// Unix-only: the `{ …; } &` grouping it feeds is `spawn_detached_unix`'s
-/// backgrounding wrapper, which the Windows spawn has no counterpart for.
-#[cfg(unix)]
-fn posix_command_separator(command: &str) -> &'static str {
-    if command.ends_with('\n') || command.ends_with(';') {
-        ""
-    } else {
-        ";"
-    }
-}
-
 /// Create the log directory and file for a detached process.
 ///
 /// Returns `(log_path, log_file)`. Shared by `spawn_detached` and
@@ -169,116 +155,26 @@ fn create_detach_log(
 pub fn spawn_detached(
     repo: &Repository,
     worktree_path: &Path,
-    command: &str,
+    args: &[OsString],
     branch: &str,
     hook_log: &HookLog,
-) -> anyhow::Result<std::path::PathBuf> {
-    let (log_path, log_file) = create_detach_log(repo, branch, hook_log)?;
-
-    tracing::debug!(
-        command = %command,
-        "$ {} (detached, logging to {})",
-        command,
-        log_path.file_name().unwrap_or_default().to_string_lossy()
-    );
-
-    #[cfg(unix)]
-    {
-        let low_priority = matches!(hook_log, HookLog::Internal(_) | HookLog::Shared(_));
-        spawn_detached_unix(worktree_path, command, log_file, low_priority)?;
-    }
-
-    #[cfg(windows)]
-    {
-        spawn_detached_windows(worktree_path, command, log_file)?;
-    }
-
-    Ok(log_path)
-}
-
-#[cfg(unix)]
-fn spawn_detached_unix(
-    worktree_path: &Path,
-    command: &str,
-    log_file: fs::File,
-    low_priority: bool,
-) -> anyhow::Result<()> {
-    use std::os::unix::process::CommandExt;
-
-    // Wrap in braces so `&` backgrounds the entire compound command.
-    // Without braces, `cmd1 && cmd2; cmd3 &` parses as two statements:
-    // `cmd1 && cmd2` (foreground) then `cmd3 &` (background) — the semicolon
-    // has lower precedence than `&`, so only the last segment is backgrounded.
-    let shell_cmd = format!("{{ {}{} }} &", command, posix_command_separator(command));
-
-    // Detachment via process_group(0): puts the spawned shell in its own process group.
-    // When the controlling PTY closes, SIGHUP is sent to the foreground process group.
-    // Since our process is in a different group, it doesn't receive the signal.
-    //
-    // For low-priority ops (internal cleanup), wrap the shell via
-    // `worktrunk::priority::command`. The policy is inherited by the backgrounded
-    // command and its grandchildren.
-    let mut cmd = worktrunk::priority::command("sh", low_priority);
-    cmd.arg("-c")
-        .arg(&shell_cmd)
-        .current_dir(worktree_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(
-            log_file
-                .try_clone()
-                .context("Failed to clone log file handle")?,
-        ))
-        .stderr(Stdio::from(log_file))
-        .process_group(0); // New process group, not in PTY's foreground group
-    // Prevent hooks from writing to the directive file
-    worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
-    let mut child =
-        worktrunk::shell_exec::spawn(&mut cmd).context("Failed to spawn detached process")?;
-
-    // Wait for sh to exit (immediate, doesn't block on background command)
-    child
-        .wait()
-        .context("Failed to wait for detachment shell")?;
-
-    Ok(())
-}
-
-#[cfg(windows)]
-fn spawn_detached_windows(
-    worktree_path: &Path,
-    command: &str,
-    log_file: fs::File,
-) -> anyhow::Result<()> {
-    use std::os::windows::process::CommandExt;
-    use worktrunk::shell_exec::ShellConfig;
-
-    // CREATE_NEW_PROCESS_GROUP: Creates new process group (0x00000200)
-    // CREATE_NO_WINDOW: Creates process without console window (0x08000000)
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-    let shell = ShellConfig::get()?;
-
-    // Git Bash runs the command as written; no stdin wrapper is needed.
-    let mut cmd = shell.command(command);
-
-    cmd.current_dir(worktree_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(
-            log_file
-                .try_clone()
-                .context("Failed to clone log file handle")?,
-        ))
-        .stderr(Stdio::from(log_file))
-        .creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
-    // Prevent hooks from writing to the directive file
-    worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
-    worktrunk::shell_exec::spawn(&mut cmd).context("Failed to spawn detached process")?;
-
-    // Windows: Process is fully detached with a hidden window via CREATE_NO_WINDOW flag,
-    // no need to wait (unlike Unix which waits for the outer shell)
-
-    Ok(())
+) -> anyhow::Result<PathBuf> {
+    let shell = worktrunk::shell_exec::ShellConfig::get()?;
+    let args: Vec<_> = shell
+        .args
+        .iter()
+        .map(OsString::from)
+        .chain(args.iter().cloned())
+        .collect();
+    spawn_detached_exec(
+        repo,
+        worktree_path,
+        &shell.executable,
+        &args,
+        branch,
+        hook_log,
+        &[],
+    )
 }
 
 /// Spawn a detached background process by executing a binary directly.
@@ -299,7 +195,7 @@ pub fn spawn_detached_exec(
     repo: &Repository,
     worktree_path: &Path,
     program: &Path,
-    args: &[&str],
+    args: &[impl AsRef<OsStr>],
     branch: &str,
     hook_log: &HookLog,
     stdin_bytes: &[u8],
@@ -310,7 +206,7 @@ pub fn spawn_detached_exec(
         program = %program.display(),
         "$ {} {} (detached, logging to {})",
         program.display(),
-        args.join(" "),
+        args.iter().map(|arg| arg.as_ref().to_string_lossy()).collect::<Vec<_>>().join(" "),
         log_path.file_name().unwrap_or_default().to_string_lossy()
     );
 
@@ -360,7 +256,7 @@ fn set_background_hook_env(cmd: &mut std::process::Command, is_background_hook: 
 fn spawn_detached_exec_unix(
     worktree_path: &Path,
     program: &Path,
-    args: &[&str],
+    args: &[impl AsRef<OsStr>],
     log_file: fs::File,
     stdin_bytes: &[u8],
     low_priority: bool,
@@ -394,7 +290,7 @@ fn spawn_detached_exec_unix(
 fn spawn_detached_exec_windows(
     worktree_path: &Path,
     program: &Path,
-    args: &[&str],
+    args: &[impl AsRef<OsStr>],
     log_file: fs::File,
     stdin_bytes: &[u8],
     is_background_hook: bool,
@@ -445,8 +341,8 @@ fn spawn_detached_exec_windows(
 ///
 /// Steps:
 ///
-/// 1. [`sweep_stale_trash`] — delete stale `.git/wt/trash/` entries left by
-///    an interrupted background removal.
+/// 1. [`sweep_trash`] — restart deletion of `.git/wt/trash/` entries left
+///    by an interrupted background removal.
 /// 2. [`worktrunk::git::fsmonitor::reap_orphan_fsmonitor_daemons`] — terminate
 ///    `git fsmonitor--daemon` processes whose worktree no longer exists.
 ///    Defense-in-depth for daemons orphaned by paths that bypass `wt remove`
@@ -454,178 +350,91 @@ fn spawn_detached_exec_windows(
 ///    `wt remove` source itself stops the daemon synchronously.
 pub fn run_internal_sweep(repo: &Repository) {
     let _span = worktrunk::trace::Span::new("internal-sweep");
-    sweep_stale_trash(repo);
+    sweep_trash(repo);
     worktrunk::git::fsmonitor::reap_orphan_fsmonitor_daemons(repo);
 }
 
-/// How old a `.git/wt/trash/` entry must be before [`sweep_stale_trash`] deletes it.
-pub const TRASH_STALE_THRESHOLD_SECS: u64 = 24 * 60 * 60;
-
-/// Fire-and-forget cleanup of stale entries in `.git/wt/trash/`.
+/// Fire-and-forget restart of trash deletion.
 ///
-/// Worktree removal uses a fast path that renames the worktree into
-/// `.git/wt/trash/<name>-<timestamp>/` and deletes it in a detached background
-/// process. If that process is interrupted (SIGKILL, reboot, disk full), the
-/// renamed directory is orphaned. `wt remove` calls this function after its
-/// primary user-visible output — so the sweep never delays the progress or
-/// success message — to provide eventual cleanup: entries older than
-/// [`TRASH_STALE_THRESHOLD_SECS`] are removed by a single detached `rm -rf`.
+/// Worktree removal renames the worktree into
+/// `.git/wt/trash/<name>-<timestamp>/` and starts a detached
+/// [`worktrunk::git::drain_trash`] to delete it. If that process is
+/// interrupted (SIGKILL, reboot, disk full), its entries stay behind. `wt
+/// remove` calls this function after its primary user-visible output — so the
+/// sweep never delays the progress or success message — and starts another
+/// drain when the trash holds anything and no drain is running.
 ///
-/// Best effort: directory read failures and spawn failures are logged at debug
-/// level and otherwise ignored. The sweep is purely additive — the primary
-/// `wt remove` operation proceeds regardless of outcome.
-pub fn sweep_stale_trash(repo: &Repository) {
+/// Best effort: spawn failures are logged at debug level and otherwise
+/// ignored. The sweep is purely additive — the primary `wt remove` operation
+/// proceeds regardless of outcome.
+pub fn sweep_trash(repo: &Repository) {
     let trash_dir = repo.wt_trash_dir();
-    let stale = collect_stale_trash_entries(&trash_dir, epoch_now(), TRASH_STALE_THRESHOLD_SECS);
-    if stale.is_empty() {
+    if worktrunk::git::staged_trash_entries(&trash_dir).is_empty()
+        || worktrunk::git::trash_drain_running(&trash_dir)
+    {
         return;
     }
-
-    let command = build_trash_sweep_command(&stale);
 
     // The sweep is repo-wide (not branch-scoped), so it logs to a top-level
     // shared file alongside `commands.jsonl` and `trace.log`. The branch
     // argument is ignored for the `Shared` variant.
-    if let Err(e) = spawn_detached(
-        repo,
-        &repo.wt_dir(),
-        &command,
-        "",
-        &HookLog::Shared(InternalOp::TrashSweep),
-    ) {
+    let spawned = std::env::current_exe()
+        .context("Failed to locate Worktrunk executable")
+        .and_then(|executable| {
+            spawn_detached(
+                repo,
+                &repo.wt_dir(),
+                &build_drain_trash_command(executable, &trash_dir),
+                "",
+                &HookLog::Shared(InternalOp::TrashSweep),
+            )
+        });
+    if let Err(e) = spawned {
         tracing::debug!(error = %format!("{e:#}"), "Failed to spawn stale trash sweep");
     }
 }
 
-/// Build the `rm -rf -- …` command that [`sweep_stale_trash`] hands to
-/// [`spawn_detached`]. All entries are joined into a single invocation so the
-/// sweep spawns one background process regardless of how many stale entries
-/// exist; each path is POSIX-escaped so directories with spaces or shell
-/// metacharacters round-trip safely through the wrapping `sh -c`.
-fn build_trash_sweep_command(paths: &[PathBuf]) -> String {
-    let escaped: Vec<String> = paths
-        .iter()
-        .map(|p| shell_escape::unix::escape(p.to_string_lossy().as_ref().into()).into_owned())
-        .collect();
-    format!("rm -rf -- {}", escaped.join(" "))
+/// Shell argv that runs `wt _drain-trash <trash_dir>`: a fixed script, its
+/// `$0`, then native arguments. Paths are never interpolated into shell source.
+pub fn build_drain_trash_command(executable: PathBuf, trash_dir: &Path) -> Vec<OsString> {
+    vec![
+        OsString::from(r#"exec "$@""#),
+        OsString::from("wt"),
+        executable.into_os_string(),
+        OsString::from("_drain-trash"),
+        trash_dir.as_os_str().to_os_string(),
+    ]
 }
 
-/// Collect paths in `trash_dir` whose embedded timestamp is older than
-/// `threshold_secs` relative to `now`.
-///
-/// Entries whose filename can't be parsed as `<name>-<timestamp>` are skipped —
-/// the sweep only touches directories worktrunk created via
-/// [`worktrunk::git::remove::stage_worktree_removal`].
-fn collect_stale_trash_entries(trash_dir: &Path, now: u64, threshold_secs: u64) -> Vec<PathBuf> {
-    let Ok(read_dir) = fs::read_dir(trash_dir) else {
-        return Vec::new();
-    };
-
-    read_dir
-        .filter_map(|entry| entry.ok())
-        .filter_map(|entry| {
-            let name = entry.file_name();
-            let timestamp = parse_trash_entry_timestamp(name.to_str()?)?;
-            let age = now.saturating_sub(timestamp);
-            (age >= threshold_secs).then(|| entry.path())
-        })
-        .collect()
+/// Remove the empty shell-PWD placeholder after the wrapper consumes its cd directive.
+/// `rmdir` preserves any files written into the original path.
+pub fn build_remove_placeholder_command(path: &Path) -> Vec<OsString> {
+    vec![
+        r#"sleep 1 && rmdir -- "$1" 2>/dev/null"#.into(),
+        "wt".into(),
+        path.as_os_str().into(),
+    ]
 }
 
-/// Extract the Unix timestamp suffix from a trash entry filename.
-///
-/// Filenames produced by [`worktrunk::git::remove::stage_worktree_removal`]
-/// have the form `<name>-<timestamp>`, where timestamp is a bare unsigned
-/// integer in Unix epoch seconds. The worktree name may contain hyphens, so
-/// splitting from the right and parsing the tail is unambiguous.
-fn parse_trash_entry_timestamp(name: &str) -> Option<u64> {
-    let (_, suffix) = name.rsplit_once('-')?;
-    suffix.parse::<u64>().ok()
-}
-
-/// Remove an already-staged worktree's trash independently of branch deletion.
-///
-/// The worktree has been renamed and its registry entry pruned. This command
-/// can start immediately; it never touches the original worktree path.
-pub fn build_remove_command_staged(staged_path: &std::path::Path) -> String {
-    use shell_escape::unix::escape;
-
-    let staged_path_str = staged_path.to_string_lossy();
-    let staged_escaped = escape(staged_path_str.as_ref().into());
-    format!("rm -rf -- {}", staged_escaped)
-}
-
-/// Remove the empty shell-PWD placeholder after synchronous removal finishes.
-///
-/// The one-second delay gives the shell wrapper time to consume its cd
-/// directive. `rmdir` preserves any files written into the original path.
-pub fn build_remove_placeholder_command(original_path: &std::path::Path) -> String {
-    use shell_escape::unix::escape;
-
-    let original_path_str = original_path.to_string_lossy();
-    let original_escaped = escape(original_path_str.as_ref().into());
-    format!("sleep 1 && rmdir -- {} 2>/dev/null", original_escaped)
-}
-
-/// Build shell command for background worktree removal (legacy path).
-///
-/// This is the fallback for when rename-based removal fails (e.g., cross-filesystem)
-/// or for foreground mode where `git worktree remove` provides better error messages.
-///
-/// `branch_to_delete` is the branch to delete after removing the worktree.
-/// Pass `None` for detached HEAD or when branch should be retained.
-/// This decision is computed upfront (checking if branch is merged) before spawning the background process.
-///
-/// `force_worktree` adds `--force` to `git worktree remove`, allowing removal
-/// even when the worktree contains untracked files (like build artifacts).
-///
-/// When `changed_directory` is true, a 1-second delay runs first so the shell
-/// wrapper can cd away before the directory is removed. When false (removing a
-/// non-current worktree), the removal runs immediately.
+/// Fallback when staging fails. Only flags and sequencing enter the script;
+/// the checkout remains a separate process argument.
 pub fn build_remove_command(
-    worktree_path: &std::path::Path,
-    branch_to_delete: Option<&str>,
+    path: &Path,
     force_worktree: bool,
     changed_directory: bool,
-) -> String {
-    use shell_escape::unix::escape;
-
-    let worktree_path_str = worktree_path.to_string_lossy();
-    let worktree_escaped = escape(worktree_path_str.as_ref().into());
-
-    let force_flag = if force_worktree { " --force" } else { "" };
-
-    // The fsmonitor daemon is stopped (and force-killed if wedged) synchronously
-    // in the Rust foreground by `stop_fsmonitor_daemon`, before this command is
-    // built — see `spawn_background_removal`. The detached process only does the
-    // `git worktree remove` / `rm -rf`.
-    //
-    // When removing the current worktree, delay so the shell wrapper can cd away
-    // before the directory is removed. The primary fix for the "shell-init: error
-    // retrieving current directory" race is in the fish wrapper (using builtins
-    // instead of subprocesses to read the directive), but this provides defense in
-    // depth for other shells and edge cases.
-    let prefix = if changed_directory {
-        "sleep 1 && ".to_string()
-    } else {
-        String::new()
-    };
-
-    match branch_to_delete {
-        Some(branch_name) => {
-            let branch_escaped = escape(branch_name.into());
-            format!(
-                "{}git worktree remove{} {} && git branch -D -- {}",
-                prefix, force_flag, worktree_escaped, branch_escaped
-            )
-        }
-        None => {
-            format!(
-                "{}git worktree remove{} {}",
-                prefix, force_flag, worktree_escaped
-            )
-        }
+    tail: Option<&[OsString]>,
+) -> Vec<OsString> {
+    let delay = if changed_directory { "sleep 1 && " } else { "" };
+    let force = if force_worktree { " --force" } else { "" };
+    let mut script = format!(r#"{delay}git worktree remove{force} -- "$1""#);
+    if tail.is_some() {
+        script.push_str(r#" && shift && "$@""#);
     }
+    let mut args = vec![script.into(), "wt".into(), path.as_os_str().into()];
+    if let Some(tail) = tail {
+        args.extend_from_slice(tail);
+    }
+    args
 }
 
 #[cfg(test)]
@@ -693,94 +502,12 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
-    fn test_posix_command_separator() {
-        // Commands ending with newline don't need separator
-        assert_eq!(posix_command_separator("echo hello\n"), "");
-
-        // Commands ending with semicolon don't need separator
-        assert_eq!(posix_command_separator("echo hello;"), "");
-
-        // Commands without trailing newline/semicolon need separator
-        assert_eq!(posix_command_separator("echo hello"), ";");
-
-        // Empty command needs separator
-        assert_eq!(posix_command_separator(""), ";");
-
-        // Commands with internal newlines but not trailing
-        assert_eq!(posix_command_separator("echo\nhello"), ";");
-
-        // Commands with internal semicolons but not trailing
-        assert_eq!(posix_command_separator("echo; hello"), ";");
-    }
-
-    #[test]
-    fn test_build_remove_command() {
-        use std::path::PathBuf;
-
-        let path = PathBuf::from("/tmp/test-worktree");
-
-        // changed_directory=true: sleep before removal
-        assert_snapshot!(build_remove_command(&path, None, false, true), @"sleep 1 && git worktree remove /tmp/test-worktree");
-        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, true), @"sleep 1 && git worktree remove /tmp/test-worktree && git branch -D -- feature-branch");
-
-        // changed_directory=false: no sleep
-        assert_snapshot!(build_remove_command(&path, None, false, false), @"git worktree remove /tmp/test-worktree");
-        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, false), @"git worktree remove /tmp/test-worktree && git branch -D -- feature-branch");
-
-        // With force flag
-        assert_snapshot!(build_remove_command(&path, None, true, true), @"sleep 1 && git worktree remove --force /tmp/test-worktree");
-
-        // Shell escaping for special characters
-        let special_path = PathBuf::from("/tmp/test worktree");
-        assert_snapshot!(build_remove_command(&special_path, Some("feature/branch"), false, true), @"sleep 1 && git worktree remove '/tmp/test worktree' && git branch -D -- feature/branch");
-    }
-
-    #[test]
-    fn test_build_remove_command_staged() {
-        let staged_path = PathBuf::from("/tmp/repo/.git/wt/trash/my-project.feature-1234567890");
-        let original_path = PathBuf::from("/tmp/my-project.feature");
-        assert_snapshot!(build_remove_command_staged(&staged_path), @"rm -rf -- /tmp/repo/.git/wt/trash/my-project.feature-1234567890");
-        assert_snapshot!(build_remove_placeholder_command(&original_path), @"sleep 1 && rmdir -- /tmp/my-project.feature 2>/dev/null");
-
-        let special_path = PathBuf::from("/tmp/repo/.git/wt/trash/test worktree-123");
-        let special_original = PathBuf::from("/tmp/test worktree");
-        assert_snapshot!(build_remove_command_staged(&special_path), @"rm -rf -- '/tmp/repo/.git/wt/trash/test worktree-123'");
-        assert_snapshot!(build_remove_placeholder_command(&special_original), @"sleep 1 && rmdir -- '/tmp/test worktree' 2>/dev/null");
-    }
-
-    #[test]
-    fn test_build_trash_sweep_command() {
-        // Empty list still produces a well-formed command — the caller
-        // (`sweep_stale_trash`) bails before we get here, but the helper itself
-        // must not panic on an empty slice.
-        assert_snapshot!(build_trash_sweep_command(&[]), @"rm -rf -- ");
-
-        // Plain paths — joined with spaces, no quoting.
-        let paths = [
-            PathBuf::from("/tmp/repo/.git/wt/trash/feature-1700000000"),
-            PathBuf::from("/tmp/repo/.git/wt/trash/bugfix-1700000100"),
-        ];
-        assert_snapshot!(
-            build_trash_sweep_command(&paths),
-            @"rm -rf -- /tmp/repo/.git/wt/trash/feature-1700000000 /tmp/repo/.git/wt/trash/bugfix-1700000100"
-        );
-
-        // Shell metacharacters — POSIX single-quote escaping isolates each path
-        // so the wrapping `sh -c` reads them as literal arguments. The embedded
-        // single quote uses the standard `'\''` idiom. This is the regression
-        // guard for the platform/MSYSTEM-sensitive `shell_escape::escape` we
-        // replaced: under cmd.exe quoting `$(echo pwned)` would still execute
-        // when spliced into a POSIX shell.
-        let nasty = [
-            PathBuf::from("/tmp/trash/with space-1"),
-            PathBuf::from("/tmp/trash/$(echo pwned)-2"),
-            PathBuf::from("/tmp/trash/a'b-3"),
-        ];
-        assert_snapshot!(
-            build_trash_sweep_command(&nasty),
-            @"rm -rf -- '/tmp/trash/with space-1' '/tmp/trash/$(echo pwned)-2' '/tmp/trash/a'\\''b-3'"
-        );
+    fn drain_command_passes_trash_dir_as_its_own_argument() {
+        let trash_dir = Path::new("/repo/with space-'$(echo PWNED)\n/.git/wt/trash");
+        let args = build_drain_trash_command(PathBuf::from("/bin/wt"), trash_dir);
+        assert_eq!(args[0], r#"exec "$@""#);
+        assert_eq!(args[3], "_drain-trash");
+        assert_eq!(args[4], trash_dir.as_os_str());
     }
 
     #[test]
@@ -824,64 +551,6 @@ mod tests {
                 .path(log_dir, "anything")
                 .to_slash_lossy(),
             @"/repo/.git/wt/logs/internal-trash-sweep.log"
-        );
-    }
-
-    #[test]
-    fn test_parse_trash_entry_timestamp() {
-        // Simple name with trailing timestamp
-        assert_eq!(
-            parse_trash_entry_timestamp("feature-1700000000"),
-            Some(1700000000)
-        );
-        // Worktree name containing hyphens — split from the right
-        assert_eq!(
-            parse_trash_entry_timestamp("my-project.feature-branch-1700000000"),
-            Some(1700000000)
-        );
-        // Missing separator or non-numeric suffix → None (sweep leaves it alone)
-        assert_eq!(parse_trash_entry_timestamp("no-timestamp"), None);
-        assert_eq!(parse_trash_entry_timestamp("notimestamp"), None);
-        assert_eq!(parse_trash_entry_timestamp(""), None);
-    }
-
-    #[test]
-    fn test_collect_stale_trash_entries() {
-        let trash = tempfile::tempdir().unwrap();
-        let now: u64 = 1_700_000_000;
-        let day = TRASH_STALE_THRESHOLD_SECS;
-
-        // Stale: 2 days old
-        let stale = trash.path().join(format!("feature-old-{}", now - 2 * day));
-        fs::create_dir(&stale).unwrap();
-        // Fresh: 1 hour old
-        let fresh = trash.path().join(format!("feature-new-{}", now - 3600));
-        fs::create_dir(&fresh).unwrap();
-        // Exactly at threshold: 1 day old (inclusive)
-        let boundary = trash.path().join(format!("feature-edge-{}", now - day));
-        fs::create_dir(&boundary).unwrap();
-        // Unparsable: no timestamp suffix — sweep ignores it
-        let foreign = trash.path().join("random-folder");
-        fs::create_dir(&foreign).unwrap();
-
-        let mut collected = collect_stale_trash_entries(trash.path(), now, day);
-        collected.sort();
-        let mut expected = vec![stale, boundary];
-        expected.sort();
-        assert_eq!(collected, expected);
-        assert!(
-            fresh.exists(),
-            "fresh entries must not appear in stale list"
-        );
-        assert!(foreign.exists(), "unparsable entries must be left alone");
-    }
-
-    #[test]
-    fn test_collect_stale_trash_entries_missing_dir() {
-        let missing = std::path::PathBuf::from("/nonexistent/wt/trash/path");
-        assert!(
-            collect_stale_trash_entries(&missing, 1_700_000_000, TRASH_STALE_THRESHOLD_SECS)
-                .is_empty()
         );
     }
 }

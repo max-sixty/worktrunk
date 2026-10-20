@@ -46,8 +46,24 @@ fn test_for_each_no_args_error(repo: TestRepo) {
 
 #[rstest]
 fn test_for_each_with_detached_head(mut repo: TestRepo) {
-    repo.add_worktree("detached-test");
+    // A generic directory name needs its location even without a collision.
+    let lone_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("solo")
+        .join("worktrunk");
+    repo.add_worktree_at_path("detached-test", &lone_path);
     repo.detach_head_in_worktree("detached-test");
+
+    // A detached checkout and an off-template branch can share a directory name.
+    for name in ["a", "on-branch"] {
+        let path = repo.root_path().parent().unwrap().join(name).join("repo");
+        repo.add_worktree_at_path(name, &path);
+        if name != "on-branch" {
+            repo.detach_head_in_worktree(name);
+        }
+    }
 
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
@@ -268,6 +284,35 @@ fn test_for_each_aborts_on_signal_exit(repo: TestRepo) {
     assert!(
         stderr.contains("Interrupted"),
         "expected 'Interrupted' message in stderr, got: {stderr}"
+    );
+}
+
+/// Ctrl-C stops the loop even when the child catches it and exits successfully:
+/// wt received the key itself, so no later worktree is visited.
+#[rstest]
+#[cfg(unix)]
+fn test_for_each_stops_on_caught_ctrl_c(repo: TestRepo) {
+    let marker_dir = tempfile::tempdir().unwrap();
+    let pid_file = marker_dir.path().join("pid");
+    let script = format!(
+        "trap 'exit 0' INT; touch {dir}/\"$(basename \"$PWD\")\"; echo $$ > {pid}; while :; do sleep 0.1; done",
+        dir = shell_escape::unix::escape(marker_dir.path().join("visited").to_string_lossy()),
+        pid = shell_escape::unix::escape(pid_file.to_string_lossy()),
+    );
+    std::fs::create_dir(marker_dir.path().join("visited")).unwrap();
+    let mut job = crate::common::SignalJob::spawn(
+        &repo,
+        &["-vv", "step", "for-each", "--", "sh", "-c", &script],
+        std::process::Stdio::null(),
+    );
+    job.interrupt_admitted_child(&repo, &pid_file);
+    assert_eq!(crate::common::shell_exit_code(&job.wait()), Some(130));
+    let visited = std::fs::read_dir(marker_dir.path().join("visited"))
+        .unwrap()
+        .count();
+    assert_eq!(
+        visited, 1,
+        "Ctrl-C must stop the loop after its first visit"
     );
 }
 

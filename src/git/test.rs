@@ -7,43 +7,31 @@ use super::{DefaultBranchName, LineDiff, WorktreeInfo};
 use insta::assert_debug_snapshot;
 use rstest::rstest;
 
-/// Helper to parse a single worktree from porcelain output
-fn parse_single(input: &str) -> WorktreeInfo {
-    let list = WorktreeInfo::parse_porcelain_list(input).expect("parse ok");
-    assert_eq!(list.len(), 1);
-    list.into_iter().next().unwrap()
-}
-
 #[test]
-fn test_parse_worktree_list_no_trailing_blank_line() {
-    // Bug hypothesis: If output doesn't end with blank line,
-    // the last worktree might not be added.
-    // The end-of-input handling in parse_porcelain_list should cover this.
-    let output = "worktree /path/to/repo1\nHEAD abc123\nbranch refs/heads/main\n\nworktree /path/to/repo2\nHEAD def456\nbranch refs/heads/dev";
-    let result = WorktreeInfo::parse_porcelain_list(output);
+fn git_path_decoders_preserve_content_and_distinguish_terminators() {
+    use super::{git_path_from_file, git_path_from_output};
+    use std::path::Path;
 
-    assert!(result.is_ok());
-    let worktrees = result.unwrap();
-
-    // Should have 2 worktrees - code handles this with "if let Some(wt) = current" at end
     assert_eq!(
-        worktrees.len(),
-        2,
-        "Should parse both worktrees even without trailing blank line"
+        git_path_from_output(b"store\nwith spaces \t\n").unwrap(),
+        Path::new("store\nwith spaces \t")
+    );
+    assert_eq!(
+        git_path_from_file(b"store\nwith spaces \t\r\n").unwrap(),
+        Path::new("store\nwith spaces \t")
+    );
+    assert_eq!(
+        git_path_from_output(b"unterminated").unwrap_err().kind(),
+        std::io::ErrorKind::InvalidData
     );
 }
 
-#[test]
-fn test_parse_worktree_list_multiple_worktrees() {
-    let output = "worktree /path/to/main\nHEAD abc123\nbranch refs/heads/main\n\nworktree /path/to/feature\nHEAD def456\nbranch refs/heads/feature\ndetached\n\n";
-    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
-    let [main_wt, feature_wt]: [WorktreeInfo; 2] = worktrees.try_into().unwrap();
-
-    assert_eq!(main_wt.branch, Some("main".to_string()));
-    assert!(!main_wt.detached);
-
-    assert_eq!(feature_wt.branch, Some("feature".to_string()));
-    assert!(feature_wt.detached);
+/// Helper to parse a single worktree from porcelain output
+fn parse_single(input: &str) -> WorktreeInfo {
+    let list = WorktreeInfo::parse_porcelain_list_z(input.replace('\n', "\0").as_bytes())
+        .expect("parse ok");
+    assert_eq!(list.len(), 1);
+    list.into_iter().next().unwrap()
 }
 
 #[rstest]
@@ -54,7 +42,7 @@ fn test_parse_worktree_list_multiple_worktrees() {
 )]
 #[case::branch_missing_ref("worktree /path/to/repo\nHEAD abc123\nbranch\n\n", "missing ref")]
 fn test_parse_worktree_list_error_cases(#[case] input: &str, #[case] expected_message: &str) {
-    let result = WorktreeInfo::parse_porcelain_list(input);
+    let result = WorktreeInfo::parse_porcelain_list_z(input.replace('\n', "\0").as_bytes());
 
     assert!(result.is_err(), "Parsing should fail");
     let err = result.unwrap_err();
@@ -194,12 +182,6 @@ fn test_line_diff_from_shortstat(
 }
 
 #[test]
-fn snapshot_parse_worktree_list_empty_output() {
-    let result = WorktreeInfo::parse_porcelain_list("").expect("parse ok");
-    assert_debug_snapshot!(result, @"[]");
-}
-
-#[test]
 fn snapshot_parse_worktree_list_missing_head() {
     let wt = parse_single("worktree /path/to/repo\nbranch refs/heads/main\n\n");
     assert_debug_snapshot!(wt, @r#"
@@ -239,28 +221,6 @@ fn snapshot_parse_worktree_list_locked_with_empty_reason() {
 }
 
 #[test]
-fn snapshot_parse_worktree_list_locked_with_reason() {
-    let wt = parse_single(
-        "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main\nlocked working on it\n\n",
-    );
-    assert_debug_snapshot!(wt, @r#"
-    WorktreeInfo {
-        path: "/path/to/repo",
-        head: "abc123",
-        branch: Some(
-            "main",
-        ),
-        bare: false,
-        detached: false,
-        locked: Some(
-            "working on it",
-        ),
-        prunable: None,
-    }
-    "#);
-}
-
-#[test]
 fn snapshot_parse_worktree_list_prunable_empty() {
     let wt =
         parse_single("worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main\nprunable\n\n");
@@ -291,76 +251,6 @@ fn snapshot_parse_worktree_list_fields_before_worktree() {
         path: "/path/to/repo",
         head: "def456",
         branch: None,
-        bare: false,
-        detached: false,
-        locked: None,
-        prunable: None,
-    }
-    "#);
-}
-
-#[test]
-fn snapshot_parse_worktree_list_bare_repository() {
-    let wt = parse_single("worktree /path/to/repo\nbare\n\n");
-    assert_debug_snapshot!(wt, @r#"
-    WorktreeInfo {
-        path: "/path/to/repo",
-        head: "",
-        branch: None,
-        bare: true,
-        detached: false,
-        locked: None,
-        prunable: None,
-    }
-    "#);
-}
-
-#[test]
-fn snapshot_parse_worktree_list_detached_head() {
-    let wt = parse_single("worktree /path/to/repo\nHEAD abc123\ndetached\n\n");
-    assert_debug_snapshot!(wt, @r#"
-    WorktreeInfo {
-        path: "/path/to/repo",
-        head: "abc123",
-        branch: None,
-        bare: false,
-        detached: true,
-        locked: None,
-        prunable: None,
-    }
-    "#);
-}
-
-#[test]
-fn snapshot_parse_worktree_list_branch_with_refs_prefix() {
-    let wt = parse_single(
-        "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/feature/nested/branch\n\n",
-    );
-    assert_debug_snapshot!(wt, @r#"
-    WorktreeInfo {
-        path: "/path/to/repo",
-        head: "abc123",
-        branch: Some(
-            "feature/nested/branch",
-        ),
-        bare: false,
-        detached: false,
-        locked: None,
-        prunable: None,
-    }
-    "#);
-}
-
-#[test]
-fn snapshot_parse_worktree_list_branch_without_refs_prefix() {
-    let wt = parse_single("worktree /path/to/repo\nHEAD abc123\nbranch main\n\n");
-    assert_debug_snapshot!(wt, @r#"
-    WorktreeInfo {
-        path: "/path/to/repo",
-        head: "abc123",
-        branch: Some(
-            "main",
-        ),
         bare: false,
         detached: false,
         locked: None,

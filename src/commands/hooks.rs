@@ -29,7 +29,7 @@
 //!
 //! | Plan-backed hook | Runs in (the anchor) | Gate |
 //! |---|---|---|
-//! | `pre-merge`, `pre-remove`, `post-remove` | the feature/removed worktree | `merge::approve_merge_plan`, `remove::handle_remove_command`'s `approve_remove`, `step::prune::approve_prune_hooks` |
+//! | `pre-merge`, `pre-remove`, `post-remove` | the feature/removed worktree | `merge::approve_merge_plan`, `remove::handle_remove_command`'s `approve_remove`, `step::prune::step_prune`'s `build_pessimistic_plan` approval |
 //! | `post-merge`, `post-switch` (after a removal) | the merge/removal destination | the same gates |
 //! | `pre-start`, `post-start`, `post-switch` (on switch) | the new/destination worktree | `worktree::switch::approve_switch_hooks` |
 //!
@@ -65,6 +65,8 @@
 //! running something else. `WORKTRUNK_PROJECT_CONFIG_PATH` overrides the path
 //! (test isolation); user config (`~/.config/worktrunk/config.toml`) is global
 //! and unaffected.
+
+use crate::commands::command_executor::ForegroundStdin;
 
 use std::path::{Path, PathBuf};
 
@@ -357,7 +359,7 @@ impl<'a> HookAnnouncer<'a> {
         display_path: Option<&Path>,
     ) -> anyhow::Result<()> {
         let project_config = ctx.repo.load_project_config()?;
-        let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
+        let user_hooks = ctx.config.hooks(ctx.project_id().as_ref());
         let flat = prepare_and_check(
             ctx,
             user_hooks.get(hook_type),
@@ -652,15 +654,14 @@ fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: PendingPipeline) -> an
 /// Every step gets the same `DirectivePassthrough::inherit_from_env()`; the
 /// EXEC passthrough the `source` field used to select is gone (#3977).
 ///
-/// Foreground steps — hook and alias alike — inherit the parent's stdin so an
-/// interactive child keeps the controlling terminal (a `pre-*` hook can prompt;
-/// an alias body's `wt switch` picker works). The forms that can't be
-/// interactive get a closed stdin rather than a substitute payload: concurrent
-/// children (they'd race for the terminal) and detached (`post-*`) hooks (there
-/// is none). Template variables carry the context in every form.
+/// The caller supplies input ownership: exclusive pipelines inherit stdin,
+/// while pipelines running alongside other input consumers read EOF.
+/// Concurrent groups always close stdin, whatever the outer pipeline's policy.
+/// Template variables carry the context in every form.
 pub(crate) fn sourced_steps_to_foreground(
     sourced_steps: Vec<SourcedStep>,
     kind: &PipelineKind,
+    stdin: ForegroundStdin,
 ) -> Vec<ForegroundStep> {
     sourced_steps
         .into_iter()
@@ -674,6 +675,7 @@ pub(crate) fn sourced_steps_to_foreground(
             };
             ForegroundStep {
                 step: sourced.step,
+                stdin,
                 announce: kind.clone(),
                 source: sourced.source,
                 redirect_stdout_to_stderr,
@@ -695,6 +697,8 @@ pub(crate) fn sourced_steps_to_foreground(
 /// The announcement shows the worktree path when commands run somewhere other
 /// than the user's cwd ([`crate::output::pre_hook_display_path`] — pre-hooks
 /// and manual `wt hook` invocations both run with the user still at cwd).
+///
+/// Returns whether any hook ran.
 pub(crate) fn run_hooks_foreground(
     ctx: &CommandContext,
     user_config: Option<&CommandConfig>,
@@ -703,7 +707,7 @@ pub(crate) fn run_hooks_foreground(
     extra_vars: &[(&str, &str)],
     name_filters: &[String],
     failure_strategy: FailureStrategy,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let sourced_steps = prepare_and_check(
         ctx,
         user_config,
@@ -714,7 +718,7 @@ pub(crate) fn run_hooks_foreground(
     )?;
 
     if sourced_steps.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
 
     let kind = PipelineKind::Hook {
@@ -722,14 +726,15 @@ pub(crate) fn run_hooks_foreground(
         display_path: crate::output::pre_hook_display_path(ctx.worktree_path)
             .map(Path::to_path_buf),
     };
-    let foreground_steps = sourced_steps_to_foreground(sourced_steps, &kind);
+    let foreground_steps = sourced_steps_to_foreground(sourced_steps, &kind, ctx.stdin);
 
     execute_pipeline_foreground(
         &foreground_steps,
         ctx.repo,
         ctx.worktree_path,
         failure_strategy,
-    )
+    )?;
+    Ok(true)
 }
 
 /// Run a single hook type in the foreground for an operation (merge, switch,
@@ -744,14 +749,16 @@ pub(crate) fn run_hooks_foreground(
 /// Project config comes from `ctx.repo.load_project_config()` — see the
 /// module-level "Which `.config/wt.toml` a hook reads" docs for which worktree
 /// `ctx.repo` is rooted at per hook type.
+///
+/// Returns whether any hook ran.
 pub(crate) fn execute_hook(
     ctx: &CommandContext,
     hook_type: HookType,
     extra_vars: &[(&str, &str)],
     failure_strategy: FailureStrategy,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let project_config = ctx.repo.load_project_config()?;
-    let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
+    let user_hooks = ctx.config.hooks(ctx.project_id().as_ref());
     run_hooks_foreground(
         ctx,
         user_hooks.get(hook_type),

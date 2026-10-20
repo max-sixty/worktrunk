@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use super::worktree::{RemovalPlan, SharedBranchCheckout};
 use anyhow::{Context, bail};
 use color_print::cformat;
+use worktrunk::config::StageMode;
 use worktrunk::git::{
     BranchDeletionMode, GitError, IntegrationReason, RefSnapshot, Repository, WorkingTree,
     WorktreeInfo, parse_porcelain_z, parse_untracked_files,
@@ -311,7 +312,6 @@ impl RepositoryCliExt for Repository {
                         branch_name: branch,
                         deletion_mode: BranchDeletionMode::Keep,
                         prune_entry: pruned_from,
-                        force_worktree,
                         target_branch: None,
                         integration_reason: None,
                         branch_checked_out_at: shared,
@@ -331,7 +331,6 @@ impl RepositoryCliExt for Repository {
                     branch_name: branch,
                     deletion_mode,
                     prune_entry: pruned_from,
-                    force_worktree,
                     target_branch,
                     integration_reason,
                     branch_checked_out_at: None,
@@ -364,7 +363,6 @@ impl RepositoryCliExt for Repository {
 
         if !force_worktree {
             target_wt.ensure_clean("remove worktree", branch_name.as_deref(), true)?;
-            self.require_discardable_submodules(&worktree_path, true)?;
         }
 
         // main_path: where post-remove hooks run from and background removal
@@ -626,6 +624,21 @@ pub(crate) fn check_not_default_branch(
     Ok(())
 }
 
+/// Stage the paths `mode` selects for a commit, first warning about any
+/// untracked paths that all-files mode is about to add.
+///
+/// Commit paths call this on both sides of the `pre-commit` hooks: before them
+/// so a hook that reads the index (`pre-commit run`, lint-staged,
+/// `git diff --cached`) sees the changes about to be committed, and after them
+/// so a formatter hook's edits land in the commit. The second call warns only
+/// about untracked paths the hooks created.
+pub(crate) fn auto_stage(wt: &WorkingTree, mode: StageMode) -> anyhow::Result<()> {
+    if mode == StageMode::All {
+        warn_about_untracked_files(wt)?;
+    }
+    wt.stage(mode)
+}
+
 /// Warn about untracked files that will be auto-staged.
 ///
 /// Paths come from git's `normal` untracked mode, which overrides a
@@ -635,7 +648,7 @@ pub(crate) fn check_not_default_branch(
 ///
 /// The listing has at most `MAX_ROWS` rows. Past that many paths, the last row
 /// is a hint counting the rest, which is always at least two paths.
-pub(crate) fn warn_about_untracked_files(wt: &WorkingTree) -> anyhow::Result<()> {
+fn warn_about_untracked_files(wt: &WorkingTree) -> anyhow::Result<()> {
     const MAX_ROWS: usize = 10;
 
     let status = wt

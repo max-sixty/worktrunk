@@ -508,6 +508,45 @@ fn test_copy_ignored_directory(mut repo: TestRepo) {
     );
 }
 
+/// Copied files keep their source's mtime, as `cp -a` does. Cargo treats an
+/// output newer than its sources as up to date, so a copied `target/` stamped
+/// with the copy time would hide that the new worktree's sources changed.
+#[rstest]
+fn test_copy_ignored_preserves_source_mtimes(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    fs::create_dir_all(repo.root_path().join("target/debug")).unwrap();
+    fs::write(repo.root_path().join(".gitignore"), "target/\n.env\n").unwrap();
+    // One file reached through a directory entry, one as a top-level entry,
+    // each with its own past mtime.
+    let base = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_500_000_000);
+    let files = [
+        ("target/debug/output", base),
+        (
+            "target/CACHEDIR.TAG",
+            base + std::time::Duration::from_secs(7),
+        ),
+        (".env", base + std::time::Duration::from_secs(3)),
+    ];
+    for (name, mtime) in files {
+        let path = repo.root_path().join(name);
+        fs::write(&path, name).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(mtime)
+            .unwrap();
+    }
+
+    run_copy_ignored(&repo, &feature_path);
+
+    for (name, mtime) in files {
+        let copied = fs::metadata(feature_path.join(name)).unwrap();
+        assert_eq!(copied.modified().unwrap(), mtime, "{name} mtime");
+    }
+}
+
 /// Test glob patterns: .env.*
 #[rstest]
 fn test_copy_ignored_glob_pattern(mut repo: TestRepo) {
@@ -1547,8 +1586,14 @@ fn test_copy_ignored_preserves_file_executable_permissions(mut repo: TestRepo) {
     )
     .unwrap();
 
-    // Also create a non-executable file for comparison
+    // Also create a non-executable file for comparison. Set its mode explicitly:
+    // the mode `fs::write` creates depends on the umask (0664 under 002).
     fs::write(bin_dir.join("config.json"), r#"{"key": "value"}"#).unwrap();
+    fs::set_permissions(
+        bin_dir.join("config.json"),
+        fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
 
     // Create a top-level ignored executable file (exercises the individual file copy
     // path in step/copy_ignored.rs, separate from the recursive directory copy in copy.rs)
