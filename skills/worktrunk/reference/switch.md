@@ -48,7 +48,7 @@ $ wt switch ../dark-mode                   # Switch by path...
 $ wt switch feature/JIRA-1234              # ...or by branch
 ```
 
-Worktrunk finds the worktree from git's own records, so commands reach it by branch or path as usual. [`wt list`](https://worktrunk.dev/list/#worktree) marks it `⚐`, since it isn't at the path its branch implies, and [`wt step relocate`](https://worktrunk.dev/step/#wt-step-relocate) offers to move it back to the template path.
+Other commands reach it by branch or path as usual. [`wt list`](https://worktrunk.dev/list/#worktree) marks it `⚐`, since it isn't at the path its branch implies, and [`wt step relocate`](https://worktrunk.dev/step/#wt-step-relocate) offers to move it back to the template path.
 
 ## Naming a worktree
 
@@ -124,7 +124,7 @@ The comparison base is the merge-base with the default branch, or with its upstr
 pager = "delta --paging=never --width=$COLUMNS"
 ```
 
-**Starting list-only:** Set `preview = false` under `[switch.picker]` to open the picker with the preview hidden; `Alt-p` still shows it.
+**Hiding the preview:** Set `preview = false` under `[switch.picker]` to open the picker with the preview hidden; `Alt-p` still shows it.
 
 ## Pull requests and merge requests
 

@@ -8,7 +8,7 @@ sidebar:
 
 Merge a branch into the target branch. Squash & rebase, fast-forward the target branch, remove the worktree.
 
-Unlike `git merge`, this merges the source branch into the target branch — not the target into current. Similar to clicking "Merge pull request" on GitHub, but locally. The source defaults to the current branch; the target defaults to the default branch.
+Unlike `git merge`, this merges a source branch into the target branch, not the target into the current branch. Similar to clicking "Merge pull request" on GitHub, but locally. The source defaults to the current branch (`--branch` names another); the target defaults to the default branch.
 
 <figure class="demo">
 <picture>
@@ -137,7 +137,7 @@ Arguments:
 
 Options:
   -b, --branch <BRANCH>
-          Branch to merge from (defaults to current worktree)
+          Branch to merge (defaults to the current branch)
 
       --no-squash
           Skip commit squashing

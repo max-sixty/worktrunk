@@ -56,7 +56,7 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET][0m
 
 [1m[32mOptions:[0m
   [1m[36m-b[0m, [1m[36m--branch[0m[36m [0m[36m<BRANCH>[0m
-          Branch to merge from (defaults to current worktree)
+          Branch to merge (defaults to the current branch)
 
       [1m[36m--no-squash[0m
           Skip commit squashing
@@ -112,7 +112,7 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET][0m
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
-Unlike [2mgit merge[0m, this merges the source branch into the target branch — not the target into current. Similar to clicking "Merge pull request" on GitHub, but locally. The source defaults to the current branch; the target defaults to the default branch.
+Unlike [2mgit merge[0m, this merges a source branch into the target branch, not the target into the current branch. Similar to clicking "Merge pull request" on GitHub, but locally. The source defaults to the current branch ([2m--branch[0m names another); the target defaults to the default branch.
 
 [1m[32mExamples[0m
 

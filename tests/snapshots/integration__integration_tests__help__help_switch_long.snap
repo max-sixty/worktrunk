@@ -184,7 +184,7 @@ If the branch already has a worktree, [2mwt switch[0m changes directories to i
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch ../dark-mode                   # Switch by path...[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch feature/JIRA-1234              # ...or by branch[0m
 
-Worktrunk finds the worktree from git's own records, so commands reach it by branch or path as usual. [2mwt list[0m marks it [2m⚐[0m, since it isn't at the path its branch implies, and [2mwt step relocate[0m offers to move it back to the template path.
+Other commands reach it by branch or path as usual. [2mwt list[0m marks it [2m⚐[0m, since it isn't at the path its branch implies, and [2mwt step relocate[0m offers to move it back to the template path.
 
 [1m[32mNaming a worktree[0m
 
@@ -256,7 +256,7 @@ The comparison base is the merge-base with the default branch, or with its upstr
 [107m [0m [2m[36m[switch.picker][0m
 [107m [0m [2mpager = [0m[2m[32m"delta --paging=never --width=$COLUMNS"[0m
 
-[1mStarting list-only:[0m Set [2mpreview = false[0m under [2m[switch.picker][0m to open the picker with the preview hidden; [2mAlt-p[0m still shows it.
+[1mHiding the preview:[0m Set [2mpreview = false[0m under [2m[switch.picker][0m to open the picker with the preview hidden; [2mAlt-p[0m still shows it.
 
 [1m[32mPull requests and merge requests[0m
 

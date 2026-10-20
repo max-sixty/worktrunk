@@ -556,7 +556,7 @@ pub(crate) struct RemoveArgs {
 
 #[derive(Args)]
 pub(crate) struct MergeArgs {
-    /// Branch to merge from (defaults to current worktree)
+    /// Branch to merge (defaults to the current branch)
     #[arg(short, long, add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
     pub(crate) branch: Option<String>,
 
@@ -688,7 +688,7 @@ $ wt switch ../dark-mode                   # Switch by path...
 $ wt switch feature/JIRA-1234              # ...or by branch
 ```
 
-Worktrunk finds the worktree from git's own records, so commands reach it by branch or path as usual. [`wt list`](/list/#worktree) marks it `⚐`, since it isn't at the path its branch implies, and [`wt step relocate`](/step/#wt-step-relocate) offers to move it back to the template path.
+Other commands reach it by branch or path as usual. [`wt list`](/list/#worktree) marks it `⚐`, since it isn't at the path its branch implies, and [`wt step relocate`](/step/#wt-step-relocate) offers to move it back to the template path.
 
 ## Naming a worktree
 
@@ -765,7 +765,7 @@ The comparison base is the merge-base with the default branch, or with its upstr
 pager = "delta --paging=never --width=$COLUMNS"
 ```
 
-**Starting list-only:** Set `preview = false` under `[switch.picker]` to open the picker with the preview hidden; `Alt-p` still shows it.
+**Hiding the preview:** Set `preview = false` under `[switch.picker]` to open the picker with the preview hidden; `Alt-p` still shows it.
 
 ## Pull requests and merge requests
 
@@ -1408,7 +1408,7 @@ Unix only; on Windows `--reap` is rejected.
 
 ## JSON output
 
-`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal. Branch-only results also include `detached_worktree`: the path of a detached worktree left behind, or `null`.
+`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal. Branch-only results also include `detached_worktree`: the path of a detached worktree at the branch's expected location, which the removal leaves in place, or `null`.
 
 `branch_outcome` names what happened to the branch, so a caller can tell a deletion the removal declined from one it was never asked to make:
 
@@ -1441,7 +1441,7 @@ Detached worktrees have no branch name. Pass the worktree path instead: `wt remo
     ///
     /// Squash & rebase, fast-forward the target branch, remove the worktree.
     #[command(
-        after_long_help = r#"Unlike `git merge`, this merges the source branch into the target branch — not the target into current. Similar to clicking "Merge pull request" on GitHub, but locally. The source defaults to the current branch; the target defaults to the default branch.
+        after_long_help = r#"Unlike `git merge`, this merges a source branch into the target branch, not the target into the current branch. Similar to clicking "Merge pull request" on GitHub, but locally. The source defaults to the current branch (`--branch` names another); the target defaults to the default branch.
 
 <!-- demo: wt-merge.gif 1600x900 | Creating a worktree, committing in it, and merging it away -->
 ## Examples
@@ -1823,6 +1823,22 @@ The `tojson` filter renders a whole object or array as JSON, for commands that t
 seed = "curl -X POST localhost:3000/seed -d {{ vars.config | tojson }}"
 ```
 
+Logic that templates can't express belongs in a script, with the values it needs passed as arguments:
+
+```toml
+# .config/wt.toml
+[post-start]
+setup = "python3 scripts/post-start-setup.py {{ branch }} {{ repo }}"
+```
+
+```python
+# scripts/post-start-setup.py
+import subprocess, sys
+branch, repo = sys.argv[1], sys.argv[2]
+if branch.startswith('feature/') and 'backend' in repo:
+    subprocess.run(['make', 'seed-db'])
+```
+
 ## Worktrunk filters
 
 Templates support Jinja2 filters for transforming values:
@@ -1901,28 +1917,12 @@ wt switch "$(wt step eval "{{ expected_worktree_path_of_branch('feature') }}")"
 
 ## Interactive hooks
 
-Hooks can prompt when run serially in the foreground, as in this `pre-start` hook:
+A hook command inherits wt's stdin, so it can prompt, when it runs in the foreground with no other command alongside it. Commands that run concurrently, such as the keys of a multi-key table, get empty stdin, as do `post-*` hooks running in the background and the hooks `wt step prune` runs for several worktrees at once. This `pre-start` hook asks before trusting the worktree:
 
 ```toml
 # .config/wt.toml
 [pre-start]
 trust = "gum confirm 'trust this worktree?' && mise trust"
-```
-
-Logic that templates can't express belongs in a script, with the values it needs passed as arguments:
-
-```toml
-# .config/wt.toml
-[post-start]
-setup = "python3 scripts/post-start-setup.py {{ branch }} {{ repo }}"
-```
-
-```python
-# scripts/post-start-setup.py
-import subprocess, sys
-branch, repo = sys.argv[1], sys.argv[2]
-if branch.startswith('feature/') and 'backend' in repo:
-    subprocess.run(['make', 'seed-db'])
 ```
 
 ## Copying untracked files

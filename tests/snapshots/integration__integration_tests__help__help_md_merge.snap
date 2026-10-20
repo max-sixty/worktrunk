@@ -56,7 +56,7 @@ Arguments:
 
 Options:
   -b, --branch <BRANCH>
-          Branch to merge from (defaults to current worktree)
+          Branch to merge (defaults to the current branch)
 
       --no-squash
           Skip commit squashing
@@ -112,7 +112,7 @@ Global Options:
   -y, --yes
           Skip approval prompts
 
-Unlike `git merge`, this merges the source branch into the target branch — not the target into current. Similar to clicking "Merge pull request" on GitHub, but locally. The source defaults to the current branch; the target defaults to the default branch.
+Unlike `git merge`, this merges a source branch into the target branch, not the target into the current branch. Similar to clicking "Merge pull request" on GitHub, but locally. The source defaults to the current branch (`--branch` names another); the target defaults to the default branch.
 
 <!-- demo: wt-merge.gif 1600x900 | Creating a worktree, committing in it, and merging it away -->
 ## Examples
