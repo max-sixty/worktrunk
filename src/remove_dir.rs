@@ -38,13 +38,17 @@ use crate::progress::{DataCopy, Progress};
 /// Each successful unlink is recorded on `progress`, so a `progress` dedicated
 /// to this call reports `(files_removed, bytes_removed)` in `totals()`
 /// afterwards. Symlinks count as their own size, not the target's. A symlink
-/// or file at `path` is unlinked, as `rm -rf` does. Any I/O errors are
-/// silently skipped — a leaf that can't be unlinked is simply not counted.
+/// or file at `path` is unlinked, as `rm -rf` does. A path without a final
+/// name (`/`, `.`, `x/..`) is left alone, as `rm -rf` refuses it. Any I/O
+/// errors are silently skipped — a leaf that can't be unlinked is simply not
+/// counted.
 ///
 /// Returns whether `path` is gone afterwards. A failure to inspect it counts
 /// as still present.
 pub fn remove_dir_with_progress(path: &Path, progress: &Progress) -> bool {
-    tree::remove(path, progress);
+    if path.file_name().is_some() {
+        tree::remove(path, progress);
+    }
     matches!(path.symlink_metadata(), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
 }
 
@@ -284,6 +288,20 @@ mod tests {
         remove_dir_with_progress(&missing, &progress);
 
         assert_eq!(progress.totals(), (0, 0));
+    }
+
+    #[test]
+    fn test_remove_dir_with_progress_refuses_paths_without_a_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let kept = temp.path().join("kept");
+        std::fs::create_dir_all(kept.join("child")).unwrap();
+        std::fs::write(kept.join("file.txt"), b"x").unwrap();
+
+        let progress = Progress::disabled();
+        assert!(!remove_dir_with_progress(&kept.join("child/.."), &progress));
+
+        assert_eq!(progress.totals(), (0, 0));
+        assert!(kept.join("file.txt").exists());
     }
 
     #[cfg(unix)]
