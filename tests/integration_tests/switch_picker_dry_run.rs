@@ -24,7 +24,7 @@ fn worktree_row_id(path: &std::path::Path) -> String {
 
 /// Install a strict fake summary command through TestRepo's cross-platform
 /// mock-PATH wiring. Tests observe its external call log to distinguish the
-/// generated-summary route from the static mode-5 config hint.
+/// generated-summary route from the static mode-6 config hint.
 fn install_summary_probe(repo: &mut TestRepo) {
     repo.setup_mock_gh();
     let mock_bin = repo

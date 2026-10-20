@@ -15,7 +15,7 @@
 //! **Authoritative** (hand-authored or override state; lost permanently if
 //! cleared). `state clear` prompts before removing these unless `--yes`:
 //!
-//! - Default branch override (git config `worktrunk.default_branch.*`)
+//! - Default branch override (git config `worktrunk.default-branch`)
 //! - Branch markers (git config `worktrunk.state.<branch>.marker`)
 //! - Vars (git config `worktrunk.state.<branch>.vars.*`)
 //! - Logs (`.git/wt/logs/`)
