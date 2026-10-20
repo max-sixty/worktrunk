@@ -78,10 +78,8 @@ fn preview_commit(
     dry_run: bool,
     yes: bool,
 ) -> anyhow::Result<()> {
-    let env = CommandEnv::for_selector(
-        UserConfig::load().context("Failed to load config")?,
-        branch.unwrap_or("@"),
-    )?;
+    let config = UserConfig::load().context("Failed to load config")?;
+    let env = CommandEnv::for_selector(config, branch.unwrap_or("@"))?;
     let commit_config = env.resolved().commit_generation.clone();
     let wt = env.repo.worktree_at(&env.worktree_path);
 

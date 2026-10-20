@@ -6244,3 +6244,26 @@ approved-commands = [{hook:?}]
     assert!(!parent.join("PWNED").exists());
     let _ = fs::remove_file(staged_path);
 }
+
+/// WORKTRUNK_FIRST_OUTPUT exits after validation, before approval and removal.
+/// Used by time-to-first-output benchmarks.
+#[rstest]
+fn test_remove_first_output_exits_cleanly(mut repo: TestRepo) {
+    let worktree = repo.add_worktree("feature-bench");
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--yes"])
+        .current_dir(&worktree)
+        .env("WORKTRUNK_FIRST_OUTPUT", "1")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "WORKTRUNK_FIRST_OUTPUT should exit 0: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    assert!(worktree.exists());
+}
