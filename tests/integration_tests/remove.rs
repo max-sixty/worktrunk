@@ -4525,36 +4525,6 @@ fn test_remove_leaves_entries_to_the_running_drain(mut repo: TestRepo) {
     });
 }
 
-/// A `wt` binary inside the worktree it removes still drains the trash: the
-/// rename carries the binary into trash, and the drain starts it from there.
-#[rstest]
-#[cfg(unix)]
-fn test_remove_drains_when_wt_lives_in_the_removed_worktree(mut repo: TestRepo) {
-    let worktree_path = repo.add_worktree("feature-self");
-    let info_exclude = crate::common::resolve_git_common_dir(repo.root_path()).join("info/exclude");
-    std::fs::write(&info_exclude, "/wt-copy\n").unwrap();
-    let copy = worktree_path.join("wt-copy");
-    std::fs::copy(worktrunk::testing::wt_bin(), &copy).unwrap();
-
-    let mut cmd = std::process::Command::new(&copy);
-    repo.configure_wt_cmd(&mut cmd);
-    let output = cmd
-        .current_dir(repo.root_path())
-        .args(["remove", "feature-self"])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "wt remove should succeed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let trash_dir = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/trash");
-    crate::common::wait_for("trash drained by the relocated binary", || {
-        std::fs::read_dir(&trash_dir).unwrap().next().is_none()
-    });
-}
-
 /// `wt remove -vv` resolves every fsmonitor daemon in ONE `lsof` spawn and
 /// traces the sweep.
 ///

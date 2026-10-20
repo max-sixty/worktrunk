@@ -187,40 +187,6 @@ fn spawn_background_removal(
     }
 }
 
-/// The running `wt`, located before staging so the drain can still start it
-/// when it lived inside the staged worktree (a `target/debug/wt` built there).
-/// The rename moves the binary into trash with the rest of the worktree, and
-/// macOS `current_exe()` keeps reporting the vacated path.
-struct DrainExecutable {
-    executable: anyhow::Result<PathBuf>,
-    worktree: Option<PathBuf>,
-}
-
-impl DrainExecutable {
-    fn locate(worktree_path: &Path) -> Self {
-        Self {
-            executable: std::env::current_exe()
-                .and_then(dunce::canonicalize)
-                .context("Failed to locate Worktrunk executable"),
-            worktree: dunce::canonicalize(worktree_path).ok(),
-        }
-    }
-
-    fn after_staging(self, staged_path: &Path) -> anyhow::Result<PathBuf> {
-        let executable = self.executable?;
-        Ok(
-            match self
-                .worktree
-                .as_deref()
-                .and_then(|worktree| executable.strip_prefix(worktree).ok())
-            {
-                Some(relative) => staged_path.join(relative),
-                None => executable,
-            },
-        )
-    }
-}
-
 /// Execute instant worktree removal via rename-then-prune.
 ///
 /// This function has side effects: it renames the worktree directory and prunes git metadata.
@@ -253,10 +219,7 @@ fn execute_instant_removal_or_fallback(
     // (instant on same filesystem) — the same prelude the synchronous
     // `remove_worktree_with_cleanup` runs. On the fast path the background
     // process is then just a trash drain.
-    let executable = DrainExecutable::locate(worktree_path);
-    if let Some(staged_path) =
-        stage_worktree_removal(repo, worktree_path, branch_name, force_worktree)?
-    {
+    if stage_worktree_removal(repo, worktree_path, branch_name, force_worktree)?.is_some() {
         if changed_directory {
             // Keep the shell's PWD valid until its cd directive is consumed.
             let _ = std::fs::create_dir(worktree_path);
@@ -269,8 +232,8 @@ fn execute_instant_removal_or_fallback(
         let cleanup = if worktrunk::git::trash_drain_running(&trash_dir) {
             Ok(())
         } else {
-            executable
-                .after_staging(&staged_path)
+            std::env::current_exe()
+                .context("Failed to locate Worktrunk executable")
                 .and_then(|executable| {
                     spawn_cleanup(
                         &build_drain_trash_command(executable, &trash_dir),
