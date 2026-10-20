@@ -4,6 +4,8 @@
 //! Target failures are reported independently; later targets still run and
 //! the batch exits unsuccessfully. An interrupt cancels the batch immediately.
 
+use crate::commands::command_executor::ForegroundStdin;
+
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -363,13 +365,12 @@ fn maybe_reap_result(result: &RemovalPlan, reap_enabled: bool) {
 ///      `.git/wt/trash/<name>-<timestamp>/` → prune metadata → delete branch
 ///      → synchronous `remove_dir_all` on the staged directory.
 ///    - **Background** (default): stop fsmonitor → rename + prune +
-///      synchronous branch delete → spawn detached `rm -rf` on the staged
-///      directory. Cross-filesystem or locked worktrees fall back to
+///      synchronous branch delete → spawn a detached drain of the trash
+///      directory (`wt _drain-trash`). Cross-filesystem or locked worktrees fall back to
 ///      `git worktree remove` in the detached process.
 /// 4. **Post-remove hooks** run in the background after dispatch.
-/// 5. **Internal sweep** (fire-and-forget, after primary output): stale
-///    `.git/wt/trash/` entries older than 24 hours are removed by a detached
-///    `rm -rf`, and orphaned `git fsmonitor--daemon` processes (worktree gone)
+/// 5. **Internal sweep** (fire-and-forget, after primary output): entries
+///    left in `.git/wt/trash/` start another detached drain, and orphaned `git fsmonitor--daemon` processes (worktree gone)
 ///    are terminated. Runs last so it never delays the user-visible progress
 ///    or success message. See [`super::process::run_internal_sweep`].
 pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
@@ -484,6 +485,7 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                 let fate = handle_remove_output(
                     &result,
                     removal_execution(args.foreground),
+                    ForegroundStdin::Inherit,
                     &plan,
                     false,
                     &mut announcer,
@@ -546,6 +548,7 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                     let fate = handle_remove_output(
                         result,
                         removal_execution(args.foreground),
+                        ForegroundStdin::Inherit,
                         &plan,
                         false,
                         &mut announcer,
