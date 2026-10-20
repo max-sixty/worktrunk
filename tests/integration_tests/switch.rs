@@ -9022,6 +9022,27 @@ fn test_switch_path_occupied_suggests_path_in_clobber_hint(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_switch_path_naming_another_worktree(mut repo: TestRepo) {
+    let occupied = repo.add_worktree("feature-z");
+
+    // Another branch's worktree is reported by its branch, never moved aside
+    // by `--clobber`.
+    snapshot_switch(
+        "switch_path_another_worktree",
+        &repo,
+        &[
+            "--create",
+            "feature-n",
+            "--clobber",
+            "--path",
+            "../repo.feature-z",
+        ],
+    );
+
+    assert!(occupied.join(".git").is_file());
+}
+
+#[rstest]
 fn test_switch_path_rejects_directory_overlapping_repo(repo: TestRepo) {
     std::fs::create_dir_all(repo.root_path().join("src")).unwrap();
 
