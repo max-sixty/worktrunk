@@ -17,7 +17,7 @@ use super::super::command_executor::FailureStrategy;
 use super::super::commit::{CommitGenerator, CommitOutcome, HookGate, StageMode};
 use super::super::context::CommandEnv;
 use super::super::hooks::{HookAnnouncer, execute_hook};
-use super::super::repository_ext::warn_about_untracked_files;
+use super::super::repository_ext::auto_stage;
 use super::super::template_vars::TemplateVars;
 use super::shared::print_dry_run;
 
@@ -180,9 +180,9 @@ pub fn handle_squash_in(
         .unwrap_or_else(|| integration_target.clone());
     let template_vars = TemplateVars::new().with_target(&integration_target);
 
-    // Run pre-commit hooks (user first, then project) before staging, as
-    // `wt step commit` does, so the edits a formatter hook makes are staged
-    // into the squash commit rather than left in the working tree.
+    // Stage on both sides of the pre-commit hooks (user first, then project);
+    // `auto_stage` says why.
+    auto_stage(&wt, stage_mode)?;
     if hooks.run() {
         execute_hook(
             &ctx,
@@ -190,12 +190,8 @@ pub fn handle_squash_in(
             &template_vars.as_extra_vars(),
             FailureStrategy::FailFast,
         )?;
+        auto_stage(&wt, stage_mode)?;
     }
-
-    if stage_mode == StageMode::All {
-        warn_about_untracked_files(&wt)?;
-    }
-    wt.stage(stage_mode)?;
 
     // Resolve HEAD once, so the span, the message's commit list, and the
     // compare-and-swap that finally moves the branch all describe one tip.
