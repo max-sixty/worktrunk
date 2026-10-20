@@ -13,7 +13,8 @@ use anyhow::Context;
 use worktrunk::HookType;
 use worktrunk::config::UserConfig;
 use worktrunk::git::{
-    BranchDeletionMode, ErrorExt, GitError, Repository, ResolvedWorktree, WorktrunkError,
+    BranchDeletionMode, ErrorExt, GitError, Repository, ResolvedWorktree, WorktreeId,
+    WorktrunkError, normalize_selector,
 };
 use worktrunk::styling::{eprintln, info_message};
 
@@ -168,8 +169,24 @@ fn validate_remove_targets(
     // fall back to capturing internally when None.
     let snapshot = repo.capture_refs().ok();
     let mut seen_targets = HashSet::new();
+    let current_id = WorktreeId::new(&current_worktree);
 
     for branch_name in branches {
+        // Outside every worktree (a bare repo's directory), `@` resolves to
+        // the branch HEAD names. Removal acts only on the worktree the user
+        // is in, so refuse there, as removing with no argument does.
+        if normalize_selector(&branch_name) == "@"
+            && let Some(worktrees) = &worktrees
+            && !worktrees.iter().any(|wt| wt.id() == current_id)
+        {
+            plans.record_error(
+                GitError::WorktreeNotFoundAtPath {
+                    path: current_worktree.clone(),
+                }
+                .into(),
+            );
+            continue;
+        }
         let resolved = match repo.resolve_worktree(&branch_name) {
             Ok(r) => r,
             Err(e) => {

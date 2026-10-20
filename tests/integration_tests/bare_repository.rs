@@ -729,6 +729,37 @@ fn test_bare_repo_at_from_bare_directory_names_head_branch() {
     assert!(!test.bare_repo_path().join("secret").exists());
 }
 
+/// `wt remove @` from a bare repo's directory refuses, like `wt remove` with
+/// no argument, rather than removing the worktree of the branch HEAD names.
+#[test]
+fn test_bare_repo_remove_at_from_bare_directory_refuses() {
+    let test = BareRepoTest::new();
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit");
+    let feature_worktree = test.create_worktree("feature", "feature");
+    test.run_git_in(
+        test.bare_repo_path(),
+        &["symbolic-ref", "HEAD", "refs/heads/feature"],
+    );
+    test.run_git_in(
+        test.bare_repo_path(),
+        &["config", "worktrunk.default-branch", "main"],
+    );
+
+    let output = test
+        .wt_command()
+        .args(["remove", "@", "--yes", "--foreground"])
+        .current_dir(test.bare_repo_path())
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(feature_worktree.exists());
+}
+
 /// Full merge workflow in a bare repo: create main + feature worktrees, merge
 /// feature into main, and confirm the merge landed.
 ///
