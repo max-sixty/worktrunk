@@ -512,7 +512,8 @@ impl Repository {
             // canonical identities so alternate path spellings (for example
             // macOS `/var` and `/private/var`) select one inventory entry
             // without changing Git's registered path.
-            let path = self.current_worktree().root()?;
+            let current = self.current_worktree();
+            let path = current.root()?;
             let current_id = WorktreeId::new(&path);
             if let Some(wt) = self
                 .list_worktrees()?
@@ -521,7 +522,13 @@ impl Repository {
             {
                 return Ok(ResolvedWorktree::worktree(path, wt.branch.clone()));
             }
-            // Outside every worktree — a bare repo's directory, or a `.git`
+            // Inside a work tree git no longer has registered at this path (a
+            // worktree moved without `git worktree repair`), `@` still means
+            // this directory, which holds no worktree wt can act on.
+            if current.prewarm_info()?.is_inside {
+                return Ok(ResolvedWorktree::NoWorktreeAtPath { path });
+            }
+            // Outside every work tree — a bare repo's directory, or a `.git`
             // directory — `@` falls through to the branch HEAD names, as
             // `expand_selector` reads it.
         }
