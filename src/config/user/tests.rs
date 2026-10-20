@@ -1,6 +1,6 @@
 use super::*;
-use crate::config::HooksConfig;
 use crate::config::commands::CommandConfig;
+use crate::config::{HooksConfig, ProjectId};
 use crate::git::HookType;
 use crate::testing::TestRepo;
 
@@ -201,7 +201,7 @@ fn test_worktree_path_for_project_uses_project_specific() {
 
     // Project-specific path should be used
     assert_eq!(
-        config.worktree_path_for_project("github.com/user/repo"),
+        config.worktree_path_for_project(&ProjectId::from("github.com/user/repo")),
         ".worktrees/{{ branch | sanitize }}"
     );
 }
@@ -223,7 +223,7 @@ fn test_worktree_path_for_project_falls_back_to_global() {
 
     // Should fall back to global worktree-path
     assert_eq!(
-        config.worktree_path_for_project("github.com/user/repo"),
+        config.worktree_path_for_project(&ProjectId::from("github.com/user/repo")),
         "../{{ repo }}-{{ branch | sanitize }}"
     );
 }
@@ -234,7 +234,7 @@ fn test_worktree_path_for_project_falls_back_to_default() {
 
     // Unknown project should fall back to default template
     assert_eq!(
-        config.worktree_path_for_project("github.com/unknown/project"),
+        config.worktree_path_for_project(&ProjectId::from("github.com/unknown/project")),
         "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
     );
 }
@@ -260,7 +260,7 @@ fn test_format_path_with_project_override() {
             "myrepo",
             "feature/branch",
             &test.repo,
-            Some("github.com/user/repo"),
+            Some(&ProjectId::from("github.com/user/repo")),
         )
         .unwrap();
     assert_eq!(path, ".worktrees/feature-branch");
@@ -549,7 +549,11 @@ delete-branch = false
     // Global default is preserved
     assert!(parsed.remove(None).delete_branch());
     // Project override wins
-    assert!(!parsed.remove(Some("github.com/user/repo")).delete_branch());
+    assert!(
+        !parsed
+            .remove(Some(&ProjectId::from("github.com/user/repo")))
+            .delete_branch()
+    );
 }
 
 #[test]
@@ -632,7 +636,7 @@ fn test_set_project_worktree_path() {
         .unwrap();
 
     assert_eq!(
-        config.worktree_path_for_project("github.com/user/repo"),
+        config.worktree_path_for_project(&ProjectId::from("github.com/user/repo")),
         "../{{ branch | sanitize }}"
     );
 
@@ -930,14 +934,14 @@ fn test_effective_commit_generation_with_project_override() {
     );
 
     // With project identifier, should merge project config
-    let effective = config.commit_generation(Some("github.com/user/repo"));
+    let effective = config.commit_generation(Some(&ProjectId::from("github.com/user/repo")));
     assert_eq!(effective.command, Some("project-llm".to_string()));
 
     // Without project or unknown project, should use global
     let effective = config.commit_generation(None);
     assert_eq!(effective.command, Some("global-llm".to_string()));
 
-    let effective = config.commit_generation(Some("github.com/other/repo"));
+    let effective = config.commit_generation(Some(&ProjectId::from("github.com/other/repo")));
     assert_eq!(effective.command, Some("global-llm".to_string()));
 }
 
@@ -970,7 +974,7 @@ fn test_effective_merge_with_partial_override() {
         },
     );
 
-    let effective = config.merge(Some("github.com/user/repo"));
+    let effective = config.merge(Some(&ProjectId::from("github.com/user/repo")));
     assert_eq!(effective.squash, Some(false)); // From project
     assert_eq!(effective.commit, Some(true)); // From global
     assert_eq!(effective.rebase, Some(true)); // From global
@@ -993,13 +997,13 @@ fn test_effective_list_project_only() {
         },
     );
 
-    let effective = config.list(Some("github.com/user/repo"));
+    let effective = config.list(Some(&ProjectId::from("github.com/user/repo")));
     assert_eq!(effective.full, Some(true));
     assert!(effective.branches.is_none());
 
     // No global, no matching project falls back to default
     assert_eq!(
-        config.list(Some("github.com/other/repo")),
+        config.list(Some(&ProjectId::from("github.com/other/repo"))),
         ListConfig::default()
     );
 }
@@ -1015,7 +1019,7 @@ fn test_effective_commit_global_only() {
         ..Default::default()
     };
 
-    let effective = config.commit(Some("github.com/any/project"));
+    let effective = config.commit(Some(&ProjectId::from("github.com/any/project")));
     assert_eq!(effective.stage, Some(StageMode::Tracked));
 }
 
@@ -1353,7 +1357,7 @@ fn test_switch_picker_project_override() {
         },
     );
 
-    let picker = config.switch_picker(Some("github.com/user/repo"));
+    let picker = config.switch_picker(Some(&ProjectId::from("github.com/user/repo")));
     assert_eq!(picker.pager.as_deref(), Some("bat")); // From project
 }
 
@@ -1370,7 +1374,7 @@ pager = "bat"
     )
     .unwrap();
 
-    let picker = config.switch_picker(Some("github.com/user/repo"));
+    let picker = config.switch_picker(Some(&ProjectId::from("github.com/user/repo")));
     assert_eq!(picker.pager.as_deref(), Some("bat"));
     // [select] is migrated to [switch.picker] at the TOML level before parsing,
     // so it ends up in the switch.picker field, not select
@@ -1519,13 +1523,13 @@ squash = false
     assert_eq!(project.merge.squash, Some(false));
 
     // Effective config for project
-    let effective_cg = config.commit_generation(Some("github.com/user/repo"));
+    let effective_cg = config.commit_generation(Some(&ProjectId::from("github.com/user/repo")));
     assert_eq!(
         effective_cg.command,
         Some("claude -p --model opus".to_string())
     );
 
-    let effective_merge = config.merge(Some("github.com/user/repo"));
+    let effective_merge = config.merge(Some(&ProjectId::from("github.com/user/repo")));
     assert_eq!(effective_merge.squash, Some(false));
 }
 
@@ -1552,12 +1556,14 @@ exclude = [".repo-local/", ".entire/"]
 
     assert_eq!(config.copy_ignored(None).exclude, expected_global);
     assert_eq!(
-        config.copy_ignored(Some(project_id)).exclude,
+        config
+            .copy_ignored(Some(&ProjectId::from(project_id)))
+            .exclude,
         expected_merged.clone()
     );
     assert_eq!(
         config
-            .resolved(Some(project_id))
+            .resolved(Some(&ProjectId::from(project_id)))
             .step
             .copy_ignored()
             .exclude,
@@ -1598,7 +1604,7 @@ command = "claude -p --model opus"
         Some("claude -p --model opus")
     );
 
-    let effective_cg = config.commit_generation(Some("github.com/user/repo"));
+    let effective_cg = config.commit_generation(Some(&ProjectId::from("github.com/user/repo")));
     assert_eq!(
         effective_cg.command,
         Some("claude -p --model opus".to_string())
@@ -1711,7 +1717,7 @@ fn test_hooks_merge_append_semantics() {
         },
     );
 
-    let effective = config.hooks(Some("github.com/user/repo"));
+    let effective = config.hooks(Some(&ProjectId::from("github.com/user/repo")));
     let post_create = effective.post_create.unwrap();
     let commands: Vec<_> = post_create.commands().collect();
     assert_eq!(commands.len(), 2);
@@ -1727,7 +1733,7 @@ fn test_hooks_no_project_override_uses_global() {
         ..Default::default()
     };
 
-    let effective = config.hooks(Some("github.com/other/repo"));
+    let effective = config.hooks(Some(&ProjectId::from("github.com/other/repo")));
     let post_create = effective.post_create.unwrap();
     let commands: Vec<_> = post_create.commands().collect();
     assert_eq!(commands.len(), 1);
@@ -1747,7 +1753,7 @@ fn test_hooks_project_only_no_global() {
         },
     );
 
-    let effective = config.hooks(Some("github.com/user/repo"));
+    let effective = config.hooks(Some(&ProjectId::from("github.com/user/repo")));
     let post_create = effective.post_create.unwrap();
     let commands: Vec<_> = post_create.commands().collect();
     assert_eq!(commands.len(), 1);
@@ -1771,7 +1777,7 @@ fn test_hooks_different_hook_types_not_merged() {
         },
     );
 
-    let effective = config.hooks(Some("github.com/user/repo"));
+    let effective = config.hooks(Some(&ProjectId::from("github.com/user/repo")));
 
     // post-start: only global
     let post_create = effective.post_create.unwrap();
@@ -1907,7 +1913,7 @@ setup = "echo setup"
     );
 
     // Verify merge preserves order: global first, then project
-    let effective = config.hooks(Some("github.com/user/repo"));
+    let effective = config.hooks(Some(&ProjectId::from("github.com/user/repo")));
     let commands: Vec<_> = effective.post_create.as_ref().unwrap().commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "npm install"); // Global first
@@ -1946,7 +1952,7 @@ test = "npm test"
     );
 
     // Both commands present, global first
-    let effective = config.hooks(Some("github.com/user/repo"));
+    let effective = config.hooks(Some(&ProjectId::from("github.com/user/repo")));
     let commands: Vec<_> = effective.post_create.as_ref().unwrap().commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "cargo test");
@@ -2130,7 +2136,7 @@ project-only = "only-project"
 "#;
     let config: UserConfig = toml::from_str(toml_str).unwrap();
 
-    let aliases = config.aliases(Some("test-project"));
+    let aliases = config.aliases(Some(&ProjectId::from("test-project")));
 
     // Non-colliding aliases are present
     assert_eq!(aliases["global-only"].commands().count(), 1);
@@ -2432,7 +2438,7 @@ fn test_cli_layer_outranks_project_worktree_path() {
     let (table, warnings) = apply_overrides(base, &["worktree-path = \"/from-cli\""]);
     assert!(warnings.is_empty());
     assert_eq!(
-        loaded(table).worktree_path_for_project(PROJECT),
+        loaded(table).worktree_path_for_project(&ProjectId::from(PROJECT)),
         "/from-cli"
     );
 }
@@ -2452,7 +2458,7 @@ fn test_env_layer_outranks_project_worktree_path() {
 
     assert!(warnings.is_empty());
     assert_eq!(
-        loaded(table).worktree_path_for_project(PROJECT),
+        loaded(table).worktree_path_for_project(&ProjectId::from(PROJECT)),
         "/from-env"
     );
 }
@@ -2498,7 +2504,7 @@ fn test_file_layer_outranks_lower_layer_project_entry() {
     );
 
     assert_eq!(
-        loaded(table).worktree_path_for_project(PROJECT),
+        loaded(table).worktree_path_for_project(&ProjectId::from(PROJECT)),
         "/from-user-global"
     );
 }
@@ -2518,8 +2524,11 @@ branches = true
     let (table, warnings) = apply_overrides(base, &["list.full = false"]);
     assert!(warnings.is_empty());
     let config = loaded(table);
-    assert_eq!(config.worktree_path_for_project(PROJECT), "/from-project");
-    let list = config.list(Some(PROJECT));
+    assert_eq!(
+        config.worktree_path_for_project(&ProjectId::from(PROJECT)),
+        "/from-project"
+    );
+    let list = config.list(Some(&ProjectId::from(PROJECT)));
     assert_eq!(list.full, Some(false), "the higher layer wins");
     assert_eq!(list.branches, Some(true), "sibling key survives");
 }
@@ -2538,7 +2547,7 @@ fn test_layer_keeps_its_own_project_scoped_override() {
     );
     assert!(warnings.is_empty());
     assert_eq!(
-        loaded(table).worktree_path_for_project(PROJECT),
+        loaded(table).worktree_path_for_project(&ProjectId::from(PROJECT)),
         "/from-cli-project"
     );
 }
@@ -2553,7 +2562,7 @@ fn test_layer_applies_to_pattern_entries() {
     let (table, warnings) = apply_overrides(base, &["worktree-path = \"/from-cli\""]);
     assert!(warnings.is_empty());
     assert_eq!(
-        loaded(table).worktree_path_for_project(PROJECT),
+        loaded(table).worktree_path_for_project(&ProjectId::from(PROJECT)),
         "/from-cli"
     );
 }
@@ -2591,15 +2600,20 @@ exclude = ["project-pattern"]
             .collect::<Vec<_>>()
     };
     assert_eq!(
-        templates(&config.hooks(Some(PROJECT)).pre_merge.unwrap()),
+        templates(
+            &config
+                .hooks(Some(&ProjectId::from(PROJECT)))
+                .pre_merge
+                .unwrap()
+        ),
         ["cli-hook", "project-hook"]
     );
     assert_eq!(
-        templates(&config.aliases(Some(PROJECT))["ship"]),
+        templates(&config.aliases(Some(&ProjectId::from(PROJECT)))["ship"]),
         ["cli-alias", "project-alias"]
     );
     assert_eq!(
-        config.copy_ignored(Some(PROJECT)).exclude,
+        config.copy_ignored(Some(&ProjectId::from(PROJECT))).exclude,
         ["cli-pattern", "project-pattern"]
     );
 }
@@ -2622,7 +2636,10 @@ width = 30
         &["list.custom-columns.Ticket.template = \"from-cli\""],
     );
     assert!(warnings.is_empty());
-    let column = loaded(table).list(Some(PROJECT)).custom_columns["Ticket"].clone();
+    let column = loaded(table)
+        .list(Some(&ProjectId::from(PROJECT)))
+        .custom_columns["Ticket"]
+        .clone();
     assert_eq!(column.template, "from-cli");
     assert_eq!(column.width, None, "the column went as a unit");
 
@@ -2646,7 +2663,10 @@ width = 30
         ],
     );
     assert!(warnings.is_empty());
-    let column = loaded(table).list(Some(PROJECT)).custom_columns["Ticket"].clone();
+    let column = loaded(table)
+        .list(Some(&ProjectId::from(PROJECT)))
+        .custom_columns["Ticket"]
+        .clone();
     assert_eq!(column.template, "from-cli-project");
     assert_eq!(column.width, None, "the column went as a unit here too");
 }
@@ -2658,7 +2678,7 @@ fn test_layer_noop_without_overrides() {
     let (table, warnings) = apply_overrides(base, &[]);
     assert!(warnings.is_empty());
     assert_eq!(
-        loaded(table).worktree_path_for_project(PROJECT),
+        loaded(table).worktree_path_for_project(&ProjectId::from(PROJECT)),
         "/from-project"
     );
 }
@@ -2671,7 +2691,7 @@ fn test_dropped_layer_leaves_projects_intact() {
     let (table, warnings) = apply_overrides(base, &["worktree-path = \"/from-cli\"", "garbage"]);
     assert_eq!(warnings.len(), 1);
     assert_eq!(
-        loaded(table).worktree_path_for_project(PROJECT),
+        loaded(table).worktree_path_for_project(&ProjectId::from(PROJECT)),
         "/from-project"
     );
 }
@@ -3173,19 +3193,25 @@ platform = "gitlab"
         "git.company.example/group/team/repo",
     ] {
         assert_eq!(
-            config.worktree_path_for_project(project),
+            config.worktree_path_for_project(&ProjectId::from(project)),
             ".worktrees/{{ branch | sanitize }}"
         );
-        assert!(config.has_project_worktree_path(project));
-        assert_eq!(config.forge_platform(Some(project)), Some("gitlab"));
+        assert!(config.has_project_worktree_path(&ProjectId::from(project)));
+        assert_eq!(
+            config.forge_platform(Some(&ProjectId::from(project))),
+            Some("gitlab")
+        );
     }
 
     // A repo on another host takes the global settings.
     assert_eq!(
-        config.worktree_path_for_project("github.com/owner/repo"),
+        config.worktree_path_for_project(&ProjectId::from("github.com/owner/repo")),
         "../{{ repo }}.{{ branch | sanitize }}"
     );
-    assert_eq!(config.forge_platform(Some("github.com/owner/repo")), None);
+    assert_eq!(
+        config.forge_platform(Some(&ProjectId::from("github.com/owner/repo"))),
+        None
+    );
 }
 
 #[test]
@@ -3205,15 +3231,15 @@ worktree-path = "exact"
     .unwrap();
 
     assert_eq!(
-        config.worktree_path_for_project("git.company.example/team/repo"),
+        config.worktree_path_for_project(&ProjectId::from("git.company.example/team/repo")),
         "exact"
     );
     assert_eq!(
-        config.worktree_path_for_project("git.company.example/team/other"),
+        config.worktree_path_for_project(&ProjectId::from("git.company.example/team/other")),
         "team"
     );
     assert_eq!(
-        config.worktree_path_for_project("git.company.example/ops/thing"),
+        config.worktree_path_for_project(&ProjectId::from("git.company.example/ops/thing")),
         "host"
     );
 }
@@ -3234,7 +3260,7 @@ branches = false
     )
     .unwrap();
 
-    let list = config.list(Some("git.company.example/owner/repo"));
+    let list = config.list(Some(&ProjectId::from("git.company.example/owner/repo")));
     assert_eq!(list.full, Some(true), "kept from the host-wide entry");
     assert_eq!(list.branches, Some(false), "overridden by the exact entry");
 }
@@ -3254,7 +3280,7 @@ post-switch = "repo-setup"
     )
     .unwrap();
 
-    let hooks = config.hooks(Some("git.company.example/owner/repo"));
+    let hooks = config.hooks(Some(&ProjectId::from("git.company.example/owner/repo")));
     let commands: Vec<&str> = hooks
         .post_switch
         .iter()
@@ -3276,11 +3302,11 @@ hostname = "github.company.example"
     .unwrap();
 
     assert_eq!(
-        config.forge_platform(Some("work/owner/repo")),
+        config.forge_platform(Some(&ProjectId::from("work/owner/repo"))),
         Some("github")
     );
     assert_eq!(
-        config.forge_hostname(Some("work/owner/repo")),
+        config.forge_hostname(Some(&ProjectId::from("work/owner/repo"))),
         Some("github.company.example")
     );
     assert_eq!(config.forge_hostname(None), None);

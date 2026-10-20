@@ -1,8 +1,8 @@
 use crate::common::{
-    SLEEP_FOR_ABSENCE_CHECK, TestRepo, configure_directive_file, directive_file, make_snapshot_cmd,
-    make_snapshot_cmd_with_global_flags, repo, repo_with_remote, set_temp_home_env,
-    setup_home_snapshot_settings, setup_snapshot_settings, temp_home, wait_for_file_content,
-    wt_command,
+    SLEEP_FOR_ABSENCE_CHECK, TestRepo, add_force_duplicate, configure_directive_file,
+    directive_file, make_snapshot_cmd, make_snapshot_cmd_with_global_flags, repo, repo_with_remote,
+    set_temp_home_env, setup_home_snapshot_settings, setup_snapshot_settings, temp_home,
+    wait_for_file_content, wt_command,
 };
 use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
@@ -381,6 +381,40 @@ fn test_switch_create_with_remote_only_base(#[from(repo_with_remote)] repo: Test
     assert!(
         !upstream_check.status.success(),
         "new branch should NOT track origin/releases/4.x.x"
+    );
+}
+
+/// A default branch that is a remote-tracking ref with no local branch of the
+/// same name (git-p4 keeps its mainline only as `p4/master`) is the base for
+/// `--create`, not the current HEAD. Regression test for GitHub issue #4481.
+#[rstest]
+fn test_switch_create_from_remote_tracking_default_branch(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    // `origin/release` exists only as a remote-tracking ref.
+    repo.run_git(&["branch", "release"]);
+    repo.run_git(&["push", "origin", "release"]);
+    repo.run_git(&["branch", "-D", "release"]);
+    repo.run_git(&["config", "worktrunk.default-branch", "origin/release"]);
+
+    // Move HEAD past the default branch so the two bases differ.
+    repo.run_git(&["commit", "--allow-empty", "-m", "unrelated work"]);
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "probe", "--no-cd"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(
+        repo.git_output(&["rev-parse", "probe"]),
+        repo.git_output(&["rev-parse", "origin/release"]),
+        "probe should be created from the default branch, not HEAD"
     );
 }
 
@@ -3680,14 +3714,37 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         "html_url": "https://github.com/owner/test-repo/pull/42"
     }"#;
 
-    let mock_bin = setup_mock_gh_for_pr(&repo, gh_response);
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    // The CLI supplies the protocol; record its arguments to verify that the
+    // lookup selects the API host rather than a global preference.
+    MockConfig::new("gh")
+        .command("api", MockResponse::output(gh_response))
+        .command("config get git_protocol", MockResponse::output("ssh\n"))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    let call_log = tempfile::tempdir().unwrap();
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
+        cmd.env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path());
         assert_cmd_snapshot!("switch_pr_fork", cmd);
     });
+    let calls = fs::read_to_string(call_log.path().join("gh.calls")).unwrap();
+    assert_eq!(
+        calls
+            .lines()
+            .find(|line| line.starts_with("config get git_protocol")),
+        Some("config get git_protocol --host github.com")
+    );
+    assert_eq!(
+        repo.git_output(&["config", "branch.feature-fix.pushRemote"])
+            .trim(),
+        "git@github.com:contributor/test-repo.git"
+    );
 }
 
 /// A failed fork `pr:N` switch leaves a branch it did not create alone.
@@ -5698,12 +5755,12 @@ fn test_switch_pr_gitea_create_conflict(#[from(repo_with_remote)] repo: TestRepo
         "head": {
             "label": "feature-auth",
             "ref": "feature-auth",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}
         },
         "base": {
             "label": "main",
             "ref": "main",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}
         },
         "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
     }"#;
@@ -5771,12 +5828,12 @@ fn test_switch_pr_gitea_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) 
         "head": {
             "label": "feature-auth",
             "ref": "feature-auth",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}
         },
         "base": {
             "label": "main",
             "ref": "main",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}
         },
         "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
     }"#;
@@ -5845,12 +5902,12 @@ fn test_switch_pr_gitea_fork(#[from(repo_with_remote)] repo: TestRepo) {
         "head": {
             "label": "contributor:feature-fix",
             "ref": "feature-fix",
-            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}, "clone_url": "http://gitea.example.com:3000/gitea/contributor/test-repo.git"}
         },
         "base": {
             "label": "main",
             "ref": "main",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}
         },
         "html_url": "https://gitea.example.com/owner/test-repo/pulls/42"
     }"#;
@@ -5862,6 +5919,51 @@ fn test_switch_pr_gitea_fork(#[from(repo_with_remote)] repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_gitea_fork", cmd);
+    });
+    assert_eq!(
+        repo.git_output(&["config", "branch.feature-fix.pushRemote"])
+            .trim(),
+        "http://gitea.example.com:3000/gitea/contributor/test-repo.git"
+    );
+}
+
+/// A renamed base repository can resolve through the API while no configured
+/// remote matches its current owner. The recovery hint must retain Gitea's
+/// canonical clone URL rather than reconstructing it from the PR's web URL.
+#[rstest]
+fn test_switch_pr_gitea_missing_remote_uses_api_clone_url(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/old-owner/test-repo.git",
+    ]);
+
+    let tea_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "head": {
+            "label": "contributor:feature-fix",
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}, "clone_url": "http://gitea.example.com:3000/gitea/contributor/test-repo.git"}
+        },
+        "base": {
+            "label": "main",
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "http://gitea.example.com:3000/gitea/owner/test-repo.git"}
+        },
+        "html_url": "https://gitea.example.com/owner/test-repo/pulls/42"
+    }"#;
+    let mock_bin = setup_mock_tea(&repo, "200 OK", tea_response);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_missing_remote_uses_api_clone_url", cmd);
     });
 }
 
@@ -5940,12 +6042,12 @@ fn test_switch_pr_gitea_forge_platform(#[from(repo_with_remote)] repo: TestRepo)
         "head": {
             "label": "feature-auth",
             "ref": "feature-auth",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://git.internal.example.com/owner/test-repo.git"}
         },
         "base": {
             "label": "main",
             "ref": "main",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://git.internal.example.com/owner/test-repo.git"}
         },
         "html_url": "https://git.internal.example.com/owner/test-repo/pulls/101"
     }"#;
@@ -6112,12 +6214,12 @@ fn test_switch_pr_self_hosted_tea_authed_dispatches_to_gitea(
         "head": {
             "label": "feature-auth",
             "ref": "feature-auth",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://forge.selfhosted.test/owner/test-repo.git"}
         },
         "base": {
             "label": "main",
             "ref": "main",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://forge.selfhosted.test/owner/test-repo.git"}
         },
         "html_url": "https://forge.selfhosted.test/owner/test-repo/pulls/101"
     }"#;
@@ -6410,12 +6512,12 @@ fn test_switch_pr_gitea_no_source_branch(#[from(repo_with_remote)] repo: TestRep
         "head": {
             "label": "",
             "ref": "",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}
         },
         "base": {
             "label": "main",
             "ref": "main",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}
         },
         "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
     }"#;
@@ -6454,7 +6556,7 @@ fn test_switch_pr_gitea_deleted_fork(#[from(repo_with_remote)] repo: TestRepo) {
         "base": {
             "label": "main",
             "ref": "main",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}
         },
         "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
     }"#;
@@ -6577,9 +6679,9 @@ fn test_switch_pr_gitea_no_status_line(#[from(repo_with_remote)] repo: TestRepo)
                 "user": {"login": "alice"},
                 "state": "open",
                 "head": {"label": "feature", "ref": "feature",
-                         "repo": {"name": "test-repo", "owner": {"login": "owner"}}},
+                         "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}},
                 "base": {"label": "main", "ref": "main",
-                         "repo": {"name": "test-repo", "owner": {"login": "owner"}}},
+                         "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}},
                 "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
             }"#,
             ),
@@ -7723,6 +7825,13 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         "https://gitlab.com/owner/test-repo.git",
     ]);
 
+    repo.run_git(&[
+        "config",
+        "--add",
+        &format!("url.{}.insteadOf", bare_url),
+        "git@gitlab.com:owner/test-repo.git",
+    ]);
+
     // Set up mock glab with separate responses for MR API and project APIs.
     // Mock playback supports compound keys like "api projects/456" to match
     // different API paths.
@@ -7770,15 +7879,30 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
             "api projects/123",
             MockResponse::output(target_project_response),
         )
+        .command("config get git_protocol", MockResponse::output("ssh\n"))
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
 
+    let call_log = tempfile::tempdir().unwrap();
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
+        cmd.env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path());
         assert_cmd_snapshot!("switch_mr_fork", cmd);
     });
+    let calls = fs::read_to_string(call_log.path().join("glab.calls")).unwrap();
+    assert_eq!(
+        calls
+            .lines()
+            .find(|line| line.starts_with("config get git_protocol")),
+        Some("config get git_protocol --host gitlab.com")
+    );
+    assert_eq!(
+        repo.git_output(&["config", "branch.feature-fix.pushRemote"])
+            .trim(),
+        "git@gitlab.com:contributor/test-repo.git"
+    );
 }
 
 /// A failing `glab api projects/<id>` surfaces glab's own verdict.
@@ -8460,6 +8584,128 @@ fn test_switch_with_relative_worktree_paths(repo: TestRepo) {
     snapshot_switch("switch_to_relative_paths", &repo, &["relative-test"]);
 }
 
+/// `@` names the worktree the command runs in, by path, so it reaches the
+/// checkouts its branch name can't: the second copy of a branch checked out
+/// twice, and a detached worktree.
+#[rstest]
+#[case::second_checkout(false)]
+#[case::detached(true)]
+fn test_switch_at_names_the_current_worktree(mut repo: TestRepo, #[case] detached: bool) {
+    repo.add_worktree("feature");
+    let current = if detached {
+        repo.detach_head_in_worktree("feature");
+        repo.worktrees["feature"].clone()
+    } else {
+        add_force_duplicate(&repo, "feature", "feature-copy")
+    };
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "@", "--no-cd", "--yes", "--format=json"])
+        .current_dir(&current)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["action"], "already_at");
+    let path = std::path::Path::new(json["path"].as_str().unwrap());
+    assert_eq!(path.file_name(), current.file_name());
+}
+
+/// Outside every worktree, here the main worktree's `.git` directory, `@`
+/// names the branch HEAD points at: the switch lands in the main worktree
+/// rather than treating the `.git` directory as a detached worktree.
+#[rstest]
+fn test_switch_at_outside_a_worktree_names_the_head_branch(repo: TestRepo) {
+    let path = switch_json_path(&repo, &repo.root_path().join(".git"), &["@"]);
+    assert_eq!(path, repo.root_path());
+}
+
+/// Run `wt switch <args>` from `dir` with `--format=json` and return the
+/// path it lands in.
+fn switch_json_path(repo: &TestRepo, dir: &std::path::Path, args: &[&str]) -> std::path::PathBuf {
+    let output = repo
+        .wt_command()
+        .args(["switch", "--no-cd", "--yes", "--format=json"])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    std::path::PathBuf::from(json["path"].as_str().unwrap())
+}
+
+/// `wt switch -` returns to the worktree it left, by path, so it reaches the
+/// checkouts a branch name can't: the second copy of a branch checked out
+/// twice, and a detached worktree.
+#[rstest]
+#[case::second_checkout(false)]
+#[case::detached(true)]
+fn test_switch_previous_returns_to_the_worktree_left(mut repo: TestRepo, #[case] detached: bool) {
+    repo.add_worktree("feature");
+    let left = if detached {
+        repo.detach_head_in_worktree("feature");
+        repo.worktrees["feature"].clone()
+    } else {
+        add_force_duplicate(&repo, "feature", "feature-copy")
+    };
+
+    switch_json_path(&repo, &left, &["main"]);
+    let back = switch_json_path(&repo, repo.root_path(), &["-"]);
+    assert_eq!(back.file_name(), left.file_name());
+}
+
+/// The recorded path stands only while a worktree there still holds the
+/// recorded branch. When an older wt has since recorded a different branch
+/// without a path, `-` names that branch.
+#[rstest]
+fn test_switch_previous_falls_back_to_the_branch(mut repo: TestRepo) {
+    let feature = repo.add_worktree("feature");
+    repo.add_worktree("other");
+
+    switch_json_path(&repo, &feature, &["main"]);
+    // An older wt switching from `other` writes only the branch.
+    repo.run_git(&["config", "worktrunk.history", "other"]);
+
+    let back = switch_json_path(&repo, repo.root_path(), &["-"]);
+    assert_eq!(back.file_name(), repo.worktrees["other"].file_name());
+}
+
+/// When the worktree left has since been removed, `-` names its branch, which
+/// creates a worktree for it again.
+#[rstest]
+fn test_switch_previous_after_its_worktree_is_removed(mut repo: TestRepo) {
+    let feature = repo.add_worktree("feature");
+
+    switch_json_path(&repo, &feature, &["main"]);
+    repo.run_git(&["worktree", "remove", feature.to_str().unwrap()]);
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "-", "--no-cd", "--yes", "--format=json"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["action"], "created");
+    assert_eq!(json["branch"], "feature");
+}
+
 // -- JSON format tests --
 
 #[rstest]
@@ -9087,13 +9333,35 @@ fn test_switch_path_occupied_suggests_path_in_clobber_hint(repo: TestRepo) {
     let custom = repo.root_path().parent().unwrap().join("occupied");
     std::fs::create_dir_all(&custom).unwrap();
 
-    // The `--clobber` suggestion must keep `--path`, or following it would
-    // back up the template's path instead of this one.
+    // `--path` can name any directory, so the hint suggests another path
+    // rather than deleting this one. The `--clobber` suggestion must keep
+    // `--path`, or following it would back up the template's path instead.
     snapshot_switch(
         "switch_path_occupied",
         &repo,
         &["--create", "feature-y", "--path", "../occupied"],
     );
+}
+
+#[rstest]
+fn test_switch_path_naming_another_worktree(mut repo: TestRepo) {
+    let occupied = repo.add_worktree("feature-z");
+
+    // Another branch's worktree is reported by its branch, never moved aside
+    // by `--clobber`.
+    snapshot_switch(
+        "switch_path_another_worktree",
+        &repo,
+        &[
+            "--create",
+            "feature-n",
+            "--clobber",
+            "--path",
+            "../repo.feature-z",
+        ],
+    );
+
+    assert!(occupied.join(".git").is_file());
 }
 
 #[rstest]

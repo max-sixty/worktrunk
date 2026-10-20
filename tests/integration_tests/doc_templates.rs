@@ -547,6 +547,37 @@ fn test_doc_example_dev_server(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_doc_example_vars_tojson(repo: TestRepo) {
+    // From docs/src/content/docs/hook.md, "Template variables":
+    // seed = "curl -X POST localhost:3000/seed -d {{ vars.config | tojson }}"
+    //
+    // `tojson` writes `'`, `<`, `>` and `&` as `\u` escapes, which JSON
+    // parsers decode back.
+    repo.run_git(&[
+        "config",
+        "worktrunk.state.main.vars.config",
+        r#"{"port": 3000, "name": "it's"}"#,
+    ]);
+
+    let repository = Repository::at(repo.root_path()).unwrap();
+    let mut vars = HashMap::new();
+    vars.insert("branch", "main");
+
+    let result = expand_template(
+        "curl -X POST localhost:3000/seed -d {{ vars.config | tojson }}",
+        &vars,
+        ShellEscapeMode::Posix,
+        &repository,
+        "test",
+    )
+    .unwrap();
+    assert_eq!(
+        result,
+        r#"curl -X POST localhost:3000/seed -d '{"name": "it\u0027s", "port": 3000}'"#
+    );
+}
+
+#[rstest]
 fn test_doc_example_worktree_path_sanitize(repo: TestRepo) {
     // From docs/src/content/docs/tips-patterns.md, "Bare repository layout":
     // worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"

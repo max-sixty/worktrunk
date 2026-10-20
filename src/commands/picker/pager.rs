@@ -1,7 +1,7 @@
 //! Pager detection and execution.
 //!
 //! Handles detection and use of diff pagers (delta, bat, etc.) for preview windows.
-//! Input is prepared in an anonymous file before spawn. On Unix, one deadline
+//! Input is prepared by `buffered_stdin` before spawn. On Unix, one deadline
 //! bounds both output consumption and the direct child wait,
 //! including descendants retaining the pipes. Timeout closes our pipe endpoints
 //! and kills/reaps only the owned pager; preview falls back to the original text.

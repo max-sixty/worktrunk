@@ -477,12 +477,15 @@ impl Repository {
     /// or one of several checkouts of the same branch.
     ///
     /// Resolution order:
-    /// 1. `@` — the current worktree, matched by path so detached HEAD resolves
-    /// 2. `-` / `^` — the previous / default branch, then as a branch below
-    /// 3. a branch with a worktree
-    /// 4. a path naming a registered worktree — absolute, `~`-relative, or
+    /// 1. `@` — the current worktree, matched by path so detached HEAD
+    ///    resolves; outside any worktree, the branch HEAD names, as below
+    /// 2. `-` — the worktree `wt switch` last left, by the path it recorded
+    ///    (see [`switch_previous_worktree`](Self::switch_previous_worktree))
+    /// 3. `-` / `^` — the previous / default branch, then as a branch below
+    /// 4. a branch with a worktree
+    /// 5. a path naming a registered worktree — absolute, `~`-relative, or
     ///    relative to `-C` (see [`resolve_input_path`])
-    /// 5. otherwise the branch alone, which may or may not exist
+    /// 6. otherwise the branch alone, which may or may not exist
     ///
     /// A path that named no worktree lands in `BranchOnly` or
     /// `NoWorktreeAtPath` — [`resolve_selector`](Self::resolve_selector)
@@ -499,27 +502,39 @@ impl Repository {
     /// [`usable_worktree_for_branch`](Self::usable_worktree_for_branch)'s job,
     /// which the commands that go on to run there call instead.
     pub fn resolve_worktree(&self, name: &str) -> anyhow::Result<ResolvedWorktree> {
-        // `@` is the only selector that resolves by path rather than by name,
-        // which is what lets it answer in a detached worktree — where the
-        // branch expansion `expand_selector` would apply has nothing to return.
+        // `@` and `-` resolve by path rather than by name, which is what lets
+        // them answer for a detached worktree — where the branch expansion
+        // `expand_selector` would apply has nothing to return.
         let name = normalize_selector(name);
         if name == "@" {
-            // If worktree_root fails (e.g., in bare repo directory), give a clear error
-            let path = self
-                .current_worktree()
-                .root()
-                .map_err(|_| GitError::NotInWorktree {
-                    action: Some("resolve @".into()),
-                })?;
-            // Compare canonical identities so alternate path spellings (for
-            // example macOS `/var` and `/private/var`) select one inventory
-            // entry without changing Git's registered path.
+            // `root()` falls back to the cwd itself outside a work tree, so
+            // only a registered worktree at that path counts. Compare
+            // canonical identities so alternate path spellings (for example
+            // macOS `/var` and `/private/var`) select one inventory entry
+            // without changing Git's registered path.
+            let current = self.current_worktree();
+            let path = current.root()?;
             let current_id = WorktreeId::new(&path);
-            let branch = self
+            if let Some(wt) = self
                 .list_worktrees()?
                 .iter()
                 .find(|wt| wt.id() == current_id)
-                .and_then(|wt| wt.branch.clone());
+            {
+                return Ok(ResolvedWorktree::worktree(path, wt.branch.clone()));
+            }
+            // Inside a work tree git no longer has registered at this path (a
+            // worktree moved without `git worktree repair`), `@` still means
+            // this directory, which holds no worktree wt can act on.
+            if current.prewarm_info()?.is_inside {
+                return Ok(ResolvedWorktree::NoWorktreeAtPath { path });
+            }
+            // Outside every work tree — a bare repo's directory, or a `.git`
+            // directory — `@` falls through to the branch HEAD names, as
+            // `expand_selector` reads it.
+        }
+        if name == "-"
+            && let Some((path, branch)) = self.switch_previous_worktree()?
+        {
             return Ok(ResolvedWorktree::worktree(path, branch));
         }
 
@@ -530,10 +545,10 @@ impl Repository {
     /// what the selector could have meant.
     ///
     /// Split from [`resolve_worktree`](Self::resolve_worktree) for the callers
-    /// that do their own expanding before they get here — `wt switch`, whose
-    /// `pr:`/`mr:` dispatch and remote-prefix strip run first and report their
-    /// rewriting through the [`Selector`]. They used to re-implement these
-    /// three steps rather than expand into a shared one.
+    /// whose selector comes from somewhere other than the user's token — `wt
+    /// switch`, for a `pr:`/`mr:` branch or a stripped remote prefix — and
+    /// report that rewriting through the [`Selector`]. They used to
+    /// re-implement these three steps rather than expand into a shared one.
     pub fn resolve_selector(&self, selector: &Selector) -> anyhow::Result<ResolvedWorktree> {
         let token = selector.token();
 
@@ -542,11 +557,9 @@ impl Repository {
         }
 
         // Both remaining steps are about the token as a path, so
-        // `names_a_path` gates them together — a caller that turns it off gets
-        // neither a worktree matched by path nor a verdict about a directory,
-        // which is what `wt switch --create` needs: the argument names a branch
-        // to create, and a directory sitting at that spelling is the clobber
-        // check's business.
+        // `names_a_path` gates them together: a rewritten token gets neither a
+        // worktree matched by path nor a verdict about a directory, since the
+        // user never typed it as a path.
         if !selector.names_a_path() {
             return Ok(ResolvedWorktree::branch_only(token.to_string()));
         }
@@ -568,8 +581,8 @@ impl Repository {
     /// worktree.
     ///
     /// [`resolve_worktree`](Self::resolve_worktree) for the arguments that want
-    /// a branch rather than a worktree — `wt step promote`, and the `--branch`
-    /// of the `wt config state` commands, which key state by branch name. A
+    /// a branch rather than a worktree — the `--branch` of the `wt config
+    /// state` commands, which key state by branch name, defaulting to `@`. A
     /// branch with no worktree is a fine answer to those; a worktree named by
     /// path that has no branch is not.
     pub fn require_selected_branch(&self, name: &str, action: &str) -> anyhow::Result<String> {
@@ -584,6 +597,15 @@ impl Repository {
             ResolvedWorktree::NoWorktreeAtPath { path } => {
                 Err(GitError::WorktreeNotFoundAtPath { path }.into())
             }
+            // Name the detached worktree only when it isn't the one the
+            // command runs in, as `GitError::DetachedHead` asks.
+            ResolvedWorktree::Worktree {
+                path, branch: None, ..
+            } if self.is_current_worktree(&path)? => Err(GitError::DetachedHead {
+                action: Some(action.to_string()),
+                worktree: None,
+            }
+            .into()),
             ResolvedWorktree::Worktree {
                 path, branch: None, ..
             } => Err(GitError::DetachedHead {
@@ -597,19 +619,41 @@ impl Repository {
         }
     }
 
-    /// The path of the worktree a selector names, erroring when it names none.
+    /// Whether `path` is the worktree this repository was discovered in.
+    fn is_current_worktree(&self, path: &Path) -> anyhow::Result<bool> {
+        Ok(WorktreeId::new(self.current_worktree().root()?) == WorktreeId::new(path))
+    }
+
+    /// This repository, rooted at the worktree at `path`.
+    ///
+    /// Keeps `self`, discovered from the cwd and with the caches it has
+    /// already filled, when `path` is the worktree it was discovered in, so a
+    /// command acting on `@` there runs exactly as it would from the cwd.
+    /// Otherwise discovers the repository at `path`.
+    pub fn rooted_at(self, path: &Path) -> anyhow::Result<Self> {
+        if self.is_current_worktree(path)? {
+            Ok(self)
+        } else {
+            Self::at(path)
+        }
+    }
+
+    /// The worktree a selector names — its path, and its branch (`None` when
+    /// detached) — erroring when it names none.
     ///
     /// [`resolve_worktree`](Self::resolve_worktree) for the commands that need a
-    /// worktree to operate in rather than a branch to reason about — `wt step
-    /// diff --branch`, `copy-ignored --from`/`--to`, `promote`. A branch with no
-    /// checkout and a name matching nothing at all are the same answer to them.
+    /// worktree to operate in rather than a branch to reason about. A branch
+    /// with no checkout and a name matching nothing at all are the same answer
+    /// to them. The branch comes back with the path so a caller that needs
+    /// both uses the pair resolution found, rather than looking one up from
+    /// the other: a branch checked out twice maps back to the wrong path.
     /// A selector matching nothing at all is reported as such, rather than as a
     /// branch without a worktree: `wt switch <the selector>` creates a worktree
     /// only when the branch exists, so offering it for a mistyped path would
     /// just fail again.
-    pub fn require_worktree(&self, name: &str) -> anyhow::Result<PathBuf> {
+    pub fn require_worktree(&self, name: &str) -> anyhow::Result<(PathBuf, Option<String>)> {
         match self.resolve_worktree(name)? {
-            ResolvedWorktree::Worktree { path, .. } => Ok(path),
+            ResolvedWorktree::Worktree { path, branch, .. } => Ok((path, branch)),
             ResolvedWorktree::BranchOnly { branch, .. } => Err(self.no_worktree_error(branch)),
             ResolvedWorktree::NoWorktreeAtPath { path } => {
                 Err(GitError::WorktreeNotFoundAtPath { path }.into())

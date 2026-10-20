@@ -355,7 +355,7 @@ pub fn execute(
     let cmd = Cmd::new(program)
         .args(argv)
         .inherit_stdin()
-        .forward_signals()
+        .hand_off_terminal()
         .current_dir(dir)
         .scrub_git_discovery_env();
     let cmd = if redirect_stdout_to_stderr {

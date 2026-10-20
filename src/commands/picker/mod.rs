@@ -103,6 +103,8 @@ mod progressive_handler;
 mod prs;
 mod summary;
 
+use crate::commands::command_executor::ForegroundStdin;
+
 use std::cell::RefCell;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -387,6 +389,7 @@ impl AltXRemover {
                 handle_remove_output(
                     result,
                     RemovalExecution::Silent,
+                    ForegroundStdin::Closed,
                     &plan,
                     /* quiet */ true,
                     &mut announcer,
@@ -1327,7 +1330,7 @@ fn approved_removal_plan(
     // pipeline can be matched against approvals — `approve_readonly` then
     // drops them (fail-closed), rather than aborting the picker removal.
     let project_id = repo.project_identifier().ok();
-    let pid = project_id.as_deref();
+    let pid = project_id.as_ref();
     let user = repo.user_config();
     let project_config = repo.load_project_config()?;
 
@@ -3969,7 +3972,7 @@ pub mod tests {
         let approvals_path = approvals_dir.path().join("approvals.toml");
         let mut approvals = Approvals::default();
         approvals
-            .approve_commands(pid, vec!["false".to_string()], &approvals_path)
+            .approve_commands(pid.to_string(), vec!["false".to_string()], &approvals_path)
             .unwrap();
 
         // Build the row from the git-reported worktree path, not the raw temp

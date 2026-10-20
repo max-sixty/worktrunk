@@ -1,6 +1,6 @@
 //! Git config, hints, marker, and default branch operations for Repository.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -287,15 +287,56 @@ impl Repository {
         Ok(result)
     }
 
-    /// Set the previous branch in worktrunk.history for `wt switch -` support.
+    /// Record the worktree `wt switch` is leaving, so `wt switch -` can
+    /// return to it.
     ///
-    /// Stores the branch we're switching FROM, so `wt switch -` can return to it.
-    pub fn set_switch_previous(&self, previous: Option<&str>) -> anyhow::Result<()> {
-        if let Some(prev) = previous {
-            self.set_config_value("worktrunk.history", prev)?;
+    /// The branch goes in `worktrunk.history` and the path in
+    /// `worktrunk.history-path`. The branch alone can't name a detached
+    /// worktree, or the second checkout of a branch checked out twice; the
+    /// path can. A detached worktree clears the branch, so the two keys always
+    /// describe the same worktree, which is what
+    /// [`switch_previous_worktree`](Self::switch_previous_worktree) checks.
+    pub fn record_switch_source(&self, path: &Path, branch: Option<&str>) -> anyhow::Result<()> {
+        match branch {
+            Some(branch) => self.set_config_value("worktrunk.history", branch)?,
+            None => {
+                self.unset_config("worktrunk.history")?;
+            }
         }
-        // If previous is None (detached HEAD), don't update history
+        self.set_config_value("worktrunk.history-path", &path.to_string_lossy())
+    }
+
+    /// Set the previous branch outright (`wt config state previous-branch
+    /// set`), dropping the path a switch recorded alongside the old one.
+    pub fn set_switch_previous(&self, branch: &str) -> anyhow::Result<()> {
+        self.set_config_value("worktrunk.history", branch)?;
+        self.unset_config("worktrunk.history-path")?;
         Ok(())
+    }
+
+    /// Forget the previous worktree. Returns whether anything was recorded.
+    pub fn clear_switch_previous(&self) -> anyhow::Result<bool> {
+        let branch = self.unset_config("worktrunk.history")?;
+        let path = self.unset_config("worktrunk.history-path")?;
+        Ok(branch || path)
+    }
+
+    /// The worktree `wt switch` last left, while it is still registered and
+    /// still holds the branch recorded with it.
+    ///
+    /// `None` sends `wt switch -` to [`switch_previous`](Self::switch_previous)
+    /// instead: the worktree is gone, its checkout changed since, or an older
+    /// wt recorded a different branch without a path. An older wt recording
+    /// the same branch leaves the stale path standing, which matters only for
+    /// a branch checked out twice.
+    pub fn switch_previous_worktree(&self) -> anyhow::Result<Option<(PathBuf, Option<String>)>> {
+        let Some(path) = self.config_last("worktrunk.history-path")? else {
+            return Ok(None);
+        };
+        let Some((path, branch)) = self.worktree_at_path(Path::new(&path))? else {
+            return Ok(None);
+        };
+        Ok((branch == self.switch_previous()).then_some((path, branch)))
     }
 
     /// Get the previous branch from worktrunk.history for `wt switch -`.

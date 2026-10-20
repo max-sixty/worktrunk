@@ -1,7 +1,15 @@
 //! Foreground commands share the caller's Unix job group, independently of stdin.
 //!
-//! The terminal delivers Ctrl-C and Ctrl-Z to the whole job. A handled Ctrl-C
-//! therefore leaves each child's own exit status intact. SIGTERM addressed to
+//! The terminal delivers Ctrl-C and Ctrl-Z to the whole job, so wt and its
+//! child both receive the key. Like make or cargo, and unlike a shell's
+//! wait-and-cooperative-exit, wt treats its own receipt of SIGINT while a
+//! child runs as cancellation: the child handles the key its own way and is
+//! never signalled for it, but once it exits the command starts nothing more
+//! and exits interrupted, whatever status the child chose. Receipt is the
+//! evidence; a numeric exit status such as 130 never is. A child the command
+//! hands the terminal to ([`TerminalInterrupt::ChildInput`]: a pager, an
+//! `--execute` program, a custom subcommand, an alias's last serial step) owns
+//! the key as input instead, and its exit status stands. SIGTERM addressed to
 //! wt cancels its command and is forwarded to live direct children by PID;
 //! SharedChild serializes those deliveries with reaping. No caller group is killed.
 //! A group-wide TERM may also reach a child through this PID forwarding;
@@ -13,12 +21,13 @@
 //! handlers retain native default behavior, including between pipeline steps.
 //! A confirmed INT/TERM child exit wakes all current foreground scopes, so
 //! parallel output waits also stop. Execution leases end with direct waits;
-//! output observers remain through EOF and distinguish newly delivered keys
-//! using a flag registered at that transition, rather than notification timing.
+//! output observers remain through EOF and keep reading the scope's latched
+//! SIGINT flag, so a key received at any point stops the remaining drain.
 //! A command-operation guard retains cancellation across gaps between foreground
 //! scopes without disabling idle native defaults. New scopes share that operation's
 //! latch; dropping the guard makes the next operation independent.
 
+use crate::shell_exec::TerminalInterrupt;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::thread;
@@ -94,6 +103,9 @@ static ACTIVITY: OnceLock<Result<Mutex<Activity>, String>> = OnceLock::new();
 struct OperationCancellation {
     signal: Arc<AtomicI32>,
     terminated: Arc<AtomicBool>,
+    /// Terminal SIGINT wt received while a [`TerminalInterrupt::Cancels`]
+    /// scope ran. Those scopes register this flag; handoff scopes do not.
+    interrupted: Arc<AtomicBool>,
 }
 
 impl OperationCancellation {
@@ -102,7 +114,7 @@ impl OperationCancellation {
             Some(SIGTERM)
         } else {
             match self.signal.load(Ordering::SeqCst) {
-                0 => None,
+                0 => self.interrupted.load(Ordering::SeqCst).then_some(SIGINT),
                 signal => Some(signal),
             }
         }
@@ -236,7 +248,11 @@ impl Drop for Registration {
 pub struct ForegroundSignals {
     signals: Signals,
     terminated: Arc<AtomicBool>,
+    /// SIGINT received since install. A `Cancels` scope shares the operation's
+    /// flag and keeps observing it while children run; a `ChildInput` scope
+    /// consults its own flag only until spawn commits admission.
     interrupted: Arc<AtomicBool>,
+    terminal_interrupt: TerminalInterrupt,
     scope: Arc<Interruption>,
     lease: Lease,
     registration: Registration,
@@ -250,7 +266,7 @@ pub struct ForegroundOutcome {
 
 impl ForegroundSignals {
     /// Install before spawning so startup signals remain queued.
-    pub fn install() -> std::io::Result<Self> {
+    pub fn install(terminal_interrupt: TerminalInterrupt) -> std::io::Result<Self> {
         let state = Lease::state()?;
         // Fallible setup precedes admission, so an unwinding setup leaves
         // existing leases intact. Recover as the other Activity owners do.
@@ -269,7 +285,10 @@ impl ForegroundSignals {
             .as_ref()
             .map(|operation| operation.terminated.clone())
             .unwrap_or_default();
-        let interrupted = Arc::new(AtomicBool::new(false));
+        let interrupted = match (&operation, terminal_interrupt) {
+            (Some(operation), TerminalInterrupt::Cancels) => operation.interrupted.clone(),
+            _ => Arc::default(),
+        };
         let mut registration = Registration(Vec::new());
         for &signal in watched {
             if signal == SIGTERM && operation.is_some() {
@@ -301,6 +320,7 @@ impl ForegroundSignals {
             signals,
             terminated,
             interrupted,
+            terminal_interrupt,
             scope,
             registration,
             lease: Lease(state),
@@ -384,7 +404,8 @@ impl ForegroundSignals {
         let Self {
             mut signals,
             terminated,
-            interrupted: _,
+            interrupted,
+            terminal_interrupt,
             scope,
             registration,
             lease,
@@ -402,8 +423,8 @@ impl ForegroundSignals {
                         let _ = child.send_signal(SIGCONT);
                     }
                 }
-                // Wake output drains; a caught terminal INT still keeps the
-                // child's normal exit status, including a successful exit.
+                // Wake output drains. Terminal INT stays with the children:
+                // the drain observes the latched flag once they have exited.
                 wake();
             }
         });
@@ -411,7 +432,7 @@ impl ForegroundSignals {
             handle,
             listener: Some(listener),
             terminated,
-            output_interrupted: None,
+            interrupted: (terminal_interrupt == TerminalInterrupt::Cancels).then_some(interrupted),
             scope,
             _registration: registration,
             _lease: Some(lease),
@@ -423,7 +444,8 @@ pub struct ActiveForwarder {
     handle: Handle,
     listener: Option<thread::JoinHandle<()>>,
     terminated: Arc<AtomicBool>,
-    output_interrupted: Option<Arc<AtomicBool>>,
+    /// The scope's latched SIGINT, absent for a terminal handoff.
+    interrupted: Option<Arc<AtomicBool>>,
     scope: Arc<Interruption>,
     _lease: Option<Lease>,
     _registration: Registration,
@@ -439,26 +461,8 @@ impl ActiveForwarder {
     }
 
     /// Release direct execution while continuing to observe output cancellation.
-    /// Registering a fresh flag here excludes older, already handled Ctrl-C
-    /// deliveries, even when their iterator notifications are still queued.
-    pub fn finish_children(&mut self) -> std::io::Result<()> {
-        if let Some(lease) = &self._lease {
-            let watched = lease
-                .0
-                .lock()
-                .unwrap_or_else(|error| error.into_inner())
-                .watched
-                .contains(&SIGINT);
-            if watched {
-                let flag = Arc::new(AtomicBool::new(false));
-                self._registration
-                    .0
-                    .push(signal_hook::flag::register(SIGINT, flag.clone())?);
-                self.output_interrupted = Some(flag);
-            }
-            self._lease.take();
-        }
-        Ok(())
+    pub fn finish_children(&mut self) {
+        self._lease.take();
     }
 
     pub fn interrupt_signal(&self) -> Option<i32> {
@@ -467,7 +471,7 @@ impl ActiveForwarder {
         } else {
             self.scope.signal().or_else(|| {
                 if self
-                    .output_interrupted
+                    .interrupted
                     .as_ref()
                     .is_some_and(|flag| flag.load(Ordering::SeqCst))
                 {
