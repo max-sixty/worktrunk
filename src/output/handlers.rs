@@ -2271,9 +2271,7 @@ pub fn execute_shell_command(
     eprint!("{}", anstyle::Reset);
     stderr().flush().ok(); // Ignore flush errors - reset is best-effort, command execution should proceed
 
-    let mut cmd = Cmd::shell(command)
-        .current_dir(working_dir)
-        .forward_signals();
+    let mut cmd = Cmd::shell(command).current_dir(working_dir);
 
     // User hooks discover their repo from the cwd wt sets, not an inherited
     // GIT_DIR/GIT_WORK_TREE (issue #3373). Aliases keep the inherited context.
@@ -2290,8 +2288,9 @@ pub fn execute_shell_command(
     }
 
     cmd = match stdin {
-        ForegroundStdin::Inherit => cmd.inherit_stdin(),
-        ForegroundStdin::Closed => cmd.stdin(Stdio::null()),
+        ForegroundStdin::Inherit => cmd.inherit_stdin().forward_signals(),
+        ForegroundStdin::HandOff => cmd.inherit_stdin().hand_off_terminal(),
+        ForegroundStdin::Closed => cmd.stdin(Stdio::null()).forward_signals(),
     };
 
     if let Some(path) = directives.cd_file {

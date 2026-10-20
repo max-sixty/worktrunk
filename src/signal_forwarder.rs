@@ -8,8 +8,8 @@
 //! and exits interrupted, whatever status the child chose. Receipt is the
 //! evidence; a numeric exit status such as 130 never is. A child the command
 //! hands the terminal to ([`TerminalInterrupt::ChildInput`]: a pager, an
-//! `--execute` program, a custom subcommand) owns the key as input instead,
-//! and its exit status stands. SIGTERM addressed to
+//! `--execute` program, a custom subcommand, an alias's last serial step) owns
+//! the key as input instead, and its exit status stands. SIGTERM addressed to
 //! wt cancels its command and is forwarded to live direct children by PID;
 //! SharedChild serializes those deliveries with reaping. No caller group is killed.
 //! A group-wide TERM may also reach a child through this PID forwarding;

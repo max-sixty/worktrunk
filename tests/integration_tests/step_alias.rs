@@ -1414,6 +1414,20 @@ fn test_alias_group_sigint_does_not_escalate(
     }
 }
 
+/// An alias is the whole command, so its last serial step owns Ctrl-C as input,
+/// like `--execute`: a child that handles the key and exits successfully keeps
+/// that status. Earlier steps cancel instead (`test_alias_group_sigint_does_not_escalate`).
+#[rstest]
+#[cfg(unix)]
+fn test_alias_last_step_keeps_status_after_caught_ctrl_c(repo: TestRepo) {
+    repo.write_test_config(
+        "[aliases]\nsignal-test = \"trap 'exit 0' INT; echo $$ > pid; while :; do sleep 0.1; done\"\n",
+    );
+    let mut job = SignalJob::spawn(&repo, &["-vv", "step", "signal-test"], Stdio::null());
+    job.interrupt_admitted_child(&repo, &repo.root_path().join("pid"));
+    assert!(job.wait().success());
+}
+
 /// Non-UTF-8 bytes and CRLF line endings in child output must not stall the
 /// executor. Earlier code using `BufRead::lines()` returned `InvalidData` on
 /// the first invalid byte and terminated the iterator, leaving the child's

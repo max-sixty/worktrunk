@@ -134,6 +134,10 @@ impl PipelineKind {
 #[derive(Clone, Copy, Debug)]
 pub enum ForegroundStdin {
     Inherit,
+    /// [`Self::Inherit`] for the command's final interactive child, which also
+    /// owns a terminal Ctrl-C as input
+    /// ([`worktrunk::shell_exec::TerminalInterrupt::ChildInput`]).
+    HandOff,
     Closed,
 }
 
@@ -481,16 +485,28 @@ pub fn render_template_preview(
 ///
 /// `Single` steps run one at a time; `Concurrent` steps run all their
 /// commands in parallel via the prefixed-line executor.
+///
+/// A terminal Ctrl-C wt receives during a step stops the pipeline. An alias is
+/// the whole command, so its last `Single` step with inherited input is the
+/// command's final interactive child instead ([`ForegroundStdin::HandOff`]).
 pub fn execute_pipeline_foreground(
     steps: &[ForegroundStep],
     repo: &Repository,
     wt_path: &Path,
     failure_strategy: FailureStrategy,
 ) -> anyhow::Result<()> {
-    for fg_step in steps {
+    for (index, fg_step) in steps.iter().enumerate() {
         match &fg_step.step {
             PreparedStep::Single(cmd) => {
-                run_one_command(cmd, fg_step, repo, wt_path, failure_strategy)?;
+                let stdin = match fg_step.stdin {
+                    ForegroundStdin::Inherit
+                        if index + 1 == steps.len() && !fg_step.announce.is_hook() =>
+                    {
+                        ForegroundStdin::HandOff
+                    }
+                    stdin => stdin,
+                };
+                run_one_command(cmd, fg_step, stdin, repo, wt_path, failure_strategy)?;
             }
             PreparedStep::Concurrent(cmds) => {
                 run_concurrent_group(cmds, fg_step, repo, wt_path, failure_strategy)?;
@@ -582,6 +598,7 @@ fn run_concurrent_group(
 fn run_one_command(
     cmd: &PreparedCommand,
     fg_step: &ForegroundStep,
+    stdin: ForegroundStdin,
     repo: &Repository,
     wt_path: &Path,
     failure_strategy: FailureStrategy,
@@ -600,7 +617,7 @@ fn run_one_command(
         &command_str,
         log_label.as_deref(),
         directives.clone(),
-        fg_step.stdin,
+        stdin,
         fg_step.redirect_stdout_to_stderr,
         fg_step.announce.is_hook(),
     );

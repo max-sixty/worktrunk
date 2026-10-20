@@ -279,8 +279,8 @@ pub enum TerminalInterrupt {
     /// exits interrupted, whatever status the child chose.
     Cancels,
     /// The command hands the terminal to its final, interactive child: a pager,
-    /// an `--execute` program, a custom subcommand. The key is that child's
-    /// input, and its own exit status stands.
+    /// an `--execute` program, a custom subcommand, an alias's last serial step.
+    /// The key is that child's input, and its own exit status stands.
     ChildInput,
 }
 
