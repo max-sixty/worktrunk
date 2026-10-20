@@ -798,12 +798,6 @@ fn open_drain_lock(trash_dir: &Path) -> anyhow::Result<fs::File> {
         .with_context(|| format!("Failed to open {}", format_path_for_display(&lock_path)))
 }
 
-/// Whether `path` no longer exists. Any other failure to inspect it counts as
-/// still present.
-fn is_gone(path: &Path) -> bool {
-    matches!(path.symlink_metadata(), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
-}
-
 /// Delete every staged entry in `trash_dir`, unless another drain is running.
 ///
 /// Every staged removal starts a drain, so a prune starts one per worktree.
@@ -827,11 +821,10 @@ pub fn drain_trash(trash_dir: &Path) -> anyhow::Result<()> {
     loop {
         let lock = open_drain_lock(trash_dir)?;
         match lock.try_lock() {
-            Ok(()) => {}
             Err(TryLockError::WouldBlock) => return Ok(()),
-            Err(TryLockError::Error(error)) => {
-                return Err(error).context("Failed to lock the trash for deletion");
-            }
+            result => result
+                .map_err(std::io::Error::from)
+                .context("Failed to lock the trash for deletion")?,
         }
         loop {
             let pending: Vec<_> = staged_trash_entries(trash_dir)
@@ -842,8 +835,7 @@ pub fn drain_trash(trash_dir: &Path) -> anyhow::Result<()> {
                 break;
             }
             for entry in pending {
-                remove_dir_with_progress(&entry, &Progress::disabled());
-                if !is_gone(&entry) {
+                if !remove_dir_with_progress(&entry, &Progress::disabled()) {
                     undeletable.insert(entry);
                 }
             }
@@ -890,6 +882,24 @@ mod tests {
         assert!(staged_trash_entries(&trash).is_empty());
         assert!(foreign.exists());
         assert!(staged_trash_entries(&temp.path().join("missing")).is_empty());
+    }
+
+    /// An entry the drain can't delete ends the drain rather than looping.
+    #[cfg(unix)]
+    #[test]
+    fn drain_trash_stops_at_an_undeletable_entry() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let trash = temp.path().join("trash");
+        fs::create_dir(&trash).unwrap();
+        fs::write(trash.join("stuck-1700000000"), "x").unwrap();
+        // Unlinking an entry needs write permission on the trash itself.
+        fs::set_permissions(&trash, fs::Permissions::from_mode(0o555)).unwrap();
+
+        drain_trash(&trash).unwrap();
+
+        fs::set_permissions(&trash, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     /// A `git worktree lock` must stop the rename even when the caller skipped

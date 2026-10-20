@@ -2202,15 +2202,9 @@ fn test_removal_runs_post_remove_after_cleanup_spawn_failure(
             "{stderr}"
         );
     }
+    // The trash entry may already be gone: `wt remove`'s sweep starts a drain
+    // under the shared log, which the blocked branch log doesn't stop.
     assert!(!worktree.exists());
-    assert!(
-        common_dir
-            .join("wt/trash")
-            .read_dir()
-            .unwrap()
-            .next()
-            .is_some()
-    );
     crate::common::wait_for("post-remove hook after cleanup scheduling fails", || {
         marker.exists()
     });

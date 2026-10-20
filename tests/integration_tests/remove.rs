@@ -4481,6 +4481,50 @@ fn test_remove_drains_leftover_trash_entries(mut repo: TestRepo) {
     );
 }
 
+/// While another drain holds `trash.lock`, a removal leaves its staged entry
+/// to that drain; the next removal after the lock frees deletes it.
+#[rstest]
+fn test_remove_leaves_entries_to_the_running_drain(mut repo: TestRepo) {
+    let git_common_dir = crate::common::resolve_git_common_dir(repo.root_path());
+    let trash_dir = git_common_dir.join("wt/trash");
+    std::fs::create_dir_all(&trash_dir).unwrap();
+    let holder = std::fs::File::create(git_common_dir.join("wt/trash.lock")).unwrap();
+    holder.lock().unwrap();
+
+    let _ = repo.add_worktree("feature-held");
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-held"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let staged: Vec<_> = std::fs::read_dir(&trash_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(staged.len(), 1, "the lock holder owns the deletion");
+
+    drop(holder);
+    let _ = repo.add_worktree("feature-next");
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-next"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    crate::common::wait_for("trash drained after the lock frees", || {
+        std::fs::read_dir(&trash_dir).unwrap().next().is_none()
+    });
+}
+
 /// A `wt` binary inside the worktree it removes still drains the trash: the
 /// rename carries the binary into trash, and the drain starts it from there.
 #[rstest]

@@ -266,16 +266,12 @@ fn clear_trash(repo: &Repository) -> anyhow::Result<usize> {
     let mut cleared = 0;
     for entry in std::fs::read_dir(&trash_dir)? {
         let path = entry?.path();
-        remove_dir_with_progress(&path, &Progress::disabled());
-        match path.symlink_metadata() {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => cleared += 1,
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!("Failed to remove {}", format_path_for_display(&path))
-                });
-            }
-            Ok(_) => anyhow::bail!("Failed to remove {}", format_path_for_display(&path)),
-        }
+        anyhow::ensure!(
+            remove_dir_with_progress(&path, &Progress::disabled()),
+            "Failed to remove {}",
+            format_path_for_display(&path)
+        );
+        cleared += 1;
     }
 
     // Remove the trash directory itself if empty

@@ -40,15 +40,17 @@ use crate::progress::{DataCopy, Progress};
 /// afterwards. Symlinks count as their own size, not the target's. A symlink
 /// or file at `path` is unlinked, as `rm -rf` does. Any I/O errors are
 /// silently skipped — a leaf that can't be unlinked is simply not counted.
-pub fn remove_dir_with_progress(path: &Path, progress: &Progress) {
+///
+/// Returns whether `path` is gone afterwards. A failure to inspect it counts
+/// as still present.
+pub fn remove_dir_with_progress(path: &Path, progress: &Progress) -> bool {
     tree::remove(path, progress);
+    matches!(path.symlink_metadata(), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
 }
 
 #[cfg(unix)]
 mod tree {
-    use std::ffi::{CStr, CString};
-    use std::os::fd::OwnedFd;
-    use std::os::unix::ffi::OsStrExt;
+    use std::os::fd::{AsFd, BorrowedFd};
     use std::path::Path;
     use std::sync::LazyLock;
 
@@ -58,6 +60,7 @@ mod tree {
         unlinkat,
     };
     use rustix::io::Errno;
+    use rustix::path::Arg;
 
     use super::{DataCopy, Progress};
 
@@ -76,35 +79,12 @@ mod tree {
         .union(OFlags::CLOEXEC);
 
     pub(super) fn remove(path: &Path, progress: &Progress) {
-        REMOVE_POOL.install(|| remove_path(path, progress));
-    }
-
-    fn remove_path(path: &Path, progress: &Progress) {
-        let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
-            return;
-        };
-        let parent = if parent.as_os_str().is_empty() {
-            Path::new(".")
-        } else {
-            parent
-        };
-        let Ok(parent) = openat(
-            CWD,
-            parent,
-            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
-            Mode::empty(),
-        ) else {
-            return;
-        };
-        let Ok(name) = CString::new(name.as_bytes()) else {
-            return;
-        };
-        remove_entry(&parent, &name, progress);
+        REMOVE_POOL.install(|| remove_entry(CWD, path, progress));
     }
 
     /// Remove `name` inside `parent`, recursing into it only when it is a real
     /// directory.
-    fn remove_entry(parent: &OwnedFd, name: &CStr, progress: &Progress) {
+    fn remove_entry(parent: BorrowedFd<'_>, name: impl Arg + Copy, progress: &Progress) {
         let dir = match openat(parent, name, DIR_FLAGS, Mode::empty()) {
             Ok(dir) => dir,
             // `O_NOFOLLOW` on a symlink fails with ELOOP (ENOTDIR on some
@@ -121,11 +101,11 @@ mod tree {
             }
             Err(_) => return,
         };
-        empty_dir(&dir, progress);
+        empty_dir(dir.as_fd(), progress);
         let _ = unlinkat(parent, name, AtFlags::REMOVEDIR);
     }
 
-    fn empty_dir(dir: &OwnedFd, progress: &Progress) {
+    fn empty_dir(dir: BorrowedFd<'_>, progress: &Progress) {
         // Opening it needed read and search; unlinking entries needs write.
         if let Some(mode) = fstat(dir)
             .ok()
@@ -133,12 +113,9 @@ mod tree {
         {
             let _ = fchmod(dir, mode);
         }
-        let Ok(entries) = Dir::read_from(dir) else {
-            return;
-        };
         let mut dirs = Vec::new();
         let mut leaves = Vec::new();
-        for entry in entries.flatten() {
+        for entry in Dir::read_from(dir).into_iter().flatten().flatten() {
             let name = entry.file_name();
             if name == c"." || name == c".." {
                 continue;
@@ -152,15 +129,15 @@ mod tree {
         }
         leaves
             .par_iter()
-            .for_each(|name| remove_leaf(dir, name, progress));
+            .for_each(|name| remove_leaf(dir, name.as_c_str(), progress));
         // Subdirectories go one at a time, so the open descriptors number the
         // tree's depth.
         for name in &dirs {
-            remove_entry(dir, name, progress);
+            remove_entry(dir, name.as_c_str(), progress);
         }
     }
 
-    fn remove_leaf(parent: &OwnedFd, name: &CStr, progress: &Progress) {
+    fn remove_leaf(parent: BorrowedFd<'_>, name: impl Arg + Copy, progress: &Progress) {
         // Capture size before unlinking. Best-effort: a racy delete counts
         // the leaf with zero bytes.
         let bytes = statat(parent, name, AtFlags::SYMLINK_NOFOLLOW)
@@ -174,12 +151,32 @@ mod tree {
     }
 
     /// Add the owner's `rwx` bits to the directory `name`, never through a
-    /// symlink. rustix's Linux `chmodat` rejects `AT_SYMLINK_NOFOLLOW`, so on
-    /// Linux a directory its owner can't read or search stays in place.
-    fn grant_owner_access_at(parent: &OwnedFd, name: &CStr) -> Option<()> {
+    /// symlink.
+    #[cfg(not(target_os = "linux"))]
+    fn grant_owner_access_at(parent: BorrowedFd<'_>, name: impl Arg + Copy) -> Option<()> {
         let stat = statat(parent, name, AtFlags::SYMLINK_NOFOLLOW).ok()?;
         let mode = with_owner_access(stat.st_mode)?;
         chmodat(parent, name, mode, AtFlags::SYMLINK_NOFOLLOW).ok()
+    }
+
+    /// Add the owner's `rwx` bits to the directory `name`, never through a
+    /// symlink. Linux's `fchmodat` ignores `AT_SYMLINK_NOFOLLOW`, so this opens
+    /// the directory with `O_PATH`, which needs no permission on it, and
+    /// changes the mode through that descriptor's `/proc` link.
+    #[cfg(target_os = "linux")]
+    fn grant_owner_access_at(parent: BorrowedFd<'_>, name: impl Arg + Copy) -> Option<()> {
+        use std::os::fd::AsRawFd;
+
+        let dir = openat(
+            parent,
+            name,
+            OFlags::PATH | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .ok()?;
+        let mode = with_owner_access(fstat(&dir).ok()?.st_mode)?;
+        let link = format!("/proc/self/fd/{}", dir.as_raw_fd());
+        chmodat(CWD, link.as_str(), mode, AtFlags::empty()).ok()
     }
 
     /// `st_mode`'s permissions with the owner's `rwx` added, or `None` when
@@ -374,9 +371,8 @@ mod tests {
         assert!(!root.exists());
     }
 
-    /// A directory its owner can't read is made readable and deleted where
-    /// `chmod` can refuse symlinks (macOS).
-    #[cfg(target_os = "macos")]
+    /// A directory its owner can't read is made readable and deleted.
+    #[cfg(unix)]
     #[test]
     fn test_remove_dir_with_progress_removes_unreadable_directories() {
         use std::os::unix::fs::PermissionsExt;
