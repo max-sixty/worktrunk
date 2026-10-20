@@ -1429,20 +1429,9 @@ impl GitError {
                 Ok(())
             }
 
-            GitError::CannotRemoveMainWorktree => {
+            GitError::CannotRemoveMainWorktree | GitError::CannotRemoveDefaultBranch { .. } => {
                 let title = self.title();
                 write!(f, "{}", error_message(&title))
-            }
-
-            GitError::CannotRemoveDefaultBranch { branch } => {
-                let title = self.title();
-                let cmd = suggest_command("remove", &[branch], &["-D"]);
-                write!(
-                    f,
-                    "{}\n{}",
-                    error_message(&title),
-                    hint_message(cformat!("To force-delete, run <underline>{cmd}</>"))
-                )
             }
 
             GitError::WorktreeLocked { path, .. } => {

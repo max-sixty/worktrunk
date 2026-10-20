@@ -791,7 +791,6 @@ fn test_bare_repo_remove_from_bare_directory_targets_head_branch() {
     assert!(main_worktree.exists());
     insta::assert_snapshot!(String::from_utf8_lossy(&no_arg.stderr), @"
     ✗ Cannot remove the default branch main
-    ↳ To force-delete, run wt remove -D main
     ");
 }
 
