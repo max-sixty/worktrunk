@@ -244,6 +244,7 @@ fn worktree_errors_render() {
                 branch: "feature".into(),
                 path: PathBuf::from("/tmp/repo.feature"),
                 create: false,
+                from_path_flag: false,
             }
             .render(),
         ),

@@ -1,6 +1,6 @@
 //! Worktree management operations for Repository.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
@@ -17,7 +17,7 @@ use super::{
     is_valid_branch_name, normalize_selector, resolve_input_path,
 };
 use crate::git::{CommandError, PlumbingDiff, WorktreeId, finalize_worktrees, is_bare_repo_dir};
-use crate::path::{canonicalize_with_parents, format_path_for_display, paths_match};
+use crate::path::{format_path_for_display, paths_match};
 use crate::shell_exec::Cmd;
 use crate::styling::{eprintln, format_with_gutter, hint_message, warning_message};
 
@@ -39,47 +39,45 @@ impl Repository {
         self.cache
             .worktrees
             .get_or_try_init(|| {
-                let _registry = self.worktree_registry_read();
-                self.load_worktrees_unlocked()
+                let stdout = {
+                    let _registry = self.worktree_registry_read();
+                    self.run_command_bytes(&["worktree", "list", "--porcelain", "-z"])?
+                };
+                let raw_worktrees = WorktreeInfo::parse_porcelain_list_z(&stdout)?;
+                let mut worktrees: Vec<_> =
+                    raw_worktrees.into_iter().filter(|wt| !wt.bare).collect();
+
+                // Main-worktree path correction.
+                //
+                // Git's `get_main_worktree()` computes the main worktree path by stripping
+                // a trailing `/.git` from the common dir. Two layouts have no such suffix,
+                // so git leaves the path unchanged and reports the git data directory as
+                // the "main worktree": submodules, whose common dir is `.git/modules/sub`,
+                // and `--separate-git-dir` repositories, whose common dir is wherever the
+                // user put the store. Git consults neither `core.worktree` nor its own
+                // `gitdir` backlink in this code path.
+                //
+                // We detect this by checking whether the first worktree's path equals
+                // git_common_dir (which never holds for normal repos, where git_common_dir
+                // is `.git` inside the worktree). When matched, we correct it using
+                // repo_path(), which resolves both layouts from the signals git does
+                // record.
+                //
+                // We fix this here rather than at each call site because list_worktrees()
+                // is the single point where worktree paths enter the system — all consumers
+                // (worktree_for_branch, resolve_worktree, etc.) depend on paths being
+                // working directories. If git fixes this upstream, the condition stops
+                // triggering.
+                if let Some(first) = worktrees.first_mut()
+                    && canonicalize(&first.path).ok().as_deref() == Some(self.git_common_dir())
+                {
+                    first.path = self.repo_path()?.to_path_buf();
+                }
+
+                finalize_worktrees(self, &mut worktrees);
+                Ok(worktrees)
             })
             .map(Vec::as_slice)
-    }
-
-    /// Load inventory while the caller holds the registry read or write lock.
-    /// Deletion uses this with its strict registration scan in one snapshot.
-    pub(in crate::git) fn load_worktrees_unlocked(&self) -> anyhow::Result<Vec<WorktreeInfo>> {
-        let stdout = self.run_command_bytes(&["worktree", "list", "--porcelain", "-z"])?;
-        let raw_worktrees = WorktreeInfo::parse_porcelain_list_z(&stdout)?;
-        let mut worktrees: Vec<_> = raw_worktrees.into_iter().filter(|wt| !wt.bare).collect();
-
-        // Main-worktree path correction.
-        //
-        // Git's `get_main_worktree()` computes the main worktree path by stripping
-        // a trailing `/.git` from the common dir. Two layouts have no such suffix,
-        // so git leaves the path unchanged and reports the git data directory as
-        // the "main worktree": submodules, whose common dir is `.git/modules/sub`,
-        // and `--separate-git-dir` repositories, whose common dir is wherever the
-        // user put the store. Git consults neither `core.worktree` nor its own
-        // `gitdir` backlink in this code path.
-        //
-        // We detect this by checking whether the first worktree's path equals
-        // git_common_dir (which never holds for normal repos, where git_common_dir
-        // is `.git` inside the worktree). When matched, we correct it using
-        // repo_path(), which resolves both layouts from the signals git does
-        // record.
-        //
-        // We fix this here rather than at each call site because list_worktrees()
-        // is the single point where worktree paths enter the system — all consumers
-        // (worktree_for_branch, resolve_worktree, etc.) depend on paths being
-        // working directories. If git fixes this upstream, the condition stops
-        // triggering.
-        if let Some(first) = worktrees.first_mut()
-            && canonicalize(&first.path).ok().as_deref() == Some(self.git_common_dir())
-        {
-            first.path = self.repo_path()?.to_path_buf();
-        }
-        finalize_worktrees(self, &mut worktrees)?;
-        Ok(worktrees)
     }
 
     /// Find the worktree path for a given branch, if one exists.
@@ -291,7 +289,6 @@ impl Repository {
     /// remains stay on disk either way, and a registration with no index has
     /// nothing staged.
     pub fn stale_worktree_work(&self, path: &Path) -> anyhow::Result<Option<StaleWorktreeWork>> {
-        let _registry = self.worktree_registry_read();
         let (registration, _) = self.registration_at(path)?;
         if let Some(operation) = operation_in_progress_at(&registration) {
             return Ok(Some(StaleWorktreeWork::Operation(operation)));
@@ -330,95 +327,22 @@ impl Repository {
         Ok((!unchanged).then_some(StaleWorktreeWork::StagedChanges))
     }
 
-    /// Map canonical checkout identities to canonical Git storage.
-    /// Only vanished entries may be skipped; surviving incomplete
-    /// entries cannot establish safe branch-deletion topology.
-    pub(crate) fn worktree_registrations(&self) -> anyhow::Result<BTreeMap<PathBuf, PathBuf>> {
-        let registrations = self.git_common_dir().join("worktrees");
-        let entries = match std::fs::read_dir(&registrations) {
-            Ok(entries) => entries,
-            Err(error) if vanished_registration(&registrations, &error) => {
-                return Ok(BTreeMap::new());
-            }
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!(
-                        "Failed to read worktree registry @ {}",
-                        format_path_for_display(&registrations)
-                    )
-                });
-            }
-        };
-        let mut found = BTreeMap::new();
-        for entry in entries {
-            let entry = entry.with_context(|| {
-                format!(
-                    "Failed to read worktree registry @ {}",
-                    format_path_for_display(&registrations)
-                )
-            })?;
-            let registration = entry.path();
-            match entry.file_type() {
-                Ok(kind) if kind.is_file() => continue,
-                Ok(_) => {}
-                Err(error) if vanished_registration(&registration, &error) => continue,
-                Err(error) => {
-                    return Err(error).context("Failed to inspect worktree registration");
-                }
-            }
-            let recorded = match registration_worktree_path(&registration) {
-                Ok(recorded) => recorded,
-                Err(error) if vanished_registration(&registration, &error) => continue,
-                Err(error) => {
-                    return Err(error).with_context(|| {
-                        format!(
-                            "Failed to read worktree registration @ {}",
-                            format_path_for_display(&registration)
-                        )
-                    });
-                }
-            };
-            let git_dir = match dunce::canonicalize(&registration) {
-                Ok(git_dir) => git_dir,
-                Err(error) if vanished_registration(&registration, &error) => continue,
-                Err(error) => {
-                    return Err(error).context("Failed to resolve worktree registration");
-                }
-            };
-            if found.insert(recorded.clone(), git_dir).is_some() {
-                anyhow::bail!(
-                    "Multiple worktrees registered @ {}",
-                    format_path_for_display(&recorded)
-                );
-            }
-        }
-        Ok(found)
-    }
-
-    /// Find the selected registration by its backlink, ignoring unreadable
-    /// siblings. Only branch deletion requires a complete registry topology.
+    /// The registration `<common>/worktrees/<id>` whose `gitdir` names the
+    /// worktree at `path`, with the worktree path it records.
+    ///
+    /// Unreadable siblings (an entry another process is deleting) are not
+    /// this one, so they are passed over rather than failing the lookup.
     pub(crate) fn registration_at(&self, path: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
         let registrations = self.git_common_dir().join("worktrees");
-        let entries = std::fs::read_dir(&registrations).with_context(|| {
-            format!("Failed to read {}", format_path_for_display(&registrations))
-        })?;
-        let selected = canonicalize_with_parents(path);
-        let mut found = None;
-        for entry in entries {
-            let registration = entry?.path();
-            let Ok(recorded) = registration_worktree_path(&registration) else {
-                continue;
-            };
-            if recorded == selected {
-                anyhow::ensure!(
-                    found.is_none(),
-                    "Multiple worktrees registered @ {}",
-                    format_path_for_display(path)
-                );
-                found = Some((registration, recorded));
-            }
-        }
-        found.with_context(|| format!("No worktree registered @ {}", format_path_for_display(path)))
+        std::fs::read_dir(&registrations)
+            .with_context(|| format!("Failed to read {}", format_path_for_display(&registrations)))?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find_map(|registration| {
+                let recorded = registration_worktree_path(&registration).ok()?;
+                paths_match(&recorded, path).then_some((registration, recorded))
+            })
+            .with_context(|| format!("No worktree registered @ {}", format_path_for_display(path)))
     }
 
     /// Remove a worktree at the specified path.
@@ -456,14 +380,7 @@ impl Repository {
         } else {
             self.worktree_at(path).has_initialized_submodules()?
         };
-        // Staging already stopped fsmonitor; Git's own dirty gate must not
-        // restart it during this direct-removal fallback.
-        let mut args = vec![
-            OsStr::new("-c"),
-            OsStr::new("core.fsmonitor=false"),
-            OsStr::new("worktree"),
-            OsStr::new("remove"),
-        ];
+        let mut args = vec![OsStr::new("worktree"), OsStr::new("remove")];
         if use_force {
             args.push(OsStr::new("--force"));
         }
@@ -480,11 +397,10 @@ impl Repository {
             // cleanliness ourselves right before the destructive command —
             // a file modified since the caller's check must still fail
             // closed rather than be silently destroyed.
-            self.worktree_at(path).ensure_clean_with_mode(
+            self.worktree_at(path).ensure_clean(
                 "remove worktree with submodules",
                 None,
                 /* force_hint */ true,
-                super::CleanCheckMode::FullScan,
             )?;
             tracing::debug!("Using --force for worktree removal due to initialized submodules");
         }
@@ -561,12 +477,15 @@ impl Repository {
     /// or one of several checkouts of the same branch.
     ///
     /// Resolution order:
-    /// 1. `@` — the current worktree, matched by path so detached HEAD resolves
-    /// 2. `-` / `^` — the previous / default branch, then as a branch below
-    /// 3. a branch with a worktree
-    /// 4. a path naming a registered worktree — absolute, `~`-relative, or
+    /// 1. `@` — the current worktree, matched by path so detached HEAD
+    ///    resolves; outside any worktree, the branch HEAD names, as below
+    /// 2. `-` — the worktree `wt switch` last left, by the path it recorded
+    ///    (see [`switch_previous_worktree`](Self::switch_previous_worktree))
+    /// 3. `-` / `^` — the previous / default branch, then as a branch below
+    /// 4. a branch with a worktree
+    /// 5. a path naming a registered worktree — absolute, `~`-relative, or
     ///    relative to `-C` (see [`resolve_input_path`])
-    /// 5. otherwise the branch alone, which may or may not exist
+    /// 6. otherwise the branch alone, which may or may not exist
     ///
     /// A path that named no worktree lands in `BranchOnly` or
     /// `NoWorktreeAtPath` — [`resolve_selector`](Self::resolve_selector)
@@ -583,27 +502,39 @@ impl Repository {
     /// [`usable_worktree_for_branch`](Self::usable_worktree_for_branch)'s job,
     /// which the commands that go on to run there call instead.
     pub fn resolve_worktree(&self, name: &str) -> anyhow::Result<ResolvedWorktree> {
-        // `@` is the only selector that resolves by path rather than by name,
-        // which is what lets it answer in a detached worktree — where the
-        // branch expansion `expand_selector` would apply has nothing to return.
+        // `@` and `-` resolve by path rather than by name, which is what lets
+        // them answer for a detached worktree — where the branch expansion
+        // `expand_selector` would apply has nothing to return.
         let name = normalize_selector(name);
         if name == "@" {
-            // If worktree_root fails (e.g., in bare repo directory), give a clear error
-            let path = self
-                .current_worktree()
-                .root()
-                .map_err(|_| GitError::NotInWorktree {
-                    action: Some("resolve @".into()),
-                })?;
-            // Compare canonical identities so alternate path spellings (for
-            // example macOS `/var` and `/private/var`) select one inventory
-            // entry without changing Git's registered path.
+            // `root()` falls back to the cwd itself outside a work tree, so
+            // only a registered worktree at that path counts. Compare
+            // canonical identities so alternate path spellings (for example
+            // macOS `/var` and `/private/var`) select one inventory entry
+            // without changing Git's registered path.
+            let current = self.current_worktree();
+            let path = current.root()?;
             let current_id = WorktreeId::new(&path);
-            let branch = self
+            if let Some(wt) = self
                 .list_worktrees()?
                 .iter()
                 .find(|wt| wt.id() == current_id)
-                .and_then(|wt| wt.branch.clone());
+            {
+                return Ok(ResolvedWorktree::worktree(path, wt.branch.clone()));
+            }
+            // Inside a work tree git no longer has registered at this path (a
+            // worktree moved without `git worktree repair`), `@` still means
+            // this directory, which holds no worktree wt can act on.
+            if current.prewarm_info()?.is_inside {
+                return Ok(ResolvedWorktree::NoWorktreeAtPath { path });
+            }
+            // Outside every work tree — a bare repo's directory, or a `.git`
+            // directory — `@` falls through to the branch HEAD names, as
+            // `expand_selector` reads it.
+        }
+        if name == "-"
+            && let Some((path, branch)) = self.switch_previous_worktree()?
+        {
             return Ok(ResolvedWorktree::worktree(path, branch));
         }
 
@@ -614,10 +545,10 @@ impl Repository {
     /// what the selector could have meant.
     ///
     /// Split from [`resolve_worktree`](Self::resolve_worktree) for the callers
-    /// that do their own expanding before they get here — `wt switch`, whose
-    /// `pr:`/`mr:` dispatch and remote-prefix strip run first and report their
-    /// rewriting through the [`Selector`]. They used to re-implement these
-    /// three steps rather than expand into a shared one.
+    /// whose selector comes from somewhere other than the user's token — `wt
+    /// switch`, for a `pr:`/`mr:` branch or a stripped remote prefix — and
+    /// report that rewriting through the [`Selector`]. They used to
+    /// re-implement these three steps rather than expand into a shared one.
     pub fn resolve_selector(&self, selector: &Selector) -> anyhow::Result<ResolvedWorktree> {
         let token = selector.token();
 
@@ -626,11 +557,9 @@ impl Repository {
         }
 
         // Both remaining steps are about the token as a path, so
-        // `names_a_path` gates them together — a caller that turns it off gets
-        // neither a worktree matched by path nor a verdict about a directory,
-        // which is what `wt switch --create` needs: the argument names a branch
-        // to create, and a directory sitting at that spelling is the clobber
-        // check's business.
+        // `names_a_path` gates them together: a rewritten token gets neither a
+        // worktree matched by path nor a verdict about a directory, since the
+        // user never typed it as a path.
         if !selector.names_a_path() {
             return Ok(ResolvedWorktree::branch_only(token.to_string()));
         }
@@ -652,8 +581,8 @@ impl Repository {
     /// worktree.
     ///
     /// [`resolve_worktree`](Self::resolve_worktree) for the arguments that want
-    /// a branch rather than a worktree — `wt step promote`, and the `--branch`
-    /// of the `wt config state` commands, which key state by branch name. A
+    /// a branch rather than a worktree — the `--branch` of the `wt config
+    /// state` commands, which key state by branch name, defaulting to `@`. A
     /// branch with no worktree is a fine answer to those; a worktree named by
     /// path that has no branch is not.
     pub fn require_selected_branch(&self, name: &str, action: &str) -> anyhow::Result<String> {
@@ -668,6 +597,15 @@ impl Repository {
             ResolvedWorktree::NoWorktreeAtPath { path } => {
                 Err(GitError::WorktreeNotFoundAtPath { path }.into())
             }
+            // Name the detached worktree only when it isn't the one the
+            // command runs in, as `GitError::DetachedHead` asks.
+            ResolvedWorktree::Worktree {
+                path, branch: None, ..
+            } if self.is_current_worktree(&path)? => Err(GitError::DetachedHead {
+                action: Some(action.to_string()),
+                worktree: None,
+            }
+            .into()),
             ResolvedWorktree::Worktree {
                 path, branch: None, ..
             } => Err(GitError::DetachedHead {
@@ -681,19 +619,41 @@ impl Repository {
         }
     }
 
-    /// The path of the worktree a selector names, erroring when it names none.
+    /// Whether `path` is the worktree this repository was discovered in.
+    fn is_current_worktree(&self, path: &Path) -> anyhow::Result<bool> {
+        Ok(WorktreeId::new(self.current_worktree().root()?) == WorktreeId::new(path))
+    }
+
+    /// This repository, rooted at the worktree at `path`.
+    ///
+    /// Keeps `self`, discovered from the cwd and with the caches it has
+    /// already filled, when `path` is the worktree it was discovered in, so a
+    /// command acting on `@` there runs exactly as it would from the cwd.
+    /// Otherwise discovers the repository at `path`.
+    pub fn rooted_at(self, path: &Path) -> anyhow::Result<Self> {
+        if self.is_current_worktree(path)? {
+            Ok(self)
+        } else {
+            Self::at(path)
+        }
+    }
+
+    /// The worktree a selector names — its path, and its branch (`None` when
+    /// detached) — erroring when it names none.
     ///
     /// [`resolve_worktree`](Self::resolve_worktree) for the commands that need a
-    /// worktree to operate in rather than a branch to reason about — `wt step
-    /// diff --branch`, `copy-ignored --from`/`--to`, `promote`. A branch with no
-    /// checkout and a name matching nothing at all are the same answer to them.
+    /// worktree to operate in rather than a branch to reason about. A branch
+    /// with no checkout and a name matching nothing at all are the same answer
+    /// to them. The branch comes back with the path so a caller that needs
+    /// both uses the pair resolution found, rather than looking one up from
+    /// the other: a branch checked out twice maps back to the wrong path.
     /// A selector matching nothing at all is reported as such, rather than as a
     /// branch without a worktree: `wt switch <the selector>` creates a worktree
     /// only when the branch exists, so offering it for a mistyped path would
     /// just fail again.
-    pub fn require_worktree(&self, name: &str) -> anyhow::Result<PathBuf> {
+    pub fn require_worktree(&self, name: &str) -> anyhow::Result<(PathBuf, Option<String>)> {
         match self.resolve_worktree(name)? {
-            ResolvedWorktree::Worktree { path, .. } => Ok(path),
+            ResolvedWorktree::Worktree { path, branch, .. } => Ok((path, branch)),
             ResolvedWorktree::BranchOnly { branch, .. } => Err(self.no_worktree_error(branch)),
             ResolvedWorktree::NoWorktreeAtPath { path } => {
                 Err(GitError::WorktreeNotFoundAtPath { path }.into())
@@ -959,10 +919,4 @@ fn warn_duplicate_checkout(branch: &str, paths: &[PathBuf]) {
             );
         }
     }
-}
-
-fn vanished_registration(registration: &Path, error: &std::io::Error) -> bool {
-    error.kind() == std::io::ErrorKind::NotFound
-        && matches!(std::fs::symlink_metadata(registration),
-            Err(missing) if missing.kind() == std::io::ErrorKind::NotFound)
 }

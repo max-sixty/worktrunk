@@ -122,6 +122,7 @@ struct TeaPrRef {
 struct TeaPrRepo {
     name: String,
     owner: TeaOwner,
+    clone_url: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -241,10 +242,7 @@ pub(super) fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result
         .eq_ignore_ascii_case(&head_repo.owner.login)
         || !base_repo.name.eq_ignore_ascii_case(&head_repo.name);
 
-    let host = extract_host_from_html_url(&response.html_url)?;
-
-    let fork_push_url =
-        is_cross_repo.then(|| fork_remote_url(&host, &head_repo.owner.login, &head_repo.name));
+    let fork_push_url = is_cross_repo.then_some(head_repo.clone_url);
 
     Ok(RemoteRefInfo {
         number: pr_number,
@@ -257,11 +255,11 @@ pub(super) fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result
         url: response.html_url,
         fork_push_url,
         platform_data: PlatformData::Gitea {
-            host,
             head_owner: head_repo.owner.login,
             head_repo: head_repo.name,
             base_owner: base_repo.owner.login,
             base_repo: base_repo.name,
+            base_clone_url: base_repo.clone_url,
         },
     })
 }
@@ -305,11 +303,6 @@ fn is_real_branch_name(s: &str) -> bool {
         && !s.starts_with("refs/")
         && !s.starts_with("pulls/")
         && !s.starts_with("pull/")
-}
-
-/// Construct the remote URL for a Gitea repository.
-pub fn fork_remote_url(host: &str, owner: &str, repo: &str) -> String {
-    format!("https://{}/{}/{}.git", host, owner, repo)
 }
 
 /// Whether `tea` has a login configured for `host`.

@@ -17,16 +17,6 @@ use crate::git::{CommandError, PlumbingDiff};
 
 const TEMP_INDEX_PREFIX: &str = "worktrunk-temp-index-";
 
-/// Whether a cleanliness gate uses Git's configured fsmonitor or rescans the
-/// filesystem without starting a daemon. Removal rescans after daemon shutdown.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CleanCheckMode {
-    /// Follow `core.fsmonitor`, as an ordinary `git status` does.
-    ConfiguredFsmonitor,
-    /// Bypass fsmonitor to observe changes made during shutdown.
-    FullScan,
-}
-
 /// A squash safety backup: an immutable snapshot of the index and the ref
 /// whose reflog retains it. The backup commit's parent is the pre-squash HEAD.
 #[derive(Debug)]
@@ -619,7 +609,13 @@ impl<'a> WorkingTree<'a> {
     /// the user's `status.showUntrackedFiles` or `submodule.<name>.ignore`
     /// display preferences.
     pub fn is_dirty(&self) -> anyhow::Result<bool> {
-        Ok(!self.dirty_files()?.is_empty())
+        let stdout = self.run_command(&[
+            "status",
+            "--porcelain",
+            "--untracked-files=normal",
+            "--ignore-submodules=none",
+        ])?;
+        Ok(!stdout.trim().is_empty())
     }
 
     /// Return the raw `git status --porcelain` lines for a dirty working tree
@@ -629,21 +625,12 @@ impl<'a> WorkingTree<'a> {
     /// [`GitError::UncommittedChanges`] in [`Self::ensure_clean`]. The same
     /// caveats as [`Self::is_dirty`] apply (skip-worktree files are invisible).
     pub fn dirty_files(&self) -> anyhow::Result<Vec<String>> {
-        self.dirty_files_with_mode(CleanCheckMode::ConfiguredFsmonitor)
-    }
-
-    fn dirty_files_with_mode(&self, mode: CleanCheckMode) -> anyhow::Result<Vec<String>> {
-        let mut args = Vec::new();
-        if mode == CleanCheckMode::FullScan {
-            args.extend(["-c", "core.fsmonitor=false"]);
-        }
-        args.extend([
+        let stdout = self.run_command(&[
             "status",
             "--porcelain",
             "--untracked-files=normal",
             "--ignore-submodules=none",
-        ]);
-        let stdout = self.run_command(&args)?;
+        ])?;
         Ok(stdout.lines().map(str::to_owned).collect())
     }
 
@@ -687,6 +674,44 @@ impl<'a> WorkingTree<'a> {
                 Ok(e.insert(self.resolve_git_dir(&stdout)?).clone())
             }
         }
+    }
+
+    /// [`Self::git_dir`] for several worktrees, forking the uncached
+    /// `git rev-parse --git-dir` lookups concurrently through
+    /// [`Cmd::run_concurrently`]. Results are in input order.
+    pub fn git_dirs(worktrees: &[WorkingTree<'_>]) -> Vec<anyhow::Result<PathBuf>> {
+        const ARGS: [&str; 2] = ["rev-parse", "--git-dir"];
+        let cached: Vec<Option<PathBuf>> = worktrees
+            .iter()
+            .map(|wt| super::GIT_DIRS.get(&wt.path).map(|e| e.value().clone()))
+            .collect();
+        let cmds: Vec<Cmd> = worktrees
+            .iter()
+            .zip(&cached)
+            .filter(|(_, cached)| cached.is_none())
+            .map(|(wt, _)| wt.git_command(&ARGS))
+            .collect();
+        let mut fetched = Cmd::run_concurrently(&cmds).into_iter();
+        worktrees
+            .iter()
+            .zip(cached)
+            .map(|(wt, cached)| {
+                if let Some(git_dir) = cached {
+                    return Ok(git_dir);
+                }
+                let output = fetched
+                    .next()
+                    .context("run_concurrently returned fewer results than commands")??;
+                if !output.status.success() {
+                    return Err(CommandError::from_failed_output("git", &ARGS, &output).into());
+                }
+                let git_dir = wt.resolve_git_dir(&output.stdout)?;
+                Ok(super::GIT_DIRS
+                    .entry(wt.path.clone())
+                    .or_insert(git_dir)
+                    .clone())
+            })
+            .collect()
     }
 
     /// Canonicalize `git rev-parse --git-dir` output run in this worktree.
@@ -928,23 +953,7 @@ impl<'a> WorkingTree<'a> {
         branch: Option<&str>,
         force_hint: bool,
     ) -> anyhow::Result<()> {
-        self.ensure_clean_with_mode(
-            action,
-            branch,
-            force_hint,
-            CleanCheckMode::ConfiguredFsmonitor,
-        )
-    }
-
-    /// Internal removal gate, which can bypass fsmonitor after daemon shutdown.
-    pub(crate) fn ensure_clean_with_mode(
-        &self,
-        action: &str,
-        branch: Option<&str>,
-        force_hint: bool,
-        mode: CleanCheckMode,
-    ) -> anyhow::Result<()> {
-        let dirty_files = self.dirty_files_with_mode(mode)?;
+        let dirty_files = self.dirty_files()?;
         if !dirty_files.is_empty() {
             return Err(GitError::UncommittedChanges {
                 action: Some(action.into()),

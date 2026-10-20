@@ -22,7 +22,7 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 
 ## Full mode
 
-`--full` adds the two columns that reach off-machine: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail, over the network) and [LLM-generated summaries](#llm-summaries) of each branch's changes.
+`--full` adds the two columns that reach off-machine: [CI status](#ci-status) (forge pipeline pass/fail, over the network) and [LLM-generated summaries](#llm-summaries) of each branch's changes.
 
 ## Examples
 

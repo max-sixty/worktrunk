@@ -191,7 +191,7 @@ fn handle_config_show_json() -> anyhow::Result<()> {
             {
                 invalid = true;
             }
-            let identifier = repo.project_identifier().ok();
+            let identifier = repo.project_identifier().ok().map(|id| id.to_string());
             let exists = on_disk.as_ref().is_some_and(|path| path.exists()) || object_store_exists;
             (path, exists, config, identifier)
         } else {
@@ -640,7 +640,7 @@ fn render_diagnostics(out: &mut String, repo: Option<&Repository>) -> anyhow::Re
     // Test commit generation - use effective config for current project
     let config = UserConfig::load().context("Failed to load config")?;
     let project_id = repo.and_then(|repo| repo.project_identifier().ok());
-    let commit_config = config.commit_generation(project_id.as_deref());
+    let commit_config = config.commit_generation(project_id.as_ref());
 
     if !commit_config.is_configured() {
         writeln!(out, "{}", info_message("Commit generation not configured"))?;
@@ -1157,14 +1157,17 @@ fn render_fish_legacy_migration(
 
 /// Zsh-only: warn when compinit isn't enabled, since the integration
 /// installs completions but they won't load without compinit.
-fn render_zsh_compinit_warning(out: &mut String) -> anyhow::Result<()> {
+fn render_zsh_compinit_warning(out: &mut String, path: &Path, cmd: &str) -> anyhow::Result<()> {
     if probe_zsh_compdef(ZshStartupScope::UserOnly) != Some(false) {
         return Ok(());
     }
     writeln!(
         out,
         "{}",
-        warning_message("Completions won't work; add to ~/.zshrc before the wt line:")
+        warning_message(format!(
+            "Completions won't work; add to {} before the {cmd} line:",
+            format_path_for_display(path)
+        ))
     )?;
     writeln!(
         out,
@@ -1278,7 +1281,7 @@ fn render_already_configured(
 
     let needs_install = match shell {
         Shell::Zsh => {
-            render_zsh_compinit_warning(out)?;
+            render_zsh_compinit_warning(out, &result.path, cmd)?;
             false
         }
         Shell::Fish => render_fish_completion_status(out, cmd)?,

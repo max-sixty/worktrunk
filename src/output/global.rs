@@ -350,7 +350,7 @@ pub fn execute(argv: Vec<String>, dir: &Path) -> anyhow::Result<()> {
     let cmd = Cmd::new(program)
         .args(argv)
         .inherit_stdin()
-        .forward_signals()
+        .hand_off_terminal()
         .current_dir(dir)
         .scrub_git_discovery_env();
     #[cfg(unix)]

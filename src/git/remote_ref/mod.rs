@@ -229,8 +229,8 @@ pub(super) fn cli_config_value(tool: &str, args: &[&str]) -> Option<String> {
 ///
 /// Matches by owner/repo only (host is not required to match). This handles
 /// SSH host aliases where the local hostname differs from the API hostname.
-/// The suggested URL in the error respects each platform's configured git
-/// protocol (SSH vs HTTPS).
+/// The suggested URL comes from the API when available, otherwise it respects
+/// the platform's configured git protocol (SSH vs HTTPS).
 pub fn find_remote(repo: &Repository, info: &RemoteRefInfo) -> Result<String, GitError> {
     // Azure DevOps URLs don't fit the host/owner/repo shape that `find_remote_for_repo`
     // assumes (the parser stores `{org}/{project}/_git` in owner). Use the dedicated
@@ -275,12 +275,7 @@ pub fn find_remote(repo: &Repository, info: &RemoteRefInfo) -> Result<String, Gi
                 base_repo,
                 ..
             } => github::fork_remote_url(host, base_owner, base_repo),
-            PlatformData::Gitea {
-                host,
-                base_owner,
-                base_repo,
-                ..
-            } => gitea::fork_remote_url(host, base_owner, base_repo),
+            PlatformData::Gitea { base_clone_url, .. } => base_clone_url.clone(),
             PlatformData::GitLab {
                 host,
                 base_owner,

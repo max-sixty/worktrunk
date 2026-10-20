@@ -34,9 +34,13 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use worktrunk::git::WorktrunkError;
+#[cfg(unix)]
+use worktrunk::shell_exec::TerminalInterrupt;
 #[cfg(not(unix))]
 use worktrunk::shell_exec::wait_shared_child;
 use worktrunk::shell_exec::{DIRECTIVE_EXEC_FILE_ENV_VAR, RETIRED_DIRECTIVE_FILE_ENV_VAR};
+#[cfg(unix)]
+use worktrunk::signal_forwarder::ForegroundSignals;
 use worktrunk::trace::CommandTrace;
 
 use crate::cli::build_command;
@@ -147,7 +151,7 @@ fn run_custom(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> Res
     }
 
     #[cfg(unix)]
-    let signals = worktrunk::signal_forwarder::ForegroundSignals::install()?;
+    let signals = ForegroundSignals::install(TerminalInterrupt::ChildInput)?;
     let mut trace = CommandTrace::new(None, &path.display().to_string());
     #[cfg(unix)]
     let spawned = signals.spawn(&mut cmd);

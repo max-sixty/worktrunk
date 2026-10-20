@@ -146,6 +146,7 @@ Worktrunk stores repository state, caches, and logs under `.git/`:
 | `.git/wt/logs/subprocess.log` | Raw uncapped subprocess stdout/stderr (may be multi-MB) | Running with `-vv` |
 | `.git/wt/logs/diagnostic.md` | Diagnostic report for issue reporting (leads with the performance profile) | Running with `-vv` |
 | `.git/wt/trash/<name>-<timestamp>` | Staged worktree contents pending background deletion | `wt remove` |
+| `.git/wt/trash.lock` | Lock for background trash deletion | `wt remove` |
 
 None of this is tracked by git or pushed to remotes.
 
@@ -157,7 +158,7 @@ Created by the `wt config plugins <agent>` install commands. Each writes outside
 
 | File | Created by | Purpose |
 |------|------------|---------|
-| `~/.config/opencode/plugins/worktrunk.ts` | `wt config plugins opencode install` | Activity markers in `wt list` |
+| `~/.config/opencode/plugins/worktrunk.ts` | `wt config plugins opencode install` | Activity markers in `wt list`; OpenCode 2 worktrees through `wt` |
 | `~/.pi/agent/extensions/worktrunk.ts` | `wt config plugins pi install` | Activity markers in `wt list` |
 | `~/.omp/agent/hooks/pre/worktrunk.ts` | `wt config plugins omp install` | Activity markers in `wt list` |
 | `~/.claude/settings.json` | `wt config plugins claude install-statusline` | Adds a `statusLine` entry running `wt list statusline --format=claude-code` |
@@ -211,7 +212,7 @@ A branch checked out in a second worktree is retained regardless, `-D` included.
 
 - `wt merge` / `wt step push` — the target branch's checked-out worktree is updated to the merged commits, so a file those commits delete disappears from it, and an ignored file at a path they track is overwritten — the same result a `git merge` run in that worktree would produce. Uncommitted changes at paths the merge doesn't touch stay in place, staged or not; one at a path it does touch refuses the merge upfront, naming the file
 - `wt remove` / `wt step prune` — unregister a stale worktree (`⊟` in `wt list`) by deleting its `.git/worktrees/<id>` entry, as `git worktree prune` does, but for that worktree only. Files still in its directory stay. An entry whose index holds staged changes, or with a rebase, merge, or other operation in progress, is kept unless `wt remove --force` names it, since `git worktree repair` can restore it only while the entry exists
-- `wt remove` — also stops the removed worktree's `git fsmonitor--daemon` (under `core.fsmonitor=true`), and sweeps `.git/wt/trash/` entries older than 24 hours along with fsmonitor daemons whose worktree no longer exists
+- `wt remove` — also stops the removed worktree's `git fsmonitor--daemon` (under `core.fsmonitor=true`), and resumes deleting `.git/wt/trash/` entries an interrupted removal left behind, along with fsmonitor daemons whose worktree no longer exists
 - `wt config state clear` — clears config keys, caches, markers, hints, variables, logs, and stale trash
 - `wt config shell install` — replaces an existing fish or Nushell wrapper file whole, and removes one an older version installed at a previous location (fish `conf.d/wt.fish`, Nushell `<config-dir>/vendor/autoload/wt.nu`), printing each removal; [Files created](https://worktrunk.dev/shell-integration/#files-created) names the file each shell gets
 - `wt config shell uninstall` — removes the lines that run `wt config shell init` from bash/zsh/PowerShell rc files, and deletes wrapper and completion files carrying worktrunk's content markers (fish `functions/`, `conf.d/`, and `completions/`; nushell `vendor/autoload`). Every removed line is printed
@@ -221,7 +222,7 @@ See [What files does Worktrunk create?](#what-files-does-worktrunk-create) for d
 
 ## What commands does Worktrunk execute?
 
-Worktrunk runs `git` commands internally and optionally runs `gh` (GitHub) or `glab` (GitLab) for CI status. Beyond that, user-defined commands execute in four contexts:
+Worktrunk runs `git` commands internally and optionally runs the forge CLI (`gh`, `glab`, `tea`, or `az`) for CI status. Beyond that, user-defined commands execute in four contexts:
 
 1. **User hooks** (`~/.config/worktrunk/config.toml`) — Personal automation for all repositories
 2. **Project hooks** (`.config/wt.toml`) — Repository-specific automation

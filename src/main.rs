@@ -313,7 +313,7 @@ fn handle_step_command(
         } => {
             let repo = Repository::current()?;
             let result = if no_ff {
-                let current_branch = repo.require_current_branch("step push --no-ff")?;
+                let current_branch = repo.require_selected_branch("@", "step push --no-ff")?;
                 handle_no_ff_merge(&repo, target.as_deref(), None, &current_branch)?
             } else {
                 handle_push(&repo, target.as_deref(), PushKind::Standalone, None)?
@@ -597,7 +597,7 @@ fn handle_config_shell_command(action: ConfigShellCommand, yes: bool) -> anyhow:
         } => {
             // Auto-write to shell config files and completions
             let cmd = cmd.unwrap_or_else(binary_name);
-            handle_configure_shell(shell, yes, dry_run, cmd)
+            handle_configure_shell(shell, yes, dry_run, cmd.clone())
                 .map_err(anyhow::Error::from)
                 .and_then(|scan_result| {
                     // Exit with error if no shells configured
@@ -613,7 +613,7 @@ fn handle_config_shell_command(action: ConfigShellCommand, yes: bool) -> anyhow:
                     if dry_run {
                         return Ok(());
                     }
-                    crate::output::print_shell_install_result(&scan_result);
+                    crate::output::print_shell_install_result(&scan_result, &cmd);
                     Ok(())
                 })
         }
@@ -971,6 +971,7 @@ fn dispatch_command(
             expected_tip.as_deref(),
             force_delete,
         ),
+        Commands::InternalDrainTrash { trash_dir } => worktrunk::git::drain_trash(&trash_dir),
         // `working_dir` is the top-level `-C <path>` flag, applied as the
         // child's current directory so global `-C` works for custom
         // subcommands the same way it does for built-ins.

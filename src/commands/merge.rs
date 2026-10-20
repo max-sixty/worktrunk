@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
-use worktrunk::config::{MergeConfig, UserConfig};
+use worktrunk::config::{MergeConfig, ProjectId, UserConfig};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{eprintln, info_message};
@@ -107,7 +107,7 @@ fn approve_merge_plan(
     config: &UserConfig,
     feature_root: &Path,
     destination_path: &Path,
-    project_id: &str,
+    project_id: &ProjectId,
     verify: bool,
     will_remove: bool,
     will_switch: bool,
@@ -163,13 +163,11 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     }
 
     let invoking_repo = Repository::current()?;
-    let env = match opts.branch {
-        Some(selector) => CommandEnv::for_selector(config, selector)?,
-        None => CommandEnv::for_action(config)?,
-    };
+    let env = CommandEnv::for_selector(config, opts.branch.unwrap_or("@"))?;
     // Compare actual worktree identity, not whether a selector was supplied:
     // --branch @ and a path naming the current worktree retain normal cleanup.
-    // A bare invocation has no current worktree and cannot require a cd.
+    // Outside every worktree (a bare repo's directory), `@` names HEAD's
+    // branch's worktree, which the invoking shell isn't in, so no cd follows.
     let source_is_current = invoking_repo.current_worktree().root()? == env.worktree_path;
     let result = merge_in(opts, &env, source_is_current);
     if source_is_current {

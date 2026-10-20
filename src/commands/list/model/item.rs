@@ -79,7 +79,7 @@ pub struct WorktreeData {
     pub is_main: bool,
     /// Whether this is the current worktree (matches repo discovery path: PWD or `-C`)
     pub is_current: bool,
-    /// Whether this was the previous worktree (from `worktrunk.history`)
+    /// Whether this was the previous worktree (the `wt switch -` target)
     pub is_previous: bool,
     /// Whether the worktree is at an unexpected location (branch-worktree mismatch).
     /// Only true when: has branch name, not main worktree, and path differs from template.

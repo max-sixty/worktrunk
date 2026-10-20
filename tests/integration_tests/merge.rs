@@ -1290,7 +1290,7 @@ fn test_merge_pre_commit_collected_for_squash_clean_worktree(
 }
 
 /// A pre-commit hook's edits land in the squash commit, as they do in the
-/// commit `wt step commit` makes: the hook runs before staging, not after.
+/// commit `wt step commit` makes: Worktrunk stages again after the hook runs.
 #[rstest]
 fn test_step_squash_includes_pre_commit_hook_edits(repo_with_multi_commit_feature: TestRepo) {
     let repo = &repo_with_multi_commit_feature;
@@ -1331,6 +1331,53 @@ fn test_step_squash_includes_pre_commit_hook_edits(repo_with_multi_commit_featur
         repo.git_output(&["-C", feature_wt.to_str().unwrap(), "status", "--porcelain"]),
         ""
     );
+}
+
+/// A pre-commit hook that reads the index (`pre-commit run`, lint-staged,
+/// `git diff --cached`) sees the uncommitted changes Worktrunk is about to
+/// commit, so a gate on them blocks the commit. `merge` covers the squash path
+/// and `step commit` the plain commit path.
+#[rstest]
+#[case::merge(&["merge", "main", "--yes"])]
+#[case::step_commit(&["step", "commit", "--yes"])]
+fn test_pre_commit_hook_sees_staged_changes(
+    repo_with_multi_commit_feature: TestRepo,
+    #[case] args: &[&str],
+) {
+    let repo = &repo_with_multi_commit_feature;
+    let feature_wt = repo.worktrees["feature"].clone();
+
+    let config_dir = feature_wt.join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        "pre-commit = \"! git diff --cached | grep -q FORBIDDEN\"",
+    )
+    .unwrap();
+    repo.run_git_in(&feature_wt, &["add", ".config/wt.toml"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Add config"]);
+    let feature_head = repo.git_output(&["rev-parse", "feature"]);
+    let main_head = repo.git_output(&["rev-parse", "main"]);
+
+    fs::write(feature_wt.join("new.txt"), "FORBIDDEN\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(args)
+        .current_dir(&feature_wt)
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: combined'",
+        )
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "pre-commit gate passed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(repo.git_output(&["rev-parse", "feature"]), feature_head);
+    assert_eq!(repo.git_output(&["rev-parse", "main"]), main_head);
 }
 
 // README EXAMPLE GENERATION TESTS
@@ -4584,10 +4631,14 @@ fn test_step_push_refuses_mid_rebase(mut repo: TestRepo) {
 /// this.
 #[rstest]
 fn test_step_commit_refuses_hook_created_conflict(mut repo: TestRepo) {
-    // A pre-commit hook that conflicts the index. `|| true` so the hook
-    // succeeds and the commit proceeds to staging; output suppressed to keep
-    // git's own wording out of the snapshot.
-    repo.write_project_config(r#"pre-commit = "git merge side >/dev/null 2>&1 || true""#);
+    // A pre-commit hook that conflicts the index. It unstages first because
+    // Worktrunk stages before the hooks run and `git merge` refuses to start
+    // with a dirty index. `|| true` so the hook succeeds and the commit
+    // proceeds to staging; output suppressed to keep git's own wording out of
+    // the snapshot.
+    repo.write_project_config(
+        r#"pre-commit = "git reset -q && git merge side >/dev/null 2>&1 || true""#,
+    );
     repo.run_git(&["add", ".config/wt.toml"]);
     repo.run_git(&["commit", "-m", "Add project config"]);
 
