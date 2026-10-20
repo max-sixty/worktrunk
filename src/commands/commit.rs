@@ -230,7 +230,7 @@ impl CommitOptions<'_> {
         wt.ensure_no_unmerged_paths("commit")?;
 
         let project_config = self.ctx.repo.load_project_config()?;
-        let user_hooks = self.ctx.config.hooks(self.ctx.project_id().as_deref());
+        let user_hooks = self.ctx.config.hooks(self.ctx.project_id().as_ref());
         let any_hooks_exist = user_hooks.get(HookType::PreCommit).is_some()
             || project_config
                 .as_ref()

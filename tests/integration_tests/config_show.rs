@@ -99,7 +99,7 @@ fn test_config_show_rejects_invalid_approvals_file(repo: TestRepo) {
 fn test_config_show_hides_fully_approved_commands(repo: TestRepo) {
     repo.write_project_config("pre-start = \"npm install\"\n");
     let project = repo.repo.project_identifier().unwrap();
-    let project = toml::Value::String(project).to_string();
+    let project = toml::Value::String(project.to_string()).to_string();
     fs::write(
         repo.test_approvals_path(),
         format!("[projects.{project}]\napproved-commands = [\"npm install\"]\n"),

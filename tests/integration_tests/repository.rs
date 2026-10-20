@@ -359,7 +359,7 @@ fn test_project_identifier_ssh_protocol_with_port() {
 }
 
 /// The project identifier of a repository whose `origin` is `url`.
-fn project_identifier_for_remote(url: &str) -> String {
+fn project_identifier_for_remote(url: &str) -> worktrunk::config::ProjectId {
     let mut repo = TestRepo::with_initial_commit();
     repo.setup_remote("main");
     repo.git_command()
@@ -382,10 +382,10 @@ fn test_project_identifier_ipv6_hosts_are_distinct() {
     assert_eq!(second, "[2001:db8::2]/owner/repo");
 }
 
-/// The identifier selects both saved approvals and `[projects]` settings: an
-/// entry keyed on the port-less identifier an SSH port remote used to share
-/// does not carry over, while the ordinary SSH and HTTPS forms of one project
-/// still share one entry.
+/// The identifier selects both saved approvals and `[projects]` settings. The
+/// ordinary SSH and HTTPS forms of one project share one entry. A remote on a
+/// non-default SSH port has its own identifier, but entries keyed on the
+/// port-less identifier v0.80.0 gave it still apply, below its own.
 #[test]
 fn test_project_identifier_selects_approvals_and_project_settings() {
     use worktrunk::config::{Approvals, UserConfig};
@@ -395,19 +395,26 @@ fn test_project_identifier_selects_approvals_and_project_settings() {
     let default_port =
         project_identifier_for_remote("ssh://git@gitlab.example.com:22/team/project.git");
     let https = project_identifier_for_remote("https://gitlab.example.com/team/project.git");
+    assert_eq!(ported, "gitlab.example.com:2222/team/project");
+    assert_eq!(ported.legacy(), Some("gitlab.example.com/team/project"));
     assert_eq!(default_port, "gitlab.example.com/team/project");
+    assert_eq!(default_port.legacy(), None);
     assert_eq!(https, default_port);
 
     let approvals: Approvals = toml::from_str(
         r#"
 [projects."gitlab.example.com/team/project"]
 approved-commands = ["npm install"]
+
+[projects."gitlab.example.com:2222/team/project"]
+approved-commands = ["npm test"]
 "#,
     )
     .unwrap();
     assert!(approvals.is_command_approved(&https, "npm install"));
-    assert!(approvals.is_command_approved(&default_port, "npm install"));
-    assert!(!approvals.is_command_approved(&ported, "npm install"));
+    assert!(!approvals.is_command_approved(&https, "npm test"));
+    assert!(approvals.is_command_approved(&ported, "npm install"));
+    assert!(approvals.is_command_approved(&ported, "npm test"));
 
     let config: UserConfig = toml::from_str(
         r#"
@@ -415,14 +422,67 @@ worktree-path = "global"
 
 [projects."gitlab.example.com/team/project"]
 worktree-path = "default-port"
-
-[projects."gitlab.example.com:2222/team/project"]
-worktree-path = "port-2222"
 "#,
     )
     .unwrap();
     assert_eq!(config.worktree_path_for_project(&https), "default-port");
+    assert_eq!(config.worktree_path_for_project(&ported), "default-port");
+
+    let config: UserConfig = toml::from_str(
+        r#"
+[projects."gitlab.example.com/team/project"]
+worktree-path = "default-port"
+
+[projects."gitlab.example.com:2222/*"]
+worktree-path = "port-2222"
+"#,
+    )
+    .unwrap();
     assert_eq!(config.worktree_path_for_project(&ported), "port-2222");
+}
+
+/// Approvals and `[projects]` settings saved under the identifier v0.80.0 gave
+/// a remote keep applying after its identifier changed: a non-interactive
+/// `wt switch --create` runs the approved hook, in the worktree path the
+/// legacy entry names.
+#[rstest::rstest]
+#[case::ssh_port(
+    "ssh://git@gitlab.example.com:2222/team/app.git",
+    "gitlab.example.com/team/app"
+)]
+#[case::uppercase_host("git@GitHub.com:team/app.git", "GitHub.com/team/app")]
+#[case::git_plus_ssh(
+    "git+ssh://git@github.com/team/app.git",
+    "git+ssh://git@github.com/team/app"
+)]
+fn test_switch_honors_entries_under_legacy_identifier(#[case] url: &str, #[case] legacy: &str) {
+    let mut repo = TestRepo::with_initial_commit();
+    repo.setup_remote("main");
+    repo.git_command()
+        .args(["remote", "set-url", "origin", url])
+        .run()
+        .unwrap();
+    repo.write_project_config(r#"pre-start = "echo ran > hook-ran.txt""#);
+    repo.commit("Add config");
+    repo.write_test_config(&format!(
+        "[projects.'{legacy}']\nworktree-path = \"{{{{ repo_path }}}}/../legacy.{{{{ branch }}}}\"\n"
+    ));
+    repo.write_test_approvals(&format!(
+        "[projects.'{legacy}']\napproved-commands = [\"echo ran > hook-ran.txt\"]\n"
+    ));
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "feature"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let worktree = repo.root_path().parent().unwrap().join("legacy.feature");
+    assert!(worktree.join("hook-ran.txt").exists());
 }
 
 #[test]

@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::ConfigError;
+use super::{ConfigError, ProjectId};
 
 use crate::config::deprecation::normalize_template_vars;
 use crate::path::format_path_for_display;
@@ -228,7 +228,7 @@ impl Approvals {
     /// is ever a pattern: [`Self::approve_commands`] records under the exact
     /// project identifier and refuses one that contains `*`, so approving a
     /// command in one repository never widens to another.
-    pub fn is_command_approved(&self, project: &str, command: &str) -> bool {
+    pub fn is_command_approved(&self, project: &ProjectId, command: &str) -> bool {
         let normalized_command = normalize_template_vars(command);
         crate::config::matching_project_keys(&self.projects, project)
             .into_iter()
@@ -247,17 +247,19 @@ impl Approvals {
     }
 
     /// Pattern keys whose approved commands cover `project` — the entries
-    /// [`Self::is_command_approved`] consults beyond the exact one. Always
+    /// [`Self::is_command_approved`] consults beyond the exact ones. Always
     /// hand-written (the write paths refuse `*`), so mutations never touch
     /// them; `wt config approvals clear` names them in a hint, making an
     /// approval that survives a clear traceable to the entry that supplies it.
-    pub fn matching_pattern_keys(&self, project: &str) -> Vec<&str> {
+    pub fn matching_pattern_keys(&self, project: &ProjectId) -> Vec<&str> {
         self.projects
             .iter()
             .filter(|(key, p)| {
                 key.contains('*')
                     && !p.approved_commands.is_empty()
-                    && super::user::project_match::matches(key, project)
+                    && project
+                        .exact_keys()
+                        .any(|id| super::user::project_match::matches(key, id))
             })
             .map(|(key, _)| key.as_str())
             .collect()
@@ -393,23 +395,33 @@ impl Approvals {
         })
     }
 
-    /// Remove all approvals for a project and save.
+    /// Remove all approvals for a project and save, including any saved under
+    /// its legacy identifier.
     pub fn revoke_project(
         &mut self,
-        project: &str,
+        project: &ProjectId,
         approvals_path: &Path,
     ) -> Result<(), ConfigError> {
-        let project = project.to_string();
         self.with_locked_mutation(approvals_path, |approvals| {
-            let Some(project_config) = approvals.projects.get_mut(&project) else {
-                return false;
-            };
-            if project_config.approved_commands.is_empty() {
-                return false;
+            let mut changed = false;
+            for key in project.exact_keys() {
+                changed |= approvals
+                    .projects
+                    .remove(key)
+                    .is_some_and(|p| !p.approved_commands.is_empty());
             }
-            approvals.projects.remove(&project);
-            true
+            changed
         })
+    }
+
+    /// The number of approvals saved for `project` under its exact keys —
+    /// what [`Self::revoke_project`] removes.
+    pub fn exact_approval_count(&self, project: &ProjectId) -> usize {
+        project
+            .exact_keys()
+            .filter_map(|key| self.projects.get(key))
+            .map(|p| p.approved_commands.len())
+            .sum()
     }
 
     /// Remove approvals for `project` that match none of `templates` (the
@@ -514,7 +526,7 @@ mod tests {
     #[test]
     fn test_empty_approvals() {
         let approvals = Approvals::default();
-        assert!(!approvals.is_command_approved("any/project", "any command"));
+        assert!(!approvals.is_command_approved(&"any/project".into(), "any command"));
     }
 
     #[test]
@@ -529,12 +541,17 @@ approved-commands = ["npm install"]
         )
         .unwrap();
 
-        assert!(approvals.is_command_approved("git.company.example/owner/repo", "npm install"));
         assert!(
-            approvals.is_command_approved("git.company.example/group/team/repo", "npm install")
+            approvals.is_command_approved(&"git.company.example/owner/repo".into(), "npm install")
         );
-        assert!(!approvals.is_command_approved("github.com/owner/repo", "npm install"));
-        assert!(!approvals.is_command_approved("git.company.example/owner/repo", "npm test"));
+        assert!(
+            approvals
+                .is_command_approved(&"git.company.example/group/team/repo".into(), "npm install")
+        );
+        assert!(!approvals.is_command_approved(&"github.com/owner/repo".into(), "npm install"));
+        assert!(
+            !approvals.is_command_approved(&"git.company.example/owner/repo".into(), "npm test")
+        );
     }
 
     #[test]
@@ -560,12 +577,12 @@ approved-commands = ["make"]
         // no commands are all excluded — only entries actually supplying
         // approvals are worth naming.
         assert_eq!(
-            approvals.matching_pattern_keys("git.company.example/owner/repo"),
+            approvals.matching_pattern_keys(&"git.company.example/owner/repo".into()),
             vec!["git.company.example/*"]
         );
         assert!(
             approvals
-                .matching_pattern_keys("codeberg.org/owner/repo")
+                .matching_pattern_keys(&"codeberg.org/owner/repo".into())
                 .is_empty()
         );
     }
@@ -589,7 +606,8 @@ approved-commands = ["make"]
             .unwrap_err();
         assert!(err.to_string().contains("pattern"), "got: {err}");
         assert!(
-            !approvals.is_command_approved("git.company.example/owner/re*po", "npm install"),
+            !approvals
+                .is_command_approved(&"git.company.example/owner/re*po".into(), "npm install"),
             "nothing may be recorded in memory"
         );
         assert!(!path.exists(), "nothing may be written to disk");
@@ -619,9 +637,11 @@ approved-commands = ["npm install"]
             )
             .unwrap();
 
-        assert!(approvals.is_command_approved("git.company.example/owner/repo", "npm test"));
         assert!(
-            !approvals.is_command_approved("git.company.example/other/repo", "npm test"),
+            approvals.is_command_approved(&"git.company.example/owner/repo".into(), "npm test")
+        );
+        assert!(
+            !approvals.is_command_approved(&"git.company.example/other/repo".into(), "npm test"),
             "the pattern entry must not have absorbed the new approval"
         );
     }
@@ -642,15 +662,15 @@ approved-commands = ["npm test"]
         approvals.save_to(&path).unwrap();
 
         approvals
-            .revoke_project("git.company.example/owner/repo", &path)
+            .revoke_project(&"git.company.example/owner/repo".into(), &path)
             .unwrap();
 
         assert!(
-            !approvals.is_command_approved("git.company.example/owner/repo", "npm test"),
+            !approvals.is_command_approved(&"git.company.example/owner/repo".into(), "npm test"),
             "the repository's own approval is gone"
         );
         assert!(
-            approvals.is_command_approved("git.company.example/owner/repo", "npm install"),
+            approvals.is_command_approved(&"git.company.example/owner/repo".into(), "npm install"),
             "the pattern entry other repositories share is untouched"
         );
     }
@@ -668,9 +688,9 @@ approved-commands = ["npm test"]
             )
             .unwrap();
 
-        assert!(approvals.is_command_approved("github.com/user/repo", "npm install"));
-        assert!(!approvals.is_command_approved("github.com/user/repo", "npm test"));
-        assert!(!approvals.is_command_approved("github.com/other/repo", "npm install"));
+        assert!(approvals.is_command_approved(&"github.com/user/repo".into(), "npm install"));
+        assert!(!approvals.is_command_approved(&"github.com/user/repo".into(), "npm test"));
+        assert!(!approvals.is_command_approved(&"github.com/other/repo".into(), "npm install"));
     }
 
     #[test]
@@ -715,8 +735,8 @@ approved-commands = ["npm test"]
             )
             .unwrap();
 
-        assert!(approvals.is_command_approved("github.com/user/repo", "npm install"));
-        assert!(approvals.is_command_approved("github.com/user/repo", "npm test"));
+        assert!(approvals.is_command_approved(&"github.com/user/repo".into(), "npm install"));
+        assert!(approvals.is_command_approved(&"github.com/user/repo".into(), "npm test"));
     }
 
     #[test]
@@ -740,10 +760,43 @@ approved-commands = ["npm test"]
             .unwrap();
 
         approvals
-            .revoke_project("github.com/user/repo1", &path)
+            .revoke_project(&"github.com/user/repo1".into(), &path)
             .unwrap();
         assert!(!approvals.projects.contains_key("github.com/user/repo1"));
         assert!(approvals.projects.contains_key("github.com/user/repo2"));
+    }
+
+    /// A project's approvals saved under its v0.80.0 identifier count toward
+    /// it and go with it on revoke, so `wt config approvals clear` leaves
+    /// nothing of its own approving commands.
+    #[test]
+    fn test_revoke_project_includes_legacy_identifier() {
+        let (_temp_dir, path) = test_dir();
+        let project = ProjectId::with_legacy(
+            "github.com/user/repo".to_string(),
+            Some("GitHub.com/user/repo".to_string()),
+        );
+
+        let mut approvals = Approvals::default();
+        for (key, command) in [
+            ("GitHub.com/user/repo", "npm install"),
+            ("github.com/user/repo", "npm test"),
+            ("github.com/user/other", "cargo build"),
+        ] {
+            approvals
+                .approve_commands(key.to_string(), vec![command.to_string()], &path)
+                .unwrap();
+        }
+        assert!(approvals.is_command_approved(&project, "npm install"));
+        assert_eq!(approvals.exact_approval_count(&project), 2);
+
+        approvals.revoke_project(&project, &path).unwrap();
+        assert!(!approvals.is_command_approved(&project, "npm install"));
+        assert!(!approvals.is_command_approved(&project, "npm test"));
+        assert_eq!(
+            approvals.projects.keys().collect::<Vec<_>>(),
+            ["github.com/user/other"]
+        );
     }
 
     #[test]
@@ -785,8 +838,8 @@ approved-commands = ["npm test"]
 
         // Load from disk
         let loaded = load_from_path(&path).unwrap();
-        assert!(loaded.is_command_approved("github.com/user/repo", "npm install"));
-        assert!(loaded.is_command_approved("github.com/user/repo", "npm test"));
+        assert!(loaded.is_command_approved(&"github.com/user/repo".into(), "npm install"));
+        assert!(loaded.is_command_approved(&"github.com/user/repo".into(), "npm test"));
     }
 
     /// Failure to create the approvals directory must leave the blocking file
@@ -853,8 +906,8 @@ approved-commands = ["npm test"]
 
         assert_eq!(std::fs::read_to_string(&path).unwrap(), original_content);
         let loaded = Approvals::load_from_file(&path).unwrap();
-        assert!(loaded.is_command_approved("github.com/user/repo", "npm install"));
-        assert!(!loaded.is_command_approved("github.com/user/repo", "npm test"));
+        assert!(loaded.is_command_approved(&"github.com/user/repo".into(), "npm install"));
+        assert!(!loaded.is_command_approved(&"github.com/user/repo".into(), "npm test"));
     }
 
     #[test]
@@ -895,7 +948,7 @@ approved-commands = ["npm test"]
             .unwrap();
 
         // Should match with canonical variable name
-        assert!(approvals.is_command_approved("project", "echo {{ repo_path }}"));
+        assert!(approvals.is_command_approved(&"project".into(), "echo {{ repo_path }}"));
     }
 
     #[test]
@@ -911,7 +964,7 @@ approved-commands = ["npm test"]
             )
             .unwrap();
 
-        assert!(!approvals.is_command_approved("project", "echo repo_path"));
+        assert!(!approvals.is_command_approved(&"project".into(), "echo repo_path"));
     }
 
     #[test]
@@ -975,9 +1028,9 @@ approved-commands = ["cargo build"]
         .unwrap();
 
         let approvals = Approvals::load_from_config_file(&config_path).unwrap();
-        assert!(approvals.is_command_approved("github.com/user/repo", "npm install"));
-        assert!(approvals.is_command_approved("github.com/user/repo", "npm test"));
-        assert!(approvals.is_command_approved("github.com/other/repo", "cargo build"));
+        assert!(approvals.is_command_approved(&"github.com/user/repo".into(), "npm install"));
+        assert!(approvals.is_command_approved(&"github.com/user/repo".into(), "npm test"));
+        assert!(approvals.is_command_approved(&"github.com/other/repo".into(), "cargo build"));
     }
 
     /// When `approvals.toml` doesn't exist but `config.toml` is a sibling with
@@ -1010,8 +1063,8 @@ approved-commands = ["npm install"]
             .unwrap();
 
         // Both the fallback command and the new one should be present
-        assert!(approvals.is_command_approved("github.com/user/repo", "npm install"));
-        assert!(approvals.is_command_approved("github.com/user/repo", "npm test"));
+        assert!(approvals.is_command_approved(&"github.com/user/repo".into(), "npm install"));
+        assert!(approvals.is_command_approved(&"github.com/user/repo".into(), "npm test"));
 
         // approvals.toml should now exist with both commands
         let content = std::fs::read_to_string(&approvals_path).unwrap();
@@ -1101,8 +1154,10 @@ approved-command = ["npm test"]
             .approve_commands("project-a".to_string(), vec!["cmd1".to_string()], &path)
             .unwrap();
         // Revoke a project that doesn't exist — should be a no-op
-        approvals.revoke_project("nonexistent", &path).unwrap();
-        assert!(approvals.is_command_approved("project-a", "cmd1"));
+        approvals
+            .revoke_project(&"nonexistent".into(), &path)
+            .unwrap();
+        assert!(approvals.is_command_approved(&"project-a".into(), "cmd1"));
     }
 
     #[test]
@@ -1156,7 +1211,9 @@ approved-command = ["npm test"]
         // Write this state to disk
         approvals.save_to(&path).unwrap();
         // Now revoke_project should find the project but see empty commands → no-op
-        approvals.revoke_project("project-a", &path).unwrap();
+        approvals
+            .revoke_project(&"project-a".into(), &path)
+            .unwrap();
     }
 
     /// Stale = approved but matching no config template, with the same
@@ -1213,8 +1270,8 @@ approved-command = ["npm test"]
             .revoke_stale("project", &templates, &path)
             .unwrap();
         assert_eq!(removed, vec!["removed command"]);
-        assert!(approvals.is_command_approved("project", "npm test"));
-        assert!(approvals.is_command_approved("project", "echo {{ repo_root }}"));
+        assert!(approvals.is_command_approved(&"project".into(), "npm test"));
+        assert!(approvals.is_command_approved(&"project".into(), "echo {{ repo_root }}"));
 
         // Nothing stale left — a second call is a no-op.
         let removed = approvals

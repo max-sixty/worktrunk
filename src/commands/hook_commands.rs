@@ -11,7 +11,7 @@ use color_print::cformat;
 use strum::IntoEnumIterator;
 use worktrunk::HookType;
 use worktrunk::config::{
-    ALIAS_ARGS_KEY, Approvals, CommandConfig, ProjectConfig, UserConfig, binds_cli_var,
+    ALIAS_ARGS_KEY, Approvals, CommandConfig, ProjectConfig, ProjectId, UserConfig, binds_cli_var,
     referenced_vars_for_config,
 };
 use worktrunk::git::Repository;
@@ -240,7 +240,7 @@ pub fn run_hook(
     }
 
     // Get effective user hooks (global + per-project merged)
-    let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
+    let user_hooks = ctx.config.hooks(ctx.project_id().as_ref());
     let user_config = user_hooks.get(hook_type);
     let proj_config = project_config.as_ref().and_then(|c| c.hooks.get(hook_type));
     // No hooks configured: warn and exit successfully. Running hooks that
@@ -395,7 +395,7 @@ pub fn handle_hook_show(
             config,
             project_config,
             &approvals,
-            project_id.as_deref(),
+            project_id.as_ref(),
             filter,
             ctx.as_ref(),
         );
@@ -408,7 +408,7 @@ pub fn handle_hook_show(
         &mut output,
         config,
         &approvals,
-        project_id.as_deref(),
+        project_id.as_ref(),
         filter,
         ctx.as_ref(),
     )?;
@@ -420,7 +420,7 @@ pub fn handle_hook_show(
         &repo,
         project_config,
         &approvals,
-        project_id.as_deref(),
+        project_id.as_ref(),
         filter,
         ctx.as_ref(),
     )?;
@@ -440,7 +440,7 @@ fn emit_hook_show_json(
     user_config: &UserConfig,
     project_config: Option<&ProjectConfig>,
     approvals: &Approvals,
-    project_id: Option<&str>,
+    project_id: Option<&ProjectId>,
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
@@ -502,7 +502,7 @@ fn render_user_hooks(
     out: &mut String,
     config: &UserConfig,
     approvals: &Approvals,
-    project_id: Option<&str>,
+    project_id: Option<&ProjectId>,
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
@@ -546,7 +546,7 @@ fn render_project_hooks(
     repo: &Repository,
     project_config: Option<&ProjectConfig>,
     approvals: &Approvals,
-    project_id: Option<&str>,
+    project_id: Option<&ProjectId>,
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
@@ -595,7 +595,7 @@ fn render_hook_section(
     hooks: &[(HookType, &CommandConfig)],
     source: HookSource,
     approvals: &Approvals,
-    project_id: Option<&str>,
+    project_id: Option<&ProjectId>,
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
@@ -625,7 +625,7 @@ fn render_hook_commands(
     config: &CommandConfig,
     source: HookSource,
     approvals: &Approvals,
-    project_id: Option<&str>,
+    project_id: Option<&ProjectId>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<bool> {
     let mut wrote_any = false;
@@ -658,7 +658,7 @@ fn render_hook_commands(
 fn needs_approval(
     source: HookSource,
     approvals: &Approvals,
-    project_id: Option<&str>,
+    project_id: Option<&ProjectId>,
     template: &str,
 ) -> bool {
     match source {

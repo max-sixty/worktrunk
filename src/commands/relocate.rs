@@ -338,7 +338,7 @@ pub fn validate_candidates(
                 worktree.stage(StageMode::All)?;
                 // Commit using shared pipeline
                 let project_id = repo.project_identifier().ok();
-                let commit_config = config.commit_generation(project_id.as_deref());
+                let commit_config = config.commit_generation(project_id.as_ref());
                 CommitGenerator::new(&commit_config, project_append).commit_staged_changes(
                     &worktree,
                     false, // show_progress - already showing "Committing changes in..."

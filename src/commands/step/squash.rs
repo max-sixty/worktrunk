@@ -139,7 +139,7 @@ pub fn handle_squash_in(
 
     // Check if any pre-commit hooks exist (needed for skip message and approval)
     let project_config = repo.load_project_config()?;
-    let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
+    let user_hooks = ctx.config.hooks(ctx.project_id().as_ref());
     let any_hooks_exist = user_hooks.get(HookType::PreCommit).is_some()
         || project_config
             .as_ref()
@@ -513,7 +513,7 @@ fn preview_squash(
     let repo = Repository::current()?;
     let config = UserConfig::load().context("Failed to load config")?;
     let project_id = repo.project_identifier().ok();
-    let commit_config = config.commit_generation(project_id.as_deref());
+    let commit_config = config.commit_generation(project_id.as_ref());
 
     let integration_target = repo.require_target_ref(target)?;
     // #3519: preview against the same upstream-aware span the real squash uses.

@@ -1713,7 +1713,7 @@ fn approve_switch_hooks(
     // when the project identifier can't be resolved (the plan ends up empty
     // and `approve` never needs it).
     let project_id = repo.project_identifier().ok();
-    let pid = project_id.as_deref();
+    let pid = project_id.as_ref();
     let project_config = repo.load_project_config()?;
     let mut builder = HookPlanBuilder::new(project_config.as_ref(), config, pid);
     builder.add(
@@ -2129,7 +2129,7 @@ fn run_switch(
     // Now that we have the repo, we can resolve project-specific config.
     let change_dir = change_dir_flag.unwrap_or_else(|| {
         let project_id = repo.project_identifier().ok();
-        config.resolved(project_id.as_deref()).switch.cd()
+        config.resolved(project_id.as_ref()).switch.cd()
     });
 
     // Build switch suggestion context for enriching error hints with --path/--execute/trailing args.
@@ -2287,7 +2287,7 @@ fn validate_switch_templates(
     }
 
     let project_config = repo.load_project_config()?;
-    let user_hooks = config.hooks(repo.project_identifier().ok().as_deref());
+    let user_hooks = config.hooks(repo.project_identifier().ok().as_ref());
 
     for &hook_type in switch_post_hook_types(plan.is_create()) {
         let user_cfg = user_hooks.get(hook_type);

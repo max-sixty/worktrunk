@@ -201,13 +201,13 @@ impl<'a> CommandContext<'a> {
     ///
     /// Uses the remote URL if available, otherwise the canonical repository path.
     /// Returns None only if the path is not valid UTF-8.
-    pub fn project_id(&self) -> Option<String> {
+    pub fn project_id(&self) -> Option<worktrunk::config::ProjectId> {
         self.repo.project_identifier().ok()
     }
 
     /// Get the commit generation config, merging project-specific settings.
     pub fn commit_generation(&self) -> worktrunk::config::CommitGenerationConfig {
-        self.config.commit_generation(self.project_id().as_deref())
+        self.config.commit_generation(self.project_id().as_ref())
     }
 }
 

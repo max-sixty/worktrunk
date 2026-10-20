@@ -357,7 +357,7 @@ impl<'a> HookAnnouncer<'a> {
         display_path: Option<&Path>,
     ) -> anyhow::Result<()> {
         let project_config = ctx.repo.load_project_config()?;
-        let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
+        let user_hooks = ctx.config.hooks(ctx.project_id().as_ref());
         let flat = prepare_and_check(
             ctx,
             user_hooks.get(hook_type),
@@ -756,7 +756,7 @@ pub(crate) fn execute_hook(
     failure_strategy: FailureStrategy,
 ) -> anyhow::Result<bool> {
     let project_config = ctx.repo.load_project_config()?;
-    let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
+    let user_hooks = ctx.config.hooks(ctx.project_id().as_ref());
     run_hooks_foreground(
         ctx,
         user_hooks.get(hook_type),
