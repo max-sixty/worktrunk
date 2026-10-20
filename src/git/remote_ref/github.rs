@@ -213,8 +213,8 @@ pub(super) fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result
 }
 
 /// Get the git protocol preference from `gh` (GitHub CLI).
-fn use_ssh_protocol() -> bool {
-    cli_config_value("gh", &["git_protocol"]).as_deref() == Some("ssh")
+fn use_ssh_protocol(host: &str) -> bool {
+    cli_config_value("gh", &["git_protocol", "--host", host]).as_deref() == Some("ssh")
 }
 
 /// Whether `gh` has an authentication token configured for `host`.
@@ -233,7 +233,7 @@ pub fn is_authed_for(host: &str) -> bool {
 
 /// Construct the remote URL for a fork repository.
 pub fn fork_remote_url(host: &str, owner: &str, repo: &str) -> String {
-    if use_ssh_protocol() {
+    if use_ssh_protocol(host) {
         format!("git@{}:{}/{}.git", host, owner, repo)
     } else {
         format!("https://{}/{}/{}.git", host, owner, repo)

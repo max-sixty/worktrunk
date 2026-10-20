@@ -244,6 +244,7 @@ Templates also support functions for dynamic lookups:
 | Function | Example | Description |
 |----------|---------|-------------|
 | `worktree_path_of_branch(branch)` | `{{ worktree_path_of_branch("main") }}` | Look up the path of a branch's worktree |
+| `expected_worktree_path_of_branch(branch)` | `{{ expected_worktree_path_of_branch("feature") }}` | Where `wt switch` expects the branch's worktree |
 
 The `worktree_path_of_branch` function returns the filesystem path of a worktree given a branch name, or an empty string if no worktree exists for that branch. This is useful for referencing files in other worktrees:
 
@@ -252,6 +253,12 @@ The `worktree_path_of_branch` function returns the filesystem path of a worktree
 [pre-start]
 # Copy config from main worktree
 setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path }}"
+```
+
+The `expected_worktree_path_of_branch` function returns the path `wt switch --create` would use for a branch, whether or not a worktree exists there. Unlike `worktree_path_of_branch`, it still returns that path after the worktree there has moved to another branch. For example, this switches to the worktree at `feature`'s path, whichever branch it now holds:
+
+```bash
+wt switch "$(wt step eval "{{ expected_worktree_path_of_branch('feature') }}")"
 ```
 
 ## Interactive hooks

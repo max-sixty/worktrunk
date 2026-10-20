@@ -197,6 +197,18 @@ pub fn canonical_temp_home(temp_home: &TempDir) -> std::path::PathBuf {
     dunce::canonicalize(temp_home.path()).unwrap()
 }
 
+/// Check out `branch` a second time at `<repo>.<suffix>`, the state only
+/// `--force` can produce.
+pub fn add_force_duplicate(repo: &TestRepo, branch: &str, suffix: &str) -> std::path::PathBuf {
+    let dup = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(format!("repo.{suffix}"));
+    repo.run_git(&["worktree", "add", "--force", dup.to_str().unwrap(), branch]);
+    dup
+}
+
 /// Repo with remote tracking set up.
 ///
 /// Builds on the `repo` fixture, adding a "remote" for the default branch.
@@ -639,6 +651,10 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
     settings.add_redaction(".env.PWD", "[PWD]");
     // Mock commands directory (temp path for mock gh/glab binaries)
     settings.add_redaction(".env.WORKTRUNK_TEST_MOCK_CONFIG_DIR", "[TEST_MOCK_CONFIG]");
+    settings.add_redaction(
+        ".env.WORKTRUNK_TEST_MOCK_CALL_LOG_DIR",
+        "[TEST_MOCK_CALL_LOG]",
+    );
     // Nushell vendor-autoload override (temp path pinned by shell-integration tests)
     settings.add_redaction(
         ".env.WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR",

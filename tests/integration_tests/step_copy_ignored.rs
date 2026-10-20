@@ -1547,8 +1547,14 @@ fn test_copy_ignored_preserves_file_executable_permissions(mut repo: TestRepo) {
     )
     .unwrap();
 
-    // Also create a non-executable file for comparison
+    // Also create a non-executable file for comparison. Set its mode explicitly:
+    // the mode `fs::write` creates depends on the umask (0664 under 002).
     fs::write(bin_dir.join("config.json"), r#"{"key": "value"}"#).unwrap();
+    fs::set_permissions(
+        bin_dir.join("config.json"),
+        fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
 
     // Create a top-level ignored executable file (exercises the individual file copy
     // path in step/copy_ignored.rs, separate from the recursive directory copy in copy.rs)

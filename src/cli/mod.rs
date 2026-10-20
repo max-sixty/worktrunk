@@ -740,6 +740,8 @@ The CI column shows each row's PR/MR CI and review status, the same as [`wt list
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
 
+On macOS, `Alt` is the Option key; the terminal needs to send it as Meta (e.g. Terminal.app's [Use Option as Meta key](https://support.apple.com/guide/terminal/change-profiles-keyboard-settings-trmlkbrd/mac)).
+
 The filter matches each row's branch, path, and — when it has a PR/MR — the PR/MR's number, title, and author. Typing `+` narrows to linked worktrees, and `@` to the current worktree.
 
 **Preview tabs:**
@@ -811,7 +813,7 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 
 ## Full mode
 
-`--full` adds the two columns that reach off-machine: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail, over the network) and [LLM-generated summaries](#llm-summaries) of each branch's changes.
+`--full` adds the two columns that reach off-machine: [CI status](#ci-status) (forge pipeline pass/fail, over the network) and [LLM-generated summaries](#llm-summaries) of each branch's changes.
 
 ## Examples
 
@@ -1872,6 +1874,7 @@ Templates also support functions for dynamic lookups:
 | Function | Example | Description |
 |----------|---------|-------------|
 | `worktree_path_of_branch(branch)` | `{{ worktree_path_of_branch("main") }}` | Look up the path of a branch's worktree |
+| `expected_worktree_path_of_branch(branch)` | `{{ expected_worktree_path_of_branch("feature") }}` | Where `wt switch` expects the branch's worktree |
 
 The `worktree_path_of_branch` function returns the filesystem path of a worktree given a branch name, or an empty string if no worktree exists for that branch. This is useful for referencing files in other worktrees:
 
@@ -1880,6 +1883,12 @@ The `worktree_path_of_branch` function returns the filesystem path of a worktree
 [pre-start]
 # Copy config from main worktree
 setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path }}"
+```
+
+The `expected_worktree_path_of_branch` function returns the path `wt switch --create` would use for a branch, whether or not a worktree exists there. Unlike `worktree_path_of_branch`, it still returns that path after the worktree there has moved to another branch. For example, this switches to the worktree at `feature`'s path, whichever branch it now holds:
+
+```bash
+wt switch "$(wt step eval "{{ expected_worktree_path_of_branch('feature') }}")"
 ```
 
 ## Interactive hooks
@@ -2604,7 +2613,7 @@ See [`wt config shell`](#wt-config-shell) for setup, activation, and current-she
 
 ### First-run prompts
 
-On first run without shell integration, Worktrunk offers to install it. On first commit without LLM configuration, it offers to configure a detected tool (`claude`, `codex`). Declining sets `skip-shell-integration-prompt` or `skip-commit-generation-prompt` automatically.
+On first run without shell integration, Worktrunk offers to install it. On first commit without LLM configuration, it offers to configure a detected tool (`claude`, `codex`, `opencode`). Declining sets `skip-shell-integration-prompt` or `skip-commit-generation-prompt` automatically.
 
 # Other
 
@@ -2682,6 +2691,23 @@ Hooks, aliases and `step.copy-ignored.exclude` accumulate rather than replace, s
     Config {
         #[command(subcommand)]
         action: ConfigCommand,
+    },
+
+    /// Complete a detached branch deletion after worktree removal.
+    #[command(name = "_delete-branch-if-safe", hide = true)]
+    InternalDeleteBranchIfSafe {
+        #[arg(long, value_parser = non_empty_branch)]
+        branch: String,
+        #[arg(long)]
+        target: String,
+        #[arg(
+            long,
+            required_unless_present = "force_delete",
+            conflicts_with = "force_delete"
+        )]
+        expected_tip: Option<String>,
+        #[arg(long)]
+        force_delete: bool,
     },
 
     /// Run a custom `wt-<name>` command found on PATH.

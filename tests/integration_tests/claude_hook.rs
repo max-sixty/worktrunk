@@ -143,7 +143,8 @@ fn test_claude_hook_permission_request(mut repo: TestRepo) {
 /// `WorktreeCreate` prints the new worktree's path; a failed create exits
 /// nonzero with nothing on stdout, so Claude Code reports wt's error rather
 /// than a successful hook with no path (#3545). Without `CLAUDE_PROJECT_DIR`
-/// the hook creates from its own cwd.
+/// the hook creates from its own cwd. A name whose branch already exists
+/// reopens it, as `claude --worktree <name>` does for a kept worktree (#4486).
 #[rstest]
 fn test_claude_hook_worktree_create(repo: TestRepo) {
     let root = repo.root_path().to_path_buf();
@@ -156,9 +157,14 @@ fn test_claude_hook_worktree_create(repo: TestRepo) {
     assert!(path.join(".git").exists(), "no worktree at {path:?}");
     assert!(path.ends_with("repo.agent-task"), "{path:?}");
 
-    let collision = run_hook(&repo, &root, &root, payload);
-    assert!(!collision.status.success());
-    assert_eq!(stdout(&collision), "");
+    let reopened = run_hook(&repo, &root, &root, payload);
+    assert!(reopened.status.success(), "{reopened:?}");
+    assert_eq!(Path::new(stdout(&reopened).trim_end()), path);
+
+    let outside = repo.home_path().to_path_buf();
+    let failed = run_hook(&repo, &outside, &outside, payload);
+    assert!(!failed.status.success());
+    assert_eq!(stdout(&failed), "");
 }
 
 /// `WorktreeRemove` resolves against the path Claude Code hands it, even when

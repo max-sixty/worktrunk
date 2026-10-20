@@ -43,61 +43,50 @@ use worktrunk::config::HookSource;
 /// `yes` grants consent for this invocation alone: nothing is recorded, so the
 /// next run asks again. Recording without a prompt is `wt config approvals
 /// add --yes`'s job ([`crate::commands::add_approvals`]), which doesn't pass
-/// through this gate.
-///
-/// # Parameters
-/// - `commands_already_filtered`: If true, commands list is pre-filtered; skip filtering by approval status
+/// through this gate. Because `yes` neither reads nor records approvals,
+/// `approvals.toml` is loaded only on the interactive path, so a malformed
+/// file never aborts a `--yes` run.
 pub fn approve_command_batch(
     commands: &[ApprovableCommand],
     project_id: &str,
-    approvals: &Approvals,
     yes: bool,
-    commands_already_filtered: bool,
 ) -> anyhow::Result<bool> {
+    if yes {
+        return Ok(true);
+    }
+
+    let mut approvals = Approvals::load().context("Failed to load approvals")?;
     let needs_approval: Vec<&ApprovableCommand> = commands
         .iter()
-        .filter(|cmd| {
-            commands_already_filtered
-                || !approvals.is_command_approved(project_id, &cmd.command.template)
-        })
+        .filter(|cmd| !approvals.is_command_approved(project_id, &cmd.command.template))
         .collect();
 
     if needs_approval.is_empty() {
         return Ok(true);
     }
 
-    let approved = if yes {
-        true
-    } else {
-        prompt_for_batch_approval(&needs_approval, project_id)?
-    };
-
-    if !approved {
+    if !prompt_for_batch_approval(&needs_approval, project_id)? {
         return Ok(false);
     }
 
-    // Only save approvals when interactively approved, not when using --yes.
     // A failed save costs one more prompt next run, not the command the user
-    // actually ran, so it warns rather than errors.
-    if !yes {
-        let mut fresh_approvals = Approvals::load().context("Failed to load approvals")?;
-        let commands: Vec<String> = needs_approval
-            .iter()
-            .map(|cmd| cmd.command.template.clone())
-            .collect();
-        let save_result = require_approvals_path().and_then(|path| {
-            fresh_approvals.approve_commands(project_id.to_string(), commands, &path)
-        });
-        if let Err(e) = save_result {
-            eprintln!(
-                "{}",
-                warning_message(format!("Failed to save command approval: {e}"))
-            );
-            eprintln!(
-                "{}",
-                hint_message("Approval will be requested again next time")
-            );
-        }
+    // actually ran, so it warns rather than errors. `approve_commands` reloads
+    // under the lock, so approvals saved since the load above are kept.
+    let commands: Vec<String> = needs_approval
+        .iter()
+        .map(|cmd| cmd.command.template.clone())
+        .collect();
+    let save_result = require_approvals_path()
+        .and_then(|path| approvals.approve_commands(project_id.to_string(), commands, &path));
+    if let Err(e) = save_result {
+        eprintln!(
+            "{}",
+            warning_message(format!("Failed to save command approval: {e}"))
+        );
+        eprintln!(
+            "{}",
+            hint_message("Approval will be requested again next time")
+        );
     }
 
     Ok(true)
@@ -211,8 +200,6 @@ pub fn approve_alias_commands(
     project_id: &str,
     yes: bool,
 ) -> anyhow::Result<bool> {
-    let approvals = Approvals::load().context("Failed to load approvals")?;
-
     let cmds: Vec<_> = commands
         .commands()
         .map(|cmd| ApprovableCommand {
@@ -224,7 +211,7 @@ pub fn approve_alias_commands(
         })
         .collect();
 
-    approve_command_batch(&cmds, project_id, &approvals, yes, false)
+    approve_command_batch(&cmds, project_id, yes)
 }
 
 /// Collect project commands for hooks and request batch approval.
@@ -305,8 +292,7 @@ pub fn approve_hooks_filtered(
     }
 
     let project_id = ctx.repo.project_identifier()?;
-    let approvals = Approvals::load().context("Failed to load approvals")?;
-    approve_command_batch(&commands, &project_id, &approvals, ctx.yes, false)
+    approve_command_batch(&commands, &project_id, ctx.yes)
 }
 
 /// Approve `hook_types` and centralize the "decline → continue without hooks" message.
@@ -371,14 +357,9 @@ pub fn approve_commit_template_append(
     };
 
     let project_id = ctx.repo.project_identifier()?;
-    let approvals = Approvals::load().context("Failed to load approvals")?;
     let owned = fragment.to_string();
-    if approvals.is_command_approved(&project_id, &owned) {
-        return Ok(Some(owned));
-    }
-
     let batch = vec![ApprovableCommand::commit_template_append(owned.clone())];
-    let approved = approve_command_batch(&batch, &project_id, &approvals, ctx.yes, true)?;
+    let approved = approve_command_batch(&batch, &project_id, ctx.yes)?;
     if !approved {
         worktrunk::styling::eprintln!(
             "{}",

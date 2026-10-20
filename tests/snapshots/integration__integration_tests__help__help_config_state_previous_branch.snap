@@ -79,7 +79,7 @@ Enables [2mwt switch -[0m to return to the previous worktree, similar to [2mc
 
 [1m[32mHow it works[0m
 
-Updated automatically on every [2mwt switch[0m. Stored in git config as [2mworktrunk.history[0m.
+Updated automatically on every [2mwt switch[0m. Stored in git config as [2mworktrunk.history[0m, with the worktree's path in [2mworktrunk.history-path[0m.
 
 Without a subcommand, runs [2mget[0m. Use [2mset[0m to override or [2mclear[0m to reset.
 

@@ -422,7 +422,9 @@ fn test_prune_orphan_branches(mut repo: TestRepo) {
     repo.create_branch("orphan-b");
 
     // Create an unmerged branch (has a unique commit via worktree, then remove worktree)
-    repo.add_worktree_with_commit("unmerged-orphan", "u.txt", "data", "unique commit");
+    let unmerged_path =
+        repo.add_worktree_with_commit("unmerged-orphan", "u.txt", "data", "unique commit");
+    repo.run_git(&["worktree", "remove", unmerged_path.to_str().unwrap()]);
 
     // Far-future epoch: branches appear ~5 years old, passing the default 1d guard
     let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--yes"], None);
@@ -430,6 +432,9 @@ fn test_prune_orphan_branches(mut repo: TestRepo) {
     cmd.env("RAYON_NUM_THREADS", "1"); // deterministic output order
 
     assert_cmd_snapshot!(cmd);
+
+    // The unmerged orphan has a unique commit, so prune keeps it
+    repo.run_git(&["rev-parse", "--verify", "refs/heads/unmerged-orphan"]);
 }
 
 /// Orphan branches (no worktree) respect the min-age guard via reflog timestamps.
@@ -1562,6 +1567,41 @@ fn test_prune_pre_remove_needs_approval(mut repo: TestRepo) {
     assert!(
         !marker.exists(),
         "the pre-remove hook must not run without approval"
+    );
+}
+
+/// Approval hints compare the effective config source: an absolute override
+/// shares hooks across worktrees, while a relative override follows each root.
+#[rstest]
+#[case::absolute("prune_approval_absolute_project_config", true)]
+#[case::relative("prune_approval_relative_project_config", false)]
+fn test_prune_approval_project_config_override(
+    mut repo: TestRepo,
+    #[case] snapshot_name: &str,
+    #[case] absolute: bool,
+) {
+    let wt_path = repo.add_worktree("merged");
+    repo.commit("Advance default branch");
+    let config_name = "shared-hooks.toml";
+    let config_path = repo.root_path().join(config_name);
+    std::fs::write(&config_path, "pre-remove = \"exit 89\"\n").unwrap();
+    let override_path = if absolute {
+        config_path
+    } else {
+        config_name.into()
+    };
+
+    let mut cmd = make_snapshot_cmd(
+        &repo,
+        "step",
+        &["prune", "--foreground", "--min-age=0s"],
+        None,
+    );
+    cmd.env("WORKTRUNK_PROJECT_CONFIG_PATH", override_path);
+    assert_cmd_snapshot!(snapshot_name, cmd);
+    assert!(
+        wt_path.exists(),
+        "the unapproved worktree must remain in place"
     );
 }
 

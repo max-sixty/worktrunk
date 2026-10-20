@@ -7,7 +7,7 @@ use std::time::SystemTime;
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::copy::{copy_dir_recursive, copy_leaf};
-use worktrunk::git::Repository;
+use worktrunk::git::{Repository, path_dir_name};
 use worktrunk::path::format_path_for_display;
 use worktrunk::progress::{Progress, format_bytes, format_reflink_paren};
 use worktrunk::styling::{
@@ -67,7 +67,11 @@ pub fn step_copy_ignored(
 
     // Resolve source and destination worktree paths
     let (source_path, source_context) = match from {
-        Some(branch) => (repo.require_worktree(branch)?, branch.to_string()),
+        Some(selector) => {
+            let (path, branch) = repo.require_worktree(selector)?;
+            let context = branch.unwrap_or_else(|| path_dir_name(&path).to_string());
+            (path, context)
+        }
         None => {
             // Default source is the primary worktree (main worktree for normal repos,
             // default branch worktree for bare repos).
@@ -76,16 +80,13 @@ pub fn step_copy_ignored(
                     "No primary worktree found (bare repo with no default branch worktree)"
                 )
             })?;
-            let context = path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
+            let context = path_dir_name(&path).to_string();
             (path, context)
         }
     };
 
     let dest_path = match to {
-        Some(branch) => repo.require_worktree(branch)?,
+        Some(selector) => repo.require_worktree(selector)?.0,
         None => repo.current_worktree().root()?,
     };
 

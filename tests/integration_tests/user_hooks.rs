@@ -8,8 +8,8 @@
 
 use crate::common::{
     SLEEP_FOR_ABSENCE_CHECK, TestRepo, make_snapshot_cmd, make_snapshot_cmd_with_global_flags,
-    repo, resolve_git_common_dir, setup_snapshot_settings, wait_for_file, wait_for_file_content,
-    wait_for_file_count,
+    repo, repo_with_remote, resolve_git_common_dir, setup_snapshot_settings, wait_for_file,
+    wait_for_file_content, wait_for_file_count,
 };
 use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
@@ -4014,6 +4014,159 @@ capture = "echo 'target={{ target }} target_wt={{ target_worktree_path }} wt_pat
         content.contains(&format!("wt_name={main_name}")),
         "{{{{ worktree_name }}}} should be the main worktree name, got: {content}"
     );
+}
+
+/// Regression test for #4492: a worktree path selects the same worktree as its
+/// branch name, so the pre-switch vars must describe that destination too.
+/// The picker passes paths, so every picker switch takes this route.
+#[rstest]
+fn test_pre_switch_vars_with_path_argument(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+    let feature_name = feature_path.file_name().unwrap().to_string_lossy();
+
+    repo.write_test_config(
+        r#"[pre-switch]
+capture = "echo 'branch={{ branch }} target={{ target }} wt_name={{ worktree_name }} target_wt={% if target_worktree_path %}set{% endif %} commit={% if commit %}set{% endif %}' > pre_switch_path.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["switch", feature_path.to_str().unwrap(), "--yes"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content = fs::read_to_string(repo.root_path().join("pre_switch_path.txt")).unwrap();
+    assert_eq!(
+        content.trim(),
+        format!("branch=feature target=feature wt_name={feature_name} target_wt=set commit=set"),
+    );
+}
+
+/// A detached worktree is reachable only by path. Its pre-switch vars leave
+/// `branch`/`target` unset and take `commit` from the destination's HEAD, not
+/// the source's.
+#[rstest]
+fn test_pre_switch_vars_with_detached_path_argument(mut repo: TestRepo) {
+    let detached_path = repo.add_worktree("detached");
+    repo.commit_in_worktree(&detached_path, "file.txt", "content", "detached commit");
+    repo.detach_head_in_worktree("detached");
+    let detached_sha = repo.head_sha_in(&detached_path);
+
+    repo.write_test_config(
+        r#"[pre-switch]
+capture = "echo 'branch={% if branch is defined %}{{ branch }}{% else %}unset{% endif %} target={% if target is defined %}{{ target }}{% else %}unset{% endif %} commit={{ commit }}' > pre_switch_detached_path.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["switch", detached_path.to_str().unwrap(), "--yes"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content =
+        fs::read_to_string(repo.root_path().join("pre_switch_detached_path.txt")).unwrap();
+    assert_eq!(
+        content.trim(),
+        format!("branch=unset target=unset commit={detached_sha}"),
+    );
+}
+
+/// A remote-tracking name (`origin/feature`, which the picker passes for a
+/// remote branch) switches to the local branch, so the pre-switch vars name
+/// that branch — with its worktree when it has one, and without when the
+/// switch creates it.
+#[rstest]
+#[case::existing_worktree("feature", "set")]
+#[case::remote_only("remote-feature", "unset")]
+fn test_pre_switch_vars_with_remote_prefixed_argument(
+    #[from(repo_with_remote)] mut repo: TestRepo,
+    #[case] branch: &str,
+    #[case] target_wt: &str,
+) {
+    if branch == "feature" {
+        repo.add_worktree("feature");
+        repo.run_git(&["push", "origin", "feature"]);
+    } else {
+        repo.run_git(&["branch", branch]);
+        repo.run_git(&["push", "origin", branch]);
+        repo.run_git(&["branch", "-D", branch]);
+    }
+
+    repo.write_test_config(
+        r#"[pre-switch]
+capture = "echo 'branch={{ branch }} target={{ target }} target_wt={% if target_worktree_path %}set{% else %}unset{% endif %}' > pre_switch_remote.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["switch", &format!("origin/{branch}"), "--yes"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content = fs::read_to_string(repo.root_path().join("pre_switch_remote.txt")).unwrap();
+    assert_eq!(
+        content.trim(),
+        format!("branch={branch} target={branch} target_wt={target_wt}"),
+    );
+}
+
+/// A pre-switch hook that fetches makes a branch it fetched switchable in the
+/// same run — the fetch-if-stale use the hook exists for — whether the
+/// argument names the branch or its remote-tracking ref.
+#[rstest]
+#[case::branch("late")]
+#[case::remote_tracking("origin/late")]
+fn test_pre_switch_fetch_makes_branch_switchable(
+    #[from(repo_with_remote)] repo: TestRepo,
+    #[case] argument: &str,
+) {
+    // `late` exists on the remote, but nothing local knows about it yet.
+    repo.run_git(&["branch", "late"]);
+    repo.run_git(&["push", "origin", "late"]);
+    repo.run_git(&["branch", "-D", "late"]);
+    repo.run_git(&["update-ref", "-d", "refs/remotes/origin/late"]);
+
+    repo.write_test_config(
+        r#"[pre-switch]
+fetch = "git fetch -q origin"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["switch", argument, "--no-cd", "--yes", "--format=json"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["action"], "created");
+    assert_eq!(json["branch"], "late");
 }
 
 /// Post-remove: target/target_worktree_path point to where user ends up.

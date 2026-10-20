@@ -52,7 +52,8 @@ fn run_post_hook(
             extra_vars,
             name_filters,
             FailureStrategy::Warn,
-        );
+        )
+        .map(drop);
     }
 
     // Filter path merges user + project matches into one pipeline (the user
@@ -342,6 +343,7 @@ pub fn run_hook(
             name_filters,
             FailureStrategy::FailFast,
         )
+        .map(drop)
     } else {
         run_post_hook(
             &ctx,

@@ -18,7 +18,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use color_print::cformat;
-use minijinja::value::{Enumerator, Object, ObjectRepr, StringInput};
+use minijinja::value::{Enumerator, Object, ObjectRepr, Serde, StringInput};
 use minijinja::{Environment, ErrorKind, State, UndefinedBehavior, Value};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -301,6 +301,12 @@ pub fn vars_available_in(scope: ValidationScope) -> Vec<&'static str> {
         }
     }
     vars
+}
+
+/// Whether `name` is a variable Worktrunk supplies in some scope.
+fn is_worktrunk_var(name: &str) -> bool {
+    use strum::IntoEnumIterator;
+    HookType::iter().any(|hook| vars_available_in(ValidationScope::Hook(hook)).contains(&name))
 }
 
 /// Cheap vars `build_hook_context` computes regardless of [`VarScope`] but
@@ -860,8 +866,10 @@ fn build_undefined_vars_error(
     } else {
         "variables"
     };
+    // A name Worktrunk defines somewhere is unset here, not misspelled, so a
+    // similar name (`target_worktree_path` for `target`) would mislead.
     let suggestion = match undefined_vars {
-        [var] => did_you_mean(var, available_vars.iter().cloned())
+        [var] if !is_worktrunk_var(var) => did_you_mean(var, available_vars.iter().cloned())
             .into_iter()
             .next(),
         _ => None,
@@ -947,6 +955,34 @@ pub fn template_environment(repo: &Repository) -> Environment<'static> {
             .map(|p| to_posix_path(&p.to_string_lossy()))
             .unwrap_or_default()
     });
+
+    // Register expected_worktree_path_of_branch: where `wt switch --create` would put a
+    // branch's worktree, whether or not one exists there. Rendering the
+    // `worktree-path` template re-enters this environment, so a template
+    // that calls the function errors rather than recursing.
+    let repo_clone = repo.clone();
+    env.add_function(
+        "expected_worktree_path_of_branch",
+        move |branch: String| -> Result<String, minijinja::Error> {
+            thread_local! {
+                static IN_EXPECTED_WORKTREE_PATH_OF_BRANCH: std::cell::Cell<bool> =
+                    const { std::cell::Cell::new(false) };
+            }
+            if IN_EXPECTED_WORKTREE_PATH_OF_BRANCH.replace(true) {
+                return Err(minijinja::Error::new(
+                    ErrorKind::InvalidOperation,
+                    "expected_worktree_path_of_branch cannot be used in the worktree-path template",
+                ));
+            }
+            let result = repo_clone
+                .user_config()
+                .expected_worktree_path(&repo_clone, &branch);
+            IN_EXPECTED_WORKTREE_PATH_OF_BRANCH.set(false);
+            result
+                .map(|p| to_posix_path(&p.to_string_lossy()))
+                .map_err(|e| minijinja::Error::new(ErrorKind::InvalidOperation, format!("{e:#}")))
+        },
+    );
 
     env
 }
@@ -1058,7 +1094,7 @@ pub fn validate_template(
     // Inject vars as empty map so {{ vars.key | default(...) }} doesn't error
     context.insert(
         "vars".to_string(),
-        minijinja::Value::from_serialize(std::collections::BTreeMap::<String, String>::new()),
+        minijinja::Value::from(std::collections::BTreeMap::<String, String>::new()),
     );
     // In alias and hook scopes, inject `args` as an empty sequence so
     // `{{ args }}`, `{{ args[0] | default(...) }}`, `{{ args | length }}`,
@@ -1125,6 +1161,8 @@ pub fn validate_template(
 /// # Functions
 /// - `worktree_path_of_branch(branch)` — Look up the filesystem path of a branch's worktree
 ///   Returns empty string if branch has no worktree.
+/// - `expected_worktree_path_of_branch(branch)` — Where `wt switch` expects the branch's worktree,
+///   from the `worktree-path` template. Returns the path whether or not it exists.
 ///
 /// The `name` parameter appears in error messages to help identify which template failed.
 pub fn expand_template(
@@ -1169,7 +1207,13 @@ pub fn expand_template_with(
     let mut env = template_environment(repo);
     if escape_mode != ShellEscapeMode::Literal {
         // Preserve trailing newlines in templates (important for multiline shell commands)
-        env.set_keep_trailing_newline(true);
+        let syntax = env
+            .syntax()
+            .to_builder()
+            .keep_trailing_newline(true)
+            .build()
+            .map_err(|e| build_template_error(&e, template, name, Vec::new()))?;
+        env.set_syntax(syntax);
 
         // Shell-escape values at output time, not before template rendering.
         // This ensures filters (sanitize, sanitize_db, etc.) operate on raw values
@@ -1307,12 +1351,12 @@ pub fn vars_map_to_value(entries: &std::collections::BTreeMap<String, String>) -
             let value = serde_json::from_str::<serde_json::Value>(v)
                 .ok()
                 .filter(|j| j.is_object() || j.is_array())
-                .map(|j| Value::from_serialize(&j))
+                .map(|j| Value::from(Serde(j)))
                 .unwrap_or_else(|| Value::from(v.clone()));
             (k.as_str(), value)
         })
         .collect();
-    Value::from_serialize(&vars_map)
+    Value::from(vars_map)
 }
 
 /// A stand-in for the `vars` / `git.branch` maps that answers every key
@@ -1764,22 +1808,62 @@ mod tests {
         }
     }
 
+    /// A Worktrunk variable the operation left unset (`target` in a
+    /// `post-switch` hook to a detached worktree) is not a typo: suggesting a
+    /// similarly named variable would steer the user to the wrong value.
+    #[test]
+    fn test_unset_worktrunk_variable_gets_no_suggestion() {
+        let test = test_repo();
+        let vars = HashMap::from([("branch", "main"), ("target_worktree_path", "/tmp/wt")]);
+        let err = expand_template(
+            "echo {{ target }}",
+            &vars,
+            ShellEscapeMode::Literal,
+            &test.repo,
+            "test",
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.message,
+            "Failed to expand test: undefined variable target @ line 1"
+        );
+        assert_eq!(err.suggestion, None);
+    }
+
     #[test]
     fn test_undefined_namespace_values_do_not_name_unreached_typos() {
         let test = test_repo();
         let vars = HashMap::from([("branch", "main"), ("args", "[]")]);
-        for template in [
-            "{{ args[0] }}{{ brnch }}",
-            "{{ vars.missing }}{{ brnch }}",
-            "{% if optional %}{{ brnch }}{% endif %}{{ vars.missing }}",
-            "{% set local = brnch %}{{ local }}",
-            "{{ brnch if branch else other_missing }}",
-            "{{ branch | replace(brnch, '-') }}",
-            "{% if false %}{{ brnch }}{% endif %}{% set brnch = vars.missing %}{{ brnch }}",
-            "{% if false %}{{ brnch }}{% endif %}{% with brnch = vars.missing %}{{ brnch }}{% endwith %}",
-            "{% if false %}{{ brnch }}{% endif %}{% for brnch in [vars.missing] %}{{ brnch }}{% endfor %}",
-            "{% if false %}{{ brnch }}{% endif %}{% for brnch, other in [[vars.missing, 1]] %}{{ brnch }}{% endfor %}",
-            "{% if false %}{{ brnch }}{% endif %}{% set captured %}{% set brnch = vars.missing %}{{ brnch }}{% endset %}",
+        for (template, undefined) in [
+            ("{{ args[0] }}{{ brnch }}", "args[0]"),
+            ("{{ vars.missing }}{{ brnch }}", "vars.missing"),
+            (
+                "{% if optional %}{{ brnch }}{% endif %}{{ vars.missing }}",
+                "vars.missing",
+            ),
+            ("{% set local = brnch %}{{ local }}", "brnch"),
+            ("{{ brnch if branch else other_missing }}", "brnch"),
+            ("{{ branch | replace(brnch, '-') }}", "brnch"),
+            (
+                "{% if false %}{{ brnch }}{% endif %}{% set brnch = vars.missing %}{{ brnch }}",
+                "vars.missing",
+            ),
+            (
+                "{% if false %}{{ brnch }}{% endif %}{% with brnch = vars.missing %}{{ brnch }}{% endwith %}",
+                "vars.missing",
+            ),
+            (
+                "{% if false %}{{ brnch }}{% endif %}{% for brnch in [vars.missing] %}{{ brnch }}{% endfor %}",
+                "vars.missing",
+            ),
+            (
+                "{% if false %}{{ brnch }}{% endif %}{% for brnch, other in [[vars.missing, 1]] %}{{ brnch }}{% endfor %}",
+                "vars.missing",
+            ),
+            (
+                "{% if false %}{{ brnch }}{% endif %}{% set captured %}{% set brnch = vars.missing %}{{ brnch }}{% endset %}",
+                "vars.missing",
+            ),
         ] {
             let err = expand_template(
                 template,
@@ -1789,9 +1873,17 @@ mod tests {
                 "test",
             )
             .unwrap_err();
-            assert_eq!(
-                err.message,
-                "Failed to expand test: undefined value @ line 1"
+            // MiniJinja names the undefined expression only when the
+            // environment's debug flag is on, which defaults to
+            // `debug_assertions`; accept either exact form.
+            let named = format!(
+                "Failed to expand test: undefined value: `{undefined}` is undefined @ line 1"
+            );
+            let unnamed = "Failed to expand test: undefined value @ line 1";
+            assert!(
+                err.message == named || err.message == unnamed,
+                "{template}: {}",
+                err.message
             );
             assert_eq!(err.suggestion, None);
         }

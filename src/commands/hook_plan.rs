@@ -214,14 +214,7 @@ impl HookPlan {
         }
         let project_id =
             project_id.context("project identifier is required to approve project commands")?;
-        // `approve_command_batch` with `yes = true` is an unconditional
-        // `Ok(true)`, so loading `Approvals` here would be dead work.
-        let approved = if yes {
-            true
-        } else {
-            let approvals = Approvals::load().context("Failed to load approvals")?;
-            approve_command_batch(&approvable, project_id, &approvals, false, false)?
-        };
+        let approved = approve_command_batch(&approvable, project_id, yes)?;
         if !approved {
             return Ok(None);
         }
