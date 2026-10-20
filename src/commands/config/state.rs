@@ -755,10 +755,8 @@ pub fn handle_state_get(
             None => println!(""),
         },
         "marker" => {
-            let branch_name = match branch {
-                Some(b) => repo.require_selected_branch(&b, "get marker")?,
-                None => repo.require_current_branch("get marker for current branch")?,
-            };
+            let branch_name =
+                repo.require_selected_branch(branch.as_deref().unwrap_or("@"), "get marker")?;
             if format == SwitchFormat::Json {
                 // Read raw config to get both marker and set_at
                 let config_key = format!("worktrunk.state.{branch_name}.marker");
@@ -788,10 +786,8 @@ pub fn handle_state_get(
             }
         }
         "ci-status" => {
-            let branch_name = match branch {
-                Some(b) => repo.require_selected_branch(&b, "get ci-status")?,
-                None => repo.require_current_branch("get ci-status for current branch")?,
-            };
+            let branch_name =
+                repo.require_selected_branch(branch.as_deref().unwrap_or("@"), "get ci-status")?;
 
             // Ask git for both qualified forms in one call so the remote/local
             // determination and the HEAD SHA come from the same ref. A local
@@ -923,10 +919,8 @@ pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> any
             );
         }
         "marker" => {
-            let branch_name = match branch {
-                Some(b) => repo.require_selected_branch(&b, "set marker")?,
-                None => repo.require_current_branch("set marker for current branch")?,
-            };
+            let branch_name =
+                repo.require_selected_branch(branch.as_deref().unwrap_or("@"), "set marker")?;
 
             // Store as JSON with timestamp
             let now = epoch_now();
@@ -989,10 +983,8 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                 }
             } else {
                 // Clear CI status for specific branch
-                let branch_name = match branch {
-                    Some(b) => repo.require_selected_branch(&b, "clear ci-status")?,
-                    None => repo.require_current_branch("clear ci-status for current branch")?,
-                };
+                let branch_name = repo
+                    .require_selected_branch(branch.as_deref().unwrap_or("@"), "clear ci-status")?;
                 if CachedCiStatus::clear_one(&repo, &branch_name)? {
                     eprintln!(
                         "{}",
@@ -1021,10 +1013,8 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                     );
                 }
             } else {
-                let branch_name = match branch {
-                    Some(b) => repo.require_selected_branch(&b, "clear marker")?,
-                    None => repo.require_current_branch("clear marker for current branch")?,
-                };
+                let branch_name =
+                    repo.require_selected_branch(branch.as_deref().unwrap_or("@"), "clear marker")?;
 
                 let config_key = format!("worktrunk.state.{branch_name}.marker");
                 if repo.unset_config(&config_key)? {
@@ -1673,10 +1663,8 @@ fn validate_vars_key(key: &str) -> anyhow::Result<()> {
 pub fn handle_vars_get(key: &str, branch: Option<String>) -> anyhow::Result<()> {
     validate_vars_key(key)?;
     let repo = Repository::current()?;
-    let branch_name = match branch {
-        Some(b) => repo.require_selected_branch(&b, "get variable")?,
-        None => repo.require_current_branch("get variable for current branch")?,
-    };
+    let branch_name =
+        repo.require_selected_branch(branch.as_deref().unwrap_or("@"), "get variable")?;
 
     let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
     if let Some(value) = repo.config_value(&config_key)? {
@@ -1689,10 +1677,8 @@ pub fn handle_vars_get(key: &str, branch: Option<String>) -> anyhow::Result<()> 
 pub fn handle_vars_set(key: &str, value: &str, branch: Option<String>) -> anyhow::Result<()> {
     validate_vars_key(key)?;
     let repo = Repository::current()?;
-    let branch_name = match branch {
-        Some(b) => repo.require_selected_branch(&b, "set variable")?,
-        None => repo.require_current_branch("set variable for current branch")?,
-    };
+    let branch_name =
+        repo.require_selected_branch(branch.as_deref().unwrap_or("@"), "set variable")?;
 
     let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
     repo.set_config(&config_key, value)?;
@@ -1707,10 +1693,8 @@ pub fn handle_vars_set(key: &str, value: &str, branch: Option<String>) -> anyhow
 /// Handle vars list
 pub fn handle_vars_list(branch: Option<String>, format: SwitchFormat) -> anyhow::Result<()> {
     let repo = Repository::current()?;
-    let branch_name = match branch {
-        Some(b) => repo.require_selected_branch(&b, "list variables")?,
-        None => repo.require_current_branch("list variables for current branch")?,
-    };
+    let branch_name =
+        repo.require_selected_branch(branch.as_deref().unwrap_or("@"), "list variables")?;
 
     let entries: Vec<_> = repo.vars_entries(&branch_name).into_iter().collect();
 
@@ -1740,10 +1724,8 @@ pub fn handle_vars_clear(
     branch: Option<String>,
 ) -> anyhow::Result<()> {
     let repo = Repository::current()?;
-    let branch_name = match branch {
-        Some(b) => repo.require_selected_branch(&b, "clear variable")?,
-        None => repo.require_current_branch("clear variable for current branch")?,
-    };
+    let branch_name =
+        repo.require_selected_branch(branch.as_deref().unwrap_or("@"), "clear variable")?;
 
     match (all, key) {
         (false, None) => {

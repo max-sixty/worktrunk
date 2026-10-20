@@ -1,59 +1,43 @@
-use anyhow::Context;
 use std::path::PathBuf;
 use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 
 use super::command_executor::CommandContext;
 
-/// Shared execution context for command handlers that operate on the current worktree.
+/// Shared execution context for command handlers that act on one worktree.
 ///
-/// Centralizes the common "repo + branch + config + cwd" setup so individual handlers
-/// can focus on their core logic while sharing consistent error messaging.
+/// Centralizes the common "repo + branch + config + worktree" setup so individual
+/// handlers can focus on their core logic while sharing consistent error messaging.
 ///
-/// This helper is used for commands that explicitly act on "where the user is standing"
-/// (e.g., `beta` and `merge`) and therefore need all of these pieces together. Commands that
-/// inspect multiple worktrees or run without a config/branch requirement (`list`, the picker,
-/// some `worktree` helpers) still call `Repository::current()` directly so they can operate in
-/// broader contexts without forcing config loads or branch resolution.
+/// Used by commands that act on a single worktree — the one named by `--branch`,
+/// or `@` without it (`merge`, `step commit`, `step squash`, `hook`). Commands that
+/// inspect multiple worktrees or run without a config/branch requirement (`list`, the
+/// picker, some `worktree` helpers) still call `Repository::current()` directly so
+/// they can operate in broader contexts without forcing config loads or branch
+/// resolution.
 pub struct CommandEnv {
     pub repo: Repository,
-    /// Current branch name, if on a branch (None in detached HEAD state).
+    /// The selected worktree's branch (None in detached HEAD state).
     pub branch: Option<String>,
     pub config: UserConfig,
-    /// Canonical absolute path to the worktree root (via `git rev-parse --show-toplevel`).
+    /// The selected worktree's root.
     pub worktree_path: PathBuf,
 }
 
 impl CommandEnv {
-    /// Load the command environment for the current worktree.
+    /// Load the command environment for the worktree `selector` names.
     ///
-    /// Resolves the worktree path from the current directory. The branch is
-    /// populated when available but not required — commands that need a branch
-    /// should call `require_branch()` after construction.
-    pub fn for_action(config: UserConfig) -> anyhow::Result<Self> {
-        let repo = Repository::current()?;
-        let current_wt = repo.current_worktree();
-        let worktree_path = current_wt.root()?;
-        let branch = current_wt
-            .branch()
-            .context("Failed to determine current branch")?;
-
-        Ok(Self {
-            repo,
-            branch,
-            config,
-            worktree_path,
-        })
-    }
-
-    /// Load the command environment for a named worktree.
+    /// Commands without a `--branch` pass `"@"`, so "the current worktree" has
+    /// one definition, [`Repository::resolve_worktree`]'s: the worktree the
+    /// command runs in, or outside every worktree, the one checked out on the
+    /// branch HEAD names.
     ///
-    /// Resolves the worktree from the selector rather than the current
-    /// directory, and roots `repo` at that worktree — so a command run with
-    /// `--branch <b>` (e.g. `wt step commit --branch <b>`) and its hooks
-    /// (`pre-commit` / `post-commit`) operate on, and resolve `.config/wt.toml`
-    /// from, `<b>`'s worktree rather than the cwd. See the `commands::hooks`
-    /// module docs for the hook config-resolution rule.
+    /// `repo` is rooted at the selected worktree (see
+    /// [`Repository::rooted_at`]), so a command run with `--branch <b>`
+    /// (e.g. `wt step commit --branch <b>`) and its hooks (`pre-commit` /
+    /// `post-commit`) operate on, and resolve `.config/wt.toml` from, `<b>`'s
+    /// worktree rather than the cwd. See the `commands::hooks` module docs for
+    /// the hook config-resolution rule.
     ///
     /// `branch` carries the resolved branch, not the selector, so a worktree
     /// named by path expands `{{ branch }}` to the branch checked out there.
@@ -62,33 +46,7 @@ impl CommandEnv {
         let (worktree_path, branch) = repo.require_worktree(selector)?;
 
         Ok(Self {
-            repo: Repository::at(&worktree_path)?,
-            branch,
-            config,
-            worktree_path,
-        })
-    }
-
-    /// Load the command environment, taking [`UserConfig`] from the repository's
-    /// own cached load rather than from the caller.
-    ///
-    /// The branch is resolved exactly as [`Self::for_action`] resolves it —
-    /// `None` in detached HEAD, and required only by a later
-    /// [`Self::require_branch`] call. The config source is the whole
-    /// difference: use this where the caller has no `UserConfig` in hand and
-    /// the repository has already loaded one.
-    pub fn for_action_loading_config() -> anyhow::Result<Self> {
-        let repo = Repository::current()?;
-        let current_wt = repo.current_worktree();
-        let worktree_path = current_wt.root()?;
-        // Propagate git errors (broken repo, missing git) but allow None for detached HEAD
-        let branch = current_wt
-            .branch()
-            .context("Failed to determine current branch")?;
-        let config = repo.user_config().clone();
-
-        Ok(Self {
-            repo,
+            repo: repo.rooted_at(&worktree_path)?,
             branch,
             config,
             worktree_path,

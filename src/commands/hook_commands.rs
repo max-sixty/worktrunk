@@ -219,9 +219,9 @@ pub fn run_hook(
         shorthand_vars,
         forwarded_args,
     } = cli;
-    // Derive context from the current environment; `config` isn't in hand here,
-    // so let the repository supply its cached load.
-    let env = CommandEnv::for_action_loading_config()?;
+    // `config` isn't in hand here, so let the repository supply its cached load.
+    let config = Repository::current()?.user_config().clone();
+    let env = CommandEnv::for_selector(config, "@")?;
     let repo = &env.repo;
     let ctx = env.context(yes);
 
@@ -365,8 +365,15 @@ pub fn handle_hook_show(
 ) -> anyhow::Result<()> {
     use crate::help_pager::show_help_in_pager;
 
-    let repo = Repository::current().context("Failed to show hooks")?;
-    let config: &UserConfig = repo.user_config();
+    let config = Repository::current()
+        .context("Failed to show hooks")?
+        .user_config()
+        .clone();
+    // Show the hooks `wt hook` would run: the project config of the worktree
+    // `@` names.
+    let env = CommandEnv::for_selector(config, "@")?;
+    let repo = &env.repo;
+    let config = &env.config;
     // Preserve the loader's typed source diagnosis through command context.
     let project_config: Option<&ProjectConfig> = repo.project_config()?;
     let approvals = Approvals::load().context("Failed to load approvals")?;
@@ -379,16 +386,10 @@ pub fn handle_hook_show(
         .map(crate::cli::parse_hook_type)
         .transpose()?;
 
-    // Build context for template expansion (only used if --expanded).
-    // Need to keep CommandEnv alive for the lifetime of ctx. Detached HEAD is
+    // Context for template expansion, only under --expanded. Detached HEAD is
     // fine: `{{ branch }}` is unset there, and `--expanded` renders the
     // guarded form the way any other unset variable renders.
-    let env = if expanded {
-        Some(CommandEnv::for_action_loading_config()?)
-    } else {
-        None
-    };
-    let ctx = env.as_ref().map(|e| e.context(false));
+    let ctx = expanded.then(|| env.context(false));
 
     if format == crate::cli::SwitchFormat::Json {
         return emit_hook_show_json(
@@ -417,7 +418,7 @@ pub fn handle_hook_show(
     // Render project hooks
     render_project_hooks(
         &mut output,
-        &repo,
+        repo,
         project_config,
         &approvals,
         project_id.as_ref(),

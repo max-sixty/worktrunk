@@ -17,19 +17,17 @@ use worktrunk::git::Repository;
 /// a stale local `main` would count every upstream commit the branch picked up
 /// as the branch's own.
 ///
-/// `branch` selects which worktree to diff: when `Some`, the repo is rooted at
-/// that branch's worktree so the diff (and its target resolution) operate there
-/// rather than on the current directory. The branch must have a checked-out
-/// worktree.
+/// `branch` selects which worktree to diff, `@` when `None`; the repo is
+/// rooted at that worktree so the diff (and its target resolution) operate
+/// there. The branch must have a checked-out worktree.
 pub fn step_diff(
     branch: Option<&str>,
     target: Option<&str>,
     extra_args: &[String],
 ) -> anyhow::Result<()> {
-    let repo = match branch {
-        Some(b) => Repository::at(Repository::current()?.require_worktree(b)?.0)?,
-        None => Repository::current()?,
-    };
+    let repo = Repository::current()?;
+    let (path, _) = repo.require_worktree(branch.unwrap_or("@"))?;
+    let repo = repo.rooted_at(&path)?;
     let wt = repo.current_worktree();
 
     let integration_target = repo.require_target_ref(target)?;

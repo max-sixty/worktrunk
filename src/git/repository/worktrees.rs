@@ -575,9 +575,9 @@ impl Repository {
     ///
     /// [`resolve_worktree`](Self::resolve_worktree) for the arguments that want
     /// a branch rather than a worktree — the `--branch` of the `wt config
-    /// state` commands, which key state by branch name. A branch with no
-    /// worktree is a fine answer to those; a worktree named by path that has no
-    /// branch is not.
+    /// state` commands, which key state by branch name, defaulting to `@`. A
+    /// branch with no worktree is a fine answer to those; a worktree named by
+    /// path that has no branch is not.
     pub fn require_selected_branch(&self, name: &str, action: &str) -> anyhow::Result<String> {
         match self.resolve_worktree(name)? {
             ResolvedWorktree::Worktree {
@@ -590,6 +590,15 @@ impl Repository {
             ResolvedWorktree::NoWorktreeAtPath { path } => {
                 Err(GitError::WorktreeNotFoundAtPath { path }.into())
             }
+            // Name the detached worktree only when it isn't the one the
+            // command runs in, as `GitError::DetachedHead` asks.
+            ResolvedWorktree::Worktree {
+                path, branch: None, ..
+            } if self.is_current_worktree(&path)? => Err(GitError::DetachedHead {
+                action: Some(action.to_string()),
+                worktree: None,
+            }
+            .into()),
             ResolvedWorktree::Worktree {
                 path, branch: None, ..
             } => Err(GitError::DetachedHead {
@@ -600,6 +609,25 @@ impl Repository {
                 worktree: Some(path),
             }
             .into()),
+        }
+    }
+
+    /// Whether `path` is the worktree this repository was discovered in.
+    fn is_current_worktree(&self, path: &Path) -> anyhow::Result<bool> {
+        Ok(WorktreeId::new(self.current_worktree().root()?) == WorktreeId::new(path))
+    }
+
+    /// This repository, rooted at the worktree at `path`.
+    ///
+    /// Keeps `self`, discovered from the cwd and with the caches it has
+    /// already filled, when `path` is the worktree it was discovered in, so a
+    /// command acting on `@` there runs exactly as it would from the cwd.
+    /// Otherwise discovers the repository at `path`.
+    pub fn rooted_at(self, path: &Path) -> anyhow::Result<Self> {
+        if self.is_current_worktree(path)? {
+            Ok(self)
+        } else {
+            Self::at(path)
         }
     }
 

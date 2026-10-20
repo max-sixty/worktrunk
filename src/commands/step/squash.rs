@@ -4,7 +4,7 @@ use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::UserConfig;
-use worktrunk::git::{Repository, WorkingTree};
+use worktrunk::git::WorkingTree;
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, println, progress_message,
     success_message, suggest_command,
@@ -80,7 +80,7 @@ pub fn handle_squash(
     // One-time LLM setup prompt (errors logged internally; don't block commit)
     let _ = crate::output::prompt_commit_generation(&mut config);
 
-    let env = CommandEnv::for_action(config)?;
+    let env = CommandEnv::for_selector(config, "@")?;
     handle_squash_in(
         &env,
         target,
@@ -506,10 +506,9 @@ fn preview_squash(
     dry_run: bool,
     yes: bool,
 ) -> anyhow::Result<()> {
-    let repo = Repository::current()?;
-    let config = UserConfig::load().context("Failed to load config")?;
-    let project_id = repo.project_identifier().ok();
-    let commit_config = config.commit_generation(project_id.as_ref());
+    let env = CommandEnv::for_selector(UserConfig::load().context("Failed to load config")?, "@")?;
+    let repo = &env.repo;
+    let commit_config = env.config.commit_generation(env.project_id().as_ref());
 
     let integration_target = repo.require_target_ref(target)?;
     // #3519: preview against the same upstream-aware span the real squash uses.
@@ -537,7 +536,6 @@ fn preview_squash(
         .and_then(|n| n.to_str())
         .unwrap_or("repo");
 
-    let env = CommandEnv::for_action(config)?;
     let ctx = env.context(yes);
     let project_append = resolve_template_for_preview(&ctx, &commit_config, dry_run)?;
 

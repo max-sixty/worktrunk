@@ -1491,19 +1491,6 @@ impl Repository {
         }
     }
 
-    /// Get the current branch name, or error if in detached HEAD state.
-    ///
-    /// `action` describes what requires being on a branch (e.g., "merge").
-    pub fn require_current_branch(&self, action: &str) -> anyhow::Result<String> {
-        self.current_worktree().branch()?.ok_or_else(|| {
-            GitError::DetachedHead {
-                action: Some(action.into()),
-                worktree: None,
-            }
-            .into()
-        })
-    }
-
     // =========================================================================
     // Core repository properties
     // =========================================================================

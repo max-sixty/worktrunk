@@ -313,7 +313,7 @@ fn handle_step_command(
         } => {
             let repo = Repository::current()?;
             let result = if no_ff {
-                let current_branch = repo.require_current_branch("step push --no-ff")?;
+                let current_branch = repo.require_selected_branch("@", "step push --no-ff")?;
                 handle_no_ff_merge(&repo, target.as_deref(), None, &current_branch)?
             } else {
                 handle_push(&repo, target.as_deref(), PushKind::Standalone, None)?
