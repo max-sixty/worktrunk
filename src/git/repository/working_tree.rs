@@ -1162,6 +1162,21 @@ impl<'a> WorkingTree<'a> {
         Ok(has_initialized_submodules_from_status(&output))
     }
 
+    /// Initialized submodules, recursively, holding commits that no
+    /// remote-tracking ref reaches, by display path. Reflog-only commits
+    /// count: removing the worktree deletes a module store along with them.
+    /// A shallow or SHA-fetched pin can report commits a remote does hold.
+    pub fn submodules_with_local_commits(&self) -> anyhow::Result<Vec<String>> {
+        let output = self.run_command(&[
+            "submodule",
+            "foreach",
+            "--quiet",
+            "--recursive",
+            r#"test -z "$(git rev-list --all --reflog --not --remotes --max-count=1)" || echo "$displaypath""#,
+        ])?;
+        Ok(output.lines().map(String::from).collect())
+    }
+
     /// Back up the index, as a squash is about to commit it, to `refs/wt-backup/<branch>`.
     ///
     /// Writes the index as a commit whose parent is `HEAD`, so one commit holds

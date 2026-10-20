@@ -4859,7 +4859,61 @@ fn test_remove_foreground_succeeds_with_stuck_directory_detached(mut repo: TestR
 /// Regression test for <https://github.com/max-sixty/worktrunk/issues/1194>.
 #[rstest]
 fn test_remove_foreground_with_submodules(mut repo: TestRepo) {
-    // Create a local repo to use as a submodule source
+    let worktree_path = add_worktree_with_submodule(&mut repo, "feature-submod");
+
+    // Remove the worktree in foreground mode — should succeed despite submodules
+    let output = repo
+        .wt_command()
+        .args(["remove", "--foreground", "feature-submod"])
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "Remove should succeed with submodules, got: {stderr}"
+    );
+    assert!(
+        !worktree_path.exists(),
+        "Worktree directory should be removed"
+    );
+    // The submodule's only commit is on its remote.
+    assert!(!stderr.contains("has commits on no remote"), "{stderr}");
+}
+
+/// A submodule commit reachable from no remote-tracking ref lives only in the
+/// worktree's module store, so removal warns before deleting it, and still
+/// removes: shallow or SHA-fetched pins can look the same.
+#[rstest]
+fn test_remove_warns_about_local_submodule_commits(mut repo: TestRepo) {
+    let worktree_path = add_worktree_with_submodule(&mut repo, "feature-submod-local");
+    let submodule = worktree_path.join("submod");
+    repo.run_git_in(&submodule, &["commit", "--allow-empty", "-m", "local only"]);
+    // Record the new pin, so the worktree itself is clean.
+    repo.run_git_in(&worktree_path, &["commit", "-am", "bump submod"]);
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--foreground", "feature-submod-local"])
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains(
+            "Submodule submod has commits on no remote; removing the worktree deletes them"
+        ),
+        "{stderr}"
+    );
+    assert!(!worktree_path.exists());
+}
+
+/// Add a `submod` submodule cloned from a local source repository, then create
+/// a worktree for `branch` with that submodule initialized.
+fn add_worktree_with_submodule(repo: &mut TestRepo, branch: &str) -> PathBuf {
     let sub_source = repo.root_path().parent().unwrap().join("sub-source");
     std::fs::create_dir_all(&sub_source).unwrap();
     repo.run_git_in(&sub_source, &["init", "-b", "main"]);
@@ -4887,8 +4941,7 @@ fn test_remove_foreground_with_submodules(mut repo: TestRepo) {
     );
     repo.run_git(&["commit", "-m", "add submodule"]);
 
-    // Create a worktree and initialize submodules in it
-    let worktree_path = repo.add_worktree("feature-submod");
+    let worktree_path = repo.add_worktree(branch);
     let output = repo
         .git_command()
         .current_dir(&worktree_path)
@@ -4906,29 +4959,11 @@ fn test_remove_foreground_with_submodules(mut repo: TestRepo) {
         "Failed to init submodule: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-
-    // Verify the submodule is actually initialized
     assert!(
         worktree_path.join("submod").join("sub.txt").exists(),
         "Submodule should be initialized"
     );
-
-    // Remove the worktree in foreground mode — should succeed despite submodules
-    let output = repo
-        .wt_command()
-        .args(["remove", "--foreground", "feature-submod"])
-        .output()
-        .unwrap();
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "Remove should succeed with submodules, got: {stderr}"
-    );
-    assert!(
-        !worktree_path.exists(),
-        "Worktree directory should be removed"
-    );
+    worktree_path
 }
 
 /// Regression: `Repository::remove_worktree(path, force=false)` synthesizes

@@ -2140,6 +2140,22 @@ fn handle_removed_worktree_output(
         return remove_removed_worktree_silently(&repo, &ctx, announcer);
     }
 
+    // `--force` already consents to losing what the worktree holds.
+    let local_submodules = if ctx.force_worktree {
+        Vec::new()
+    } else {
+        repo.worktree_at(ctx.worktree_path)
+            .submodules_with_local_commits()?
+    };
+    for submodule in local_submodules {
+        eprintln!(
+            "{}",
+            warning_message(cformat!(
+                "Submodule <bold>{submodule}</> has commits on no remote; removing the worktree deletes them"
+            ))
+        );
+    }
+
     prepare_remove_directory_change(ctx.main_path, ctx.worktree_path, ctx.changed_directory)?;
 
     // Handle detached HEAD case (no branch known)
