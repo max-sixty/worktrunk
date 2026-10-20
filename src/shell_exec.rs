@@ -24,8 +24,10 @@
 //! The shell owns the foreground job and the kernel delivers Ctrl-C, Ctrl-Z
 //! and hangup to it. No terminal handoff or private foreground group is needed.
 //!
-//! [`Cmd::forward_signals`] observes direct exit while waiting, preserving a
-//! child's normal exit when it handles Ctrl-C.
+//! [`Cmd::forward_signals`] observes direct exit while waiting. A terminal
+//! Ctrl-C that wt itself receives meanwhile cancels the command once the child
+//! exits, whatever status the child chose; [`Cmd::hand_off_terminal`] leaves
+//! the key to a final interactive child instead (see [`TerminalInterrupt`]).
 //! SIGTERM addressed only to wt is forwarded
 //! to owned direct children and cancels the command. Child signal exits propagate
 //! through `WorktrunkError::ChildProcessExited` to stop foreground loops.
@@ -265,6 +267,21 @@ fn track_if_cancellable(pid: u32) -> Option<BackgroundPid> {
         }
         guard
     })
+}
+
+/// What a terminal Ctrl-C that wt itself receives means while a foreground
+/// child runs. Either way the child handles the key its own way; wt never
+/// signals it for INT.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalInterrupt {
+    /// The child is one step of the command, such as a hook, an alias step or
+    /// a `for-each` visit. Once it exits the command starts nothing more and
+    /// exits interrupted, whatever status the child chose.
+    Cancels,
+    /// The command hands the terminal to its final, interactive child: a pager,
+    /// an `--execute` program, a custom subcommand. The key is that child's
+    /// input, and its own exit status stands.
+    ChildInput,
 }
 
 /// Whether a cancellation would signal `pid` right now.
@@ -1237,7 +1254,7 @@ pub struct Cmd {
     /// Stdin configuration for stream() (defaults to null; stdin_data takes precedence)
     stdin_cfg: Option<std::process::Stdio>,
     /// Observe terminal signals and forward PID-targeted cancellation during stream().
-    forward_signals: bool,
+    forward_signals: Option<TerminalInterrupt>,
     /// If true, treat a SIGPIPE exit as success. This is the default for pager
     /// producers, where the consumer closing early is expected. Direct user
     /// programs can opt out with [`Cmd::propagate_sigpipe`].
@@ -1551,7 +1568,7 @@ impl Cmd {
             shell_wrap,
             stdout_cfg: None,
             stdin_cfg: None,
-            forward_signals: false,
+            forward_signals: None,
             ignore_sigpipe: true,
             external_label: None,
             directive_cd_file: None,
@@ -1838,11 +1855,19 @@ impl Cmd {
 
     /// Preserve terminal Ctrl-C delivery and forward SIGTERM to live children.
     ///
-    /// The child shares the caller's foreground group. A handled Ctrl-C keeps
-    /// its normal status; cancellation and signal exits stop foreground loops.
+    /// The child shares the caller's foreground group, so it receives the key
+    /// alongside wt. wt's own receipt of SIGINT cancels the command once the
+    /// child exits ([`TerminalInterrupt::Cancels`]); signal exits do too.
     /// Only affects `.stream()` on Unix. No-op on Windows.
     pub fn forward_signals(mut self) -> Self {
-        self.forward_signals = true;
+        self.forward_signals = Some(TerminalInterrupt::Cancels);
+        self
+    }
+
+    /// [`Cmd::forward_signals`] for the command's final, interactive child,
+    /// which owns a terminal Ctrl-C as input ([`TerminalInterrupt::ChildInput`]).
+    pub fn hand_off_terminal(mut self) -> Self {
+        self.forward_signals = Some(TerminalInterrupt::ChildInput);
         self
     }
 
@@ -2278,10 +2303,11 @@ impl Cmd {
         // Install the SIGINT/SIGTERM handler BEFORE spawn so a signal arriving
         // mid-spawn is queued, not default-killed.
         #[cfg(unix)]
-        let signals = if self.forward_signals {
-            Some(crate::signal_forwarder::ForegroundSignals::install()?)
-        } else {
-            None
+        let signals = match self.forward_signals {
+            Some(terminal_interrupt) => Some(crate::signal_forwarder::ForegroundSignals::install(
+                terminal_interrupt,
+            )?),
+            None => None,
         };
 
         // Apply environment and spawn

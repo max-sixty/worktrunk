@@ -147,7 +147,9 @@ fn run_custom(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> Res
     }
 
     #[cfg(unix)]
-    let signals = worktrunk::signal_forwarder::ForegroundSignals::install()?;
+    let signals = worktrunk::signal_forwarder::ForegroundSignals::install(
+        worktrunk::shell_exec::TerminalInterrupt::ChildInput,
+    )?;
     let mut trace = CommandTrace::new(None, &path.display().to_string());
     #[cfg(unix)]
     let spawned = signals.spawn(&mut cmd);

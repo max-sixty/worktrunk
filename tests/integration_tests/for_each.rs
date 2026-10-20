@@ -287,6 +287,35 @@ fn test_for_each_aborts_on_signal_exit(repo: TestRepo) {
     );
 }
 
+/// Ctrl-C stops the loop even when the child catches it and exits successfully:
+/// wt received the key itself, so no later worktree is visited.
+#[rstest]
+#[cfg(unix)]
+fn test_for_each_stops_on_caught_ctrl_c(repo: TestRepo) {
+    let marker_dir = tempfile::tempdir().unwrap();
+    let pid_file = marker_dir.path().join("pid");
+    let script = format!(
+        "trap 'exit 0' INT; touch {dir}/\"$(basename \"$PWD\")\"; echo $$ > {pid}; while :; do sleep 0.1; done",
+        dir = shell_escape::unix::escape(marker_dir.path().join("visited").to_string_lossy()),
+        pid = shell_escape::unix::escape(pid_file.to_string_lossy()),
+    );
+    std::fs::create_dir(marker_dir.path().join("visited")).unwrap();
+    let mut job = crate::common::SignalJob::spawn(
+        &repo,
+        &["-vv", "step", "for-each", "--", "sh", "-c", &script],
+        std::process::Stdio::null(),
+    );
+    job.interrupt_admitted_child(&repo, &pid_file);
+    assert_eq!(crate::common::shell_exit_code(&job.wait()), Some(130));
+    let visited = std::fs::read_dir(marker_dir.path().join("visited"))
+        .unwrap()
+        .count();
+    assert_eq!(
+        visited, 1,
+        "Ctrl-C must stop the loop after its first visit"
+    );
+}
+
 /// An interrupted `--format=json` run still owes its consumer the results it
 /// collected before the signal: the machine-readable answer is emitted on the
 /// abort path too, not just on the completing one.

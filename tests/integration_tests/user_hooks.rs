@@ -607,6 +607,32 @@ fn test_pre_merge_pipeline_aborts_on_signal_exit(repo: TestRepo) {
     );
 }
 
+/// Ctrl-C stops a Warn pipeline even when the step catches it and exits with an
+/// ordinary status: wt received the key itself, so the next step never starts.
+#[rstest]
+#[cfg(unix)]
+fn test_post_start_pipeline_stops_on_caught_ctrl_c(repo: TestRepo) {
+    repo.write_project_config(
+        r#"post-start = [
+    "trap 'exit 130' INT; echo $$ > hook-pid; while :; do sleep 0.1; done",
+    "echo after > after.log",
+]
+"#,
+    );
+    repo.commit("Add post-start pipeline");
+    let mut job = crate::common::SignalJob::spawn(
+        &repo,
+        &["-vv", "hook", "post-start", "--yes", "--foreground"],
+        std::process::Stdio::null(),
+    );
+    job.interrupt_admitted_child(&repo, &repo.root_path().join("hook-pid"));
+    assert_eq!(crate::common::shell_exit_code(&job.wait()), Some(130));
+    assert!(
+        !repo.root_path().join("after.log").exists(),
+        "the step after Ctrl-C must not run"
+    );
+}
+
 // ============================================================================
 // User Post-Merge Hook Tests
 // ============================================================================

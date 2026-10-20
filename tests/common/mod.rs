@@ -52,6 +52,104 @@ pub fn wait_for_foreground_admission(repo: &TestRepo, children: &[i32]) {
     });
 }
 
+/// wt running as a native job in a process group of its own, so a group signal
+/// reaches wt and its children as a terminal key would, but not the test runner.
+/// Signal fixtures synchronize through files and avoid background descendants.
+/// An owned, unreaped keeper reserves the native group for scoped cleanup.
+#[cfg(unix)]
+pub struct SignalJob {
+    child: Option<std::process::Child>,
+    keeper: std::process::Child,
+    pub release: std::path::PathBuf,
+}
+
+#[cfg(unix)]
+impl SignalJob {
+    pub fn spawn(repo: &TestRepo, args: &[&str], stderr: std::process::Stdio) -> Self {
+        use std::os::unix::process::CommandExt;
+        // This owned, unreaped child reserves the caller group's numeric ID
+        // even after wt finishes or a group interrupt kills the keeper.
+        let keeper = std::process::Command::new("sleep")
+            .arg("300")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let mut job = Self {
+            child: None,
+            keeper,
+            release: repo.root_path().join("release"),
+        };
+        let mut command = repo.wt_command();
+        command.args(args);
+        command
+            .current_dir(repo.root_path())
+            .env("RUST_LOG", crate::common::FOREGROUND_TRACE_FILTER)
+            .stdout(std::process::Stdio::null())
+            .stderr(stderr)
+            .process_group(job.group().as_raw());
+        job.child = Some(command.spawn().unwrap());
+        job
+    }
+
+    pub fn pid(&self) -> nix::unistd::Pid {
+        nix::unistd::Pid::from_raw(self.child.as_ref().unwrap().id() as i32)
+    }
+
+    pub fn group(&self) -> nix::unistd::Pid {
+        nix::unistd::Pid::from_raw(self.keeper.id() as i32)
+    }
+
+    pub fn running(&mut self) -> bool {
+        self.child.as_mut().unwrap().try_wait().unwrap().is_none()
+    }
+
+    pub fn release(&self) {
+        std::fs::write(&self.release, "release").unwrap();
+    }
+
+    /// Press Ctrl-C once wt has admitted the child that wrote its PID to
+    /// `pid_file`, so wt receives the key while that child runs, not during startup.
+    /// Needs `-vv` among the spawn arguments for the admission trace.
+    pub fn interrupt_admitted_child(&self, repo: &TestRepo, pid_file: &Path) {
+        wait_for_file_content(pid_file);
+        let pid: i32 = std::fs::read_to_string(pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        wait_for_foreground_admission(repo, &[pid]);
+        nix::sys::signal::killpg(self.group(), nix::sys::signal::Signal::SIGINT).unwrap();
+    }
+
+    pub fn wait(&mut self) -> std::process::ExitStatus {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            if let Some(status) = self.child.as_mut().unwrap().try_wait().unwrap() {
+                return status;
+            }
+            assert!(std::time::Instant::now() < deadline, "wt did not finish");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for SignalJob {
+    fn drop(&mut self) {
+        let _ = std::fs::write(&self.release, "release");
+        // No wait for the keeper precedes this signal. Its reserved PID pins
+        // the group's identity, independently of wt's cached wait status.
+        let _ = nix::sys::signal::killpg(self.group(), nix::sys::signal::Signal::SIGKILL);
+        if let Some(child) = &mut self.child {
+            let _ = child.wait();
+        }
+        let _ = self.keeper.wait();
+    }
+}
+
 /// Block SIGTTIN and SIGTTOU signals to prevent test processes from being
 /// stopped when PTY operations interact with terminal control in background
 /// process groups.

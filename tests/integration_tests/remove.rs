@@ -1331,6 +1331,43 @@ fn test_remove_interrupt_stops_batch(
     );
 }
 
+/// Ctrl-C stops the batch even when the hook catches it and exits with an
+/// ordinary status, whether that is pre-commit's 130 or success: wt received
+/// the key itself, so neither the current nor a later target is removed.
+#[cfg(unix)]
+#[rstest]
+#[case::exit_130(130)]
+#[case::exit_0(0)]
+fn test_remove_ctrl_c_caught_by_hook_stops_batch(mut repo: TestRepo, #[case] hook_exit: i32) {
+    let pid_file = repo.root_path().join("hook-pid");
+    let hook = format!(
+        "trap 'exit {hook_exit}' INT; echo $$ > {}; while :; do sleep 0.1; done",
+        shell_escape::unix::escape(pid_file.to_string_lossy())
+    );
+    repo.write_project_config(&format!("pre-remove = {hook:?}"));
+    repo.commit("Add pre-remove hook that catches Ctrl-C");
+    let interrupted = repo.add_worktree("interrupted");
+    let later = repo.add_worktree("later");
+    let mut job = crate::common::SignalJob::spawn(
+        &repo,
+        &[
+            "-vv",
+            "remove",
+            "interrupted",
+            "later",
+            "--foreground",
+            "--yes",
+        ],
+        std::process::Stdio::null(),
+    );
+    job.interrupt_admitted_child(&repo, &pid_file);
+    assert_eq!(crate::common::shell_exit_code(&job.wait()), Some(130));
+    assert!(
+        interrupted.exists() && later.exists(),
+        "Ctrl-C must stop all removals"
+    );
+}
+
 /// Signals from execution-time Git commands cancel removal just like hook
 /// signals. The hook arms the shim only after validation has succeeded;
 /// everything except the selected Git boundary delegates to real Git.

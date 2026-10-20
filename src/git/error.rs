@@ -1810,7 +1810,8 @@ impl std::fmt::Display for GitError {
 #[derive(Debug)]
 pub enum WorktrunkError {
     /// Physical child outcome, independently of observed operation cancellation.
-    /// A caught interrupt may leave a normal child exit, including zero.
+    /// A child that catches Ctrl-C may exit normally, even with zero, while
+    /// `cancellation` records the interrupt wt itself received.
     ChildProcessExited {
         code: i32,
         physical_signal: Option<i32>,
