@@ -90,6 +90,40 @@ fn test_bare_repo_list_no_worktrees() {
     });
 }
 
+/// `--path` naming the bare repository itself is refused, even with
+/// `--clobber`, which would otherwise move the repository aside and strand
+/// every worktree's gitfile on the backup.
+#[test]
+fn test_bare_repo_switch_path_rejects_the_repository() {
+    let test = bare_repo_without_worktrees();
+    let bare = test.bare_repo_path();
+
+    let settings = setup_temp_snapshot_settings(test.temp_path());
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        test.configure_wt_cmd(&mut cmd);
+        cmd.args([
+            "switch",
+            "--create",
+            "feature-b",
+            "--clobber",
+            "--path",
+            ".",
+        ])
+        .current_dir(bare);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    assert!(bare.join("HEAD").is_file());
+    let siblings: Vec<_> = fs::read_dir(bare.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .filter(|name| name.to_string_lossy().contains(".bak."))
+        .collect();
+    assert!(siblings.is_empty(), "unexpected backup: {siblings:?}");
+}
+
 /// `--format json` owes its consumer a payload in the same state: the schema-2
 /// envelope with `items: []`, not an empty stdout that no parser accepts.
 #[test]

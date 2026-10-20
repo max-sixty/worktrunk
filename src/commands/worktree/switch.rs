@@ -22,7 +22,7 @@ use worktrunk::git::{
     ErrorExt, ForgeKind, GitError, GitRemoteUrl, RefType, Repository, ResolvedWorktree, Selector,
     SwitchSuggestionCtx, WorktreeId, branch_tracks_ref, current_or_recover, resolve_input_path,
 };
-use worktrunk::path::format_path_for_display;
+use worktrunk::path::{canonicalize_with_parents, format_path_for_display};
 use worktrunk::shell_exec::{ShellEscapeMode, shell_cwd};
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, println, progress_message,
@@ -787,6 +787,7 @@ fn validate_worktree_creation(
     path: &Path,
     clobber: bool,
     method: &CreationMethod,
+    from_path_flag: bool,
 ) -> anyhow::Result<bool> {
     // For regular switches without --create, validate branch exists
     if let CreationMethod::Regular {
@@ -846,6 +847,7 @@ fn validate_worktree_creation(
         branch: branch.to_string(),
         path: path.to_path_buf(),
         create: is_create,
+        from_path_flag,
     }
     .into())
 }
@@ -1028,6 +1030,7 @@ fn plan_switch(
     };
 
     // Phase 3: Compute expected path. `--path` replaces the template outright.
+    let from_path_flag = requested_path.is_some();
     let expected_path = match requested_path {
         Some(path) => {
             reject_path_overlapping_worktrees(repo, &path)?;
@@ -1037,8 +1040,14 @@ fn plan_switch(
     };
 
     // Phase 4: Validate we can create at this path
-    let needs_clobber_backup =
-        validate_worktree_creation(repo, &branch, &expected_path, clobber, &method)?;
+    let needs_clobber_backup = validate_worktree_creation(
+        repo,
+        &branch,
+        &expected_path,
+        clobber,
+        &method,
+        from_path_flag,
+    )?;
 
     // Phase 5: Return the plan
     Ok(SwitchPlan::Create {
@@ -1051,8 +1060,8 @@ fn plan_switch(
     })
 }
 
-/// Refuse a `--path` directory that holds a worktree or the repository, or
-/// that sits inside one.
+/// Refuse a `--path` directory that holds a worktree or the repository, that
+/// sits inside one, or that is its git directory.
 ///
 /// Such a directory always exists, so `validate_worktree_creation` would
 /// otherwise offer `--clobber`, which moves it aside: `--path ..` would move
@@ -1061,14 +1070,29 @@ fn plan_switch(
 /// directory that does not exist yet is left alone — nesting a new worktree
 /// inside another is git's call, not a clobber.
 fn reject_path_overlapping_worktrees(repo: &Repository, requested: &Path) -> anyhow::Result<()> {
-    let Ok(requested) = canonicalize(requested) else {
+    if !requested.exists() {
         return Ok(());
-    };
-    let registered = repo.list_worktrees()?.iter().map(|wt| wt.path.as_path());
-    for existing in registered.chain([repo.git_common_dir()]) {
-        let existing = canonicalize(existing).unwrap_or_else(|_| existing.to_path_buf());
+    }
+    // The comparison form: `dunce` keeps `\\?\` on a deep Windows path and
+    // drops it from a short root, which `starts_with` reads as unrelated.
+    let requested = canonicalize_with_parents(requested);
+    let registered = repo
+        .list_worktrees()?
+        .iter()
+        .map(|wt| (wt.path.as_path(), true));
+    for (existing, is_worktree) in registered.chain([(repo.git_common_dir(), false)]) {
+        let existing = canonicalize_with_parents(existing);
         if existing == requested {
-            continue;
+            // A worktree at exactly this path is `validate_worktree_creation`'s
+            // to report, naming its branch. The git directory has no such
+            // check; in a bare repository it is the repository itself.
+            if is_worktree {
+                continue;
+            }
+            let requested = format_path_for_display(&requested);
+            bail!(cformat!(
+                "<bold>--path {requested}</> is the repository's git directory; choose a directory outside the repository and its worktrees"
+            ));
         }
         let relation = if existing.starts_with(&requested) {
             "contains"

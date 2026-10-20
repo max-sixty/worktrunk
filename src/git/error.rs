@@ -546,6 +546,10 @@ pub enum GitError {
         branch: String,
         path: PathBuf,
         create: bool,
+        /// The path came from `--path`, so it can name any directory, such as
+        /// a project of its own, rather than the template's worktree location.
+        /// The hint then suggests another path instead of deleting this one.
+        from_path_flag: bool,
     },
     WorktreeCreationFailed {
         branch: String,
@@ -1321,9 +1325,9 @@ impl GitError {
                 branch,
                 path,
                 create,
+                from_path_flag,
             } => {
                 let title = self.title();
-                let path_display = format_path_for_display(path);
                 let flags: &[&str] = if *create {
                     &["--create", "--clobber"]
                 } else {
@@ -1333,12 +1337,20 @@ impl GitError {
                 if let Some(ctx) = ctx {
                     switch_cmd = ctx.apply(switch_cmd);
                 }
+                let alternative = if *from_path_flag {
+                    cformat!(
+                        "To place the worktree elsewhere, choose a different <underline>--path</>"
+                    )
+                } else {
+                    let path_display = format_path_for_display(path);
+                    cformat!("To remove manually, run <underline>rm -rf {path_display}</>")
+                };
                 write!(
                     f,
                     "{}\n{}",
                     error_message(&title),
                     hint_message(cformat!(
-                        "To remove manually, run <underline>rm -rf {path_display}</>; to overwrite (with backup), run <underline>{switch_cmd}</>"
+                        "{alternative}; to overwrite (with backup), run <underline>{switch_cmd}</>"
                     ))
                 )
             }
@@ -2255,6 +2267,7 @@ mod tests {
             branch: "feature".to_string(),
             path: PathBuf::from("/some/path"),
             create: true,
+            from_path_flag: false,
         };
         assert_snapshot!(err.render(), @"
         [31m✗[39m [31mDirectory already exists: [1m/some/path[22m[39m
@@ -3043,6 +3056,7 @@ mod tests {
                 branch: "emails".into(),
                 path: PathBuf::from("/tmp/repo.emails"),
                 create: true,
+                from_path_flag: false,
             }),
             ctx: SwitchSuggestionCtx {
                 extra_flags: vec!["--execute=claude".into()],

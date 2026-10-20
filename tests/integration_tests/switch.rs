@@ -9011,8 +9011,9 @@ fn test_switch_path_occupied_suggests_path_in_clobber_hint(repo: TestRepo) {
     let custom = repo.root_path().parent().unwrap().join("occupied");
     std::fs::create_dir_all(&custom).unwrap();
 
-    // The `--clobber` suggestion must keep `--path`, or following it would
-    // back up the template's path instead of this one.
+    // `--path` can name any directory, so the hint suggests another path
+    // rather than deleting this one. The `--clobber` suggestion must keep
+    // `--path`, or following it would back up the template's path instead.
     snapshot_switch(
         "switch_path_occupied",
         &repo,
