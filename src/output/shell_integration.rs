@@ -512,6 +512,14 @@ pub fn prompt_shell_integration(
         return Ok(false);
     }
 
+    // Can't or shouldn't prompt - show install hint. Check this before the
+    // scan below: only the prompt uses its result, and it spawns `pwsh` and
+    // `nu` to find their config files.
+    if config.skip_shell_integration_prompt || !is_tty || skip_prompt {
+        print_shell_integration_hint(repo);
+        return Ok(false);
+    }
+
     // Scan ALL shells (same as `wt config shell install`)
     // Only includes shells where config files already exist
     let mut scan = scan_shell_configs(None, true, binary_name)
@@ -519,12 +527,6 @@ pub fn prompt_shell_integration(
 
     // No config files exist - show install hint
     if scan.configured.is_empty() {
-        print_shell_integration_hint(repo);
-        return Ok(false);
-    }
-
-    // Can't or shouldn't prompt - show install hint
-    if config.skip_shell_integration_prompt || !is_tty || skip_prompt {
         print_shell_integration_hint(repo);
         return Ok(false);
     }
