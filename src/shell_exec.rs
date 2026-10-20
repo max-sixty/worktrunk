@@ -2304,9 +2304,7 @@ impl Cmd {
         // mid-spawn is queued, not default-killed.
         #[cfg(unix)]
         let signals = match self.forward_signals {
-            Some(terminal_interrupt) => Some(crate::signal_forwarder::ForegroundSignals::install(
-                terminal_interrupt,
-            )?),
+            Some(mode) => Some(crate::signal_forwarder::ForegroundSignals::install(mode)?),
             None => None,
         };
 
