@@ -35,7 +35,8 @@
 //!    the graceful `git fsmonitor--daemon stop` IPC request, then verifies the
 //!    daemon is actually gone and force-kills it by PID if it has wedged.
 //!    Without this, a daemon that has stopped answering its socket leaks
-//!    forever once its worktree is removed.
+//!    forever once its worktree is removed. With fsmonitor configured, the
+//!    clean check then reruns without it, catching writes during shutdown.
 //! 3. **Fast-path trash staging.** The worktree directory is renamed into
 //!    `<git-common-dir>/wt/trash/<name>-<timestamp>/`. Same-filesystem renames
 //!    are instant metadata operations, so the user's workspace clears
@@ -69,6 +70,10 @@
 //! the full re-stat the ordering above avoids — the dominant per-removal cost
 //! at rust-lang/rust scale. (`--no-optional-locks` is not that knob: it
 //! governs index-lock acquisition, and git still queries the daemon under it.)
+//!
+//! Stopping the daemon is `wt`'s own step, not git's, and it opens a window
+//! git's gate never has: writes during the shutdown. Closing that window
+//! takes one re-stat after the stop, paid only where fsmonitor is configured.
 //!
 //! # Example
 //!
@@ -437,6 +442,8 @@ pub fn remove_worktree_with_cleanup(
 /// the daemon is a deliberate match to `git worktree remove`, whose own gate
 /// trusts it identically — see "The dirty-worktree gate follows git" in the
 /// [module-level docs](self) for why that is the decision and not a gap.
+/// What the daemon cannot cover is a write during its own shutdown, so with
+/// fsmonitor configured the gate runs once more after the stop, rescanning.
 ///
 /// The daemon stop runs **before** the rename because on Windows the daemon
 /// holds a handle on the worktree that would fail it, and git's graceful stop
@@ -521,7 +528,14 @@ pub fn stage_worktree_removal(
         worktree.ensure_clean("remove worktree", branch, true)?;
     }
 
-    stop_fsmonitor_daemon(&repo.worktree_at(worktree_path));
+    stop_fsmonitor_daemon(&worktree);
+
+    // The daemon answered the gate above, and a write can land while it shuts
+    // down. Recheck without it; with fsmonitor configured, a plain status
+    // would start a new daemon in the worktree about to go.
+    if !force_worktree && repo.is_builtin_fsmonitor_enabled() {
+        worktree.ensure_clean_without_fsmonitor("remove worktree", branch, true)?;
+    }
 
     Ok(rename_into_trash(repo, worktree_path, &git_dir))
 }
