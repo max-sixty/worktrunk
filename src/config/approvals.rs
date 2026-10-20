@@ -800,8 +800,14 @@ approved-commands = ["npm test"]
             ["npm install"]
         );
 
+        let removed = approvals
+            .revoke_stale(&project, &["npm test"], &path)
+            .unwrap();
+        assert_eq!(removed, ["npm install"]);
+        assert!(!approvals.projects.contains_key("GitHub.com/user/repo"));
+        assert!(approvals.is_command_approved(&project, "npm test"));
+
         approvals.revoke_project(&project, &path).unwrap();
-        assert!(!approvals.is_command_approved(&project, "npm install"));
         assert!(!approvals.is_command_approved(&project, "npm test"));
         assert_eq!(
             approvals.projects.keys().collect::<Vec<_>>(),
