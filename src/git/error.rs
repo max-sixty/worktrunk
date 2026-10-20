@@ -1839,7 +1839,7 @@ pub enum WorktrunkError {
     ///
     /// Exits `128 + signal`; Unix INT/TERM are passed to the parent shell.
     /// Native job messages belong to that shell, while recovery hints belong
-    /// to wt. Custom commands may also report other signal-derived exits here.
+    /// to wt. Custom commands and aliases also report other signal deaths here.
     Interrupted { signal: i32, hint: Option<String> },
 }
 

@@ -409,6 +409,25 @@ fail = "exit 42"
     ));
 }
 
+/// An alias child killed by a signal other than INT/TERM is reported: the
+/// child printed nothing about its death, and wt exits `128 + signal` rather
+/// than dying by it, so no shell reports it either.
+#[cfg(unix)]
+#[rstest]
+fn test_step_alias_killed_by_signal(repo: TestRepo) {
+    repo.write_test_config(
+        r#"
+[aliases]
+crash = "kill -KILL $$"
+"#,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "step", &["crash"], None));
+}
+
 /// Alias from user config works
 #[rstest]
 fn test_step_alias_from_user_config(mut repo: TestRepo) {
