@@ -85,10 +85,7 @@ pub fn step_copy_ignored(
         }
     };
 
-    let dest_path = match to {
-        Some(selector) => repo.require_worktree(selector)?.0,
-        None => repo.current_worktree().root()?,
-    };
+    let dest_path = repo.require_worktree(to.unwrap_or("@"))?.0;
 
     if source_path == dest_path {
         if json_mode {

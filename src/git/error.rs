@@ -512,10 +512,6 @@ pub enum GitError {
 
     // Worktree errors
     InteractivePickerRequiresTerminal,
-    NotInWorktree {
-        /// The action that requires being in a worktree
-        action: Option<String>,
-    },
     /// A registered worktree git calls prunable, or whose directory is gone.
     /// Built with [`GitError::worktree_missing`].
     WorktreeMissing {
@@ -869,10 +865,6 @@ impl GitError {
             GitError::InteractivePickerRequiresTerminal => {
                 "Interactive picker requires an interactive terminal".to_string()
             }
-            GitError::NotInWorktree { action } => match action {
-                Some(action) => format!("Cannot {action}: not in a worktree"),
-                None => "Not in a worktree".to_string(),
-            },
 
             GitError::WorktreeMissing { branch, .. } => {
                 cformat!("Worktree for <bold>{branch}</> is stale; its directory or .git is gone")
@@ -1233,17 +1225,6 @@ impl GitError {
                     error_message(self.title()),
                     hint_message(cformat!(
                         "To switch to a branch, run <underline>{command}</>"
-                    ))
-                )
-            }
-            GitError::NotInWorktree { .. } => {
-                let title = self.title();
-                write!(
-                    f,
-                    "{}\n{}",
-                    error_message(&title),
-                    hint_message(cformat!(
-                        "Run from inside a worktree, or specify a branch name"
                     ))
                 )
             }
@@ -2656,23 +2637,6 @@ mod tests {
         ✗ pre-start user hook failed
           echo test
           setup failed
-        ");
-    }
-
-    #[test]
-    fn snapshot_not_in_worktree() {
-        let err = GitError::NotInWorktree {
-            action: Some("resolve @".into()),
-        };
-        assert_snapshot!(err.render(), @"
-        [31m✗[39m [31mCannot resolve @: not in a worktree[39m
-        [2m↳[22m [2mRun from inside a worktree, or specify a branch name[22m
-        ");
-
-        let err = GitError::NotInWorktree { action: None };
-        assert_snapshot!(err.render(), @"
-        [31m✗[39m [31mNot in a worktree[39m
-        [2m↳[22m [2mRun from inside a worktree, or specify a branch name[22m
         ");
     }
 

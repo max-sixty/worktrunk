@@ -8617,6 +8617,15 @@ fn test_switch_at_names_the_current_worktree(mut repo: TestRepo, #[case] detache
     assert_eq!(path.file_name(), current.file_name());
 }
 
+/// Outside every worktree, here the main worktree's `.git` directory, `@`
+/// names the branch HEAD points at: the switch lands in the main worktree
+/// rather than treating the `.git` directory as a detached worktree.
+#[rstest]
+fn test_switch_at_outside_a_worktree_names_the_head_branch(repo: TestRepo) {
+    let path = switch_json_path(&repo, &repo.root_path().join(".git"), &["@"]);
+    assert_eq!(path, repo.root_path());
+}
+
 /// Run `wt switch <args>` from `dir` with `--format=json` and return the
 /// path it lands in.
 fn switch_json_path(repo: &TestRepo, dir: &std::path::Path, args: &[&str]) -> std::path::PathBuf {

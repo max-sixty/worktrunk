@@ -477,7 +477,8 @@ impl Repository {
     /// or one of several checkouts of the same branch.
     ///
     /// Resolution order:
-    /// 1. `@` — the current worktree, matched by path so detached HEAD resolves
+    /// 1. `@` — the current worktree, matched by path so detached HEAD
+    ///    resolves; outside any worktree, the branch HEAD names, as below
     /// 2. `-` — the worktree `wt switch` last left, by the path it recorded
     ///    (see [`switch_previous_worktree`](Self::switch_previous_worktree))
     /// 3. `-` / `^` — the previous / default branch, then as a branch below
@@ -506,23 +507,23 @@ impl Repository {
         // `expand_selector` would apply has nothing to return.
         let name = normalize_selector(name);
         if name == "@" {
-            // If worktree_root fails (e.g., in bare repo directory), give a clear error
-            let path = self
-                .current_worktree()
-                .root()
-                .map_err(|_| GitError::NotInWorktree {
-                    action: Some("resolve @".into()),
-                })?;
-            // Compare canonical identities so alternate path spellings (for
-            // example macOS `/var` and `/private/var`) select one inventory
-            // entry without changing Git's registered path.
+            // `root()` falls back to the cwd itself outside a work tree, so
+            // only a registered worktree at that path counts. Compare
+            // canonical identities so alternate path spellings (for example
+            // macOS `/var` and `/private/var`) select one inventory entry
+            // without changing Git's registered path.
+            let path = self.current_worktree().root()?;
             let current_id = WorktreeId::new(&path);
-            let branch = self
+            if let Some(wt) = self
                 .list_worktrees()?
                 .iter()
                 .find(|wt| wt.id() == current_id)
-                .and_then(|wt| wt.branch.clone());
-            return Ok(ResolvedWorktree::worktree(path, branch));
+            {
+                return Ok(ResolvedWorktree::worktree(path, wt.branch.clone()));
+            }
+            // Outside every worktree — a bare repo's directory, or a `.git`
+            // directory — `@` falls through to the branch HEAD names, as
+            // `expand_selector` reads it.
         }
         if name == "-"
             && let Some((path, branch)) = self.switch_previous_worktree()?

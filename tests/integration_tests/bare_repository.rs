@@ -688,6 +688,47 @@ fn test_bare_repo_commands_from_bare_directory() {
     });
 }
 
+/// The bare repository's own directory is no worktree, so `@` there names the
+/// branch HEAD points at. `wt switch @` lands in that branch's worktree, and
+/// `wt step copy-ignored`, whose destination defaults to `@`, copies nothing
+/// into the bare repository.
+#[test]
+fn test_bare_repo_at_from_bare_directory_names_head_branch() {
+    let test = BareRepoTest::new();
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit");
+    fs::write(main_worktree.join(".gitignore"), "secret\n").unwrap();
+    fs::write(main_worktree.join("secret"), "s\n").unwrap();
+
+    let output = test
+        .wt_command()
+        .args(["switch", "@", "--no-cd", "--yes", "--format=json"])
+        .current_dir(test.bare_repo_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["branch"], "main");
+    assert_eq!(Path::new(json["path"].as_str().unwrap()), main_worktree);
+
+    let output = test
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(test.bare_repo_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!test.bare_repo_path().join("secret").exists());
+}
+
 /// Full merge workflow in a bare repo: create main + feature worktrees, merge
 /// feature into main, and confirm the merge landed.
 ///
