@@ -1129,23 +1129,14 @@ fn handle_command_failure(
     switch_json: bool,
 ) -> ! {
     if switch_json {
-        let message = error.display_message();
-        // --execute marks a child failure AlreadyDisplayed to suppress duplicate
-        // stderr, but retains the actual producer as its source for JSON.
-        let message = if let Some(signal) = error.interrupt_signal() {
-            format!("Interrupted by signal {signal}")
-        } else if message.is_empty() {
-            error.root_cause().to_string()
-        } else if worktrunk::git::CommandError::find_in(&error).is_some() {
-            message
-        } else if let Some(diagnostic) = error.render_diagnostic() {
-            // Typed errors keep their captured detail and recovery hints in
-            // Diagnostic, while Display intentionally returns only the title.
-            diagnostic
-        } else {
-            // Keep context and source detail for discovery/configuration
-            // failures; the outer caption alone hides the actual cause.
-            format!("{error:#}")
+        // The JSON error carries what stderr shows. A child failure shows
+        // nothing there (the child spoke for itself), so name its exit instead.
+        let message = match error.interrupt_signal() {
+            Some(signal) => format!("Interrupted by signal {signal}"),
+            None => match format_command_error(&error) {
+                rendered if rendered.is_empty() => error.root_cause().to_string(),
+                rendered => rendered.trim_end().to_string(),
+            },
         };
         commands::worktree::print_switch_json_error(&message);
     }

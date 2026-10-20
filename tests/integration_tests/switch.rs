@@ -8908,7 +8908,10 @@ fn test_switch_format_json_directive_failure_emits_one_error(repo: TestRepo) {
     assert!(!output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let message = json["error"].as_str().unwrap();
-    assert!(message.starts_with("Failed to write the cd directive file"));
+    assert!(
+        message.contains("Failed to write the cd directive file"),
+        "{message}"
+    );
     assert!(message.contains(repo.root_path().to_str().unwrap()));
     assert!(json.get("action").is_none());
     assert!(
