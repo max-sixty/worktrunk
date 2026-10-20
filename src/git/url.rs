@@ -470,9 +470,11 @@ impl GitRemoteUrl {
 /// - `git+ssh://` and `ssh+git://`: these didn't parse, so the identifier was
 ///   the raw URL minus `.git`, as for any other unparsed URL.
 ///
-/// Returns `None` where the old parser truncated an IPv6 host at its first
-/// `:` (`[2001/o/r`). That identifier was shared by every IPv6 server
-/// with the same leading group, the collision the `gix-url` parser fixed.
+/// Returns `None` for an `ssh://` URL with an IPv6 host, which the old parser
+/// truncated at its first `:` (`[2001/o/r`). That identifier was shared by
+/// every IPv6 server with the same leading group, the collision the `gix-url`
+/// parser fixed. The SCP form kept the rest of the address in the path, so
+/// its identifier stayed distinct and still counts.
 pub(crate) fn legacy_project_identifier(url: &str) -> Option<String> {
     let trimmed = url.trim();
     let parse = || -> Option<(&str, String, String)> {
@@ -505,7 +507,7 @@ pub(crate) fn legacy_project_identifier(url: &str) -> Option<String> {
         Some((host, namespace, repo))
     };
     match parse() {
-        Some((host, _, _)) if host.starts_with('[') && !host.contains(']') => None,
+        Some((host, _, _)) if trimmed.starts_with("ssh://") && host.starts_with('[') => None,
         Some((host, namespace, repo)) => Some(format!("{host}/{namespace}/{repo}")),
         None => Some(url.strip_suffix(".git").unwrap_or(url).to_string()),
     }
@@ -887,8 +889,8 @@ mod tests {
 
     /// The v0.80.0 identifier, for remotes whose identifier changed and for
     /// ordinary ones where it didn't. Values are what the v0.80.0 binary's
-    /// `wt config show` printed, except the truncated IPv6 host (`[2001/o/r`),
-    /// which gets none.
+    /// `wt config show` printed, except the truncated `ssh://` IPv6 host
+    /// (`[2001/o/r`), which gets none.
     #[test]
     fn test_legacy_project_identifier() {
         let cases = [
@@ -908,6 +910,7 @@ mod tests {
             ),
             ("git@github.com:o/r.git", Some("github.com/o/r")),
             ("ssh://git@[2001:db8::1]/o/r.git", None),
+            ("git@[2001:db8::1]:o/r.git", Some("[2001/db8::1]:o/r")),
         ];
         for (input, expected) in cases {
             assert_eq!(

@@ -269,26 +269,30 @@ impl Approvals {
     /// template-variable normalization) — approvals left behind when a config
     /// command was edited or removed.
     ///
-    /// Reads the exact key only, unlike [`Self::is_command_approved`]. A
-    /// pattern entry's commands are shared with every repository it matches,
-    /// and this drives `wt config approvals clear --stale`, so judging them
-    /// against one repository's config would let that repository revoke
-    /// approvals the others still rely on.
-    pub fn stale_approvals<'a>(&'a self, project: &str, templates: &[&str]) -> Vec<&'a str> {
+    /// Reads the exact keys only (the current and legacy identifiers),
+    /// unlike [`Self::is_command_approved`]. A pattern entry's commands are
+    /// shared with every repository it matches, and this drives `wt config
+    /// approvals clear --stale`, so judging them against one repository's
+    /// config would let that repository revoke approvals the others still
+    /// rely on.
+    pub fn stale_approvals<'a>(&'a self, project: &ProjectId, templates: &[&str]) -> Vec<&'a str> {
         let normalized: Vec<_> = templates
             .iter()
             .map(|t| normalize_template_vars(t))
             .collect();
-        self.projects
-            .get(project)
-            .map(|p| {
-                p.approved_commands
-                    .iter()
-                    .filter(|c| !normalized.contains(&normalize_template_vars(c)))
-                    .map(String::as_str)
-                    .collect()
-            })
-            .unwrap_or_default()
+        let mut stale: Vec<&str> = Vec::new();
+        for command in project
+            .exact_keys()
+            .filter_map(|key| self.projects.get(key))
+            .flat_map(|p| &p.approved_commands)
+        {
+            if !normalized.contains(&normalize_template_vars(command))
+                && !stale.contains(&command.as_str())
+            {
+                stale.push(command);
+            }
+        }
+        stale
     }
 }
 
@@ -432,7 +436,7 @@ impl Approvals {
     /// this call is never removed by mistake.
     pub fn revoke_stale(
         &mut self,
-        project: &str,
+        project: &ProjectId,
         templates: &[&str],
         approvals_path: &Path,
     ) -> Result<Vec<String>, ConfigError> {
@@ -446,14 +450,16 @@ impl Approvals {
             if stale.is_empty() {
                 return false;
             }
-            let Some(project_config) = approvals.projects.get_mut(project) else {
-                return false;
-            };
-            project_config
-                .approved_commands
-                .retain(|c| !stale.contains(c));
-            if project_config.approved_commands.is_empty() {
-                approvals.projects.remove(project);
+            for key in project.exact_keys() {
+                let Some(project_config) = approvals.projects.get_mut(key) else {
+                    continue;
+                };
+                project_config
+                    .approved_commands
+                    .retain(|c| !stale.contains(c));
+                if project_config.approved_commands.is_empty() {
+                    approvals.projects.remove(key);
+                }
             }
             removed = stale;
             true
@@ -767,8 +773,8 @@ approved-commands = ["npm test"]
     }
 
     /// A project's approvals saved under its v0.80.0 identifier count toward
-    /// it and go with it on revoke, so `wt config approvals clear` leaves
-    /// nothing of its own approving commands.
+    /// it, show as stale, and go with it on revoke, so `wt config approvals
+    /// clear` leaves nothing of its own approving commands.
     #[test]
     fn test_revoke_project_includes_legacy_identifier() {
         let (_temp_dir, path) = test_dir();
@@ -789,6 +795,10 @@ approved-commands = ["npm test"]
         }
         assert!(approvals.is_command_approved(&project, "npm install"));
         assert_eq!(approvals.exact_approval_count(&project), 2);
+        assert_eq!(
+            approvals.stale_approvals(&project, &["npm test"]),
+            ["npm install"]
+        );
 
         approvals.revoke_project(&project, &path).unwrap();
         assert!(!approvals.is_command_approved(&project, "npm install"));
@@ -1236,11 +1246,12 @@ approved-command = ["npm test"]
             )
             .unwrap();
 
-        let stale = approvals.stale_approvals("project", &["npm test", "echo {{ repo_path }}"]);
+        let stale =
+            approvals.stale_approvals(&"project".into(), &["npm test", "echo {{ repo_path }}"]);
         assert_eq!(stale, vec!["removed command"]);
         assert!(
             approvals
-                .stale_approvals("other-project", &["npm test"])
+                .stale_approvals(&"other-project".into(), &["npm test"])
                 .is_empty()
         );
     }
@@ -1267,7 +1278,7 @@ approved-command = ["npm test"]
 
         let templates = ["npm test", "echo {{ repo_path }}"];
         let removed = approvals
-            .revoke_stale("project", &templates, &path)
+            .revoke_stale(&"project".into(), &templates, &path)
             .unwrap();
         assert_eq!(removed, vec!["removed command"]);
         assert!(approvals.is_command_approved(&"project".into(), "npm test"));
@@ -1275,12 +1286,14 @@ approved-command = ["npm test"]
 
         // Nothing stale left — a second call is a no-op.
         let removed = approvals
-            .revoke_stale("project", &templates, &path)
+            .revoke_stale(&"project".into(), &templates, &path)
             .unwrap();
         assert!(removed.is_empty());
 
         // Every remaining approval stale — the project entry disappears.
-        let removed = approvals.revoke_stale("project", &[], &path).unwrap();
+        let removed = approvals
+            .revoke_stale(&"project".into(), &[], &path)
+            .unwrap();
         assert_eq!(removed.len(), 2);
         assert!(!approvals.projects.contains_key("project"));
     }

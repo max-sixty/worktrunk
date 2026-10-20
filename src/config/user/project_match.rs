@@ -41,9 +41,9 @@
 //! current identifier, ordered among themselves by the usual rules. Settings
 //! under a current key override settings under a legacy key, and approvals
 //! under either key apply, so approving a new command (recorded under the
-//! current identifier) keeps the earlier approvals in force. A per-project
-//! `wt config approvals clear` removes the legacy exact key along with the
-//! current one.
+//! current identifier) keeps the earlier approvals in force. The per-project
+//! `wt config approvals` operations (`list`'s stale approvals, `clear`, `clear
+//! --stale`) treat the legacy exact key like the current one.
 //!
 //! [`legacy_project_identifier`]: crate::git::legacy_project_identifier
 //!
