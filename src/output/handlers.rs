@@ -16,7 +16,7 @@ use crate::commands::command_executor::FailureStrategy;
 use crate::commands::hook_plan::{ApprovedHookPlan, execute_planned_hook, register_planned};
 use crate::commands::hooks::HookAnnouncer;
 use crate::commands::process::{
-    HookLog, InternalOp, build_remove_command, build_remove_paths_command,
+    HookLog, InternalOp, build_drain_trash_command, build_remove_command,
     build_remove_placeholder_command, spawn_detached,
 };
 use crate::commands::template_vars::TemplateVars;
@@ -121,8 +121,8 @@ pub enum RemovalExecution {
     /// Remove inline and report actual outcomes: progress message, spinner
     /// over the trash cleanup, success message from what really happened.
     Foreground,
-    /// Announce, then stage the worktree into trash and hand the `rm -rf` to a
-    /// detached process; the branch deletion still runs synchronously on the
+    /// Announce, then stage the worktree into trash and hand its deletion to a
+    /// detached trash drain; the branch deletion still runs synchronously on the
     /// fast path. The mode says what happens when the rename-into-trash fails.
     Background(BackgroundFallbackMode),
     /// The TUI (picker) path: the same inline removal as `Foreground` with no
@@ -147,7 +147,7 @@ struct BackgroundRemovalOutcome {
 }
 
 /// Spawn background worktree removal: clean-check, stop fsmonitor,
-/// rename-then-prune, spawn detached rm.
+/// rename-then-prune, spawn a detached trash drain.
 ///
 /// Shared sequence for both detached HEAD and branch background removal paths.
 /// The caller is responsible for output messages before this call, and hooks
@@ -187,11 +187,45 @@ fn spawn_background_removal(
     }
 }
 
+/// The running `wt`, located before staging so the drain can still start it
+/// when it lived inside the staged worktree (a `target/debug/wt` built there).
+/// The rename moves the binary into trash with the rest of the worktree, and
+/// macOS `current_exe()` keeps reporting the vacated path.
+struct DrainExecutable {
+    executable: anyhow::Result<PathBuf>,
+    worktree: Option<PathBuf>,
+}
+
+impl DrainExecutable {
+    fn locate(worktree_path: &Path) -> Self {
+        Self {
+            executable: std::env::current_exe()
+                .and_then(dunce::canonicalize)
+                .context("Failed to locate Worktrunk executable"),
+            worktree: dunce::canonicalize(worktree_path).ok(),
+        }
+    }
+
+    fn after_staging(self, staged_path: &Path) -> anyhow::Result<PathBuf> {
+        let executable = self.executable?;
+        Ok(
+            match self
+                .worktree
+                .as_deref()
+                .and_then(|worktree| executable.strip_prefix(worktree).ok())
+            {
+                Some(relative) => staged_path.join(relative),
+                None => executable,
+            },
+        )
+    }
+}
+
 /// Execute instant worktree removal via rename-then-prune.
 ///
 /// This function has side effects: it renames the worktree directory and prunes git metadata.
 /// On the fast path, the branch is also deleted synchronously (since after prune, the branch
-/// is no longer checked out in any worktree), and the background command is just `rm -rf`.
+/// is no longer checked out in any worktree), and the background command is just a trash drain.
 /// If rename fails (cross-filesystem, permissions, Windows file locking), either returns the
 /// legacy `git worktree remove` command with branch deletion deferred to the background, or
 /// runs that fallback synchronously for non-current worktrees when the caller needs the
@@ -218,7 +252,8 @@ fn execute_instant_removal_or_fallback(
     // Dirty-worktree gate, fsmonitor stop, then the rename into .git/wt/trash/
     // (instant on same filesystem) — the same prelude the synchronous
     // `remove_worktree_with_cleanup` runs. On the fast path the background
-    // process is then just an `rm -rf`.
+    // process is then just a trash drain.
+    let executable = DrainExecutable::locate(worktree_path);
     if let Some(staged_path) =
         stage_worktree_removal(repo, worktree_path, branch_name, force_worktree)?
     {
@@ -228,10 +263,21 @@ fn execute_instant_removal_or_fallback(
         }
         // Trash cleanup is independent of branch deletion. Start it before a
         // deletion lock wait, and still attempt deletion if scheduling fails.
-        let cleanup = spawn_cleanup(
-            &build_remove_paths_command([&staged_path]),
-            InternalOp::Remove,
-        );
+        // A running drain deletes this entry too, so a prune starts one
+        // drain rather than one per worktree.
+        let trash_dir = repo.wt_trash_dir();
+        let cleanup = if worktrunk::git::trash_drain_running(&trash_dir) {
+            Ok(())
+        } else {
+            executable
+                .after_staging(&staged_path)
+                .and_then(|executable| {
+                    spawn_cleanup(
+                        &build_drain_trash_command(executable, &trash_dir),
+                        InternalOp::Remove,
+                    )
+                })
+        };
         // Delete branch synchronously now that prune has removed the worktree metadata.
         // Fresh refs, not the pre-hook planning decision: hooks or concurrent
         // processes may have advanced the branch (`execute_branch_deletion`).
@@ -2479,17 +2525,13 @@ mod tests {
             },
             BackgroundFallbackMode::Detached,
             |args, _| {
-                let shell = worktrunk::shell_exec::ShellConfig::get()?;
-                let output = Cmd::new(shell.executable.to_str().unwrap())
-                    .args(&shell.args)
-                    .args(args)
-                    .run()?;
-                assert!(output.status.success());
-                Ok(())
+                assert_eq!(args.last().unwrap(), repo.wt_trash_dir().as_os_str());
+                worktrunk::git::drain_trash(&repo.wt_trash_dir())
             },
         )
         .unwrap();
         assert!(!checkout.exists());
+        assert!(worktrunk::git::staged_trash_entries(&repo.wt_trash_dir()).is_empty());
         assert!(!registration.exists());
         assert!(
             repo.run_command(&["rev-parse", "--verify", "feature"])
