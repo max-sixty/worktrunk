@@ -21,8 +21,8 @@
 //! handlers retain native default behavior, including between pipeline steps.
 //! A confirmed INT/TERM child exit wakes all current foreground scopes, so
 //! parallel output waits also stop. Execution leases end with direct waits;
-//! output observers remain through EOF and distinguish newly delivered keys
-//! using a flag registered at that transition, rather than notification timing.
+//! output observers remain through EOF and keep reading the scope's latched
+//! SIGINT flag, so a key received at any point stops the remaining drain.
 //! A command-operation guard retains cancellation across gaps between foreground
 //! scopes without disabling idle native defaults. New scopes share that operation's
 //! latch; dropping the guard makes the next operation independent.
