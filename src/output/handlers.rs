@@ -12,11 +12,11 @@ use worktrunk::shell_exec::{Cmd, shell_cwd};
 use worktrunk::styling::{eprint, format_bash_with_gutter, stderr};
 
 use crate::commands::command_executor::CommandContext;
-use crate::commands::command_executor::FailureStrategy;
+use crate::commands::command_executor::{FailureStrategy, ForegroundStdin};
 use crate::commands::hook_plan::{ApprovedHookPlan, execute_planned_hook, register_planned};
 use crate::commands::hooks::HookAnnouncer;
 use crate::commands::process::{
-    HookLog, InternalOp, build_remove_command, build_remove_paths_command,
+    HookLog, InternalOp, build_drain_trash_command, build_remove_command,
     build_remove_placeholder_command, spawn_detached,
 };
 use crate::commands::template_vars::TemplateVars;
@@ -121,8 +121,8 @@ pub enum RemovalExecution {
     /// Remove inline and report actual outcomes: progress message, spinner
     /// over the trash cleanup, success message from what really happened.
     Foreground,
-    /// Announce, then stage the worktree into trash and hand the `rm -rf` to a
-    /// detached process; the branch deletion still runs synchronously on the
+    /// Announce, then stage the worktree into trash and hand its deletion to a
+    /// detached trash drain; the branch deletion still runs synchronously on the
     /// fast path. The mode says what happens when the rename-into-trash fails.
     Background(BackgroundFallbackMode),
     /// The TUI (picker) path: the same inline removal as `Foreground` with no
@@ -147,7 +147,7 @@ struct BackgroundRemovalOutcome {
 }
 
 /// Spawn background worktree removal: clean-check, stop fsmonitor,
-/// rename-then-prune, spawn detached rm.
+/// rename-then-prune, spawn a detached trash drain.
 ///
 /// Shared sequence for both detached HEAD and branch background removal paths.
 /// The caller is responsible for output messages before this call, and hooks
@@ -191,7 +191,7 @@ fn spawn_background_removal(
 ///
 /// This function has side effects: it renames the worktree directory and prunes git metadata.
 /// On the fast path, the branch is also deleted synchronously (since after prune, the branch
-/// is no longer checked out in any worktree), and the background command is just `rm -rf`.
+/// is no longer checked out in any worktree), and the background command is just a trash drain.
 /// If rename fails (cross-filesystem, permissions, Windows file locking), either returns the
 /// legacy `git worktree remove` command with branch deletion deferred to the background, or
 /// runs that fallback synchronously for non-current worktrees when the caller needs the
@@ -218,20 +218,29 @@ fn execute_instant_removal_or_fallback(
     // Dirty-worktree gate, fsmonitor stop, then the rename into .git/wt/trash/
     // (instant on same filesystem) — the same prelude the synchronous
     // `remove_worktree_with_cleanup` runs. On the fast path the background
-    // process is then just an `rm -rf`.
-    if let Some(staged_path) =
-        stage_worktree_removal(repo, worktree_path, branch_name, force_worktree)?
-    {
+    // process is then just a trash drain.
+    if stage_worktree_removal(repo, worktree_path, branch_name, force_worktree)?.is_some() {
         if changed_directory {
             // Keep the shell's PWD valid until its cd directive is consumed.
             let _ = std::fs::create_dir(worktree_path);
         }
         // Trash cleanup is independent of branch deletion. Start it before a
         // deletion lock wait, and still attempt deletion if scheduling fails.
-        let cleanup = spawn_cleanup(
-            &build_remove_paths_command([&staged_path]),
-            InternalOp::Remove,
-        );
+        // A running drain deletes this entry too, so a prune starts one
+        // drain rather than one per worktree.
+        let trash_dir = repo.wt_trash_dir();
+        let cleanup = if worktrunk::git::trash_drain_running(&trash_dir) {
+            Ok(())
+        } else {
+            std::env::current_exe()
+                .context("Failed to locate Worktrunk executable")
+                .and_then(|executable| {
+                    spawn_cleanup(
+                        &build_drain_trash_command(executable, &trash_dir),
+                        InternalOp::Remove,
+                    )
+                })
+        };
         // Delete branch synchronously now that prune has removed the worktree metadata.
         // Fresh refs, not the pre-hook planning decision: hooks or concurrent
         // processes may have advanced the branch (`execute_branch_deletion`).
@@ -1213,11 +1222,12 @@ pub fn execute_user_command(
 pub fn handle_remove_output(
     plan: &RemovalPlan,
     execution: RemovalExecution,
+    stdin: ForegroundStdin,
     hook_plan: &ApprovedHookPlan,
     quiet: bool,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<BranchFate> {
-    handle_remove_output_inner(plan, execution, hook_plan, quiet, false, announcer)
+    handle_remove_output_inner(plan, execution, stdin, hook_plan, quiet, false, announcer)
 }
 
 /// Merge may select a source containing another checkout, including the
@@ -1233,6 +1243,7 @@ pub fn handle_merge_remove_output(
     handle_remove_output_inner(
         plan,
         RemovalExecution::Background(BackgroundFallbackMode::Detached),
+        ForegroundStdin::Inherit,
         hook_plan,
         false,
         true,
@@ -1243,6 +1254,7 @@ pub fn handle_merge_remove_output(
 fn handle_remove_output_inner(
     plan: &RemovalPlan,
     execution: RemovalExecution,
+    stdin: ForegroundStdin,
     hook_plan: &ApprovedHookPlan,
     quiet: bool,
     protect_nested_worktrees: bool,
@@ -1274,6 +1286,7 @@ fn handle_remove_output_inner(
                 branch_checked_out_at: branch_checked_out_at.as_ref(),
                 hook_plan,
                 execution,
+                stdin,
                 protect_nested_worktrees,
             },
             announcer,
@@ -1804,6 +1817,7 @@ struct WorktreeRemovalContext<'a> {
     /// no `ProjectConfig` snapshot to thread.
     hook_plan: &'a ApprovedHookPlan,
     execution: RemovalExecution,
+    stdin: ForegroundStdin,
     protect_nested_worktrees: bool,
 }
 
@@ -1837,7 +1851,8 @@ fn execute_pre_remove_hooks_if_needed(
         ctx.branch_name,
         ctx.worktree_path,
         false, // yes=false for CommandContext (not approval-related)
-    );
+    )
+    .with_stdin(ctx.stdin);
     let display_path = if ctx.changed_directory {
         None
     } else {
@@ -2193,15 +2208,10 @@ fn remove_removed_worktree_silently(
 ///
 /// ## Stdin
 ///
-/// The child inherits the parent's stdin for interactive input. Foreground children
-/// share the caller's process group independently of stdin, so a `pre-*` hook
-/// can `gum confirm`, and an alias body's `wt switch` picker can drive `/dev/tty`.
-///
-/// Nothing is ever written to that stdin — a hook reads its context through
-/// template variables, whatever form it runs in. The two forms that can't be
-/// interactive close stdin instead, in their own spawn paths: concurrent groups
-/// in `output/concurrent.rs`, detached `post-*` pipelines in
-/// `commands/run_pipeline.rs`.
+/// Exclusive pipelines inherit stdin. Picker removals and parallel prune hooks
+/// close it so they cannot consume another input owner's bytes. Process-group
+/// membership and signal forwarding are independent of this input policy.
+/// Hook context comes from template variables.
 ///
 /// ## Directive files
 ///
@@ -2247,6 +2257,7 @@ pub fn execute_shell_command(
     command: &str,
     command_log_label: Option<&str>,
     directives: DirectivePassthrough,
+    stdin: ForegroundStdin,
     redirect_stdout_to_stderr: bool,
     scrub_git_discovery: bool,
 ) -> anyhow::Result<()> {
@@ -2278,10 +2289,10 @@ pub fn execute_shell_command(
         cmd = cmd.external(label);
     }
 
-    // Inherit the parent's stdin so interactive children (e.g. TUI pickers,
-    // a `gum confirm` in a hook body) keep their controlling terminal — see
-    // the "Stdin" section of this function's docs.
-    cmd = cmd.inherit_stdin();
+    cmd = match stdin {
+        ForegroundStdin::Inherit => cmd.inherit_stdin(),
+        ForegroundStdin::Closed => cmd.stdin(Stdio::null()),
+    };
 
     if let Some(path) = directives.cd_file {
         cmd = cmd.directive_cd_file(path);
@@ -2479,17 +2490,13 @@ mod tests {
             },
             BackgroundFallbackMode::Detached,
             |args, _| {
-                let shell = worktrunk::shell_exec::ShellConfig::get()?;
-                let output = Cmd::new(shell.executable.to_str().unwrap())
-                    .args(&shell.args)
-                    .args(args)
-                    .run()?;
-                assert!(output.status.success());
-                Ok(())
+                assert_eq!(args.last().unwrap(), repo.wt_trash_dir().as_os_str());
+                worktrunk::git::drain_trash(&repo.wt_trash_dir())
             },
         )
         .unwrap();
         assert!(!checkout.exists());
+        assert!(worktrunk::git::staged_trash_entries(&repo.wt_trash_dir()).is_empty());
         assert!(!registration.exists());
         assert!(
             repo.run_command(&["rev-parse", "--verify", "feature"])

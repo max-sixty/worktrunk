@@ -4430,33 +4430,36 @@ fn test_remove_stale_staging_dir_from_crashed_removal(mut repo: TestRepo) {
     );
 }
 
-/// `wt remove` sweeps `.git/wt/trash/` entries older than 24 hours.
+/// `wt remove` deletes entries an interrupted removal left in `.git/wt/trash/`.
 ///
-/// Each run of `wt remove` fires a detached `rm -rf` on trash entries whose
-/// encoded timestamp is more than a day in the past. This provides eventual
-/// cleanup for directories orphaned when a previous background removal was
-/// interrupted. Fresh entries (from recent or in-flight removals) are left
-/// alone so concurrent removals don't race.
+/// Each staged removal and each internal sweep starts a detached
+/// `wt _drain-trash`, which deletes every staged entry, including read-only
+/// directories that `rm -rf` can't delete. Entries not named
+/// `<name>-<timestamp>` were not staged by worktrunk and stay.
 #[rstest]
-fn test_remove_sweeps_stale_trash_entries(mut repo: TestRepo) {
+fn test_remove_drains_leftover_trash_entries(mut repo: TestRepo) {
     let git_common_dir = crate::common::resolve_git_common_dir(repo.root_path());
     let trash_dir = git_common_dir.join("wt/trash");
     std::fs::create_dir_all(&trash_dir).unwrap();
 
-    // Pre-populate the trash directory with a stale entry (2 days old) and a
-    // fresh entry (just created). The stale entry should be swept; the fresh
-    // entry should survive.
     let day = 24 * 60 * 60;
-    let stale_timestamp = crate::common::TEST_EPOCH - 2 * day;
-    let stale_entry = trash_dir.join(format!("orphan-stale-{stale_timestamp}"));
+    let stale_entry = trash_dir.join(format!(
+        "orphan-stale-{}",
+        crate::common::TEST_EPOCH - 2 * day
+    ));
     let fresh_entry = trash_dir.join(format!("orphan-fresh-{}", crate::common::TEST_EPOCH));
-    std::fs::create_dir(&stale_entry).unwrap();
-    std::fs::write(stale_entry.join("marker"), "leftover").unwrap();
-    std::fs::create_dir(&fresh_entry).unwrap();
-    std::fs::write(fresh_entry.join("marker"), "recent").unwrap();
+    let foreign_entry = trash_dir.join("not-staged");
+    for entry in [&stale_entry, &fresh_entry, &foreign_entry] {
+        std::fs::create_dir(entry).unwrap();
+        std::fs::write(entry.join("marker"), "leftover").unwrap();
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&stale_entry, std::fs::Permissions::from_mode(0o555)).unwrap();
+    }
 
-    // Create and remove a real worktree to trigger the sweep, which runs after
-    // the primary `wt remove` output has been printed.
+    // Create and remove a real worktree to trigger the drain.
     let _ = repo.add_worktree("feature-sweep");
     let output = repo
         .wt_command()
@@ -4469,14 +4472,57 @@ fn test_remove_sweeps_stale_trash_entries(mut repo: TestRepo) {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // The stale entry is removed by a detached `rm -rf` — poll for absence.
-    crate::common::wait_for("stale trash entry swept", || !stale_entry.exists());
-
-    // The fresh entry must survive — only entries older than 24 hours are swept.
+    crate::common::wait_for("leftover trash entries drained", || {
+        !stale_entry.exists() && !fresh_entry.exists()
+    });
     assert!(
-        fresh_entry.exists(),
-        "fresh trash entry (age 0) must not be swept"
+        foreign_entry.exists(),
+        "unstaged entries must be left alone"
     );
+}
+
+/// While another drain holds `trash.lock`, a removal leaves its staged entry
+/// to that drain; the next removal after the lock frees deletes it.
+#[rstest]
+fn test_remove_leaves_entries_to_the_running_drain(mut repo: TestRepo) {
+    let git_common_dir = crate::common::resolve_git_common_dir(repo.root_path());
+    let trash_dir = git_common_dir.join("wt/trash");
+    std::fs::create_dir_all(&trash_dir).unwrap();
+    let holder = std::fs::File::create(git_common_dir.join("wt/trash.lock")).unwrap();
+    holder.lock().unwrap();
+
+    let _ = repo.add_worktree("feature-held");
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-held"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let staged: Vec<_> = std::fs::read_dir(&trash_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(staged.len(), 1, "the lock holder owns the deletion");
+
+    drop(holder);
+    let _ = repo.add_worktree("feature-next");
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-next"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    crate::common::wait_for("trash drained after the lock frees", || {
+        std::fs::read_dir(&trash_dir).unwrap().next().is_none()
+    });
 }
 
 /// `wt remove -vv` resolves every fsmonitor daemon in ONE `lsof` spawn and
@@ -4680,20 +4726,16 @@ fn test_remove_foreground_succeeds_with_stuck_directory(mut repo: TestRepo) {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Restore permissions in trash dir so TempDir cleanup works
-    let git_dir = repo.root_path().join(".git");
-    let trash_dir = git_dir.join("wt").join("trash");
-    if trash_dir.exists() {
-        for entry in fs::read_dir(&trash_dir).unwrap().flatten() {
-            restore_dir_permissions(&entry.path());
-        }
-    }
-
     assert!(
         output.status.success(),
         "Remove should succeed via fast path, got: {stderr}"
     );
     assert!(!worktree_path.exists(), "Worktree directory should be gone");
+    let trash_dir = repo.root_path().join(".git/wt/trash");
+    assert!(
+        fs::read_dir(&trash_dir).unwrap().next().is_none(),
+        "the read-only directory should be deleted with the rest of the worktree"
+    );
 }
 
 /// Same as above but for the detached HEAD code path.
@@ -4735,20 +4777,16 @@ fn test_remove_foreground_succeeds_with_stuck_directory_detached(mut repo: TestR
 
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Restore permissions in trash dir so TempDir cleanup works
-    let git_dir = repo.root_path().join(".git");
-    let trash_dir = git_dir.join("wt").join("trash");
-    if trash_dir.exists() {
-        for entry in fs::read_dir(&trash_dir).unwrap().flatten() {
-            restore_dir_permissions(&entry.path());
-        }
-    }
-
     assert!(
         output.status.success(),
         "Remove should succeed via fast path, got: {stderr}"
     );
     assert!(!worktree_path.exists(), "Worktree directory should be gone");
+    let trash_dir = repo.root_path().join(".git/wt/trash");
+    assert!(
+        fs::read_dir(&trash_dir).unwrap().next().is_none(),
+        "the read-only directory should be deleted with the rest of the worktree"
+    );
 }
 
 /// Worktrees with initialized git submodules should be removable.
@@ -5013,22 +5051,6 @@ fn test_remove_refuses_dirty_submodule_hidden_by_user_config(mut repo: TestRepo)
         "DIRTIED\n",
         "the hidden submodule change must remain recoverable"
     );
-}
-
-/// Restore write permissions recursively so TempDir cleanup succeeds.
-#[cfg(unix)]
-fn restore_dir_permissions(dir: &std::path::Path) {
-    use std::fs::{self, Permissions};
-    use std::os::unix::fs::PermissionsExt;
-
-    let _ = fs::set_permissions(dir, Permissions::from_mode(0o755));
-    if let Ok(entries) = fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            if entry.file_type().is_ok_and(|t| t.is_dir()) {
-                restore_dir_permissions(&entry.path());
-            }
-        }
-    }
 }
 
 // ============================================================================
