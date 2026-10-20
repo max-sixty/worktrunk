@@ -2710,6 +2710,10 @@ Hooks, aliases and `step.copy-ignored.exclude` accumulate rather than replace, s
         force_delete: bool,
     },
 
+    /// Delete the worktrees staged in a trash directory.
+    #[command(name = "_drain-trash", hide = true)]
+    InternalDrainTrash { trash_dir: std::path::PathBuf },
+
     /// Run a custom `wt-<name>` command found on PATH.
     ///
     /// Captured by clap when the first positional argument doesn't match any

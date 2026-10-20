@@ -11,9 +11,9 @@
 //!   fallback and branch deletion, run to completion synchronously.
 //!
 //! The split exists because the default path defers its deletion: `wt remove`
-//! and `wt merge --remove` stage the worktree here, then hand the `rm -rf` to
-//! a detached process so the command returns as soon as the workspace is
-//! clear. They build that tail themselves rather than calling
+//! and `wt merge --remove` stage the worktree here, then hand the deletion to
+//! a detached [`drain_trash`] so the command returns as soon as the workspace
+//! is clear. They build that tail themselves rather than calling
 //! [`remove_worktree_with_cleanup`]. The callers that run to completion —
 //! `--foreground` removals, the TUI picker, and external tooling (e.g.
 //! `worktrunk-sync`) — call it and get the fallback and integration-checked
@@ -40,7 +40,8 @@
 //!    `<git-common-dir>/wt/trash/<name>-<timestamp>/`. Same-filesystem renames
 //!    are instant metadata operations, so the user's workspace clears
 //!    immediately. The caller is responsible for eventually removing the
-//!    staged path — either synchronously or via a background process.
+//!    staged path — either synchronously or via [`drain_trash`] in a
+//!    background process.
 //! 4. **Fallback removal.** If the rename fails (cross-filesystem, permission
 //!    denied, Windows file locks), the code falls back to `git worktree remove`
 //!    (optionally with `--force`), which deletes files directly.
@@ -98,6 +99,8 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
+use std::collections::HashSet;
+use std::fs::{self, TryLockError};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -106,6 +109,8 @@ use anyhow::Context as _;
 use crate::git::repository::WorkingTree;
 use crate::git::{ErrorExt, GitError, IntegrationReason, Repository, WorktreeInfo, path_dir_name};
 use crate::path::format_path_for_display;
+use crate::progress::Progress;
+use crate::remove_dir::remove_dir_with_progress;
 use crate::shell_exec::Cmd;
 use crate::styling::{eprintln, format_with_gutter, warning_message};
 use crate::utils::epoch_now;
@@ -139,8 +144,8 @@ const FSMONITOR_LSOF_TIMEOUT: Duration = Duration::from_secs(2);
 /// while the worktree path still exists** (the socket lives under the
 /// per-worktree git dir and is needed to resolve the owning PID), so its one
 /// caller is [`stage_worktree_removal`], which every removal path runs in the
-/// foreground before the directory is staged or pruned. The detached `rm -rf`
-/// background process never touches the daemon; keeping daemon management in
+/// foreground before the directory is staged or pruned. The detached trash drain
+/// never touches the daemon; keeping daemon management in
 /// the Rust foreground avoids reimplementing socket/PID resolution and signal
 /// escalation as a shell string.
 ///
@@ -346,7 +351,7 @@ pub struct RemoveOptions {
 ///
 /// `staged_path` is `Some` only on the fast path. Callers are responsible for
 /// cleaning up the staged directory; `wt remove` does this with a detached
-/// background `rm -rf` so the foreground command returns immediately.
+/// [`drain_trash`] so the foreground command returns immediately.
 pub struct RemovalOutput {
     pub branch_result: Option<anyhow::Result<BranchDeletionResult>>,
     /// Path to the staged trash directory on the fast path.
@@ -413,7 +418,7 @@ pub fn remove_worktree_with_cleanup(
 /// Every removal path runs this, in the foreground, before the worktree
 /// directory stops existing: the synchronous
 /// [`remove_worktree_with_cleanup`], and the default background path, which
-/// stages here and hands the `rm -rf` to a detached process. Keeping the three
+/// stages here and hands the deletion to a detached [`drain_trash`]. Keeping the three
 /// steps together is what makes the dirty-worktree gate a single decision
 /// rather than a sequence each caller re-assembles — the order below is easy
 /// to get subtly wrong, and getting it wrong destroys uncommitted work.
@@ -752,11 +757,150 @@ pub(crate) fn generate_removing_path(trash_dir: &Path, git_dir: &Path) -> PathBu
     trash_dir.join(format!("{}-{}", name, timestamp))
 }
 
+/// Entries in `trash_dir` named `<name>-<timestamp>`, as removal stages them.
+///
+/// Anything else in the directory was not staged by worktrunk and is left
+/// alone. A missing directory has no entries.
+pub fn staged_trash_entries(trash_dir: &Path) -> Vec<PathBuf> {
+    let Ok(read_dir) = fs::read_dir(trash_dir) else {
+        return Vec::new();
+    };
+    read_dir
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry.file_name().to_str().is_some_and(|name| {
+                name.rsplit_once('-')
+                    .is_some_and(|(_, timestamp)| timestamp.parse::<u64>().is_ok())
+            })
+        })
+        .map(|entry| entry.path())
+        .collect()
+}
+
+/// Whether a drain holds `trash_dir`'s lock.
+///
+/// A removal that finds one running skips starting another: the running drain
+/// lists the trash again before it exits. The check holds the lock for an
+/// instant, so a drain starting at that moment may exit early; the check then
+/// reports no drain running and the caller starts one.
+pub fn trash_drain_running(trash_dir: &Path) -> bool {
+    open_drain_lock(trash_dir)
+        .is_ok_and(|lock| matches!(lock.try_lock(), Err(TryLockError::WouldBlock)))
+}
+
+fn open_drain_lock(trash_dir: &Path) -> anyhow::Result<fs::File> {
+    let lock_path = trash_dir.with_extension("lock");
+    fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)
+        .with_context(|| format!("Failed to open {}", format_path_for_display(&lock_path)))
+}
+
+/// Delete every staged entry in `trash_dir`, unless another drain is running.
+///
+/// Every staged removal starts a drain, so a prune starts one per worktree.
+/// Concurrent deletions on one filesystem add CPU without adding throughput:
+/// a 193-worktree prune ran 193 `rm -rf` processes using about three cores to
+/// delete 1,500 files/s, where one process alone deleted 3,000–5,000 files/s
+/// at under one core. So one drain per trash directory does the deleting.
+///
+/// The running drain holds an exclusive lock on `<trash_dir>.lock`. A drain
+/// that finds the lock held exits and leaves its entry to the holder, which
+/// lists the directory again after each pass. After releasing the lock, the
+/// holder lists once more and, if it finds a new entry, takes the lock again:
+/// an entry staged while the holder was releasing it would otherwise wait for
+/// the next removal.
+///
+/// An entry that a drain can't fully delete, such as one holding another
+/// user's files, stays in the trash for a later drain rather than being
+/// retried in a loop.
+pub fn drain_trash(trash_dir: &Path) -> anyhow::Result<()> {
+    let mut undeletable = HashSet::new();
+    loop {
+        let lock = open_drain_lock(trash_dir)?;
+        match lock.try_lock() {
+            Err(TryLockError::WouldBlock) => return Ok(()),
+            result => result
+                .map_err(std::io::Error::from)
+                .context("Failed to lock the trash for deletion")?,
+        }
+        loop {
+            let pending: Vec<_> = staged_trash_entries(trash_dir)
+                .into_iter()
+                .filter(|entry| !undeletable.contains(entry))
+                .collect();
+            if pending.is_empty() {
+                break;
+            }
+            for entry in pending {
+                if !remove_dir_with_progress(&entry, &Progress::disabled()) {
+                    undeletable.insert(entry);
+                }
+            }
+        }
+        drop(lock);
+        if staged_trash_entries(trash_dir)
+            .iter()
+            .all(|entry| undeletable.contains(entry))
+        {
+            return Ok(());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::git::ErrorExt;
     use crate::testing::TestRepo;
+
+    /// A drain deletes worktrunk's staged entries and leaves anything else; a
+    /// drain that finds another holding the lock leaves the entries to it.
+    #[test]
+    fn drain_trash_deletes_staged_entries_once_the_lock_is_free() {
+        let temp = tempfile::tempdir().unwrap();
+        let trash = temp.path().join("trash");
+        let staged = trash.join("repo.feature-branch-1700000000");
+        let foreign = trash.join("not-staged");
+        fs::create_dir_all(staged.join("node_modules/pkg")).unwrap();
+        fs::write(staged.join("node_modules/pkg/index.js"), "x").unwrap();
+        fs::create_dir_all(&foreign).unwrap();
+        fs::write(trash.join("stray-file-1700000000"), "a staged file").unwrap();
+        assert_eq!(staged_trash_entries(&trash).len(), 2);
+
+        assert!(!trash_drain_running(&trash));
+        let holder = fs::File::create(temp.path().join("trash.lock")).unwrap();
+        holder.lock().unwrap();
+        assert!(trash_drain_running(&trash));
+        drain_trash(&trash).unwrap();
+        assert!(staged.exists(), "the lock holder owns the deletion");
+
+        drop(holder);
+        drain_trash(&trash).unwrap();
+        assert!(staged_trash_entries(&trash).is_empty());
+        assert!(foreign.exists());
+        assert!(staged_trash_entries(&temp.path().join("missing")).is_empty());
+    }
+
+    /// An entry the drain can't delete ends the drain rather than looping.
+    #[cfg(unix)]
+    #[test]
+    fn drain_trash_stops_at_an_undeletable_entry() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let trash = temp.path().join("trash");
+        fs::create_dir(&trash).unwrap();
+        fs::write(trash.join("stuck-1700000000"), "x").unwrap();
+        // Unlinking an entry needs write permission on the trash itself.
+        fs::set_permissions(&trash, fs::Permissions::from_mode(0o555)).unwrap();
+
+        drain_trash(&trash).unwrap();
+
+        fs::set_permissions(&trash, fs::Permissions::from_mode(0o755)).unwrap();
+    }
 
     /// A `git worktree lock` must stop the rename even when the caller skipped
     /// `prepare_worktree_removal` (merge used to construct a plan by hand).

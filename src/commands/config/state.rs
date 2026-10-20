@@ -79,6 +79,8 @@ use color_print::cformat;
 use path_slash::PathExt as _;
 use worktrunk::git::{BranchRef, CommandError, Repository, resolve_input_path, sha_cache};
 use worktrunk::path::{format_path_for_display, sanitize_for_filename};
+use worktrunk::progress::Progress;
+use worktrunk::remove_dir::remove_dir_with_progress;
 use worktrunk::styling::{
     eprintln, format_heading, format_with_gutter, hint_message, info_message, println,
     success_message, warning_message,
@@ -207,7 +209,7 @@ fn sort_hook_entries(entries: &mut [HookOutputEntry]) {
 /// A top-level entry staged under `wt_trash_dir()`.
 ///
 /// Worktree removal renames directories into `.git/wt/trash/<name>-<timestamp>`
-/// and a background `rm -rf` cleans them up; entries still present here are
+/// and a background trash drain deletes them; entries still present here are
 /// awaiting (or escaped) that sweep.
 struct TrashEntry {
     /// Filename, e.g. `myproject.feature-1234567890`.
@@ -222,7 +224,7 @@ struct TrashEntry {
 /// Only the first level matters — each entry is one staged worktree (a
 /// directory) or a stray file. Sorted by mtime (newest first) with name as
 /// tie-breaker. Individual dirent/metadata failures are skipped: `state get`
-/// is a read-only inspector and can race with the background `rm -rf`, so a
+/// is a read-only inspector and can race with the background trash drain, so a
 /// partial listing is more useful than a hard failure.
 fn list_trash_entries(repo: &Repository) -> anyhow::Result<Vec<TrashEntry>> {
     let trash_dir = repo.wt_trash_dir();
@@ -252,7 +254,7 @@ fn list_trash_entries(repo: &Repository) -> anyhow::Result<Vec<TrashEntry>> {
 /// Clear stale entries from the wt/trash directory.
 ///
 /// Worktree removal renames directories into `.git/wt/trash/` for instant UX,
-/// then deletes them in a background process. If the background `rm -rf` fails
+/// then deletes them in a background process. If the background drain fails
 /// or is killed, entries accumulate. This cleans them up.
 fn clear_trash(repo: &Repository) -> anyhow::Result<usize> {
     let trash_dir = repo.wt_trash_dir();
@@ -263,13 +265,12 @@ fn clear_trash(repo: &Repository) -> anyhow::Result<usize> {
 
     let mut cleared = 0;
     for entry in std::fs::read_dir(&trash_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            std::fs::remove_dir_all(&path)?;
-        } else {
-            std::fs::remove_file(&path)?;
-        }
+        let path = entry?.path();
+        anyhow::ensure!(
+            remove_dir_with_progress(&path, &Progress::disabled()),
+            "Failed to remove {}",
+            format_path_for_display(&path)
+        );
         cleared += 1;
     }
 
