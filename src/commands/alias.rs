@@ -412,7 +412,7 @@ pub(crate) fn load_aliases(
 ) -> AliasMap {
     let project_id = repo.and_then(|r| r.project_identifier().ok());
     let mut result: AliasMap = user_config
-        .aliases(project_id.as_deref())
+        .aliases(project_id.as_ref())
         .into_iter()
         .map(|(n, c)| {
             (
@@ -894,7 +894,7 @@ pub(crate) fn load_aliases_for_listing() -> Vec<(String, CommandConfig, HookSour
 
     let user_aliases = UserConfig::load()
         .ok()
-        .map(|uc| uc.aliases(project_id.as_deref()))
+        .map(|uc| uc.aliases(project_id.as_ref()))
         .unwrap_or_default();
 
     let project_aliases = repo

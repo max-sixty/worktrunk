@@ -33,7 +33,7 @@ use color_print::cformat;
 use crossbeam_channel as chan;
 use rayon::prelude::*;
 use worktrunk::HookType;
-use worktrunk::config::{Approvals, ProjectConfig, UserConfig};
+use worktrunk::config::{Approvals, ProjectConfig, ProjectId, UserConfig};
 use worktrunk::git::{
     BranchDeletionMode, IntegrationReason, RefSnapshot, Repository, WorktreeInfo,
 };
@@ -928,7 +928,7 @@ fn build_pessimistic_plan(
     current_root: &Path,
     project_config: Option<&ProjectConfig>,
     user_config: &UserConfig,
-    project_id: Option<&str>,
+    project_id: Option<&ProjectId>,
 ) -> anyhow::Result<HookPlan> {
     let mut builder = HookPlanBuilder::new(project_config, user_config, project_id);
     let mut has_current = false;
@@ -958,7 +958,7 @@ fn unapproved_for_hook(
     hook_type: HookType,
     project_config: Option<&ProjectConfig>,
     user_config: &UserConfig,
-    project_id: Option<&str>,
+    project_id: Option<&ProjectId>,
     approvals: &Approvals,
 ) -> Vec<String> {
     let Ok(home) = repo.home_path() else {
@@ -1115,7 +1115,7 @@ pub fn step_prune(
     //     (`wt config approvals add`) or remove individually
     //     (`wt -C <wt> remove`). Unapproved hooks never run silently.
     let project_id_owned = repo.project_identifier().ok();
-    let project_id = project_id_owned.as_deref();
+    let project_id = project_id_owned.as_ref();
     let project_config = repo.load_project_config()?;
     let approvals = if yes {
         Approvals::default()

@@ -198,9 +198,11 @@ tracing-subscriber = { version = "0.3.17", default-features = false, features = 
 # Only enable needed features; macros and multi-template loading remain disabled.
 # `unstable_machinery` supplies syntax analysis for migrations and diagnostics;
 # `debug` supplies error source spans, including release builds.
+# `json` supplies the `tojson` filter for passing structured vars to commands.
 minijinja = { version = "3.0", default-features = false, features = [
     "builtins",
     "debug",
+    "json",
     "serde",
     "std_collections",
     "unstable_machinery",

@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
-use worktrunk::config::{MergeConfig, UserConfig};
+use worktrunk::config::{MergeConfig, ProjectId, UserConfig};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{eprintln, info_message};
@@ -107,7 +107,7 @@ fn approve_merge_plan(
     config: &UserConfig,
     feature_root: &Path,
     destination_path: &Path,
-    project_id: &str,
+    project_id: &ProjectId,
     verify: bool,
     will_remove: bool,
     will_switch: bool,

@@ -89,9 +89,22 @@ use crate::trace::CommandTrace;
 pub mod pipe;
 
 /// Prepare complete input before spawning, with no producer that can block.
-/// The anonymous file is removed when its last handle closes, even on interruption.
-/// This is seekable stdin, unlike the pipes connecting live pipeline stages.
+///
+/// On Unix, input that fits in a pipe's buffer is written there before spawn,
+/// so it needs no temporary storage and works with an unusable `TMPDIR`.
+/// Larger input, and all input on Windows, goes through an anonymous file,
+/// removed when its last handle closes, even on interruption.
 pub fn buffered_stdin(bytes: &[u8]) -> std::io::Result<Stdio> {
+    #[cfg(unix)]
+    {
+        let (reader, mut writer) = with_process_creation_guard(std::io::pipe)?;
+        pipe::set_nonblocking(&writer)?;
+        // Writing to a fresh pipe whose reader we hold fails only with
+        // `WouldBlock`, once the input outgrows the buffer.
+        if writer.write_all(bytes).is_ok() {
+            return Ok(reader.into());
+        }
+    }
     let mut file = tempfile::tempfile()?;
     file.write_all(bytes)?;
     file.rewind()?;
@@ -1221,7 +1234,7 @@ pub struct Cmd {
     shell_wrap: bool,
     /// Stdout configuration for stream() (defaults to inherit)
     stdout_cfg: Option<std::process::Stdio>,
-    /// Stdin configuration for stream() (defaults to null, or a file for stdin_data)
+    /// Stdin configuration for stream() (defaults to null; stdin_data takes precedence)
     stdin_cfg: Option<std::process::Stdio>,
     /// Observe terminal signals and forward PID-targeted cancellation during stream().
     forward_signals: bool,
@@ -1705,7 +1718,7 @@ impl Cmd {
         self
     }
 
-    /// Set complete input bytes, delivered through an anonymous temporary file.
+    /// Set complete input bytes, prepared by [`buffered_stdin`] before spawn.
     ///
     /// The child reads these bytes followed by EOF, without a pipe writer that
     /// can block on an unread input. This takes precedence over `.stdin(Stdio)`.

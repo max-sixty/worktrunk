@@ -121,12 +121,12 @@ impl CommandEnv {
     ///
     /// Uses the remote URL if available, otherwise the canonical repository path.
     /// Returns None only if the path is not valid UTF-8.
-    pub fn project_id(&self) -> Option<String> {
+    pub fn project_id(&self) -> Option<worktrunk::config::ProjectId> {
         self.repo.project_identifier().ok()
     }
 
     /// Get all resolved config with defaults applied.
     pub fn resolved(&self) -> worktrunk::config::ResolvedConfig {
-        self.config.resolved(self.project_id().as_deref())
+        self.config.resolved(self.project_id().as_ref())
     }
 }

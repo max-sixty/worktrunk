@@ -63,8 +63,9 @@
 use anyhow::Context;
 
 use super::{GitRemoteUrl, GitRepoInfo, Repository};
+use crate::config::ProjectId;
 use crate::git::error::RefType;
-use crate::git::url_path_segments_eq;
+use crate::git::{legacy_project_identifier, url_path_segments_eq};
 
 impl Repository {
     /// Get the primary remote name for this repository.
@@ -404,22 +405,26 @@ impl Repository {
     /// Uses the git remote URL if available (e.g., "github.com/user/repo"),
     /// otherwise falls back to the full canonical path of the repository.
     ///
-    /// This identifier is used to track which commands have been approved
-    /// for execution in this project.
+    /// This identifier keys approved commands and `[projects."…"]` settings.
+    /// For a remote whose identifier changed after v0.80.0, it also carries
+    /// the old one, so keys saved under it keep applying.
     ///
     /// Result is cached in the repository's shared cache (same for all clones).
-    pub fn project_identifier(&self) -> anyhow::Result<String> {
+    pub fn project_identifier(&self) -> anyhow::Result<ProjectId> {
         self.cache
             .project_identifier
             .get_or_try_init(|| {
                 // Try to get the remote URL first (cached)
                 if let Some(url) = self.primary_remote_url() {
-                    if let Some(parsed) = GitRemoteUrl::parse(url.trim()) {
-                        return Ok(parsed.project_identifier());
-                    }
-                    // Fallback for URLs that don't fit host/owner/repo model
-                    let url = url.strip_suffix(".git").unwrap_or(url.as_str());
-                    return Ok(url.to_string());
+                    let current = match GitRemoteUrl::parse(url.trim()) {
+                        Some(parsed) => parsed.project_identifier(),
+                        // Fallback for URLs that don't fit host/owner/repo model
+                        None => url.strip_suffix(".git").unwrap_or(url.as_str()).to_string(),
+                    };
+                    return Ok(ProjectId::with_legacy(
+                        current,
+                        legacy_project_identifier(&url),
+                    ));
                 }
 
                 // Fall back to full canonical path (use worktree base for consistency across all worktrees)
@@ -431,7 +436,7 @@ impl Repository {
                     .to_str()
                     .context("Repository path is not valid UTF-8")?;
 
-                Ok(path_str.to_string())
+                Ok(ProjectId::from(path_str))
             })
             .cloned()
     }

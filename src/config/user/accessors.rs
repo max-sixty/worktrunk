@@ -8,9 +8,9 @@ use std::path::PathBuf;
 
 use normalize_path::NormalizePath;
 
-use crate::config::HooksConfig;
 use crate::config::commands::CommandConfig;
 use crate::config::expansion::expand_template;
+use crate::config::{HooksConfig, ProjectId};
 use crate::path::format_path_for_display;
 use crate::shell_exec::ShellEscapeMode;
 
@@ -36,7 +36,7 @@ impl UserConfig {
     /// and ordering rules.
     fn project_overrides(
         &self,
-        project: Option<&str>,
+        project: Option<&ProjectId>,
     ) -> Vec<&super::sections::UserProjectOverrides> {
         project.map_or_else(Vec::new, |p| {
             super::project_match::matching_keys(&self.projects, p)
@@ -45,7 +45,7 @@ impl UserConfig {
 
     fn merged_project_config<T: Merge + Clone>(
         &self,
-        project: Option<&str>,
+        project: Option<&ProjectId>,
         global: &T,
         project_config: impl Fn(&super::sections::UserProjectOverrides) -> &T,
     ) -> T {
@@ -60,7 +60,7 @@ impl UserConfig {
     /// so the most specific entry that sets it wins.
     fn project_field<'a, T>(
         &'a self,
-        project: Option<&str>,
+        project: Option<&ProjectId>,
         field: impl Fn(&'a super::sections::UserProjectOverrides) -> Option<T>,
     ) -> Option<T> {
         self.project_overrides(project)
@@ -82,7 +82,7 @@ impl UserConfig {
     }
 
     /// Returns true if the given project has an explicit worktree-path override.
-    pub fn has_project_worktree_path(&self, project: &str) -> bool {
+    pub fn has_project_worktree_path(&self, project: &ProjectId) -> bool {
         self.project_field(Some(project), |p| p.worktree_path.as_ref())
             .is_some()
     }
@@ -91,7 +91,7 @@ impl UserConfig {
     ///
     /// Checks project-specific config first, falls back to global worktree-path,
     /// and finally to the default template if neither is set.
-    pub fn worktree_path_for_project(&self, project: &str) -> String {
+    pub fn worktree_path_for_project(&self, project: &ProjectId) -> String {
         self.project_field(Some(project), |p| p.worktree_path.clone())
             .unwrap_or_else(|| self.worktree_path())
     }
@@ -103,7 +103,7 @@ impl UserConfig {
     /// repository on a host whose name carries no forge brand, without a
     /// `[forge]` block in each one. Read by
     /// [`Repository::ci_platform`](crate::git::Repository::ci_platform).
-    pub fn forge_platform(&self, project: Option<&str>) -> Option<&str> {
+    pub fn forge_platform(&self, project: Option<&ProjectId>) -> Option<&str> {
         self.project_field(project, |p| p.forge.platform.as_deref())
     }
 
@@ -112,7 +112,7 @@ impl UserConfig {
     /// Names the API server for a remote whose host is an SSH alias, or whose
     /// API lives on a different name. Both are facts about the host rather
     /// than the repository, which is why a pattern entry suits them.
-    pub fn forge_hostname(&self, project: Option<&str>) -> Option<&str> {
+    pub fn forge_hostname(&self, project: Option<&ProjectId>) -> Option<&str> {
         self.project_field(project, |p| p.forge.hostname.as_deref())
     }
 
@@ -122,7 +122,7 @@ impl UserConfig {
     /// settings take precedence for fields that are set. Deprecated
     /// `[commit-generation]` sections are normalized into `[commit.generation]`
     /// during config loading.
-    pub fn commit_generation(&self, project: Option<&str>) -> CommitGenerationConfig {
+    pub fn commit_generation(&self, project: Option<&ProjectId>) -> CommitGenerationConfig {
         self.project_overrides(project)
             .into_iter()
             .filter_map(|config| config.commit.generation.as_ref())
@@ -136,7 +136,7 @@ impl UserConfig {
     ///
     /// Merges project-specific settings with global settings, where project
     /// settings take precedence for fields that are set.
-    pub fn list(&self, project: Option<&str>) -> ListConfig {
+    pub fn list(&self, project: Option<&ProjectId>) -> ListConfig {
         self.merged_project_config(project, &self.list, |config| &config.list)
     }
 
@@ -144,7 +144,7 @@ impl UserConfig {
     ///
     /// Merges project-specific settings with global settings, where project
     /// settings take precedence for fields that are set.
-    pub fn commit(&self, project: Option<&str>) -> CommitConfig {
+    pub fn commit(&self, project: Option<&ProjectId>) -> CommitConfig {
         self.merged_project_config(project, &self.commit, |config| &config.commit)
     }
 
@@ -152,7 +152,7 @@ impl UserConfig {
     ///
     /// Merges project-specific settings with global settings, where project
     /// settings take precedence for fields that are set.
-    pub fn merge(&self, project: Option<&str>) -> MergeConfig {
+    pub fn merge(&self, project: Option<&ProjectId>) -> MergeConfig {
         self.merged_project_config(project, &self.merge, |config| &config.merge)
     }
 
@@ -160,7 +160,7 @@ impl UserConfig {
     ///
     /// Merges project-specific settings with global settings, where project
     /// settings take precedence for fields that are set.
-    pub fn remove(&self, project: Option<&str>) -> RemoveConfig {
+    pub fn remove(&self, project: Option<&ProjectId>) -> RemoveConfig {
         self.merged_project_config(project, &self.remove, |config| &config.remove)
     }
 
@@ -168,17 +168,17 @@ impl UserConfig {
     ///
     /// Merges project-specific settings with global settings, where project
     /// settings take precedence for fields that are set.
-    pub fn switch(&self, project: Option<&str>) -> SwitchConfig {
+    pub fn switch(&self, project: Option<&ProjectId>) -> SwitchConfig {
         self.merged_project_config(project, &self.switch, |config| &config.switch)
     }
 
     /// Returns the `wt step` config for a specific project.
-    pub fn step(&self, project: Option<&str>) -> StepConfig {
+    pub fn step(&self, project: Option<&ProjectId>) -> StepConfig {
         self.merged_project_config(project, &self.step, |config| &config.step)
     }
 
     /// Returns the `wt step copy-ignored` config for a specific project.
-    pub fn copy_ignored(&self, project: Option<&str>) -> CopyIgnoredConfig {
+    pub fn copy_ignored(&self, project: Option<&ProjectId>) -> CopyIgnoredConfig {
         self.step(project).copy_ignored.unwrap_or_default()
     }
 
@@ -187,7 +187,7 @@ impl UserConfig {
     /// Merges project-specific settings with global settings, where project
     /// settings take precedence for fields that are set. Deprecated `[select]`
     /// sections are normalized into `[switch.picker]` during config loading.
-    pub fn switch_picker(&self, project: Option<&str>) -> SwitchPickerConfig {
+    pub fn switch_picker(&self, project: Option<&ProjectId>) -> SwitchPickerConfig {
         self.project_overrides(project)
             .into_iter()
             .filter_map(|config| config.switch.picker.as_ref())
@@ -201,7 +201,7 @@ impl UserConfig {
     ///
     /// Merges global hooks with per-project hooks using append semantics.
     /// Both global and per-project hooks run (global first, then per-project).
-    pub fn hooks(&self, project: Option<&str>) -> HooksConfig {
+    pub fn hooks(&self, project: Option<&ProjectId>) -> HooksConfig {
         self.project_overrides(project)
             .into_iter()
             .fold(self.hooks.clone(), |merged, config| {
@@ -213,7 +213,7 @@ impl UserConfig {
     ///
     /// Merges global user aliases with per-project user aliases using append
     /// semantics: both run on name collision (global first, then per-project).
-    pub fn aliases(&self, project: Option<&str>) -> BTreeMap<String, CommandConfig> {
+    pub fn aliases(&self, project: Option<&ProjectId>) -> BTreeMap<String, CommandConfig> {
         let mut result = self.aliases.clone();
         for proj in self.project_overrides(project) {
             crate::config::commands::append_aliases(&mut result, &proj.aliases);
@@ -226,7 +226,7 @@ impl UserConfig {
     /// Returns all resolved config with defaults applied.
     ///
     /// Merges global and per-project settings, applying defaults for any unset fields.
-    pub fn resolved(&self, project: Option<&str>) -> super::resolved::ResolvedConfig {
+    pub fn resolved(&self, project: Option<&ProjectId>) -> super::resolved::ResolvedConfig {
         super::resolved::ResolvedConfig::for_project(self, project)
     }
 
@@ -249,7 +249,7 @@ impl UserConfig {
         main_worktree: &str,
         branch: &str,
         repo: &crate::git::Repository,
-        project: Option<&str>,
+        project: Option<&ProjectId>,
     ) -> anyhow::Result<String> {
         let template = match project {
             Some(p) => self.worktree_path_for_project(p),
@@ -314,7 +314,7 @@ impl UserConfig {
             })?;
 
         let project = repo.project_identifier().ok();
-        let expanded_path = self.format_path(repo_name, branch, repo, project.as_deref())?;
+        let expanded_path = self.format_path(repo_name, branch, repo, project.as_ref())?;
 
         Ok(repo_root.join(expanded_path).normalize())
     }

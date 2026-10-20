@@ -40,7 +40,7 @@ fn test_approval_saves_to_disk() {
     "#);
 
     // Verify approval is in memory
-    assert!(approvals.is_command_approved("github.com/test/repo", "test command"));
+    assert!(approvals.is_command_approved(&"github.com/test/repo".into(), "test command"));
 }
 
 #[test]
@@ -107,10 +107,10 @@ fn test_multiple_project_approvals() {
         .unwrap();
 
     // Verify all approvals exist
-    assert!(approvals.is_command_approved("github.com/user1/repo1", "npm install"));
-    assert!(approvals.is_command_approved("github.com/user2/repo2", "cargo build"));
-    assert!(approvals.is_command_approved("github.com/user1/repo1", "npm test"));
-    assert!(!approvals.is_command_approved("github.com/user1/repo1", "cargo build"));
+    assert!(approvals.is_command_approved(&"github.com/user1/repo1".into(), "npm install"));
+    assert!(approvals.is_command_approved(&"github.com/user2/repo2".into(), "cargo build"));
+    assert!(approvals.is_command_approved(&"github.com/user1/repo1".into(), "npm test"));
+    assert!(!approvals.is_command_approved(&"github.com/user1/repo1".into(), "cargo build"));
 
     // Verify file structure
     let toml_content = fs::read_to_string(&approvals_path).unwrap();
@@ -426,7 +426,7 @@ fn test_concurrent_revoke_preserves_all_changes() {
     // Process A: revokes the project
     let mut approvals_a = Approvals::default();
     approvals_a
-        .revoke_project("github.com/user/repo", &approvals_path)
+        .revoke_project(&"github.com/user/repo".into(), &approvals_path)
         .unwrap();
 
     // Read the final state from disk

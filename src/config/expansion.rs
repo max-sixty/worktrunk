@@ -18,8 +18,8 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use color_print::cformat;
-use minijinja::value::{Enumerator, Object, ObjectRepr, Serde, StringInput};
-use minijinja::{Environment, ErrorKind, State, UndefinedBehavior, Value};
+use minijinja::value::{Enumerator, Kwargs, Object, ObjectRepr, Serde, StringInput};
+use minijinja::{AutoEscape, Environment, ErrorKind, State, UndefinedBehavior, Value};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -909,6 +909,10 @@ pub fn template_environment(repo: &Repository) -> Environment<'static> {
     // SemiStrict: errors on undefined variable use (printing, iteration) but allows
     // truthiness checks ({% if var %}). This catches typos while supporting optional vars.
     env.set_undefined_behavior(UndefinedBehavior::SemiStrict);
+    // MiniJinja picks HTML or JSON escaping from the template name's extension,
+    // and our names are config keys (a custom column named `json` or `html`),
+    // not file names.
+    env.set_auto_escape_callback(|_| AutoEscape::None);
 
     // Register custom filters
     env.add_filter("sanitize", |state: &State, value: Value| {
@@ -943,6 +947,17 @@ pub fn template_environment(repo: &Repository) -> Environment<'static> {
         )
     });
     env.add_filter("codename", codename_filter);
+    // MiniJinja's `tojson` writes an undefined value as `null`. Fail on it as
+    // printing does, so a missing `vars` key errors instead of sending `null`.
+    env.add_filter(
+        "tojson",
+        |state: &State, value: Value, indent: Option<Value>, kwargs: Kwargs| {
+            if value.is_undefined() {
+                StringInput::new(state, &value)?;
+            }
+            minijinja::filters::tojson(&value, indent, kwargs)
+        },
+    );
 
     // Register worktree_path_of_branch function for looking up branch worktree paths.
     // Returns raw paths — shell escaping is applied by the formatter at output time.
@@ -2954,6 +2969,28 @@ mod tests {
             )
             .unwrap(),
             "fallback"
+        );
+
+        // `tojson` errors on a missing key, as printing it does, rather than
+        // writing `null`
+        let err = expand_template(
+            "{{ vars.config.missing | tojson }}",
+            &vars,
+            ShellEscapeMode::Literal,
+            &test.repo,
+            "test",
+        )
+        .unwrap_err();
+        // MiniJinja names the undefined expression only in debug builds (see
+        // the undefined-diagnostics test); accept either form.
+        assert!(
+            [
+                "Failed to expand test: undefined value: `vars.config.missing` is undefined @ line 1",
+                "Failed to expand test: undefined value @ line 1",
+            ]
+            .contains(&err.message.as_str()),
+            "got: {}",
+            err.message
         );
     }
 

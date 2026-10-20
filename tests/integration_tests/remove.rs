@@ -345,6 +345,30 @@ fn test_remove_reap_spares_terminal_process(mut repo: TestRepo) {
     let _ = child.wait();
 }
 
+/// Background removal hands its cleanup to a detached process, which must
+/// spawn without temporary storage when the system temporary directory is
+/// unusable.
+#[cfg(unix)]
+#[rstest]
+fn test_remove_background_with_unavailable_system_temp_directory(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature");
+    let missing_temp = repo.root_path().join("missing-temp");
+    assert!(!missing_temp.exists());
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature", "--yes"])
+        .env("TMPDIR", &missing_temp)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success() && !stderr.contains("Failed"),
+        "remove should succeed with an unavailable TMPDIR; stderr:\n{stderr}"
+    );
+    assert!(!worktree_path.exists());
+}
+
 #[rstest]
 fn test_remove_internal_mode(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-internal");

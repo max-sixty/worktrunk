@@ -221,13 +221,13 @@ impl<'a> CommandContext<'a> {
     ///
     /// Uses the remote URL if available, otherwise the canonical repository path.
     /// Returns None only if the path is not valid UTF-8.
-    pub fn project_id(&self) -> Option<String> {
+    pub fn project_id(&self) -> Option<worktrunk::config::ProjectId> {
         self.repo.project_identifier().ok()
     }
 
     /// Get the commit generation config, merging project-specific settings.
     pub fn commit_generation(&self) -> worktrunk::config::CommitGenerationConfig {
-        self.config.commit_generation(self.project_id().as_deref())
+        self.config.commit_generation(self.project_id().as_ref())
     }
 }
 
@@ -677,16 +677,36 @@ pub fn hook_error_wrapper(
 
 /// Build the standard `ErrorWrapper` for alias steps.
 ///
-/// Children that report a child exit code surface as `AlreadyDisplayed` so
-/// `wt` propagates the alias's exit status. Anything else (template errors,
-/// spawn failures) is wrapped with the alias and configured member names.
+/// Children that exit with a code surface as `AlreadyDisplayed` so `wt`
+/// propagates the alias's exit status; the child reported its own failure.
+/// A child killed by any other signal than INT/TERM (those short-circuit in
+/// [`handle_command_error`]) surfaces as `Interrupted`, which renders
+/// `Killed by signal N` as a custom subcommand does: `wt` exits with
+/// `128 + N` rather than dying by the signal, so no shell reports it.
+/// Anything else (template errors, spawn failures) is wrapped with the alias
+/// and configured member names.
 pub fn alias_error_wrapper(alias_name: String) -> ErrorWrapper {
-    Box::new(move |cmd, error| match error.exit_code() {
-        Some(code) => WorktrunkError::AlreadyDisplayed { exit_code: code }.into(),
-        None => error.context(match &cmd.name {
-            Some(name) => format!("Failed to run alias '{alias_name}' command '{name}'"),
-            None => format!("Failed to run alias '{alias_name}'"),
-        }),
+    Box::new(move |cmd, error| {
+        if let Some(WorktrunkError::ChildProcessExited {
+            physical_signal: Some(signal),
+            ..
+        }) = error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<WorktrunkError>())
+        {
+            return WorktrunkError::Interrupted {
+                signal: *signal,
+                hint: None,
+            }
+            .into();
+        }
+        match error.exit_code() {
+            Some(code) => WorktrunkError::AlreadyDisplayed { exit_code: code }.into(),
+            None => error.context(match &cmd.name {
+                Some(name) => format!("Failed to run alias '{alias_name}' command '{name}'"),
+                None => format!("Failed to run alias '{alias_name}'"),
+            }),
+        }
     })
 }
 

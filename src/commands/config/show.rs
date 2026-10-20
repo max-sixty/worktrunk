@@ -191,7 +191,7 @@ fn handle_config_show_json() -> anyhow::Result<()> {
             {
                 invalid = true;
             }
-            let identifier = repo.project_identifier().ok();
+            let identifier = repo.project_identifier().ok().map(|id| id.to_string());
             let exists = on_disk.as_ref().is_some_and(|path| path.exists()) || object_store_exists;
             (path, exists, config, identifier)
         } else {
@@ -640,7 +640,7 @@ fn render_diagnostics(out: &mut String, repo: Option<&Repository>) -> anyhow::Re
     // Test commit generation - use effective config for current project
     let config = UserConfig::load().context("Failed to load config")?;
     let project_id = repo.and_then(|repo| repo.project_identifier().ok());
-    let commit_config = config.commit_generation(project_id.as_deref());
+    let commit_config = config.commit_generation(project_id.as_ref());
 
     if !commit_config.is_configured() {
         writeln!(out, "{}", info_message("Commit generation not configured"))?;

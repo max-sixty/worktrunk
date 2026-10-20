@@ -403,7 +403,7 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
             let project = repo.project_identifier().ok();
             let cli_override = flag_pair(args.delete_branch, args.no_delete_branch);
             let delete_branch =
-                cli_override.unwrap_or_else(|| config.remove(project.as_deref()).delete_branch());
+                cli_override.unwrap_or_else(|| config.remove(project.as_ref()).delete_branch());
 
             // Validate conflicting flags
             if !delete_branch && args.force_delete {
@@ -440,7 +440,7 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                 // up empty and `approve` never needs it). Matches the pre-plan
                 // behaviour where the empty-batch fast path ran first.
                 let project_id = repo.project_identifier().ok();
-                let pid = project_id.as_deref();
+                let pid = project_id.as_ref();
                 let project_config = repo.load_project_config()?;
                 let mut builder = HookPlanBuilder::new(project_config.as_ref(), &config, pid);
                 for &wt_path in removed_worktree_paths {

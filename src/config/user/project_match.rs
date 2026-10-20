@@ -30,6 +30,23 @@
 //! the exact key must still win. Equal-specificity patterns fall back to
 //! lexicographic order so the result never depends on map iteration luck.
 //!
+//! # Identifiers from v0.80.0 and earlier
+//!
+//! The release after v0.80.0 changed the identifier of some remotes: a
+//! non-default SSH port joined the host, hosts were lowercased, and
+//! `git+ssh://` URLs began to parse. So that keys saved under the old
+//! identifier keep applying, a [`ProjectId`] carries it too where it differs
+//! (see [`legacy_project_identifier`]). Keys matching it count as least
+//! specific: [`matching_keys`] returns them before every key matching the
+//! current identifier, ordered among themselves by the usual rules. Settings
+//! under a current key override settings under a legacy key, and approvals
+//! under either key apply, so approving a new command (recorded under the
+//! current identifier) keeps the earlier approvals in force. The per-project
+//! `wt config approvals` operations (`list`'s stale approvals, `clear`, `clear
+//! --stale`) treat the legacy exact key like the current one.
+//!
+//! [`legacy_project_identifier`]: crate::git::legacy_project_identifier
+//!
 //! # Where patterns do not apply
 //!
 //! Writes are always keyed by the exact identifier: `wt config approvals add`
@@ -42,6 +59,71 @@
 //! refuses it; pattern entries are hand-written, with no exception.
 
 use std::collections::BTreeMap;
+
+/// A repository's project identifier, the key for `approvals.toml` and
+/// `[projects."…"]` settings, as [`Repository::project_identifier`] computes
+/// it.
+///
+/// Dereferences to the current identifier, which is what is shown and
+/// written. Lookups that take a `ProjectId` also read keys saved under the
+/// identifier v0.80.0 computed for the same remote; see the module docs.
+///
+/// [`Repository::project_identifier`]: crate::git::Repository::project_identifier
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectId {
+    current: String,
+    legacy: Option<String>,
+}
+
+impl ProjectId {
+    /// An identifier with a v0.80.0 spelling, kept only where it differs from
+    /// the current one.
+    pub(crate) fn with_legacy(current: String, legacy: Option<String>) -> Self {
+        let legacy = legacy.filter(|legacy| *legacy != current);
+        Self { current, legacy }
+    }
+
+    /// The identifier v0.80.0 computed for this repository's remote, when it
+    /// differs from the current one.
+    pub fn legacy(&self) -> Option<&str> {
+        self.legacy.as_deref()
+    }
+
+    /// The exact keys this project's entries can be saved under: the current
+    /// identifier, then the legacy one.
+    pub fn exact_keys(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.current.as_str()).chain(self.legacy())
+    }
+}
+
+impl From<&str> for ProjectId {
+    fn from(current: &str) -> Self {
+        Self {
+            current: current.to_string(),
+            legacy: None,
+        }
+    }
+}
+
+impl std::ops::Deref for ProjectId {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.current
+    }
+}
+
+impl PartialEq<&str> for ProjectId {
+    fn eq(&self, other: &&str) -> bool {
+        self.current == *other
+    }
+}
+
+impl std::fmt::Display for ProjectId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.current)
+    }
+}
 
 /// Whether `pattern` matches `identifier`, treating `*` as any run of
 /// characters and every other character as a literal.
@@ -85,29 +167,48 @@ fn literal_len(pattern: &str) -> usize {
     pattern.chars().filter(|c| *c != '*').count()
 }
 
-/// Every key of `projects` matching `identifier`, least- to most-specific.
+/// Every key of `projects` matching `project`, least- to most-specific.
 ///
 /// A literal key sorts last, so a caller folding the results applies it over
-/// any pattern that also matched.
+/// any pattern that also matched. Keys matching only the legacy identifier
+/// come first of all.
 pub(crate) fn matching_keys<'a, T>(
     projects: &'a BTreeMap<String, T>,
-    identifier: &str,
+    project: &ProjectId,
 ) -> Vec<&'a T> {
+    let current = ranked_keys(projects, project);
+    let mut matched = match project.legacy() {
+        Some(legacy) => ranked_keys(projects, legacy)
+            .into_iter()
+            .filter(|key| !current.contains(key))
+            .collect(),
+        None => Vec::new(),
+    };
+    matched.extend(current);
+    matched.into_iter().map(|key| &projects[key]).collect()
+}
+
+/// The keys of `projects` matching `identifier`, least- to most-specific.
+fn ranked_keys<'a, T>(projects: &'a BTreeMap<String, T>, identifier: &str) -> Vec<&'a str> {
     // The common case is a config with no patterns at all: take the exact hit
     // and skip the scan entirely.
     if !projects.keys().any(|key| key.contains('*')) {
-        return projects.get(identifier).into_iter().collect();
+        return projects
+            .get_key_value(identifier)
+            .map(|(key, _)| key.as_str())
+            .into_iter()
+            .collect();
     }
 
     // The bool ranks a literal key above any pattern it ties with on literal
     // count (one whose stars all matched empty).
-    let mut matched: Vec<(usize, bool, &str, &T)> = projects
-        .iter()
-        .filter(|(key, _)| matches(key, identifier))
-        .map(|(key, value)| (literal_len(key), !key.contains('*'), key.as_str(), value))
+    let mut matched: Vec<(usize, bool, &str)> = projects
+        .keys()
+        .filter(|key| matches(key, identifier))
+        .map(|key| (literal_len(key), !key.contains('*'), key.as_str()))
         .collect();
-    matched.sort_by(|a, b| (a.0, a.1, a.2).cmp(&(b.0, b.1, b.2)));
-    matched.into_iter().map(|(_, _, _, value)| value).collect()
+    matched.sort();
+    matched.into_iter().map(|(_, _, key)| key).collect()
 }
 
 #[cfg(test)]
@@ -156,7 +257,7 @@ mod tests {
             ("github.com/*".to_string(), "other-host"),
         ]);
         assert_eq!(
-            matching_keys(&projects, "git.company.example/team/repo"),
+            matching_keys(&projects, &"git.company.example/team/repo".into()),
             vec![&"all", &"host", &"team", &"exact"]
         );
     }
@@ -168,10 +269,30 @@ mod tests {
             ("github.com/owner/other".to_string(), "theirs"),
         ]);
         assert_eq!(
-            matching_keys(&projects, "github.com/owner/repo"),
+            matching_keys(&projects, &"github.com/owner/repo".into()),
             vec![&"mine"]
         );
-        assert!(matching_keys(&projects, "github.com/owner/absent").is_empty());
+        assert!(matching_keys(&projects, &"github.com/owner/absent".into()).is_empty());
+    }
+
+    #[test]
+    fn test_legacy_identifier_keys_rank_below_current_ones() {
+        let projects = BTreeMap::from([
+            ("*".to_string(), "all"),
+            ("git.example/*".to_string(), "legacy-host"),
+            ("git.example/owner/repo".to_string(), "legacy-exact"),
+            ("git.example:2222/*".to_string(), "host"),
+            ("git.example:2222/owner/repo".to_string(), "exact"),
+        ]);
+        let project = ProjectId::with_legacy(
+            "git.example:2222/owner/repo".to_string(),
+            Some("git.example/owner/repo".to_string()),
+        );
+        // `*` matches both identifiers and ranks with the current ones.
+        assert_eq!(
+            matching_keys(&projects, &project),
+            vec![&"legacy-host", &"legacy-exact", &"all", &"host", &"exact"]
+        );
     }
 
     #[test]
@@ -268,7 +389,7 @@ mod tests {
             ("github.com/owner/repo*".to_string(), "pattern"),
         ]);
         assert_eq!(
-            matching_keys(&projects, "github.com/owner/repo"),
+            matching_keys(&projects, &"github.com/owner/repo".into()),
             vec![&"pattern", &"exact"]
         );
     }
@@ -283,7 +404,7 @@ mod tests {
             ("*/b/c*".to_string(), "star-slash"),
         ]);
         assert_eq!(
-            matching_keys(&projects, "a/b/c"),
+            matching_keys(&projects, &"a/b/c".into()),
             vec![&"star-slash", &"star-a"]
         );
     }
