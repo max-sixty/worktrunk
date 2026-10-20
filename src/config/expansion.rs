@@ -2981,8 +2981,14 @@ mod tests {
             "test",
         )
         .unwrap_err();
+        // MiniJinja names the undefined expression only in debug builds (see
+        // the undefined-diagnostics test); accept either form.
         assert!(
-            err.message.contains("`vars.config.missing` is undefined"),
+            [
+                "Failed to expand test: undefined value: `vars.config.missing` is undefined @ line 1",
+                "Failed to expand test: undefined value @ line 1",
+            ]
+            .contains(&err.message.as_str()),
             "got: {}",
             err.message
         );
