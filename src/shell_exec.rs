@@ -99,10 +99,10 @@ pub fn buffered_stdin(bytes: &[u8]) -> std::io::Result<Stdio> {
     {
         let (reader, mut writer) = with_process_creation_guard(std::io::pipe)?;
         pipe::set_nonblocking(&writer)?;
-        match writer.write_all(bytes) {
-            Ok(()) => return Ok(reader.into()),
-            Err(error) if error.kind() == ErrorKind::WouldBlock => {}
-            Err(error) => return Err(error),
+        // Writing to a fresh pipe whose reader we hold fails only with
+        // `WouldBlock`, once the input outgrows the buffer.
+        if writer.write_all(bytes).is_ok() {
+            return Ok(reader.into());
         }
     }
     let mut file = tempfile::tempfile()?;
