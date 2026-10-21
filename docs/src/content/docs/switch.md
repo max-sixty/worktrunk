@@ -164,7 +164,7 @@ $ wt switch --prs                                   # Browse open PRs/MRs in the
 
 Both work anywhere a branch is accepted, including `--base`. The `--create` flag cannot be used with a PR/MR reference since the branch already exists.
 
-If the PR or MR is on a fork, the local branch uses its branch name directly, so `git push` works normally. If a local branch with that name already tracks something else, a GitHub or Gitea PR checks out as `<owner>/<branch>` instead, which can't push to the fork; a GitLab or Azure DevOps MR requires renaming the existing branch first.
+If the PR or MR is on a fork, the local branch uses its branch name directly, so `git push` works normally. If a local branch with that name already tracks something else, a GitHub or Gitea PR checks out as `<owner>/<branch>` instead, which can't push to the fork; a GitLab MR or Azure DevOps PR requires renaming the existing branch first.
 
 The `--prs` flag adds the repository's open PRs (GitHub) or MRs (GitLab) that aren't already in the interactive picker. Selecting one switches to it as `pr:<number>` / `mr:<number>` would.
 
