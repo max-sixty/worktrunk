@@ -853,25 +853,6 @@ pub fn test_tempdir() -> TempDir {
     TempDir::new_in(test_temp_root()).expect("create test temp dir")
 }
 
-/// Whether directory permissions deny file creation to this process.
-///
-/// Permission-failure tests are inapplicable when privileges bypass the mode
-/// bits. Probe the already-restricted fixture rather than inferring privileges
-/// from a user name. Unexpected I/O failures remain test failures.
-#[cfg(unix)]
-pub fn permissions_restrict_writes(directory: &Path) -> bool {
-    match tempfile::NamedTempFile::new_in(directory) {
-        Ok(_) => {
-            crate::styling::eprintln!(
-                "Skipping permission-denial assertions: directory writes are permitted"
-            );
-            false
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => true,
-        Err(error) => panic!("probing directory write permissions: {error}"),
-    }
-}
-
 /// A single fixed empty directory used as the default `current_dir` for
 /// [`wt_command`], created on first use and shared by every test process.
 ///
@@ -3634,20 +3615,6 @@ fn is_leap_year(year: i64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A permission fixture may be skipped only when creation is permitted;
-    /// a malformed fixture must fail rather than masquerading as elevated privileges.
-    #[cfg(unix)]
-    #[test]
-    fn test_permission_probe_distinguishes_writes_from_fixture_errors() {
-        let dir = test_tempdir();
-        assert!(!permissions_restrict_writes(dir.path()));
-        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
-        let missing = dir.path().join("missing directory");
-        let failure = std::panic::catch_unwind(|| permissions_restrict_writes(&missing));
-        assert!(failure.is_err());
-        assert!(!missing.exists());
-    }
 
     /// A harness-built `git` reaches local paths and nothing else, so no test
     /// can make an unbounded connect to whatever host a fixture URL names

@@ -261,11 +261,14 @@ mod tests {
             StatuslineSegment::new("x".to_string(), 10),                     // 1 char, low priority
             StatuslineSegment::new("y".to_string(), 10),                     // 1 char, low priority
         ];
-        // Budget is 25 - only fits the important segment (22) or x+y (1+2+1=4), not both
-        let result = StatuslineSegment::fit_to_width(segments, 25);
-        assert!(
-            result.iter().any(|s| s.content == "very_important_segment"),
-            "Should keep the high-priority segment"
+        // Budget is 23: the important segment (22) fits alone, but adding
+        // either narrow segment (22+2+1=25) does not
+        let result = StatuslineSegment::fit_to_width(segments, 23);
+        let contents: Vec<_> = result.iter().map(|s| s.content.as_str()).collect();
+        assert_eq!(
+            contents,
+            ["very_important_segment"],
+            "Should drop the narrow low-priority segments, not the wide high-priority one"
         );
     }
 }

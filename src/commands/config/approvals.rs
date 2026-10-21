@@ -10,7 +10,7 @@ use anyhow::Context;
 use color_print::cformat;
 use strum::IntoEnumIterator;
 use worktrunk::HookType;
-use worktrunk::config::{Approvals, ProjectConfig, require_approvals_path};
+use worktrunk::config::{Approvals, ProjectConfig, ProjectId, require_approvals_path};
 use worktrunk::git::{GitError, Repository};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
@@ -251,7 +251,11 @@ pub fn add_approvals(show_all: bool, yes: bool) -> anyhow::Result<()> {
         .map(|cmd| cmd.command.template.clone())
         .collect();
     approvals
-        .approve_commands(project_id, templates, &require_approvals_path()?)
+        .approve_commands(
+            project_id.to_string(),
+            templates,
+            &require_approvals_path()?,
+        )
         .context("Failed to save command approval")?;
 
     eprintln!("{}", success_message("Commands approved & saved to config"));
@@ -328,12 +332,7 @@ pub fn clear_approvals(global: bool, stale: bool) -> anyhow::Result<()> {
         let repo = Repository::current()?;
         let project_id = repo.project_identifier()?;
 
-        // Count approvals before clearing
-        let approval_count = approvals
-            .projects()
-            .find(|(id, _)| *id == project_id)
-            .map(|(_, cmds)| cmds.len())
-            .unwrap_or(0);
+        let approval_count = approvals.exact_approval_count(&project_id);
 
         if approval_count == 0 {
             eprintln!("{}", info_message("No approvals to clear for this project"));
@@ -362,7 +361,7 @@ pub fn clear_approvals(global: bool, stale: bool) -> anyhow::Result<()> {
 /// hand-written pattern entries still approving commands for this project.
 /// `clear` only ever touches the exact entry, so without this the approval
 /// survives with nothing pointing at the entry supplying it.
-fn emit_pattern_entries_hint(approvals: &Approvals, project_id: &str) -> anyhow::Result<()> {
+fn emit_pattern_entries_hint(approvals: &Approvals, project_id: &ProjectId) -> anyhow::Result<()> {
     let keys = approvals.matching_pattern_keys(project_id);
     if keys.is_empty() {
         return Ok(());

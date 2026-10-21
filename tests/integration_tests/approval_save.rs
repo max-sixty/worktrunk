@@ -40,7 +40,7 @@ fn test_approval_saves_to_disk() {
     "#);
 
     // Verify approval is in memory
-    assert!(approvals.is_command_approved("github.com/test/repo", "test command"));
+    assert!(approvals.is_command_approved(&"github.com/test/repo".into(), "test command"));
 }
 
 #[test]
@@ -107,10 +107,10 @@ fn test_multiple_project_approvals() {
         .unwrap();
 
     // Verify all approvals exist
-    assert!(approvals.is_command_approved("github.com/user1/repo1", "npm install"));
-    assert!(approvals.is_command_approved("github.com/user2/repo2", "cargo build"));
-    assert!(approvals.is_command_approved("github.com/user1/repo1", "npm test"));
-    assert!(!approvals.is_command_approved("github.com/user1/repo1", "cargo build"));
+    assert!(approvals.is_command_approved(&"github.com/user1/repo1".into(), "npm install"));
+    assert!(approvals.is_command_approved(&"github.com/user2/repo2".into(), "cargo build"));
+    assert!(approvals.is_command_approved(&"github.com/user1/repo1".into(), "npm test"));
+    assert!(!approvals.is_command_approved(&"github.com/user1/repo1".into(), "cargo build"));
 
     // Verify file structure
     let toml_content = fs::read_to_string(&approvals_path).unwrap();
@@ -426,7 +426,7 @@ fn test_concurrent_revoke_preserves_all_changes() {
     // Process A: revokes the project
     let mut approvals_a = Approvals::default();
     approvals_a
-        .revoke_project("github.com/user/repo", &approvals_path)
+        .revoke_project(&"github.com/user/repo".into(), &approvals_path)
         .unwrap();
 
     // Read the final state from disk
@@ -585,7 +585,10 @@ fn test_permission_error_prevents_save() {
         fs::set_permissions(approvals_dir, readonly_perms).unwrap();
     }
 
-    if !worktrunk::testing::permissions_restrict_writes(approvals_dir) {
+    // Test if permissions actually restrict us (skip if running as root)
+    // Root can write to read-only directories, so the test would be meaningless
+    let test_file = approvals_dir.join("test_write");
+    if fs::write(&test_file, "test").is_ok() {
         // Running as root or permissions don't work
         // Restore write permissions and skip test
         #[cfg(unix)]
@@ -593,6 +596,7 @@ fn test_permission_error_prevents_save() {
             let writable_perms = Permissions::from_mode(0o755);
             fs::set_permissions(approvals_dir, writable_perms).unwrap();
         }
+        eprintln!("Skipping permission test - running with elevated privileges");
         return;
     }
 

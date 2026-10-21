@@ -9,7 +9,7 @@ use worktrunk::styling::{
 use super::command_executor::CommandContext;
 use super::command_executor::FailureStrategy;
 use super::hooks::{HookAnnouncer, execute_hook};
-use super::repository_ext::warn_about_untracked_files;
+use super::repository_ext::auto_stage;
 use super::template_vars::TemplateVars;
 
 // Re-export StageMode from config for use by CLI
@@ -230,7 +230,7 @@ impl CommitOptions<'_> {
         wt.ensure_no_unmerged_paths("commit")?;
 
         let project_config = self.ctx.repo.load_project_config()?;
-        let user_hooks = self.ctx.config.hooks(self.ctx.project_id().as_deref());
+        let user_hooks = self.ctx.config.hooks(self.ctx.project_id().as_ref());
         let any_hooks_exist = user_hooks.get(HookType::PreCommit).is_some()
             || project_config
                 .as_ref()
@@ -247,24 +247,20 @@ impl CommitOptions<'_> {
             .target_branch
             .map_or_else(TemplateVars::new, |t| TemplateVars::new().with_target(t));
 
-        if self.hooks.run() {
-            // Run pre-commit hooks (user first, then project).
-            execute_hook(
+        // Stage on both sides of the pre-commit hooks (user first, then
+        // project); `auto_stage` says why. Each stage re-checks for unmerged
+        // paths, since a hook is free to leave them behind.
+        auto_stage(&wt, self.stage_mode)?;
+        if self.hooks.run()
+            && execute_hook(
                 self.ctx,
                 HookType::PreCommit,
                 &template_vars.as_extra_vars(),
                 FailureStrategy::FailFast,
-            )?;
+            )?
+        {
+            auto_stage(&wt, self.stage_mode)?;
         }
-
-        if self.stage_mode == StageMode::All {
-            warn_about_untracked_files(&wt)?;
-        }
-
-        // Stage changes based on mode. Re-gated inside `stage`: the refusal
-        // above ran before the pre-commit hooks, and a hook is free to leave
-        // unmerged paths behind.
-        wt.stage(self.stage_mode)?;
 
         let effective_config = self.ctx.commit_generation();
         // Skip the approval gate when the LLM isn't configured — the fallback

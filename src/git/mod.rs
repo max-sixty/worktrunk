@@ -138,8 +138,8 @@ pub use parse::{parse_porcelain_z, parse_untracked_files};
 pub use recover::{current_or_recover, cwd_removed_hint};
 pub use remove::{
     BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemovalOutput, RemoveOptions,
-    delete_branch_if_safe, execute_branch_deletion, remove_worktree_with_cleanup,
-    stage_worktree_removal, stop_fsmonitor_daemon,
+    delete_branch_if_safe, drain_trash, execute_branch_deletion, remove_worktree_with_cleanup,
+    stage_worktree_removal, staged_trash_entries, stop_fsmonitor_daemon, trash_drain_running,
 };
 pub use repository::sha_cache;
 pub use repository::{
@@ -151,7 +151,7 @@ pub use repository::{
 };
 pub use url::parse_owner_repo;
 pub use url::{GitRemoteUrl, GitRepoInfo, GitRepoProvider};
-pub(crate) use url::{canonical_url_path_segment, url_path_segments_eq};
+pub(crate) use url::{canonical_url_path_segment, legacy_project_identifier, url_path_segments_eq};
 pub use version::{git_version, require_minimum_git};
 
 /// Why branch content is considered integrated into the target branch.

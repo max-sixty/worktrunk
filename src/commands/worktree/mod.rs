@@ -91,8 +91,8 @@ mod types;
 pub use finish::{FinishAfterMergeArgs, finish_after_merge};
 pub use push::{PushKind, PushOutcome, PushResult, handle_no_ff_merge, handle_push};
 pub use resolve::{compute_worktree_path, is_worktree_at_expected_path, worktree_display_name};
-pub(crate) use switch::SwitchPipeline;
 pub use switch::handle_switch_command;
+pub(crate) use switch::{SwitchPipeline, print_switch_json_error};
 pub use types::{
     BranchFate, MergeOperations, RemovalPlan, RetainedReason, SharedBranchCheckout,
     SwitchBranchInfo, SwitchResult,

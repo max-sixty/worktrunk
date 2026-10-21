@@ -99,7 +99,7 @@ fn test_config_show_rejects_invalid_approvals_file(repo: TestRepo) {
 fn test_config_show_hides_fully_approved_commands(repo: TestRepo) {
     repo.write_project_config("pre-start = \"npm install\"\n");
     let project = repo.repo.project_identifier().unwrap();
-    let project = toml::Value::String(project).to_string();
+    let project = toml::Value::String(project.to_string()).to_string();
     fs::write(
         repo.test_approvals_path(),
         format!("[projects.{project}]\napproved-commands = [\"npm install\"]\n"),
@@ -753,16 +753,20 @@ fn test_config_show_zsh_compinit_warning(mut repo: TestRepo, temp_home: TempDir)
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(global_config_dir.join("config.toml"), "").unwrap();
 
-    // Create .zshrc WITHOUT compinit - completions won't work
+    // Use a custom zsh config directory so the advisory must name the same
+    // file as the integration detector.
+    let zdotdir = canonical_temp_home(&temp_home).join("zsh-config");
+    fs::create_dir_all(&zdotdir).unwrap();
     fs::write(
-        temp_home.path().join(".zshrc"),
+        zdotdir.join(".zshrc"),
         r#"# wt integration but no compinit!
 if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)"; fi
 "#,
     )
     .unwrap();
 
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    let mut settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.add_redaction(".env.ZDOTDIR", "[TEST_ZDOTDIR]");
     settings.bind(|| {
         let mut cmd = repo.wt_command();
         // Force compinit warning for deterministic tests across environments
@@ -770,6 +774,7 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
+        cmd.env("ZDOTDIR", &zdotdir);
 
         assert_cmd_snapshot!(cmd);
     });
@@ -2199,8 +2204,8 @@ pre-start = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
     );
 }
 
-/// With -v flag, the brief deprecation warning includes the mv command hint
-/// and template expansion logs are shown
+/// With -v flag, template expansion logs appear alongside the deprecation
+/// warnings
 #[rstest]
 fn test_deprecated_template_variables_verbose_shows_content(repo: TestRepo, temp_home: TempDir) {
     // Write config with deprecated variables
@@ -2795,7 +2800,7 @@ fn test_config_show_gemini_extension_installed(mut repo: TestRepo, temp_home: Te
 /// override the harness sets, so the production `which::which` PATH lookup is
 /// otherwise never exercised. `setup_mock_clis_on_path()` drops the overrides
 /// and prepends real mock executables, so this single run covers the
-/// PATH-detection path for all five AI CLIs at once.
+/// PATH-detection path for all six AI CLIs at once.
 #[rstest]
 fn test_config_show_clis_detected_via_path(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
@@ -3092,7 +3097,7 @@ fn test_opencode_install_ignores_relative_xdg_config_home(temp_home: TempDir) {
 }
 
 /// Install prompt declined (no `--yes`, piped stdin → empty → declined).
-/// Exercises the `return Ok(())` branch at lines 83-84 of opencode.rs.
+/// Exercises the declined-prompt branch of `install_file_plugin` in config/mod.rs.
 #[rstest]
 fn test_opencode_install_prompt_declined(temp_home: TempDir) {
     let settings = setup_home_snapshot_settings(&temp_home);
@@ -3115,7 +3120,7 @@ fn test_opencode_install_prompt_declined(temp_home: TempDir) {
 }
 
 /// Uninstall prompt declined (no `--yes`, piped stdin → empty → declined).
-/// Exercises the `return Ok(())` branch at lines 129-130 of opencode.rs.
+/// Exercises the declined-prompt branch of `uninstall_file_plugin` in config/mod.rs.
 #[rstest]
 fn test_opencode_uninstall_prompt_declined(temp_home: TempDir) {
     // Pre-install the plugin so we reach the prompt
@@ -3661,7 +3666,8 @@ fn test_config_show_runs_real_ancestry_walk(mut repo: TestRepo, temp_home: TempD
     );
 }
 
-/// Test that deprecated [commit-generation] section shows warning and creates migration file
+/// Test that deprecated [commit-generation] section shows warning and that
+/// `wt config update` migrates it in place
 #[rstest]
 fn test_deprecated_commit_generation_section_shows_warning(repo: TestRepo, temp_home: TempDir) {
     // Write user config with deprecated [commit-generation] section

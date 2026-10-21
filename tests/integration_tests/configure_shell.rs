@@ -691,8 +691,12 @@ fn test_configure_shell_fish_legacy_remove_failure_warns(repo: TestRepo, temp_ho
     // Read-only parent dir → remove of contained file fails with EACCES.
     fs::set_permissions(&conf_d, Permissions::from_mode(0o555)).unwrap();
 
-    if !worktrunk::testing::permissions_restrict_writes(&conf_d) {
+    // Skip when running as root — permissions don't restrict.
+    let probe = conf_d.join("__probe");
+    if fs::write(&probe, "").is_ok() {
+        let _ = fs::remove_file(&probe);
         fs::set_permissions(&conf_d, Permissions::from_mode(0o755)).unwrap();
+        eprintln!("Skipping - running with elevated privileges");
         return;
     }
 
@@ -3573,8 +3577,10 @@ fn test_configure_shell_absolute_zdotdir_is_honoured(repo: TestRepo, temp_home: 
     set_temp_home_env(&mut cmd, temp_home.path());
     cmd.env("SHELL", "/bin/zsh");
     cmd.env("ZDOTDIR", &zdotdir);
-    cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
-    cmd.args(["config", "shell", "install", "zsh", "--yes"]);
+    cmd.env("WORKTRUNK_TEST_COMPINIT_MISSING", "1");
+    cmd.args([
+        "config", "shell", "install", "zsh", "--yes", "--cmd", "git-wt",
+    ]);
     cmd.current_dir(repo.root_path());
 
     let output = cmd.output().expect("install command should run");
@@ -3584,6 +3590,17 @@ fn test_configure_shell_absolute_zdotdir_is_honoured(repo: TestRepo, temp_home: 
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
+
+    setup_home_snapshot_settings(&temp_home).bind(|| {
+        insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+        [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m_PARENT_/zsh-config/.zshrc[22m[39m
+
+        [32m✓[39m [32mConfigured 1 shell[39m
+        [33m▲[39m [33mCompletions require compinit; add to _PARENT_/zsh-config/.zshrc before the git-wt line:[39m
+        [107m [0m [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m
+        [2m↳[22m [2mRestart shell to activate shell integration[22m
+        ");
+    });
 
     let zdotdir_contents = fs::read_to_string(zdotdir.join(".zshrc")).unwrap();
     assert!(

@@ -2191,7 +2191,11 @@ mod tests {
             .unwrap();
         assert!(contender.try_lock_exclusive().is_err());
         drop(locked);
-        contender.try_lock_exclusive().unwrap();
+        // A child that a concurrent test forks while `locked` is open inherits
+        // the lock until it execs, so the release can take an instant to land.
+        worktrunk::testing::wait_for("the rc lock to be released", || {
+            contender.try_lock_exclusive().is_ok()
+        });
     }
 
     #[test]
@@ -2319,10 +2323,13 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         fs::set_permissions(path, fs::Permissions::from_mode(0o500)).unwrap();
-        if worktrunk::testing::permissions_restrict_writes(path) {
+        let probe = path.join("__probe");
+        if fs::write(&probe, "").is_err() {
             true
         } else {
+            fs::remove_file(probe).unwrap();
             fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+            std::eprintln!("Skipping - running with elevated privileges");
             false
         }
     }

@@ -56,7 +56,7 @@ filterset = "test(/aur_pkgbuild/)"
 
 [package]
 name = "worktrunk"
-version = "0.80.0"
+version = "0.81.0"
 edition = "2024"
 rust-version = "1.98"
 build = "build.rs"
@@ -198,9 +198,11 @@ tracing-subscriber = { version = "0.3.17", default-features = false, features = 
 # Only enable needed features; macros and multi-template loading remain disabled.
 # `unstable_machinery` supplies syntax analysis for migrations and diagnostics;
 # `debug` supplies error source spans, including release builds.
-minijinja = { version = "2.24", default-features = false, features = [
+# `json` supplies the `tojson` filter for passing structured vars to commands.
+minijinja = { version = "3.0", default-features = false, features = [
     "builtins",
     "debug",
+    "json",
     "serde",
     "std_collections",
     "unstable_machinery",
@@ -243,7 +245,10 @@ urlencoding = "2.1"
 gix-url = "0.40"
 regex = "1.12.3"
 ignore = "0.4"
-# Exclusive rename for --clobber backups and Windows copy publication.
+reflink-copy = "0.1"
+# Atomic, no-overwrite rename (renameat2 / renamex_np / MoveFileExW) for
+# `--clobber` backups — closes the check-then-rename TOCTOU. Keeps the FFI
+# (and its `unsafe`) out of this crate.
 renamore = "0.3"
 dashmap = "6.2.1"
 fs2 = "0.4.3"
@@ -328,23 +333,13 @@ open = { version = "5.3", optional = true }
 # Gating keeps both out of the Windows dependency graph.
 nix = { version = "0.31.3", default-features = false, features = ["event", "fs", "poll", "process", "signal"] }
 signal-hook = "0.4.1"
-# Safe FIONREAD snapshots bound cancellation drains even with continuous writers.
+# Safe FIONREAD snapshots bound cancellation drains even with continuous writers;
+# directory-relative `*at` calls let tree removal never follow a symlink.
 rustix = { version = "1.1.4", features = ["fs"] }
 
-[target.'cfg(target_os = "macos")'.dependencies]
-# Atomic clonefile creation preserves source file metadata.
-reflink-copy = "0.1.30"
-
 [target.'cfg(windows)'.dependencies]
-# Atomic copied-file replacement must retain attributes while replacing a
-# read-only destination; std's rename doesn't request that Windows flag.
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Wdk_Storage_FileSystem"] }
 # The localized Documents folder that holds PowerShell profiles.
 dirs = "7.0"
-
-[target.'cfg(windows)'.dev-dependencies]
-# Native copy inheritance regressions inspect disposable Windows file ACLs.
-windows-sys = { version = "0.61", features = ["Win32_Security_Authorization"] }
 
 [build-dependencies]
 vergen-gitcl = { version = "10.0.0", features = ["build"] }
@@ -393,7 +388,7 @@ harness = false
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage)"] }
-# Native calls permit scoped exceptions with a documented safety contract.
+# Native signal inspection and coverage flushing permit scoped runtime calls.
 unsafe_code = "deny"
 
 # The profile that 'dist' will build with

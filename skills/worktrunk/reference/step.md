@@ -193,7 +193,7 @@ The squash commit is made on a detached HEAD, as `git rebase` does, so git's own
 
 ### Recovering staged changes
 
-Before squashing staged changes, Worktrunk saves them to `refs/wt-backup/<branch>`. Changes left unstaged are not included in the backup.
+Before squashing, Worktrunk saves the uncommitted changes the squash includes (everything staged, by hand or by `--stage`) to `refs/wt-backup/<branch>`. Changes left out of the squash stay in the working tree and aren't backed up.
 
 The output prints a command to recover the saved changes in a new worktree, including after `wt merge` removes the original.
 
@@ -504,14 +504,14 @@ Without `.worktreeinclude`, the command is a no-op (it reports that nothing was 
 
 ### Copy-on-write
 
-Files use reflinks when supported by the filesystem and operating system. A reflinked copy shares the source's disk blocks until one side writes. For a 14GB `target/` directory:
+Files are reflinked where the filesystem supports it: APFS (macOS), btrfs and XFS (Linux), ReFS (Windows). A reflinked copy shares the source's disk blocks until one side writes. For a 14GB `target/` directory:
 
 | Command | Time | Disk |
 |---------|------|------|
 | `cp -R` (full copy) | 2m | 14GB |
 | `cp -Rc` / `wt step copy-ignored` | 20s | ~0 |
 
-The summary identifies confirmed reflinks as `(reflinked, no extra disk)`.
+On ext4 and NTFS, which have no reflink, every file is copied in full; the summary says `(reflinked, no extra disk)` or `(full copy)`.
 
 Reflinks are per file (like `cp -Rc`), so copy time scales with file count.
 
@@ -817,7 +817,7 @@ Prune removes worktrees concurrently, so hooks that write shared resources must 
 
 ### Min-age guard
 
-Candidates younger than `--min-age` (default: 1 day) are skipped. A worktree's age comes from its creation time. For branches without a reflog, Git maintenance or branch deletion can restart the age guard, even on older branches. This prevents removing a worktree just created from the default branch: it looks "merged" because its branch points at the same commit.
+Candidates younger than `--min-age` (default: 1 day) are skipped, so a worktree just created from the default branch isn't removed for looking "merged" (its branch points at the same commit). A worktree's age is its creation time; a branch with no worktree takes its age from its reflog. A branch with no reflog, which is common in bare repositories, can look new again after Git maintenance or a branch deletion, and is then skipped until `--min-age` passes.
 
 ```console
 $ wt step prune --min-age=0s     # no age guard

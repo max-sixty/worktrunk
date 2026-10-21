@@ -1,8 +1,10 @@
 //! Integration tests for `wt step promote`
 
 use crate::common::{
-    TestRepo, configure_git_env, make_snapshot_cmd, repo, setup_snapshot_settings, wt_command,
+    TestRepo, add_force_duplicate, configure_git_env, make_snapshot_cmd, repo,
+    setup_snapshot_settings, wt_command,
 };
+use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
@@ -76,6 +78,62 @@ fn test_promote_with_branch_argument(mut repo: TestRepo) {
         "main",
         "other worktree should now have main"
     );
+}
+
+/// A branch checked out in two worktrees (`git worktree add --force`) can't
+/// be exchanged: git won't check it out in the main worktree while the other
+/// copy holds it. Promote refuses before touching anything, here with the
+/// second copy named by its path, which used to promote the first.
+#[rstest]
+fn test_promote_refuses_duplicate_checkout_by_path(mut repo: TestRepo) {
+    let _settings_guard = setup_snapshot_settings(&repo).bind_to_scope();
+    let first = repo.add_worktree("feature");
+    let second = add_force_duplicate(&repo, "feature", "feature-copy");
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["promote", second.to_str().unwrap()],
+        Some(repo.root_path()),
+    ));
+
+    assert_eq!(branch_name(&repo, repo.root_path()), "main");
+    assert_eq!(branch_name(&repo, &first), "feature");
+    assert_eq!(branch_name(&repo, &second), "feature");
+}
+
+/// The other two routes to a duplicated branch: run with no argument from the
+/// second copy of the target, and a default branch checked out twice.
+#[rstest]
+#[case::target_from_second_copy("feature")]
+#[case::main_branch("main")]
+fn test_promote_refuses_duplicate_checkout(mut repo: TestRepo, #[case] duplicated: &str) {
+    let feature = repo.add_worktree("feature");
+    let copy = add_force_duplicate(&repo, duplicated, "copy");
+    let run_from = if duplicated == "feature" {
+        &copy
+    } else {
+        &feature
+    };
+
+    let output = repo
+        .wt_command()
+        .args(["step", "promote"])
+        .current_dir(run_from)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .to_string();
+    assert!(!output.status.success(), "stderr: {stderr}");
+    assert!(
+        stderr.contains(&format!("{duplicated} is checked out in 2 worktrees")),
+        "stderr: {stderr}"
+    );
+
+    assert_eq!(branch_name(&repo, repo.root_path()), "main");
+    assert_eq!(branch_name(&repo, &feature), "feature");
+    assert_eq!(branch_name(&repo, &copy), duplicated);
 }
 
 /// Test restoring canonical state

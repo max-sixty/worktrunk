@@ -21,8 +21,8 @@
 //! operation (or batch reported as one) gets its own `Progress`.
 //!
 //! Every [`Progress::record`] also classifies the file by [`DataCopy`], so a
-//! copy can report the explicit-clone and ordinary-copy API paths.
-//! [`Progress::copy_split`] reads that pair back.
+//! copy can report how much of it shared the source's extents rather than
+//! costing disk. [`Progress::copy_split`] reads that pair back.
 //!
 //! `start` is named deliberately (not `new`) because it spawns a ticker thread
 //! as a side effect — `Default`-style semantics would be misleading. The verb
@@ -42,18 +42,20 @@ use color_print::cformat;
 pub use imp::Progress;
 pub use imp::Watchdog;
 
-/// The explicit API used to prepare a recorded file.
+/// How a recorded file's data reached its destination, which is what decides
+/// whether the file cost disk.
 ///
 /// [`Progress`] counts [`Self::Reflinked`] and [`Self::Written`] separately so
 /// `wt step copy-ignored` can report the split; [`Self::Neither`] contributes
-/// to the file and byte totals only. An ordinary copy may also be accelerated
-/// internally by the filesystem. Symlinks and removals record `Neither`.
+/// to the file and byte totals only. Only a filesystem clone distinguishes the
+/// first two, so everything that moves no file extents — a symlink, whose
+/// content is a path, and a removal, which frees them — records `Neither`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DataCopy {
     /// The filesystem cloned the source's extents. The destination shares them
     /// until one side writes, so the copy costs no data blocks.
     Reflinked,
-    /// Used the ordinary copy API; filesystem acceleration may be opaque.
+    /// The bytes were written out, costing the file's full size on disk.
     Written,
     /// Neither — the record moved no file extents.
     Neither,
@@ -200,8 +202,7 @@ mod imp {
         }
 
         /// Record that a file (or symlink) was processed, classified by whether
-        /// it used an explicit clone or an ordinary copy. Safe to call from any
-        /// thread.
+        /// its data cost disk. Safe to call from any thread.
         pub fn record(&self, bytes: u64, data: super::DataCopy) {
             self.shared.files.fetch_add(1, Ordering::Relaxed);
             self.shared.bytes.fetch_add(bytes, Ordering::Relaxed);
@@ -225,8 +226,7 @@ mod imp {
         }
 
         /// Running `(reflinked, written)` file counts. Their sum is at most
-        /// `totals().0` — the gap is symlinks and removals. Native acceleration of
-        /// ordinary copies does not change this classification.
+        /// `totals().0` — the gap is the files that moved no extents.
         pub fn copy_split(&self) -> (usize, usize) {
             (
                 self.shared.reflinked.load(Ordering::Relaxed),
@@ -978,18 +978,21 @@ pub fn format_stats_paren(files: usize, bytes: u64) -> String {
 /// has already reported its file and byte counts.
 ///
 /// Takes the two halves of [`Progress::copy_split`]. Only the reflinked wording
-/// carries a gloss, since that is the term a reader won't know. Ordinary
-/// copies add no label: the filesystem may accelerate them internally.
+/// carries a gloss, since that is the term a reader won't know; the contrast
+/// then tells them what a full copy cost, without repeating the byte count the
+/// summary just gave.
 ///
 /// A mixed result is real, since a tree can span two filesystems, so it reports
 /// the count rather than collapsing to whichever side is larger.
 ///
-/// Returns an empty string when no explicit clone was recorded, including an
-/// empty run or one that only created symlinks.
+/// Returns an empty string when neither half has anything in it, so a caller
+/// can concatenate it unconditionally. That covers an empty run and one that
+/// only created symlinks, neither of which has a split to report.
 pub fn format_reflink_paren(reflinked: usize, written: usize) -> String {
     match (reflinked, written) {
-        (0, _) => String::new(),
+        (0, 0) => String::new(),
         (_, 0) => cformat!(" <bright-black>(reflinked, no extra disk)</>"),
+        (0, _) => cformat!(" <bright-black>(full copy)</>"),
         _ => cformat!(
             " <bright-black>({} of {} reflinked)</>",
             format_count(reflinked),
@@ -1047,7 +1050,7 @@ mod tests {
     fn test_format_reflink_paren_wording() {
         assert_eq!(format_reflink_paren(0, 0), "");
         assert!(format_reflink_paren(3, 0).contains("(reflinked, no extra disk)"));
-        assert_eq!(format_reflink_paren(0, 3), "");
+        assert!(format_reflink_paren(0, 3).contains("(full copy)"));
         assert!(format_reflink_paren(2, 1).contains("(2 of 3 reflinked)"));
         assert!(format_reflink_paren(1_500, 500).contains("(1,500 of 2,000 reflinked)"));
     }

@@ -64,7 +64,7 @@ $ wt switch ../dark-mode                   # Switch by path...
 $ wt switch feature/JIRA-1234              # ...or by branch
 ```
 
-Worktrunk finds the worktree from git's own records, so commands reach it by branch or path as usual. [`wt list`](/list/#worktree) marks it `⚐`, since it isn't at the path its branch implies, and [`wt step relocate`](/step/#wt-step-relocate) offers to move it back to the template path.
+Other commands reach it by branch or path as usual. [`wt list`](/list/#worktree) marks it `⚐`, since it isn't at the path its branch implies, and [`wt step relocate`](/step/#wt-step-relocate) offers to move it back to the template path.
 
 ## Naming a worktree
 
@@ -123,6 +123,8 @@ The CI column shows each row's PR/MR CI and review status, the same as [`wt list
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
 
+On macOS, `Alt` is the Option key; the terminal needs to send it as Meta (e.g. Terminal.app's [Use Option as Meta key](https://support.apple.com/guide/terminal/change-profiles-keyboard-settings-trmlkbrd/mac)).
+
 The filter matches each row's branch, path, and — when it has a PR/MR — the PR/MR's number, title, and author. Typing `+` narrows to linked worktrees, and `@` to the current worktree.
 
 **Preview tabs:**
@@ -146,7 +148,7 @@ The comparison base is the merge-base with the default branch, or with its upstr
 pager = "delta --paging=never --width=$COLUMNS"
 ```
 
-**Starting list-only:** Set `preview = false` under `[switch.picker]` to open the picker with the preview hidden; `Alt-p` still shows it.
+**Hiding the preview:** Set `preview = false` under `[switch.picker]` to open the picker with the preview hidden; `Alt-p` still shows it.
 
 ## Pull requests and merge requests
 
@@ -287,8 +289,12 @@ Automation:
       --format <FORMAT>
           Output format
 
-          JSON prints structured result to stdout. Designed for tool integration (e.g., Claude Code
-          WorktreeCreate hooks).
+          JSON prints one structured result to stdout once the switch, including any --execute
+          command, completes. Once arguments are accepted, failures print an object with an error
+          string. Argument errors use stderr only. Diagnostics and --execute output go to stderr. A
+          worktree created before a later failure remains in place. Canceling the interactive picker
+          produces no result. Background hooks run independently of the result. Designed for tool
+          integration (e.g., Claude Code WorktreeCreate hooks).
 
           [default: text]
           [possible values: text, json]

@@ -37,9 +37,9 @@
 //!   re-dims the diff tabs' tab-bar number — chrome the user can wait a keystroke
 //!   for, never worth a scroll reset.
 //! - **`pr` tab** — body renders every shown `PrStatus` field, so it re-runs on
-//!   any real change. The collect handler excludes `is_priming` (a list-cell dim
-//!   hint the pane never draws — see `items::pr_status_pane_eq`) so a
-//!   cache-prime→live flip that only clears it doesn't reset scroll.
+//!   any real change. The collect handler excludes `is_priming` and `updated_at`
+//!   (fields the pane never draws — see `items::pr_status_pane_eq`) so a
+//!   cache-prime→live flip that only changes them doesn't reset scroll.
 //! - **`comments` tab** — body is the row-keyed thread (surfaced by
 //!   `notify_filled`), invariant to `PrStatus` fields once a PR exists, so it
 //!   re-runs only on a [`PrPresence`](super::items::PrPresence) change
@@ -73,8 +73,8 @@ use super::preview::PreviewMode;
 #[derive(Debug, Clone, Copy)]
 pub(super) struct PrStatusDelta {
     /// The rendered `pr` pane would differ — any shown field changed (CI badge,
-    /// title, body, review, …), ignoring the `is_priming` dim hint the pane
-    /// never draws. Gates the `pr` tab. See `items::pr_status_pane_eq`.
+    /// title, body, review, …), ignoring the `is_priming` and `updated_at`
+    /// fields the pane never draws. Gates the `pr` tab. See `items::pr_status_pane_eq`.
     pub(super) pane_changed: bool,
     /// The [`PrPresence`](super::items::PrPresence) (Loading/NoPr/HasPr) changed.
     /// Gates the `comments` tab, whose body is otherwise the row-keyed thread
