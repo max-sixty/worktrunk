@@ -114,11 +114,8 @@ use crate::path::format_path_for_display;
 use crate::progress::Progress;
 use crate::remove_dir::remove_dir_with_progress;
 use crate::shell_exec::Cmd;
-use crate::styling::{
-    eprintln, format_with_gutter, hint_message, suggest_command, warning_message,
-};
+use crate::styling::{eprintln, format_with_gutter, warning_message};
 use crate::utils::epoch_now;
-use color_print::cformat;
 
 /// Bound on the graceful `git fsmonitor--daemon stop` IPC request.
 ///
@@ -514,25 +511,7 @@ pub fn stage_worktree_removal(
                 let backup = worktree
                     .create_removal_backup(&format!("{name} (remove --force)"))
                     .context("Failed to back up uncommitted changes; worktree not removed")?;
-                let short_sha = repo.short_sha(&backup.sha)?;
-                eprintln!(
-                    "{}",
-                    hint_message(cformat!(
-                        "Backup created @ <underline>{}</> ({short_sha})",
-                        backup.ref_name
-                    ))
-                );
-                let command = suggest_command(
-                    "switch",
-                    &[&format!("recovery/{short_sha}")],
-                    &["--create", "--base", &backup.sha, "--no-hooks"],
-                );
-                eprintln!(
-                    "{}",
-                    hint_message(cformat!(
-                        "To recover in a new worktree, run <underline>{command}</>"
-                    ))
-                );
+                backup.print_recovery_hints(repo)?;
             }
             Ok(_) => {}
             Err(error) => {

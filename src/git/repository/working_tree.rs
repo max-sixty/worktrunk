@@ -26,6 +26,35 @@ pub struct SafetyBackup {
     pub ref_name: String,
 }
 
+impl SafetyBackup {
+    /// Print where the backup went and the command that recovers it.
+    pub fn print_recovery_hints(&self, repo: &Repository) -> anyhow::Result<()> {
+        use crate::styling::{eprintln, hint_message, suggest_command};
+        use color_print::cformat;
+
+        let short_sha = repo.short_sha(&self.sha)?;
+        eprintln!(
+            "{}",
+            hint_message(cformat!(
+                "Backup created @ <underline>{}</> ({short_sha})",
+                self.ref_name
+            ))
+        );
+        let command = suggest_command(
+            "switch",
+            &[&format!("recovery/{short_sha}")],
+            &["--create", "--base", &self.sha, "--no-hooks"],
+        );
+        eprintln!(
+            "{}",
+            hint_message(cformat!(
+                "To recover in a new worktree, run <underline>{command}</>"
+            ))
+        );
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 struct NumstatEntry {
     diff: LineDiff,
