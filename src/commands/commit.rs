@@ -251,13 +251,14 @@ impl CommitOptions<'_> {
         // project); `auto_stage` says why. Each stage re-checks for unmerged
         // paths, since a hook is free to leave them behind.
         auto_stage(&wt, self.stage_mode)?;
-        if self.hooks.run() {
-            execute_hook(
+        if self.hooks.run()
+            && execute_hook(
                 self.ctx,
                 HookType::PreCommit,
                 &template_vars.as_extra_vars(),
                 FailureStrategy::FailFast,
-            )?;
+            )?
+        {
             auto_stage(&wt, self.stage_mode)?;
         }
 

@@ -629,9 +629,9 @@ pub(crate) fn check_not_default_branch(
 ///
 /// Commit paths call this on both sides of the `pre-commit` hooks: before them
 /// so a hook that reads the index (`pre-commit run`, lint-staged,
-/// `git diff --cached`) sees the changes about to be committed, and after them
-/// so a formatter hook's edits land in the commit. The second call warns only
-/// about untracked paths the hooks created.
+/// `git diff --cached`) sees the changes about to be committed, and, when a
+/// hook ran, after them so a formatter hook's edits land in the commit. The
+/// second call warns only about untracked paths the hooks created.
 pub(crate) fn auto_stage(wt: &WorkingTree, mode: StageMode) -> anyhow::Result<()> {
     if mode == StageMode::All {
         warn_about_untracked_files(wt)?;

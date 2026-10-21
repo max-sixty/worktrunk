@@ -1380,6 +1380,46 @@ fn test_pre_commit_hook_sees_staged_changes(
     assert_eq!(repo.git_output(&["rev-parse", "main"]), main_head);
 }
 
+/// With no pre-commit hook configured, a commit stages once. The second
+/// staging pass only picks up edits a hook made, so running it with no hook
+/// would repeat a full `git status` and `git add` for nothing.
+#[rstest]
+#[case::merge(&["-vv", "merge", "main", "--yes"])]
+#[case::step_commit(&["-vv", "step", "commit", "--yes"])]
+fn test_commit_stages_once_without_pre_commit_hook(
+    repo_with_multi_commit_feature: TestRepo,
+    #[case] args: &[&str],
+) {
+    let repo = &repo_with_multi_commit_feature;
+    let feature_wt = repo.worktrees["feature"].clone();
+    fs::write(feature_wt.join("new.txt"), "content\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(args)
+        .current_dir(&feature_wt)
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: combined'",
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "commit failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let trace_log =
+        crate::common::resolve_git_common_dir(repo.root_path()).join("wt/logs/trace.log");
+    let trace = fs::read_to_string(&trace_log).unwrap();
+    let untracked_scans = trace
+        .lines()
+        .filter(|line| line.contains("$ git status --porcelain -z -unormal"))
+        .count();
+    assert_eq!(untracked_scans, 1, "trace.log: {trace}");
+}
+
 // README EXAMPLE GENERATION TESTS
 // These tests are specifically designed to generate realistic output examples for the README.
 // The snapshots from these tests are manually copied into README.md to show users what

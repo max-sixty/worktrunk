@@ -183,13 +183,14 @@ pub fn handle_squash_in(
     // Stage on both sides of the pre-commit hooks (user first, then project);
     // `auto_stage` says why.
     auto_stage(&wt, stage_mode)?;
-    if hooks.run() {
-        execute_hook(
+    if hooks.run()
+        && execute_hook(
             &ctx,
             HookType::PreCommit,
             &template_vars.as_extra_vars(),
             FailureStrategy::FailFast,
-        )?;
+        )?
+    {
         auto_stage(&wt, stage_mode)?;
     }
 
