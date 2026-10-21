@@ -386,7 +386,7 @@ pub fn sweep_trash(repo: &Repository) {
             spawn_detached(
                 repo,
                 &repo.wt_dir(),
-                &build_drain_trash_command(executable),
+                &build_drain_trash_command(executable, repo),
                 "",
                 &HookLog::Shared(InternalOp::TrashSweep),
             )
@@ -396,15 +396,19 @@ pub fn sweep_trash(repo: &Repository) {
     }
 }
 
-/// Shell argv that runs `wt _drain-trash`: a fixed script, its `$0`, then
-/// native arguments. Paths are never interpolated into shell source. The
-/// drain takes no path: it derives the trash directory from the repository
-/// at its cwd, so it can't be pointed at a directory outside the trash.
-pub fn build_drain_trash_command(executable: PathBuf) -> Vec<OsString> {
+/// Shell argv that runs `wt -C <git-common-dir> _drain-trash`: a fixed script,
+/// its `$0`, then native arguments. Paths are never interpolated into shell
+/// source. The drain derives the trash directory from the repository it
+/// discovers, so it can't be pointed at a directory outside a trash. `-C`
+/// names that repository because the spawn's cwd may be the placeholder of a
+/// worktree the removal just deleted.
+pub fn build_drain_trash_command(executable: PathBuf, repo: &Repository) -> Vec<OsString> {
     vec![
         OsString::from(r#"exec "$@""#),
         OsString::from("wt"),
         executable.into_os_string(),
+        OsString::from("-C"),
+        repo.git_common_dir().as_os_str().to_os_string(),
         OsString::from("_drain-trash"),
     ]
 }
@@ -505,12 +509,16 @@ mod tests {
     }
 
     #[test]
-    fn drain_command_passes_executable_as_its_own_argument() {
+    fn drain_command_passes_paths_as_their_own_arguments() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
         let executable = PathBuf::from("/opt/with space-'$(echo PWNED)\n/wt");
-        let args = build_drain_trash_command(executable.clone());
+        let args = build_drain_trash_command(executable.clone(), &repo);
         assert_eq!(args[0], r#"exec "$@""#);
         assert_eq!(args[2], executable.as_os_str());
-        assert_eq!(args[3..], ["_drain-trash"]);
+        assert_eq!(args[3], "-C");
+        assert_eq!(args[4], repo.git_common_dir().as_os_str());
+        assert_eq!(args[5], "_drain-trash");
     }
 
     #[test]
