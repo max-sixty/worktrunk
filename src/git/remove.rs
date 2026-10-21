@@ -28,7 +28,9 @@
 //!    unconditionally (matching `git worktree remove`; `--force` does not
 //!    override it). The dirty-worktree gate is skipped with
 //!    [`RemoveOptions::force_worktree`], which reports the current uncommitted
-//!    paths, or why they could not be read, before deletion instead. Why the
+//!    paths, or why they could not be read, before deletion instead, and
+//!    backs those changes up to `refs/wt-backup/<branch>` (ignored files
+//!    excepted); a failed backup refuses the removal. Why the
 //!    dirty gate precedes the stop below: [`stage_worktree_removal`], "Why this order".
 //! 2. **fsmonitor daemon stopped** (best effort). [`stop_fsmonitor_daemon`]
 //!    runs against the target worktree before its path disappears: it sends
@@ -112,8 +114,11 @@ use crate::path::format_path_for_display;
 use crate::progress::Progress;
 use crate::remove_dir::remove_dir_with_progress;
 use crate::shell_exec::Cmd;
-use crate::styling::{eprintln, format_with_gutter, warning_message};
+use crate::styling::{
+    eprintln, format_with_gutter, hint_message, suggest_command, warning_message,
+};
 use crate::utils::epoch_now;
+use color_print::cformat;
 
 /// Bound on the graceful `git fsmonitor--daemon stop` IPC request.
 ///
@@ -462,7 +467,8 @@ pub fn remove_worktree_with_cleanup(
 ///
 /// # Errors
 ///
-/// The ownership, lock, and dirty-worktree gates error. A
+/// The ownership, lock, and dirty-worktree gates error, as does a failed
+/// `--force` backup of uncommitted changes. A
 /// failed rename is reported as `None`, not an error, and the daemon stop is
 /// best-effort throughout.
 pub fn stage_worktree_removal(
@@ -501,6 +507,32 @@ pub fn stage_worktree_removal(
                     warning_message("Discarding uncommitted changes (--force):")
                 );
                 eprintln!("{}", format_with_gutter(&dirty_files.join("\n"), None));
+                // `--force` waives the dirty gate, not recoverability. A
+                // failed backup refuses the removal rather than lose the
+                // changes it was meant to keep.
+                let name = branch.unwrap_or_else(|| path_dir_name(worktree_path));
+                let backup = worktree
+                    .create_removal_backup(&format!("{name} (remove --force)"))
+                    .context("Failed to back up uncommitted changes; worktree not removed")?;
+                let short_sha = repo.short_sha(&backup.sha)?;
+                eprintln!(
+                    "{}",
+                    hint_message(cformat!(
+                        "Backup created @ <underline>{}</> ({short_sha})",
+                        backup.ref_name
+                    ))
+                );
+                let command = suggest_command(
+                    "switch",
+                    &[&format!("recovery/{short_sha}")],
+                    &["--create", "--base", &backup.sha, "--no-hooks"],
+                );
+                eprintln!(
+                    "{}",
+                    hint_message(cformat!(
+                        "To recover in a new worktree, run <underline>{command}</>"
+                    ))
+                );
             }
             Ok(_) => {}
             Err(error) => {
