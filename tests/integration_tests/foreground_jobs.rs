@@ -65,11 +65,18 @@ impl Shell {
                     .iter()
                     .map(|pid| (*pid, nix::unistd::getpgid(Some(*pid))))
                     .collect();
+                // A timeout names the processes on the terminal, such as a stuck job.
+                let processes = std::process::Command::new("ps")
+                    .args(["-o", "pid,ppid,pgid,stat,wchan,etime,command", "-t"])
+                    .arg(self.master.tty_name().unwrap())
+                    .output()
+                    .unwrap();
                 panic!(
-                    "missing {marker:?}; shell={:?}, foreground={:?}, members={members:?}, termios={:?}; terminal output:\n{}",
+                    "missing {marker:?}; shell={:?}, foreground={:?}, members={members:?}, termios={:?}; processes:\n{}terminal output:\n{}",
                     self.child.process_id(),
                     self.master.process_group_leader(),
                     self.master.get_termios(),
+                    String::from_utf8_lossy(&processes.stdout),
                     self.output
                 )
             });
