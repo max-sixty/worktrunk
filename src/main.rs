@@ -971,7 +971,9 @@ fn dispatch_command(
             expected_tip.as_deref(),
             force_delete,
         ),
-        Commands::InternalDrainTrash { trash_dir } => worktrunk::git::drain_trash(&trash_dir),
+        Commands::InternalDrainTrash => {
+            worktrunk::git::drain_trash(&Repository::current()?.wt_trash_dir())
+        }
         // `working_dir` is the top-level `-C <path>` flag, applied as the
         // child's current directory so global `-C` works for custom
         // subcommands the same way it does for built-ins.

@@ -4586,6 +4586,69 @@ fn test_remove_leaves_entries_to_the_running_drain(mut repo: TestRepo) {
     });
 }
 
+/// `wt _drain-trash` drains only the trash of the repository at its cwd, the
+/// way the post-removal sweep runs it from `.git/wt`. Outside a repository it
+/// fails and deletes nothing, however the directory's entries are named.
+#[rstest]
+fn test_drain_trash_derives_the_trash_from_the_repository(repo: TestRepo) {
+    let outside = tempfile::tempdir().unwrap();
+    let lookalike = outside.path().join("backup-2024");
+    fs::create_dir(&lookalike).unwrap();
+    let output = repo
+        .wt_command()
+        .arg("_drain-trash")
+        .current_dir(outside.path())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(lookalike.exists());
+
+    let wt_dir = crate::common::resolve_git_common_dir(repo.root_path()).join("wt");
+    let staged = wt_dir.join("trash/feature-1700000000");
+    fs::create_dir_all(&staged).unwrap();
+    let output = repo
+        .wt_command()
+        .arg("_drain-trash")
+        .current_dir(&wt_dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!staged.exists());
+}
+
+/// Run as a `!wt` alias, `wt remove` inherits a `GIT_DIR` naming the invoking
+/// worktree's gitdir, which the removal prunes. The detached drain discovers
+/// the repository from its cwd instead, so it still empties the trash.
+#[rstest]
+fn test_remove_drains_trash_under_inherited_git_dir(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    let git_dir = fs::read_to_string(feature_wt.join(".git")).unwrap();
+    let git_dir = PathBuf::from(git_dir.trim().strip_prefix("gitdir: ").unwrap());
+
+    let output = repo
+        .wt_command()
+        .current_dir(&feature_wt)
+        .args(["remove", "--no-delete-branch", "--yes"])
+        .env("GIT_DIR", &git_dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!git_dir.exists());
+
+    let trash_dir = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/trash");
+    crate::common::wait_for("trash drained", || {
+        fs::read_dir(&trash_dir).unwrap().next().is_none()
+    });
+}
+
 /// `wt remove -vv` resolves every fsmonitor daemon in ONE `lsof` spawn and
 /// traces the sweep.
 ///

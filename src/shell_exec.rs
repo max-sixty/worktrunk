@@ -704,7 +704,10 @@ pub fn apply_cd_directive_env(cmd: &mut std::process::Command, cd_file: &std::pa
 ///   into a relocated command misdirects every `git` call in it; with both
 ///   `GIT_DIR` and `GIT_WORK_TREE` present, a `git init` even writes
 ///   `core.worktree` into the *inherited* repo's config, silently redirecting
-///   every later plain git command there. See issue #3373.
+///   every later plain git command there. See issue #3373. Detached children
+///   (`spawn_detached_exec`: hook pipelines, trash drains) are relocated the
+///   same way, and outlive the parent, so removing the invoking worktree would
+///   also leave an inherited `GIT_DIR` naming a pruned gitdir.
 ///
 /// - **The child runs where the user already was** — aliases (the user's own
 ///   top-level command, run from the invoking worktree) and `commit.generation`

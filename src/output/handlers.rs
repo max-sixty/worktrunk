@@ -235,10 +235,7 @@ fn execute_instant_removal_or_fallback(
             std::env::current_exe()
                 .context("Failed to locate Worktrunk executable")
                 .and_then(|executable| {
-                    spawn_cleanup(
-                        &build_drain_trash_command(executable, &trash_dir),
-                        InternalOp::Remove,
-                    )
+                    spawn_cleanup(&build_drain_trash_command(executable), InternalOp::Remove)
                 })
         };
         // Delete branch synchronously now that prune has removed the worktree metadata.
@@ -2506,7 +2503,7 @@ mod tests {
             },
             BackgroundFallbackMode::Detached,
             |args, _| {
-                assert_eq!(args.last().unwrap(), repo.wt_trash_dir().as_os_str());
+                assert_eq!(args.last().unwrap(), "_drain-trash");
                 worktrunk::git::drain_trash(&repo.wt_trash_dir())
             },
         )
