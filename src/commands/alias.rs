@@ -38,6 +38,8 @@
 //! applies `DirectivePassthrough`: the CD directive file is passed through so
 //! inner `wt` invocations can redirect the parent shell's cwd.
 
+use crate::commands::command_executor::ForegroundStdin;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
 
@@ -410,7 +412,7 @@ pub(crate) fn load_aliases(
 ) -> AliasMap {
     let project_id = repo.and_then(|r| r.project_identifier().ok());
     let mut result: AliasMap = user_config
-        .aliases(project_id.as_deref())
+        .aliases(project_id.as_ref())
         .into_iter()
         .map(|(n, c)| {
             (
@@ -744,7 +746,11 @@ fn run_alias(
                 sourced_steps.push(SourcedStep { step, source });
             }
         }
-        sourced_steps_to_foreground(sourced_steps, &PipelineKind::Alias { name: alias_name })
+        sourced_steps_to_foreground(
+            sourced_steps,
+            &PipelineKind::Alias { name: alias_name },
+            ForegroundStdin::Inherit,
+        )
     };
 
     execute_pipeline_foreground(&foreground_steps, repo, &wt_path, FailureStrategy::FailFast)
@@ -888,7 +894,7 @@ pub(crate) fn load_aliases_for_listing() -> Vec<(String, CommandConfig, HookSour
 
     let user_aliases = UserConfig::load()
         .ok()
-        .map(|uc| uc.aliases(project_id.as_deref()))
+        .map(|uc| uc.aliases(project_id.as_ref()))
         .unwrap_or_default();
 
     let project_aliases = repo

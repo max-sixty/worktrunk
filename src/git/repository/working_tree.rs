@@ -111,6 +111,26 @@ fn temporary_path_exclusion(worktree_root: &Path, temporary_path: &Path) -> Opti
         .map(|relative| format!(":(top,exclude,literal){}", relative.to_slash_lossy()))
 }
 
+/// Refuse `action` when `dirty_files` (status porcelain lines) is non-empty.
+fn require_no_dirty_files(
+    dirty_files: Vec<String>,
+    action: &str,
+    branch: Option<&str>,
+    force_hint: bool,
+) -> anyhow::Result<()> {
+    if !dirty_files.is_empty() {
+        return Err(GitError::UncommittedChanges {
+            action: Some(action.into()),
+            branch: branch.map(String::from),
+            force_hint,
+            dirty_files,
+        }
+        .into());
+    }
+
+    Ok(())
+}
+
 /// Parse `git submodule status` output and detect whether any submodule is initialized.
 ///
 /// Status lines start with a one-character state marker:
@@ -625,12 +645,19 @@ impl<'a> WorkingTree<'a> {
     /// [`GitError::UncommittedChanges`] in [`Self::ensure_clean`]. The same
     /// caveats as [`Self::is_dirty`] apply (skip-worktree files are invisible).
     pub fn dirty_files(&self) -> anyhow::Result<Vec<String>> {
-        let stdout = self.run_command(&[
+        self.dirty_files_with(&[])
+    }
+
+    /// [`Self::dirty_files`] with `git -c` overrides ahead of `status`.
+    fn dirty_files_with(&self, config: &[&str]) -> anyhow::Result<Vec<String>> {
+        let mut args = config.to_vec();
+        args.extend([
             "status",
             "--porcelain",
             "--untracked-files=normal",
             "--ignore-submodules=none",
-        ])?;
+        ]);
+        let stdout = self.run_command(&args)?;
         Ok(stdout.lines().map(str::to_owned).collect())
     }
 
@@ -953,18 +980,19 @@ impl<'a> WorkingTree<'a> {
         branch: Option<&str>,
         force_hint: bool,
     ) -> anyhow::Result<()> {
-        let dirty_files = self.dirty_files()?;
-        if !dirty_files.is_empty() {
-            return Err(GitError::UncommittedChanges {
-                action: Some(action.into()),
-                branch: branch.map(String::from),
-                force_hint,
-                dirty_files,
-            }
-            .into());
-        }
+        require_no_dirty_files(self.dirty_files()?, action, branch, force_hint)
+    }
 
-        Ok(())
+    /// [`Self::ensure_clean`] with fsmonitor disabled, for a worktree whose
+    /// daemon was just stopped: a full rescan, and no daemon restarted.
+    pub fn ensure_clean_without_fsmonitor(
+        &self,
+        action: &str,
+        branch: Option<&str>,
+        force_hint: bool,
+    ) -> anyhow::Result<()> {
+        let dirty_files = self.dirty_files_with(&["-c", "core.fsmonitor=false"])?;
+        require_no_dirty_files(dirty_files, action, branch, force_hint)
     }
 
     /// Get line diff statistics for working tree changes (unstaged + staged).
@@ -1160,6 +1188,21 @@ impl<'a> WorkingTree<'a> {
     pub fn has_initialized_submodules(&self) -> anyhow::Result<bool> {
         let output = self.run_command(&["submodule", "status", "--recursive"])?;
         Ok(has_initialized_submodules_from_status(&output))
+    }
+
+    /// Initialized submodules, recursively, holding commits that no
+    /// remote-tracking ref reaches, by display path. Reflog-only commits
+    /// count: removing the worktree deletes a module store along with them.
+    /// A shallow or SHA-fetched pin can report commits a remote does hold.
+    pub fn submodules_with_local_commits(&self) -> anyhow::Result<Vec<String>> {
+        let output = self.run_command(&[
+            "submodule",
+            "foreach",
+            "--quiet",
+            "--recursive",
+            r#"test -z "$(git rev-list --all --reflog --not --remotes --max-count=1)" || echo "$displaypath""#,
+        ])?;
+        Ok(output.lines().map(String::from).collect())
     }
 
     /// Back up the index, as a squash is about to commit it, to `refs/wt-backup/<branch>`.

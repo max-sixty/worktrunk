@@ -3718,8 +3718,9 @@ fn test_list_does_not_persist_observation_objects(mut repo: TestRepo) {
 }
 
 /// A broken system temporary-directory setting must not prevent either list
-/// entry point from rendering. Probe objects fall back to a temporary directory
-/// in Git's metadata and still disappear when the command exits.
+/// entry point from rendering, nor fail a task. Probe objects fall back to a
+/// temporary directory in Git's metadata and still disappear when the command
+/// exits. The untracked file makes the working-tree diff pass paths on stdin.
 #[cfg(unix)]
 #[rstest]
 fn test_list_survives_unavailable_system_temp_directory(mut repo: TestRepo) {
@@ -3728,6 +3729,7 @@ fn test_list_survives_unavailable_system_temp_directory(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
     repo.commit("Main diverges");
     std::fs::write(feature_path.join("file.txt"), "feature\n").unwrap();
+    std::fs::write(feature_path.join("untracked.txt"), "untracked\n").unwrap();
 
     let before = repo.git_output(&["count-objects", "-v"]);
     let missing_temp = repo.root_path().join("missing-temp");
@@ -3744,7 +3746,7 @@ fn test_list_survives_unavailable_system_temp_directory(mut repo: TestRepo) {
             .output()
             .unwrap();
         assert!(
-            output.status.success(),
+            output.status.success() && output.stderr.is_empty(),
             "{} should fall back from an unavailable TMPDIR; stderr:\n{}",
             args.join(" "),
             String::from_utf8_lossy(&output.stderr)

@@ -28,7 +28,6 @@ use std::io::Write as _;
 use std::process::Stdio;
 
 use anyhow::Context;
-use color_print::cformat;
 use worktrunk::config::{UserConfig, VarScope};
 use worktrunk::git::{ErrorExt, Repository, WorktreeInfo, WorktrunkError};
 use worktrunk::shell_exec::{Cmd, ShellEscapeMode};
@@ -130,7 +129,7 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                     };
                 eprintln!(
                     "{}",
-                    error_message(cformat!("Failed in <bold>{display_name}</>{exit_info}"))
+                    error_message(format!("Failed in {display_name}{exit_info}"))
                 );
                 if let Some(detail) = &stderr_detail {
                     eprintln!("{}", format_with_gutter(detail, None));

@@ -19,6 +19,8 @@
 //! current worktree is removed last, after the fan-out, because its removal
 //! cd's the shell to the primary.
 
+use crate::commands::command_executor::ForegroundStdin;
+
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -31,7 +33,7 @@ use color_print::cformat;
 use crossbeam_channel as chan;
 use rayon::prelude::*;
 use worktrunk::HookType;
-use worktrunk::config::{Approvals, ProjectConfig, UserConfig};
+use worktrunk::config::{Approvals, ProjectConfig, ProjectId, UserConfig};
 use worktrunk::git::{
     BranchDeletionMode, IntegrationReason, RefSnapshot, Repository, WorktreeInfo,
 };
@@ -351,7 +353,12 @@ fn try_remove(
     } else {
         RemovalExecution::Background(BackgroundFallbackMode::SynchronousForNonCurrent)
     };
-    let fate = handle_remove_output(&plan, execution, ctx.hook_plan, true, &mut announcer)?;
+    let stdin = if needs_write {
+        ForegroundStdin::Inherit
+    } else {
+        ForegroundStdin::Closed
+    };
+    let fate = handle_remove_output(&plan, execution, stdin, ctx.hook_plan, true, &mut announcer)?;
     announcer.flush()?;
     let branch_deleted = fate.deleted();
     // A branch-only candidate that kept its branch removed nothing at all —
@@ -371,15 +378,15 @@ fn try_remove(
 
 /// One candidate skipped because its project hooks aren't yet approved.
 /// Carries enough context for the end-of-run hint to print a per-candidate
-/// `wt -C <path> remove` line and annotate candidates whose own
-/// `.config/wt.toml` differs from the invoking worktree's (so the user knows
-/// `wt config approvals add` from current can't approve their hooks).
+/// `wt -C <path> remove` line and annotate candidates whose resolved project
+/// config differs from the invoking worktree's (so the user knows `wt config
+/// approvals add` from current can't approve their hooks).
 struct SkippedApproval {
     /// `Some` for candidates whose plan removes a worktree (the only
     /// `(approval required)` source — branch-only plans and stale-detached
     /// entries run no hooks).
     path: Option<PathBuf>,
-    /// True when the candidate's `.config/wt.toml` doesn't match the
+    /// True when the candidate's resolved project config doesn't match the
     /// invoking worktree's bytes — `wt config approvals add` from current
     /// approves only invoking's templates, so this candidate needs the
     /// per-worktree `wt -C <path> remove` form to surface its own hooks.
@@ -921,7 +928,7 @@ fn build_pessimistic_plan(
     current_root: &Path,
     project_config: Option<&ProjectConfig>,
     user_config: &UserConfig,
-    project_id: Option<&str>,
+    project_id: Option<&ProjectId>,
 ) -> anyhow::Result<HookPlan> {
     let mut builder = HookPlanBuilder::new(project_config, user_config, project_id);
     let mut has_current = false;
@@ -951,7 +958,7 @@ fn unapproved_for_hook(
     hook_type: HookType,
     project_config: Option<&ProjectConfig>,
     user_config: &UserConfig,
-    project_id: Option<&str>,
+    project_id: Option<&ProjectId>,
     approvals: &Approvals,
 ) -> Vec<String> {
     let Ok(home) = repo.home_path() else {
@@ -1108,7 +1115,7 @@ pub fn step_prune(
     //     (`wt config approvals add`) or remove individually
     //     (`wt -C <wt> remove`). Unapproved hooks never run silently.
     let project_id_owned = repo.project_identifier().ok();
-    let project_id = project_id_owned.as_deref();
+    let project_id = project_id_owned.as_ref();
     let project_config = repo.load_project_config()?;
     let approvals = if yes {
         Approvals::default()
@@ -1167,7 +1174,7 @@ pub fn step_prune(
     };
     // The invoking worktree's project-config bytes — load once so the per-
     // candidate "(different hooks on branch)" annotation in the skip hint
-    // can compare each candidate's own `.config/wt.toml` against this
+    // can compare each candidate's resolved project config against this
     // baseline. Byte-equal is approximate (whitespace differences flag too)
     // but the result drives a hint, not behavior.
     let invoking_project_bytes = repo
@@ -1324,8 +1331,11 @@ pub fn step_prune(
                             .to_string();
                     let _ = job_tx.send(RemovalJob::PrintSkip(line));
                     let differs = path.as_deref().is_some_and(|wt_path| {
-                        let candidate_bytes =
-                            std::fs::read(wt_path.join(".config").join("wt.toml")).ok();
+                        let candidate_bytes = Repository::at(wt_path)
+                            .and_then(|candidate_repo| candidate_repo.project_config_path())
+                            .ok()
+                            .flatten()
+                            .and_then(|p| std::fs::read(p).ok());
                         candidate_bytes != invoking_project_bytes
                     });
                     skipped_approval.push(SkippedApproval { path, differs });
@@ -1445,7 +1455,7 @@ struct ApprovalHintBlock {
 /// Build the headline+gutter pairs for `(approval required)` skips: a
 /// `wt config approvals add` block listing the unapproved templates from the
 /// invoking worktree's config, and a per-worktree `wt -C <path> remove` block
-/// for the skipped candidates. Candidates whose own `.config/wt.toml` differs
+/// for the skipped candidates. Candidates whose resolved project config differs
 /// from the invoking worktree get a `(different hooks on branch)` annotation —
 /// `wt config approvals add` from current approves only current's templates,
 /// so the per-worktree form is the only path for them.

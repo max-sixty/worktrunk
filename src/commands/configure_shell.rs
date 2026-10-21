@@ -2191,7 +2191,11 @@ mod tests {
             .unwrap();
         assert!(contender.try_lock_exclusive().is_err());
         drop(locked);
-        contender.try_lock_exclusive().unwrap();
+        // A child that a concurrent test forks while `locked` is open inherits
+        // the lock until it execs, so the release can take an instant to land.
+        worktrunk::testing::wait_for("the rc lock to be released", || {
+            contender.try_lock_exclusive().is_ok()
+        });
     }
 
     #[test]

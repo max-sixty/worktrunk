@@ -22,7 +22,7 @@ use std::path::Path;
 
 use anyhow::Context;
 use color_print::cformat;
-use worktrunk::config::{Approvals, require_approvals_path};
+use worktrunk::config::{Approvals, ProjectId, require_approvals_path};
 use worktrunk::git::{GitError, HookType};
 use worktrunk::styling::{
     INFO_SYMBOL, WARNING_SYMBOL, eprint, eprintln, format_heading, hint_message, prompt_message,
@@ -48,7 +48,7 @@ use worktrunk::config::HookSource;
 /// file never aborts a `--yes` run.
 pub fn approve_command_batch(
     commands: &[ApprovableCommand],
-    project_id: &str,
+    project_id: &ProjectId,
     yes: bool,
 ) -> anyhow::Result<bool> {
     if yes {
@@ -197,7 +197,7 @@ fn prompt_for_batch_approval_with_header(
 pub fn approve_alias_commands(
     commands: &worktrunk::config::CommandConfig,
     alias_name: &str,
-    project_id: &str,
+    project_id: &ProjectId,
     yes: bool,
 ) -> anyhow::Result<bool> {
     let cmds: Vec<_> = commands

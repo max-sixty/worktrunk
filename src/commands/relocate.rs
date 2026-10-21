@@ -170,7 +170,7 @@ pub fn gather_candidates(
     } else {
         let mut selected: Vec<WorktreeInfo> = Vec::new();
         for arg in filter_branches {
-            let path = repo.require_worktree(arg)?;
+            let (path, _) = repo.require_worktree(arg)?;
             let Some(wt) = worktrees.iter().find(|wt| paths_match(&path, &wt.path)) else {
                 // Resolved, but pruned out above: its directory or `.git` is
                 // gone, so there is nothing to move.
@@ -338,7 +338,7 @@ pub fn validate_candidates(
                 worktree.stage(StageMode::All)?;
                 // Commit using shared pipeline
                 let project_id = repo.project_identifier().ok();
-                let commit_config = config.commit_generation(project_id.as_deref());
+                let commit_config = config.commit_generation(project_id.as_ref());
                 CommitGenerator::new(&commit_config, project_append).commit_staged_changes(
                     &worktree,
                     false, // show_progress - already showing "Committing changes in..."

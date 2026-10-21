@@ -4,7 +4,7 @@
 
 ## Why shell integration exists
 
-The [shell integration overview](https://worktrunk.dev/config/#wt-config-shell) explains why directory switching needs a shell function. [How the shell wrapper works](#how-the-shell-wrapper-works) describes the directive mechanism.
+A subprocess can't change its parent shell's directory, so `wt` installs a shell function that runs the binary and then changes directory when the command asks. [How the shell wrapper works](#how-the-shell-wrapper-works) has the details.
 
 ## Installation
 
@@ -12,13 +12,13 @@ See [`wt config shell install`](https://worktrunk.dev/config/#wt-config-shell-in
 
 ## Files created
 
-[`wt config shell install`](https://worktrunk.dev/config/#wt-config-shell-install) uses these locations:
+[`wt config shell install`](https://worktrunk.dev/config/#wt-config-shell-install) appends a line to the bash, zsh, and PowerShell files, and writes the fish and Nushell files whole:
 
 - **Bash**: `~/.bashrc`
 - **Zsh**: `~/.zshrc` (or `$ZDOTDIR/.zshrc`)
 - **Fish**: `~/.config/fish/functions/wt.fish` and `~/.config/fish/completions/wt.fish` (under `$XDG_CONFIG_HOME/fish` when that is set)
 - **Nushell 0.113+** [experimental]: `wt.nu` in Nushell's user vendor-autoload directory — the last entry of `$nu.vendor-autoload-dirs`, under `$nu.data-dir` (typically `~/.local/share/nushell/vendor/autoload` on Linux, `~/Library/Application Support/nushell/vendor/autoload` on macOS)
-- **PowerShell** (Windows): both profile files:
+- **PowerShell** (Windows): both profile files, created if they don't exist:
   - `Documents/PowerShell/Microsoft.PowerShell_profile.ps1` (PowerShell 7+)
   - `Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1` (Windows PowerShell 5.1)
 
@@ -28,7 +28,7 @@ See [`wt config shell uninstall`](https://worktrunk.dev/config/#wt-config-shell-
 
 ## Checking status
 
-The [current-shell checks](https://worktrunk.dev/config/#wt-config-shell) explain how to inspect installation and activation with `wt config show` and the shell's command lookup.
+Run `wt config show`. Its SHELL INTEGRATION section reports whether the wrapper is active in the current shell.
 
 ## Warning messages
 

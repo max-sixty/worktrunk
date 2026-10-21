@@ -139,8 +139,8 @@ pub struct ProgressiveCaptureOptions {
     /// Terminal size in (rows, cols) (default: 48 rows x 150 cols - matches test suite conventions)
     pub terminal_size: (u16, u16),
     /// Minimum change required between snapshots
-    /// - For TimeInterval: minimum time between different snapshots (default: 10ms)
-    /// - For ByteInterval: minimum bytes between snapshots (default: 100 bytes)
+    /// - For TimeInterval: minimum milliseconds between different snapshots (default: 100)
+    /// - For ByteInterval: minimum bytes between snapshots (default: 100)
     pub min_change_threshold: usize,
 }
 
@@ -150,7 +150,7 @@ impl Default for ProgressiveCaptureOptions {
             strategy: CaptureStrategy::TimeInterval(Duration::from_millis(50)),
             timeout: Duration::from_secs(10),
             terminal_size: (48, 150),
-            min_change_threshold: 100, // 100 bytes minimum change
+            min_change_threshold: 100, // 100ms between time-based snapshots
         }
     }
 }

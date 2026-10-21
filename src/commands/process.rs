@@ -7,7 +7,6 @@ use std::process::Command;
 use std::process::Stdio;
 use worktrunk::git::{HookType, Repository};
 use worktrunk::path::{format_path_for_display, sanitize_for_filename};
-use worktrunk::utils::epoch_now;
 
 use worktrunk::config::HookSource;
 
@@ -281,6 +280,7 @@ fn spawn_detached_exec_unix(
         .stderr(Stdio::from(log_file))
         .process_group(0);
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
+    worktrunk::shell_exec::scrub_git_discovery_env_vars(&mut cmd);
     set_background_hook_env(&mut cmd, is_background_hook);
     worktrunk::shell_exec::spawn(&mut cmd).context("Failed to spawn detached process")?;
 
@@ -316,6 +316,7 @@ fn spawn_detached_exec_windows(
         .stderr(Stdio::from(log_file))
         .creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
+    worktrunk::shell_exec::scrub_git_discovery_env_vars(&mut cmd);
     set_background_hook_env(&mut cmd, is_background_hook);
     worktrunk::shell_exec::spawn(&mut cmd).context("Failed to spawn detached process")?;
 
@@ -342,8 +343,8 @@ fn spawn_detached_exec_windows(
 ///
 /// Steps:
 ///
-/// 1. [`sweep_stale_trash`] — delete stale `.git/wt/trash/` entries left by
-///    an interrupted background removal.
+/// 1. [`sweep_trash`] — restart deletion of `.git/wt/trash/` entries left
+///    by an interrupted background removal.
 /// 2. [`worktrunk::git::fsmonitor::reap_orphan_fsmonitor_daemons`] — terminate
 ///    `git fsmonitor--daemon` processes whose worktree no longer exists.
 ///    Defense-in-depth for daemons orphaned by paths that bypass `wt remove`
@@ -351,93 +352,65 @@ fn spawn_detached_exec_windows(
 ///    `wt remove` source itself stops the daemon synchronously.
 pub fn run_internal_sweep(repo: &Repository) {
     let _span = worktrunk::trace::Span::new("internal-sweep");
-    sweep_stale_trash(repo);
+    sweep_trash(repo);
     worktrunk::git::fsmonitor::reap_orphan_fsmonitor_daemons(repo);
 }
 
-/// How old a `.git/wt/trash/` entry must be before [`sweep_stale_trash`] deletes it.
-pub const TRASH_STALE_THRESHOLD_SECS: u64 = 24 * 60 * 60;
-
-/// Fire-and-forget cleanup of stale entries in `.git/wt/trash/`.
+/// Fire-and-forget restart of trash deletion.
 ///
-/// Worktree removal uses a fast path that renames the worktree into
-/// `.git/wt/trash/<name>-<timestamp>/` and deletes it in a detached background
-/// process. If that process is interrupted (SIGKILL, reboot, disk full), the
-/// renamed directory is orphaned. `wt remove` calls this function after its
-/// primary user-visible output — so the sweep never delays the progress or
-/// success message — to provide eventual cleanup: entries older than
-/// [`TRASH_STALE_THRESHOLD_SECS`] are removed by a single detached `rm -rf`.
+/// Worktree removal renames the worktree into
+/// `.git/wt/trash/<name>-<timestamp>/` and starts a detached
+/// [`worktrunk::git::drain_trash`] to delete it. If that process is
+/// interrupted (SIGKILL, reboot, disk full), its entries stay behind. `wt
+/// remove` calls this function after its primary user-visible output — so the
+/// sweep never delays the progress or success message — and starts another
+/// drain when the trash holds anything and no drain is running.
 ///
-/// Best effort: directory read failures and spawn failures are logged at debug
-/// level and otherwise ignored. The sweep is purely additive — the primary
-/// `wt remove` operation proceeds regardless of outcome.
-pub fn sweep_stale_trash(repo: &Repository) {
+/// Best effort: spawn failures are logged at debug level and otherwise
+/// ignored. The sweep is purely additive — the primary `wt remove` operation
+/// proceeds regardless of outcome.
+pub fn sweep_trash(repo: &Repository) {
     let trash_dir = repo.wt_trash_dir();
-    let stale = collect_stale_trash_entries(&trash_dir, epoch_now(), TRASH_STALE_THRESHOLD_SECS);
-    if stale.is_empty() {
+    if worktrunk::git::staged_trash_entries(&trash_dir).is_empty()
+        || worktrunk::git::trash_drain_running(&trash_dir)
+    {
         return;
     }
-
-    let command = build_remove_paths_command(&stale);
 
     // The sweep is repo-wide (not branch-scoped), so it logs to a top-level
     // shared file alongside `commands.jsonl` and `trace.log`. The branch
     // argument is ignored for the `Shared` variant.
-    if let Err(e) = spawn_detached(
-        repo,
-        &repo.wt_dir(),
-        &command,
-        "",
-        &HookLog::Shared(InternalOp::TrashSweep),
-    ) {
+    let spawned = std::env::current_exe()
+        .context("Failed to locate Worktrunk executable")
+        .and_then(|executable| {
+            spawn_detached(
+                repo,
+                &repo.wt_dir(),
+                &build_drain_trash_command(executable, repo),
+                "",
+                &HookLog::Shared(InternalOp::TrashSweep),
+            )
+        });
+    if let Err(e) = spawned {
         tracing::debug!(error = %format!("{e:#}"), "Failed to spawn stale trash sweep");
     }
 }
 
-/// Shell argv: a fixed script, its `$0`, then native path arguments.
-/// Paths are never interpolated into shell source.
-pub fn build_remove_paths_command(
-    paths: impl IntoIterator<Item = impl AsRef<OsStr>>,
-) -> Vec<OsString> {
-    let mut args = vec![
-        OsString::from(r#"exec rm -rf -- "$@""#),
+/// Shell argv that runs `wt -C <git-common-dir> _drain-trash`: a fixed script,
+/// its `$0`, then native arguments. Paths are never interpolated into shell
+/// source. The drain derives the trash directory from the repository it
+/// discovers, so it can't be pointed at a directory outside a trash. `-C`
+/// names that repository because the spawn's cwd may be the placeholder of a
+/// worktree the removal just deleted.
+pub fn build_drain_trash_command(executable: PathBuf, repo: &Repository) -> Vec<OsString> {
+    vec![
+        OsString::from(r#"exec "$@""#),
         OsString::from("wt"),
-    ];
-    args.extend(paths.into_iter().map(|path| path.as_ref().to_os_string()));
-    args
-}
-
-/// Collect paths in `trash_dir` whose embedded timestamp is older than
-/// `threshold_secs` relative to `now`.
-///
-/// Entries whose filename can't be parsed as `<name>-<timestamp>` are skipped —
-/// the sweep only touches directories worktrunk created via
-/// [`worktrunk::git::remove::stage_worktree_removal`].
-fn collect_stale_trash_entries(trash_dir: &Path, now: u64, threshold_secs: u64) -> Vec<PathBuf> {
-    let Ok(read_dir) = fs::read_dir(trash_dir) else {
-        return Vec::new();
-    };
-
-    read_dir
-        .filter_map(|entry| entry.ok())
-        .filter_map(|entry| {
-            let name = entry.file_name();
-            let timestamp = parse_trash_entry_timestamp(name.to_str()?)?;
-            let age = now.saturating_sub(timestamp);
-            (age >= threshold_secs).then(|| entry.path())
-        })
-        .collect()
-}
-
-/// Extract the Unix timestamp suffix from a trash entry filename.
-///
-/// Filenames produced by [`worktrunk::git::remove::stage_worktree_removal`]
-/// have the form `<name>-<timestamp>`, where timestamp is a bare unsigned
-/// integer in Unix epoch seconds. The worktree name may contain hyphens, so
-/// splitting from the right and parsing the tail is unambiguous.
-fn parse_trash_entry_timestamp(name: &str) -> Option<u64> {
-    let (_, suffix) = name.rsplit_once('-')?;
-    suffix.parse::<u64>().ok()
+        executable.into_os_string(),
+        OsString::from("-C"),
+        repo.git_common_dir().as_os_str().to_os_string(),
+        OsString::from("_drain-trash"),
+    ]
 }
 
 /// Remove the empty shell-PWD placeholder after the wrapper consumes its cd directive.
@@ -536,25 +509,16 @@ mod tests {
     }
 
     #[test]
-    fn removal_arguments_do_not_interpret_paths() {
-        let tmp = tempfile::tempdir().unwrap();
-        let name = if cfg!(windows) {
-            "with space-$(echo PWNED)"
-        } else {
-            "with space-'$(echo PWNED)\n"
-        };
-        let path = tmp.path().join(name);
-        fs::create_dir(&path).unwrap();
-        fs::write(path.join("payload"), "keep exact target").unwrap();
-        let args = build_remove_paths_command([&path]);
-        let shell = worktrunk::shell_exec::ShellConfig::get().unwrap();
-        let output = worktrunk::shell_exec::Cmd::new(shell.executable.to_str().unwrap())
-            .args(&shell.args)
-            .args(&args)
-            .run()
-            .unwrap();
-        assert!(output.status.success(), "{output:?}");
-        assert!(!path.exists());
+    fn drain_command_passes_paths_as_their_own_arguments() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let executable = PathBuf::from("/opt/with space-'$(echo PWNED)\n/wt");
+        let args = build_drain_trash_command(executable.clone(), &repo);
+        assert_eq!(args[0], r#"exec "$@""#);
+        assert_eq!(args[2], executable.as_os_str());
+        assert_eq!(args[3], "-C");
+        assert_eq!(args[4], repo.git_common_dir().as_os_str());
+        assert_eq!(args[5], "_drain-trash");
     }
 
     #[test]
@@ -598,64 +562,6 @@ mod tests {
                 .path(log_dir, "anything")
                 .to_slash_lossy(),
             @"/repo/.git/wt/logs/internal-trash-sweep.log"
-        );
-    }
-
-    #[test]
-    fn test_parse_trash_entry_timestamp() {
-        // Simple name with trailing timestamp
-        assert_eq!(
-            parse_trash_entry_timestamp("feature-1700000000"),
-            Some(1700000000)
-        );
-        // Worktree name containing hyphens — split from the right
-        assert_eq!(
-            parse_trash_entry_timestamp("my-project.feature-branch-1700000000"),
-            Some(1700000000)
-        );
-        // Missing separator or non-numeric suffix → None (sweep leaves it alone)
-        assert_eq!(parse_trash_entry_timestamp("no-timestamp"), None);
-        assert_eq!(parse_trash_entry_timestamp("notimestamp"), None);
-        assert_eq!(parse_trash_entry_timestamp(""), None);
-    }
-
-    #[test]
-    fn test_collect_stale_trash_entries() {
-        let trash = tempfile::tempdir().unwrap();
-        let now: u64 = 1_700_000_000;
-        let day = TRASH_STALE_THRESHOLD_SECS;
-
-        // Stale: 2 days old
-        let stale = trash.path().join(format!("feature-old-{}", now - 2 * day));
-        fs::create_dir(&stale).unwrap();
-        // Fresh: 1 hour old
-        let fresh = trash.path().join(format!("feature-new-{}", now - 3600));
-        fs::create_dir(&fresh).unwrap();
-        // Exactly at threshold: 1 day old (inclusive)
-        let boundary = trash.path().join(format!("feature-edge-{}", now - day));
-        fs::create_dir(&boundary).unwrap();
-        // Unparsable: no timestamp suffix — sweep ignores it
-        let foreign = trash.path().join("random-folder");
-        fs::create_dir(&foreign).unwrap();
-
-        let mut collected = collect_stale_trash_entries(trash.path(), now, day);
-        collected.sort();
-        let mut expected = vec![stale, boundary];
-        expected.sort();
-        assert_eq!(collected, expected);
-        assert!(
-            fresh.exists(),
-            "fresh entries must not appear in stale list"
-        );
-        assert!(foreign.exists(), "unparsable entries must be left alone");
-    }
-
-    #[test]
-    fn test_collect_stale_trash_entries_missing_dir() {
-        let missing = std::path::PathBuf::from("/nonexistent/wt/trash/path");
-        assert!(
-            collect_stale_trash_entries(&missing, 1_700_000_000, TRASH_STALE_THRESHOLD_SECS)
-                .is_empty()
         );
     }
 }

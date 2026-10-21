@@ -286,7 +286,7 @@ pub fn maybe_handle_help_with_pager(
                 // Page only when stdout is a TTY; redirected help stays on stdout.
                 // use_pager=false for -h (short help), true for --help (long help)
                 if let Err(error) = crate::help_pager::show_help_in_pager(&help, use_pager) {
-                    crate::handle_command_failure(error, 0, &args.join(" "));
+                    crate::handle_command_failure(error, 0, &args.join(" "), false);
                 }
                 process::exit(0);
             }

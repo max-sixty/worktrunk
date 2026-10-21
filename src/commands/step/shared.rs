@@ -92,7 +92,7 @@ pub(super) fn resolve_copy_ignored_config(repo: &Repository) -> anyhow::Result<C
         config = config.merged_with(project_copy_ignored);
     }
     let project_id = repo.project_identifier().ok();
-    config = config.merged_with(&user_config.copy_ignored(project_id.as_deref()));
+    config = config.merged_with(&user_config.copy_ignored(project_id.as_ref()));
     Ok(config)
 }
 
