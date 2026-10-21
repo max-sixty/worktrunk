@@ -10,6 +10,8 @@ use path_slash::PathExt;
 
 use crate::path::canonicalize_with_parents;
 use crate::shell_exec::Cmd;
+use crate::styling::{eprintln, hint_message, suggest_command};
+use color_print::cformat;
 use dunce::canonicalize;
 
 use super::{GitError, LineDiff, Repository};
@@ -29,9 +31,6 @@ pub struct SafetyBackup {
 impl SafetyBackup {
     /// Print where the backup went and the command that recovers it.
     pub fn print_recovery_hints(&self, repo: &Repository) -> anyhow::Result<()> {
-        use crate::styling::{eprintln, hint_message, suggest_command};
-        use color_print::cformat;
-
         let short_sha = repo.short_sha(&self.sha)?;
         eprintln!(
             "{}",
