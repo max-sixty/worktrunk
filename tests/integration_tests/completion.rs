@@ -2265,8 +2265,15 @@ fn test_complete_custom_subcommand_after_globals(repo: TestRepo) {
     use std::os::unix::fs::PermissionsExt;
 
     let other = TestRepo::with_initial_commit();
-    let ext_dir = crate::common::test_tempdir();
-    let script = ext_dir.path().join("wt-testext");
+    let relative_bin = std::path::Path::new("completion-bin");
+    let ext_dir = repo.root_path().join(relative_bin);
+    std::fs::create_dir(&ext_dir).unwrap();
+    let other_bin = other.root_path().join(relative_bin);
+    std::fs::create_dir(&other_bin).unwrap();
+    let wrong_script = other_bin.join("wt-testext");
+    std::fs::write(&wrong_script, "#!/bin/sh\nprintf wrong-executable\n").unwrap();
+    std::fs::set_permissions(&wrong_script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let script = ext_dir.join("wt-testext");
     std::fs::write(
         &script,
         r#"#!/bin/sh
@@ -2286,7 +2293,7 @@ printf 'cwd:%s\n' "$PWD"
         "--",
     ];
     let mut cmd = repo.completion_cmd(&args);
-    prepend_path(&mut cmd, ext_dir.path());
+    prepend_path(&mut cmd, relative_bin);
     let output = cmd.output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
@@ -2301,7 +2308,7 @@ printf 'cwd:%s\n' "$PWD"
     // With the cursor back on the command name, offer wt command names.
     // Existing arguments to its right must not trigger external completion.
     let mut cmd = repo.completion_cmd(&args);
-    prepend_path(&mut cmd, ext_dir.path());
+    prepend_path(&mut cmd, relative_bin);
     let output = cmd.env("_CLAP_COMPLETE_INDEX", "3").output().unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("testext"), "{stdout}");

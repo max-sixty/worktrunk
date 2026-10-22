@@ -146,7 +146,6 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
         // must agree.
         let binary = format!("wt-{subcommand}");
         if cli::build_command().find_subcommand(&*subcommand).is_none()
-            && which::which(&binary).is_ok()
             && let Some(forwarded) = forward_completion_to_custom(
                 &binary,
                 &args[start..],
@@ -851,7 +850,10 @@ fn try_forward_completion_to_custom(
         .and_then(|i| i.parse::<usize>().ok())
         .map(|i| i.saturating_sub(removed_words));
 
-    let mut cmd = std::process::Command::new(binary);
+    // Resolve before applying the child's cwd, as runtime custom dispatch
+    // does. Relative PATH entries must not select another executable in -C.
+    let path = which::which(binary).map_err(std::io::Error::other)?;
+    let mut cmd = std::process::Command::new(path);
     if let Some(dir) = current_dir {
         cmd.current_dir(dir);
     }
