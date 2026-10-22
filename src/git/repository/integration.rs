@@ -968,6 +968,17 @@ mod snapshot_resolve_tests {
     /// `--verify --end-of-options` is on this call site too — keep this
     /// test honest about what shape rev-parse returns.
     #[test]
+    fn failed_ancestor_query_is_not_cached_as_false() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let head = test.git_output(&["rev-parse", "HEAD"]);
+        let missing = "1111111111111111111111111111111111111111";
+        assert!(super::super::sha_cache::is_ancestor(&repo, missing, &head).is_none());
+        assert!(repo.is_ancestor_by_sha(missing, &head).is_err());
+        assert!(super::super::sha_cache::is_ancestor(&repo, missing, &head).is_none());
+    }
+
+    #[test]
     fn falls_back_to_rev_parse_for_refs_not_in_snapshot() {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();

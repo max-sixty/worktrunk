@@ -757,11 +757,14 @@ fn creation_method(
     // branch (#4481). When the cached default no longer resolves, return None
     // and create from HEAD.
     let base_branch = if create {
-        resolved_base.or_else(|| {
-            repo.resolve_target_branch(None)
-                .ok()
-                .filter(|b| repo.ref_exists(b).unwrap_or(false))
-        })
+        match resolved_base {
+            Some(base) => Some(base),
+            None => match repo.resolve_target_branch(None) {
+                Ok(base) if repo.ref_exists(&base)? => Some(base),
+                Err(err) if err.interrupt_signal().is_some() => return Err(err),
+                _ => None,
+            },
+        }
     } else {
         None
     };
