@@ -7943,12 +7943,17 @@ fn test_config_show_non_utf8_environment(repo: TestRepo) {
             .output()
             .unwrap();
         assert_eq!(output.status.code(), Some(0), "{key:?}: {output:?}");
+        let report = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            report.contains("not valid UTF-8"),
+            warns,
+            "{key:?}: {report}"
+        );
         if warns {
-            let report = format!(
-                "{}{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
             assert!(
                 report.contains("WORKTRUNK_LIST__TIMEOUT_MS is not valid UTF-8"),
                 "{report}"
@@ -7971,7 +7976,8 @@ fn test_config_show_non_utf8_environment(repo: TestRepo) {
 
 /// Infrastructure overrides are filesystem paths, so retain their native
 /// encoding instead of falling back to the user's default configuration.
-#[cfg(unix)]
+// macOS filesystems reject these names before the command can read them.
+#[cfg(target_os = "linux")]
 #[rstest]
 fn test_config_show_non_utf8_config_paths(repo: TestRepo) {
     use std::ffi::OsString;
@@ -8009,6 +8015,26 @@ fn test_config_show_non_utf8_config_paths(repo: TestRepo) {
     assert!(stdout.contains("encoding-user"), "{stdout}");
     assert!(stdout.contains("encoding-system"), "{stdout}");
     assert!(stdout.contains("approvals-�.toml"), "{stdout}");
+
+    fs::write(&approvals, "").unwrap();
+    let output = repo
+        .wt_command()
+        .env("WORKTRUNK_CONFIG_PATH", &user)
+        .env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system)
+        .env("WORKTRUNK_APPROVALS_PATH", &approvals)
+        .args(["config", "show", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["user"]["path"], user.to_string_lossy().as_ref());
+    assert_eq!(report["system"]["path"], system.to_string_lossy().as_ref());
+    assert_eq!(report["user"]["exists"], true);
+    assert_eq!(report["system"]["exists"], true);
+    assert_eq!(
+        report["user"]["config"]["worktree-path"],
+        "../encoding-user-{{ branch }}"
+    );
 }
 
 /// An unreadable config must stop a mutation before it uses default settings.
