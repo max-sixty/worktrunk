@@ -12,6 +12,7 @@ repo). Entry — the confirmation, both `EnterWorktree` routes, and what each
 leaves behind at exit — was re-run live on 2026-07-28 against Claude Code
 2.1.220 and wt v0.69.2. The confirmation hook and `cd`-before-entry for another
 repo were verified live on 2026-09-16 against Claude Code 2.1.273 (#4149).
+Hook-based exit cleanup was checked live on Claude Code 2.1.308 on 2026-10-22.
 Re-verify against current versions before relying on a specific behavior; the
 *shape* of the argument should outlive the details.
 Binary symbol names are deliberately omitted — they re-minify every build.
@@ -273,16 +274,12 @@ or without worktrunk's hook, and it creates and enters in one call. The same
 plugin hook backs `isolation: "worktree"` agents, so the worktree it produces is
 the one `wt` would have made either way. Three properties come with it:
 
-1. **An untouched worktree is cleaned up at exit, branch included.** With no
-   changed files, no commits, and no user-set session title, the exiting
-   session removes it through the plugin's `WorktreeRemove` hook, which is
-   `wt remove`, so a clean fully-merged branch goes too. Verified end-to-end:
-   `EnterWorktree({name: "probe"})`, then `/exit`, leaves neither `repo.probe`
-   nor the `probe` branch; one untracked file is enough for exit to report
-   "Keeping worktree…" and leave both. This is a feature at this scale — a
-   research task that wrote nothing leaves nothing to prune — and it is the
-   reason step 2's worktrees are not described as durable. Path-entered
-   worktrees are always left in place ("worktree at <path> left in place").
+1. **Exit asks whether to keep or remove a hook-created worktree.** Claude
+   Code 2.1.308 cannot infer unpushed commits in a worktree returned by a
+   `WorktreeCreate` hook. Even an untouched session gets a Keep / Remove
+   prompt, with Keep selected by default. This also applies when the hook
+   reopens an existing worktree. Keep leaves the checkout and branch intact;
+   Remove invokes `WorktreeRemove`, which uses normal `wt remove` safeguards.
 2. **It enters an existing branch's worktree.** The dispatcher uses `wt switch`
    without `--create`, creating the checkout if needed.
 3. **It only works on a session's first entry, and only in its own repo.** From
