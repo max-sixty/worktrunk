@@ -3,11 +3,14 @@
 //! Methods for determining if a branch has been integrated into the target
 //! (same commit, ancestor, trees match, etc.).
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 use super::{RefSnapshot, Repository};
-use crate::git::{IntegrationReason, PlumbingDiff, check_integration, compute_integration_lazy};
+use crate::git::{
+    CommandError, ErrorExt, IntegrationReason, PlumbingDiff, check_integration,
+    compute_integration_lazy,
+};
 use crate::shell_exec::Cmd;
 
 /// Integration targets for `wt list`'s status column.
@@ -487,21 +490,30 @@ impl Repository {
         if let Some(data) = stdin {
             source = source.stdin_bytes(data);
         }
+        let sink_args = ["patch-id", "--verbatim"];
         let sink = Cmd::new("git")
-            .args(["patch-id", "--verbatim"])
+            .args(sink_args)
             .current_dir(&self.discovery_path)
             .context(self.logging_context());
         let (source_output, sink_output) = source
             .pipe_into(sink)
             .context("Failed to compute patch-id")?;
-        // A failed source (bad ref, I/O error) truncates the stream fed to
-        // patch-id, which would then emit a bogus non-empty patch-id.
-        if !source_output.status.success() {
-            bail!(
-                "git {} failed: {}",
-                args.join(" "),
-                String::from_utf8_lossy(&source_output.stderr).trim()
-            );
+        // Either stage can emit incomplete output before failing. Preserve
+        // cancellation from either child even if its peer failed with SIGPIPE.
+        let mut first_failure = None;
+        for (command_args, output) in [(args, &source_output), (sink_args.as_slice(), &sink_output)]
+        {
+            if !output.status.success() {
+                let error: anyhow::Error =
+                    CommandError::from_failed_output("git", command_args, output).into();
+                if error.interrupt_signal().is_some() {
+                    return Err(error);
+                }
+                first_failure.get_or_insert(error);
+            }
+        }
+        if let Some(error) = first_failure {
+            return Err(error);
         }
         Ok(String::from_utf8_lossy(&sink_output.stdout).into_owned())
     }
@@ -545,11 +557,20 @@ impl Repository {
             },
             None => {
                 // merge-tree conflicted — try patch-id fallback.
-                // Patch-id errors are non-fatal: if we can't compute patch-ids,
+                // Ordinary patch-id errors are non-fatal: if we cannot compute them,
                 // conservatively report no match (branch appears not integrated).
-                let matched = self
-                    .is_squash_merged_via_patch_id(branch_sha, target_sha)
-                    .unwrap_or(false);
+                let matched = match self.is_squash_merged_via_patch_id(branch_sha, target_sha) {
+                    Ok(matched) => matched,
+                    Err(error) if error.interrupt_signal().is_some() => return Err(error),
+                    Err(_) => {
+                        // This is an unknown result, not an immutable negative
+                        // answer. Leave it uncached so a later invocation retries.
+                        return Ok(MergeProbeResult {
+                            would_merge_add: true,
+                            is_patch_id_match: false,
+                        });
+                    }
+                };
                 MergeProbeResult {
                     would_merge_add: true,
                     is_patch_id_match: matched,

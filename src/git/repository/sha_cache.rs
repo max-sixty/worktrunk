@@ -81,6 +81,13 @@ pub(super) fn put_merge_conflicts(repo: &Repository, sha1: &str, sha2: &str, val
 
 // merge-add probe (asymmetric)
 
+/// Older bare results could trust failed pipeline output or cache a failed
+/// query as a negative answer. Recompute those entries on first use.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct MergeProbeEntry {
+    result: MergeProbeResult,
+}
+
 /// Look up a cached `merge_integration_probe_by_sha(branch, target)` result.
 ///
 /// The key is order-dependent: the merge result is compared against
@@ -90,11 +97,12 @@ pub(super) fn merge_add_probe(
     branch_sha: &str,
     target_sha: &str,
 ) -> Option<MergeProbeResult> {
-    cache::read(
+    cache::read::<MergeProbeEntry>(
         repo,
         KIND_MERGE_ADD_PROBE,
         &asymmetric_key(branch_sha, target_sha),
     )
+    .map(|entry| entry.result)
 }
 
 /// Store a `merge_integration_probe_by_sha(branch, target)` result, triggering
@@ -109,7 +117,7 @@ pub(super) fn put_merge_add_probe(
         repo,
         KIND_MERGE_ADD_PROBE,
         &asymmetric_key(branch_sha, target_sha),
-        &value,
+        &MergeProbeEntry { result: value },
         MAX_ENTRIES_PER_KIND,
     );
 }
@@ -328,6 +336,32 @@ mod tests {
         // Overwrite with a new value
         put_merge_conflicts(&repo, "aaaa", "bbbb", false);
         assert_eq!(merge_conflicts(&repo, "aaaa", "bbbb"), Some(false));
+    }
+
+    #[test]
+    fn legacy_merge_probe_entries_are_recomputed() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let head = test.git_output(&["rev-parse", "HEAD"]);
+        cache::write_with_lru(
+            &repo,
+            KIND_MERGE_ADD_PROBE,
+            &asymmetric_key(&head, &head),
+            &MergeProbeResult {
+                would_merge_add: true,
+                is_patch_id_match: true,
+            },
+            MAX_ENTRIES_PER_KIND,
+        );
+        let actual = repo.merge_integration_probe_by_sha(&head, &head).unwrap();
+        assert_eq!(
+            actual,
+            MergeProbeResult {
+                would_merge_add: false,
+                is_patch_id_match: false
+            }
+        );
+        assert_eq!(merge_add_probe(&repo, &head, &head), Some(actual));
     }
 
     #[test]
@@ -564,7 +598,7 @@ mod tests {
             would_merge_add: true,
             is_patch_id_match: true,
         };
-        fs::write(entries[0].path(), serde_json::to_string(&tampered).unwrap()).unwrap();
+        cache::write_json(&entries[0].path(), &MergeProbeEntry { result: tampered });
 
         // Fresh repo reads the tampered cache
         let repo2 = Repository::at(test.root_path()).unwrap();

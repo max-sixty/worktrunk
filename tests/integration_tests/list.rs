@@ -4653,3 +4653,131 @@ fn test_list_statusline_survives_read_only_object_database(mut repo: TestRepo) {
     assert_eq!(feature["branch"], "feature", "entry: {feature}");
     assert_eq!(feature["main_state"], "diverged", "entry: {feature}");
 }
+
+/// Failed pipeline output must not establish integration or poison the cache.
+#[cfg(unix)]
+#[rstest]
+#[case("exit 128", "exit 0", false)]
+#[case("exit 0", "exit 128", false)]
+#[case("kill -INT $$", "exit 0", true)]
+#[case("kill -TERM $$", "exit 0", true)]
+#[case("exit 0", "kill -INT $$", true)]
+#[case("exit 0", "kill -TERM $$", true)]
+#[case("exit 0", "exit 130", false)]
+#[case("kill -PIPE $$", "kill -INT $$", true)]
+fn test_list_retries_failed_patch_id_pipeline(
+    repo: TestRepo,
+    #[case] source_exit: &str,
+    #[case] sink_exit: &str,
+    #[case] interrupted: bool,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    repo.run_git(&["checkout", "-b", "feature-probe"]);
+    std::fs::write(repo.root_path().join("shared.txt"), "feature content").unwrap();
+    repo.run_git(&["add", "shared.txt"]);
+    repo.run_git(&["commit", "-m", "Feature change"]);
+    repo.run_git(&["checkout", "main"]);
+    std::fs::write(repo.root_path().join("shared.txt"), "feature content").unwrap();
+    repo.run_git(&["add", "shared.txt"]);
+    repo.run_git(&["commit", "-m", "Squashed change"]);
+    std::fs::write(
+        repo.root_path().join("shared.txt"),
+        "feature content\nmain advanced",
+    )
+    .unwrap();
+    repo.run_git(&["add", "shared.txt"]);
+    repo.run_git(&["commit", "-m", "Advance main"]);
+    let merge = repo
+        .git_command()
+        .args(["merge-tree", "--write-tree", "main", "feature-probe"])
+        .run()
+        .unwrap();
+    assert_eq!(
+        merge.status.code(),
+        Some(1),
+        "fixture must require the patch-id fallback"
+    );
+
+    let scratch = crate::common::test_tempdir();
+    let script = scratch.path().join("git");
+    let reached = scratch.path().join("reached");
+    let real_git = which::which("git").unwrap();
+    std::fs::write(
+        &script,
+        format!(
+            r#"#!/bin/sh
+patch=false
+for arg in "$@"; do
+  if [ "$arg" = --patch ]; then patch=true; fi
+done
+for arg in "$@"; do
+  case "$arg" in
+    diff-tree)
+      if [ "$patch" != true ]; then exec {real_git} "$@"; fi
+      echo diff-tree >> {reached}
+      {real_git} "$@"
+      {source_exit}
+      ;;
+    patch-id)
+      echo patch-id >> {reached}
+      {real_git} "$@"
+      {sink_exit}
+      ;;
+  esac
+done
+exec {real_git} "$@"
+"#,
+            reached = shell_escape::unix::escape(reached.to_string_lossy()),
+            real_git = shell_escape::unix::escape(real_git.to_string_lossy()),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut paths = vec![scratch.path().to_path_buf()];
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    let output = repo
+        .wt_command()
+        .args(["list", "--branches", "--full", "--format=json"])
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .output()
+        .unwrap();
+    assert!(
+        reached.exists(),
+        "pipeline stage was not reached: {output:?}"
+    );
+    assert!(output.status.success(), "{output:?}");
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let rows = json["items"].as_array().unwrap();
+    let feature = rows
+        .iter()
+        .find(|row| row["branch"] == "feature-probe")
+        .unwrap();
+    let integration = feature["default_branch"].get("integration");
+    if interrupted {
+        assert_eq!(
+            integration,
+            Some(&serde_json::Value::Null),
+            "cancellation must remain unknown: {feature}"
+        );
+    } else {
+        assert_eq!(integration, None, "failed output was trusted: {feature}");
+    }
+
+    // Once Git works again, the same SHA pair must be recomputed successfully.
+    let retry = repo
+        .wt_command()
+        .args(["list", "--branches", "--full", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(retry.status.success(), "{retry:?}");
+    let json: serde_json::Value = serde_json::from_slice(&retry.stdout).unwrap();
+    let rows = json["items"].as_array().unwrap();
+    let feature = rows
+        .iter()
+        .find(|row| row["branch"] == "feature-probe")
+        .unwrap();
+    assert_eq!(
+        feature["default_branch"]["integration"]["reason"], "patch_id_match",
+        "failed query was cached: {feature}"
+    );
+}
