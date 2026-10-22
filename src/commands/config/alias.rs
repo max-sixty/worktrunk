@@ -40,82 +40,42 @@ use crate::commands::command_executor::{
 use worktrunk::config::HookSource;
 use worktrunk::utils::did_you_mean;
 
-/// Show the configured template(s) for an alias — or, with no name, every
-/// configured alias's template(s).
+/// Show configured alias templates, optionally restricted to one name.
 ///
-/// When the same name is defined in both user and project config, both
-/// entries are printed (user first, matching runtime execution order).
+/// Both forms are discovery surfaces: tolerate running outside a repository,
+/// suppress config migration warnings, and page long definitions. Entries are
+/// ordered by name, then user before project, matching runtime execution order.
 pub fn handle_alias_show(name: Option<String>) -> anyhow::Result<()> {
-    let Some(name) = name else {
-        return list_aliases();
-    };
-
-    let repo = Repository::current()?;
-    let user_config = repo.user_config();
-    let project_config = repo.project_config()?;
-    let entries = entries_for_name(&repo, user_config, project_config, &name);
-
-    if entries.is_empty() {
-        return Err(unknown_alias_error(
-            &repo,
-            user_config,
-            project_config,
-            &name,
-            "show",
-        ));
-    }
-
-    warn_if_shadowed(&name);
-
-    for (cfg, source) in &entries {
-        let bodies: Vec<String> = cfg.commands().map(|c| c.template.clone()).collect();
-        println!("{}", format_entry(&name, cfg, *source, &bodies, None));
-    }
-    Ok(())
-}
-
-/// Show every configured alias's full definition — the same header + gutter
-/// block `wt config alias show <name>` prints, emitted for each alias in name
-/// order (and for each source when a name is defined in both, user first,
-/// matching runtime execution order). `wt --help` shows a compact names-only
-/// list (`render_aliases_help_section`) and points here for these.
-///
-/// Tolerates running outside a repository (user-config aliases still list,
-/// project-config ones are skipped) and outside a config (prints a note).
-/// Warnings are suppressed: this is a discovery surface, so a deprecated
-/// `wt.toml` shouldn't make `wt config alias show` noisy — `wt config update`
-/// is where deprecations get reported. A name shadowed by a top-level
-/// built-in still gets the same stderr warning `wt config alias show <name>`
-/// emits, once per name.
-fn list_aliases() -> anyhow::Result<()> {
     worktrunk::config::suppress_warnings();
-    let entries = load_aliases_for_listing();
+    let mut entries = load_aliases_for_listing();
+    if let Some(name) = name {
+        if !entries.iter().any(|(n, _, _)| n == &name) {
+            return Err(unknown_alias_error(
+                &name,
+                "show",
+                entries.into_iter().map(|(n, _, _)| n).collect(),
+            ));
+        }
+        entries.retain(|(n, _, _)| n == &name);
+    }
     if entries.is_empty() {
         println!("{}", info_message("No aliases configured"));
         return Ok(());
     }
 
-    // `entries` is sorted by (name, source), so a name's entries are adjacent.
-    // Warn once per shadowed name — matching `show <name>`, which warns on the
-    // name, not per entry. The `Aliases:` names are invoked as `wt <name>`, so
-    // shadowing is judged from the top-level perspective (an alias named `list`
-    // is unreachable; one named `commit` is not — `wt commit` runs it).
+    // Duplicate names from user and project config need only one warning.
     let mut prev_name: Option<&str> = None;
-    for (name, _, _) in &entries {
+    let mut out = String::new();
+    for (name, cfg, source) in &entries {
         if prev_name != Some(name.as_str()) {
             warn_if_shadowed(name);
             prev_name = Some(name);
         }
-    }
-
-    let mut out = String::new();
-    for (name, cfg, source) in &entries {
         let bodies: Vec<String> = cfg.commands().map(|c| c.template.clone()).collect();
         out.push_str(&format_entry(name, cfg, *source, &bodies, None));
         out.push('\n');
     }
-    crate::help_pager::show_help_in_pager(&out, true)?;
-    Ok(())
+    crate::help_pager::show_help_in_pager(&out, true)
 }
 
 /// Emit a warning if `name` is a top-level built-in subcommand. Aliases with
@@ -149,11 +109,11 @@ pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<(
 
     if entries.is_empty() {
         return Err(unknown_alias_error(
-            &repo,
-            user_config,
-            project_config,
             &name,
             "dry-run",
+            load_aliases(Some(&repo), user_config, project_config)
+                .into_keys()
+                .collect(),
         ));
     }
 
@@ -163,7 +123,7 @@ pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<(
     // so a flag binds if any entry's template references it.
     let mut referenced: BTreeSet<String> = BTreeSet::new();
     for (cfg, _) in &entries {
-        referenced.extend(referenced_vars_for_config(cfg, &name)?);
+        referenced.extend(referenced_vars_for_config(cfg, |_| name.clone())?);
     }
     let mut parse_args = Vec::with_capacity(1 + args.len());
     parse_args.push(name.clone());
@@ -285,15 +245,8 @@ fn entries_for_name(
 /// Returns `AlreadyDisplayed { exit_code: 2 }` rather than calling
 /// `process::exit`, so `main`'s `finish_command` still runs `terminate_output`
 /// (ANSI reset for shell integration) and `diagnostic::write_if_verbose`.
-fn unknown_alias_error(
-    repo: &Repository,
-    user_config: &UserConfig,
-    project_config: Option<&ProjectConfig>,
-    name: &str,
-    sub: &str,
-) -> anyhow::Error {
-    let aliases = load_aliases(Some(repo), user_config, project_config);
-    let suggestions = did_you_mean(name, aliases.into_keys());
+fn unknown_alias_error(name: &str, sub: &str, aliases: BTreeSet<String>) -> anyhow::Error {
+    let suggestions = did_you_mean(name, aliases);
 
     let mut top = crate::cli::build_command();
     let sub_cmd = top

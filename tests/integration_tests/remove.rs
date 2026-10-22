@@ -1298,8 +1298,8 @@ fn test_remove_continues_after_execution_failures(
     });
 }
 
-/// Cancellation stops the batch before its next worktree. The hook signals
-/// its own shell, exercising child signal identity without signaling cargo.
+/// Cancellation retains completed removals in JSON and stops the batch before
+/// its next worktree. The hook signals its own shell, never the test process.
 #[cfg(unix)]
 #[rstest]
 #[case::sigint("INT", 130)]
@@ -1309,14 +1309,23 @@ fn test_remove_interrupt_stops_batch(
     #[case] signal: &str,
     #[case] exit_code: i32,
 ) {
-    let hook = format!("kill -{signal} $$");
+    let hook = format!("if [ '{{{{ branch }}}}' = interrupted ]; then kill -{signal} $$; fi");
     repo.write_project_config(&format!("pre-remove = {hook:?}"));
     repo.commit("Add interrupting pre-remove hook");
+    let completed = repo.add_worktree("completed");
     let interrupted = repo.add_worktree("interrupted");
     let later = repo.add_worktree("later");
     let output = repo
         .wt_command()
-        .args(["remove", "interrupted", "later", "--foreground", "--yes"])
+        .args([
+            "remove",
+            "completed",
+            "interrupted",
+            "later",
+            "--foreground",
+            "--yes",
+            "--format=json",
+        ])
         .output()
         .unwrap();
     assert_eq!(
@@ -1327,8 +1336,17 @@ fn test_remove_interrupt_stops_batch(
     );
     assert!(
         interrupted.exists() && later.exists(),
-        "interrupt must stop all removals"
+        "interrupt must stop the current and later removals"
     );
+    assert!(
+        !completed.exists(),
+        "the earlier removal must have completed"
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let items = json.as_array().unwrap();
+    assert_eq!(items.len(), 1, "{json}");
+    assert_eq!(items[0]["branch"], "completed");
+    assert_eq!(items[0]["path"], completed.to_string_lossy().as_ref());
 }
 
 /// Ctrl-C stops the batch even when the hook catches it and exits with an
@@ -1457,10 +1475,8 @@ exec {real_git} "$@"
         Some(exit_code),
         "stderr:\n{stderr}"
     );
-    assert!(
-        output.stdout.is_empty(),
-        "a canceled batch must not publish success JSON"
-    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json, serde_json::json!([]), "no removal completed: {json}");
 }
 
 #[rstest]
