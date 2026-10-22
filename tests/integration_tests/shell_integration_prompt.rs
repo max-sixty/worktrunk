@@ -865,7 +865,9 @@ mod pty_tests {
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 mod commit_generation_prompt_tests {
     use super::*;
-    use crate::common::pty::{build_pty_command, exec_cmd_in_pty, exec_cmd_in_pty_prompted};
+    use crate::common::pty::{
+        build_pty_command, exec_cmd_in_pty, exec_cmd_in_pty_prompted, exec_cmd_in_pty_prompted_with,
+    };
     use crate::common::wt_bin;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
@@ -1141,9 +1143,9 @@ mod commit_generation_prompt_tests {
 
     /// Test: LLM tool available, user accepts, but the config save fails
     ///
-    /// Points WORKTRUNK_CONFIG_PATH at a path whose parent is a regular file,
-    /// so the write fails with ENOTDIR — exercising the save-failure hint,
-    /// which names the resolved config path via `config_path_for_display`.
+    /// Makes the config path unwritable after the prompt appears, so loading
+    /// succeeds but saving fails with ENOTDIR. This exercises the save-failure
+    /// hint, which names the resolved path via `config_path_for_display`.
     #[rstest]
     fn test_user_accepts_but_save_fails_shows_manual_hint(repo: TestRepo) {
         let temp_home = TempDir::new().unwrap();
@@ -1154,10 +1156,10 @@ mod commit_generation_prompt_tests {
         fs::write(&test_file, "test content\n").unwrap();
         repo.run_git(&["add", "test.txt"]);
 
-        // A regular file standing in for the config's parent directory makes
-        // every write under it fail with ENOTDIR — root-proof, unlike chmod.
+        // Create the blocking file only after config loading has completed.
+        // This isolates a save failure from an earlier read failure and stays
+        // root-proof, unlike chmod.
         let blocker = temp_home.path().join("blocker");
-        fs::write(&blocker, "x").unwrap();
         let unwritable_config = blocker.join("config.toml");
 
         let mut env_vars = repo.test_env_vars();
@@ -1176,7 +1178,9 @@ mod commit_generation_prompt_tests {
             &env_vars,
             Some(temp_home.path()),
         );
-        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["y\n"], "[y/N");
+        let (output, exit_code) = exec_cmd_in_pty_prompted_with(cmd, &["y\n"], "[y/N", |_| {
+            fs::write(&blocker, "x").unwrap();
+        });
 
         // The commit still completes with a fallback message; only the config
         // save fails, so the manual-add hint fires.
