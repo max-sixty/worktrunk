@@ -761,7 +761,6 @@ fn creation_method(
             Some(base) => Some(base),
             None => match repo.resolve_target_branch(None) {
                 Ok(base) if repo.ref_exists(&base)? => Some(base),
-                Err(err) if err.interrupt_signal().is_some() => return Err(err),
                 _ => None,
             },
         }
