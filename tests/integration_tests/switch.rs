@@ -14,15 +14,8 @@ use tempfile::TempDir;
 /// A failed existence check must stop creation, not pretend a ref is absent.
 #[cfg(unix)]
 #[rstest]
-#[case("exit 128", None)]
-#[case("kill -INT $$", Some(2))]
-#[case("kill -TERM $$", Some(15))]
-fn test_switch_create_propagates_ref_query_failure(
-    repo: TestRepo,
-    #[case] failure: &str,
-    #[case] signal: Option<i32>,
-) {
-    use std::os::unix::{fs::PermissionsExt, process::ExitStatusExt};
+fn test_switch_create_propagates_ref_query_failure(repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
 
     let scratch = crate::common::test_tempdir();
     let script = scratch.path().join("git");
@@ -47,7 +40,7 @@ if [ "$1" = rev-parse ]; then
     if [ "$arg" = '{reference}' ] || [ "$arg" = '{reference}^{{commit}}' ]; then
       echo reached > {reached}
       echo 'simulated query failure' >&2
-      {failure}
+      exit 128
     fi
   done
 fi
@@ -72,13 +65,10 @@ exec {real_git} "$@"
             "{reference}: {output:?}"
         );
         assert!(!output.status.success(), "{reference}: {output:?}");
-        assert_eq!(output.status.signal(), signal, "{reference}: {output:?}");
-        if signal.is_none() {
-            assert!(
-                String::from_utf8_lossy(&output.stderr).contains("simulated query failure"),
-                "{reference}: {output:?}"
-            );
-        }
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("simulated query failure"),
+            "{reference}: {output:?}"
+        );
         let probe = repo
             .git_command()
             .args(["show-ref", "--verify", "--quiet", "refs/heads/new-branch"])

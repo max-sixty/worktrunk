@@ -16,9 +16,7 @@ use super::{
     GitError, InProgressOperation, Repository, ResolvedWorktree, Selector, WorktreeInfo,
     is_valid_branch_name, normalize_selector, resolve_input_path,
 };
-use crate::git::{
-    CommandError, ErrorExt, PlumbingDiff, WorktreeId, finalize_worktrees, is_bare_repo_dir,
-};
+use crate::git::{CommandError, PlumbingDiff, WorktreeId, finalize_worktrees, is_bare_repo_dir};
 use crate::path::{format_path_for_display, paths_match};
 use crate::shell_exec::Cmd;
 use crate::styling::{eprintln, format_with_gutter, hint_message, warning_message};
@@ -741,7 +739,6 @@ impl Repository {
     fn no_worktree_error(&self, branch: String) -> anyhow::Error {
         match self.branch(&branch).exists_locally() {
             Ok(true) => GitError::WorktreeNotFound { branch }.into(),
-            Err(error) if error.interrupt_signal().is_some() => error,
             // A ref lookup that fails says nothing about the branch, so fall
             // back to the message that claims less.
             _ => GitError::WorktreeSelectorNotFound { selector: branch }.into(),
