@@ -7943,12 +7943,17 @@ fn test_config_show_non_utf8_environment(repo: TestRepo) {
             .output()
             .unwrap();
         assert_eq!(output.status.code(), Some(0), "{key:?}: {output:?}");
+        let report = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            report.contains("not valid UTF-8"),
+            warns,
+            "{key:?}: {report}"
+        );
         if warns {
-            let report = format!(
-                "{}{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
             assert!(
                 report.contains("WORKTRUNK_LIST__TIMEOUT_MS is not valid UTF-8"),
                 "{report}"
