@@ -91,13 +91,7 @@ pub(crate) fn handle_custom_command(
     // requires UTF-8, but we only run it after confirming the name is a
     // configured alias, so non-UTF-8 args meant for a custom subcommand binary
     // don't surface as alias parse errors.
-    let alias_args: Option<Vec<String>> = rest
-        .iter()
-        .map(|a| a.to_str().map(|s| s.to_owned()))
-        .collect();
-    if let Some(alias_args) = alias_args
-        && let Some(()) = try_alias(name.clone(), alias_args, yes)?
-    {
+    if let Some(()) = try_alias(name.clone(), &rest, yes)? {
         return Ok(());
     }
 

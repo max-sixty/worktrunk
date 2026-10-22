@@ -101,11 +101,7 @@ Use `--no-commit` to skip committing uncommitted changes and squashing; rebase s
 
 ## Local CI
 
-For personal projects, pre-merge hooks open up the possibility of a workflow with much faster iteration — an order of magnitude more small changes instead of fewer large ones.
-
-Historically, ensuring tests ran before merging was difficult to enforce locally. Remote CI was valuable for the process as much as the checks: it guaranteed validation happened. `wt merge` brings that guarantee local.
-
-The full workflow: start an agent (one of many) on a task, work elsewhere, return when it's ready. Review the diff, run `wt merge`, move on. Pre-merge hooks validate before merging — if they pass, the branch goes to the default branch and the worktree cleans up.
+Pre-merge hooks run checks locally before merging. A failed check stops the merge:
 
 ```toml
 # .config/wt.toml

@@ -13,8 +13,8 @@ use color_print::cformat;
 use serde::{Deserialize, Serialize};
 use worktrunk::HookType;
 use worktrunk::config::{
-    Command, CommandConfig, HookStep, TemplateContext, UserConfig, VarScope, VarsMode,
-    format_hook_variables, validate_template_syntax,
+    Command, CommandConfig, HookStep, TemplateContext, TemplateExpandError, UserConfig, VarScope,
+    VarsMode, format_hook_variables, validate_template_syntax,
 };
 use worktrunk::git::{ErrorExt, Repository, WorktrunkError};
 use worktrunk::path::{format_path_for_display, to_posix_path};
@@ -41,9 +41,7 @@ pub struct PreparedCommand {
     /// Template variables, frozen at preparation. Serialized to JSON only at
     /// the process boundary (the background pipeline spec).
     pub context: TemplateContext,
-    /// Name used in template expansion errors: `"user:foo"` for named hook
-    /// commands, `"user pre-merge hook"` for unnamed ones, the alias name for
-    /// aliases.
+    /// Hook identity from [`HookSource::hook_label`], or the alias name.
     pub template_name: String,
     /// Label for the per-command announcement summary and render span.
     /// For hooks: `"user:foo"` for named, `"user"` for unnamed. For aliases: alias name.
@@ -522,9 +520,10 @@ pub fn execute_pipeline_foreground(
 /// expansion reads git config; racing on reads would produce inconsistent
 /// state), announces each command (per the step's `PipelineKind` — hooks
 /// render per-command announcements, aliases only announce the outer group),
-/// then dispatches to `run_concurrent_commands` which streams each child's
-/// output prefixed by its label and waits for all to complete before folding
-/// outcomes.
+/// skips failed expansions under `Warn` (or aborts before spawning under
+/// `FailFast`), then dispatches to `run_concurrent_commands` which streams each
+/// child's output prefixed by its label and waits for all to complete before
+/// folding outcomes.
 fn run_concurrent_group(
     cmds: &[PreparedCommand],
     fg_step: &ForegroundStep,
@@ -534,39 +533,45 @@ fn run_concurrent_group(
 ) -> anyhow::Result<()> {
     let directives = &fg_step.directives;
 
-    let expanded: Vec<String> = cmds
-        .iter()
-        .map(|cmd| {
+    let mut admitted = Vec::new();
+    for cmd in cmds {
+        let expanded = {
             let _span = Span::new(format!("template_render:{}", cmd.label));
             resolve_command_str(cmd, repo)
-        })
-        .collect::<Result<_>>()?;
+        };
+        match expanded {
+            Ok(command_str) => admitted.push((cmd, command_str)),
+            Err(err) => {
+                handle_command_error(err, cmd, &fg_step.error_wrapper, failure_strategy)?;
+            }
+        }
+    }
 
-    for (cmd, command_str) in cmds.iter().zip(&expanded) {
+    for (cmd, command_str) in &admitted {
         announce_command(cmd, &fg_step.announce, fg_step.source, command_str);
     }
 
     // Both alias tables and hook tables produce named commands (TOML keys
     // become `name`), so `cmd.name` is always `Some` here.
-    let labels: Vec<&str> = cmds
+    let labels: Vec<&str> = admitted
         .iter()
-        .map(|cmd| {
+        .map(|(cmd, _)| {
             cmd.name
                 .as_deref()
                 .expect("concurrent group commands are always named")
         })
         .collect();
 
-    let log_labels: Vec<Option<String>> = cmds
+    let log_labels: Vec<Option<String>> = admitted
         .iter()
-        .map(|cmd| fg_step.announce.log_label(cmd))
+        .map(|(cmd, _)| fg_step.announce.log_label(cmd))
         .collect();
 
     let scrub_git_discovery = fg_step.announce.is_hook();
-    let specs: Vec<ConcurrentCommand<'_>> = (0..cmds.len())
+    let specs: Vec<ConcurrentCommand<'_>> = (0..admitted.len())
         .map(|i| ConcurrentCommand {
             label: labels[i],
-            expanded: &expanded[i],
+            expanded: &admitted[i].1,
             working_dir: wt_path,
             log_label: log_labels[i].as_deref(),
             directives,
@@ -577,7 +582,7 @@ fn run_concurrent_group(
     let outcomes = run_concurrent_commands(&specs)?;
 
     let mut first_failure: Option<anyhow::Error> = None;
-    for (outcome, cmd) in outcomes.into_iter().zip(cmds) {
+    for (outcome, (cmd, _)) in outcomes.into_iter().zip(&admitted) {
         let Err(err) = outcome else { continue };
         match handle_command_error(err, cmd, &fg_step.error_wrapper, failure_strategy) {
             Ok(()) => {}
@@ -607,7 +612,13 @@ fn run_one_command(
 
     let command_str = {
         let _span = Span::new(format!("template_render:{}", cmd.label));
-        resolve_command_str(cmd, repo)?
+        resolve_command_str(cmd, repo)
+    };
+    let command_str = match command_str {
+        Ok(command_str) => command_str,
+        Err(err) => {
+            return handle_command_error(err, cmd, &fg_step.error_wrapper, failure_strategy);
+        }
     };
     announce_command(cmd, &fg_step.announce, fg_step.source, &command_str);
 
@@ -673,14 +684,19 @@ fn announce_command(
 
 /// Build the standard `ErrorWrapper` for hook steps.
 ///
-/// Wraps non-signal failures in `WorktrunkError::HookCommandFailed`. Signal
-/// errors short-circuit upstream (see [`handle_command_error`]).
+/// Retains expansion diagnostics; wraps execution failures in
+/// `WorktrunkError::HookCommandFailed`. Signal errors short-circuit upstream
+/// (see [`handle_command_error`]).
 pub fn hook_error_wrapper(
     hook_type: HookType,
     source: HookSource,
     show_template: bool,
 ) -> ErrorWrapper {
     Box::new(move |cmd, error| {
+        // Expansion diagnostics already carry the full hook identity and template.
+        if error.downcast_ref::<TemplateExpandError>().is_some() {
+            return error;
+        }
         WorktrunkError::HookCommandFailed {
             hook_type,
             source,
@@ -852,10 +868,7 @@ pub fn prepare_steps(
             cmd_context.insert("hook_name", name.clone());
         }
 
-        let template_name = match &cmd.name {
-            Some(_) => source.command_label(cmd.name.as_deref()),
-            None => source.hook_label(hook_type, None),
-        };
+        let template_name = source.hook_label(hook_type, cmd.name.as_deref());
 
         Ok(PreparedCommand {
             name: cmd.name.clone(),

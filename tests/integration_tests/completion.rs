@@ -892,6 +892,60 @@ fn test_complete_hook_subcommands(repo: TestRepo) {
     assert!(!subcommands.contains(&"pre-merge"));
 }
 
+/// Hook names include the same effective user settings used at execution:
+/// global hooks, matching wildcard keys, and the exact project key.
+#[rstest]
+fn test_hook_command_completion_includes_project_user_settings(repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.write_project_config(
+        r#"
+[pre-merge]
+project-file = "echo project"
+[post-merge]
+other-hook = "echo other hook"
+"#,
+    );
+    repo.write_test_config(&format!(
+        r#"
+[pre-merge]
+global = "echo global"
+[projects."*".pre-merge]
+wildcard = "echo wildcard"
+[projects.'{}'.pre-merge]
+exact = "echo exact"
+[projects."nonmatching-project".pre-merge]
+unrelated = "echo unrelated"
+"#,
+        repo.project_id()
+    ));
+
+    let output = repo
+        .completion_cmd(&["wt", "hook", "pre-merge", ""])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let mut names = value_suggestions(&stdout);
+    names.sort_unstable();
+    assert_eq!(names, ["exact", "global", "project-file", "wildcard"]);
+
+    for (prefix, expected) in [
+        ("user:", vec!["user:exact", "user:global", "user:wildcard"]),
+        ("project:", vec!["project:project-file"]),
+        ("user:ex", vec!["user:exact"]),
+    ] {
+        let output = repo
+            .completion_cmd(&["wt", "hook", "pre-merge", prefix])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let mut names = value_suggestions(&stdout);
+        names.sort_unstable();
+        assert_eq!(names, expected, "{prefix}: {stdout}");
+    }
+}
+
 /// Cross-shell completion contract for hook command names.
 ///
 /// Same contract as branch completions (test_completion_cross_shell_filtering_contract):

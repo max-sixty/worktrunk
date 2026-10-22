@@ -18,6 +18,7 @@ use rstest::rstest;
 use std::fs;
 use std::thread;
 use std::time::Duration;
+use worktrunk::config::HookSource;
 
 #[rstest]
 #[cfg(unix)]
@@ -1380,10 +1381,9 @@ broken = "echo {{ does_not_exist }} > should_not_exist.txt"
         .join("runner.log");
     wait_for_file_content(&runner_log);
     let log_content = fs::read_to_string(&runner_log).unwrap();
-    // Same label the foreground path renders for this command (see the
-    // foreground_pipeline_undefined_var_runs_earlier_steps snapshot).
+    // Template errors identify the hook type, source, and command.
     assert_snapshot!(log_content, @"
-    [31m✗[39m [31mFailed to expand user:broken: undefined variable does_not_exist @ line 1[39m
+    [31m✗[39m [31mFailed to expand post-start user:broken: undefined variable does_not_exist @ line 1[39m
     [107m [0m echo {{ does_not_exist }} > should_not_exist.txt
     [2m↳[22m [2mAvailable variables: [4margs[24m, [4mbase[24m, [4mbase_worktree_path[24m, [4mbranch[24m, [4mcommit[24m, [4mcwd[24m, [4mdefault_branch[24m, [4mhook_name[24m, [4mhook_type[24m, [4mprimary_worktree_path[24m, [4mremote[24m, [4mremote_url[24m, [4mrepo[24m, [4mrepo_path[24m, [4mshort_commit[24m, [4mtarget[24m, [4mtarget_worktree_path[24m, [4mupstream[24m, [4mworktree_name[24m, [4mworktree_path[24m[22m
     ");
@@ -1426,8 +1426,8 @@ fn test_background_concurrent_template_failure_reaps_admitted_child(repo: TestRe
             "name": name,
             "template": template,
             "context": {},
-            "template_name": format!("user:{name}"),
-            "label": format!("user:{name}"),
+            "template_name": HookSource::User.hook_label(worktrunk::HookType::PostCreate, Some(name)),
+            "label": HookSource::User.command_label(Some(name)),
         })
     };
     let spec = serde_json::json!({
@@ -1483,7 +1483,7 @@ fn test_background_concurrent_template_failure_reaps_admitted_child(repo: TestRe
     crate::common::wait_for("concurrent preparation failure", || {
         fs::read_to_string(&runner_log)
             .unwrap()
-            .contains("Failed to expand user:broken:")
+            .contains("Failed to expand post-start user:broken:")
     });
     assert_eq!(kill(pid, None), Err(nix::errno::Errno::ESRCH));
 
@@ -1500,6 +1500,68 @@ fn test_background_concurrent_template_failure_reaps_admitted_child(repo: TestRe
     let status = runner.child.wait().unwrap();
     runner.waited = true;
     assert_eq!(status.code(), Some(1));
+}
+
+/// Filtered background hooks keep each source's execution and logs independent.
+#[rstest]
+#[case::user(HookSource::User)]
+#[case::project(HookSource::Project)]
+fn test_filtered_background_hooks_preserve_sources(
+    repo: TestRepo,
+    #[case] failing_source: HookSource,
+) {
+    let user_exit = if failing_source == HookSource::User {
+        "exit 7"
+    } else {
+        "true"
+    };
+    let project_exit = if failing_source == HookSource::Project {
+        "exit 7"
+    } else {
+        "true"
+    };
+    repo.write_test_config(&format!(
+        r#"[post-start]
+fmt = "echo USER_LOG; echo ran > user.txt; {user_exit}"
+"#
+    ));
+    repo.write_project_config(&format!(
+        r#"[post-start]
+fmt = "echo PROJECT_LOG; echo ran > project.txt; {project_exit}"
+"#
+    ));
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "post-start", "fmt", "--yes"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    wait_for_file_content(&repo.root_path().join("user.txt"));
+    wait_for_file_content(&repo.root_path().join("project.txt"));
+
+    let logs = resolve_git_common_dir(repo.root_path()).join("wt/logs/main");
+    let runner = logs
+        .join(failing_source.to_string())
+        .join("post-start/runner.log");
+    crate::common::wait_for("source-qualified background failure", || {
+        fs::read_to_string(&runner)
+            .is_ok_and(|text| text.contains("failed (exit code 7)") && text.ends_with('\n'))
+    });
+    let user_log = fs::read_to_string(logs.join("user/post-start/fmt.log")).unwrap();
+    let project_log = fs::read_to_string(logs.join("project/post-start/fmt.log")).unwrap();
+    let failure = fs::read_to_string(runner).unwrap();
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!(format!("filtered_background_sources_{failing_source}"), format!(
+            "announcement:\n{}\nuser/fmt.log:\n{user_log}\nproject/fmt.log:\n{project_log}\n{failing_source}/runner.log:\n{failure}",
+            String::from_utf8_lossy(&output.stderr),
+        ));
+    });
 }
 
 /// Runner-log failures use the same hook/status grammar as foreground failures.
@@ -1551,8 +1613,7 @@ exit 9
 
 /// A semantic template error in a foreground pipeline step surfaces when that
 /// step runs: earlier steps execute first, then the broken step's render
-/// aborts the pipeline. (Pre-change, prep expanded every template upfront and
-/// nothing ran.) Syntax errors still abort before step 1.
+/// aborts the pipeline. Syntax errors still abort before step 1.
 #[rstest]
 fn test_foreground_pipeline_undefined_var_runs_earlier_steps(repo: TestRepo) {
     repo.write_test_config(
@@ -1578,6 +1639,108 @@ fn test_foreground_pipeline_undefined_var_runs_earlier_steps(repo: TestRepo) {
         marker.exists(),
         "step 1 should have run before step 2's template error"
     );
+}
+
+/// Runtime expansion obeys the same foreground policy as child failures:
+/// Warn admits healthy concurrent siblings and later commands from either
+/// source; FailFast rejects the group before spawning any command in it.
+#[rstest]
+#[case::warn_serial(true, false, true)]
+#[case::warn_concurrent(true, true, true)]
+#[case::warn_all_broken(true, true, false)]
+#[case::failfast_serial(false, false, true)]
+#[case::failfast_concurrent(false, true, true)]
+fn test_foreground_template_failure_policy(
+    repo: TestRepo,
+    #[case] warn: bool,
+    #[case] concurrent: bool,
+    #[case] healthy_sibling: bool,
+) {
+    let hook_type = if warn { "post-start" } else { "pre-merge" };
+    let broken = r#"broken = "echo {{ does_not_exist }}""#;
+    let sibling = if healthy_sibling {
+        r#"sibling = "echo ran > sibling.txt", "#
+    } else {
+        r#"also_broken = "echo {{ missing_too }}", "#
+    };
+    let failing_step = if concurrent {
+        format!("{{ {sibling}{broken} }}")
+    } else {
+        format!("{{ {broken} }}")
+    };
+    repo.write_test_config(&format!(
+        r#"{hook_type} = [
+    {{ first = "echo ran > first.txt" }},
+    {failing_step},
+    {{ later = "echo ran > later.txt" }},
+]
+"#,
+    ));
+    repo.write_project_config(&format!(
+        r#"[{hook_type}]
+project = "echo ran > project.txt"
+"#,
+    ));
+    let output = repo
+        .wt_command()
+        .args(["hook", hook_type, "--foreground", "--yes"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.success(), warn, "{stderr}");
+    assert!(repo.root_path().join("first.txt").exists(), "{stderr}");
+    for name in ["later.txt", "project.txt"] {
+        assert_eq!(
+            repo.root_path().join(name).exists(),
+            warn,
+            "{name}: {stderr}"
+        );
+    }
+    assert_eq!(
+        repo.root_path().join("sibling.txt").exists(),
+        warn && concurrent && healthy_sibling,
+        "{stderr}",
+    );
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!(
+            format!("foreground_template_policy_{warn}_{concurrent}_{healthy_sibling}"),
+            stderr,
+        );
+    });
+}
+
+/// An ordinary shell status 130 remains a failure under Warn, so healthy
+/// concurrent siblings and subsequent source/serial commands still run.
+#[rstest]
+#[case::serial(false)]
+#[case::concurrent(true)]
+fn test_foreground_warn_status_130_continues(repo: TestRepo, #[case] concurrent: bool) {
+    let first = if concurrent {
+        r#"{ fail = "exit 130", sibling = "echo ran > sibling.txt" }"#
+    } else {
+        r#"{ fail = "exit 130" }"#
+    };
+    repo.write_test_config(&format!(
+        r#"post-start = [{first}, {{ later = "echo ran > later.txt" }}]
+"#,
+    ));
+    repo.write_project_config(
+        r#"[post-start]
+project = "echo ran > project.txt"
+"#,
+    );
+    let output = repo
+        .wt_command()
+        .args(["hook", "post-start", "--foreground", "--yes"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(stderr.contains("failed (exit code 130)"), "{stderr}");
+    assert!(repo.root_path().join("later.txt").exists(), "{stderr}");
+    assert!(repo.root_path().join("project.txt").exists(), "{stderr}");
+    assert_eq!(repo.root_path().join("sibling.txt").exists(), concurrent);
 }
 
 #[rstest]
@@ -1739,27 +1902,45 @@ marker = "printf POST_REMOVE_RAN > '{marker_path}'"
     assert_eq!(fs::read_to_string(marker).unwrap(), "POST_REMOVE_RAN");
 }
 
+/// Manual hook argument routing parses templates before pipeline preparation.
+/// Its syntax errors must identify the same source and command as execution
+/// errors, including which named command failed.
 #[rstest]
-fn test_standalone_hook_post_remove_invalid_template(repo: TestRepo) {
-    // Write project config with invalid template syntax (unclosed braces)
-    repo.write_project_config(r#"post-remove = "echo {{ invalid""#);
+#[case::user_unnamed(HookSource::User, None)]
+#[case::user_named(HookSource::User, Some("broken"))]
+#[case::project_unnamed(HookSource::Project, None)]
+#[case::project_named(HookSource::Project, Some("broken"))]
+fn test_standalone_hook_post_remove_invalid_template(
+    repo: TestRepo,
+    #[case] source: HookSource,
+    #[case] name: Option<&str>,
+) {
+    let config = match name {
+        Some(name) => format!(
+            r#"[post-remove]
+{name} = "echo {{{{ invalid"
+"#
+        ),
+        None => r#"post-remove = "echo {{ invalid""#.to_owned(),
+    };
+    match source {
+        HookSource::User => repo.write_test_config(&config),
+        HookSource::Project => repo.write_project_config(&config),
+    }
 
-    let mut cmd = crate::common::wt_command();
-    cmd.current_dir(repo.root_path());
-    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    let mut cmd = repo.wt_command();
     cmd.args(["hook", "post-remove", "--yes"]);
 
-    let output = cmd.output().unwrap();
-    assert!(
-        !output.status.success(),
-        "wt hook post-remove should fail with invalid template"
-    );
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("syntax error"),
-        "Error should mention template expansion failure, got: {stderr}"
-    );
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        assert_cmd_snapshot!(
+            format!(
+                "standalone_hook_post_remove_invalid_template_{source}_{}",
+                name.unwrap_or("unnamed")
+            ),
+            cmd
+        );
+    });
 }
 
 #[rstest]
@@ -2976,38 +3157,77 @@ bar = "echo ran > project_bar.txt"
     );
 }
 
-/// A bare source filter (`user:` / `project:`) asks for every hook from one
-/// source, so it runs them all without naming any.
+/// Source selection excludes malformed templates in the other configuration.
 #[rstest]
-fn test_hook_bare_source_filter_runs_that_source(repo: TestRepo) {
-    repo.write_test_config(
-        r#"[pre-merge]
-fmt = "echo ran > user_fmt.txt"
-lint = "echo ran > user_lint.txt"
-"#,
-    );
-    repo.write_project_config(r#"pre-merge = "echo ran > project.txt""#);
+#[case::user(HookSource::User)]
+#[case::project(HookSource::Project)]
+fn test_hook_bare_source_filter_runs_that_source(repo: TestRepo, #[case] source: HookSource) {
+    let selected = r#"[pre-merge]
+fmt = "echo ran > selected_fmt.txt"
+lint = "echo ran > selected_lint.txt"
+"#;
+    let excluded = r#"pre-merge = "echo {{ unclosed""#;
+    match source {
+        HookSource::User => {
+            repo.write_test_config(selected);
+            repo.write_project_config(excluded);
+        }
+        HookSource::Project => {
+            repo.write_test_config(excluded);
+            repo.write_project_config(selected);
+        }
+    }
     repo.commit("Add pre-merge hooks");
-
+    let filter = format!("{source}:");
     let output = repo
         .wt_command()
-        .args(["hook", "pre-merge", "user:", "--yes"])
+        .args(["hook", "pre-merge", &filter, "--yes"])
         .output()
-        .expect("Failed to run wt hook pre-merge");
-
+        .unwrap();
     assert!(
         output.status.success(),
-        "wt hook pre-merge user: failed: {}",
+        "{}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        repo.root_path().join("user_fmt.txt").exists()
-            && repo.root_path().join("user_lint.txt").exists(),
-        "user: should run every user hook"
+        repo.root_path().join("selected_fmt.txt").exists()
+            && repo.root_path().join("selected_lint.txt").exists()
     );
+}
+
+/// Only selected commands participate in syntax validation and shorthand binding.
+#[rstest]
+#[case::syntax("echo {{ unclosed")]
+#[case::routing("echo {{ key }}")]
+fn test_hook_named_filter_selects_before_template_parsing(
+    repo: TestRepo,
+    #[case] excluded_template: &str,
+    #[values(HookSource::User, HookSource::Project)] source: HookSource,
+) {
+    let config = format!(
+        r#"[pre-merge]
+valid = "printf '%s' {{{{ args }}}} > selected.txt"
+broken = "{excluded_template}"
+"#
+    );
+    match source {
+        HookSource::User => repo.write_test_config(&config),
+        HookSource::Project => repo.write_project_config(&config),
+    }
+    let filter = format!("{source}:valid");
+    let output = repo
+        .wt_command()
+        .args(["hook", "pre-merge", &filter, "--yes", "--key=value"])
+        .output()
+        .unwrap();
     assert!(
-        !repo.root_path().join("project.txt").exists(),
-        "user: must not reach the project hook"
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(repo.root_path().join("selected.txt")).unwrap(),
+        "--key=value"
     );
 }
 

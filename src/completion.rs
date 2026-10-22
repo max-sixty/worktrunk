@@ -38,10 +38,10 @@ use clap_complete::engine::{ArgValueCompleter, CompletionCandidate, ValueComplet
 use clap_complete::env::CompleteEnv;
 
 use crate::cli;
-use crate::commands::{AliasMap, load_aliases};
+use crate::commands::{AliasMap, ParsedFilter, load_aliases};
 use crate::display::format_relative_time_short;
 use worktrunk::config::{
-    ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, template_references_var,
+    ALIAS_ARGS_KEY, CommandConfig, HookSource, ProjectConfig, UserConfig, template_references_var,
 };
 use worktrunk::git::{BranchCategory, HookType, Repository};
 
@@ -302,7 +302,7 @@ pub(crate) fn worktree_only_completer() -> ArgValueCompleter {
 }
 
 /// Hook command name completion for `wt hook <hook-type> <name>`.
-/// Completes with command names from the project config for the hook type being invoked.
+/// Completes with effective user and project command names for the hook type being invoked.
 pub(crate) fn hook_command_name_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(HookCommandCompleter)
 }
@@ -357,30 +357,42 @@ impl ValueCompleter for HookCommandCompleter {
 
         let mut candidates = Vec::new();
 
+        let filter = ParsedFilter::parse(current.to_str().unwrap_or_default());
         let add_named_commands =
-            |candidates: &mut Vec<_>, config: &worktrunk::config::CommandConfig| {
-                candidates.extend(
-                    config
-                        .commands()
-                        .filter_map(|cmd| cmd.name.as_ref())
-                        .map(|name| CompletionCandidate::new(name.clone())),
-                );
+            |candidates: &mut Vec<_>, config: &CommandConfig, source: HookSource| {
+                if !filter.matches_source(source) {
+                    return;
+                }
+                candidates.extend(config.commands().filter_map(|cmd| {
+                    let name = cmd.name.as_ref()?;
+                    let name = if filter.source.is_some() {
+                        source.command_label(Some(name))
+                    } else {
+                        name.clone()
+                    };
+                    Some(CompletionCandidate::new(name))
+                }));
             };
 
-        // Load user config and add user hook names
+        let repo = Repository::current().ok();
+        let project_id = repo
+            .as_ref()
+            .and_then(|repo| repo.project_identifier().ok());
+
+        // Use the same global + per-project merge as hook execution.
         if let Ok(user_config) = UserConfig::load()
-            && let Some(config) = user_config.hooks.get(hook_type)
+            && let Some(config) = user_config.hooks(project_id.as_ref()).get(hook_type)
         {
-            add_named_commands(&mut candidates, config);
+            add_named_commands(&mut candidates, config, HookSource::User);
         }
 
         // Load project config and add project hook names
         // Pass write_hints=false to avoid side effects during completion
-        if let Ok(repo) = Repository::current()
+        if let Some(repo) = repo
             && let Ok(Some(project_config)) = ProjectConfig::load(&repo, false)
             && let Some(config) = project_config.hooks.get(hook_type)
         {
-            add_named_commands(&mut candidates, config);
+            add_named_commands(&mut candidates, config, HookSource::Project);
         }
 
         candidates
@@ -797,12 +809,7 @@ fn truncate_template(template: &str) -> &str {
     let s = template.trim();
     let first_line = s.lines().next().unwrap_or(s);
     if first_line.len() > 60 {
-        // Find the last char boundary at or before byte 57
-        let mut end = 57;
-        while end > 0 && !first_line.is_char_boundary(end) {
-            end -= 1;
-        }
-        &first_line[..end]
+        &first_line[..first_line.floor_char_boundary(57)]
     } else {
         first_line
     }
@@ -927,7 +934,6 @@ fn discover_custom_subcommands() -> Vec<String> {
 /// (without the `wt-` prefix). On Windows, executable extensions (.exe, .cmd, etc.)
 /// are stripped so that `wt-sync.exe` produces the subcommand name `sync`.
 fn discover_custom_subcommands_in(path_var: &OsStr) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
     let mut result = Vec::new();
 
     for dir in std::env::split_paths(path_var) {
@@ -949,25 +955,19 @@ fn discover_custom_subcommands_in(path_var: &OsStr) -> Vec<String> {
                 .and_then(|s| s.to_str())
                 .unwrap_or(subcommand);
 
-            if subcommand.is_empty() || !seen.insert(subcommand.to_string()) {
-                continue;
-            }
-
-            // Verify it's executable (on Unix)
-            #[cfg(unix)]
+            // Use the dispatch resolver's executable rules, including symlink
+            // targets and Windows extensions. A non-executable entry must not
+            // hide a valid command in a later PATH directory.
+            if subcommand.is_empty() || which::which(dir.join(format!("wt-{subcommand}"))).is_err()
             {
-                use std::os::unix::fs::PermissionsExt;
-                if let Ok(meta) = entry.metadata()
-                    && meta.permissions().mode() & 0o111 == 0
-                {
-                    continue;
-                }
+                continue;
             }
             result.push(subcommand.to_string());
         }
     }
 
     result.sort();
+    result.dedup();
     result
 }
 
@@ -1178,6 +1178,48 @@ mod tests {
 
         let result = discover_custom_subcommands_in(dir.path().as_os_str());
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_discover_skips_directories() {
+        let dir = worktrunk::testing::test_tempdir();
+        std::fs::create_dir(dir.path().join("wt-directory")).unwrap();
+        assert!(discover_custom_subcommands_in(dir.path().as_os_str()).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_discover_checks_symlink_targets() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let dir = worktrunk::testing::test_tempdir();
+        let executable = dir.path().join("executable");
+        let non_executable = dir.path().join("data");
+        std::fs::write(&executable, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(&non_executable, "data").unwrap();
+        std::fs::set_permissions(&non_executable, std::fs::Permissions::from_mode(0o644)).unwrap();
+        symlink(&executable, dir.path().join("wt-valid")).unwrap();
+        symlink(&non_executable, dir.path().join("wt-invalid")).unwrap();
+        symlink(dir.path().join("missing"), dir.path().join("wt-broken")).unwrap();
+        assert_eq!(
+            discover_custom_subcommands_in(dir.path().as_os_str()),
+            vec!["valid"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_discover_finds_later_executable() {
+        use std::os::unix::fs::PermissionsExt;
+        let first = worktrunk::testing::test_tempdir();
+        let second = worktrunk::testing::test_tempdir();
+        for (dir, mode) in [(first.path(), 0o644), (second.path(), 0o755)] {
+            let path = dir.join("wt-visible");
+            std::fs::write(&path, "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        }
+        let path = std::env::join_paths([first.path(), second.path()]).unwrap();
+        assert_eq!(discover_custom_subcommands_in(&path), vec!["visible"]);
     }
 
     #[cfg(unix)]
