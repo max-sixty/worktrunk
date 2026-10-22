@@ -1467,7 +1467,7 @@ fn test_complete_single_dash_shows_both_short_and_long_flags(repo: TestRepo) {
 /// A completed -C option selects the repository used by branch completion.
 #[rstest]
 fn test_completion_respects_directory_option(repo: TestRepo) {
-    let other = TestRepo::new();
+    let other = TestRepo::with_initial_commit();
     other.create_branch("only-in-selected-repo");
     repo.create_branch("only-in-original-repo");
     let path = other.root_path().to_str().unwrap();
@@ -1475,11 +1475,17 @@ fn test_completion_respects_directory_option(repo: TestRepo) {
         vec!["wt", "-C", path, "switch", ""],
         vec!["wt", "switch", "-C", path, ""],
     ] {
-        let output = repo.completion_cmd(&args).output().unwrap();
+        let output = repo
+            .completion_cmd(&args)
+            .env("WORKTRUNK_VERBOSE", "2")
+            .output()
+            .unwrap();
         assert!(output.status.success());
         let stdout = String::from_utf8(output.stdout).unwrap();
         assert!(stdout.contains("only-in-selected-repo"), "{stdout}");
         assert!(!stdout.contains("only-in-original-repo"), "{stdout}");
+        assert!(other.root_path().join(".git/wt/logs/trace.log").exists());
+        assert!(!repo.root_path().join(".git/wt/logs/trace.log").exists());
     }
 }
 

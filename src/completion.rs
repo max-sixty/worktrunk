@@ -60,18 +60,6 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
     // warnings for the duration of this process.
     worktrunk::config::suppress_warnings();
 
-    // Completion exits before `main`'s `logging::init`, so the normal
-    // `-v`/`-vv` pipeline never runs here. `WORKTRUNK_VERBOSE` opts this
-    // short-lived subprocess into the same logging as a flagged command — the
-    // env-var equivalent of `-vv` — so humanized timing (`✓ git …`) and
-    // `$ git …` start records for a slow completion land in `.git/wt/logs/`
-    // just as `-vv` writes them. Left unset, completion stays silent so stray
-    // stderr never lands above the user's prompt.
-    let completion_verbose = crate::logging::env_verbose_level();
-    if completion_verbose > 0 {
-        crate::logging::init(completion_verbose);
-    }
-
     let mut args: Vec<OsString> = std::env::args_os().collect();
     CONTEXT.with(|ctx| *ctx.borrow_mut() = Some(CompletionContext { args: args.clone() }));
 
@@ -120,6 +108,18 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
     // values and globals after built-in subcommands follow the same rules.
     let globals = crate::parse_early_globals(args.iter().take(index).cloned());
     crate::apply_global_options(globals.directory, globals.config, globals.config_overrides);
+
+    // Completion exits before `main`'s `logging::init`, so the normal
+    // `-v`/`-vv` pipeline never runs here. `WORKTRUNK_VERBOSE` opts this
+    // short-lived subprocess into the same logging as a flagged command — the
+    // env-var equivalent of `-vv` — so humanized timing (`✓ git …`) and
+    // `$ git …` start records for a slow completion land in `.git/wt/logs/`
+    // just as `-vv` writes them. Left unset, completion stays silent so stray
+    // stderr never lands above the user's prompt.
+    let completion_verbose = crate::logging::env_verbose_level();
+    if completion_verbose > 0 {
+        crate::logging::init(completion_verbose);
+    }
 
     // Fill the git-discovery, git-config, and user-config caches on three
     // concurrent threads, exactly as `main` does before dispatching a command.
