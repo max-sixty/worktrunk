@@ -2257,6 +2257,57 @@ fn test_complete_custom_subcommand_listed(repo: TestRepo) {
     );
 }
 
+/// Global options belong to wt; the external completer receives its own argv,
+/// cursor position, and the selected working directory.
+#[cfg(unix)]
+#[rstest]
+fn test_complete_custom_subcommand_after_globals(repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let other = TestRepo::with_initial_commit();
+    let ext_dir = crate::common::test_tempdir();
+    let script = ext_dir.path().join("wt-testext");
+    std::fs::write(
+        &script,
+        r#"#!/bin/sh
+printf 'index:%s\n' "$_CLAP_COMPLETE_INDEX"
+printf 'arg:%s\n' "$@"
+printf 'cwd:%s\n' "$PWD"
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let args = [
+        "wt",
+        "-C",
+        other.root_path().to_str().unwrap(),
+        "testext",
+        "value",
+        "--",
+    ];
+    let mut cmd = repo.completion_cmd(&args);
+    prepend_path(&mut cmd, ext_dir.path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        stdout,
+        format!(
+            "index:2\narg:--\narg:wt-testext\narg:value\narg:--\ncwd:{}\n",
+            other.root_path().display()
+        )
+    );
+
+    // With the cursor back on the command name, offer wt command names.
+    // Existing arguments to its right must not trigger external completion.
+    let mut cmd = repo.completion_cmd(&args);
+    prepend_path(&mut cmd, ext_dir.path());
+    let output = cmd.env("_CLAP_COMPLETE_INDEX", "3").output().unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("testext"), "{stdout}");
+    assert!(!stdout.contains("index:"), "{stdout}");
+}
+
 /// Completion for a custom subcommand's flags forwards to the `wt-*` binary.
 #[cfg(unix)]
 #[rstest]

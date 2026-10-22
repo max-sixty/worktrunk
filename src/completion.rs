@@ -137,9 +137,10 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
 
     // If the subcommand word matches a custom-subcommand binary, forward the
     // completion request to it (e.g., `wt sync --<tab>` → `wt-sync --<tab>`).
-    // args[0] is the binary name ("wt"), args[1] is the subcommand ("sync").
-    if args.len() >= 3 {
-        let subcommand = args[1].to_string_lossy();
+    // The early parse includes only words before the cursor, so editing the
+    // subcommand itself never invokes a binary from PATH.
+    if let Some(start) = globals.external_subcommand_index {
+        let subcommand = args[start].to_string_lossy();
         // Only forward to the custom binary if no built-in subcommand has this
         // name. Built-ins always take precedence at runtime, so completions
         // must agree.
@@ -147,8 +148,8 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
         if cli::build_command().find_subcommand(&*subcommand).is_none()
             && which::which(&binary).is_ok()
         {
-            // Forward args[1..] to the custom binary
-            if let Some(forwarded) = forward_completion_to_custom(&binary, &args[1..], &shell_name)
+            if let Some(forwarded) =
+                forward_completion_to_custom(&binary, &args[start..], &shell_name, start)
             {
                 let _ = std::io::stdout().write_all(forwarded.as_bytes());
                 CONTEXT.with(|ctx| ctx.borrow_mut().take());
@@ -814,8 +815,13 @@ fn truncate_template(template: &str) -> &str {
 ///
 /// Rebuilds the args as if the user invoked `wt-sync <rest>` directly, passing
 /// the `COMPLETE` env var so the custom binary generates completions.
-fn forward_completion_to_custom(binary: &str, args: &[OsString], shell: &OsStr) -> Option<String> {
-    try_forward_completion_to_custom(binary, args, shell)
+fn forward_completion_to_custom(
+    binary: &str,
+    args: &[OsString],
+    shell: &OsStr,
+    removed_words: usize,
+) -> Option<String> {
+    try_forward_completion_to_custom(binary, args, shell, removed_words)
         .ok()
         .flatten()
 }
@@ -828,16 +834,17 @@ fn try_forward_completion_to_custom(
     binary: &str,
     args: &[OsString],
     shell: &OsStr,
+    removed_words: usize,
 ) -> std::io::Result<Option<String>> {
     // Build args for the custom binary: [binary_name, rest_args...]
     let mut child_args: Vec<OsString> = vec![OsString::from(binary)];
     child_args.extend_from_slice(&args[1..]);
 
-    // Adjust the completion index: subtract 1 since we removed the subcommand name
+    // Drop wt and its global options from the child's cursor position.
     let index = std::env::var("_CLAP_COMPLETE_INDEX")
         .ok()
         .and_then(|i| i.parse::<usize>().ok())
-        .map(|i| i.saturating_sub(1));
+        .map(|i| i.saturating_sub(removed_words));
 
     let mut cmd = std::process::Command::new(binary);
     cmd.arg("--");
@@ -1235,6 +1242,7 @@ mod tests {
             "/nonexistent/binary/xxxxxxxx_wt_test",
             &[OsString::from("test")],
             OsStr::new("bash"),
+            1,
         );
         assert!(result.is_none());
     }
@@ -1258,7 +1266,7 @@ mod tests {
         use std::io::ErrorKind;
         let mut result: Option<std::io::Result<Option<String>>> = None;
         worktrunk::testing::wait_for("ETXTBSY to clear and script to exec", || {
-            match try_forward_completion_to_custom(binary, args, shell) {
+            match try_forward_completion_to_custom(binary, args, shell, 1) {
                 Err(e) if e.kind() == ErrorKind::ExecutableFileBusy => false,
                 other => {
                     result = Some(other);

@@ -783,6 +783,7 @@ fn parse_cli() -> Cli {
         config_overrides,
         alias_help_context,
         subcommand,
+        ..
     } = parse_early_globals(std::env::args_os());
     apply_global_options(directory, config, config_overrides);
 
@@ -838,6 +839,8 @@ struct EarlyGlobals {
     /// arrives, through the `external_subcommand` arm that carries user
     /// aliases, so those entry points can name it back in their own errors.
     subcommand: Option<String>,
+    /// Offset of an external command after clap has consumed global options.
+    external_subcommand_index: Option<usize>,
 }
 
 /// Parse global options (`-C`, `--config`, `--config-set`), name the command,
@@ -855,12 +858,22 @@ struct EarlyGlobals {
 /// the global-flag definitions in one place (the derive on `Cli`), so renaming
 /// `-C` or adding a value-taking global doesn't silently desync this path.
 fn parse_early_globals(args: impl IntoIterator<Item = std::ffi::OsString>) -> EarlyGlobals {
-    let cmd = cli::build_command()
+    let args: Vec<_> = args.into_iter().collect();
+    let mut cmd = cli::build_command()
         .ignore_errors(true)
         .disable_help_flag(true);
-    let Ok(matches) = cmd.try_get_matches_from(args) else {
+    let Ok(matches) = cmd.try_get_matches_from_mut(&args) else {
         return EarlyGlobals::default();
     };
+    let external_subcommand_index = matches.subcommand().and_then(|(name, sub)| {
+        if cmd.find_subcommand(name).is_some() {
+            return None;
+        }
+        // Clap leaves every word after an external command unparsed, so its
+        // raw tail locates the name without scanning global flags ourselves.
+        let tail_len = sub.get_raw("").map_or(0, |args| args.len());
+        args.len().checked_sub(tail_len + 1)
+    });
     let directory = matches.get_one::<std::path::PathBuf>("directory").cloned();
     let config = matches.get_one::<std::path::PathBuf>("config").cloned();
     let config_overrides = matches
@@ -882,6 +895,7 @@ fn parse_early_globals(args: impl IntoIterator<Item = std::ffi::OsString>) -> Ea
         config_overrides,
         alias_help_context,
         subcommand: matches.subcommand_name().map(str::to_owned),
+        external_subcommand_index,
     }
 }
 
