@@ -2,7 +2,8 @@
 //! dispatch each removal to the output handler.
 //!
 //! Target failures are reported independently; later targets still run and
-//! the batch exits unsuccessfully. An interrupt cancels the batch immediately.
+//! the batch exits unsuccessfully. An interrupt cancels the batch immediately,
+//! retaining completed removals in the JSON report.
 
 use crate::commands::command_executor::ForegroundStdin;
 
@@ -512,6 +513,7 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
             };
             let mut failed = !plans.errors.is_empty();
             let mut json_items = Vec::new();
+            let mut interrupted = None;
             for result in all_plans() {
                 match run(result) {
                     Ok(fate) => {
@@ -521,7 +523,8 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                     }
                     Err(e) => {
                         if let Some(signal) = e.interrupt_signal() {
-                            return Err(WorktrunkError::Interrupted { signal, hint: None }.into());
+                            interrupted = Some(signal);
+                            break;
                         }
                         crate::print_command_error(&e);
                         failed = true;
@@ -531,6 +534,9 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
 
             if json_mode {
                 print_json(&json_items)?;
+            }
+            if let Some(signal) = interrupted {
+                return Err(WorktrunkError::Interrupted { signal, hint: None }.into());
             }
 
             // Fire-and-forget repo-wide internal cleanup (stale trash +

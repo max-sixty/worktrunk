@@ -28,4 +28,4 @@ copy-on-write build caches.
 - [Tips & Patterns](https://worktrunk.dev/tips-patterns.md): Practical recipes for Worktrunk workflows: repo layout, aliases and hooks, per-worktree dev servers and databases, agent handoffs, and branch status.
 - [Shell integration](https://worktrunk.dev/shell-integration.md): How Worktrunk's shell wrapper changes the parent shell's directory, which files each shell gets, and how to debug integration that isn't working.
 - [FAQ](https://worktrunk.dev/faq.md): Common questions about Worktrunk: comparison to git worktree and branch switching, bare repos, TUI support, and more.
-- [Code Signing Policy](https://worktrunk.dev/code-signing.md): How Worktrunk's Windows release binaries are code-signed: certificate provenance, the build and signing pipeline, project roles, and per-release approval.
+- [Code Signing Policy](https://worktrunk.dev/code-signing.md): Windows code signing, release approval, and privacy.

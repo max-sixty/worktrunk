@@ -38,6 +38,21 @@ hello = "echo Hello from {{ branch }}"
     ));
 }
 
+/// Alias expansion errors retain the alias identity and underlying diagnostic.
+#[rstest]
+fn test_step_alias_runtime_undefined_variable(repo: TestRepo) {
+    repo.write_test_config(
+        r#"
+[aliases]
+deploy = "echo {{ nope }}"
+"#,
+    );
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        assert_cmd_snapshot!(make_snapshot_cmd(&repo, "step", &["deploy"], None));
+    });
+}
+
 /// `wt config alias dry-run <name>` shows the expanded command without running it
 /// (no approval needed — preview never executes project commands).
 #[rstest]
@@ -1880,6 +1895,56 @@ greet = "echo hi {{ branch }}"
         &["alias", "show"],
         Some(&feature_path),
     ));
+}
+
+/// User alias discovery does not require a Git repository, with or without a
+/// name. A typo still gets alias suggestions rather than a repository error.
+#[rstest]
+fn test_config_alias_show_outside_repository(repo: TestRepo) {
+    let outside = crate::common::test_tempdir();
+    repo.write_test_config(
+        r#"
+[aliases]
+deploy = "echo {{ branch }}"
+"#,
+    );
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    for (snapshot, args) in [
+        ("alias_show_outside_all", vec!["alias", "show"]),
+        ("alias_show_outside_named", vec!["alias", "show", "deploy"]),
+        ("alias_show_outside_typo", vec!["alias", "show", "deplyo"]),
+    ] {
+        assert_cmd_snapshot!(
+            snapshot,
+            make_snapshot_cmd(&repo, "config", &args, Some(outside.path()))
+        );
+    }
+}
+
+/// Discovery stays quiet even when prewarm reads a deprecated user setting.
+#[rstest]
+fn test_config_alias_show_suppresses_deprecation_warnings(repo: TestRepo) {
+    repo.write_test_config(
+        r#"
+[aliases]
+deploy = "echo hi"
+[commit-generation]
+command = "echo message"
+"#,
+    );
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+    for (snapshot, args) in [
+        ("alias_show_deprecated_all", vec!["alias", "show"]),
+        (
+            "alias_show_deprecated_named",
+            vec!["alias", "show", "deploy"],
+        ),
+    ] {
+        assert_cmd_snapshot!(snapshot, make_snapshot_cmd(&repo, "config", &args, None));
+    }
 }
 
 /// `wt config alias show` with no name and no aliases configured prints a note

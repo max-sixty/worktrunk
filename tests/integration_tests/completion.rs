@@ -892,6 +892,60 @@ fn test_complete_hook_subcommands(repo: TestRepo) {
     assert!(!subcommands.contains(&"pre-merge"));
 }
 
+/// Hook names include the same effective user settings used at execution:
+/// global hooks, matching wildcard keys, and the exact project key.
+#[rstest]
+fn test_hook_command_completion_includes_project_user_settings(repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.write_project_config(
+        r#"
+[pre-merge]
+project-file = "echo project"
+[post-merge]
+other-hook = "echo other hook"
+"#,
+    );
+    repo.write_test_config(&format!(
+        r#"
+[pre-merge]
+global = "echo global"
+[projects."*".pre-merge]
+wildcard = "echo wildcard"
+[projects.'{}'.pre-merge]
+exact = "echo exact"
+[projects."nonmatching-project".pre-merge]
+unrelated = "echo unrelated"
+"#,
+        repo.project_id()
+    ));
+
+    let output = repo
+        .completion_cmd(&["wt", "hook", "pre-merge", ""])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let mut names = value_suggestions(&stdout);
+    names.sort_unstable();
+    assert_eq!(names, ["exact", "global", "project-file", "wildcard"]);
+
+    for (prefix, expected) in [
+        ("user:", vec!["user:exact", "user:global", "user:wildcard"]),
+        ("project:", vec!["project:project-file"]),
+        ("user:ex", vec!["user:exact"]),
+    ] {
+        let output = repo
+            .completion_cmd(&["wt", "hook", "pre-merge", prefix])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let mut names = value_suggestions(&stdout);
+        names.sort_unstable();
+        assert_eq!(names, expected, "{prefix}: {stdout}");
+    }
+}
+
 /// Cross-shell completion contract for hook command names.
 ///
 /// Same contract as branch completions (test_completion_cross_shell_filtering_contract):
@@ -2218,6 +2272,50 @@ printf '%s\n%s\n%s' '--custom-flag' '--another' "retired:${WORKTRUNK_DIRECTIVE_F
         "",
         "the retired directive file must remain untouched"
     );
+}
+
+/// Alias completions must win over an executable with the same name, just
+/// like dispatch. The losing executable must not run even on a Tab press.
+#[cfg(unix)]
+#[rstest]
+#[case(false)]
+#[case(true)]
+fn test_complete_alias_shadows_custom_binary(repo: TestRepo, #[case] project: bool) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let config = r#"
+[aliases]
+co = "wt switch {{ args }}"
+"#;
+    if project {
+        repo.write_project_config(config);
+    } else {
+        repo.write_test_config(config);
+    }
+    let ext_dir = crate::common::test_tempdir();
+    let script = ext_dir.path().join("wt-co");
+    let marker = ext_dir.path().join("called");
+    std::fs::write(
+        &script,
+        r#"#!/bin/sh
+printf called > "$WORKTRUNK_TEST_COMPLETION_MARKER"
+printf -- '--external-flag\n'
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let mut cmd = repo.completion_cmd(&["wt", "co", "--"]);
+    prepend_path(&mut cmd, ext_dir.path());
+    cmd.env("WORKTRUNK_TEST_COMPLETION_MARKER", &marker);
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--create"),
+        "alias must mirror switch: {stdout}"
+    );
+    assert!(!marker.exists(), "shadowed executable must not run");
 }
 
 /// Regression for #3816: `config shell init --cmd <name>` must generate a

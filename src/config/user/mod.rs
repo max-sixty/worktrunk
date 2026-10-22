@@ -156,20 +156,18 @@ struct EnvOverrideUnit {
 /// - `WORKTRUNK_COMMIT__GENERATION__COMMAND=cmd` → `[commit.generation]\ncommand = "cmd"`
 ///
 /// Infrastructure vars (`_CONFIG_PATH`, `_SYSTEM_CONFIG_PATH`,
-/// `_PROJECT_CONFIG_PATH`, `_APPROVALS_PATH`) and test vars (`_TEST_*`) are excluded.
-fn parse_worktrunk_env_vars(warnings: &mut Vec<LoadError>) -> Vec<EnvVar> {
+/// `_APPROVALS_PATH`) and test vars (`_TEST_*`) are excluded.
+fn parse_worktrunk_env_vars() -> Vec<EnvVar> {
     const INFRA_VARS: &[&str] = &[
         "WORKTRUNK_CONFIG_PATH",
         "WORKTRUNK_SYSTEM_CONFIG_PATH",
-        "WORKTRUNK_PROJECT_CONFIG_PATH",
         "WORKTRUNK_APPROVALS_PATH",
     ];
 
-    // Unix permits non-UTF-8 environment entries. Decode only matching
-    // override values, so unrelated or infrastructure variables cannot panic
-    // config loading or produce irrelevant warnings.
+    // `std::env::vars()` panics on any non-UTF-8 entry, including unrelated
+    // ones; skip those entries instead.
     let mut env_vars: Vec<_> = std::env::vars_os()
-        .filter_map(|(key, value)| Some((key.into_string().ok()?, value)))
+        .filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)))
         .filter(|(k, _)| k.starts_with("WORKTRUNK_"))
         .filter(|(k, _)| !INFRA_VARS.contains(&k.as_str()))
         .filter(|(k, _)| !k.starts_with("WORKTRUNK_TEST_"))
@@ -196,16 +194,6 @@ fn parse_worktrunk_env_vars(warnings: &mut Vec<LoadError>) -> Vec<EnvVar> {
                 return None;
             }
 
-            let value = match value.into_string() {
-                Ok(value) => value,
-                Err(value) => {
-                    warnings.push(LoadError::Env {
-                        err: format!("Environment variable {key} is not valid UTF-8"),
-                        vars: vec![(key, value.to_string_lossy().into_owned())],
-                    });
-                    return None;
-                }
-            };
             Some(EnvVar {
                 name: key,
                 segments,
@@ -774,7 +762,7 @@ impl UserConfig {
         }
 
         // 3. Env-var overrides (override config files)
-        let env_vars = parse_worktrunk_env_vars(&mut warnings);
+        let env_vars = parse_worktrunk_env_vars();
         if let Err(err) = Self::apply_env_vars(&env_vars, &mut merged_table, &mut warnings) {
             warnings.push(LoadError::Validation(err));
             return (Self::default(), warnings);

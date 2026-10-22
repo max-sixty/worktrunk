@@ -72,7 +72,7 @@ struct ApprovedProject {
 /// [`Approvals::load`]; they pass tempdir-backed paths instead. See
 /// `tests/AGENTS.md`.
 pub fn approvals_path() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("WORKTRUNK_APPROVALS_PATH") {
+    if let Ok(path) = std::env::var("WORKTRUNK_APPROVALS_PATH") {
         return Some(PathBuf::from(path));
     }
 
