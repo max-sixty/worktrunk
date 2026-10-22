@@ -913,8 +913,6 @@ mod tests {
         fs::set_permissions(&trash, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
-    /// A `git worktree lock` must stop the rename even when the caller skipped
-    /// `prepare_worktree_removal` (merge used to construct a plan by hand).
     /// Same-basename worktrees need distinct staging paths. Test staging
     /// directly: a prune batch may share one detached drain, so per-branch
     /// cleanup logs do not prove whether each worktree was staged.
@@ -953,6 +951,8 @@ mod tests {
         assert!(staged_paths.iter().all(|path| path.exists()));
     }
 
+    /// A `git worktree lock` must stop the rename even when the caller skipped
+    /// `prepare_worktree_removal` (merge used to construct a plan by hand).
     #[test]
     fn stage_refuses_locked_worktree() {
         let mut test = TestRepo::with_initial_commit();
