@@ -1491,6 +1491,48 @@ fn test_config_show_full_not_configured(mut repo: TestRepo, temp_home: TempDir) 
     });
 }
 
+/// Interrupting the version-check child must stop diagnostics before the LLM
+/// probe. Ordinary failures still show the unavailable check and continue.
+#[cfg(unix)]
+#[rstest]
+#[case("kill -INT $$", Some(2))]
+#[case("kill -TERM $$", Some(15))]
+#[case("exit 130", None)]
+fn test_config_show_full_version_check_interruption(
+    mut repo: TestRepo,
+    #[case] command: &str,
+    #[case] signal: Option<i32>,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::ExitStatusExt;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    let curl = repo.mock_bin_path().unwrap().join("curl");
+    fs::write(&curl, format!("#!/bin/sh\n{command}\n")).unwrap();
+    fs::set_permissions(&curl, fs::Permissions::from_mode(0o755)).unwrap();
+    let marker = repo.home_path().join("generation-probe");
+    let probe = format!(
+        "printf reached > {}; echo diagnostic-probe",
+        shell_escape::unix::escape(marker.to_string_lossy())
+    );
+    repo.write_test_config(&format!(
+        "[commit.generation]\ncommand = {}\n",
+        serde_json::to_string(&probe).unwrap()
+    ));
+    let output = repo
+        .wt_command()
+        .env_remove("WORKTRUNK_TEST_LATEST_VERSION")
+        .args(["config", "show", "--full"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.signal(), signal, "{output:?}");
+    assert_eq!(marker.exists(), signal.is_none(), "{output:?}");
+    if signal.is_none() {
+        assert!(output.status.success(), "{output:?}");
+        assert!(String::from_utf8_lossy(&output.stdout).contains("Version check unavailable"));
+    }
+}
+
 /// Native interruption cancels the report; a numeric 130 remains a reported
 /// command failure rather than being mistaken for a signal.
 #[cfg(unix)]

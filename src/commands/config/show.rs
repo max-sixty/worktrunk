@@ -1723,6 +1723,7 @@ fn format_version_status(latest: &str) -> FormattedMessage {
 fn render_version_check(out: &mut String) -> anyhow::Result<()> {
     match fetch_latest_version() {
         Ok(latest) => writeln!(out, "{}", format_version_status(&latest))?,
+        Err(e) if e.interrupt_signal().is_some() => return Err(e),
         Err(e) => {
             tracing::debug!(error = %e, "Version check failed: {e}");
             writeln!(out, "{}", hint_message("Version check unavailable"))?;
