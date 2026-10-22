@@ -908,11 +908,13 @@ fn handle_merge_command(args: MergeArgs, yes: bool) -> anyhow::Result<()> {
 }
 
 /// True when the parsed command should silence prewarm-time deprecation
-/// warnings. Two reasons qualify:
+/// warnings. These surfaces qualify:
 ///
 /// - **TUI / stderr-sensitive output** (`select`, `switch` picker mode,
 ///   `list statusline`) — warnings on stderr would land above the picker
 ///   or shell prompt and visually break it.
+/// - **Alias discovery** (`config alias show`) — definitions remain readable
+///   without unrelated config migration warnings.
 /// - **`config update`** — the handler renders the deprecations and a diff
 ///   itself, so the prewarm-time warning + `wt config update` hint is
 ///   redundant noise above its own UI.
@@ -929,7 +931,11 @@ fn command_suppresses_warnings(command: Option<&Commands>) -> bool {
             matches!(args.subcommand, Some(ListSubcommand::Statusline { .. }))
         }
         Some(Commands::Config {
-            action: ConfigCommand::Update { .. },
+            action:
+                ConfigCommand::Update { .. }
+                | ConfigCommand::Alias {
+                    action: ConfigAliasCommand::Show { .. },
+                },
         }) => true,
         _ => false,
     }

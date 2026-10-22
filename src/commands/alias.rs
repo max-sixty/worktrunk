@@ -877,7 +877,7 @@ fn render_aliases_help_section(
 /// separately preserves the individual command text; merging them would
 /// reduce to an uninformative step count when both are unnamed singles.
 ///
-/// Callers (`augment_help`, `wt config alias show` with no name) latch
+/// Callers (`augment_help`, `wt config alias show`) latch
 /// `suppress_warnings()` before reaching here so the standard `UserConfig::load()`
 /// stays quiet: no deprecation warnings, no `.new` file writes, no
 /// approved-commands copy. Project config is parsed directly from TOML rather
