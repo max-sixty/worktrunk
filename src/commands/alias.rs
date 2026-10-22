@@ -435,7 +435,7 @@ pub(crate) fn load_aliases(
 fn referenced_vars_for_entry(name: &str, entry: &AliasEntry) -> anyhow::Result<BTreeSet<String>> {
     let mut out = BTreeSet::new();
     for (_, cfg) in entry.iter() {
-        out.extend(referenced_vars_for_config(cfg, name)?);
+        out.extend(referenced_vars_for_config(cfg, |_| name.to_owned())?);
     }
     Ok(out)
 }
@@ -1585,7 +1585,8 @@ cmd = [
 ]
 "#,
         );
-        let refs = worktrunk::config::referenced_vars_for_config(&cfg, "deploy").unwrap();
+        let refs =
+            worktrunk::config::referenced_vars_for_config(&cfg, |_| "deploy".to_owned()).unwrap();
         let names: Vec<&str> = refs.iter().map(String::as_str).collect();
         assert_eq!(names, vec!["args", "env", "target"]);
     }
