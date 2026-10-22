@@ -2220,6 +2220,50 @@ printf '%s\n%s\n%s' '--custom-flag' '--another' "retired:${WORKTRUNK_DIRECTIVE_F
     );
 }
 
+/// Alias completions must win over an executable with the same name, just
+/// like dispatch. The losing executable must not run even on a Tab press.
+#[cfg(unix)]
+#[rstest]
+#[case(false)]
+#[case(true)]
+fn test_complete_alias_shadows_custom_binary(repo: TestRepo, #[case] project: bool) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let config = r#"
+[aliases]
+co = "wt switch {{ args }}"
+"#;
+    if project {
+        repo.write_project_config(config);
+    } else {
+        repo.write_test_config(config);
+    }
+    let ext_dir = crate::common::test_tempdir();
+    let script = ext_dir.path().join("wt-co");
+    let marker = ext_dir.path().join("called");
+    std::fs::write(
+        &script,
+        r#"#!/bin/sh
+printf called > "$WORKTRUNK_TEST_COMPLETION_MARKER"
+printf -- '--external-flag\n'
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let mut cmd = repo.completion_cmd(&["wt", "co", "--"]);
+    prepend_path(&mut cmd, ext_dir.path());
+    cmd.env("WORKTRUNK_TEST_COMPLETION_MARKER", &marker);
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--create"),
+        "alias must mirror switch: {stdout}"
+    );
+    assert!(!marker.exists(), "shadowed executable must not run");
+}
+
 /// Regression for #3816: `config shell init --cmd <name>` must generate a
 /// completion loader whose clap-derived identifiers match the ones the binary
 /// emits at TAB time.
