@@ -91,16 +91,15 @@ impl Repository {
     /// Accepts any valid commit-ish: branch names, tags, HEAD, commit SHAs,
     /// and relative refs like HEAD~2.
     pub fn ref_exists(&self, reference: &str) -> anyhow::Result<bool> {
-        // Use rev-parse to check if the reference resolves to a valid commit
-        // The ^{commit} suffix ensures we get the commit object, not a tag
-        Ok(self
-            .run_command(&[
-                "rev-parse",
-                "--verify",
-                "--end-of-options",
-                &format!("{}^{{commit}}", reference),
-            ])
-            .is_ok())
+        // Quiet verification uses status 1 for a missing commit-ish. Other
+        // failures, including native interruption, are not evidence of absence.
+        self.run_command_check(&[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "--end-of-options",
+            &format!("{reference}^{{commit}}"),
+        ])
     }
 
     /// Access the local-branch inventory, scanning on first call.
