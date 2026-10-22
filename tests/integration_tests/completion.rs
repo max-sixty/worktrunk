@@ -911,7 +911,7 @@ other-hook = "echo other hook"
 global = "echo global"
 [projects."*".pre-merge]
 wildcard = "echo wildcard"
-[projects."{}".pre-merge]
+[projects.'{}'.pre-merge]
 exact = "echo exact"
 [projects."nonmatching-project".pre-merge]
 unrelated = "echo unrelated"
