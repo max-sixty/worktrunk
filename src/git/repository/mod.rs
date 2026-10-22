@@ -840,14 +840,28 @@ impl Repository {
     /// For worktree-specific operations within an existing Repository context,
     /// use [`Repository::worktree_at()`] instead.
     pub fn at(path: impl Into<PathBuf>) -> anyhow::Result<Self> {
-        let discovery_path = path.into();
+        Self::discover(path.into(), true)
+    }
+
+    /// Reopen this repository without startup preloads or per-handle caches.
+    ///
+    /// Interactive refreshes use this after external Git operations may have
+    /// changed history, refs, or configuration during the current process.
+    pub fn fresh(&self) -> anyhow::Result<Self> {
+        Self::discover(self.discovery_path.clone(), false)
+    }
+
+    fn discover(discovery_path: PathBuf, use_preloads: bool) -> anyhow::Result<Self> {
         let git_common_dir = Self::resolve_git_common_dir(&discovery_path)?;
         let locks = REPOSITORY_LOCKS
             .entry(git_common_dir.clone())
             .or_insert_with(|| Arc::new(RepositoryLocks::default()))
             .clone();
 
-        let complete_history = if let Some(value) = COMPLETE_HISTORY_PRELOAD.get(&discovery_path) {
+        let preloaded_history = use_preloads
+            .then(|| COMPLETE_HISTORY_PRELOAD.get(&discovery_path))
+            .flatten();
+        let complete_history = if let Some(value) = preloaded_history {
             *value
         } else {
             let args = ["rev-parse", "--is-shallow-repository"];
@@ -873,7 +887,7 @@ impl Repository {
         // prewarm stashed under (both originate from `base_path()`); a miss
         // (different path, no prewarm, test repo) leaves the OnceCell empty
         // and the on-demand fork inside `all_config` runs as before.
-        if let Some(entry) = GIT_CONFIG_PRELOAD.get(&discovery_path) {
+        if use_preloads && let Some(entry) = GIT_CONFIG_PRELOAD.get(&discovery_path) {
             let _ = cache
                 .all_config
                 .set(std::sync::RwLock::new(entry.value().clone()));
@@ -884,7 +898,7 @@ impl Repository {
         // the first `repo.user_config()` call is a memory hit. A miss (no
         // prewarm, test repo) leaves the OnceCell empty and the on-demand
         // path in `user_config()` reloads from disk.
-        if let Some(preloaded) = WORKTRUNK_USER_CONFIG_PRELOAD.get() {
+        if use_preloads && let Some(preloaded) = WORKTRUNK_USER_CONFIG_PRELOAD.get() {
             let _ = cache.user_config.set(preloaded.clone());
         }
 

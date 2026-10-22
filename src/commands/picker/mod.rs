@@ -316,7 +316,7 @@ impl AltXRemover {
     /// the row's `output()` token — no `git worktree list` lookup, so a
     /// detached row can't be confused with another detached row.
     fn prepare_removal(&self, target: RemoveTarget) -> anyhow::Result<(Repository, RemovalPlan)> {
-        let repo = Repository::at(self.repo.discovery_path())?;
+        let repo = self.repo.fresh()?;
 
         // Validate removal before touching the list. prepare_worktree_removal
         // runs a few git commands (~15-20ms) — acceptable on skim's event loop.
@@ -1430,7 +1430,7 @@ impl PipelineFactory {
         // startup list, so after an in-picker removal the removed worktrees would
         // still appear and collect's per-worktree git ops would fail against the
         // gone branches ("fatal: Needed a single revision"). So a refresh
-        // (`rebuild_repo`) builds a fresh `Repository::at` — the post-mutation
+        // (`rebuild_repo`) uses `Repository::fresh` to bypass startup preloads — the post-mutation
         // discipline the `RepoCache` docs and `prepare_removal` already require.
         // The initial spawn skips the rebuild: the primed cache is still valid,
         // and rebuilding would re-pay both git calls on the first-paint path.
@@ -1453,7 +1453,7 @@ impl PipelineFactory {
             // already self-invalidate on the CI path; clearing them here too
             // just means a refresh also re-fetches their forge data. See the
             // `preview_orchestrator` module spec ("Spawn generations").
-            let repo = Repository::at(self.repo.discovery_path())?;
+            let repo = self.repo.fresh()?;
             self.orchestrator.refresh(repo.clone());
             repo
         } else {

@@ -3051,3 +3051,37 @@ fn stale_worktree_work_preserves_native_registration_arguments() {
     let repo = Repository::at(test.root_path()).unwrap();
     assert_eq!(repo.stale_worktree_work(&checkout).unwrap(), None);
 }
+
+#[rstest::rstest]
+#[case(false)]
+#[case(true)]
+fn fresh_repository_observes_changed_shallow_boundary(#[case] start_shallow: bool) {
+    let test = TestRepo::with_initial_commit();
+    let base = test.git_output(&["rev-parse", "HEAD"]);
+    test.run_git(&["commit", "--allow-empty", "-m", "tip"]);
+    let head = test.git_output(&["rev-parse", "HEAD"]);
+    let shallow = test
+        .root_path()
+        .join(test.git_output(&["rev-parse", "--git-path", "shallow"]));
+    if start_shallow {
+        std::fs::write(&shallow, format!("{head}\n")).unwrap();
+    }
+    Repository::prewarm_rev_parse(test.root_path());
+    let repo = Repository::at(test.root_path()).unwrap();
+    assert_eq!(repo.is_shallow(), start_shallow);
+    assert_eq!(
+        repo.is_ancestor_by_sha(&base, &head).unwrap(),
+        !start_shallow
+    );
+    if start_shallow {
+        std::fs::remove_file(shallow).unwrap();
+    } else {
+        std::fs::write(shallow, format!("{head}\n")).unwrap();
+    }
+    let fresh = repo.fresh().unwrap();
+    assert_eq!(fresh.is_shallow(), !start_shallow);
+    assert_eq!(
+        fresh.is_ancestor_by_sha(&base, &head).unwrap(),
+        start_shallow
+    );
+}
