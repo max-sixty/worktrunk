@@ -43,7 +43,8 @@ use crate::output::print_json;
 /// Run a command in each worktree sequentially.
 ///
 /// Executes the given argv directly in every worktree, streaming output in
-/// real-time. Continues on errors and reports a summary at the end.
+/// real-time. Preparation and child failures belong to each worktree; later
+/// worktrees still run. Interruptions stop the loop and retain visited results.
 ///
 /// All template variables from hooks are available; values are substituted
 /// into argv elements without shell escaping. Context JSON is provided on stdin.
@@ -73,25 +74,25 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
             progress_message(format!("Running in {display_name}..."))
         );
 
-        // Build full hook context for this worktree
-        // Pass wt.branch directly (not the display string) so a detached
-        // worktree maps to None and leaves `{{ branch }}` unset
-        let ctx = CommandContext::new(&repo, &config, wt.branch.as_deref(), &wt.path, false);
-        let context_map = build_hook_context(&ctx, &[], VarScope::All)?;
+        let result = (|| {
+            // Pass the branch, not its display name: a detached worktree
+            // leaves `{{ branch }}` unset.
+            let ctx = CommandContext::new(&repo, &config, wt.branch.as_deref(), &wt.path, false);
+            let context_map = build_hook_context(&ctx, &[], VarScope::All)?;
 
-        // Expand each argv element through the template engine without
-        // shell-escaping — values are interpolated directly into the argv
-        // element a program receives, not through `sh -c`.
-        let expanded: Vec<String> = args
-            .iter()
-            .map(|arg| {
-                context_map.expand(arg, ShellEscapeMode::Literal, &repo, "for-each argument")
-            })
-            .collect::<Result<_, _>>()?;
+            // Expand argv literally: the program receives each element
+            // directly, without shell parsing.
+            let expanded: Vec<String> = args
+                .iter()
+                .map(|arg| {
+                    context_map.expand(arg, ShellEscapeMode::Literal, &repo, "for-each argument")
+                })
+                .collect::<Result<_, _>>()?;
 
-        let context_json = context_map.to_json();
+            run_argv(&wt.path, expanded, &context_map.to_json())
+        })();
 
-        match run_argv(&wt.path, expanded, &context_json) {
+        match result {
             Ok(()) => {
                 if json_mode {
                     json_results.push(serde_json::json!({
@@ -120,12 +121,7 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                     } else {
                         let detail = err.display_message();
                         let styled = err.render_diagnostic().unwrap_or_else(|| detail.clone());
-                        (
-                            " (spawn failed)".to_string(),
-                            serde_json::json!(null),
-                            Some(styled),
-                            detail,
-                        )
+                        (String::new(), serde_json::json!(null), Some(styled), detail)
                     };
                 eprintln!(
                     "{}",

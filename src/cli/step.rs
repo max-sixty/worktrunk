@@ -766,14 +766,7 @@ refuses), unless `--commit` is passed.
     /// Teardown is automatic and needs no `pre-remove` hook; the group gets `SIGTERM` then `SIGKILL`.
     #[command(after_long_help = r#"## Why
 
-A `post-start` hook to start a long-lived process and a `pre-remove` hook to
-stop it is usually enough. But `pre-remove` only runs when worktrunk removes
-the worktree, so a `git worktree remove`, an `rm -rf`, or a crashed hook skips
-it. Across enough worktree churn some process is bound to outlive its worktree,
-and with no cleanup these leaks accumulate (on macOS they eventually saturate
-`fseventsd`). `tether` removes the need for a `pre-remove`: it ties the
-command's lifetime to the worktree and kills the whole process group once the
-worktree is gone.
+`pre-remove` hooks run only when Worktrunk removes a worktree. `tether` also stops the command when another tool removes the worktree.
 
 ## Arguments
 

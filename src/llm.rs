@@ -243,10 +243,7 @@ fn truncate_line(line: &str) -> Cow<'_, str> {
     if line.len() <= MAX_LINE_LEN {
         return Cow::Borrowed(line);
     }
-    let mut end = MAX_LINE_LEN;
-    while !line.is_char_boundary(end) {
-        end -= 1;
-    }
+    let end = line.floor_char_boundary(MAX_LINE_LEN);
     Cow::Owned(format!("{}... (line truncated)", &line[..end]))
 }
 
@@ -964,8 +961,8 @@ pub(crate) fn test_commit_generation(
 }
 
 /// Share waiting status and diagnostics across commit, squash, and connectivity
-/// checks, preserving native interruption so callers stop the operation.
-pub(crate) fn execute_generation_command(
+/// checks.
+fn execute_generation_command(
     command: &str,
     prompt: &str,
     prompt_command: Option<&str>,
@@ -974,9 +971,6 @@ pub(crate) fn execute_generation_command(
     // watchdog clears its status before the caller prints the result.
     let _watchdog = watch_llm_command(command);
     execute_llm_command(command, prompt).map_err(|e| {
-        if e.interrupt_signal().is_some() {
-            return e;
-        }
         worktrunk::git::GitError::LlmCommandFailed {
             command: command.to_owned(),
             error: e.display_message(),

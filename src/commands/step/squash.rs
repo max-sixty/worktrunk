@@ -572,14 +572,6 @@ fn preview_squash(
         println!("{}", prompt);
         return Ok(());
     }
-    let message = if let Some(command) = commit_config.command() {
-        crate::llm::execute_generation_command(
-            command,
-            &prompt,
-            Some("wt step squash --show-prompt"),
-        )?
-    } else {
-        inputs.generate_message()?
-    };
+    let message = inputs.generate_message()?;
     print_dry_run(&prompt, &commit_config, &message)
 }

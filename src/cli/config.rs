@@ -62,7 +62,7 @@ Invoke-Expression (& wt config shell init powershell | Out-String)
     )]
     Init {
         /// Shell to generate code for
-        #[arg(value_enum)]
+        #[arg(value_enum, value_name = super::shell_value_name())]
         shell: Shell,
 
         /// Command name for shell integration (defaults to binary name)
@@ -95,7 +95,7 @@ Use --yes to skip confirmation."#
     )]
     Install {
         /// Shell to install (default: all)
-        #[arg(value_enum)]
+        #[arg(value_enum, value_name = super::shell_value_name())]
         shell: Option<Shell>,
 
         /// Show what would be changed
@@ -140,7 +140,7 @@ Uninstall removes every worktrunk-managed integration it finds, regardless of:
     )]
     Uninstall {
         /// Shell to uninstall (default: all)
-        #[arg(value_enum)]
+        #[arg(value_enum, value_name = super::shell_value_name())]
         shell: Option<Shell>,
 
         /// Show what would be changed
@@ -793,7 +793,7 @@ $ wt config approvals list --format=json | jq -r .state
 
 Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval is required when the command template changes or the project moves.
 
-`--yes` bypasses the prompt, and what it leaves behind depends on the command it is passed to. On a command that runs project commands it grants consent for that run alone and records nothing, so the next run asks again. On `wt config approvals add` the record is the whole point, so the approvals are written — which is how an unattended environment pre-approves a project it has just cloned.
+`--yes` approves project commands for the current run without saving approval. `wt config approvals add --yes` saves approvals for future runs.
 
 ## Reading approval state
 

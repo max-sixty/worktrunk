@@ -1,7 +1,7 @@
 //! `wt step copy-ignored` — copy gitignored files matching `.worktreeinclude`.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use color_print::cformat;
@@ -176,18 +176,7 @@ pub fn step_copy_ignored(
 
     if dry_run {
         if json_mode {
-            let entries: Vec<_> = entries_to_copy
-                .iter()
-                .map(|(src_entry, is_dir)| {
-                    let relative = src_entry
-                        .strip_prefix(&source_path)
-                        .unwrap_or(src_entry.as_path());
-                    serde_json::json!({
-                        "path": relative.to_string_lossy(),
-                        "kind": if *is_dir { "dir" } else { "file" },
-                    })
-                })
-                .collect();
+            let entries = json_entries(&entries_to_copy, &source_path);
             let payload = serde_json::json!({
                 "outcome": "planned",
                 "dry_run": true,
@@ -198,52 +187,19 @@ pub fn step_copy_ignored(
             print_json(&payload)?;
             return Ok(());
         }
-        let items: Vec<String> = entries_to_copy
-            .iter()
-            .map(|(src_entry, is_dir)| {
-                let relative = src_entry
-                    .strip_prefix(&source_path)
-                    .unwrap_or(src_entry.as_path());
-                let entry_type = if *is_dir { "dir" } else { "file" };
-                format!("{} ({})", format_path_for_display(relative), entry_type)
-            })
-            .collect();
-        let entry_word = if items.len() == 1 { "entry" } else { "entries" };
-        // The human preview mirrors the `--format=json` plan (the entries that
-        // would be copied), so it goes to stdout — see /writing-user-outputs.
+        // The preview is primary output, so it goes to stdout.
         println!(
             "{}",
-            info_message(format!(
-                "Would copy {} {}:\n{}",
-                items.len(),
-                entry_word,
-                format_with_gutter(&items.join("\n"), None)
-            ))
+            info_message(format_entries("Would copy", &entries_to_copy, &source_path))
         );
         return Ok(());
     }
 
     // Show entries in verbose mode (text only — JSON mode emits the full list at the end).
     if verbose >= 1 && !json_mode {
-        let items: Vec<String> = entries_to_copy
-            .iter()
-            .map(|(src_entry, is_dir)| {
-                let relative = src_entry
-                    .strip_prefix(&source_path)
-                    .unwrap_or(src_entry.as_path());
-                let entry_type = if *is_dir { "dir" } else { "file" };
-                format!("{} ({})", format_path_for_display(relative), entry_type)
-            })
-            .collect();
-        let entry_word = if items.len() == 1 { "entry" } else { "entries" };
         eprintln!(
             "{}",
-            info_message(format!(
-                "Copying {} {}:\n{}",
-                items.len(),
-                entry_word,
-                format_with_gutter(&items.join("\n"), None)
-            ))
+            info_message(format_entries("Copying", &entries_to_copy, &source_path))
         );
     }
 
@@ -294,18 +250,7 @@ pub fn step_copy_ignored(
         // filesystem shared the source's extents. `insert_empty_counts` carries
         // all four through the exits that copy nothing, so a consumer never
         // branches on a key's presence.
-        let entries: Vec<_> = entries_to_copy
-            .iter()
-            .map(|(src_entry, is_dir)| {
-                let relative = src_entry
-                    .strip_prefix(&source_path)
-                    .unwrap_or(src_entry.as_path());
-                serde_json::json!({
-                    "path": relative.to_string_lossy(),
-                    "kind": if *is_dir { "dir" } else { "file" },
-                })
-            })
-            .collect();
+        let entries = json_entries(&entries_to_copy, &source_path);
         let payload = serde_json::json!({
             "outcome": "copied",
             "dry_run": false,
@@ -332,4 +277,36 @@ pub fn step_copy_ignored(
     }
 
     Ok(())
+}
+
+/// Keep planned and completed JSON entry descriptions identical.
+fn json_entries(entries: &[(PathBuf, bool)], source: &Path) -> Vec<serde_json::Value> {
+    entries
+        .iter()
+        .map(|(path, is_dir)| {
+            let relative = path.strip_prefix(source).unwrap_or(path);
+            serde_json::json!({
+                "path": relative.to_string_lossy(),
+                "kind": if *is_dir { "dir" } else { "file" },
+            })
+        })
+        .collect()
+}
+
+/// Shared entry list for the dry-run preview and verbose progress output.
+fn format_entries(action: &str, entries: &[(PathBuf, bool)], source: &Path) -> String {
+    let items: Vec<_> = entries
+        .iter()
+        .map(|(path, is_dir)| {
+            let relative = path.strip_prefix(source).unwrap_or(path);
+            let kind = if *is_dir { "dir" } else { "file" };
+            format!("{} ({kind})", format_path_for_display(relative))
+        })
+        .collect();
+    let word = if items.len() == 1 { "entry" } else { "entries" };
+    format!(
+        "{action} {} {word}:\n{}",
+        items.len(),
+        format_with_gutter(&items.join("\n"), None)
+    )
 }

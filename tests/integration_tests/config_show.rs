@@ -1491,76 +1491,6 @@ fn test_config_show_full_not_configured(mut repo: TestRepo, temp_home: TempDir) 
     });
 }
 
-/// Interrupting the version-check child must stop diagnostics before the LLM
-/// probe. Ordinary failures still show the unavailable check and continue.
-#[cfg(unix)]
-#[rstest]
-#[case("kill -INT $$", Some(2))]
-#[case("kill -TERM $$", Some(15))]
-#[case("exit 130", None)]
-fn test_config_show_full_version_check_interruption(
-    mut repo: TestRepo,
-    #[case] command: &str,
-    #[case] signal: Option<i32>,
-) {
-    use std::os::unix::fs::PermissionsExt;
-    use std::os::unix::process::ExitStatusExt;
-
-    repo.setup_mock_ci_tools_unauthenticated();
-    let curl = repo.mock_bin_path().unwrap().join("curl");
-    fs::write(&curl, format!("#!/bin/sh\n{command}\n")).unwrap();
-    fs::set_permissions(&curl, fs::Permissions::from_mode(0o755)).unwrap();
-    let marker = repo.home_path().join("generation-probe");
-    let probe = format!(
-        "printf reached > {}; echo diagnostic-probe",
-        shell_escape::unix::escape(marker.to_string_lossy())
-    );
-    repo.write_test_config(&format!(
-        "[commit.generation]\ncommand = {}\n",
-        serde_json::to_string(&probe).unwrap()
-    ));
-    let output = repo
-        .wt_command()
-        .env_remove("WORKTRUNK_TEST_LATEST_VERSION")
-        .args(["config", "show", "--full"])
-        .output()
-        .unwrap();
-    assert_eq!(output.status.signal(), signal, "{output:?}");
-    assert_eq!(marker.exists(), signal.is_none(), "{output:?}");
-    if signal.is_none() {
-        assert!(output.status.success(), "{output:?}");
-        assert!(String::from_utf8_lossy(&output.stdout).contains("Version check unavailable"));
-    }
-}
-
-/// Native interruption cancels the report; a numeric 130 remains a reported
-/// command failure rather than being mistaken for a signal.
-#[cfg(unix)]
-#[rstest]
-#[case("kill -INT $$", Some(2))]
-#[case("kill -TERM $$", Some(15))]
-#[case("exit 130", None)]
-fn test_config_show_full_commit_generation_interruption(
-    repo: TestRepo,
-    #[case] command: &str,
-    #[case] signal: Option<i32>,
-) {
-    use std::os::unix::process::ExitStatusExt;
-
-    repo.write_test_config(&format!("[commit.generation]\ncommand = {command:?}\n"));
-    let output = repo
-        .wt_command()
-        .env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
-        .args(["config", "show", "--full"])
-        .output()
-        .unwrap();
-    assert_eq!(output.status.signal(), signal, "{output:?}");
-    if signal.is_none() {
-        assert!(output.status.success(), "{output:?}");
-        assert!(String::from_utf8_lossy(&output.stdout).contains("Commit generation failed"));
-    }
-}
-
 /// A successful connectivity probe is existing state, and includes the actual
 /// response from the configured command in the diagnostic report.
 #[rstest]
@@ -7406,6 +7336,9 @@ fn test_config_show_rejects_semantically_invalid_user_config(
     assert_eq!(output.status.code(), Some(1));
     if args.contains(&"--format=json") {
         serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("User config @"), "{stderr}");
+        assert!(stderr.contains("worktree-path cannot be empty"), "{stderr}");
     } else {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let user_section = stdout
@@ -7443,6 +7376,9 @@ fn test_config_show_rejects_semantically_invalid_system_config(
     assert_eq!(output.status.code(), Some(1));
     if args.contains(&"--format=json") {
         serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("System config @"), "{stderr}");
+        assert!(stderr.contains("worktree-path cannot be empty"), "{stderr}");
         return;
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -7498,13 +7434,12 @@ fn test_config_show_json_rejects_invalid_custom_column(repo: TestRepo, temp_home
     let output = cmd.output().unwrap();
     assert_eq!(output.status.code(), Some(1));
     serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
-    assert!(output.stderr.is_empty());
+    insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr).ansi_strip(), @"✗ Invalid [list.custom-columns.ticket] width: must be at least 1");
 }
 
 #[rstest]
 fn test_config_show_json_rejects_invalid_system_config(repo: TestRepo, temp_home: TempDir) {
-    let system_config_dir = tempfile::tempdir().unwrap();
-    let system_config_path = system_config_dir.path().join("config.toml");
+    let system_config_path = repo.root_path().join("system-config.toml");
     fs::write(&system_config_path, "invalid = [toml\n").unwrap();
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
@@ -7526,6 +7461,22 @@ fn test_config_show_json_rejects_invalid_system_config(repo: TestRepo, temp_home
         json["user"]["config"].is_object(),
         "a broken system source must not erase valid user config"
     );
+    let mut settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    crate::common::add_path_placeholder_filter(
+        &mut settings,
+        r"_REPO_/system-config\.toml",
+        "[SYSTEM_CONFIG]",
+    );
+    settings.bind(|| {
+        insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr).ansi_strip(), @"
+        ▲ System config @ [SYSTEM_CONFIG] failed to parse, skipping
+          TOML parse error at line 1, column 16
+            |
+          1 | invalid = [toml
+            |                ^
+          unclosed array, expected `]`
+        ");
+    });
 }
 
 #[rstest]
@@ -7544,6 +7495,9 @@ fn test_config_show_json_rejects_unreadable_system_config(repo: TestRepo, temp_h
     assert_eq!(output.status.code(), Some(1));
     let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
     assert_eq!(json["system"]["exists"], true);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("System config @"), "{stderr}");
+    assert!(stderr.contains("Cannot read config"), "{stderr}");
 }
 
 #[rstest]
@@ -7558,6 +7512,16 @@ fn test_config_show_json_rejects_invalid_approvals_file(repo: TestRepo) {
 
     assert_eq!(output.status.code(), Some(1));
     serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    setup_snapshot_settings(&repo).bind(|| {
+        insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr).ansi_strip(), @"
+        ✗ Approvals @ [TEST_APPROVALS] failed to parse
+          TOML parse error at line 1, column 5
+            |
+          1 | not valid TOML [[[
+            |     ^
+          key with no value, expected `=`
+        ");
+    });
 }
 
 #[rstest]
@@ -7574,6 +7538,16 @@ fn test_config_show_json_rejects_invalid_user_config(repo: TestRepo) {
     let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
     assert_eq!(json["user"]["exists"], true);
     assert!(json["user"]["config"].is_null());
+    setup_snapshot_settings(&repo).bind(|| {
+        insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr).ansi_strip(), @"
+        ▲ User config @ [TEST_CONFIG] failed to parse, skipping
+          TOML parse error at line 1, column 16
+            |
+          1 | invalid = [toml
+            |                ^
+          unclosed array, expected `]`
+        ");
+    });
 }
 
 #[rstest]
@@ -7590,6 +7564,9 @@ fn test_config_show_json_rejects_unreadable_user_config(repo: TestRepo) {
     let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
     assert_eq!(json["user"]["exists"], true);
     assert!(json["user"]["config"].is_null());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("User config @"), "{stderr}");
+    assert!(stderr.contains("Cannot read config"), "{stderr}");
 }
 
 #[rstest]
@@ -7606,6 +7583,16 @@ fn test_config_show_json_rejects_invalid_project_config(repo: TestRepo) {
     let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
     assert_eq!(json["project"]["exists"], true);
     assert!(json["project"]["config"].is_null());
+    setup_snapshot_settings(&repo).bind(|| {
+        insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr).ansi_strip(), @"
+        ✗ Project config @ _REPO_/.config/wt.toml failed to parse
+          TOML parse error at line 1, column 16
+            |
+          1 | invalid = [toml
+            |                ^
+          unclosed array, expected `]`
+        ");
+    });
 }
 
 #[rstest]
@@ -7623,6 +7610,9 @@ fn test_config_show_json_rejects_unreadable_project_config(repo: TestRepo) {
     let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
     assert_eq!(json["project"]["exists"], true);
     assert!(json["project"]["config"].is_null());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Project config @"), "{stderr}");
+    assert!(stderr.contains("Cannot read config"), "{stderr}");
 }
 
 #[rstest]

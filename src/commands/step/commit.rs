@@ -113,19 +113,11 @@ fn preview_commit(
         println!("{}", prompt);
         return Ok(());
     }
-    let message = if let Some(command) = commit_config.command() {
-        crate::llm::execute_generation_command(
-            command,
-            &prompt,
-            Some("wt step commit --show-prompt"),
-        )?
-    } else {
-        crate::llm::generate_commit_message(
-            &commit_config,
-            &wt,
-            staging_index,
-            project_append.as_deref(),
-        )?
-    };
+    let message = crate::llm::generate_commit_message(
+        &commit_config,
+        &wt,
+        staging_index,
+        project_append.as_deref(),
+    )?;
     print_dry_run(&prompt, &commit_config, &message)
 }
