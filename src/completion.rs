@@ -81,10 +81,9 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
         // A bare `Command` is all the registration needs: clap_complete 4.6.9's
         // `write_registration` reads `cmd.get_name()` and `self.bin` (set below,
         // so its `cmd.get_bin_name()` fallback never fires), and nothing else off
-        // the command. Handing it `completion_command()` instead would build the
-        // whole completion tree — `Repository::current()`, both config loads, and
-        // a scan of every `PATH` directory for `wt-*` — to produce one string, on
-        // the first TAB of every new shell.
+        // the command. Building the completion tree instead would load the
+        // repository and both configs and scan every PATH directory for
+        // `wt-*` to produce one string, on the first TAB of every new shell.
         let name = registration_name();
         let all_args: Vec<OsString> = std::env::args_os().collect();
         let _ = CompleteEnv::with_factory(move || Command::new(name))
@@ -132,7 +131,7 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
     // Completion answers and returns long before `main` reaches its own
     // `Repository::prewarm` call, so without this every one of those reads is
     // a separate fork taken serially, on the one path where the user is
-    // waiting with a finger on Tab: `completion_command`'s alias injection
+    // waiting with a finger on Tab: the completion tree's alias injection
     // needs the configs, and the branch completers below need the discovery
     // caches. Placed after the registration-script return, which resolves no
     // repository at all, and after `suppress_warnings` above, since
@@ -140,17 +139,20 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
     // warnings must not land above the user's prompt.
     Repository::prewarm();
 
+    // Resolve built-ins and aliases once, before considering PATH binaries.
+    // This tree owns the same precedence as runtime dispatch.
+    let cmd = inject_alias_subcommands(cli::build_command());
+
     // If the subcommand word matches a custom-subcommand binary, forward the
     // completion request to it (e.g., `wt sync --<tab>` → `wt-sync --<tab>`).
     // The early parse includes only words before the cursor, so editing the
     // subcommand itself never invokes a binary from PATH.
     if let Some(start) = globals.external_subcommand_index {
         let subcommand = args[start].to_string_lossy();
-        // Only forward to the custom binary if no built-in subcommand has this
-        // name. Built-ins always take precedence at runtime, so completions
-        // must agree.
+        // The early parse excludes built-ins; configured aliases also take
+        // precedence over PATH binaries. Reuse the alias-injected tree.
         let binary = format!("wt-{subcommand}");
-        if cli::build_command().find_subcommand(&*subcommand).is_none()
+        if cmd.find_subcommand(&*subcommand).is_none()
             && let Some(forwarded) = forward_completion_to_custom(
                 &binary,
                 &args[start..],
@@ -166,7 +168,9 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
     }
 
     // Generate completions with filtering
-    let mut cmd = completion_command();
+    let cmd = inject_hook_subcommands(cmd);
+    let cmd = inject_custom_subcommands(cmd);
+    let mut cmd = hide_non_positional_options_for_completion(cmd);
     cmd.build();
 
     // Check if the current word is exactly "-" (single dash)
@@ -195,8 +199,7 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
         if let Some(word) = args_with_double_dash.get_mut(index) {
             *word = OsString::from("--");
         }
-        let mut cmd2 = completion_command();
-        cmd2.build();
+        let mut cmd2 = cmd.clone();
         if let Ok(long_completions) = clap_complete::engine::complete(
             &mut cmd2,
             args_with_double_dash,
@@ -525,14 +528,6 @@ fn registration_name() -> &'static str {
         .or_else(|| Some(crate::binary_name()).filter(is_valid))
         .unwrap_or_else(|| "wt".to_string());
     Box::leak(name.into_boxed_str())
-}
-
-fn completion_command() -> Command {
-    let cmd = cli::build_command();
-    let cmd = inject_alias_subcommands(cmd);
-    let cmd = inject_hook_subcommands(cmd);
-    let cmd = inject_custom_subcommands(cmd);
-    hide_non_positional_options_for_completion(cmd)
 }
 
 /// Inject hook type names as subcommands of `hook` so both completion and
