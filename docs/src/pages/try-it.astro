@@ -12,7 +12,7 @@ const launchUrl = `${server}/launch?snapshot=${encodeURIComponent(snapshot)}`;
 <StarlightPage
   frontmatter={{
     title: 'Try it',
-    description: 'Try Worktrunk in your browser.',
+    description: 'Try Worktrunk in a demo shell',
     editUrl: false,
     tableOfContents: false,
     pagefind: false,
@@ -20,24 +20,19 @@ const launchUrl = `${server}/launch?snapshot=${encodeURIComponent(snapshot)}`;
   }}
 >
   <p>
-    Run Worktrunk in your browser. No installation needed.
+    Try Worktrunk in a demo shell
   </p>
   <p>
-    Nothing downloads until you press Run.{' '}
-    <a href={launchUrl}>Open the full-page demo</a> if your browser cannot run it here.
+    <a href={launchUrl}>Open the full-page demo</a>
   </p>
 
   <div class="wt-try-it" data-server={server} data-snapshot={snapshot}>
     <noscript>
-      <p><a href={launchUrl}>Open the demo</a> — it needs JavaScript.</p>
+      <p><a href={launchUrl}>Open the demo</a></p>
     </noscript>
   </div>
   <p class="wt-try-it-credit">
     Powered by <a href="https://demoshell.com">Demoshell</a>.
-  </p>
-
-  <p>
-    <a href="/#install">Install Worktrunk</a>
   </p>
 </StarlightPage>
 

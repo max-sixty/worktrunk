@@ -108,9 +108,8 @@ fn test_for_each_detached_branch_variable(mut repo: TestRepo) {
 /// literal `HEAD` — a string git resolves as a ref, so the command ran against
 /// the wrong thing instead of saying so.
 #[rstest]
-fn test_for_each_detached_branch_variable_unguarded(mut repo: TestRepo) {
-    repo.add_worktree("detached-test");
-    repo.detach_head_in_worktree("detached-test");
+fn test_for_each_detached_branch_variable_unguarded(repo: TestRepo) {
+    repo.detach_head_in_worktree("feature-b");
 
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
@@ -118,6 +117,57 @@ fn test_for_each_detached_branch_variable_unguarded(mut repo: TestRepo) {
         &["for-each", "--", "echo", "Branch: {{ branch }}"],
         None,
     ));
+}
+
+/// Preparation failures belong to one worktree: retain earlier results and
+/// continue to the next worktree, just as for a child command failure.
+#[rstest]
+fn test_for_each_json_retains_results_after_template_failure(repo: TestRepo) {
+    repo.detach_head_in_worktree("feature-b");
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "for-each",
+            "--format=json",
+            "--",
+            "echo",
+            "{{ branch }}",
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap(), @r#"
+    [
+      {
+        "branch": "main",
+        "path": "_REPO_",
+        "exit_code": 0,
+        "success": true
+      },
+      {
+        "branch": "feature-a",
+        "path": "_REPO_.feature-a",
+        "exit_code": 0,
+        "success": true
+      },
+      {
+        "branch": null,
+        "path": "_REPO_.feature-b",
+        "exit_code": null,
+        "success": false,
+        "error": "Failed to expand for-each argument: undefined variable branch @ line 1"
+      },
+      {
+        "branch": "feature-c",
+        "path": "_REPO_.feature-c",
+        "exit_code": 0,
+        "success": true
+      }
+    ]
+    "#);
 }
 
 #[rstest]

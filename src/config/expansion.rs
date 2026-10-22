@@ -1047,19 +1047,19 @@ pub fn referenced_vars_for_templates<'a>(
 /// a binding candidate for the whole invocation. A syntax error in any
 /// template fails here so the user sees it before flags are routed — a
 /// silent skip could mask a typo and change how subsequent CLI args bind.
-/// `name` labels the failing alias or hook in the error, which matches
-/// [`expand_template`]'s parse-failure shape so syntax errors render
-/// identically wherever they surface.
+/// `label` identifies the failing command in the error, so hooks can retain
+/// their source, type and optional command name while aliases keep their alias
+/// name. The error matches [`expand_template`]'s parse-failure shape.
 pub fn referenced_vars_for_config(
     cfg: &super::CommandConfig,
-    name: &str,
+    label: impl Fn(Option<&str>) -> String,
 ) -> anyhow::Result<BTreeSet<String>> {
     let env = minijinja::Environment::new();
     let mut out = BTreeSet::new();
     for cmd in cfg.commands() {
-        let tmpl = env
-            .template_from_str(&cmd.template)
-            .map_err(|e| build_template_error(&e, &cmd.template, name, Vec::new()))?;
+        let tmpl = env.template_from_str(&cmd.template).map_err(|e| {
+            build_template_error(&e, &cmd.template, &label(cmd.name.as_deref()), Vec::new())
+        })?;
         out.extend(tmpl.undeclared_variables(false));
     }
     Ok(out)
@@ -3413,7 +3413,7 @@ mod tests {
     #[test]
     fn test_referenced_vars_for_config_syntax_error_propagates() {
         let cfg = super::super::CommandConfig::single("echo {{ unclosed");
-        let err = referenced_vars_for_config(&cfg, "deploy").unwrap_err();
+        let err = referenced_vars_for_config(&cfg, |_| "deploy".to_owned()).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("Failed to expand deploy"), "got: {msg}");
         assert!(msg.contains("syntax error"), "got: {msg}");

@@ -7336,6 +7336,9 @@ fn test_config_show_rejects_semantically_invalid_user_config(
     assert_eq!(output.status.code(), Some(1));
     if args.contains(&"--format=json") {
         serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("User config @"), "{stderr}");
+        assert!(stderr.contains("worktree-path cannot be empty"), "{stderr}");
     } else {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let user_section = stdout
@@ -7373,6 +7376,9 @@ fn test_config_show_rejects_semantically_invalid_system_config(
     assert_eq!(output.status.code(), Some(1));
     if args.contains(&"--format=json") {
         serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("System config @"), "{stderr}");
+        assert!(stderr.contains("worktree-path cannot be empty"), "{stderr}");
         return;
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -7428,13 +7434,12 @@ fn test_config_show_json_rejects_invalid_custom_column(repo: TestRepo, temp_home
     let output = cmd.output().unwrap();
     assert_eq!(output.status.code(), Some(1));
     serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
-    assert!(output.stderr.is_empty());
+    insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr).ansi_strip(), @"✗ Invalid [list.custom-columns.ticket] width: must be at least 1");
 }
 
 #[rstest]
 fn test_config_show_json_rejects_invalid_system_config(repo: TestRepo, temp_home: TempDir) {
-    let system_config_dir = tempfile::tempdir().unwrap();
-    let system_config_path = system_config_dir.path().join("config.toml");
+    let system_config_path = repo.root_path().join("system-config.toml");
     fs::write(&system_config_path, "invalid = [toml\n").unwrap();
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
@@ -7456,6 +7461,22 @@ fn test_config_show_json_rejects_invalid_system_config(repo: TestRepo, temp_home
         json["user"]["config"].is_object(),
         "a broken system source must not erase valid user config"
     );
+    let mut settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    crate::common::add_path_placeholder_filter(
+        &mut settings,
+        r"_REPO_/system-config\.toml",
+        "[SYSTEM_CONFIG]",
+    );
+    settings.bind(|| {
+        insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr).ansi_strip(), @"
+        ▲ System config @ [SYSTEM_CONFIG] failed to parse, skipping
+          TOML parse error at line 1, column 16
+            |
+          1 | invalid = [toml
+            |                ^
+          unclosed array, expected `]`
+        ");
+    });
 }
 
 #[rstest]
@@ -7474,6 +7495,9 @@ fn test_config_show_json_rejects_unreadable_system_config(repo: TestRepo, temp_h
     assert_eq!(output.status.code(), Some(1));
     let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
     assert_eq!(json["system"]["exists"], true);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("System config @"), "{stderr}");
+    assert!(stderr.contains("Cannot read config"), "{stderr}");
 }
 
 #[rstest]
@@ -7488,6 +7512,16 @@ fn test_config_show_json_rejects_invalid_approvals_file(repo: TestRepo) {
 
     assert_eq!(output.status.code(), Some(1));
     serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    setup_snapshot_settings(&repo).bind(|| {
+        insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr).ansi_strip(), @"
+        ✗ Approvals @ [TEST_APPROVALS] failed to parse
+          TOML parse error at line 1, column 5
+            |
+          1 | not valid TOML [[[
+            |     ^
+          key with no value, expected `=`
+        ");
+    });
 }
 
 #[rstest]
@@ -7504,6 +7538,16 @@ fn test_config_show_json_rejects_invalid_user_config(repo: TestRepo) {
     let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
     assert_eq!(json["user"]["exists"], true);
     assert!(json["user"]["config"].is_null());
+    setup_snapshot_settings(&repo).bind(|| {
+        insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr).ansi_strip(), @"
+        ▲ User config @ [TEST_CONFIG] failed to parse, skipping
+          TOML parse error at line 1, column 16
+            |
+          1 | invalid = [toml
+            |                ^
+          unclosed array, expected `]`
+        ");
+    });
 }
 
 #[rstest]
@@ -7520,6 +7564,9 @@ fn test_config_show_json_rejects_unreadable_user_config(repo: TestRepo) {
     let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
     assert_eq!(json["user"]["exists"], true);
     assert!(json["user"]["config"].is_null());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("User config @"), "{stderr}");
+    assert!(stderr.contains("Cannot read config"), "{stderr}");
 }
 
 #[rstest]
@@ -7536,6 +7583,16 @@ fn test_config_show_json_rejects_invalid_project_config(repo: TestRepo) {
     let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
     assert_eq!(json["project"]["exists"], true);
     assert!(json["project"]["config"].is_null());
+    setup_snapshot_settings(&repo).bind(|| {
+        insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr).ansi_strip(), @"
+        ✗ Project config @ _REPO_/.config/wt.toml failed to parse
+          TOML parse error at line 1, column 16
+            |
+          1 | invalid = [toml
+            |                ^
+          unclosed array, expected `]`
+        ");
+    });
 }
 
 #[rstest]
@@ -7553,6 +7610,9 @@ fn test_config_show_json_rejects_unreadable_project_config(repo: TestRepo) {
     let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
     assert_eq!(json["project"]["exists"], true);
     assert!(json["project"]["config"].is_null());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Project config @"), "{stderr}");
+    assert!(stderr.contains("Cannot read config"), "{stderr}");
 }
 
 #[rstest]
