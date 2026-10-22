@@ -473,6 +473,7 @@ fn advance_target(
         Ok(_) => {
             format!("Syncing the {target_branch} worktree failed; the ref change was rolled back")
         }
+        Err(rollback_err) if rollback_err.interrupt_signal().is_some() => return Err(rollback_err),
         // Only a third writer moving the ref inside this window can land here;
         // report the state that remains rather than guessing at a fix.
         Err(rollback_err) => format!(
