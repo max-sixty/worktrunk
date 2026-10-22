@@ -107,8 +107,8 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
     // a config filename or directory. Reuse runtime parsing so attached flag
     // values and globals after built-in subcommands follow the same rules.
     let globals = crate::parse_early_globals(args.iter().take(index).cloned());
+    let current_dir = globals.directory.clone().or(current_dir);
     crate::apply_global_options(globals.directory, globals.config, globals.config_overrides);
-    let current_dir = std::env::current_dir().ok();
 
     // Completion exits before `main`'s `logging::init`, so the normal
     // `-v`/`-vv` pipeline never runs here. `WORKTRUNK_VERBOSE` opts this
@@ -148,9 +148,13 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
         if cli::build_command().find_subcommand(&*subcommand).is_none()
             && which::which(&binary).is_ok()
         {
-            if let Some(forwarded) =
-                forward_completion_to_custom(&binary, &args[start..], &shell_name, start)
-            {
+            if let Some(forwarded) = forward_completion_to_custom(
+                &binary,
+                &args[start..],
+                &shell_name,
+                start,
+                current_dir.as_deref(),
+            ) {
                 let _ = std::io::stdout().write_all(forwarded.as_bytes());
                 CONTEXT.with(|ctx| ctx.borrow_mut().take());
                 return true;
@@ -820,8 +824,9 @@ fn forward_completion_to_custom(
     args: &[OsString],
     shell: &OsStr,
     removed_words: usize,
+    current_dir: Option<&std::path::Path>,
 ) -> Option<String> {
-    try_forward_completion_to_custom(binary, args, shell, removed_words)
+    try_forward_completion_to_custom(binary, args, shell, removed_words, current_dir)
         .ok()
         .flatten()
 }
@@ -835,6 +840,7 @@ fn try_forward_completion_to_custom(
     args: &[OsString],
     shell: &OsStr,
     removed_words: usize,
+    current_dir: Option<&std::path::Path>,
 ) -> std::io::Result<Option<String>> {
     // Build args for the custom binary: [binary_name, rest_args...]
     let mut child_args: Vec<OsString> = vec![OsString::from(binary)];
@@ -847,6 +853,9 @@ fn try_forward_completion_to_custom(
         .map(|i| i.saturating_sub(removed_words));
 
     let mut cmd = std::process::Command::new(binary);
+    if let Some(dir) = current_dir {
+        cmd.current_dir(dir);
+    }
     cmd.arg("--");
     cmd.args(&child_args);
     cmd.env("COMPLETE", shell);
@@ -1243,6 +1252,7 @@ mod tests {
             &[OsString::from("test")],
             OsStr::new("bash"),
             1,
+            None,
         );
         assert!(result.is_none());
     }
@@ -1266,7 +1276,7 @@ mod tests {
         use std::io::ErrorKind;
         let mut result: Option<std::io::Result<Option<String>>> = None;
         worktrunk::testing::wait_for("ETXTBSY to clear and script to exec", || {
-            match try_forward_completion_to_custom(binary, args, shell, 1) {
+            match try_forward_completion_to_custom(binary, args, shell, 1, None) {
                 Err(e) if e.kind() == ErrorKind::ExecutableFileBusy => false,
                 other => {
                     result = Some(other);
