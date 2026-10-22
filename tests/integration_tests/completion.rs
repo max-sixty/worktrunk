@@ -892,42 +892,6 @@ fn test_complete_hook_subcommands(repo: TestRepo) {
     assert!(!subcommands.contains(&"pre-merge"));
 }
 
-/// Hook types in option values, filters, or words after the cursor do not
-/// change the hook whose command names are completed.
-#[rstest]
-fn test_hook_completion_uses_parsed_subcommand(repo: TestRepo) {
-    let config = r#"
-[pre-merge]
-expected = "echo expected"
-[pre-switch]
-wrong-hook = "echo wrong"
-"#;
-    repo.write_test_config(config);
-    std::fs::write(repo.root_path().join("pre-switch"), config).unwrap();
-
-    for (args, index) in [
-        (
-            vec!["wt", "--config", "pre-switch", "hook", "pre-merge", ""],
-            5,
-        ),
-        (vec!["wt", "hook", "pre-merge", "pre-switch", ""], 4),
-        (vec!["wt", "hook", "pre-merge", "", "pre-switch"], 3),
-    ] {
-        let output = repo
-            .completion_cmd(&args)
-            .env("_CLAP_COMPLETE_INDEX", index.to_string())
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "{args:?}: {output:?}");
-        let stdout = String::from_utf8(output.stdout).unwrap();
-        assert_eq!(
-            value_suggestions(&stdout),
-            ["expected"],
-            "{args:?}: {stdout}"
-        );
-    }
-}
-
 /// Cross-shell completion contract for hook command names.
 ///
 /// Same contract as branch completions (test_completion_cross_shell_filtering_contract):
@@ -2575,4 +2539,40 @@ fn test_completion_registration_falls_back_when_binary_name_is_invalid() {
         stdout.contains("-F _clap_complete_wt wt"),
         "an invalid binary name must fall back to `wt`, got:\n{stdout}"
     );
+}
+
+/// Hook types in option values, filters, or words after the cursor do not
+/// change the hook whose command names are completed.
+#[rstest]
+fn test_hook_completion_uses_parsed_subcommand(repo: TestRepo) {
+    let config = r#"
+[pre-merge]
+expected = "echo expected"
+[pre-switch]
+wrong-hook = "echo wrong"
+"#;
+    repo.write_test_config(config);
+    std::fs::write(repo.root_path().join("pre-switch"), config).unwrap();
+
+    for (args, index) in [
+        (
+            vec!["wt", "--config", "pre-switch", "hook", "pre-merge", ""],
+            5,
+        ),
+        (vec!["wt", "hook", "pre-merge", "pre-switch", ""], 4),
+        (vec!["wt", "hook", "pre-merge", "", "pre-switch"], 3),
+    ] {
+        let output = repo
+            .completion_cmd(&args)
+            .env("_CLAP_COMPLETE_INDEX", index.to_string())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{args:?}: {output:?}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert_eq!(
+            value_suggestions(&stdout),
+            ["expected"],
+            "{args:?}: {stdout}"
+        );
+    }
 }
