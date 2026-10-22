@@ -107,6 +107,20 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
         return true;
     }
 
+    // Determine the index of the word being completed.
+    // - Bash/Zsh: Pass `_CLAP_COMPLETE_INDEX` env var with the cursor position
+    // - Fish/Nushell: Append the current token as the last argument, so index = len - 1
+    let index: usize = std::env::var("_CLAP_COMPLETE_INDEX")
+        .ok()
+        .and_then(|i| i.parse().ok())
+        .unwrap_or_else(|| args.len() - 1);
+
+    // Only completed words can set globals: the cursor may still be editing
+    // a config filename or directory. Reuse runtime parsing so attached flag
+    // values and globals after built-in subcommands follow the same rules.
+    let globals = crate::parse_early_globals(args.iter().take(index).cloned());
+    crate::apply_global_options(globals.directory, globals.config, globals.config_overrides);
+
     // Fill the git-discovery, git-config, and user-config caches on three
     // concurrent threads, exactly as `main` does before dispatching a command.
     // Completion answers and returns long before `main` reaches its own
@@ -145,14 +159,6 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
     // Generate completions with filtering
     let mut cmd = completion_command();
     cmd.build();
-
-    // Determine the index of the word being completed.
-    // - Bash/Zsh: Pass `_CLAP_COMPLETE_INDEX` env var with the cursor position
-    // - Fish/Nushell: Append the current token as the last argument, so index = len - 1
-    let index: usize = std::env::var("_CLAP_COMPLETE_INDEX")
-        .ok()
-        .and_then(|i| i.parse().ok())
-        .unwrap_or_else(|| args.len() - 1);
 
     // Check if the current word is exactly "-" (single dash)
     // If so, we want to show both short flags (-h) AND long flags (--help)

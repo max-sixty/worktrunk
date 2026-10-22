@@ -783,7 +783,7 @@ fn parse_cli() -> Cli {
         config_overrides,
         alias_help_context,
         subcommand,
-    } = parse_early_globals();
+    } = parse_early_globals(std::env::args_os());
     apply_global_options(directory, config, config_overrides);
 
     // Handle --help with pager before clap processes it.
@@ -854,11 +854,11 @@ struct EarlyGlobals {
 /// Using `cli::build_command()` rather than a hand-rolled mini-command keeps
 /// the global-flag definitions in one place (the derive on `Cli`), so renaming
 /// `-C` or adding a value-taking global doesn't silently desync this path.
-fn parse_early_globals() -> EarlyGlobals {
+fn parse_early_globals(args: impl IntoIterator<Item = std::ffi::OsString>) -> EarlyGlobals {
     let cmd = cli::build_command()
         .ignore_errors(true)
         .disable_help_flag(true);
-    let Ok(matches) = cmd.try_get_matches_from(std::env::args_os()) else {
+    let Ok(matches) = cmd.try_get_matches_from(args) else {
         return EarlyGlobals::default();
     };
     let directory = matches.get_one::<std::path::PathBuf>("directory").cloned();

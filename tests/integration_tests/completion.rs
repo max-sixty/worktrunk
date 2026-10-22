@@ -1464,6 +1464,64 @@ fn test_complete_single_dash_shows_both_short_and_long_flags(repo: TestRepo) {
     }
 }
 
+/// A completed -C option selects the repository used by branch completion.
+#[rstest]
+fn test_completion_respects_directory_option(repo: TestRepo) {
+    let other = TestRepo::new();
+    other.create_branch("only-in-selected-repo");
+    repo.create_branch("only-in-original-repo");
+    let path = other.root_path().to_str().unwrap();
+    for args in [
+        vec!["wt", "-C", path, "switch", ""],
+        vec!["wt", "switch", "-C", path, ""],
+    ] {
+        let output = repo.completion_cmd(&args).output().unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("only-in-selected-repo"), "{stdout}");
+        assert!(!stdout.contains("only-in-original-repo"), "{stdout}");
+    }
+}
+
+/// Completion uses explicit config files and inline overrides, while a value
+/// still being edited at the cursor does not replace the active config.
+#[rstest]
+fn test_completion_respects_config_options(repo: TestRepo) {
+    repo.write_test_config("[aliases]\noriginal-alias = 'echo original'\n");
+    let config_dir = crate::common::test_tempdir();
+    let config = config_dir.path().join("config.toml");
+    std::fs::write(&config, "[aliases]\nselected-alias = 'echo selected'\n").unwrap();
+    let path = config.to_str().unwrap();
+    let attached = format!("--config={path}");
+    for args in [
+        vec!["wt", "--config", path, ""],
+        vec!["wt", &attached, ""],
+        vec![
+            "wt",
+            "--config-set",
+            "aliases.selected-alias='echo inline'",
+            "",
+        ],
+    ] {
+        let output = repo.completion_cmd(&args).output().unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("selected-alias"), "{stdout}");
+    }
+
+    // The shell reports a cursor in the middle of an existing command line.
+    // Its later --config words must not affect the alias candidates here.
+    let output = repo
+        .completion_cmd(&["wt", "", "--config", path])
+        .env("_CLAP_COMPLETE_INDEX", "1")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("original-alias"), "{stdout}");
+    assert!(!stdout.contains("selected-alias"), "{stdout}");
+}
+
 /// `wt config alias show <TAB>` and `wt config alias dry-run <TAB>` complete
 /// with the merged user + project alias name set.
 #[rstest]
