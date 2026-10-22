@@ -1696,14 +1696,10 @@ pub fn handle_vars_list(branch: Option<String>, format: SwitchFormat) -> anyhow:
     let branch_name =
         repo.require_selected_branch(branch.as_deref().unwrap_or("@"), "list variables")?;
 
-    let entries: Vec<_> = repo.load_vars_entries(&branch_name)?.into_iter().collect();
+    let entries = repo.load_vars_entries(&branch_name)?;
 
     if format == SwitchFormat::Json {
-        let obj: serde_json::Map<String, serde_json::Value> = entries
-            .into_iter()
-            .map(|(k, v)| (k, serde_json::Value::String(v)))
-            .collect();
-        print_json(&obj)?;
+        print_json(&entries)?;
     } else if entries.is_empty() {
         eprintln!(
             "{}",
