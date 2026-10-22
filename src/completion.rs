@@ -111,7 +111,7 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
     // Completion answers and returns long before `main` reaches its own
     // `Repository::prewarm` call, so without this every one of those reads is
     // a separate fork taken serially, on the one path where the user is
-    // waiting with a finger on Tab: `completion_command`'s alias injection
+    // waiting with a finger on Tab: the completion tree's alias injection
     // needs the configs, and the branch completers below need the discovery
     // caches. Placed after the registration-script return, which resolves no
     // repository at all, and after `suppress_warnings` above, since
