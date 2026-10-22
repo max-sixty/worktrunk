@@ -188,7 +188,9 @@ impl Repository {
     /// through our coherent `set_config_value` helper.
     pub fn vars_entries(&self, branch: &str) -> std::collections::BTreeMap<String, String> {
         let escaped = regex::escape(branch);
-        let pattern = format!(r"^worktrunk\.state\.{escaped}\.vars\.");
+        // A variable name cannot contain dots. Anchor it so `main` does not
+        // also read variables belonging to a branch like `main.vars.feature`.
+        let pattern = format!(r"^worktrunk\.state\.{escaped}\.vars\.[^.]+$");
         let prefix = format!("worktrunk.state.{branch}.vars.");
         self.config_regexp_entries(&pattern)
             .unwrap_or_default()

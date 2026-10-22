@@ -2950,6 +2950,95 @@ fn test_vars_clear_with_branch_flag(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_vars_branch_prefix_does_not_select_other_branch(repo: TestRepo) {
+    repo.run_git(&["branch", "main.vars.feature"]);
+    repo.run_git(&["config", "worktrunk.state.main.vars.env", "local"]);
+    repo.run_git(&[
+        "config",
+        "worktrunk.state.main.vars.feature.vars.env",
+        "remote",
+    ]);
+
+    let output = wt_state_cmd(&repo, "vars", "list", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let listed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(listed, serde_json::json!({"env": "local"}));
+
+    let output = wt_state_cmd(&repo, "vars", "clear", &["--all"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        repo.git_output(&[
+            "config",
+            "--get",
+            "worktrunk.state.main.vars.feature.vars.env"
+        ]),
+        "remote"
+    );
+    let output = wt_state_cmd(&repo, "vars", "list", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
+        serde_json::json!({})
+    );
+}
+
+#[cfg(unix)]
+#[rstest]
+#[case("exit 128", None)]
+#[case("kill -INT $$", Some(2))]
+#[case("kill -TERM $$", Some(15))]
+fn test_vars_clear_all_propagates_read_failure(
+    repo: TestRepo,
+    #[case] failure: &str,
+    #[case] signal: Option<i32>,
+) {
+    use std::os::unix::{fs::PermissionsExt, process::ExitStatusExt};
+
+    repo.run_git(&["config", "worktrunk.state.main.vars.env", "local"]);
+    let scratch = crate::common::test_tempdir();
+    let script = scratch.path().join("git");
+    let reached = scratch.path().join("reached");
+    let real_git = which::which("git").unwrap();
+    std::fs::write(
+        &script,
+        format!(
+            r#"#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = --get-regexp ]; then
+    echo reached > {reached}
+    {failure}
+  fi
+done
+exec {real_git} "$@"
+"#,
+            reached = shell_escape::unix::escape(reached.to_string_lossy()),
+            real_git = shell_escape::unix::escape(real_git.to_string_lossy()),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut path = vec![scratch.path().to_path_buf()];
+    path.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    let output = wt_state_cmd(&repo, "vars", "clear", &["--all"])
+        .env("PATH", std::env::join_paths(path).unwrap())
+        .output()
+        .unwrap();
+    assert!(reached.exists(), "the variable query must run: {output:?}");
+    assert!(!output.status.success(), "{output:?}");
+    assert_eq!(output.status.signal(), signal, "{output:?}");
+    assert_eq!(
+        repo.git_output(&["config", "--get", "worktrunk.state.main.vars.env"]),
+        "local"
+    );
+}
+
+#[rstest]
 fn test_vars_branch_with_dots_in_name(repo: TestRepo) {
     // Branch names with dots are common (e.g., "feature.auth") and contain
     // regex metacharacters. Vars must round-trip correctly despite the dots.

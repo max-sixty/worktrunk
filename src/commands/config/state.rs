@@ -1732,18 +1732,15 @@ pub fn handle_vars_clear(
             anyhow::bail!("Specify a key to clear, or use --all to clear all keys");
         }
         (true, _) => {
-            let entries: Vec<_> = repo.vars_entries(&branch_name).into_iter().collect();
-            if entries.is_empty() {
+            let escaped = regex::escape(&branch_name);
+            let pattern = format!(r"^worktrunk\.state\.{escaped}\.vars\.[^.]+$");
+            let count = clear_matching_config(&repo, &pattern)?;
+            if count == 0 {
                 eprintln!(
                     "{}",
                     info_message(cformat!("No variables for <bold>{branch_name}</>"))
                 );
             } else {
-                let count = entries.len();
-                for (key, _) in entries {
-                    let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
-                    repo.unset_config(&config_key)?;
-                }
                 eprintln!(
                     "{}",
                     success_message(cformat!(
