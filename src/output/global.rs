@@ -24,7 +24,7 @@ use anyhow::Context as _;
 use color_print::cformat;
 use std::sync::{Mutex, OnceLock};
 
-use worktrunk::git::WorktrunkError;
+use worktrunk::git::{ErrorExt, WorktrunkError};
 use worktrunk::shell_exec::Cmd;
 use worktrunk::shell_exec::{
     DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_EXEC_FILE_ENV_VAR, RETIRED_DIRECTIVE_FILE_ENV_VAR,
@@ -338,7 +338,12 @@ pub(crate) fn format_exec_argv(argv: &[String]) -> String {
 /// The caller names the directory rather than reading one the shell directive
 /// left behind: the program goes where the switch pointed, whether or not the
 /// user's shell follows it there.
-pub fn execute(argv: Vec<String>, dir: &Path) -> anyhow::Result<()> {
+/// JSON callers route stdout to stderr to keep their result stream separate.
+pub fn execute(
+    argv: Vec<String>,
+    dir: &Path,
+    redirect_stdout_to_stderr: bool,
+) -> anyhow::Result<()> {
     if argv.first().is_none_or(String::is_empty) {
         anyhow::bail!("--execute requires a non-empty program");
     }
@@ -350,9 +355,14 @@ pub fn execute(argv: Vec<String>, dir: &Path) -> anyhow::Result<()> {
     let cmd = Cmd::new(program)
         .args(argv)
         .inherit_stdin()
-        .forward_signals()
+        .hand_off_terminal()
         .current_dir(dir)
         .scrub_git_discovery_env();
+    let cmd = if redirect_stdout_to_stderr {
+        cmd.stdout(std::process::Stdio::from(std::io::stderr()))
+    } else {
+        cmd
+    };
     #[cfg(unix)]
     let cmd = cmd.propagate_sigpipe();
 
@@ -362,10 +372,16 @@ pub fn execute(argv: Vec<String>, dir: &Path) -> anyhow::Result<()> {
 /// Preserve a user program's status without printing wt's own error afterward.
 fn suppress_child_exit_message(result: anyhow::Result<()>) -> anyhow::Result<()> {
     if let Err(err) = result {
+        if let Some(signal) = err.interrupt_signal() {
+            return Err(WorktrunkError::Interrupted { signal, hint: None }.into());
+        }
         if let Some(WorktrunkError::ChildProcessExited { code, .. }) =
             err.downcast_ref::<WorktrunkError>()
         {
-            return Err(WorktrunkError::AlreadyDisplayed { exit_code: *code }.into());
+            let exit_code = *code;
+            // Retain the typed child failure for structured output while the
+            // context marker keeps the normal stderr presentation silent.
+            return Err(err.context(WorktrunkError::AlreadyDisplayed { exit_code }));
         }
         return Err(err);
     }

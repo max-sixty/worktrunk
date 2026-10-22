@@ -2506,16 +2506,14 @@ fn sync_terminal_style_manifest(project_root: &Path) -> (Vec<String>, Vec<String
         return (errors, updated_files);
     }
 
-    let generated = format!(
-        "{}\n",
-        serde_json::to_string_pretty(
-            &blocks
-                .into_iter()
-                .map(|(plain, lines)| serde_json::json!({ "plain": plain, "lines": lines }))
-                .collect::<Vec<_>>()
-        )
-        .unwrap()
+    let mut manifest = serde_json::Value::Array(
+        blocks
+            .into_iter()
+            .map(|(plain, lines)| serde_json::json!({ "plain": plain, "lines": lines }))
+            .collect(),
     );
+    manifest.sort_all_objects();
+    let generated = format!("{}\n", serde_json::to_string_pretty(&manifest).unwrap());
     let rel_path = "docs/src/generated/terminal-styles.json";
     let dst = project_root.join(rel_path);
     if fs::read_to_string(&dst).unwrap_or_default() != generated {
@@ -2865,6 +2863,8 @@ fn test_no_nested_auto_generated_markers() {
 ///
 /// Only pages the sidebar names are checked. A page may carry an order without
 /// a sidebar entry (`code-signing.md`); the order still places it in llms.txt.
+/// An Astro page (`docs/src/pages/try-it.astro`) is not in llms.txt, so it has
+/// no order to agree with.
 #[test]
 fn test_sidebar_matches_frontmatter_order() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -2882,6 +2882,11 @@ fn test_sidebar_matches_frontmatter_order() {
         .map(|link| match link.trim_matches('/') {
             "" => "worktrunk".to_string(),
             slug => slug.to_string(),
+        })
+        .filter(|slug| {
+            !project_root
+                .join(format!("docs/src/pages/{slug}.astro"))
+                .exists()
         })
         .collect();
 

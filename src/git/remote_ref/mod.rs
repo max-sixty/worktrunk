@@ -114,6 +114,20 @@ pub fn fetch_info(
     }
 }
 
+/// Whether `forge`'s CLI holds a login for `host`.
+///
+/// Each CLI answers from its own local state, so the answer needs no network
+/// and a lost connection never reads as logged out. Azure CLI logins aren't
+/// per host, so `host` doesn't apply to Azure DevOps.
+pub fn is_authed_for(forge: ForgeKind, host: &str) -> anyhow::Result<bool> {
+    Ok(match forge {
+        ForgeKind::GitHub => github::is_authed_for(host),
+        ForgeKind::GitLab => gitlab::is_authed_for(host),
+        ForgeKind::Gitea => gitea::is_authed_for(host)?,
+        ForgeKind::AzureDevOps => azure::is_logged_in(),
+    })
+}
+
 /// Get the fetch ref path for a forge PR/MR.
 pub fn ref_path(forge: ForgeKind, number: u32) -> String {
     match forge {
@@ -177,12 +191,18 @@ pub(super) fn cli_api_error_details(output: &Output) -> String {
 /// gutter carries the CLI's verdict on it. A backend with something of its own
 /// to say — the cases in the module docs — passes it as `message` rather than
 /// bailing, so its words are added to the CLI's rather than substituted for
-/// them.
-pub(super) fn cli_api_error(ref_type: RefType, message: String, output: &Output) -> anyhow::Error {
+/// them. Recovery commands belong in `hint`, rendered separately from diagnosis.
+pub(super) fn cli_api_error(
+    ref_type: RefType,
+    message: String,
+    output: &Output,
+    hint: Option<String>,
+) -> anyhow::Error {
     GitError::CliApiError {
         ref_type,
         message,
         stderr: cli_api_error_details(output),
+        hint,
     }
     .into()
 }
@@ -200,9 +220,11 @@ pub(super) fn extract_host_from_html_url(html_url: &str) -> anyhow::Result<Strin
         .with_context(|| format!("Failed to parse host from PR URL: {html_url}"))
 }
 
-pub(super) fn cli_config_value(tool: &str, key: &str) -> Option<String> {
+/// `<tool> config get <args>`, trimmed; `None` if the CLI can't answer.
+pub(super) fn cli_config_value(tool: &str, args: &[&str]) -> Option<String> {
     Cmd::new(tool)
-        .args(["config", "get", key])
+        .args(["config", "get"])
+        .args(args.iter().copied())
         .run()
         .ok()
         .filter(|output| output.status.success())
@@ -213,8 +235,8 @@ pub(super) fn cli_config_value(tool: &str, key: &str) -> Option<String> {
 ///
 /// Matches by owner/repo only (host is not required to match). This handles
 /// SSH host aliases where the local hostname differs from the API hostname.
-/// The suggested URL in the error respects each platform's configured git
-/// protocol (SSH vs HTTPS).
+/// The suggested URL comes from the API when available, otherwise it respects
+/// the platform's configured git protocol (SSH vs HTTPS).
 pub fn find_remote(repo: &Repository, info: &RemoteRefInfo) -> Result<String, GitError> {
     // Azure DevOps URLs don't fit the host/owner/repo shape that `find_remote_for_repo`
     // assumes (the parser stores `{org}/{project}/_git` in owner). Use the dedicated
@@ -259,12 +281,7 @@ pub fn find_remote(repo: &Repository, info: &RemoteRefInfo) -> Result<String, Gi
                 base_repo,
                 ..
             } => github::fork_remote_url(host, base_owner, base_repo),
-            PlatformData::Gitea {
-                host,
-                base_owner,
-                base_repo,
-                ..
-            } => gitea::fork_remote_url(host, base_owner, base_repo),
+            PlatformData::Gitea { base_clone_url, .. } => base_clone_url.clone(),
             PlatformData::GitLab {
                 host,
                 base_owner,

@@ -579,8 +579,8 @@ pub struct CollectOptions {
     /// Built once during the pre-skeleton phase (or during single-item
     /// population) and shared (cheaply, behind `Arc`) into every task.
     /// Tasks resolve target ref names to commit SHAs through this snapshot,
-    /// then call the `_by_sha` variants of cached methods — bypassing the
-    /// ambient ref→SHA cache entirely. The full list path may include
+    /// then call the `_by_sha` variants of cached methods, so every task
+    /// reads the same point-in-time ref state. The full list path may include
     /// batched ahead/behind data; single-item callers intentionally use a
     /// plain ref snapshot and let per-row tasks fall back to per-pair
     /// queries. `None` when capture failed (degraded mode).
@@ -751,6 +751,11 @@ fn render_reveal(
         .collect()
 }
 
+fn format_loading_footer(footer_base: &str) -> String {
+    let dim = Style::new().dimmed();
+    format!("{INFO_SYMBOL} {dim}{footer_base} — loading details…{dim:#}")
+}
+
 /// Build the progressive-table footer shown while the drain is stalled.
 ///
 /// Pure so it can be snapshot-tested without spinning up the live table.
@@ -758,8 +763,6 @@ fn render_reveal(
 /// `pending_count` is the total outstanding-result count (≥ 1).
 fn format_stall_footer(
     footer_base: &str,
-    completed: usize,
-    total: usize,
     pending_count: usize,
     first_kind: TaskKind,
     first_name: &str,
@@ -773,9 +776,7 @@ fn format_stall_footer(
             "waiting on {pending_count} tasks, including <underline>{kind_name}</> for <underline>{first_name}</>"
         )
     };
-    cformat!(
-        "{INFO_SYMBOL} {dim}{footer_base} ({completed}/{total} loaded, no recent progress; {waiting_clause}){dim:#}"
-    )
+    cformat!("{INFO_SYMBOL} {dim}{footer_base} — no recent progress; {waiting_clause}{dim:#}")
 }
 
 /// Caps on the message shown per failed task: at most `MAX_LINES` lines,
@@ -1247,7 +1248,7 @@ pub fn collect(
             // Check if worktree is at its expected path based on config
             // template. A detached worktree has no branch to imply a path, so
             // it isn't off-template — it has its own `⊘`, and flagging it here
-            // too would spend the `⚑` on a state the row already reports.
+            // too would spend the `⚐` on a state the row already reports.
             let branch_worktree_mismatch =
                 wt.branch.is_some() && !is_worktree_at_expected_path(wt, repo, repo.user_config());
 
@@ -1513,27 +1514,9 @@ pub fn collect(
 
     // Track expected results per item - populated as spawns are queued
     let expected_results = std::sync::Arc::new(ExpectedResults::default());
-    let num_worktrees = all_items
-        .iter()
-        .filter(|item| item.worktree_data().is_some())
-        .count();
-    let num_local_branches = branches_without_worktrees.len();
-    let num_remote_branches = remote_branches.len();
-
-    let footer_base =
-        if (show_branches && num_local_branches > 0) || (show_remotes && num_remote_branches > 0) {
-            let mut parts = vec![format!("{} worktrees", num_worktrees)];
-            if show_branches && num_local_branches > 0 {
-                parts.push(format!("{} branches", num_local_branches));
-            }
-            if show_remotes && num_remote_branches > 0 {
-                parts.push(format!("{} remote branches", num_remote_branches));
-            }
-            format!("Showing {}", parts.join(", "))
-        } else {
-            let plural = if num_worktrees == 1 { "" } else { "s" };
-            format!("Showing {} worktree{}", num_worktrees, plural)
-        };
+    let mut footer_base = super::SummaryMetrics::from_items(&all_items)
+        .inventory_parts(show_branches || show_remotes)
+        .join(", ");
 
     // Track which placeholder rendering currently uses. Progressive renderers
     // (table or picker) start blank so commands that finish under
@@ -1550,8 +1533,6 @@ pub fn collect(
 
     // Create progressive table if showing progress.
     let mut progressive_table = if show_progress {
-        let dim = Style::new().dimmed();
-
         // Build skeleton rows for both worktrees and branches
         // All items need skeleton rendering since computed data (timestamp, ahead/behind, etc.)
         // hasn't been loaded yet. Using format_list_item_line would show default values like "55y".
@@ -1560,14 +1541,20 @@ pub fn collect(
             .map(|item| layout.render_skeleton_row(item, placeholder).render())
             .collect();
 
-        let initial_footer = format!("{INFO_SYMBOL} {dim}{footer_base} (loading...){dim:#}");
-
         let mut table = ProgressiveTable::new(
             layout.format_header_line(),
             skeletons,
-            initial_footer,
+            String::new(),
             max_width,
         );
+        let visible_rows = table.visible_row_count();
+        if visible_rows < all_items.len() {
+            footer_base = format!(
+                "{footer_base} — first {visible_rows} of {} shown",
+                all_items.len()
+            );
+        }
+        table.update_footer(format_loading_footer(&footer_base));
         table.render_skeleton()?;
         worktrunk::trace::instant("Skeleton rendered");
         Some(table)
@@ -1760,14 +1747,20 @@ pub fn collect(
         .and(integration_targets.clone());
     options.snapshot = snapshot;
 
-    // Update is_previous on items
-    if let Some(prev) = previous_branch.as_deref() {
-        for item in &mut all_items {
-            if item.branch() == Some(prev)
-                && let Some(wt_data) = item.worktree_data_mut()
-            {
-                wt_data.is_previous = true;
-            }
+    // Update is_previous on items: the worktree `wt switch -` returns to,
+    // by its recorded path, or else every worktree of the previous branch.
+    let previous_path = repo
+        .switch_previous_worktree()
+        .ok()
+        .flatten()
+        .map(|(path, _)| path);
+    for item in &mut all_items {
+        let is_previous = match &previous_path {
+            Some(path) => item.worktree_path() == Some(path.as_path()),
+            None => previous_branch.is_some() && item.branch() == previous_branch.as_deref(),
+        };
+        if is_previous && let Some(wt_data) = item.worktree_data_mut() {
+            wt_data.is_previous = true;
         }
     }
 
@@ -1960,7 +1953,6 @@ pub fn collect(
         drain_deadline,
         primary_target,
         |event| {
-            let dim = Style::new().dimmed();
             let total_results = expected_results.count();
 
             match event {
@@ -1997,10 +1989,7 @@ pub fn collect(
                             s.progress_overflow = true;
                         }
 
-                        let completed = s.completed_results;
-                        let footer_msg = format!(
-                            "{INFO_SYMBOL} {dim}{footer_base} ({completed}/{total_results} loaded){dim:#}"
-                        );
+                        let footer_msg = format_loading_footer(&footer_base);
                         s.table.update_footer(footer_msg);
                         s.table.update_row(item_idx, rendered.clone());
 
@@ -2044,8 +2033,6 @@ pub fn collect(
                         let mut s = state_cell.borrow_mut();
                         let footer_msg = format_stall_footer(
                             &footer_base,
-                            s.completed_results,
-                            total_results,
                             pending_count,
                             first_kind,
                             first_name,
@@ -2451,21 +2438,24 @@ mod tests {
 
     #[test]
     fn test_format_stall_footer_single_pending() {
-        let rendered =
-            format_stall_footer("Showing 3 worktrees", 5, 12, 1, TaskKind::CiStatus, "feat");
+        let rendered = format_stall_footer("3 worktrees", 1, TaskKind::CiStatus, "feat");
         assert_snapshot!(
             rendered.ansi_strip(),
-            @"○ Showing 3 worktrees (5/12 loaded, no recent progress; waiting on CI status for feat)"
+            @"○ 3 worktrees — no recent progress; waiting on CI status for feat"
         );
     }
 
     #[test]
     fn test_format_stall_footer_many_pending() {
-        let rendered =
-            format_stall_footer("Showing 3 worktrees", 5, 12, 3, TaskKind::CiStatus, "feat");
+        let rendered = format_stall_footer(
+            "3 worktrees — first 2 of 3 shown",
+            3,
+            TaskKind::CiStatus,
+            "feat",
+        );
         assert_snapshot!(
             rendered.ansi_strip(),
-            @"○ Showing 3 worktrees (5/12 loaded, no recent progress; waiting on 3 tasks, including CI status for feat)"
+            @"○ 3 worktrees — first 2 of 3 shown — no recent progress; waiting on 3 tasks, including CI status for feat"
         );
     }
 

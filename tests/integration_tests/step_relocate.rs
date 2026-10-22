@@ -1641,3 +1641,103 @@ fn step_relocate_rejects_prunable_worktree(mut repo: TestRepo) {
         "expected a prunable-worktree error, got: {stderr}"
     );
 }
+
+/// A swap moves one worktree through a temporary location. The shell of a user
+/// standing in either worktree must follow its branch to the new path, whichever
+/// of the two takes the temporary route.
+///
+/// Ignored on Windows for the same reason as `test_relocate_preserves_subdir`.
+#[rstest]
+#[case::in_alpha("alpha")]
+#[case::in_beta("beta")]
+#[cfg_attr(windows, ignore)]
+fn test_relocate_swap_moves_shell_with_its_branch(repo: TestRepo, #[case] standing_in: &str) {
+    let parent = worktree_parent(&repo);
+    let (cd_path, _guard) = directive_file();
+
+    // alpha sits at beta's expected path and beta at alpha's.
+    let path_for_beta = parent.join("repo.beta");
+    let path_for_alpha = parent.join("repo.alpha");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "alpha",
+        path_for_beta.to_str().unwrap(),
+    ]);
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "beta",
+        path_for_alpha.to_str().unwrap(),
+    ]);
+
+    let (cwd, expected) = if standing_in == "alpha" {
+        (&path_for_beta, &path_for_alpha)
+    } else {
+        (&path_for_alpha, &path_for_beta)
+    };
+
+    let mut cmd = repo.wt_command();
+    configure_directive_file(&mut cmd, &cd_path);
+    cmd.args(["step", "relocate"]).current_dir(cwd);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt step relocate failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let cd_content = fs::read_to_string(&cd_path).unwrap_or_default();
+    assert_eq!(
+        cd_content.trim(),
+        expected.to_string_lossy(),
+        "the shell should follow {standing_in} to its new path"
+    );
+}
+
+/// Relocating the main worktree's branch must not move a shell that stands in a
+/// different worktree nested inside the main one, as the
+/// `.worktrees/{{ branch | sanitize }}` layout produces.
+#[rstest]
+fn test_relocate_main_leaves_shell_in_nested_worktree(repo: TestRepo) {
+    let root = repo.root_path().to_path_buf();
+    let (cd_path, _guard) = directive_file();
+    fs::write(
+        repo.test_config_path(),
+        "worktree-path = \".worktrees/{{ branch | sanitize }}\"\n",
+    )
+    .unwrap();
+    fs::write(root.join(".git/info/exclude"), ".worktrees\n").unwrap();
+
+    // `other` is already at its expected nested path; the main worktree is on
+    // `feature`, so relocate moves `feature` out to `.worktrees/feature`.
+    let other_path = root.join(".worktrees").join("other");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "other",
+        other_path.to_str().unwrap(),
+    ]);
+    repo.run_git(&["checkout", "-b", "feature"]);
+
+    let mut cmd = repo.wt_command();
+    configure_directive_file(&mut cmd, &cd_path);
+    cmd.args(["step", "relocate"]).current_dir(&other_path);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt step relocate failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(root.join(".worktrees").join("feature").exists());
+
+    let cd_content = fs::read_to_string(&cd_path).unwrap_or_default();
+    assert_eq!(
+        cd_content.trim(),
+        "",
+        "the shell in `other` should stay put, not follow `feature`"
+    );
+}

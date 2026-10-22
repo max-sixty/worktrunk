@@ -2,12 +2,11 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::time::SystemTime;
 
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::copy::{copy_dir_recursive, copy_leaf};
-use worktrunk::git::Repository;
+use worktrunk::git::{Repository, path_dir_name};
 use worktrunk::path::format_path_for_display;
 use worktrunk::progress::{Progress, format_bytes, format_reflink_paren};
 use worktrunk::styling::{
@@ -67,7 +66,11 @@ pub fn step_copy_ignored(
 
     // Resolve source and destination worktree paths
     let (source_path, source_context) = match from {
-        Some(branch) => (repo.require_worktree(branch)?, branch.to_string()),
+        Some(selector) => {
+            let (path, branch) = repo.require_worktree(selector)?;
+            let context = branch.unwrap_or_else(|| path_dir_name(&path).to_string());
+            (path, context)
+        }
         None => {
             // Default source is the primary worktree (main worktree for normal repos,
             // default branch worktree for bare repos).
@@ -76,18 +79,12 @@ pub fn step_copy_ignored(
                     "No primary worktree found (bare repo with no default branch worktree)"
                 )
             })?;
-            let context = path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
+            let context = path_dir_name(&path).to_string();
             (path, context)
         }
     };
 
-    let dest_path = match to {
-        Some(branch) => repo.require_worktree(branch)?,
-        None => repo.current_worktree().root()?,
-    };
+    let dest_path = repo.require_worktree(to.unwrap_or("@"))?.0;
 
     if source_path == dest_path {
         if json_mode {
@@ -257,10 +254,6 @@ pub fn step_copy_ignored(
         Progress::start("Copying")
     };
 
-    // One mtime for everything this run copies, taken before the first file
-    // lands — see `worktrunk::copy` for why build caches need it.
-    let stamp = Some(SystemTime::now());
-
     for (src_entry, is_dir) in &entries_to_copy {
         let relative = src_entry
             .strip_prefix(&source_path)
@@ -269,15 +262,11 @@ pub fn step_copy_ignored(
 
         if *is_dir {
             // A pure copy deletes no source, so the skip count has nothing to guard.
-            let _skipped = copy_dir_recursive(
-                src_entry,
-                &dest_entry,
-                Some(&dest_path),
-                force,
-                stamp,
-                &progress,
-            )
-            .with_context(|| format!("copying directory {}", format_path_for_display(relative)))?;
+            let _skipped =
+                copy_dir_recursive(src_entry, &dest_entry, Some(&dest_path), force, &progress)
+                    .with_context(|| {
+                        format!("copying directory {}", format_path_for_display(relative))
+                    })?;
         } else {
             if let Some(parent) = dest_entry.parent() {
                 fs::create_dir_all(parent).with_context(|| {
@@ -287,8 +276,7 @@ pub fn step_copy_ignored(
                     )
                 })?;
             }
-            if let Some((bytes, data)) =
-                copy_leaf(src_entry, &dest_entry, Some(&dest_path), force, stamp)?
+            if let Some((bytes, data)) = copy_leaf(src_entry, &dest_entry, Some(&dest_path), force)?
             {
                 progress.record(bytes, data);
             }

@@ -70,7 +70,7 @@ pub struct TraceEntry {
     pub context: Option<String>,
     /// The kind of trace entry
     pub kind: TraceEntryKind,
-    /// Start timestamp in microseconds since Unix epoch (for Chrome Trace Format)
+    /// Start timestamp in microseconds since the trace epoch (for Chrome Trace Format)
     pub start_time_us: Option<u64>,
     /// Thread ID that executed this command (for concurrency analysis)
     pub thread_id: Option<u64>,

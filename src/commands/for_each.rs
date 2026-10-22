@@ -7,10 +7,10 @@
 //!
 //! # Design Notes
 //!
-//! The `step` subcommand grouping is not fully satisfying. Current state:
-//!
-//! - `commit`, `squash`, `rebase`, `push` — merge workflow steps (single-worktree)
-//! - `for-each` — utility to run commands across all worktrees (multi-worktree)
+//! The `step` subcommand grouping is not fully satisfying. It holds the merge
+//! workflow's single-worktree steps (`commit`, `squash`, `rebase`, `push`)
+//! alongside unrelated utilities, including `for-each`, the one that runs a
+//! command across all worktrees.
 //!
 //! These don't naturally belong together. Options considered:
 //!
@@ -28,7 +28,6 @@ use std::io::Write as _;
 use std::process::Stdio;
 
 use anyhow::Context;
-use color_print::cformat;
 use worktrunk::config::{UserConfig, VarScope};
 use worktrunk::git::{ErrorExt, Repository, WorktreeInfo, WorktrunkError};
 use worktrunk::shell_exec::{Cmd, ShellEscapeMode};
@@ -47,7 +46,7 @@ use crate::output::print_json;
 /// real-time. Continues on errors and reports a summary at the end.
 ///
 /// All template variables from hooks are available; values are substituted
-/// into argv elements without shell escaping. Context JSON is piped to stdin.
+/// into argv elements without shell escaping. Context JSON is provided on stdin.
 pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> anyhow::Result<()> {
     let json_mode = format == crate::cli::SwitchFormat::Json;
     let repo = Repository::current()?;
@@ -109,27 +108,28 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                 // hints from typed diagnostics) and a plain string for
                 // JSON (consumers shouldn't see ANSI codes or symbols).
                 let (exit_info, exit_code, stderr_detail, json_detail) =
-                    if let Some(WorktrunkError::ChildProcessExited { code, message, .. }) =
+                    if let Some(WorktrunkError::ChildProcessExited { code, .. }) =
                         err.downcast_ref::<WorktrunkError>()
                     {
                         (
-                            format!(" (exit code {code})"),
+                            format!(" ({err})"),
                             serde_json::json!(code),
                             None,
-                            message.clone(),
+                            err.to_string(),
                         )
                     } else {
-                        let styled = err.render_diagnostic().unwrap_or_else(|| err.to_string());
+                        let detail = err.display_message();
+                        let styled = err.render_diagnostic().unwrap_or_else(|| detail.clone());
                         (
                             " (spawn failed)".to_string(),
                             serde_json::json!(null),
                             Some(styled),
-                            err.to_string(),
+                            detail,
                         )
                     };
                 eprintln!(
                     "{}",
-                    error_message(cformat!("Failed in <bold>{display_name}</>{exit_info}"))
+                    error_message(format!("Failed in {display_name}{exit_info}"))
                 );
                 if let Some(detail) = &stderr_detail {
                     eprintln!("{}", format_with_gutter(detail, None));
@@ -202,7 +202,7 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
 }
 
 /// Run argv directly (no shell) with streaming output, signal forwarding,
-/// stdout→stderr redirect, and JSON context piped on stdin.
+/// stdout→stderr redirect, and JSON context on stdin.
 ///
 /// Mirrors the bookkeeping in `output::execute_shell_command` (flush, ANSI
 /// reset, signal forwarding) but builds the command via `Cmd::new` so the

@@ -457,13 +457,12 @@ impl Repository {
 
     /// SHA-keyed variant of [`Self::merge_base`].
     ///
-    /// Inputs are commit SHAs. Skips the ambient ref→SHA conversion
-    /// entirely; cache key is `(min(sha1, sha2), max(sha1, sha2))`.
+    /// Inputs are commit SHAs, so no ref names are resolved; cache key is `(min(sha1, sha2), max(sha1, sha2))`.
     ///
     /// In-memory front over a persistent disk back
     /// (`merge-base/{min}-{max}.json`): the `DashMap` dedups within one
     /// process, the disk cache serves re-runs without re-forking. The
-    /// The `wt list` orphan check calls this once per row
+    /// `wt list` orphan check calls this once per row
     /// even when the ahead/behind counts are themselves cache-warm, so on a
     /// repo with many branches the disk back turns that per-row
     /// `git merge-base` fork into a file read. Content-addressed, never
@@ -585,7 +584,7 @@ impl Repository {
 
     /// SHA-keyed variant of [`Self::branch_diff_stats`].
     ///
-    /// Inputs are commit SHAs. Bypasses the ambient ref→SHA cache.
+    /// Inputs are commit SHAs, so no ref names are resolved.
     pub fn branch_diff_stats_by_sha(
         &self,
         base_sha: &str,

@@ -125,7 +125,7 @@ fn test_merge_as_git_subcommand(merge_scenario: (TestRepo, PathBuf)) {
     // Merge with GIT_EXEC_PATH set (simulating `git wt merge ...`)
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(&repo, "merge", &["main"], Some(&feature_wt));
-        cmd.env("GIT_EXEC_PATH", "/usr/lib/git-core");
+        crate::common::configure_git_subcommand(&mut cmd, &repo);
         cmd
     });
 }
@@ -1290,7 +1290,7 @@ fn test_merge_pre_commit_collected_for_squash_clean_worktree(
 }
 
 /// A pre-commit hook's edits land in the squash commit, as they do in the
-/// commit `wt step commit` makes: the hook runs before staging, not after.
+/// commit `wt step commit` makes: Worktrunk stages again after the hook runs.
 #[rstest]
 fn test_step_squash_includes_pre_commit_hook_edits(repo_with_multi_commit_feature: TestRepo) {
     let repo = &repo_with_multi_commit_feature;
@@ -1331,6 +1331,93 @@ fn test_step_squash_includes_pre_commit_hook_edits(repo_with_multi_commit_featur
         repo.git_output(&["-C", feature_wt.to_str().unwrap(), "status", "--porcelain"]),
         ""
     );
+}
+
+/// A pre-commit hook that reads the index (`pre-commit run`, lint-staged,
+/// `git diff --cached`) sees the uncommitted changes Worktrunk is about to
+/// commit, so a gate on them blocks the commit. `merge` covers the squash path
+/// and `step commit` the plain commit path.
+#[rstest]
+#[case::merge(&["merge", "main", "--yes"])]
+#[case::step_commit(&["step", "commit", "--yes"])]
+fn test_pre_commit_hook_sees_staged_changes(
+    repo_with_multi_commit_feature: TestRepo,
+    #[case] args: &[&str],
+) {
+    let repo = &repo_with_multi_commit_feature;
+    let feature_wt = repo.worktrees["feature"].clone();
+
+    let config_dir = feature_wt.join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        "pre-commit = \"! git diff --cached | grep -q FORBIDDEN\"",
+    )
+    .unwrap();
+    repo.run_git_in(&feature_wt, &["add", ".config/wt.toml"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Add config"]);
+    let feature_head = repo.git_output(&["rev-parse", "feature"]);
+    let main_head = repo.git_output(&["rev-parse", "main"]);
+
+    fs::write(feature_wt.join("new.txt"), "FORBIDDEN\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(args)
+        .current_dir(&feature_wt)
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: combined'",
+        )
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "pre-commit gate passed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(repo.git_output(&["rev-parse", "feature"]), feature_head);
+    assert_eq!(repo.git_output(&["rev-parse", "main"]), main_head);
+}
+
+/// With no pre-commit hook configured, a commit stages once. The second
+/// staging pass only picks up edits a hook made, so running it with no hook
+/// would repeat a full `git status` and `git add` for nothing.
+#[rstest]
+#[case::merge(&["-vv", "merge", "main", "--yes"])]
+#[case::step_commit(&["-vv", "step", "commit", "--yes"])]
+fn test_commit_stages_once_without_pre_commit_hook(
+    repo_with_multi_commit_feature: TestRepo,
+    #[case] args: &[&str],
+) {
+    let repo = &repo_with_multi_commit_feature;
+    let feature_wt = repo.worktrees["feature"].clone();
+    fs::write(feature_wt.join("new.txt"), "content\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(args)
+        .current_dir(&feature_wt)
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: combined'",
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "commit failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let trace_log =
+        crate::common::resolve_git_common_dir(repo.root_path()).join("wt/logs/trace.log");
+    let trace = fs::read_to_string(&trace_log).unwrap();
+    let untracked_scans = trace
+        .lines()
+        .filter(|line| line.contains("$ git status --porcelain -z -unormal"))
+        .count();
+    assert_eq!(untracked_scans, 1, "trace.log: {trace}");
 }
 
 // README EXAMPLE GENERATION TESTS
@@ -2680,6 +2767,239 @@ fn test_merge_squash_with_working_tree_creates_backup(mut repo_with_main_worktre
         reflog.contains("feature → main (squash)"),
         "Expected backup in reflog, but reflog was: {}",
         reflog
+    );
+
+    wait_for_worktree_removed(&feature_wt);
+    let merged_head = repo.git_output(&["rev-parse", "main"]);
+    let backup = repo.git_output(&["rev-parse", "refs/wt-backup/feature"]);
+    let repository = worktrunk::git::Repository::at(repo.root_path()).unwrap();
+    let recovery_branch = format!("recovery/{}", repository.short_sha(&backup).unwrap());
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "--base",
+            &backup,
+            "--no-hooks",
+            &recovery_branch,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let recovered = repository
+        .worktree_for_branch(&recovery_branch)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(recovered.join("file1.txt")).unwrap(),
+        "updated content 1"
+    );
+    assert_eq!(repo.git_output(&["rev-parse", "main"]), merged_head);
+}
+
+/// The printed backup recovery command restores captured content and history
+/// in another worktree, preserving edits and staging made after the squash.
+#[rstest]
+fn test_squash_backup_recovery_preserves_live_changes(mut repo: TestRepo) {
+    fs::write(repo.root_path().join("tracked.txt"), "base\n").unwrap();
+    fs::write(repo.root_path().join("unstaged.txt"), "base\n").unwrap();
+    repo.commit("base files");
+    let branch = "feature/recovery";
+    let worktree = repo.add_worktree(branch);
+    fs::write(worktree.join("tracked.txt"), "first\n").unwrap();
+    repo.run_git_in(&worktree, &["add", "."]);
+    repo.run_git_in(&worktree, &["commit", "-m", "first"]);
+    fs::write(worktree.join("committed.txt"), "second\n").unwrap();
+    repo.run_git_in(&worktree, &["add", "."]);
+    repo.run_git_in(&worktree, &["commit", "-m", "second"]);
+    let old_head = repo.git_output(&["rev-parse", branch]);
+
+    fs::write(worktree.join("tracked.txt"), "staged snapshot\n").unwrap();
+    repo.run_git_in(&worktree, &["add", "tracked.txt"]);
+    fs::write(worktree.join("unstaged.txt"), "unstaged draft\n").unwrap();
+    fs::write(worktree.join("draft.txt"), "untracked draft\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "squash", "--stage=none", "--no-hooks"])
+        .current_dir(&worktree)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("refs/wt-backup/feature/recovery"),
+        "{stderr}"
+    );
+    let recovery = stderr
+        .lines()
+        .find_map(|line| line.strip_prefix("↳ To recover in a new worktree, run "))
+        .expect("a copyable backup recovery command");
+
+    // Running the advice from main must not move main to the old feature tip.
+    let main_before = repo.git_output(&["rev-parse", "main"]);
+    let feature_before = repo.git_output(&["rev-parse", branch]);
+    // A later backup can advance the named ref; the printed SHA still selects
+    // the original saved index and history.
+    repo.run_git(&[
+        "update-ref",
+        "refs/wt-backup/feature/recovery",
+        &main_before,
+    ]);
+    fs::write(worktree.join("tracked.txt"), "new staged edit\n").unwrap();
+    repo.run_git_in(&worktree, &["add", "tracked.txt"]);
+    let index_before = repo
+        .git_command()
+        .args(["write-tree"])
+        .current_dir(&worktree)
+        .run()
+        .unwrap()
+        .stdout;
+
+    let output = repo
+        .wt_command()
+        .args(recovery.strip_prefix("wt ").unwrap().split_whitespace())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let recovery_branch = recovery.split_whitespace().last().unwrap();
+    let recovered = worktrunk::git::Repository::at(repo.root_path())
+        .unwrap()
+        .worktree_for_branch(recovery_branch)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        repo.git_output(&["rev-parse", &format!("{recovery_branch}^")]),
+        old_head
+    );
+    assert_eq!(
+        fs::read_to_string(recovered.join("tracked.txt")).unwrap(),
+        "staged snapshot\n"
+    );
+    assert_eq!(
+        fs::read_to_string(recovered.join("unstaged.txt")).unwrap(),
+        "base\n"
+    );
+    assert!(!recovered.join("draft.txt").exists());
+    assert_eq!(repo.git_output(&["rev-parse", "main"]), main_before);
+    assert_eq!(repo.git_output(&["rev-parse", branch]), feature_before);
+    assert_eq!(
+        repo.git_command()
+            .args(["write-tree"])
+            .current_dir(&worktree)
+            .run()
+            .unwrap()
+            .stdout,
+        index_before
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("unstaged.txt")).unwrap(),
+        "unstaged draft\n"
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("tracked.txt")).unwrap(),
+        "new staged edit\n"
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("draft.txt")).unwrap(),
+        "untracked draft\n"
+    );
+
+    // Squash another staged edit on the same source, then follow its new
+    // recovery advice. An earlier recovery must not block the later snapshot.
+    let first_recovery_head = repo.git_output(&["rev-parse", recovery_branch]);
+    let output = repo
+        .wt_command()
+        .args(["step", "squash", "--stage=none", "--no-hooks"])
+        .current_dir(&worktree)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(output.status.success(), "{stderr}");
+    let second_recovery = stderr
+        .lines()
+        .find_map(|line| line.strip_prefix("↳ To recover in a new worktree, run "))
+        .expect("a copyable backup recovery command");
+    let second_recovery_branch = second_recovery.split_whitespace().last().unwrap();
+    let source_head = repo.git_output(&["rev-parse", branch]);
+    fs::write(worktree.join("tracked.txt"), "latest live edit\n").unwrap();
+    repo.run_git_in(&worktree, &["add", "tracked.txt"]);
+    let live_index = repo
+        .git_command()
+        .args(["write-tree"])
+        .current_dir(&worktree)
+        .run()
+        .unwrap()
+        .stdout;
+
+    let output = repo
+        .wt_command()
+        .args(
+            second_recovery
+                .strip_prefix("wt ")
+                .unwrap()
+                .split_whitespace(),
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_ne!(recovery_branch, second_recovery_branch);
+    let second_recovered = worktrunk::git::Repository::at(repo.root_path())
+        .unwrap()
+        .worktree_for_branch(second_recovery_branch)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(second_recovered.join("tracked.txt")).unwrap(),
+        "new staged edit\n"
+    );
+    assert_eq!(
+        fs::read_to_string(recovered.join("tracked.txt")).unwrap(),
+        "staged snapshot\n"
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", recovery_branch]),
+        first_recovery_head
+    );
+    assert_eq!(repo.git_output(&["rev-parse", "main"]), main_before);
+    assert_eq!(repo.git_output(&["rev-parse", branch]), source_head);
+    assert_eq!(
+        repo.git_command()
+            .args(["write-tree"])
+            .current_dir(&worktree)
+            .run()
+            .unwrap()
+            .stdout,
+        live_index
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("tracked.txt")).unwrap(),
+        "latest live edit\n"
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("unstaged.txt")).unwrap(),
+        "unstaged draft\n"
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("draft.txt")).unwrap(),
+        "untracked draft\n"
     );
 }
 
@@ -4351,10 +4671,14 @@ fn test_step_push_refuses_mid_rebase(mut repo: TestRepo) {
 /// this.
 #[rstest]
 fn test_step_commit_refuses_hook_created_conflict(mut repo: TestRepo) {
-    // A pre-commit hook that conflicts the index. `|| true` so the hook
-    // succeeds and the commit proceeds to staging; output suppressed to keep
-    // git's own wording out of the snapshot.
-    repo.write_project_config(r#"pre-commit = "git merge side >/dev/null 2>&1 || true""#);
+    // A pre-commit hook that conflicts the index. It unstages first because
+    // Worktrunk stages before the hooks run and `git merge` refuses to start
+    // with a dirty index. `|| true` so the hook succeeds and the commit
+    // proceeds to staging; output suppressed to keep git's own wording out of
+    // the snapshot.
+    repo.write_project_config(
+        r#"pre-commit = "git reset -q && git merge side >/dev/null 2>&1 || true""#,
+    );
     repo.run_git(&["add", ".config/wt.toml"]);
     repo.run_git(&["commit", "-m", "Add project config"]);
 
@@ -5538,11 +5862,11 @@ fn test_merge_json(repo: TestRepo) {
     assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
     {
       "branch": "feature",
+      "target": "main",
       "committed": false,
-      "rebased": false,
-      "removed": true,
       "squashed": false,
-      "target": "main"
+      "rebased": false,
+      "removed": true
     }
     "#);
 }

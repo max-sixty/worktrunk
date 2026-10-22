@@ -4,15 +4,16 @@
 //!
 //! - [`stage_worktree_removal`] — the ordered prelude every removal path runs
 //!   in the foreground before the worktree directory stops existing: the
-//!   dirty-worktree gate, the fsmonitor stop, then the rename into trash. It
-//!   owns the gate, so it is the one place removal's data safety is decided.
+//!   dirty-worktree gate, the fsmonitor stop, then the
+//!   rename into trash. It owns the gates, so it is the one place removal's
+//!   data safety is decided.
 //! - [`remove_worktree_with_cleanup`] — that prelude, plus the direct-removal
 //!   fallback and branch deletion, run to completion synchronously.
 //!
 //! The split exists because the default path defers its deletion: `wt remove`
-//! and `wt merge --remove` stage the worktree here, then hand the `rm -rf` to
-//! a detached process so the command returns as soon as the workspace is
-//! clear. They build that tail themselves rather than calling
+//! and `wt merge --remove` stage the worktree here, then hand the deletion to
+//! a detached [`drain_trash`] so the command returns as soon as the workspace
+//! is clear. They build that tail themselves rather than calling
 //! [`remove_worktree_with_cleanup`]. The callers that run to completion —
 //! `--foreground` removals, the TUI picker, and external tooling (e.g.
 //! `worktrunk-sync`) — call it and get the fallback and integration-checked
@@ -26,19 +27,22 @@
 //! 1. **Lock and clean checks**. A `git worktree lock` is refused
 //!    unconditionally (matching `git worktree remove`; `--force` does not
 //!    override it). The dirty-worktree gate is skipped with
-//!    [`RemoveOptions::force_worktree`]. Why the dirty gate precedes the
-//!    stop below: [`stage_worktree_removal`], "Why this order".
+//!    [`RemoveOptions::force_worktree`], which reports the current uncommitted
+//!    paths, or why they could not be read, before deletion instead. Why the
+//!    dirty gate precedes the stop below: [`stage_worktree_removal`], "Why this order".
 //! 2. **fsmonitor daemon stopped** (best effort). [`stop_fsmonitor_daemon`]
 //!    runs against the target worktree before its path disappears: it sends
 //!    the graceful `git fsmonitor--daemon stop` IPC request, then verifies the
 //!    daemon is actually gone and force-kills it by PID if it has wedged.
 //!    Without this, a daemon that has stopped answering its socket leaks
-//!    forever once its worktree is removed.
+//!    forever once its worktree is removed. With fsmonitor configured, the
+//!    clean check then reruns without it, catching writes during shutdown.
 //! 3. **Fast-path trash staging.** The worktree directory is renamed into
 //!    `<git-common-dir>/wt/trash/<name>-<timestamp>/`. Same-filesystem renames
 //!    are instant metadata operations, so the user's workspace clears
 //!    immediately. The caller is responsible for eventually removing the
-//!    staged path — either synchronously or via a background process.
+//!    staged path — either synchronously or via [`drain_trash`] in a
+//!    background process.
 //! 4. **Fallback removal.** If the rename fails (cross-filesystem, permission
 //!    denied, Windows file locks), the code falls back to `git worktree remove`
 //!    (optionally with `--force`), which deletes files directly.
@@ -51,20 +55,19 @@
 //!    - [`ForceDelete`](BranchDeletionMode::ForceDelete): run `branch -D`
 //!      without the integration check.
 //!
-//! # The dirty-worktree gate follows git
+//! # The dirty-worktree gate
 //!
-//! Under `core.fsmonitor` the daemon answers step 1's `git status`, so a
-//! daemon returning a stale clean answer would let removal delete uncommitted
-//! work. That is git's own line, not a gap in `wt`: `git worktree remove`
-//! refuses a dirty worktree off the same daemon-served status, and on detected
-//! event loss the builtin daemon forces a client rescan or exits. A stale
-//! clean answer therefore requires an *undetected* loss, which lies to the
-//! user's own `git status` in that worktree just as readily.
+//! Under `core.fsmonitor` the daemon answers step 1's `git status`, as it
+//! answers `git worktree remove`'s. That first gate refuses a dirty worktree
+//! cheaply and leaves its daemon running.
 //!
-//! Matching git is the decision. Scoping `-c core.fsmonitor=` to that one call
-//! would make `wt` stricter than the command it replaces, and would restore
-//! the full re-stat the ordering above avoids — the dominant per-removal cost
-//! at rust-lang/rust scale. (`--no-optional-locks` is not that knob: it
+//! Stopping the daemon is `wt`'s own step, not git's, and it opens a window
+//! git's gate never has: writes during the shutdown. So with fsmonitor
+//! configured the gate runs again after the stop, rescanning without the
+//! daemon, and that rescan is what a clean removal passes. It costs one full
+//! re-stat per removal where fsmonitor is configured, and also catches a
+//! stale clean answer from the daemon, which makes `wt` stricter there than
+//! `git worktree remove`. (`--no-optional-locks` cannot replace the rescan: it
 //! governs index-lock acquisition, and git still queries the daemon under it.)
 //!
 //! # Example
@@ -96,12 +99,20 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
+use std::collections::HashSet;
+use std::fs::{self, TryLockError};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use anyhow::Context as _;
+
 use crate::git::repository::WorkingTree;
-use crate::git::{GitError, IntegrationReason, Repository, WorktreeInfo, path_dir_name};
+use crate::git::{ErrorExt, GitError, IntegrationReason, Repository, WorktreeInfo, path_dir_name};
+use crate::path::format_path_for_display;
+use crate::progress::Progress;
+use crate::remove_dir::remove_dir_with_progress;
 use crate::shell_exec::Cmd;
+use crate::styling::{eprintln, format_with_gutter, warning_message};
 use crate::utils::epoch_now;
 
 /// Bound on the graceful `git fsmonitor--daemon stop` IPC request.
@@ -133,8 +144,8 @@ const FSMONITOR_LSOF_TIMEOUT: Duration = Duration::from_secs(2);
 /// while the worktree path still exists** (the socket lives under the
 /// per-worktree git dir and is needed to resolve the owning PID), so its one
 /// caller is [`stage_worktree_removal`], which every removal path runs in the
-/// foreground before the directory is staged or pruned. The detached `rm -rf`
-/// background process never touches the daemon; keeping daemon management in
+/// foreground before the directory is staged or pruned. The detached trash drain
+/// never touches the daemon; keeping daemon management in
 /// the Rust foreground avoids reimplementing socket/PID resolution and signal
 /// escalation as a shell string.
 ///
@@ -188,7 +199,7 @@ fn force_kill_fsmonitor_via_socket(socket: &Path) {
     let output = match Cmd::new("lsof")
         .arg("-t")
         .arg("--")
-        .arg(socket.to_string_lossy().into_owned())
+        .arg(socket)
         .timeout(FSMONITOR_LSOF_TIMEOUT)
         .run()
     {
@@ -261,7 +272,7 @@ pub enum BranchDeletionOutcome {
     /// Branch was not deleted — it was not integrated, and deletion was not forced.
     NotDeleted,
     /// Branch was integrated, but a fresh topology read found it checked out in
-    /// a worktree immediately before deletion. The ref is retained so that
+    /// a worktree before the deletion attempt. The ref is retained so that
     /// worktree's HEAD remains resolvable.
     RetainedCheckedOut { path: PathBuf },
     /// Branch was integrated but the atomic compare-and-swap deletion was
@@ -340,7 +351,7 @@ pub struct RemoveOptions {
 ///
 /// `staged_path` is `Some` only on the fast path. Callers are responsible for
 /// cleaning up the staged directory; `wt remove` does this with a detached
-/// background `rm -rf` so the foreground command returns immediately.
+/// [`drain_trash`] so the foreground command returns immediately.
 pub struct RemovalOutput {
     pub branch_result: Option<anyhow::Result<BranchDeletionResult>>,
     /// Path to the staged trash directory on the fast path.
@@ -407,7 +418,7 @@ pub fn remove_worktree_with_cleanup(
 /// Every removal path runs this, in the foreground, before the worktree
 /// directory stops existing: the synchronous
 /// [`remove_worktree_with_cleanup`], and the default background path, which
-/// stages here and hands the `rm -rf` to a detached process. Keeping the three
+/// stages here and hands the deletion to a detached [`drain_trash`]. Keeping the three
 /// steps together is what makes the dirty-worktree gate a single decision
 /// rather than a sequence each caller re-assembles — the order below is easy
 /// to get subtly wrong, and getting it wrong destroys uncommitted work.
@@ -420,12 +431,11 @@ pub fn remove_worktree_with_cleanup(
 ///
 /// # Why this order
 ///
-/// The gate runs **before** the daemon stop because the fsmonitor daemon
-/// serves its `git status`; stopping first would force a full re-stat, the
-/// dominant per-removal cost on a large repo. That the gate therefore trusts
-/// the daemon is a deliberate match to `git worktree remove`, whose own gate
-/// trusts it identically — see "The dirty-worktree gate follows git" in the
-/// [module-level docs](self) for why that is the decision and not a gap.
+/// The gate runs **before** the daemon stop so a dirty worktree is refused off
+/// the daemon's cheap answer, with its daemon left running. With fsmonitor
+/// configured it runs once more after the stop, rescanning, to catch writes
+/// during the shutdown — see "The dirty-worktree gate" in the
+/// [module-level docs](self).
 ///
 /// The daemon stop runs **before** the rename because on Windows the daemon
 /// holds a handle on the worktree that would fail it, and git's graceful stop
@@ -452,7 +462,7 @@ pub fn remove_worktree_with_cleanup(
 ///
 /// # Errors
 ///
-/// The ownership check, the lock check, and the dirty-worktree gate error. A
+/// The ownership, lock, and dirty-worktree gates error. A
 /// failed rename is reported as `None`, not an error, and the daemon stop is
 /// best-effort throughout.
 pub fn stage_worktree_removal(
@@ -462,7 +472,7 @@ pub fn stage_worktree_removal(
     force_worktree: bool,
 ) -> anyhow::Result<Option<PathBuf>> {
     let worktree = repo.worktree_at(worktree_path);
-    worktree.ensure_holds_this_worktree()?;
+    let git_dir = worktree.ensure_holds_this_worktree()?;
 
     // Lock is the user's explicit "don't remove this". `--force` does not
     // override it, matching `git worktree remove` and `prepare_worktree_removal`.
@@ -481,13 +491,79 @@ pub fn stage_worktree_removal(
         .into());
     }
 
-    if !force_worktree {
+    if force_worktree {
+        // Disclosure does not veto the force removal, but an interrupted
+        // status command still cancels before any directory is removed.
+        match worktree.dirty_files() {
+            Ok(dirty_files) if !dirty_files.is_empty() => {
+                eprintln!(
+                    "{}",
+                    warning_message("Discarding uncommitted changes (--force):")
+                );
+                eprintln!("{}", format_with_gutter(&dirty_files.join("\n"), None));
+            }
+            Ok(_) => {}
+            Err(error) => {
+                if error.interrupt_signal().is_some() {
+                    return Err(error);
+                }
+                eprintln!(
+                    "{}",
+                    warning_message(
+                        "Cannot list uncommitted changes; discarding worktree contents (--force):"
+                    )
+                );
+                eprintln!("{}", format_with_gutter(&error.display_message(), None));
+            }
+        }
+    } else {
         worktree.ensure_clean("remove worktree", branch, true)?;
     }
 
-    stop_fsmonitor_daemon(&repo.worktree_at(worktree_path));
+    stop_fsmonitor_daemon(&worktree);
 
-    Ok(rename_into_trash(repo, worktree_path))
+    // The daemon answered the gate above, and a write can land while it shuts
+    // down. Recheck without it; with fsmonitor configured, a plain status
+    // would start a new daemon in the worktree about to go.
+    if !force_worktree && repo.is_builtin_fsmonitor_enabled() {
+        worktree.ensure_clean_without_fsmonitor("remove worktree", branch, true)?;
+    }
+
+    Ok(rename_into_trash(repo, worktree_path, &git_dir))
+}
+
+/// Find a registered worktree contained in `worktree_path`, using a fresh
+/// registry read. Ignored nested worktrees are invisible to `ensure_clean`,
+/// but renaming or removing their parent would destroy their independent work.
+/// Canonical paths catch registrations made through symlinks; a missing entry
+/// has no directory to protect, while other resolution errors fail closed.
+///
+/// Called only by merge cleanup: once while deciding whether to remove, then
+/// again after approved pre-remove hooks and before the final removal gates.
+/// Keep this live registry read out of `stage_worktree_removal`: batch prune
+/// staging must not wait for another removal's registry teardown (#3954).
+pub fn nested_worktree(repo: &Repository, worktree_path: &Path) -> anyhow::Result<Option<PathBuf>> {
+    let root =
+        dunce::canonicalize(worktree_path).context("Failed to resolve worktree for removal")?;
+    let fresh_repo = Repository::at(repo.discovery_path())?;
+    for worktree in fresh_repo.list_worktrees()? {
+        let path = match dunce::canonicalize(&worktree.path) {
+            Ok(path) => path,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "Failed to resolve worktree @ {}",
+                        format_path_for_display(&worktree.path)
+                    )
+                });
+            }
+        };
+        if path != root && path.starts_with(&root) {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
 }
 
 /// Rename a worktree into `<git-common-dir>/wt/trash/` and prune git metadata.
@@ -501,12 +577,17 @@ pub fn stage_worktree_removal(
 /// sweeping the repository, so a sibling worktree whose directory happens to
 /// be absent right now keeps its registration. A locked worktree never reaches
 /// here — [`stage_worktree_removal`] rejects one before the rename.
-fn rename_into_trash(repo: &Repository, worktree_path: &Path) -> Option<PathBuf> {
+fn rename_into_trash(repo: &Repository, worktree_path: &Path, git_dir: &Path) -> Option<PathBuf> {
     let trash_dir = repo.wt_trash_dir();
     let _ = std::fs::create_dir_all(&trash_dir);
-    let staged_path = generate_removing_path(&trash_dir, worktree_path);
+    let staged_path = generate_removing_path(&trash_dir, git_dir);
 
-    if std::fs::rename(worktree_path, &staged_path).is_ok() {
+    if std::fs::rename(worktree_path, &staged_path)
+        .inspect_err(|e| {
+            tracing::debug!(error = %e, "Failed to stage worktree into trash, falling back: {e}");
+        })
+        .is_ok()
+    {
         // The rename moved the directory out from under `worktree_path`,
         // leaving its registration stale for the prune to delete.
         if let Err(e) = repo.prune_worktree_entry(worktree_path) {
@@ -518,20 +599,11 @@ fn rename_into_trash(repo: &Repository, worktree_path: &Path) -> Option<PathBuf>
     }
 }
 
-/// Capture fresh refs and run a planned branch deletion.
+/// Capture fresh refs and run branch deletion.
 ///
-/// The spelling of "the plan said delete; do it now" for every synchronous
-/// site that doesn't already hold a fresh snapshot (the background fast path,
-/// prune's synchronous fallback, branch-only removal, a picker row). The
-/// invariant it carries — no deletion ever runs against the planning-time
-/// snapshot, so the topology guard and CAS in [`delete_branch_if_safe`]
-/// re-decide against live state — also holds on the two paths that don't call
-/// it: the foreground removal captures its own fresh snapshot just before
-/// [`remove_worktree_with_cleanup`], and the detached fallback can't call
-/// Rust, so it gets the guarantee from a fresh porcelain topology read followed
-/// by an `update-ref -d <ref> <sha>` shell tail instead. A hook or concurrent
-/// process that checked out or advanced the branch since planning retains it,
-/// rather than orphaning a worktree or losing a commit.
+/// Used after worktree removal and for branch-only deletion. Every path,
+/// including the detached fallback, uses [`delete_branch_if_safe`] to recheck
+/// integration and checkout ownership; safe deletion uses CAS against the captured tip.
 pub fn execute_branch_deletion(
     repo: &Repository,
     branch_name: &str,
@@ -574,46 +646,21 @@ pub fn delete_branch_if_safe(
 
     let outcome = match reason {
         Some(r) => {
-            // `update-ref` deliberately bypasses `git branch`'s checked-out
-            // branch protection, so sample topology from a brand-new
-            // Repository immediately before the ref mutation. Never consult
-            // `repo.list_worktrees()` here: callers often used that planning
-            // cache before a pre-remove hook or another process had a chance to
-            // add a checkout.
-            //
-            // Git exposes no transaction spanning worktree registration and ref
-            // updates. Keeping this fresh read directly adjacent to the CAS
-            // minimizes that unavoidable TOCTOU window; either command failing
-            // leaves the branch intact.
-            if let Some(path) = fresh_branch_checkout(repo, branch_name)? {
-                return Ok(BranchDeletionResult {
-                    outcome: BranchDeletionOutcome::RetainedCheckedOut { path },
-                    integration_target: effective_target,
-                });
-            }
-
             // Atomic compare-and-swap against the snapshotted SHA. If the ref
             // moved between `integration_reason` and the delete (e.g. a hook
-            // advanced the branch), `git update-ref -d <ref> <expected>` fails
+            // advanced the branch), the `git update-ref` mutation fails
             // closed: the branch is retained and we surface a `RetainedRaced`
             // outcome rather than dropping the unmerged commits silently.
             //
             // Read the SHA from the snapshot inventory (`local_branch`) rather
             // than `resolve()`, so it reflects the same `refs/heads/` walk
             // `integration_reason` consulted.
-            match snapshot.local_branch(branch_name) {
-                Some(b) => cas_delete_branch_outcome(repo, branch_name, &b.commit_sha, r)?,
-                // Snapshot doesn't carry the branch SHA — extremely unusual
-                // (the caller just captured refs, the branch is present in the
-                // integration check). Fall through to a non-CAS delete rather
-                // than failing the whole operation: this preserves the
-                // pre-CAS behavior in a corner case rather than introducing a
-                // new error class.
-                None => {
-                    repo.run_command(&["branch", "-D", "--", branch_name])?;
-                    BranchDeletionOutcome::Integrated(r)
-                }
-            }
+            let Some(branch) = snapshot.local_branch(branch_name) else {
+                anyhow::bail!(
+                    "Cannot safely delete branch {branch_name}: absent from ref snapshot"
+                );
+            };
+            cas_delete_branch_outcome(repo, branch_name, &branch.commit_sha, r)?
         }
         None => BranchDeletionOutcome::NotDeleted,
     };
@@ -657,24 +704,19 @@ fn branch_checkout_requires_retention(worktree: &WorktreeInfo, branch_name: &str
 /// Atomically delete `refs/heads/<branch>` iff it currently points at
 /// `expected_sha`, and translate the result into a [`BranchDeletionOutcome`].
 ///
-/// `git update-ref -d <ref> <oid>` is git's compare-and-swap delete primitive:
-/// the ref is removed only if its current value matches `<oid>`. If it has
-/// moved (a hook or concurrent process advanced the branch), the command
-/// exits non-zero with a `cannot lock ref` message and the ref is left alone —
-/// fail-closed semantics that protect unmerged commits.
+/// `git update-ref -d <ref> <original-sha>` removes the ref only if its current
+/// value still matches. The repository coordinator serializes these mutations
+/// to avoid contention on Git's packed-refs lock.
 ///
-/// When `update-ref` fails, distinguishes "ref moved" (the ref still exists
-/// → `RetainedRaced`) from "real error" (the ref is gone or git itself
-/// failed → propagate the original error) by re-checking with `rev-parse
-/// --verify --quiet`, which has a structured exit code (0 = present, 1 =
-/// absent) rather than relying on locale-sensitive error-message text.
+/// A fresh topology read provides best-effort checkout protection before
+/// acquiring the deletion mutex. Topology reads can run concurrently. Git has
+/// no transaction spanning checkout state and a ref update: a checkout can
+/// appear after this check, including during the mutex wait. The atomic SHA
+/// comparison still protects concurrent commits.
 ///
-/// A `packed-refs.lock` that stays contended past git's ~1 s retry budget
-/// (concurrent deletes of packed branches — `wt step prune`'s parallel
-/// removals — on slow ref-store I/O) also fails the CAS with the ref
-/// present, and reads as `RetainedRaced` even though the tip never moved.
-/// Accepted: it is fail-closed, empirically unobserved at 24-way concurrency
-/// on local disks, and the next prune collects the branch.
+/// On failure, a fresh exact ref read distinguishes actual SHA movement from
+/// a lock or I/O error without parsing Git's localized diagnostics. A missing,
+/// unchanged or unreadable ref propagates the original deletion error.
 fn cas_delete_branch_outcome(
     repo: &Repository,
     branch_name: &str,
@@ -682,22 +724,18 @@ fn cas_delete_branch_outcome(
     reason: IntegrationReason,
 ) -> anyhow::Result<BranchDeletionOutcome> {
     let ref_name = format!("refs/heads/{branch_name}");
-    let update_err = match repo.run_command(&["update-ref", "-d", &ref_name, expected_sha]) {
-        Ok(_) => return Ok(BranchDeletionOutcome::Integrated(reason)),
-        Err(e) => e,
-    };
-
-    // CAS failed. Re-check the ref to distinguish a race rejection (ref
-    // moved → still present) from a true error (refs DB I/O, permissions,
-    // git missing → propagate). `rev-parse --verify --quiet` returns exit
-    // 0 when the ref exists, exit 1 when it does not — no message parsing.
+    // update-ref bypasses Git's checked-out-branch protection. Sample topology
+    // from a fresh Repository cache, independent of the planning-time cache.
+    if let Some(path) = fresh_branch_checkout(repo, branch_name)? {
+        return Ok(BranchDeletionOutcome::RetainedCheckedOut { path });
+    }
     if repo
-        .run_command(&["rev-parse", "--verify", "--quiet", &ref_name])
-        .is_ok()
+        .branch_deletions()
+        .delete(repo, &ref_name, expected_sha)?
     {
-        Ok(BranchDeletionOutcome::RetainedRaced)
+        Ok(BranchDeletionOutcome::Integrated(reason))
     } else {
-        Err(update_err)
+        Ok(BranchDeletionOutcome::RetainedRaced)
     }
 }
 
@@ -709,20 +747,171 @@ fn cas_delete_branch_outcome(
 /// worktrees on different mount points will get EXDEV and fall back to the
 /// `git worktree remove` path.
 ///
-/// Format: `<trash-dir>/<name>-<timestamp>`
-pub(crate) fn generate_removing_path(trash_dir: &Path, worktree_path: &Path) -> PathBuf {
+/// Format: `<trash-dir>/<name>-<timestamp>`, where `<name>` is the final
+/// component of the worktree's `git_dir`: its registration id under
+/// `<common>/worktrees/`, which git keeps unique among a repository's
+/// worktrees. The directory's basename is not unique — Codex places every
+/// worktree at `<id>/<repo>` — and two removals sharing a staging path in the
+/// same second would make the second rename fail onto the synchronous
+/// fallback.
+pub(crate) fn generate_removing_path(trash_dir: &Path, git_dir: &Path) -> PathBuf {
     let timestamp = epoch_now();
-    let name = worktree_path
+    let name = git_dir
         .file_name()
         .map(|n| n.to_string_lossy())
         .unwrap_or_default();
     trash_dir.join(format!("{}-{}", name, timestamp))
 }
 
+/// Entries in `trash_dir` named `<name>-<timestamp>`, as removal stages them.
+///
+/// Anything else in the directory was not staged by worktrunk and is left
+/// alone. A missing directory has no entries.
+pub fn staged_trash_entries(trash_dir: &Path) -> Vec<PathBuf> {
+    let Ok(read_dir) = fs::read_dir(trash_dir) else {
+        return Vec::new();
+    };
+    read_dir
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry.file_name().to_str().is_some_and(|name| {
+                name.rsplit_once('-')
+                    .is_some_and(|(_, timestamp)| timestamp.parse::<u64>().is_ok())
+            })
+        })
+        .map(|entry| entry.path())
+        .collect()
+}
+
+/// Whether a drain holds `trash_dir`'s lock.
+///
+/// A removal that finds one running skips starting another: the running drain
+/// lists the trash again before it exits. The check holds the lock for an
+/// instant, so a drain starting at that moment may exit early; the check then
+/// reports no drain running and the caller starts one.
+pub fn trash_drain_running(trash_dir: &Path) -> bool {
+    open_drain_lock(trash_dir)
+        .is_ok_and(|lock| matches!(lock.try_lock(), Err(TryLockError::WouldBlock)))
+}
+
+fn open_drain_lock(trash_dir: &Path) -> anyhow::Result<fs::File> {
+    let lock_path = trash_dir.with_extension("lock");
+    fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)
+        .with_context(|| format!("Failed to open {}", format_path_for_display(&lock_path)))
+}
+
+/// Delete every staged entry in `trash_dir`, unless another drain is running.
+///
+/// Every staged removal starts a drain, so a prune starts one per worktree.
+/// Concurrent deletions on one filesystem add CPU without adding throughput:
+/// a 193-worktree prune ran 193 `rm -rf` processes using about three cores to
+/// delete 1,500 files/s, where one process alone deleted 3,000–5,000 files/s
+/// at under one core. So one drain per trash directory does the deleting.
+///
+/// The running drain holds an exclusive lock on `<trash_dir>.lock`. A drain
+/// that finds the lock held exits and leaves its entry to the holder, which
+/// lists the directory again after each pass. After releasing the lock, the
+/// holder lists once more and, if it finds a new entry, takes the lock again:
+/// an entry staged while the holder was releasing it would otherwise wait for
+/// the next removal.
+///
+/// An entry that a drain can't fully delete, such as one holding another
+/// user's files, stays in the trash for a later drain rather than being
+/// retried in a loop.
+pub fn drain_trash(trash_dir: &Path) -> anyhow::Result<()> {
+    let mut undeletable = HashSet::new();
+    loop {
+        let lock = open_drain_lock(trash_dir)?;
+        match lock.try_lock() {
+            Err(TryLockError::WouldBlock) => return Ok(()),
+            result => result
+                .map_err(std::io::Error::from)
+                .context("Failed to lock the trash for deletion")?,
+        }
+        loop {
+            let pending: Vec<_> = staged_trash_entries(trash_dir)
+                .into_iter()
+                .filter(|entry| !undeletable.contains(entry))
+                .collect();
+            if pending.is_empty() {
+                break;
+            }
+            for entry in pending {
+                if !remove_dir_with_progress(&entry, &Progress::disabled()) {
+                    undeletable.insert(entry);
+                }
+            }
+        }
+        drop(lock);
+        if staged_trash_entries(trash_dir)
+            .iter()
+            .all(|entry| undeletable.contains(entry))
+        {
+            return Ok(());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git::ErrorExt;
     use crate::testing::TestRepo;
+
+    /// A drain deletes worktrunk's staged entries and leaves anything else; a
+    /// drain that finds another holding the lock leaves the entries to it.
+    #[test]
+    fn drain_trash_deletes_staged_entries_once_the_lock_is_free() {
+        let temp = tempfile::tempdir().unwrap();
+        let trash = temp.path().join("trash");
+        let staged = trash.join("repo.feature-branch-1700000000");
+        let foreign = trash.join("not-staged");
+        fs::create_dir_all(staged.join("node_modules/pkg")).unwrap();
+        fs::write(staged.join("node_modules/pkg/index.js"), "x").unwrap();
+        fs::create_dir_all(&foreign).unwrap();
+        fs::write(trash.join("stray-file-1700000000"), "a staged file").unwrap();
+        assert_eq!(staged_trash_entries(&trash).len(), 2);
+
+        assert!(!trash_drain_running(&trash));
+        let holder = fs::File::create(temp.path().join("trash.lock")).unwrap();
+        holder.lock().unwrap();
+        assert!(trash_drain_running(&trash));
+        drain_trash(&trash).unwrap();
+        assert!(staged.exists(), "the lock holder owns the deletion");
+
+        drop(holder);
+        // A child that a concurrent test forks while `holder` is open inherits
+        // the lock until it execs, so a drain can still find it held for an
+        // instant and leave the deletion to that phantom holder.
+        crate::testing::wait_for("a drain to delete the staged entries", || {
+            drain_trash(&trash).unwrap();
+            staged_trash_entries(&trash).is_empty()
+        });
+        assert!(foreign.exists());
+        assert!(staged_trash_entries(&temp.path().join("missing")).is_empty());
+    }
+
+    /// An entry the drain can't delete ends the drain rather than looping.
+    #[cfg(unix)]
+    #[test]
+    fn drain_trash_stops_at_an_undeletable_entry() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let trash = temp.path().join("trash");
+        fs::create_dir(&trash).unwrap();
+        fs::write(trash.join("stuck-1700000000"), "x").unwrap();
+        // Unlinking an entry needs write permission on the trash itself.
+        fs::set_permissions(&trash, fs::Permissions::from_mode(0o555)).unwrap();
+
+        drain_trash(&trash).unwrap();
+
+        fs::set_permissions(&trash, fs::Permissions::from_mode(0o755)).unwrap();
+    }
 
     /// A `git worktree lock` must stop the rename even when the caller skipped
     /// `prepare_worktree_removal` (merge used to construct a plan by hand).
@@ -763,6 +952,60 @@ mod tests {
             other => panic!("expected WorktreeLocked without a reason, got {other:?}"),
         }
         assert!(worktree_path.exists());
+    }
+
+    #[test]
+    fn nested_worktree_reads_fresh_topology() {
+        let mut test = TestRepo::with_initial_commit();
+        let source = test.add_worktree("source");
+        let repo = Repository::at(test.root_path()).unwrap();
+        // Warm the cache before adding another checkout: the guard must read
+        // topology after planning, independently of that cache.
+        repo.list_worktrees().unwrap();
+        let late = test.add_worktree_at_path("late", &source.join("late"));
+        assert_eq!(nested_worktree(&repo, &source).unwrap(), Some(late));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nested_worktree_resolves_symlinked_parent() {
+        let mut test = TestRepo::with_initial_commit();
+        let source = test.add_worktree("source");
+        let nested = test.add_worktree_at_path("nested", &source.join("nested"));
+        let alias = test.root_path().parent().unwrap().join("source-alias");
+        std::os::unix::fs::symlink(&source, &alias).unwrap();
+        let repo = Repository::at(test.root_path()).unwrap();
+        assert_eq!(nested_worktree(&repo, &alias).unwrap(), Some(nested));
+    }
+
+    #[test]
+    fn nested_worktree_skips_missing_checkout() {
+        let mut test = TestRepo::with_initial_commit();
+        let source = test.add_worktree("source");
+        let nested = test.add_worktree_at_path("nested", &source.join("nested"));
+        std::fs::rename(&nested, test.root_path().parent().unwrap().join("saved")).unwrap();
+        let repo = Repository::at(test.root_path()).unwrap();
+        assert_eq!(nested_worktree(&repo, &source).unwrap(), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nested_worktree_refuses_unresolvable_checkout() {
+        let mut test = TestRepo::with_initial_commit();
+        let source = test.add_worktree("source");
+        let nested = test.add_worktree_at_path("nested", &source.join("nested"));
+        let saved = test.root_path().parent().unwrap().join("saved");
+        std::fs::rename(&nested, &saved).unwrap();
+        // A symlink loop is an actual resolution error, not evidence that the
+        // registered checkout is absent. Refuse cleanup rather than skip it.
+        std::os::unix::fs::symlink(&nested, &nested).unwrap();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let err = nested_worktree(&repo, &source).unwrap_err();
+        assert!(
+            err.to_string().contains("Failed to resolve worktree @"),
+            "{err:?}"
+        );
+        assert!(saved.join(".git").exists());
     }
 
     /// Registry serialization starts after the fast-path rename, so worktree
@@ -869,6 +1112,26 @@ mod tests {
         assert!(!exit.success(), "branch should have been deleted");
     }
 
+    /// A packed-ref lock failure must preserve the branch and the original
+    /// Git error; an unchanged ref is not evidence of branch movement.
+    #[test]
+    fn cas_propagates_error_when_packed_refs_locked() {
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&["branch", "feature"]);
+        test.run_git(&["pack-refs", "--all"]);
+        test.run_git(&["config", "core.packedRefsTimeout", "0"]);
+        let repo = Repository::at(test.root_path()).unwrap();
+        let snapshot = repo.capture_refs().unwrap();
+        let expected_sha = &snapshot.local_branch("feature").unwrap().commit_sha;
+        std::fs::write(repo.git_common_dir().join("packed-refs.lock"), "").unwrap();
+
+        let result = delete_branch_if_safe(&repo, &snapshot, "feature", "main", false);
+        let error = result.err().expect("lock failure must propagate");
+        let message = error.display_message();
+        assert!(message.contains("packed-refs.lock"), "{message}");
+        assert_eq!(test.git_output(&["rev-parse", "feature"]), *expected_sha);
+    }
+
     /// A branch whose name starts with `-` must still force-delete: the
     /// `git branch -D -- <name>` separator stops git from parsing `-x` as an
     /// option. Created via `update-ref` since `git branch` rejects leading-dash
@@ -939,7 +1202,7 @@ mod tests {
     }
 
     /// When the branch ref vanishes between snapshot capture and the CAS
-    /// delete, `git update-ref -d` fails *and* the ref is already absent, so
+    /// delete, `git update-ref` fails *and* the ref is already absent, so
     /// the outcome is a real error (propagated) — distinct from the
     /// `RetainedRaced` case where the ref moved but still exists.
     #[test]
@@ -961,18 +1224,16 @@ mod tests {
         );
     }
 
-    /// When the branch is integrated but absent from the captured snapshot
-    /// (created after capture), `integration_reason` still resolves it via the
-    /// live `rev-parse` fallback, yet the snapshot carries no SHA to CAS
-    /// against. The delete falls back to a plain `branch -D` and reports
-    /// `Integrated` — the non-CAS arm that exists for exactly this skew.
+    /// A branch created after the snapshot has no checked SHA. Even if a live
+    /// resolution finds it integrated, safe deletion must not force-delete it
+    /// without a compare-and-swap protecting a subsequent commit.
     #[test]
-    fn deletes_via_fallback_when_branch_absent_from_snapshot() {
+    fn retains_branch_when_snapshot_lacks_expected_sha() {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
         // Capture refs BEFORE `feature` exists, so the snapshot carries no SHA
-        // for it (forcing the snapshot-miss, non-CAS arm).
+        // for it.
         let snapshot = repo.capture_refs().unwrap();
         assert!(
             snapshot.local_branch("feature").is_none(),
@@ -983,21 +1244,20 @@ mod tests {
         // commit), resolvable live but missing from the stale snapshot.
         test.run_git(&["branch", "feature"]);
 
-        let result = delete_branch_if_safe(&repo, &snapshot, "feature", "main", false).unwrap();
-        assert!(
-            matches!(result.outcome, BranchDeletionOutcome::Integrated(_)),
-            "expected Integrated via the non-CAS fallback"
-        );
-
-        // Branch was deleted.
-        let mut rev_parse = std::process::Command::new("git");
-        crate::testing::configure_git_cmd(&mut rev_parse);
-        let exit = rev_parse
-            .args(["rev-parse", "--verify", "--quiet", "refs/heads/feature"])
-            .current_dir(test.root_path())
-            .status()
+        let (_, reason) = repo
+            .integration_reason(&snapshot, "feature", "main")
             .unwrap();
-        assert!(!exit.success(), "branch should have been deleted");
+        assert!(reason.is_some(), "the live branch must appear integrated");
+        let result = delete_branch_if_safe(&repo, &snapshot, "feature", "main", false);
+        let error = result.err().expect("missing checked SHA must fail closed");
+        assert!(
+            error.to_string().contains("absent from ref snapshot"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(
+            test.git_output(&["rev-parse", "feature"]),
+            test.git_output(&["rev-parse", "main"])
+        );
     }
 
     #[test]
@@ -1071,11 +1331,11 @@ mod tests {
     #[test]
     fn test_generate_removing_path() {
         let trash_dir = PathBuf::from("/some/path/.git/wt/trash");
-        let path = PathBuf::from("/foo/bar/feature-branch");
-        let removing_path = generate_removing_path(&trash_dir, &path);
-        // Format: <trash>/<name>-<timestamp>
+        let git_dir = PathBuf::from("/some/path/.git/worktrees/repo1");
+        let removing_path = generate_removing_path(&trash_dir, &git_dir);
+        // Format: <trash>/<registration>-<timestamp>
         let name = removing_path.file_name().unwrap().to_string_lossy();
-        assert!(name.starts_with("feature-branch-"));
+        assert!(name.starts_with("repo1-"));
         assert!(removing_path.starts_with(&trash_dir));
     }
 

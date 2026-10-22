@@ -345,10 +345,9 @@ pub(super) fn drain_results_with_timings(
                 item.pr_status = Some(pr_status);
             }
             TaskResult::UrlStatus { url, active, .. } => {
-                // The synchronous URL write in `work_items_for_worktree`
-                // already set `item.url`; this result only carries the
-                // health-check outcome. Still guard for older call sites
-                // that may send `url=Some`.
+                // `work_items_for_worktree` sends the URL itself as an
+                // immediate `url: Some, active: None` result; the later
+                // health check sends `url: None` with the outcome.
                 if url.is_some() {
                     item.url = url;
                 }

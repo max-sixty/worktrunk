@@ -285,7 +285,7 @@ exit_code: 0
       },
       "display": {
         "state": "would_conflict",
-        "symbols": "✗✘",
+        "symbols": "✘✗",
         "statusline": "feature  \u001b[31m✘\u001b[39m\u001b[33m✗\u001b[39m  \u001b[32m↑1\u001b[0m \u001b[2m\u001b[31m↓1\u001b[0m  ^\u001b[32m+2\u001b[0m \u001b[31m-2\u001b[0m"
       }
     }

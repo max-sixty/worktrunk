@@ -60,4 +60,4 @@ exit_code: 1
 
 ----- stderr -----
 [31m✗[39m [31mCannot promote: not on a branch (detached HEAD)[39m
-[2m↳[22m [2mTo switch to a branch, run [4mgit switch <branch>[24m[22m
+[2m↳[22m [2mTo switch to a branch, run [4mgit -C _REPO_.feature switch <branch>[24m[22m

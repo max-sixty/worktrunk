@@ -79,7 +79,7 @@ A string is a single command:
 pre-start = "npm install"
 ```
 
-A table is multiple commands that run concurrently:
+A table names commands. With multiple keys, they run concurrently:
 
 ```toml
 # .config/wt.toml
@@ -191,6 +191,30 @@ Variables use dot access and the `default` filter for missing keys. JSON object/
 dev = "ENV={{ vars.env | default('development') }} npm start -- --port {{ vars.config.port | default('3000') }}"
 ```
 
+The `tojson` filter renders a whole object or array as JSON, for commands that take JSON input:
+
+```toml
+# .config/wt.toml
+[post-start]
+seed = "curl -X POST localhost:3000/seed -d {{ vars.config | tojson }}"
+```
+
+Logic that templates can't express belongs in a script, with the values it needs passed as arguments:
+
+```toml
+# .config/wt.toml
+[post-start]
+setup = "python3 scripts/post-start-setup.py {{ branch }} {{ repo }}"
+```
+
+```python
+# scripts/post-start-setup.py
+import subprocess, sys
+branch, repo = sys.argv[1], sys.argv[2]
+if branch.startswith('feature/') and 'backend' in repo:
+    subprocess.run(['make', 'seed-db'])
+```
+
 ## Worktrunk filters
 
 Templates support Jinja2 filters for transforming values:
@@ -250,6 +274,7 @@ Templates also support functions for dynamic lookups:
 | Function | Example | Description |
 |----------|---------|-------------|
 | `worktree_path_of_branch(branch)` | `{{ worktree_path_of_branch("main") }}` | Look up the path of a branch's worktree |
+| `expected_worktree_path_of_branch(branch)` | `{{ expected_worktree_path_of_branch("feature") }}` | Where `wt switch` expects the branch's worktree |
 
 The `worktree_path_of_branch` function returns the filesystem path of a worktree given a branch name, or an empty string if no worktree exists for that branch. This is useful for referencing files in other worktrees:
 
@@ -260,22 +285,20 @@ The `worktree_path_of_branch` function returns the filesystem path of a worktree
 setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path }}"
 ```
 
-## JSON context
+The `expected_worktree_path_of_branch` function returns the path `wt switch --create` would use for a branch, whether or not a worktree exists there. Unlike `worktree_path_of_branch`, it still returns that path after the worktree there has moved to another branch. For example, this switches to the worktree at `feature`'s path, whichever branch it now holds:
 
-Hooks receive all template variables as JSON on stdin, enabling complex logic that templates can't express. Variables that are unset in a template are absent from the JSON too, so read the optional ones with a default — `branch` has none in a detached worktree:
+```bash
+wt switch "$(wt step eval "{{ expected_worktree_path_of_branch('feature') }}")"
+```
+
+## Interactive hooks
+
+A hook command inherits wt's stdin, so it can prompt, when it runs in the foreground with no other command alongside it. Commands that run concurrently, such as the keys of a multi-key table, get empty stdin, as do `post-*` hooks running in the background and the hooks `wt step prune` runs for several worktrees at once. This `pre-start` hook asks before trusting the worktree:
 
 ```toml
 # .config/wt.toml
 [pre-start]
-setup = "python3 scripts/pre-start-setup.py"
-```
-
-```python
-# scripts/pre-start-setup.py
-import json, sys, subprocess
-ctx = json.load(sys.stdin)
-if ctx.get('branch', '').startswith('feature/') and 'backend' in ctx['repo']:
-    subprocess.run(['make', 'seed-db'])
+trust = "gum confirm 'trust this worktree?' && mise trust"
 ```
 
 ## Copying untracked files

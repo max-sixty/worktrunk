@@ -62,7 +62,8 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mSquashing 2 commits & tracked changes into a single commit [90m(2 files, [32m+2[39m[39m[90m)[39m...[39m
-[2m↳[22m [2mBackup created @ 3f99f8e[22m
+[2m↳[22m [2mBackup created @ [4mrefs/wt-backup/feature[24m (3f99f8e)[22m
+[2m↳[22m [2mTo recover in a new worktree, run [4mwt switch --create --base 3f99f8e7a6c4d4516bf6ceff958037f873de5202 --no-hooks recovery/3f99f8e[24m[22m
 [36m◎[39m [36mGenerating squash commit message...[39m
 [107m [0m [1msquash: combined commits[22m
 [32m✓[39m [32mSquashed @ [HASH][39m

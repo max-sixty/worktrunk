@@ -1861,8 +1861,11 @@ deploy = "make deploy"
     assert!(subcommands.contains(&"deploy"));
 }
 
+/// The generic alias stub offers no `--dry-run` (an error after an alias; the
+/// dry run is `wt config alias dry-run`) or `--var` (forwarded to the alias as
+/// a plain argument).
 #[rstest]
-fn test_complete_step_alias_shows_flags(repo: TestRepo) {
+fn test_complete_step_alias_offers_no_misleading_flags(repo: TestRepo) {
     repo.commit("initial");
     repo.write_project_config(
         r#"
@@ -1880,12 +1883,9 @@ deploy = "make deploy"
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    assert!(
-        stdout.contains("--dry-run"),
-        "Missing --dry-run flag: {stdout}"
-    );
-    assert!(stdout.contains("--yes"), "Missing --yes flag: {stdout}");
-    assert!(stdout.contains("--var"), "Missing --var flag: {stdout}");
+    for flag in ["--dry-run", "--var"] {
+        assert!(!stdout.contains(flag), "Unexpected {flag} flag: {stdout}");
+    }
 }
 
 // --- Alias argument-completion mirroring -------------------------------------

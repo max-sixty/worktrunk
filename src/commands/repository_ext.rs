@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use super::worktree::{RemovalPlan, SharedBranchCheckout};
 use anyhow::{Context, bail};
 use color_print::cformat;
+use worktrunk::config::StageMode;
 use worktrunk::git::{
     BranchDeletionMode, GitError, IntegrationReason, RefSnapshot, Repository, WorkingTree,
     WorktreeInfo, parse_porcelain_z, parse_untracked_files,
@@ -82,6 +83,7 @@ pub trait RepositoryCliExt {
         &self,
         target_worktree: Option<&PathBuf>,
         target_branch: &str,
+        source_sha: &str,
     ) -> anyhow::Result<()>;
 
     /// Check if HEAD is a linear extension of the target branch.
@@ -441,6 +443,7 @@ impl RepositoryCliExt for Repository {
         &self,
         target_worktree: Option<&PathBuf>,
         target_branch: &str,
+        source_sha: &str,
     ) -> anyhow::Result<()> {
         let Some(wt_path) = target_worktree else {
             return Ok(());
@@ -458,7 +461,7 @@ impl RepositoryCliExt for Repository {
             return Ok(());
         }
 
-        let push_files = self.changed_files(target_branch, "HEAD")?;
+        let push_files = self.changed_files(target_branch, source_sha)?;
         let wt_files = parse_porcelain_z(&wt_status_output);
 
         let overlapping: Vec<String> = push_files
@@ -480,8 +483,12 @@ impl RepositoryCliExt for Repository {
     }
 
     fn is_rebased_onto(&self, target: &str) -> anyhow::Result<bool> {
+        let head = self
+            .current_worktree()
+            .run_command(&["rev-parse", "HEAD"])?;
+        let head = head.trim();
         // Orphan branches have no common ancestor, so they can't be "rebased onto" target
-        let Some(merge_base) = self.merge_base("HEAD", target)? else {
+        let Some(merge_base) = self.merge_base(head, target)? else {
             return Ok(false);
         };
         // `merge_base` peels an annotated tag to the commit it points at; a bare
@@ -509,7 +516,7 @@ impl RepositoryCliExt for Repository {
                 "rev-list",
                 "--merges",
                 "--end-of-options",
-                &format!("{}..HEAD", target),
+                &format!("{target}..{head}"),
             ])?
             .trim()
             .to_string();
@@ -569,7 +576,7 @@ pub(crate) fn compute_integration_reason(
 ///
 /// A branch reaches two worktrees only through `git worktree add --force`,
 /// which worktrunk never runs itself. Once it has, the ref is live in both, and
-/// worktrunk deletes branches with `git update-ref -d` — git's compare-and-swap
+/// worktrunk deletes branches with `git update-ref` — git's compare-and-swap
 /// primitive, which unlike `git branch -d` does not refuse a ref that is
 /// checked out somewhere. Deleting it leaves the other checkout at a null OID
 /// with an unresolvable `HEAD`, so every removal that could delete a branch
@@ -617,6 +624,21 @@ pub(crate) fn check_not_default_branch(
     Ok(())
 }
 
+/// Stage the paths `mode` selects for a commit, first warning about any
+/// untracked paths that all-files mode is about to add.
+///
+/// Commit paths call this on both sides of the `pre-commit` hooks: before them
+/// so a hook that reads the index (`pre-commit run`, lint-staged,
+/// `git diff --cached`) sees the changes about to be committed, and, when a
+/// hook ran, after them so a formatter hook's edits land in the commit. The
+/// second call warns only about untracked paths the hooks created.
+pub(crate) fn auto_stage(wt: &WorkingTree, mode: StageMode) -> anyhow::Result<()> {
+    if mode == StageMode::All {
+        warn_about_untracked_files(wt)?;
+    }
+    wt.stage(mode)
+}
+
 /// Warn about untracked files that will be auto-staged.
 ///
 /// Paths come from git's `normal` untracked mode, which overrides a
@@ -626,7 +648,7 @@ pub(crate) fn check_not_default_branch(
 ///
 /// The listing has at most `MAX_ROWS` rows. Past that many paths, the last row
 /// is a hint counting the rest, which is always at least two paths.
-pub(crate) fn warn_about_untracked_files(wt: &WorkingTree) -> anyhow::Result<()> {
+fn warn_about_untracked_files(wt: &WorkingTree) -> anyhow::Result<()> {
     const MAX_ROWS: usize = 10;
 
     let status = wt

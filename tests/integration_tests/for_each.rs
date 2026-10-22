@@ -46,8 +46,24 @@ fn test_for_each_no_args_error(repo: TestRepo) {
 
 #[rstest]
 fn test_for_each_with_detached_head(mut repo: TestRepo) {
-    repo.add_worktree("detached-test");
+    // A generic directory name needs its location even without a collision.
+    let lone_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("solo")
+        .join("worktrunk");
+    repo.add_worktree_at_path("detached-test", &lone_path);
     repo.detach_head_in_worktree("detached-test");
+
+    // A detached checkout and an off-template branch can share a directory name.
+    for name in ["a", "on-branch"] {
+        let path = repo.root_path().parent().unwrap().join(name).join("repo");
+        repo.add_worktree_at_path(name, &path);
+        if name != "on-branch" {
+            repo.detach_head_in_worktree(name);
+        }
+    }
 
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
@@ -218,13 +234,8 @@ fn test_for_each_json_spawn_failure(repo: TestRepo) {
     }
 }
 
-/// Signal-derived exit (Ctrl-C, SIGTERM) in a child must abort the loop
-/// rather than continuing into the remaining worktrees. Simulated here with
-/// a command that self-signals via SIGTERM — this drives the same
-/// `ChildProcessExited { signal: Some(_), .. }` path as a real Ctrl-C against
-/// the wt process. Sending SIGINT to the parent wt process from an integration
-/// test is impractical (it would kill the test harness), so we cover the
-/// signal-detection branch via an equivalent in-child signal.
+/// A child terminated by a signal aborts the loop before the next worktree.
+/// Self-signalling TERM exercises native child status without a terminal.
 #[rstest]
 #[cfg(unix)]
 fn test_for_each_aborts_on_signal_exit(repo: TestRepo) {
@@ -248,7 +259,7 @@ fn test_for_each_aborts_on_signal_exit(repo: TestRepo) {
 
     // Exit code: 128 + SIGTERM (15) = 143
     assert_eq!(
-        output.status.code(),
+        crate::common::shell_exit_code(&output.status),
         Some(143),
         "expected exit 143 (SIGTERM), got {:?}\nstderr: {}",
         output.status.code(),
@@ -276,10 +287,38 @@ fn test_for_each_aborts_on_signal_exit(repo: TestRepo) {
     );
 }
 
+/// Ctrl-C stops the loop even when the child catches it and exits successfully:
+/// wt received the key itself, so no later worktree is visited.
+#[rstest]
+#[cfg(unix)]
+fn test_for_each_stops_on_caught_ctrl_c(repo: TestRepo) {
+    let marker_dir = tempfile::tempdir().unwrap();
+    let pid_file = marker_dir.path().join("pid");
+    let script = format!(
+        "trap 'exit 0' INT; touch {dir}/\"$(basename \"$PWD\")\"; echo $$ > {pid}; while :; do sleep 0.1; done",
+        dir = shell_escape::unix::escape(marker_dir.path().join("visited").to_string_lossy()),
+        pid = shell_escape::unix::escape(pid_file.to_string_lossy()),
+    );
+    std::fs::create_dir(marker_dir.path().join("visited")).unwrap();
+    let mut job = crate::common::SignalJob::spawn(
+        &repo,
+        &["-vv", "step", "for-each", "--", "sh", "-c", &script],
+        std::process::Stdio::null(),
+    );
+    job.interrupt_admitted_child(&repo, &pid_file);
+    assert_eq!(crate::common::shell_exit_code(&job.wait()), Some(130));
+    let visited = std::fs::read_dir(marker_dir.path().join("visited"))
+        .unwrap()
+        .count();
+    assert_eq!(
+        visited, 1,
+        "Ctrl-C must stop the loop after its first visit"
+    );
+}
+
 /// An interrupted `--format=json` run still owes its consumer the results it
 /// collected before the signal: the machine-readable answer is emitted on the
-/// abort path too, not just on the completing one. Same in-child SIGTERM as
-/// the test above, for the same reason.
+/// abort path too, not just on the completing one.
 #[rstest]
 #[cfg(unix)]
 fn test_for_each_json_emitted_on_signal_abort(repo: TestRepo) {
@@ -299,7 +338,7 @@ fn test_for_each_json_emitted_on_signal_abort(repo: TestRepo) {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(
-        output.status.code(),
+        crate::common::shell_exit_code(&output.status),
         Some(143),
         "expected exit 143 (SIGTERM), got {:?}\nstderr: {stderr}",
         output.status.code(),
@@ -314,6 +353,122 @@ fn test_for_each_json_emitted_on_signal_abort(repo: TestRepo) {
         1,
         "only the worktree visited before the signal is reported:\n{stdout}"
     );
+}
+
+/// Controller cancellation stops iteration even when the child handles TERM,
+/// while JSON retains the child's actual exit rather than reporting spawn failure.
+#[rstest]
+#[case::caught_success(0)]
+#[case::caught_failure(3)]
+#[cfg(unix)]
+fn test_for_each_json_preserves_caught_exit_on_controller_term(
+    repo: TestRepo,
+    #[case] exit_code: i32,
+) {
+    use nix::sys::signal::{Signal, kill, killpg};
+    use nix::unistd::Pid;
+    use std::os::unix::process::CommandExt;
+    use std::process::{Child, Command, Stdio};
+
+    struct OwnedJob {
+        keeper: Child,
+        child: Option<Child>,
+    }
+    impl Drop for OwnedJob {
+        fn drop(&mut self) {
+            // The keeper is never reaped before this signal: its PID reserves
+            // the group even if wt has already exited and been collected.
+            let _ = killpg(Pid::from_raw(self.keeper.id() as i32), Signal::SIGKILL);
+            if let Some(child) = &mut self.child {
+                let _ = child.wait();
+            }
+            let _ = self.keeper.wait();
+        }
+    }
+
+    let markers = tempfile::tempdir().unwrap();
+    let ready = markers.path().join("ready");
+    std::fs::create_dir(&ready).unwrap();
+    let worker = r#"import json, os, pathlib, signal, sys
+signal.signal(signal.SIGTERM, lambda *_: os._exit(int(sys.argv[2])))
+directory = pathlib.Path(sys.argv[1])
+temporary = directory.parent / f'{os.getpid()}.tmp'
+temporary.write_text(json.dumps({'pid': os.getpid(), 'parent': os.getppid()}))
+temporary.rename(directory / str(os.getpid()))
+while True:
+    signal.pause()
+"#;
+
+    let mut job = OwnedJob {
+        keeper: Command::new("sleep")
+            .arg("300")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .unwrap(),
+        child: None,
+    };
+    job.child = Some(
+        repo.wt_command()
+            .args([
+                "-vv",
+                "step",
+                "for-each",
+                "--format=json",
+                "--",
+                "python3",
+                "-c",
+            ])
+            .arg(worker)
+            .arg(&ready)
+            .arg(exit_code.to_string())
+            .env("RUST_LOG", crate::common::FOREGROUND_TRACE_FILTER)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .process_group(job.keeper.id() as i32)
+            .spawn()
+            .unwrap(),
+    );
+
+    crate::common::wait_for("for-each command readiness", || {
+        assert!(
+            job.child.as_mut().unwrap().try_wait().unwrap().is_none(),
+            "wt exited before its command became ready"
+        );
+        std::fs::read_dir(&ready).unwrap().next().is_some()
+    });
+    let entry = std::fs::read_dir(&ready).unwrap().next().unwrap().unwrap();
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(entry.path()).unwrap()).unwrap();
+    let controller = job.child.as_ref().unwrap().id() as i32;
+    assert_eq!(metadata["parent"], controller);
+    crate::common::wait_for_foreground_admission(
+        &repo,
+        &[metadata["pid"].as_i64().unwrap() as i32],
+    );
+    assert_eq!(
+        nix::unistd::getpgid(Some(
+            Pid::from_raw(metadata["pid"].as_i64().unwrap() as i32)
+        ))
+        .unwrap(),
+        Pid::from_raw(job.keeper.id() as i32),
+    );
+    kill(Pid::from_raw(controller), Signal::SIGTERM).unwrap();
+
+    crate::common::wait_for("cancelled for-each completion", || {
+        job.child.as_mut().unwrap().try_wait().unwrap().is_some()
+    });
+    let output = job.child.take().unwrap().wait_with_output().unwrap();
+    assert_eq!(crate::common::shell_exit_code(&output.status), Some(143));
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|e| panic!("cancelled run must emit JSON: {e}\n{output:?}"));
+    let items = json.as_array().unwrap();
+    assert_eq!(items.len(), 1, "{json}");
+    assert_eq!(items[0]["exit_code"], exit_code, "{json}");
+    assert_eq!(std::fs::read_dir(&ready).unwrap().count(), 1);
 }
 
 /// for-each relocates the user's command into each worktree, so inherited
@@ -572,6 +727,6 @@ fn test_for_each_json_with_failure(repo: TestRepo) {
         assert_eq!(item["success"], false);
         assert_eq!(item["exit_code"], 1);
         // error field contains the raw message from the child process
-        assert_eq!(item["error"], "exit status: 1");
+        assert_eq!(item["error"], "exit code 1");
     }
 }

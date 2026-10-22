@@ -2,15 +2,58 @@
 
 use std::path::{Path, PathBuf};
 
+fn git_path_from_bytes(bytes: &[u8]) -> std::io::Result<PathBuf> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        Ok(PathBuf::from(std::ffi::OsString::from_vec(bytes.to_vec())))
+    }
+    #[cfg(not(unix))]
+    {
+        // Windows accepts Git's forward slashes; preserve its output spelling.
+        std::str::from_utf8(bytes)
+            .map(PathBuf::from)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+    }
+}
+
+/// Decode one path from Git output, preserving bytes before its final LF.
+fn git_path_from_output(bytes: &[u8]) -> std::io::Result<PathBuf> {
+    let path = bytes.strip_suffix(b"\n").ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Unterminated Git path output",
+        )
+    })?;
+    git_path_from_bytes(path)
+}
+
+/// Gitfiles and backlinks terminate paths with CR/LF, unlike command output.
+fn git_path_from_file(bytes: &[u8]) -> std::io::Result<PathBuf> {
+    let mut path = bytes;
+    while matches!(path.last(), Some(b'\n' | b'\r')) {
+        path = &path[..path.len() - 1];
+    }
+    if path.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Empty Git path",
+        ));
+    }
+    git_path_from_bytes(path)
+}
+
 // Submodules
 mod ci_platform;
 mod diff;
 mod error;
+pub(crate) use error::error_chain_message;
 pub mod fsmonitor;
 mod parse;
 #[cfg(unix)]
 pub mod reap;
 pub mod recover;
+mod ref_deletion;
 pub mod remote_ref;
 pub mod remove;
 mod repository;
@@ -87,6 +130,7 @@ pub use error::{
     add_hook_skip_hint,
     // Shared phrasing for an unmerged index ("1 path with unresolved conflicts")
     format_unresolved_conflicts,
+    process_exit_description,
     // Render a single error via Diagnostic if it implements one
     try_render_diagnostic,
 };
@@ -94,19 +138,20 @@ pub use parse::{parse_porcelain_z, parse_untracked_files};
 pub use recover::{current_or_recover, cwd_removed_hint};
 pub use remove::{
     BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemovalOutput, RemoveOptions,
-    delete_branch_if_safe, execute_branch_deletion, remove_worktree_with_cleanup,
-    stage_worktree_removal, stop_fsmonitor_daemon,
+    delete_branch_if_safe, drain_trash, execute_branch_deletion, remove_worktree_with_cleanup,
+    stage_worktree_removal, staged_trash_entries, stop_fsmonitor_daemon, trash_drain_running,
 };
 pub use repository::sha_cache;
 pub use repository::{
     Branch, BranchDiffSpec, CommitMessageDetail, InProgressOperation, IntegrationTargets,
-    PreparedDiff, RefSnapshot, Repository, ResolvedWorktree, Selector, StaleWorktreeWork,
-    TempIndex, WorkingTree, duplicated_branches, is_valid_branch_name, normalize_selector,
-    resolve_input_path, select_comparison_base, set_base_path,
+    PreparedDiff, RefSnapshot, Repository, ResolvedWorktree, SafetyBackup, Selector,
+    StaleWorktreeWork, TempIndex, WorkingTree, base_path, duplicated_branches,
+    is_valid_branch_name, normalize_selector, resolve_input_path, select_comparison_base,
+    set_base_path,
 };
 pub use url::parse_owner_repo;
 pub use url::{GitRemoteUrl, GitRepoInfo, GitRepoProvider};
-pub(crate) use url::{canonical_url_path_segment, url_path_segments_eq};
+pub(crate) use url::{canonical_url_path_segment, legacy_project_identifier, url_path_segments_eq};
 pub use version::{git_version, require_minimum_git};
 
 /// Why branch content is considered integrated into the target branch.
@@ -271,7 +316,7 @@ pub fn check_integration(signals: &IntegrationSignals) -> Option<IntegrationReas
 /// For batch operations, use parallel tasks to build [`IntegrationSignals`] directly.
 ///
 /// Resolves both `branch` and `target` to commit SHAs via `snapshot` so the
-/// integration probes are immune to ambient ref→SHA cache staleness — this
+/// integration probes read the ref state the caller captured — this
 /// is the safety contract that lets `wt merge`'s post-update-ref check
 /// observe the new local target SHA instead of the pre-merge value.
 /// Refs not in the snapshot (typically transient HEAD commits during a
@@ -823,7 +868,7 @@ impl WorktreeInfo {
 
     /// Build the canonical worktree subject for this inventory entry.
     pub fn worktree_ref(&self) -> WorktreeRef {
-        // `branch` is the short form produced by `parse_porcelain_list` (one
+        // `branch` is the short form produced by `parse_porcelain_list_z` (one
         // `refs/heads/` prefix stripped). Re-qualifying it in the worktree
         // constructor preserves even a pathological branch literally named
         // `refs/heads/foo` as `refs/heads/refs/heads/foo`.

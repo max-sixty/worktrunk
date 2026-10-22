@@ -37,11 +37,16 @@ use super::preview_orchestrator::{PreviewDemand, SpawnGeneration};
 /// codes — converts them itself. Rows are single lines; spans from any parsed
 /// lines are flattened into one. A parse failure falls back to the raw text.
 ///
-/// Each span's background is cleared to `None`. The rows are foreground-only,
-/// but an `\x1b[0m` reset in the source ANSI parses to an explicit
-/// `bg = Reset`, which would override skim's `highlight_line` fill and leave the
-/// selected row's gray highlight (`current_bg`) full of holes. Leaving `bg`
-/// unset lets the line-level current-row background show through uniformly.
+/// An `\x1b[0m` reset in the source ANSI parses to explicit `Reset` colors,
+/// which would override skim's line-level row style, so both are cleared to
+/// `None`:
+///
+/// - `bg`: the rows are foreground-only, and an explicit `Reset` would leave
+///   the selected row's gray highlight (`current_bg`) full of holes.
+/// - `fg`: an explicit `Reset` draws the terminal's default foreground instead
+///   of the selected row's `current:237`. A branch-only row's dim `/ ` gutter
+///   ends in `\x1b[0m`, so its branch name rendered light-on-light under the
+///   selection on dark themes. Off-cursor, `None` and `Reset` look the same.
 pub(super) fn ansi_to_line(s: &str) -> Line<'static> {
     match s.into_text() {
         Ok(text) => Line::from(
@@ -50,6 +55,9 @@ pub(super) fn ansi_to_line(s: &str) -> Line<'static> {
                 .flat_map(|line| line.spans)
                 .map(|mut span| {
                     span.style.bg = None;
+                    if span.style.fg == Some(Color::Reset) {
+                        span.style.fg = None;
+                    }
                     span
                 })
                 .collect::<Vec<Span<'static>>>(),
@@ -1352,20 +1360,33 @@ impl PickerRow {
     ) -> (String, bool) {
         match mode {
             PreviewMode::UnifiedDiff => (
-                Self::page_diff(Self::compute_unified_diff_preview(repo, item, width), width),
+                Self::page_diff(
+                    repo,
+                    Self::compute_unified_diff_preview(repo, item, width),
+                    width,
+                ),
                 false,
             ),
             PreviewMode::WorkingTree => (
-                Self::page_diff(Self::compute_working_tree_preview(repo, item, width), width),
+                Self::page_diff(
+                    repo,
+                    Self::compute_working_tree_preview(repo, item, width),
+                    width,
+                ),
                 false,
             ),
             PreviewMode::Log => Self::compute_log_preview(repo, item, width, height),
             PreviewMode::BranchDiff => (
-                Self::page_diff(Self::compute_branch_diff_preview(repo, item, width), width),
+                Self::page_diff(
+                    repo,
+                    Self::compute_branch_diff_preview(repo, item, width),
+                    width,
+                ),
                 false,
             ),
             PreviewMode::UpstreamDiff => (
                 Self::page_diff(
+                    repo,
                     Self::compute_upstream_diff_preview(repo, item, width),
                     width,
                 ),
@@ -1381,8 +1402,8 @@ impl PickerRow {
         }
     }
 
-    fn page_diff(content: String, width: usize) -> String {
-        if let Some(pager_cmd) = diff_pager() {
+    fn page_diff(repo: &Repository, content: String, width: usize) -> String {
+        if let Some(pager_cmd) = diff_pager(repo) {
             pipe_through_pager(&content, pager_cmd, width)
         } else {
             content
@@ -1773,27 +1794,20 @@ impl PickerRow {
         // freeze the dim/bright styling at the SHA main pointed at when
         // the picker started, instead of the current SHA. The
         // `log_cache_dim_split_tracks_main_advance` test pins this
-        // contract.
-        //
-        // (`Repository::merge_base` is correctness-safe — it re-resolves
-        // ref names through an uncached `git rev-parse` before hitting
-        // its SHA-keyed cache — but it'd cost an extra subprocess per
-        // render on cache miss, with no win since each item's head is
-        // unique.)
+        // contract. `Repository::merge_base` is safe here: it re-resolves
+        // ref names through an uncached `git rev-parse` before hitting its
+        // SHA-keyed cache.
         //
         // Error handling note: this code runs in an interactive preview
         // pane. Silent fallbacks beat disruptive errors during navigation;
         // the preview is supplementary, users can still select worktrees
         // even if a probe fails.
-        let Ok(merge_base_output) =
-            repo.run_command(&["merge-base", "--end-of-options", &default_branch, head])
-        else {
+        let Ok(merge_base) = repo.merge_base(&default_branch, head) else {
             return (
                 cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits\n"),
                 false,
             );
         };
-        let merge_base = merge_base_output.trim();
         let is_default_branch = branch == default_branch;
         let log_limit_str = log_limit.to_string();
 
@@ -1804,7 +1818,7 @@ impl PickerRow {
         let unique_commits: Option<HashSet<String>> = if is_default_branch {
             // On default branch: no dimming (None means show everything bright)
             None
-        } else {
+        } else if let Some(merge_base) = merge_base {
             // On feature branch: get commits unique to this branch
             // rev-list A...B --right-only gives commits reachable from B but not A
             let range = format!("{}...{}", merge_base, head);
@@ -1813,6 +1827,9 @@ impl PickerRow {
                 .map(|out| out.lines().map(String::from).collect())
                 .unwrap_or_default();
             Some(commits) // Some(empty) means dim everything
+        } else {
+            // Orphan branch: no common ancestor, so every commit is its own
+            None
         };
 
         // Cacheable: the raw `git log --graph` output plus per-commit
@@ -1921,6 +1938,26 @@ mod tests {
     fn as_worktree(item: ListItem, path: &std::path::Path, data: WorktreeData) -> ListItem {
         let subject = worktrunk::git::WorktreeRef::new(path, item.branch(), item.head());
         ListItem::new_worktree(subject, data)
+    }
+
+    /// Text after an `\x1b[0m` reset inherits the row's line-level foreground.
+    /// A branch-only row opens with a dim `/ ` gutter closed by `\x1b[0m`, so
+    /// its (non-removable) branch name used to parse to an explicit
+    /// `fg = Reset` — the terminal's default foreground, which overrides skim's
+    /// selected-row `current:237` and is light-on-light on a dark theme.
+    #[test]
+    fn ansi_to_line_leaves_reset_foreground_to_the_row_style() {
+        let line = ansi_to_line("\x1b[2m/ \x1b[0mfeature \x1b[33m✗\x1b[39m");
+        let fgs: Vec<_> = line
+            .spans
+            .iter()
+            .map(|span| (span.content.as_ref(), span.style.fg))
+            .collect();
+        assert_eq!(
+            fgs,
+            vec![("/ ", None), ("feature ", None), ("✗", Some(Color::Yellow))]
+        );
+        assert!(line.spans.iter().all(|span| span.style.bg.is_none()));
     }
 
     /// `anchor_faint_under_selection` recolors faint text to an explicit gray
@@ -3462,6 +3499,30 @@ mod tests {
         assert!(
             super::preview_cache::read_log(&repo, item.head(), 100, 24).is_none(),
             "different width still misses"
+        );
+    }
+
+    #[test]
+    fn log_orphan_shows_its_commits() {
+        // An orphan branch shares no history with the default branch, so
+        // `git merge-base` exits 1. That is "no common ancestor", not a
+        // failure: every commit is the branch's own and shows bright.
+        let (t, repo) = repo_with_main();
+        repo.run_command(&["checkout", "--orphan", "orphan-feature"])
+            .unwrap();
+        repo.run_command(&["rm", "-rf", "."]).unwrap();
+        std::fs::write(t.path().join("orphan.txt"), "orphan\n").unwrap();
+        repo.run_command(&["add", "orphan.txt"]).unwrap();
+        repo.run_command(&["commit", "-m", "orphan root"]).unwrap();
+        let item = item_at(&repo, "orphan-feature");
+        let output = PickerRow::compute_log_preview(&repo, &item, 80, 24).0;
+        let subject_line = output
+            .lines()
+            .find(|l| l.contains("orphan root"))
+            .unwrap_or_else(|| panic!("orphan log should list its commit, got: {output:?}"));
+        assert!(
+            subject_line.contains("\x1b[1;32m"),
+            "orphan commit should be bright, got: {subject_line:?}"
         );
     }
 

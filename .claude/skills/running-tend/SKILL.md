@@ -8,15 +8,13 @@ metadata:
 # Worktrunk Tend CI
 
 Project-specific guidance for tend workflows running on worktrunk (a Rust
-CLI for managing git worktrees). The generic skills
-(`/tend-ci-runner:run-tend`, `/tend-ci-runner:review`,
-`/tend-ci-runner:triage`, etc.) provide the workflow framework; this skill
-adds worktrunk conventions.
+CLI for managing git worktrees). The bundled `run-tend`, `review`, and `triage`
+skills provide the workflow framework; this skill adds worktrunk conventions.
 
 ## Filing issues in other repos
 
 Standing exception granted: file directly in agent-equipped targets (per
-**Filing issues** in the bundled `/tend-ci-runner:act-in-other-repos` skill)
+**Filing issues** in the bundled `act-in-other-repos` skill)
 without asking permission here first. The default rule (open an issue here asking
 permission first) still applies when the target shows no agent signals.
 
@@ -79,7 +77,7 @@ CI runs on Linux, Windows, and macOS.
 A test that leans on inherited state — the process CWD, an ambient env var —
 sets up its own instead, via `TestRepo::with_initial_commit()` plus a tempdir,
 the way most worktrunk tests already do. Guarding it with an early return
-(**Don't "fix" tests by adding skip guards** in `/tend-ci-runner:fix-a-bug`)
+(**Don't "fix" tests by adding skip guards** in the bundled `fix-a-bug` skill)
 drops the coverage rather than restoring it. This governs every workflow that
 fixes a test here, not just issue triage.
 

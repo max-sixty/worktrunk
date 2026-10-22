@@ -40,7 +40,7 @@ A new branch tracks the remote branch it starts from only when the two share a n
 If the branch already has a worktree, `wt switch` changes directories to it. Otherwise, it creates one:
 
 1. Runs [pre-switch hooks](/hook/#hook-types), blocking until complete
-2. Creates worktree at configured path
+2. Creates worktree at configured path (or at `--path`)
 3. Switches to new directory
 4. Runs [pre-start hooks](/hook/#hook-types), blocking until complete
 5. Spawns [post-start](/hook/#hook-types) and [post-switch hooks](/hook/#hook-types) in the background
@@ -51,6 +51,20 @@ $ wt switch --create feature               # New branch and worktree
 $ wt switch --create fix --base release    # New branch from release
 $ wt switch --create temp --no-hooks       # Skip hooks
 ```
+
+### Custom path
+
+<span class="badge-experimental"></span>
+
+`--path` places one worktree outside the `worktree-path` template, keeping the branch name intact:
+
+```console
+$ wt switch --create feature/JIRA-1234 --path ../dark-mode
+$ wt switch ../dark-mode                   # Switch by path...
+$ wt switch feature/JIRA-1234              # ...or by branch
+```
+
+Other commands reach it by branch or path as usual. [`wt list`](/list/#worktree) marks it `⚐`, since it isn't at the path its branch implies, and [`wt step relocate`](/step/#wt-step-relocate) offers to move it back to the template path.
 
 ## Naming a worktree
 
@@ -109,6 +123,8 @@ The CI column shows each row's PR/MR CI and review status, the same as [`wt list
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
 
+On macOS, `Alt` is the Option key; the terminal needs to send it as Meta (e.g. Terminal.app's [Use Option as Meta key](https://support.apple.com/guide/terminal/change-profiles-keyboard-settings-trmlkbrd/mac)).
+
 The filter matches each row's branch, path, and — when it has a PR/MR — the PR/MR's number, title, and author. Typing `+` narrows to linked worktrees, and `@` to the current worktree.
 
 **Preview tabs:**
@@ -131,6 +147,8 @@ The comparison base is the merge-base with the default branch, or with its upstr
 [switch.picker]
 pager = "delta --paging=never --width=$COLUMNS"
 ```
+
+**Hiding the preview:** Set `preview = false` under `[switch.picker]` to open the picker with the preview hidden; `Alt-p` still shows it.
 
 ## Pull requests and merge requests
 
@@ -194,6 +212,13 @@ Options:
 
           Defaults to default branch. Supports the same shortcuts as the branch argument: ^, @, -,
           pr:{N}, mr:{N}.
+
+      --path <PATH>
+          Worktree directory for a new worktree [experimental]
+
+          Overrides the worktree-path template for this worktree. Relative paths resolve from the
+          current directory, as with git worktree add. The branch keeps its own name; afterwards,
+          switch by branch or by path.
 
   -x, --execute <EXECUTE>
           Program to run after switch
@@ -264,8 +289,12 @@ Automation:
       --format <FORMAT>
           Output format
 
-          JSON prints structured result to stdout. Designed for tool integration (e.g., Claude Code
-          WorktreeCreate hooks).
+          JSON prints one structured result to stdout once the switch, including any --execute
+          command, completes. Once arguments are accepted, failures print an object with an error
+          string. Argument errors use stderr only. Diagnostics and --execute output go to stderr. A
+          worktree created before a later failure remains in place. Canceling the interactive picker
+          produces no result. Background hooks run independently of the result. Designed for tool
+          integration (e.g., Claude Code WorktreeCreate hooks).
 
           [default: text]
           [possible values: text, json]
