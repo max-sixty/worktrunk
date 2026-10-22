@@ -790,9 +790,6 @@ fn parse_cli() -> Cli {
     // Exits the process on a help/version/doc request; otherwise returns.
     help::maybe_handle_help_with_pager(alias_help_context, subcommand.as_deref());
 
-    // TODO: Enhance error messages to show possible values for missing enum arguments
-    // Currently `wt config shell init` doesn't show available shells, but `wt config shell init invalid` does.
-    // Clap doesn't support this natively yet - see https://github.com/clap-rs/clap/issues/3320
     // When available, use built-in setting. Until then, could use try_parse() to intercept
     // MissingRequiredArgument errors and print custom messages with ValueEnum::value_variants().
     let cmd = cli::build_command();

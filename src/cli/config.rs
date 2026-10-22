@@ -62,7 +62,7 @@ Invoke-Expression (& wt config shell init powershell | Out-String)
     )]
     Init {
         /// Shell to generate code for
-        #[arg(value_enum)]
+        #[arg(value_enum, value_name = super::shell_value_name())]
         shell: Shell,
 
         /// Command name for shell integration (defaults to binary name)
@@ -95,7 +95,7 @@ Use --yes to skip confirmation."#
     )]
     Install {
         /// Shell to install (default: all)
-        #[arg(value_enum)]
+        #[arg(value_enum, value_name = super::shell_value_name())]
         shell: Option<Shell>,
 
         /// Show what would be changed
@@ -140,7 +140,7 @@ Uninstall removes every worktrunk-managed integration it finds, regardless of:
     )]
     Uninstall {
         /// Shell to uninstall (default: all)
-        #[arg(value_enum)]
+        #[arg(value_enum, value_name = super::shell_value_name())]
         shell: Option<Shell>,
 
         /// Show what would be changed

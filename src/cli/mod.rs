@@ -96,12 +96,9 @@ Usage: {usage}
 
 {all-args}{after-help}";
 
-/// Cached value_name for Shell enum (e.g., "bash|fish|zsh|powershell")
-///
-/// TODO: There should be a simpler way to show ValueEnum variants in clap's "missing required
-/// argument" error. Clap auto-generates `[possible values: ...]` in help and completions from
-/// ValueEnum, but doesn't use it for value_name. We use mut_subcommand to set it dynamically,
-/// but this feels overly complex. Revisit if clap adds better support.
+/// Shell variants for usage and missing-argument errors, shared by the shell
+/// argument declarations. Clap's ValueEnum shows possible values in help but
+/// does not include them in the usage placeholder by default.
 fn shell_value_name() -> &'static str {
     static CACHE: OnceLock<String> = OnceLock::new();
     CACHE
@@ -118,21 +115,7 @@ fn shell_value_name() -> &'static str {
 
 /// Build a clap Command for Cli with the shared help template applied recursively.
 pub(crate) fn build_command() -> Command {
-    let cmd = apply_help_template_recursive(Cli::command(), DEFAULT_COMMAND_NAME);
-
-    // Set value_name for Shell args to show options in usage/errors
-    let shell_name = shell_value_name();
-    cmd.mut_subcommand("config", |c| {
-        c.mut_subcommand("shell", |c| {
-            c.mut_subcommand("init", |c| c.mut_arg("shell", |a| a.value_name(shell_name)))
-                .mut_subcommand("install", |c| {
-                    c.mut_arg("shell", |a| a.value_name(shell_name))
-                })
-                .mut_subcommand("uninstall", |c| {
-                    c.mut_arg("shell", |a| a.value_name(shell_name))
-                })
-        })
-    })
+    apply_help_template_recursive(Cli::command(), DEFAULT_COMMAND_NAME)
 }
 
 /// Parent commands whose subcommands can be suggested for unrecognized top-level commands.
