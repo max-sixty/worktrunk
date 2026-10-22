@@ -284,3 +284,49 @@ fn step_diff_branch_flag_accepts_shortcut(mut repo: TestRepo) {
         "the diff should be the current worktree's"
     );
 }
+
+/// A cancelled branch probe must not become a misleading missing-worktree error.
+#[cfg(unix)]
+#[rstest]
+#[case(2)]
+#[case(15)]
+fn step_diff_preserves_missing_worktree_probe_interruption(repo: TestRepo, #[case] signal: i32) {
+    use std::os::unix::{fs::PermissionsExt, process::ExitStatusExt};
+
+    repo.run_git(&["branch", "unopened"]);
+    let scratch = crate::common::test_tempdir();
+    let script = scratch.path().join("git");
+    let reached = scratch.path().join("reached");
+    let real_git = which::which("git").unwrap();
+    fs::write(
+        &script,
+        format!(
+            r#"#!/bin/sh
+if [ "$1" = rev-parse ]; then
+  for arg in "$@"; do
+    if [ "$arg" = 'refs/heads/unopened^{{commit}}' ]; then
+      echo reached > {reached}
+      kill -{signal} $$
+    fi
+  done
+fi
+exec {real_git} "$@"
+"#,
+            reached = shell_escape::unix::escape(reached.to_string_lossy()),
+            real_git = shell_escape::unix::escape(real_git.to_string_lossy()),
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(script, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut paths = vec![scratch.path().to_path_buf()];
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    let output = repo
+        .wt_command()
+        .args(["step", "diff", "--branch", "unopened"])
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .output()
+        .unwrap();
+    assert_eq!(fs::read_to_string(reached).unwrap(), "reached\n");
+    assert_eq!(output.status.signal(), Some(signal), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+}
