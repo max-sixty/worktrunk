@@ -13,8 +13,6 @@ rm -rf /tmp/worktrunk-aarch64-unknown-linux-musl
 
 # Studio launches bash explicitly with after-load.sh as its rcfile; changing
 # root's login shell would not change Demoshell's running ash session.
-# Demoshell's command tracker requires the arm64js: prompt prefix.
-echo 'PS1='"'"'arm64js:\[\e[32m\]\W\[\e[0m\] $ '"'" > "$HOME/.bashrc"
 wt config shell install bash --yes
 
 git config --global user.name "Demo User"

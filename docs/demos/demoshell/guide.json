@@ -59,7 +59,7 @@
       "body": "Run wt switch to open a picker: type to filter, move with the arrow keys, Enter to switch, Esc to leave. Mark this step done when you've tried it.",
       "kind": "manual",
       "match_mode": "exact",
-      "pattern": null,
+      "pattern": "",
       "output_contains": null,
       "require_success": false,
       "optional": true

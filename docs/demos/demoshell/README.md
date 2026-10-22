@@ -14,6 +14,8 @@ The VM's definition is kept here and entered into the Demoshell studio, where th
 
 Set **When a visitor opens the VM → Start an app** to `bash --rcfile /root/after-load.sh`. Demoshell's shell-prompt mode runs ash even if the recipe changes root's login shell. Starting bash explicitly loads Worktrunk's shell integration so switching and merging move the visitor's shell.
 
+`after-load.sh` supplies the prompt prefix Demoshell uses to identify commands and an OSC 133 exit-status marker so the guide can verify whether they succeeded.
+
 To check the full recipe before a Studio build, run this from the repository root with Docker:
 
 ```bash

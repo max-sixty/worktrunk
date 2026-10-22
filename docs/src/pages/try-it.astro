@@ -12,7 +12,7 @@ const launchUrl = `${server}/launch?snapshot=${encodeURIComponent(snapshot)}`;
 <StarlightPage
   frontmatter={{
     title: 'Try it',
-    description: 'Run Worktrunk in your browser: a Linux VM with wt installed and a guided walk through creating, merging, and removing a worktree.',
+    description: 'Try Worktrunk in your browser.',
     editUrl: false,
     tableOfContents: false,
     pagefind: false,
@@ -20,15 +20,11 @@ const launchUrl = `${server}/launch?snapshot=${encodeURIComponent(snapshot)}`;
   }}
 >
   <p>
-    Run Worktrunk in a Linux VM inside this browser tab — no install, and nothing
-    you type leaves your machine. The guide beside the terminal walks through a
-    worktree's whole life: create one, change a file, and merge it back to
-    <code>main</code>.
+    Run Worktrunk in your browser. No installation needed.
   </p>
   <p>
-    Nothing downloads until you press run. Chrome and Edge run the VM in the
-    page. <a href={launchUrl}>Open the full-page demo</a> if your browser cannot
-    run it here.
+    Nothing downloads until you press Run.{' '}
+    <a href={launchUrl}>Open the full-page demo</a> if your browser cannot run it here.
   </p>
 
   <div class="wt-try-it" data-server={server} data-snapshot={snapshot}>
@@ -41,9 +37,7 @@ const launchUrl = `${server}/launch?snapshot=${encodeURIComponent(snapshot)}`;
   </p>
 
   <p>
-    Ready for the real thing? <a href="/#install">Install Worktrunk</a>, then run
-    <code>wt config shell install</code> so <code>wt switch</code> can change
-    directory.
+    <a href="/#install">Install Worktrunk</a>
   </p>
 </StarlightPage>
 
