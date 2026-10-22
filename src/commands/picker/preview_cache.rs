@@ -4,7 +4,7 @@
 //! This is the on-disk tier for three of the modes; the in-memory tier above it
 //! and the system-wide invalidation rules live in [`super::preview_orchestrator`].
 //!
-//! Three of the picker's preview modes are deterministic functions of git
+//! With complete history, three preview modes are deterministic functions of git
 //! object SHAs at a given terminal width: Log on `(branch_head_sha)`,
 //! BranchDiff on `(default_head_sha, branch_head_sha)`, and UpstreamDiff on
 //! `(branch_head_sha, upstream_head_sha)`. Identical inputs produce identical
@@ -34,7 +34,7 @@
 //! The repo-scoped cache dir isolates by repository, so the PR number alone
 //! disambiguates within it.
 //!
-//! Layout: `.git/wt/cache/picker-preview/{mode}-{sig}[-{sig}][-{w}[-{h}]].json`
+//! Layout: `.git/wt/cache/picker-preview/[complete-]{mode}-{sig}[-{sig}][-{w}[-{h}]].json`
 //! (the Comments key carries no width — its entry is width-independent raw data).
 //! The diff modes cache the pre-pager rendered diff *body* plus the facts
 //! needed to re-render the branch-naming headline on read — see
@@ -45,7 +45,12 @@
 //! stats) and recomputes the dim/bright split and relative-time formatting
 //! on every render — see [`LogCacheEntry`] for why.
 //!
-//! No explicit invalidation: SHAs are content-addressed, so a `git fetch`
+//! Git previews bypass disk caching in shallow repositories: fetching deeper
+//! history changes log and merge-base output without moving the queried SHAs.
+//! The `complete-` prefix excludes legacy entries written with shallow history.
+//! Comments remain cacheable because their content signature is independent.
+//!
+//! With complete history, SHAs are content-addressed, so a `git fetch`
 //! that moves the default branch or upstream produces fresh keys; the LRU
 //! sweep prunes stale entries.
 //!
@@ -109,15 +114,15 @@ pub(super) struct LogCacheEntry {
 const MAX_ENTRIES: usize = 500;
 
 fn log_key(sha: &str, w: usize, h: usize) -> String {
-    format!("log-{sha}-{w}-{h}.json")
+    format!("complete-log-{sha}-{w}-{h}.json")
 }
 
 fn branch_diff_key(base_sha: &str, branch_sha: &str, w: usize) -> String {
-    format!("branch-diff-{base_sha}-{branch_sha}-{w}.json")
+    format!("complete-branch-diff-{base_sha}-{branch_sha}-{w}.json")
 }
 
 fn upstream_diff_key(branch_sha: &str, upstream_sha: &str, w: usize) -> String {
-    format!("upstream-diff-{branch_sha}-{upstream_sha}-{w}.json")
+    format!("complete-upstream-diff-{branch_sha}-{upstream_sha}-{w}.json")
 }
 
 /// Cached payload for the BranchDiff preview.
@@ -154,12 +159,25 @@ pub(super) struct UpstreamDiffCacheEntry {
     pub body: Option<String>,
 }
 
+fn read<T: serde::de::DeserializeOwned>(repo: &Repository, key: &str) -> Option<T> {
+    if repo.is_shallow() {
+        return None;
+    }
+    cache::read(repo, KIND, key)
+}
+
+fn write<T: Serialize>(repo: &Repository, key: &str, value: &T) {
+    if !repo.is_shallow() {
+        cache::write_with_lru(repo, KIND, key, value, MAX_ENTRIES);
+    }
+}
+
 pub(super) fn read_log(repo: &Repository, sha: &str, w: usize, h: usize) -> Option<LogCacheEntry> {
-    cache::read(repo, KIND, &log_key(sha, w, h))
+    read(repo, &log_key(sha, w, h))
 }
 
 pub(super) fn write_log(repo: &Repository, sha: &str, w: usize, h: usize, value: &LogCacheEntry) {
-    cache::write_with_lru(repo, KIND, &log_key(sha, w, h), value, MAX_ENTRIES);
+    write(repo, &log_key(sha, w, h), value);
 }
 
 pub(super) fn read_branch_diff(
@@ -168,7 +186,7 @@ pub(super) fn read_branch_diff(
     branch_sha: &str,
     w: usize,
 ) -> Option<BranchDiffCacheEntry> {
-    cache::read(repo, KIND, &branch_diff_key(base_sha, branch_sha, w))
+    read(repo, &branch_diff_key(base_sha, branch_sha, w))
 }
 
 pub(super) fn write_branch_diff(
@@ -178,13 +196,7 @@ pub(super) fn write_branch_diff(
     w: usize,
     value: &BranchDiffCacheEntry,
 ) {
-    cache::write_with_lru(
-        repo,
-        KIND,
-        &branch_diff_key(base_sha, branch_sha, w),
-        value,
-        MAX_ENTRIES,
-    );
+    write(repo, &branch_diff_key(base_sha, branch_sha, w), value);
 }
 
 pub(super) fn read_upstream_diff(
@@ -193,7 +205,7 @@ pub(super) fn read_upstream_diff(
     upstream_sha: &str,
     w: usize,
 ) -> Option<UpstreamDiffCacheEntry> {
-    cache::read(repo, KIND, &upstream_diff_key(branch_sha, upstream_sha, w))
+    read(repo, &upstream_diff_key(branch_sha, upstream_sha, w))
 }
 
 pub(super) fn write_upstream_diff(
@@ -203,13 +215,7 @@ pub(super) fn write_upstream_diff(
     w: usize,
     value: &UpstreamDiffCacheEntry,
 ) {
-    cache::write_with_lru(
-        repo,
-        KIND,
-        &upstream_diff_key(branch_sha, upstream_sha, w),
-        value,
-        MAX_ENTRIES,
-    );
+    write(repo, &upstream_diff_key(branch_sha, upstream_sha, w), value);
 }
 
 /// One cached PR comment — the deterministic, render-independent fields parsed
@@ -304,6 +310,45 @@ mod tests {
             raw_log: "raw log content".to_string(),
             stats,
         }
+    }
+
+    #[test]
+    fn legacy_shallow_log_entries_are_ignored() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        cache::write_with_lru(
+            &repo,
+            KIND,
+            "log-deadbeef-80-24.json",
+            &sample_log_entry(),
+            MAX_ENTRIES,
+        );
+        assert!(read_log(&repo, "deadbeef", 80, 24).is_none());
+    }
+
+    #[test]
+    fn shallow_history_does_not_persist_git_previews() {
+        let test = TestRepo::with_initial_commit();
+        let head = test.git_output(&["rev-parse", "HEAD"]);
+        let shallow =
+            test.root_path()
+                .join(test.git_output(&["rev-parse", "--git-path", "shallow"]));
+        std::fs::write(shallow, format!("{head}\n")).unwrap();
+        let repo = Repository::at(test.root_path()).unwrap();
+        write_log(&repo, &head, 80, 24, &sample_log_entry());
+        write_branch_diff(&repo, &head, &head, 80, &branch_entry("diff"));
+        write_upstream_diff(
+            &repo,
+            &head,
+            &head,
+            80,
+            &UpstreamDiffCacheEntry {
+                ahead: 1,
+                behind: 0,
+                body: Some("diff".into()),
+            },
+        );
+        assert_eq!(count_all(&repo), 0);
     }
 
     #[test]

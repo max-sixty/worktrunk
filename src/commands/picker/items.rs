@@ -3477,6 +3477,35 @@ mod tests {
         );
     }
 
+    #[rstest::rstest]
+    #[case(true)]
+    #[case(false)]
+    fn log_cache_tracks_shallow_history_changes(#[case] start_shallow: bool) {
+        let (test, repo) = repo_with_main();
+        repo.run_command(&["commit", "--allow-empty", "-m", "shallow tip"])
+            .unwrap();
+        let item = item_at(&repo, "main");
+        let shallow = test
+            .path()
+            .join(test.git_output(&["rev-parse", "--git-path", "shallow"]));
+        if start_shallow {
+            std::fs::write(&shallow, format!("{}\n", item.head())).unwrap();
+        }
+        let repo = Repository::at(test.path()).unwrap();
+        let before = PickerRow::compute_log_preview(&repo, &item, 80, 24).0;
+        assert!(before.contains("shallow tip"), "{before:?}");
+        assert_eq!(before.contains("main2"), !start_shallow, "{before:?}");
+        if start_shallow {
+            std::fs::remove_file(shallow).unwrap();
+        } else {
+            std::fs::write(shallow, format!("{}\n", item.head())).unwrap();
+        }
+        let repo = Repository::at(test.path()).unwrap();
+        let after = PickerRow::compute_log_preview(&repo, &item, 80, 24).0;
+        assert!(after.contains("shallow tip"), "{after:?}");
+        assert_eq!(after.contains("main2"), start_shallow, "{after:?}");
+    }
+
     #[test]
     fn log_cache_writeback_on_miss() {
         // First call populates the cache; the entry must exist after.

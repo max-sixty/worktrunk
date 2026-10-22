@@ -897,6 +897,14 @@ impl Repository {
         })
     }
 
+    /// Whether Git reported shallow history during repository discovery.
+    ///
+    /// This invocation snapshot lets SHA-keyed caches avoid persisting graph
+    /// results that can change when a later fetch deepens the repository.
+    pub fn is_shallow(&self) -> bool {
+        !self.cache.complete_history
+    }
+
     /// Share registry coordination across fresh repository caches.
     pub(super) fn worktree_registry_read(&self) -> RwLockReadGuard<'_, ()> {
         self.locks
