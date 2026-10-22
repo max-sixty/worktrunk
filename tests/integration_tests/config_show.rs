@@ -7990,6 +7990,9 @@ fn test_config_show_non_utf8_config_paths(repo: TestRepo) {
     let system = scratch
         .path()
         .join(OsString::from_vec(b"system-\xff.toml".to_vec()));
+    let project = scratch
+        .path()
+        .join(OsString::from_vec(b"project-\xff.toml".to_vec()));
     let approvals = scratch
         .path()
         .join(OsString::from_vec(b"approvals-\xff.toml".to_vec()));
@@ -7999,6 +8002,11 @@ fn test_config_show_non_utf8_config_paths(repo: TestRepo) {
         "[commit.generation]\ncommand = 'echo encoding-system'\n",
     )
     .unwrap();
+    fs::write(
+        &project,
+        "[list]\nurl = 'https://example.com/encoding-project'\n",
+    )
+    .unwrap();
     // A bad approvals file proves that this exact path was consulted, rather
     // than an absent default approvals file being treated as valid.
     fs::write(&approvals, "not valid TOML [[[").unwrap();
@@ -8006,6 +8014,7 @@ fn test_config_show_non_utf8_config_paths(repo: TestRepo) {
         .wt_command()
         .env("WORKTRUNK_CONFIG_PATH", &user)
         .env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system)
+        .env("WORKTRUNK_PROJECT_CONFIG_PATH", &project)
         .env("WORKTRUNK_APPROVALS_PATH", &approvals)
         .args(["config", "show"])
         .output()
@@ -8014,6 +8023,7 @@ fn test_config_show_non_utf8_config_paths(repo: TestRepo) {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("encoding-user"), "{stdout}");
     assert!(stdout.contains("encoding-system"), "{stdout}");
+    assert!(stdout.contains("encoding-project"), "{stdout}");
     assert!(stdout.contains("approvals-�.toml"), "{stdout}");
 
     fs::write(&approvals, "").unwrap();
@@ -8021,6 +8031,7 @@ fn test_config_show_non_utf8_config_paths(repo: TestRepo) {
         .wt_command()
         .env("WORKTRUNK_CONFIG_PATH", &user)
         .env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system)
+        .env("WORKTRUNK_PROJECT_CONFIG_PATH", &project)
         .env("WORKTRUNK_APPROVALS_PATH", &approvals)
         .args(["config", "show", "--format=json"])
         .output()
@@ -8029,10 +8040,28 @@ fn test_config_show_non_utf8_config_paths(repo: TestRepo) {
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["user"]["path"], user.to_string_lossy().as_ref());
     assert_eq!(report["system"]["path"], system.to_string_lossy().as_ref());
+    assert_eq!(report["project"]["path"], project.to_string_lossy().as_ref());
     assert_eq!(report["user"]["exists"], true);
     assert_eq!(report["system"]["exists"], true);
+    assert_eq!(report["project"]["exists"], true);
+    assert_eq!(
+        report["project"]["config"]["list"]["url"],
+        "https://example.com/encoding-project"
+    );
     assert_eq!(
         report["user"]["config"]["worktree-path"],
         "../encoding-user-{{ branch }}"
     );
+
+    let output = repo
+        .wt_command()
+        .env("WORKTRUNK_CONFIG_PATH", &user)
+        .env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system)
+        .env("WORKTRUNK_PROJECT_CONFIG_PATH", &project)
+        .env("WORKTRUNK_APPROVALS_PATH", &approvals)
+        .args(["step", "eval", "{{ branch }}"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "main");
 }
