@@ -15,7 +15,7 @@ use worktrunk::config::{
     require_config_path, system_config_path,
 };
 use worktrunk::git::remote_ref::azure::azure_devops_extension_installed;
-use worktrunk::git::{ErrorExt, ForgeKind, Repository, WorktrunkError, remote_ref};
+use worktrunk::git::{CommandError, ErrorExt, ForgeKind, Repository, WorktrunkError, remote_ref};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{
     FileDetectionResult, Shell, ZshStartupScope, probe_zsh_compdef, scan_for_detection_details,
@@ -1757,24 +1757,22 @@ fn fetch_latest_version() -> anyhow::Result<String> {
     // hard ceiling still has to exist or such a run could hang silently:
     // --connect-timeout fails fast when offline, and a generous --max-time bounds a
     // connected-but-stalled host without cutting off a slow-but-progressing fetch.
-    let output = {
-        Cmd::new("curl")
-            .args([
-                "--silent",
-                "--fail",
-                "--connect-timeout",
-                "10",
-                "--max-time",
-                "60",
-                "--header",
-                &format!("User-Agent: {user_agent}"),
-                "https://api.github.com/repos/max-sixty/worktrunk/releases/latest",
-            ])
-            .run()?
-    };
+    let args = [
+        "--silent",
+        "--fail",
+        "--connect-timeout",
+        "10",
+        "--max-time",
+        "60",
+        "--header",
+        &format!("User-Agent: {user_agent}"),
+        "https://api.github.com/repos/max-sixty/worktrunk/releases/latest",
+    ];
+    let output = Cmd::new("curl").args(args).run()?;
 
     if !output.status.success() {
-        anyhow::bail!("GitHub API request failed");
+        return Err(CommandError::from_failed_output("curl", &args, &output))
+            .context("GitHub API request failed");
     }
 
     let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
