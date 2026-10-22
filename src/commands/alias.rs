@@ -41,6 +41,7 @@
 use crate::commands::command_executor::ForegroundStdin;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsString;
 use std::sync::LazyLock;
 
 use anyhow::{Context, bail};
@@ -471,7 +472,7 @@ fn referenced_vars_for_entry(name: &str, entry: &AliasEntry) -> anyhow::Result<B
 /// a broken `wt.toml` should fail loudly here just as it does for `wt list`,
 /// rather than silently turning into an "unrecognized subcommand" once we
 /// fall through to PATH lookup.
-pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::Result<Option<()>> {
+pub fn try_alias(name: String, rest: &[OsString], global_yes: bool) -> anyhow::Result<Option<()>> {
     let _span = Span::new(format!("try_alias:{}", name));
     let repo = match Repository::current() {
         Ok(repo) => repo,
@@ -486,6 +487,16 @@ pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::R
     let Some(entry) = aliases.get(&name) else {
         return Ok(None);
     };
+    // Argument encoding cannot change which command owns this name. Validate
+    // only after resolving the alias, leaving non-alias argv untouched.
+    let rest = rest
+        .iter()
+        .map(|arg| {
+            arg.to_str()
+                .map(str::to_owned)
+                .with_context(|| cformat!("Alias <bold>{name}</> requires UTF-8 arguments"))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
     let referenced = {
         let _span = Span::new("referenced_vars");
         referenced_vars_for_entry(&name, entry)?
@@ -500,9 +511,6 @@ pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::R
         let _span = Span::new("parse_alias_args");
         AliasOptions::parse(alias_args, &referenced)?
     };
-    let entry = aliases
-        .get(&opts.name)
-        .expect("entry verified above and `opts.name` matches the dispatched name");
     run_alias(
         opts,
         warnings,
@@ -557,9 +565,6 @@ pub fn step_alias(args: Vec<String>, global_yes: bool) -> anyhow::Result<()> {
         return Ok(());
     }
     let (opts, warnings) = AliasOptions::parse(args, &referenced)?;
-    let entry = aliases
-        .get(&opts.name)
-        .expect("entry verified above and `opts.name` matches the dispatched name");
     run_alias(
         opts,
         warnings,
