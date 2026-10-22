@@ -1491,6 +1491,34 @@ fn test_config_show_full_not_configured(mut repo: TestRepo, temp_home: TempDir) 
     });
 }
 
+/// Native interruption cancels the report; a numeric 130 remains a reported
+/// command failure rather than being mistaken for a signal.
+#[cfg(unix)]
+#[rstest]
+#[case("kill -INT $$", Some(2))]
+#[case("kill -TERM $$", Some(15))]
+#[case("exit 130", None)]
+fn test_config_show_full_commit_generation_interruption(
+    repo: TestRepo,
+    #[case] command: &str,
+    #[case] signal: Option<i32>,
+) {
+    use std::os::unix::process::ExitStatusExt;
+
+    repo.write_test_config(&format!("[commit.generation]\ncommand = {command:?}\n"));
+    let output = repo
+        .wt_command()
+        .env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
+        .args(["config", "show", "--full"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.signal(), signal, "{output:?}");
+    if signal.is_none() {
+        assert!(output.status.success(), "{output:?}");
+        assert!(String::from_utf8_lossy(&output.stdout).contains("Commit generation failed"));
+    }
+}
+
 /// A successful connectivity probe is existing state, and includes the actual
 /// response from the configured command in the diagnostic report.
 #[rstest]

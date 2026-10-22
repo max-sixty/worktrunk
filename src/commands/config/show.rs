@@ -661,6 +661,7 @@ fn render_diagnostics(out: &mut String, repo: Option<&Repository>) -> anyhow::Re
                 )?;
                 writeln!(out, "{}", format_with_gutter(&message, None))?;
             }
+            Err(e) if e.interrupt_signal().is_some() => return Err(e),
             Err(e) => {
                 writeln!(
                     out,
