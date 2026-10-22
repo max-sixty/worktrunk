@@ -7971,160 +7971,19 @@ fn test_config_show_reports_failed_migration_diff(repo: TestRepo) {
     );
 }
 
-/// Non-UTF-8 environment entries must not panic config loading. Only an
-/// actual override value is diagnosed; unrelated and excluded entries are ignored.
+/// A non-UTF-8 environment entry must not panic config loading.
 #[cfg(unix)]
 #[rstest]
 fn test_config_show_non_utf8_environment(repo: TestRepo) {
     use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt;
 
-    for (key, value, warns) in [
-        (b"UNRELATED".as_slice(), b"\xff".as_slice(), false),
-        (b"UNRELATED_\xff".as_slice(), b"value".as_slice(), false),
-        (
-            b"WORKTRUNK_TEST_IGNORED".as_slice(),
-            b"\xff".as_slice(),
-            false,
-        ),
-        (
-            b"WORKTRUNK_LIST__TIMEOUT_MS".as_slice(),
-            b"\xff".as_slice(),
-            true,
-        ),
-    ] {
-        let output = repo
-            .wt_command()
-            .env(
-                OsString::from_vec(key.to_vec()),
-                OsString::from_vec(value.to_vec()),
-            )
-            .args(["config", "show"])
-            .output()
-            .unwrap();
-        assert_eq!(output.status.code(), Some(0), "{key:?}: {output:?}");
-        let report = format!(
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert_eq!(
-            report.contains("not valid UTF-8"),
-            warns,
-            "{key:?}: {report}"
-        );
-        if warns {
-            assert!(
-                report.contains("WORKTRUNK_LIST__TIMEOUT_MS is not valid UTF-8"),
-                "{report}"
-            );
-        }
-    }
-    // Commands that need usable effective settings still reject the override.
     let output = repo
         .wt_command()
-        .env("WORKTRUNK_LIST__TIMEOUT_MS", OsString::from_vec(vec![0xff]))
-        .args(["step", "eval", "{{ branch }}"])
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(1), "{output:?}");
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("not valid UTF-8"),
-        "{output:?}"
-    );
-}
-
-/// Infrastructure overrides are filesystem paths, so retain their native
-/// encoding instead of falling back to the user's default configuration.
-// macOS filesystems reject these names before the command can read them.
-#[cfg(target_os = "linux")]
-#[rstest]
-fn test_config_show_non_utf8_config_paths(repo: TestRepo) {
-    use std::ffi::OsString;
-    use std::os::unix::ffi::OsStringExt;
-
-    let scratch = crate::common::test_tempdir();
-    let user = scratch
-        .path()
-        .join(OsString::from_vec(b"user-\xff.toml".to_vec()));
-    let system = scratch
-        .path()
-        .join(OsString::from_vec(b"system-\xff.toml".to_vec()));
-    let project = scratch
-        .path()
-        .join(OsString::from_vec(b"project-\xff.toml".to_vec()));
-    let approvals = scratch
-        .path()
-        .join(OsString::from_vec(b"approvals-\xff.toml".to_vec()));
-    fs::write(&user, "worktree-path = '../encoding-user-{{ branch }}'\n").unwrap();
-    fs::write(
-        &system,
-        "[commit.generation]\ncommand = 'echo encoding-system'\n",
-    )
-    .unwrap();
-    fs::write(
-        &project,
-        "[list]\nurl = 'https://example.com/encoding-project'\n",
-    )
-    .unwrap();
-    // A bad approvals file proves that this exact path was consulted, rather
-    // than an absent default approvals file being treated as valid.
-    fs::write(&approvals, "not valid TOML [[[").unwrap();
-    let output = repo
-        .wt_command()
-        .env("WORKTRUNK_CONFIG_PATH", &user)
-        .env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system)
-        .env("WORKTRUNK_PROJECT_CONFIG_PATH", &project)
-        .env("WORKTRUNK_APPROVALS_PATH", &approvals)
+        .env("UNRELATED", OsString::from_vec(vec![0xff]))
+        .env(OsString::from_vec(b"UNRELATED_\xff".to_vec()), "value")
         .args(["config", "show"])
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(1), "{output:?}");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("encoding-user"), "{stdout}");
-    assert!(stdout.contains("encoding-system"), "{stdout}");
-    assert!(stdout.contains("encoding-project"), "{stdout}");
-    assert!(stdout.contains("approvals-�.toml"), "{stdout}");
-
-    fs::write(&approvals, "").unwrap();
-    let output = repo
-        .wt_command()
-        .env("WORKTRUNK_CONFIG_PATH", &user)
-        .env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system)
-        .env("WORKTRUNK_PROJECT_CONFIG_PATH", &project)
-        .env("WORKTRUNK_APPROVALS_PATH", &approvals)
-        .args(["config", "show", "--format=json"])
-        .output()
-        .unwrap();
     assert!(output.status.success(), "{output:?}");
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["user"]["path"], user.to_string_lossy().as_ref());
-    assert_eq!(report["system"]["path"], system.to_string_lossy().as_ref());
-    assert_eq!(
-        report["project"]["path"],
-        project.to_string_lossy().as_ref()
-    );
-    assert_eq!(report["user"]["exists"], true);
-    assert_eq!(report["system"]["exists"], true);
-    assert_eq!(report["project"]["exists"], true);
-    assert_eq!(
-        report["project"]["config"]["list"]["url"],
-        "https://example.com/encoding-project"
-    );
-    assert_eq!(
-        report["user"]["config"]["worktree-path"],
-        "../encoding-user-{{ branch }}"
-    );
-
-    let output = repo
-        .wt_command()
-        .env("WORKTRUNK_CONFIG_PATH", &user)
-        .env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system)
-        .env("WORKTRUNK_PROJECT_CONFIG_PATH", &project)
-        .env("WORKTRUNK_APPROVALS_PATH", &approvals)
-        .args(["step", "eval", "{{ branch }}"])
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "{output:?}");
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "main");
 }

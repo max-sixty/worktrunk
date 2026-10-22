@@ -216,16 +216,14 @@ fn handle_config_show_json() -> anyhow::Result<()> {
     }
     invalid |= render_column_selection(&mut diagnostics, repo.as_ref())?;
 
-    // JSON strings require UTF-8; retain native paths for reads above and
-    // render them lossily here, as the text report does.
     let output = serde_json::json!({
         "user": {
-            "path": user_path.to_string_lossy(),
+            "path": user_path,
             "exists": user_exists,
             "config": user_config,
         },
         "project": {
-            "path": project_path.as_deref().map(Path::to_string_lossy),
+            "path": project_path,
             // An invalid on-disk source still exists even though `config` is
             // null. The object-store fallback counts as existing too, though
             // its revision spec is not a filesystem path.
@@ -234,7 +232,7 @@ fn handle_config_show_json() -> anyhow::Result<()> {
             "config": project_config,
         },
         "system": {
-            "path": system_path.as_deref().map(Path::to_string_lossy),
+            "path": system_path,
             "exists": system_exists,
         },
     });
