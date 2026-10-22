@@ -3085,3 +3085,18 @@ fn fresh_repository_observes_changed_shallow_boundary(#[case] start_shallow: boo
         start_shallow
     );
 }
+
+#[test]
+fn fresh_repository_observes_external_config_changes() {
+    let test = TestRepo::with_initial_commit();
+    let key = "worktrunk.test-refresh";
+    test.run_git(&["config", key, "before"]);
+    Repository::prewarm_git_config(test.root_path());
+    let repo = Repository::at(test.root_path()).unwrap();
+    assert_eq!(repo.config_last(key).unwrap().as_deref(), Some("before"));
+
+    test.run_git(&["config", key, "after"]);
+    assert_eq!(repo.config_last(key).unwrap().as_deref(), Some("before"));
+    let fresh = repo.fresh().unwrap();
+    assert_eq!(fresh.config_last(key).unwrap().as_deref(), Some("after"));
+}

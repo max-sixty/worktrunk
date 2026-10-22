@@ -843,10 +843,11 @@ impl Repository {
         Self::discover(path.into(), true)
     }
 
-    /// Reopen this repository without startup preloads or per-handle caches.
+    /// Reopen without repository configuration/history preloads or per-handle caches.
     ///
     /// Interactive refreshes use this after external Git operations may have
     /// changed history, refs, or configuration during the current process.
+    /// Process-wide worktree discovery snapshots retain their invocation lifetime.
     pub fn fresh(&self) -> anyhow::Result<Self> {
         Self::discover(self.discovery_path.clone(), false)
     }
