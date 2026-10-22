@@ -62,7 +62,7 @@ pub fn config_path() -> Option<PathBuf> {
     }
 
     // Priority 2: Environment variable (also used by tests for isolation)
-    if let Ok(path) = std::env::var("WORKTRUNK_CONFIG_PATH") {
+    if let Some(path) = std::env::var_os("WORKTRUNK_CONFIG_PATH") {
         return Some(resolve_input_path(path));
     }
 
@@ -133,7 +133,7 @@ pub fn default_config_path() -> Option<PathBuf> {
 /// Deliberately unguarded, unlike `config_path()`: this resolves a machine-wide
 /// file rather than the developer's own config.
 pub fn system_config_path() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("WORKTRUNK_SYSTEM_CONFIG_PATH") {
+    if let Some(path) = std::env::var_os("WORKTRUNK_SYSTEM_CONFIG_PATH") {
         return Some(resolve_input_path(path));
     }
 
