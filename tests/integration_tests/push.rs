@@ -30,8 +30,8 @@ fn test_push_fast_forward(mut repo: TestRepo) {
     snapshot_push("push_fast_forward", &repo, &["main"], Some(&feature_wt));
 }
 
-/// Formatting an update-ref failure must preserve native interruption. A
-/// numeric exit 130 still receives the ordinary push-failure diagnostic.
+/// Both advancing the target and rolling it back after a failed sync preserve
+/// native interruption. Numeric exit 130 remains an ordinary push failure.
 #[cfg(unix)]
 #[rstest]
 #[case("kill -INT $$", Some(2))]
@@ -41,12 +41,14 @@ fn test_push_ref_update_interruption(
     mut repo: TestRepo,
     #[case] failure: &str,
     #[case] signal: Option<i32>,
+    #[values(false, true)] rollback: bool,
 ) {
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::process::ExitStatusExt;
 
     let feature = repo.add_feature();
     let target_before = repo.git_output(&["rev-parse", "main"]);
+    let source_tip = repo.git_output(&["rev-parse", "feature"]);
     let wrapper = crate::common::test_tempdir();
     let script = wrapper.path().join("git");
     let reached = wrapper.path().join("reached");
@@ -55,7 +57,10 @@ fn test_push_ref_update_interruption(
         &script,
         format!(
             r#"#!/bin/sh
-if [ "$1" = update-ref ]; then
+if [ "$1" = update-index ]; then
+  exit 1
+fi
+if [ "$1" = update-ref ] && {selected_update}; then
   printf reached > {reached}
   {failure}
 fi
@@ -63,6 +68,11 @@ exec {real_git} "$@"
 "#,
             reached = shell_escape::unix::escape(reached.to_string_lossy()),
             real_git = shell_escape::unix::escape(real_git.to_string_lossy()),
+            selected_update = if rollback {
+                r#"[ "$3" = "wt: rollback (worktree sync failed)" ]"#
+            } else {
+                "true"
+            },
         ),
     )
     .unwrap();
@@ -83,9 +93,19 @@ exec {real_git} "$@"
     assert_eq!(output.status.signal(), signal, "{output:?}");
     if signal.is_none() {
         assert_eq!(output.status.code(), Some(1), "{output:?}");
-        assert!(String::from_utf8_lossy(&output.stderr).contains("Failed to update ref"));
+        let diagnostic = if rollback {
+            "could not be rolled back"
+        } else {
+            "Failed to update ref"
+        };
+        assert!(String::from_utf8_lossy(&output.stderr).contains(diagnostic));
     }
-    assert_eq!(repo.git_output(&["rev-parse", "main"]), target_before);
+    // The failed rollback leaves the new ref in place; the first-update failure
+    // leaves it untouched. The test must reach the selected update-ref call.
+    assert_eq!(
+        repo.git_output(&["rev-parse", "main"]),
+        if rollback { source_tip } else { target_before }
+    );
 }
 
 /// With no detectable width (piped output, no COLUMNS), the diffstat omits
