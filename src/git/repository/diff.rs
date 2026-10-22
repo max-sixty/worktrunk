@@ -466,7 +466,8 @@ impl Repository {
     /// even when the ahead/behind counts are themselves cache-warm, so on a
     /// repo with many branches the disk back turns that per-row
     /// `git merge-base` fork into a file read. Persistent caching is disabled
-    /// for shallow repositories, whose graph changes when history is fetched. The `sha1 == sha2` short-circuit (a commit is its own
+    /// for shallow repositories, whose graph changes when history is fetched.
+    /// The `sha1 == sha2` short-circuit (a commit is its own
     /// merge-base) skips both git and the cache for items sitting exactly at
     /// the base tip — the common "freshly branched" case.
     pub fn merge_base_by_sha(&self, sha1: &str, sha2: &str) -> anyhow::Result<Option<String>> {
