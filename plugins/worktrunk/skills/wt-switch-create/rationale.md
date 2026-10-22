@@ -21,11 +21,11 @@ Binary symbol names are deliberately omitted — they re-minify every build.
 Steps are numbered as in `SKILL.md`; step 1, picking the branch name, needs
 no rationale.
 
-2. `EnterWorktree({name})` for a new branch in this repo. It creates through
-   worktrunk's `WorktreeCreate` hook (`wt switch --create`), so the result is
-   an ordinary `wt` worktree, and it passes no `path`, which is what keeps M2's
-   confirmation from firing. It fails on an existing branch and from a session
-   that already entered a worktree, and it has no repo targeting.
+2. `EnterWorktree({name})` in this repo. Worktrunk's `WorktreeCreate` hook runs
+   `wt switch --create` for a new branch or `wt switch` for an existing one,
+   creating its checkout if needed. Passing no `path` keeps M2's confirmation
+   from firing. It fails from a session that already entered a worktree, and
+   it has no repo targeting.
 3. Otherwise `wt -C <repo> switch --create <branch> --no-cd --format=json` in
    Bash, then, for another repo, `cd <repo>`, then `EnterWorktree({path})`.
    `wt` solves repo targeting (`-C` works from anywhere), existing-branch
@@ -271,8 +271,7 @@ integrated machine and a no-op elsewhere. Don't drop it.
 The `name` route is worth having because it never asks M2's confirmation, with
 or without worktrunk's hook, and it creates and enters in one call. The same
 plugin hook backs `isolation: "worktree"` agents, so the worktree it produces is
-the one `wt` would have made either way. Three properties come with it, all
-verified live:
+the one `wt` would have made either way. Three properties come with it:
 
 1. **An untouched worktree is cleaned up at exit, branch included.** With no
    changed files, no commits, and no user-set session title, the exiting
@@ -284,19 +283,17 @@ verified live:
    research task that wrote nothing leaves nothing to prune — and it is the
    reason step 2's worktrees are not described as durable. Path-entered
    worktrees are always left in place ("worktree at <path> left in place").
-2. **It hard-fails on an existing branch.** The hook runs `wt switch --create`,
-   and a nonzero hook exit fails creation outright, with no git fallback
-   (binary: "Other exit codes - worktree creation failed"; docs: "the hook
-   replaces the default git behavior"). The failure is clean: `wt`'s own
-   `✗ Branch <branch> already exists` surfaces and nothing is created.
+2. **It enters an existing branch's worktree.** The dispatcher uses `wt switch`
+   without `--create`, creating the checkout if needed.
 3. **It only works on a session's first entry, and only in its own repo.** From
    a session already in a worktree it returns "Already in a worktree session.
    Pass `path` to switch into another existing worktree", and it has no `-C`.
 
-Each failure names the route out, which is why step 3 needs no pre-check: try
-the cheap call, read the error, fall back. The hook contract (stdout's last
-non-empty line must be an existing directory) stays the hook's business, since
-the skill reads only the tool result.
+Step 3 handles repo targeting and a session's later entries. Other hook
+failures surface directly, with no git fallback: the hook replaces the default
+git behavior. The hook contract (stdout's last non-empty line must be an
+existing directory) stays the hook's business, since the skill reads only the
+tool result.
 
 ### Why escalate instead of grinding through absolute paths
 
@@ -331,7 +328,3 @@ task).
 - A subagent's `cd` doesn't carry to its next call, and it gets no reset notice
   (M1), so from a subagent step 3 can't enter another repo's worktree: the
   entry reaches the hook with the subagent's own repo as `cwd`.
-- `wt switch --create` is not idempotent. If that ever changes upstream
-  (enter-if-exists), step 3's existing-branch retry collapses to nothing, and
-  the hook stops failing on an existing branch, which removes one of the two
-  reasons step 3 exists.
