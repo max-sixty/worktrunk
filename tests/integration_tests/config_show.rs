@@ -7971,7 +7971,8 @@ fn test_config_show_non_utf8_environment(repo: TestRepo) {
 
 /// Infrastructure overrides are filesystem paths, so retain their native
 /// encoding instead of falling back to the user's default configuration.
-#[cfg(unix)]
+// macOS filesystems reject these names before the command can read them.
+#[cfg(target_os = "linux")]
 #[rstest]
 fn test_config_show_non_utf8_config_paths(repo: TestRepo) {
     use std::ffi::OsString;
