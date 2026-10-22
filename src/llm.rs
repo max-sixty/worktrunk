@@ -965,7 +965,7 @@ pub(crate) fn test_commit_generation(
 }
 
 /// Share waiting status and diagnostics across commit, squash, and connectivity
-/// checks, preserving native interruption so callers stop the operation.
+/// checks.
 fn execute_generation_command(
     command: &str,
     prompt: &str,
@@ -975,9 +975,6 @@ fn execute_generation_command(
     // watchdog clears its status before the caller prints the result.
     let _watchdog = watch_llm_command(command);
     execute_llm_command(command, prompt).map_err(|e| {
-        if e.interrupt_signal().is_some() {
-            return e;
-        }
         worktrunk::git::GitError::LlmCommandFailed {
             command: command.to_owned(),
             error: e.display_message(),

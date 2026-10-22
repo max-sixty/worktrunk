@@ -14,7 +14,7 @@ use worktrunk::config::{
     require_config_path, system_config_path,
 };
 use worktrunk::git::remote_ref::azure::azure_devops_extension_installed;
-use worktrunk::git::{CommandError, ErrorExt, ForgeKind, Repository, WorktrunkError, remote_ref};
+use worktrunk::git::{ErrorExt, ForgeKind, Repository, WorktrunkError, remote_ref};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{
     FileDetectionResult, Shell, ZshStartupScope, probe_zsh_compdef, scan_for_detection_details,
@@ -692,7 +692,6 @@ fn render_diagnostics(out: &mut String, repo: Option<&Repository>) -> anyhow::Re
                 )?;
                 writeln!(out, "{}", format_with_gutter(&message, None))?;
             }
-            Err(e) if e.interrupt_signal().is_some() => return Err(e),
             Err(e) => {
                 writeln!(
                     out,
@@ -1754,7 +1753,6 @@ fn format_version_status(latest: &str) -> FormattedMessage {
 fn render_version_check(out: &mut String) -> anyhow::Result<()> {
     match fetch_latest_version() {
         Ok(latest) => writeln!(out, "{}", format_version_status(&latest))?,
-        Err(e) if e.interrupt_signal().is_some() => return Err(e),
         Err(e) => {
             tracing::debug!(error = %e, "Version check failed: {e}");
             writeln!(out, "{}", hint_message("Version check unavailable"))?;
@@ -1788,22 +1786,24 @@ fn fetch_latest_version() -> anyhow::Result<String> {
     // hard ceiling still has to exist or such a run could hang silently:
     // --connect-timeout fails fast when offline, and a generous --max-time bounds a
     // connected-but-stalled host without cutting off a slow-but-progressing fetch.
-    let args = [
-        "--silent",
-        "--fail",
-        "--connect-timeout",
-        "10",
-        "--max-time",
-        "60",
-        "--header",
-        &format!("User-Agent: {user_agent}"),
-        "https://api.github.com/repos/max-sixty/worktrunk/releases/latest",
-    ];
-    let output = Cmd::new("curl").args(args).run()?;
+    let output = {
+        Cmd::new("curl")
+            .args([
+                "--silent",
+                "--fail",
+                "--connect-timeout",
+                "10",
+                "--max-time",
+                "60",
+                "--header",
+                &format!("User-Agent: {user_agent}"),
+                "https://api.github.com/repos/max-sixty/worktrunk/releases/latest",
+            ])
+            .run()?
+    };
 
     if !output.status.success() {
-        return Err(CommandError::from_failed_output("curl", &args, &output))
-            .context("GitHub API request failed");
+        anyhow::bail!("GitHub API request failed");
     }
 
     let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;

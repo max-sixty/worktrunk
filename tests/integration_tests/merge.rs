@@ -3683,42 +3683,6 @@ fn test_squash_prompt_covers_what_its_run_would_commit(repo_with_multi_commit_fe
     );
 }
 
-/// Both generation entry points preserve a native child interruption through
-/// their user-facing error wrapper; numeric exit codes remain normal failures.
-#[cfg(unix)]
-#[rstest]
-#[case("kill -INT $$", Some(2))]
-#[case("kill -TERM $$", Some(15))]
-#[case("exit 130", None)]
-fn test_step_generation_interruption(
-    repo_with_multi_commit_feature: TestRepo,
-    #[case] command: &str,
-    #[case] signal: Option<i32>,
-) {
-    use std::os::unix::process::ExitStatusExt;
-
-    let repo = repo_with_multi_commit_feature;
-    let feature_wt = repo.worktree_path("feature").to_path_buf();
-    fs::write(feature_wt.join("new.txt"), "new content\n").unwrap();
-    repo.write_test_config(&format!("[commit.generation]\ncommand = {command:?}\n"));
-
-    for step in ["commit", "squash"] {
-        let output = make_snapshot_cmd(
-            &repo,
-            "step",
-            &[step, "--dry-run", "--yes"],
-            Some(&feature_wt),
-        )
-        .output()
-        .unwrap();
-        assert_eq!(output.status.signal(), signal, "{step}: {output:?}");
-        if signal.is_none() {
-            assert_eq!(output.status.code(), Some(1), "{step}: {output:?}");
-            assert!(String::from_utf8_lossy(&output.stderr).contains("exit 130"));
-        }
-    }
-}
-
 /// The commit and squash prompts split git's diff into per-file sections, so
 /// the user's diff display settings must not change what the LLM receives.
 ///
