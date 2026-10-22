@@ -38,10 +38,10 @@ use clap_complete::engine::{ArgValueCompleter, CompletionCandidate, ValueComplet
 use clap_complete::env::CompleteEnv;
 
 use crate::cli;
-use crate::commands::{AliasMap, load_aliases};
+use crate::commands::{AliasMap, ParsedFilter, load_aliases};
 use crate::display::format_relative_time_short;
 use worktrunk::config::{
-    ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, template_references_var,
+    ALIAS_ARGS_KEY, CommandConfig, HookSource, ProjectConfig, UserConfig, template_references_var,
 };
 use worktrunk::git::{BranchCategory, HookType, Repository};
 
@@ -344,14 +344,21 @@ impl ValueCompleter for HookCommandCompleter {
 
         let mut candidates = Vec::new();
 
+        let filter = ParsedFilter::parse(current.to_str().unwrap_or_default());
         let add_named_commands =
-            |candidates: &mut Vec<_>, config: &worktrunk::config::CommandConfig| {
-                candidates.extend(
-                    config
-                        .commands()
-                        .filter_map(|cmd| cmd.name.as_ref())
-                        .map(|name| CompletionCandidate::new(name.clone())),
-                );
+            |candidates: &mut Vec<_>, config: &CommandConfig, source: HookSource| {
+                if !filter.matches_source(source) {
+                    return;
+                }
+                candidates.extend(config.commands().filter_map(|cmd| {
+                    let name = cmd.name.as_ref()?;
+                    let name = if filter.source.is_some() {
+                        source.command_label(Some(name))
+                    } else {
+                        name.clone()
+                    };
+                    Some(CompletionCandidate::new(name))
+                }));
             };
 
         let repo = Repository::current().ok();
@@ -363,7 +370,7 @@ impl ValueCompleter for HookCommandCompleter {
         if let Ok(user_config) = UserConfig::load()
             && let Some(config) = user_config.hooks(project_id.as_ref()).get(hook_type)
         {
-            add_named_commands(&mut candidates, config);
+            add_named_commands(&mut candidates, config, HookSource::User);
         }
 
         // Load project config and add project hook names
@@ -372,7 +379,7 @@ impl ValueCompleter for HookCommandCompleter {
             && let Ok(Some(project_config)) = ProjectConfig::load(&repo, false)
             && let Some(config) = project_config.hooks.get(hook_type)
         {
-            add_named_commands(&mut candidates, config);
+            add_named_commands(&mut candidates, config, HookSource::Project);
         }
 
         candidates

@@ -928,6 +928,22 @@ unrelated = "echo unrelated"
     let mut names = value_suggestions(&stdout);
     names.sort_unstable();
     assert_eq!(names, ["exact", "global", "project-file", "wildcard"]);
+
+    for (prefix, expected) in [
+        ("user:", vec!["user:exact", "user:global", "user:wildcard"]),
+        ("project:", vec!["project:project-file"]),
+        ("user:ex", vec!["user:exact"]),
+    ] {
+        let output = repo
+            .completion_cmd(&["wt", "hook", "pre-merge", prefix])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let mut names = value_suggestions(&stdout);
+        names.sort_unstable();
+        assert_eq!(names, expected, "{prefix}: {stdout}");
+    }
 }
 
 /// Cross-shell completion contract for hook command names.
