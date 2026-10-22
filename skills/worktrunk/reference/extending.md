@@ -1,14 +1,6 @@
 # Extending Worktrunk
 
-Worktrunk has three extension mechanisms.
-
-**[Hooks](#hooks)** are shell commands that run automatically at lifecycle events (switching, starting, committing, merging, removing). Defined in TOML.
-
-**[Aliases](#aliases)** are reusable shell commands invoked as `wt <name>`. Defined in TOML.
-
-**[Custom subcommands](#custom-subcommands)** are standalone executables invoked as `wt <name>`. Drop `wt-foo` on `PATH` and it becomes `wt foo`.
-
-| | Hooks | Aliases | Custom subcommands |
+| | [Hooks](#hooks) | [Aliases](#aliases) | [Custom subcommands](#custom-subcommands) |
 |---|---|---|---|
 | **Trigger** | Automatic (lifecycle events) | Manual (`wt <name>`) | Manual (`wt <name>`) |
 | **Defined in** | TOML config | TOML config | Any executable on `PATH` |

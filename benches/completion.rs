@@ -76,16 +76,22 @@ fn bench_completion_switch(c: &mut Criterion) {
     let binary = &worktrunk::testing::wt_bin();
     let (linked_worktrees, branchless_branches) = (24, 120);
 
+    // Criterion calls the closure for warmup and every sample. Initialize
+    // only when selected, and reuse the read-only fixture across those calls.
+    let fixture = std::cell::OnceCell::new();
     group.bench_function("full_surface", |b| {
-        let fixture = FixtureRecipe::Generated {
-            linked_worktrees,
-            branchless_branches,
-            remote_tracking_refs: 1400,
-            detached_worktrees: 0,
-        }
-        .create();
-        let expected = expected_branches(branchless_branches, linked_worktrees);
-        assert_completion_candidates(binary, fixture.path(), &expected);
+        let fixture = fixture.get_or_init(|| {
+            let fixture = FixtureRecipe::Generated {
+                linked_worktrees,
+                branchless_branches,
+                remote_tracking_refs: 1400,
+                detached_worktrees: 0,
+            }
+            .create();
+            let expected = expected_branches(branchless_branches, linked_worktrees);
+            assert_completion_candidates(binary, fixture.path(), &expected);
+            fixture
+        });
         b.iter(|| run_completion(binary, fixture.path(), &["wt", "switch", ""]));
     });
 
