@@ -8040,7 +8040,10 @@ fn test_config_show_non_utf8_config_paths(repo: TestRepo) {
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["user"]["path"], user.to_string_lossy().as_ref());
     assert_eq!(report["system"]["path"], system.to_string_lossy().as_ref());
-    assert_eq!(report["project"]["path"], project.to_string_lossy().as_ref());
+    assert_eq!(
+        report["project"]["path"],
+        project.to_string_lossy().as_ref()
+    );
     assert_eq!(report["user"]["exists"], true);
     assert_eq!(report["system"]["exists"], true);
     assert_eq!(report["project"]["exists"], true);
