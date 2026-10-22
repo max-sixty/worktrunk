@@ -3719,6 +3719,68 @@ fn test_step_generation_interruption(
     }
 }
 
+/// Dry runs display exactly the prompt sent to the command, reading its patch once.
+#[cfg(unix)]
+#[rstest]
+fn test_generation_dry_run_reuses_prompt(repo_with_multi_commit_feature: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo = repo_with_multi_commit_feature;
+    let feature = repo.worktree_path("feature");
+    fs::write(feature.join("new.txt"), "new content\n").unwrap();
+    let scratch = crate::common::test_tempdir();
+    let patch_reads = scratch.path().join("patch-reads");
+    let captured = scratch.path().join("prompt");
+    let script = scratch.path().join("git");
+    let real_git = which::which("git").unwrap();
+    fs::write(
+        &script,
+        format!(
+            r#"#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = --patch ]; then
+    echo patch >> {patch_reads}
+  fi
+done
+exec {real_git} "$@"
+"#,
+            patch_reads = shell_escape::unix::escape(patch_reads.to_string_lossy()),
+            real_git = shell_escape::unix::escape(real_git.to_string_lossy()),
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    let command = format!(
+        "cat > {}; echo summary",
+        shell_escape::unix::escape(captured.to_string_lossy())
+    );
+    repo.write_test_config(&format!("[commit.generation]\ncommand = {command:?}\n"));
+    let (path_name, path) = make_path_with_mock_bin(scratch.path());
+
+    for step in ["commit", "squash"] {
+        fs::write(&patch_reads, "").unwrap();
+        let output = make_snapshot_cmd(&repo, "step", &[step, "--dry-run", "--yes"], Some(feature))
+            .env(&path_name, &path)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{step}: {output:?}");
+        assert_eq!(
+            fs::read_to_string(&patch_reads).unwrap(),
+            "patch\n",
+            "{step}"
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let stdout = stdout.ansi_strip();
+        let displayed = stdout
+            .strip_prefix("PROMPT\n")
+            .unwrap()
+            .split_once("\n\nCOMMAND\n")
+            .unwrap()
+            .0;
+        assert_eq!(displayed, fs::read_to_string(&captured).unwrap(), "{step}");
+    }
+}
+
 /// The commit and squash prompts split git's diff into per-file sections, so
 /// the user's diff display settings must not change what the LLM receives.
 ///
