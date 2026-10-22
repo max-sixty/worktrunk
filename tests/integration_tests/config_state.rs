@@ -2993,8 +2993,9 @@ fn test_vars_branch_prefix_does_not_select_other_branch(repo: TestRepo) {
 #[case("exit 128", None)]
 #[case("kill -INT $$", Some(2))]
 #[case("kill -TERM $$", Some(15))]
-fn test_vars_clear_all_propagates_read_failure(
+fn test_vars_commands_propagate_read_failure(
     repo: TestRepo,
+    #[values("clear", "list")] action: &str,
     #[case] failure: &str,
     #[case] signal: Option<i32>,
 ) {
@@ -3025,7 +3026,12 @@ exec {real_git} "$@"
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
     let mut path = vec![scratch.path().to_path_buf()];
     path.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
-    let output = wt_state_cmd(&repo, "vars", "clear", &["--all"])
+    let args = if action == "clear" {
+        &["--all"]
+    } else {
+        &["--format=json"]
+    };
+    let output = wt_state_cmd(&repo, "vars", action, args)
         .env("PATH", std::env::join_paths(path).unwrap())
         .output()
         .unwrap();

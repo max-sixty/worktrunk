@@ -187,19 +187,28 @@ impl Repository {
     /// `git config` subprocesses. Those external writes don't round-trip
     /// through our coherent `set_config_value` helper.
     pub fn vars_entries(&self, branch: &str) -> std::collections::BTreeMap<String, String> {
+        self.load_vars_entries(branch).unwrap_or_default()
+    }
+
+    /// Read branch variables, preserving failures for explicit inspection commands.
+    /// Template and display callers use [`Self::vars_entries`] for best-effort reads.
+    pub fn load_vars_entries(
+        &self,
+        branch: &str,
+    ) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
         let escaped = regex::escape(branch);
         // A variable name cannot contain dots. Anchor it so `main` does not
         // also read variables belonging to a branch like `main.vars.feature`.
         let pattern = format!(r"^worktrunk\.state\.{escaped}\.vars\.[^.]+$");
         let prefix = format!("worktrunk.state.{branch}.vars.");
-        self.config_regexp_entries(&pattern)
-            .unwrap_or_default()
+        Ok(self
+            .config_regexp_entries(&pattern)?
             .into_iter()
             .filter_map(|(config_key, value)| {
                 let key = config_key.strip_prefix(&prefix)?;
                 Some((key.to_string(), value))
             })
-            .collect()
+            .collect())
     }
 
     /// Get all vars entries across all branches in a single git call.
