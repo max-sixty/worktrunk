@@ -1489,6 +1489,30 @@ fn test_completion_respects_directory_option(repo: TestRepo) {
     }
 }
 
+/// Relative path values use the same selected cwd as the eventual command.
+#[rstest]
+fn test_completion_respects_directory_for_paths(repo: TestRepo) {
+    let other = TestRepo::with_initial_commit();
+    std::fs::create_dir(other.root_path().join("selected-directory")).unwrap();
+    std::fs::create_dir(repo.root_path().join("original-directory")).unwrap();
+    let output = repo
+        .completion_cmd(&[
+            "wt",
+            "-C",
+            other.root_path().to_str().unwrap(),
+            "switch",
+            "feature",
+            "--path",
+            "",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("selected-directory"), "{stdout}");
+    assert!(!stdout.contains("original-directory"), "{stdout}");
+}
+
 /// Completion uses explicit config files and inline overrides, while a value
 /// still being edited at the cursor does not replace the active config.
 #[rstest]

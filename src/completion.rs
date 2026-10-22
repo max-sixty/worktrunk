@@ -108,6 +108,7 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
     // values and globals after built-in subcommands follow the same rules.
     let globals = crate::parse_early_globals(args.iter().take(index).cloned());
     crate::apply_global_options(globals.directory, globals.config, globals.config_overrides);
+    let current_dir = std::env::current_dir().ok();
 
     // Completion exits before `main`'s `logging::init`, so the normal
     // `-v`/`-vv` pipeline never runs here. `WORKTRUNK_VERBOSE` opts this
