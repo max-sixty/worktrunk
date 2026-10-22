@@ -156,11 +156,12 @@ struct EnvOverrideUnit {
 /// - `WORKTRUNK_COMMIT__GENERATION__COMMAND=cmd` → `[commit.generation]\ncommand = "cmd"`
 ///
 /// Infrastructure vars (`_CONFIG_PATH`, `_SYSTEM_CONFIG_PATH`,
-/// `_APPROVALS_PATH`) and test vars (`_TEST_*`) are excluded.
+/// `_PROJECT_CONFIG_PATH`, `_APPROVALS_PATH`) and test vars (`_TEST_*`) are excluded.
 fn parse_worktrunk_env_vars(warnings: &mut Vec<LoadError>) -> Vec<EnvVar> {
     const INFRA_VARS: &[&str] = &[
         "WORKTRUNK_CONFIG_PATH",
         "WORKTRUNK_SYSTEM_CONFIG_PATH",
+        "WORKTRUNK_PROJECT_CONFIG_PATH",
         "WORKTRUNK_APPROVALS_PATH",
     ];
 
