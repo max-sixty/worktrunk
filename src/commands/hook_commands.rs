@@ -11,7 +11,7 @@ use color_print::cformat;
 use strum::IntoEnumIterator;
 use worktrunk::HookType;
 use worktrunk::config::{
-    ALIAS_ARGS_KEY, Approvals, CommandConfig, ProjectConfig, UserConfig, binds_cli_var,
+    ALIAS_ARGS_KEY, Approvals, CommandConfig, ProjectConfig, ProjectId, UserConfig, binds_cli_var,
     referenced_vars_for_config,
 };
 use worktrunk::git::Repository;
@@ -53,7 +53,8 @@ fn run_post_hook(
             extra_vars,
             name_filters,
             FailureStrategy::Warn,
-        );
+        )
+        .map(drop);
     }
 
     // Each source runs independently, including when names are filtered.
@@ -202,9 +203,9 @@ pub fn run_hook(
         shorthand_vars,
         forwarded_args,
     } = cli;
-    // Derive context from the current environment; `config` isn't in hand here,
-    // so let the repository supply its cached load.
-    let env = CommandEnv::for_action_loading_config()?;
+    // `config` isn't in hand here, so let the repository supply its cached load.
+    let config = Repository::current()?.user_config().clone();
+    let env = CommandEnv::for_selector(config, "@")?;
     let repo = &env.repo;
     let ctx = env.context(yes);
 
@@ -223,7 +224,7 @@ pub fn run_hook(
     }
 
     // Get effective user hooks (global + per-project merged)
-    let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
+    let user_hooks = ctx.config.hooks(ctx.project_id().as_ref());
     let user_config = user_hooks.get(hook_type);
     let proj_config = project_config.as_ref().and_then(|c| c.hooks.get(hook_type));
     // No hooks configured: warn and exit successfully. Running hooks that
@@ -327,6 +328,7 @@ pub fn run_hook(
             name_filters,
             FailureStrategy::FailFast,
         )
+        .map(drop)
     } else {
         run_post_hook(
             &ctx,
@@ -348,8 +350,15 @@ pub fn handle_hook_show(
 ) -> anyhow::Result<()> {
     use crate::help_pager::show_help_in_pager;
 
-    let repo = Repository::current().context("Failed to show hooks")?;
-    let config: &UserConfig = repo.user_config();
+    let config = Repository::current()
+        .context("Failed to show hooks")?
+        .user_config()
+        .clone();
+    // Show the hooks `wt hook` would run: the project config of the worktree
+    // `@` names.
+    let env = CommandEnv::for_selector(config, "@")?;
+    let repo = &env.repo;
+    let config = &env.config;
     // Preserve the loader's typed source diagnosis through command context.
     let project_config: Option<&ProjectConfig> = repo.project_config()?;
     let approvals = Approvals::load().context("Failed to load approvals")?;
@@ -362,23 +371,17 @@ pub fn handle_hook_show(
         .map(crate::cli::parse_hook_type)
         .transpose()?;
 
-    // Build context for template expansion (only used if --expanded).
-    // Need to keep CommandEnv alive for the lifetime of ctx. Detached HEAD is
+    // Context for template expansion, only under --expanded. Detached HEAD is
     // fine: `{{ branch }}` is unset there, and `--expanded` renders the
     // guarded form the way any other unset variable renders.
-    let env = if expanded {
-        Some(CommandEnv::for_action_loading_config()?)
-    } else {
-        None
-    };
-    let ctx = env.as_ref().map(|e| e.context(false));
+    let ctx = expanded.then(|| env.context(false));
 
     if format == crate::cli::SwitchFormat::Json {
         return emit_hook_show_json(
             config,
             project_config,
             &approvals,
-            project_id.as_deref(),
+            project_id.as_ref(),
             filter,
             ctx.as_ref(),
         );
@@ -391,7 +394,7 @@ pub fn handle_hook_show(
         &mut output,
         config,
         &approvals,
-        project_id.as_deref(),
+        project_id.as_ref(),
         filter,
         ctx.as_ref(),
     )?;
@@ -400,10 +403,10 @@ pub fn handle_hook_show(
     // Render project hooks
     render_project_hooks(
         &mut output,
-        &repo,
+        repo,
         project_config,
         &approvals,
-        project_id.as_deref(),
+        project_id.as_ref(),
         filter,
         ctx.as_ref(),
     )?;
@@ -423,7 +426,7 @@ fn emit_hook_show_json(
     user_config: &UserConfig,
     project_config: Option<&ProjectConfig>,
     approvals: &Approvals,
-    project_id: Option<&str>,
+    project_id: Option<&ProjectId>,
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
@@ -485,7 +488,7 @@ fn render_user_hooks(
     out: &mut String,
     config: &UserConfig,
     approvals: &Approvals,
-    project_id: Option<&str>,
+    project_id: Option<&ProjectId>,
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
@@ -529,7 +532,7 @@ fn render_project_hooks(
     repo: &Repository,
     project_config: Option<&ProjectConfig>,
     approvals: &Approvals,
-    project_id: Option<&str>,
+    project_id: Option<&ProjectId>,
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
@@ -578,7 +581,7 @@ fn render_hook_section(
     hooks: &[(HookType, &CommandConfig)],
     source: HookSource,
     approvals: &Approvals,
-    project_id: Option<&str>,
+    project_id: Option<&ProjectId>,
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
@@ -608,7 +611,7 @@ fn render_hook_commands(
     config: &CommandConfig,
     source: HookSource,
     approvals: &Approvals,
-    project_id: Option<&str>,
+    project_id: Option<&ProjectId>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<bool> {
     let mut wrote_any = false;
@@ -641,7 +644,7 @@ fn render_hook_commands(
 fn needs_approval(
     source: HookSource,
     approvals: &Approvals,
-    project_id: Option<&str>,
+    project_id: Option<&ProjectId>,
     template: &str,
 ) -> bool {
     match source {

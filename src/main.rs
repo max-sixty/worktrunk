@@ -313,7 +313,7 @@ fn handle_step_command(
         } => {
             let repo = Repository::current()?;
             let result = if no_ff {
-                let current_branch = repo.require_current_branch("step push --no-ff")?;
+                let current_branch = repo.require_selected_branch("@", "step push --no-ff")?;
                 handle_no_ff_merge(&repo, target.as_deref(), None, &current_branch)?
             } else {
                 handle_push(&repo, target.as_deref(), PushKind::Standalone, None)?
@@ -597,8 +597,8 @@ fn handle_config_shell_command(action: ConfigShellCommand, yes: bool) -> anyhow:
         } => {
             // Auto-write to shell config files and completions
             let cmd = cmd.unwrap_or_else(binary_name);
-            handle_configure_shell(shell, yes, dry_run, cmd)
-                .map_err(|e| anyhow::anyhow!("{}", e))
+            handle_configure_shell(shell, yes, dry_run, cmd.clone())
+                .map_err(anyhow::Error::from)
                 .and_then(|scan_result| {
                     // Exit with error if no shells configured
                     // Show skipped shells first so user knows what was tried
@@ -613,14 +613,14 @@ fn handle_config_shell_command(action: ConfigShellCommand, yes: bool) -> anyhow:
                     if dry_run {
                         return Ok(());
                     }
-                    crate::output::print_shell_install_result(&scan_result);
+                    crate::output::print_shell_install_result(&scan_result, &cmd);
                     Ok(())
                 })
         }
         ConfigShellCommand::Uninstall { shell, dry_run } => {
             let explicit_shell = shell.is_some();
             handle_unconfigure_shell(shell, yes, dry_run)
-                .map_err(|e| anyhow::anyhow!("{}", e))
+                .map_err(anyhow::Error::from)
                 .map(|result| {
                     if !dry_run {
                         crate::output::print_shell_uninstall_result(&result, explicit_shell);
@@ -960,6 +960,20 @@ fn dispatch_command(
         Commands::Switch(args) => handle_switch_command(args, yes),
         Commands::Remove(args) => handle_remove_command(args, yes),
         Commands::Merge(args) => handle_merge_command(args, yes),
+        Commands::InternalDeleteBranchIfSafe {
+            branch,
+            target,
+            expected_tip,
+            force_delete,
+        } => output::handlers::delete_branch_from_detached_fallback(
+            &branch,
+            &target,
+            expected_tip.as_deref(),
+            force_delete,
+        ),
+        Commands::InternalDrainTrash => {
+            worktrunk::git::drain_trash(&Repository::current()?.wt_trash_dir())
+        }
         // `working_dir` is the top-level `-C <path>` flag, applied as the
         // child's current directory so global `-C` works for custom
         // subcommands the same way it does for built-ins.
@@ -984,6 +998,15 @@ fn print_command_error(error: &anyhow::Error) {
 fn format_command_error(error: &anyhow::Error) -> String {
     use std::fmt::Write;
     let mut out = String::new();
+
+    // An AlreadyDisplayed context retains a child failure as its source for
+    // structured output, but its presentation marker still suppresses stderr.
+    if matches!(
+        error.downcast_ref::<WorktrunkError>(),
+        Some(WorktrunkError::AlreadyDisplayed { .. })
+    ) {
+        return out;
+    }
 
     // Locate the first error in the chain that implements `Diagnostic`.
     // Most typed errors render directly even when wrapped in
@@ -1101,7 +1124,24 @@ fn finish_command(verbose_level: u8, command_line: &str, error: Option<&anyhow::
     let _ = output::terminate_output();
 }
 
-fn handle_command_failure(error: anyhow::Error, verbose_level: u8, command_line: &str) -> ! {
+fn handle_command_failure(
+    error: anyhow::Error,
+    verbose_level: u8,
+    command_line: &str,
+    switch_json: bool,
+) -> ! {
+    if switch_json {
+        // The JSON error carries what stderr shows. A child failure shows
+        // nothing there (the child spoke for itself), so name its exit instead.
+        let message = match error.interrupt_signal() {
+            Some(signal) => format!("Interrupted by signal {signal}"),
+            None => match format_command_error(&error) {
+                rendered if rendered.is_empty() => error.root_cause().to_string(),
+                rendered => rendered.trim_end().to_string(),
+            },
+        };
+        commands::worktree::print_switch_json_error(&message);
+    }
     print_command_error(&error);
     print_cwd_removed_hint_if_needed();
 
@@ -1195,6 +1235,10 @@ fn main() {
         yes,
         command,
     } = cli;
+    let switch_json = matches!(
+        command.as_ref(),
+        Some(Commands::Switch(args)) if args.format == SwitchFormat::Json
+    );
     // `WORKTRUNK_VERBOSE` provides a baseline verbosity the `-v`/`-vv` flags
     // raise but never lower (`max`). It also drives shell completion, which
     // answers and returns above, before `parse_cli` — see
@@ -1252,7 +1296,7 @@ fn main() {
         })
     });
     if let Some(Err(error)) = git_version_result {
-        handle_command_failure(error, verbose, &command_line);
+        handle_command_failure(error, verbose, &command_line, switch_json);
     }
 
     {
@@ -1271,7 +1315,7 @@ fn main() {
     #[cfg(unix)]
     let operation = match worktrunk::signal_forwarder::CommandOperation::start() {
         Ok(operation) => operation,
-        Err(error) => handle_command_failure(error.into(), verbose, &command_line),
+        Err(error) => handle_command_failure(error.into(), verbose, &command_line, switch_json),
     };
     let result = dispatch_command(command, directory, yes);
     #[cfg(unix)]
@@ -1282,7 +1326,7 @@ fn main() {
 
     match result {
         Ok(()) => finish_command(verbose, &command_line, None),
-        Err(error) => handle_command_failure(error, verbose, &command_line),
+        Err(error) => handle_command_failure(error, verbose, &command_line, switch_json),
     }
 }
 

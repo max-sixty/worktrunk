@@ -586,7 +586,7 @@ pub fn scan_for_detection_details(cmd: &str) -> Result<Vec<FileDetectionResult>,
     config_files.extend(super::Shell::Nushell.config_paths(cmd).unwrap_or_default());
 
     // Add PowerShell profiles
-    config_files.extend(powershell_profile_paths(&home));
+    config_files.extend(powershell_profile_paths(&home)?);
 
     // Deduplicate and scan
     let mut seen = HashSet::new();

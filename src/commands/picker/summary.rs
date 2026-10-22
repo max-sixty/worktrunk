@@ -206,10 +206,6 @@ mod tests {
         let branch_dir = CachedSummary::cache_root(&repo).join("main");
         fs::create_dir_all(&branch_dir).unwrap();
         fs::set_permissions(&branch_dir, fs::Permissions::from_mode(0o444)).unwrap();
-        if !worktrunk::testing::permissions_restrict_writes(&branch_dir) {
-            fs::set_permissions(&branch_dir, fs::Permissions::from_mode(0o755)).unwrap();
-            return;
-        }
 
         let cached = CachedSummary {
             summary: "test".to_string(),
@@ -218,10 +214,10 @@ mod tests {
         };
         // Should not panic — just logs and returns
         cached.write(&repo, "deadbeef");
-
-        // Restore access before asserting that the write created no cache.
-        fs::set_permissions(&branch_dir, fs::Permissions::from_mode(0o755)).unwrap();
         assert!(CachedSummary::read(&repo, "main", "deadbeef").is_none());
+
+        // Restore permissions so TempDir cleanup works
+        fs::set_permissions(&branch_dir, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     #[test]

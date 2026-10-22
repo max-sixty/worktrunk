@@ -66,13 +66,14 @@ pub struct CwdProcess {
 }
 
 /// Timeout for the `lsof` / `ps` probes. Discovery is opt-in and off the hot
-/// path, but a hung probe should still not stall removal indefinitely.
+/// path, but a hung probe should still not stall removal indefinitely. The
+/// PowerShell profile query (`shell::paths`) shares this bound.
 ///
 /// Tests override via `WORKTRUNK_TEST_PROBE_TIMEOUT_MS` (set generously in
 /// `STATIC_TEST_ENV_VARS`): under suite load a probe's spawn alone can stall
 /// past the production bound, and the timeout's fail-safe empty result then
 /// reads as "no processes to reap" — a load-dependent test outcome.
-fn probe_timeout() -> Duration {
+pub(crate) fn probe_timeout() -> Duration {
     let ms = std::env::var("WORKTRUNK_TEST_PROBE_TIMEOUT_MS")
         .ok()
         .and_then(|s| s.parse().ok())

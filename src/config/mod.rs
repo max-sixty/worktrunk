@@ -23,6 +23,7 @@ mod error;
 mod expansion;
 mod hooks;
 mod project;
+mod template_analysis;
 #[cfg(test)]
 mod test;
 mod unknown_tree;
@@ -227,6 +228,7 @@ pub use unknown_tree::{
     UnknownTree, UnknownWarning, collect_unknown_warnings, compute_unknown_tree,
 };
 pub use user::LoadError;
+pub use user::project_match::ProjectId;
 pub(crate) use user::project_match::matching_keys as matching_project_keys;
 pub use user::{
     CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListColumnConfig, ListConfig,

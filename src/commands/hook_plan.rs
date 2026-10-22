@@ -46,7 +46,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use worktrunk::HookType;
-use worktrunk::config::{Approvals, Command, CommandConfig, ProjectConfig, UserConfig};
+use worktrunk::config::{Approvals, Command, CommandConfig, ProjectConfig, ProjectId, UserConfig};
 use worktrunk::git::add_hook_skip_hint;
 
 use super::command_approval::approve_command_batch;
@@ -90,7 +90,7 @@ pub struct HookPlanBuilder<'a> {
     entries: Vec<PlanEntry>,
     project_config: Option<&'a ProjectConfig>,
     user: &'a UserConfig,
-    project_id: Option<&'a str>,
+    project_id: Option<&'a ProjectId>,
 }
 
 impl<'a> HookPlanBuilder<'a> {
@@ -102,7 +102,7 @@ impl<'a> HookPlanBuilder<'a> {
     pub fn new(
         project_config: Option<&'a ProjectConfig>,
         user: &'a UserConfig,
-        project_id: Option<&'a str>,
+        project_id: Option<&'a ProjectId>,
     ) -> Self {
         Self {
             entries: Vec::new(),
@@ -202,7 +202,7 @@ impl HookPlan {
     /// path that has something to approve requires it.
     pub fn approve(
         self,
-        project_id: Option<&str>,
+        project_id: Option<&ProjectId>,
         yes: bool,
     ) -> anyhow::Result<Option<ApprovedHookPlan>> {
         let approvable = self.approvable();
@@ -213,14 +213,7 @@ impl HookPlan {
         }
         let project_id =
             project_id.context("project identifier is required to approve project commands")?;
-        // `approve_command_batch` with `yes = true` is an unconditional
-        // `Ok(true)`, so loading `Approvals` here would be dead work.
-        let approved = if yes {
-            true
-        } else {
-            let approvals = Approvals::load().context("Failed to load approvals")?;
-            approve_command_batch(&approvable, project_id, &approvals, false, false)?
-        };
+        let approved = approve_command_batch(&approvable, project_id, yes)?;
         if !approved {
             return Ok(None);
         }
@@ -242,7 +235,7 @@ impl HookPlan {
     pub fn approve_readonly(
         self,
         approvals: &Approvals,
-        project_id: Option<&str>,
+        project_id: Option<&ProjectId>,
     ) -> ApprovedHookPlan {
         let mut entries = self.entries;
         for entry in &mut entries {
@@ -266,7 +259,7 @@ impl HookPlan {
     pub fn unapproved_project_commands(
         &self,
         approvals: &Approvals,
-        project_id: Option<&str>,
+        project_id: Option<&ProjectId>,
     ) -> Vec<String> {
         let Some(pid) = project_id else {
             return Vec::new();
@@ -374,7 +367,7 @@ pub fn execute_planned_hook(
         hook_type,
         display_path: display_path.map(Path::to_path_buf),
     };
-    let foreground = sourced_steps_to_foreground(sourced, &kind);
+    let foreground = sourced_steps_to_foreground(sourced, &kind, ctx.stdin);
     execute_pipeline_foreground(&foreground, ctx.repo, ctx.worktree_path, failure_strategy)
         .map_err(add_hook_skip_hint)
 }
@@ -426,7 +419,7 @@ mod tests {
         // `--yes` ⇒ approved without writing approvals.
         let plan = builder
             .finish()
-            .approve(Some("proj"), true)
+            .approve(Some(&ProjectId::from("proj")), true)
             .unwrap()
             .expect("yes-approval never declines");
 
@@ -464,7 +457,7 @@ mod tests {
         let plan = builder
             .finish()
             // Empty approvals ⇒ the project pipeline is unapproved.
-            .approve_readonly(&Approvals::default(), Some("proj"));
+            .approve_readonly(&Approvals::default(), Some(&ProjectId::from("proj")));
 
         let sel = plan.lookup(HookType::PreRemove, Path::new("/wt"));
         assert_eq!(
@@ -488,7 +481,9 @@ mod tests {
             .unwrap();
         let mut builder = HookPlanBuilder::new(Some(&proj), &user, None);
         builder.add(Path::new("/wt"), &[HookType::PreRemove]);
-        let plan = builder.finish().approve_readonly(&approvals, Some("proj"));
+        let plan = builder
+            .finish()
+            .approve_readonly(&approvals, Some(&ProjectId::from("proj")));
         let sel = plan.lookup(HookType::PreRemove, Path::new("/wt"));
         assert_eq!(
             sel.iter().map(|(s, _)| *s).collect::<Vec<_>>(),
@@ -514,7 +509,7 @@ mod tests {
         builder.add(Path::new("/dest"), &[HookType::PostMerge]);
         let plan = builder
             .finish()
-            .approve(Some("proj"), true)
+            .approve(Some(&ProjectId::from("proj")), true)
             .unwrap()
             .unwrap();
         let sources: Vec<_> = plan

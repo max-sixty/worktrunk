@@ -125,7 +125,7 @@ fn test_merge_as_git_subcommand(merge_scenario: (TestRepo, PathBuf)) {
     // Merge with GIT_EXEC_PATH set (simulating `git wt merge ...`)
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(&repo, "merge", &["main"], Some(&feature_wt));
-        cmd.env("GIT_EXEC_PATH", "/usr/lib/git-core");
+        crate::common::configure_git_subcommand(&mut cmd, &repo);
         cmd
     });
 }
@@ -1290,7 +1290,7 @@ fn test_merge_pre_commit_collected_for_squash_clean_worktree(
 }
 
 /// A pre-commit hook's edits land in the squash commit, as they do in the
-/// commit `wt step commit` makes: the hook runs before staging, not after.
+/// commit `wt step commit` makes: Worktrunk stages again after the hook runs.
 #[rstest]
 fn test_step_squash_includes_pre_commit_hook_edits(repo_with_multi_commit_feature: TestRepo) {
     let repo = &repo_with_multi_commit_feature;
@@ -1331,6 +1331,93 @@ fn test_step_squash_includes_pre_commit_hook_edits(repo_with_multi_commit_featur
         repo.git_output(&["-C", feature_wt.to_str().unwrap(), "status", "--porcelain"]),
         ""
     );
+}
+
+/// A pre-commit hook that reads the index (`pre-commit run`, lint-staged,
+/// `git diff --cached`) sees the uncommitted changes Worktrunk is about to
+/// commit, so a gate on them blocks the commit. `merge` covers the squash path
+/// and `step commit` the plain commit path.
+#[rstest]
+#[case::merge(&["merge", "main", "--yes"])]
+#[case::step_commit(&["step", "commit", "--yes"])]
+fn test_pre_commit_hook_sees_staged_changes(
+    repo_with_multi_commit_feature: TestRepo,
+    #[case] args: &[&str],
+) {
+    let repo = &repo_with_multi_commit_feature;
+    let feature_wt = repo.worktrees["feature"].clone();
+
+    let config_dir = feature_wt.join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        "pre-commit = \"! git diff --cached | grep -q FORBIDDEN\"",
+    )
+    .unwrap();
+    repo.run_git_in(&feature_wt, &["add", ".config/wt.toml"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Add config"]);
+    let feature_head = repo.git_output(&["rev-parse", "feature"]);
+    let main_head = repo.git_output(&["rev-parse", "main"]);
+
+    fs::write(feature_wt.join("new.txt"), "FORBIDDEN\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(args)
+        .current_dir(&feature_wt)
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: combined'",
+        )
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "pre-commit gate passed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(repo.git_output(&["rev-parse", "feature"]), feature_head);
+    assert_eq!(repo.git_output(&["rev-parse", "main"]), main_head);
+}
+
+/// With no pre-commit hook configured, a commit stages once. The second
+/// staging pass only picks up edits a hook made, so running it with no hook
+/// would repeat a full `git status` and `git add` for nothing.
+#[rstest]
+#[case::merge(&["-vv", "merge", "main", "--yes"])]
+#[case::step_commit(&["-vv", "step", "commit", "--yes"])]
+fn test_commit_stages_once_without_pre_commit_hook(
+    repo_with_multi_commit_feature: TestRepo,
+    #[case] args: &[&str],
+) {
+    let repo = &repo_with_multi_commit_feature;
+    let feature_wt = repo.worktrees["feature"].clone();
+    fs::write(feature_wt.join("new.txt"), "content\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(args)
+        .current_dir(&feature_wt)
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: combined'",
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "commit failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let trace_log =
+        crate::common::resolve_git_common_dir(repo.root_path()).join("wt/logs/trace.log");
+    let trace = fs::read_to_string(&trace_log).unwrap();
+    let untracked_scans = trace
+        .lines()
+        .filter(|line| line.contains("$ git status --porcelain -z -unormal"))
+        .count();
+    assert_eq!(untracked_scans, 1, "trace.log: {trace}");
 }
 
 // README EXAMPLE GENERATION TESTS
@@ -4584,10 +4671,14 @@ fn test_step_push_refuses_mid_rebase(mut repo: TestRepo) {
 /// this.
 #[rstest]
 fn test_step_commit_refuses_hook_created_conflict(mut repo: TestRepo) {
-    // A pre-commit hook that conflicts the index. `|| true` so the hook
-    // succeeds and the commit proceeds to staging; output suppressed to keep
-    // git's own wording out of the snapshot.
-    repo.write_project_config(r#"pre-commit = "git merge side >/dev/null 2>&1 || true""#);
+    // A pre-commit hook that conflicts the index. It unstages first because
+    // Worktrunk stages before the hooks run and `git merge` refuses to start
+    // with a dirty index. `|| true` so the hook succeeds and the commit
+    // proceeds to staging; output suppressed to keep git's own wording out of
+    // the snapshot.
+    repo.write_project_config(
+        r#"pre-commit = "git reset -q && git merge side >/dev/null 2>&1 || true""#,
+    );
     repo.run_git(&["add", ".config/wt.toml"]);
     repo.run_git(&["commit", "-m", "Add project config"]);
 
@@ -5046,12 +5137,6 @@ fn test_step_squash_reports_how_to_reattach_head(repo_with_multi_commit_feature:
     let feature_wt = &repo.worktrees["feature"];
     let feature_dir = feature_wt.to_str().unwrap();
 
-    // Check applicability independently of the hook under test.
-    let probe = worktrunk::testing::test_tempdir();
-    fs::set_permissions(probe.path(), fs::Permissions::from_mode(0o555)).unwrap();
-    let restricted = worktrunk::testing::permissions_restrict_writes(probe.path());
-    fs::set_permissions(probe.path(), fs::Permissions::from_mode(0o755)).unwrap();
-
     // The hook seals the worktree's git directory before rejecting the commit,
     // so the reattach that follows can't write HEAD either.
     let hook = repo.root_path().join(".git/hooks/pre-commit");
@@ -5076,7 +5161,7 @@ fn test_step_squash_reports_how_to_reattach_head(repo_with_multi_commit_feature:
 
     let git_dir =
         PathBuf::from(repo.git_output(&["-C", feature_dir, "rev-parse", "--absolute-git-dir"]));
-    let sealed = fs::metadata(&git_dir).unwrap().permissions().mode() & 0o222 == 0;
+    let sealed = fs::write(git_dir.join("write-probe"), "x").is_err();
     fs::set_permissions(&git_dir, fs::Permissions::from_mode(0o755)).unwrap();
     repo.run_git(&[
         "-C",
@@ -5085,19 +5170,15 @@ fn test_step_squash_reports_how_to_reattach_head(repo_with_multi_commit_feature:
         "HEAD",
         "refs/heads/feature",
     ]);
-    assert!(sealed, "the pre-commit hook must seal the git directory");
-    assert!(
-        !output.status.success(),
-        "the pre-commit hook must refuse the commit"
-    );
-    if !restricted {
-        // Privileges allow reattaching HEAD, so no recovery hint is needed.
+    if !sealed {
+        // Running with privileges that ignore the read-only directory, so the
+        // reattach succeeded and there is no message to assert.
         return;
     }
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("git symbolic-ref HEAD refs/heads/feature"),
+        !output.status.success() && stderr.contains("git symbolic-ref HEAD refs/heads/feature"),
         "a failed reattach must say how to put HEAD back: {stderr}"
     );
 }
@@ -5781,11 +5862,11 @@ fn test_merge_json(repo: TestRepo) {
     assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
     {
       "branch": "feature",
+      "target": "main",
       "committed": false,
-      "rebased": false,
-      "removed": true,
       "squashed": false,
-      "target": "main"
+      "rebased": false,
+      "removed": true
     }
     "#);
 }

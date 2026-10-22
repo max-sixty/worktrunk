@@ -76,7 +76,7 @@ Worktrunk touches the network only when the user asks for it. The first Reposito
 
 ### Signal Handling: Ctrl-C Cancels the Current Command
 
-Foreground commands share the caller's native job group. A child terminated by SIGINT or SIGTERM stops every foreground loop before its next step, including Warn hook pipelines and worktree loops. A caught Ctrl-C retains the child's normal exit semantics, including an ordinary exit code 130; do not infer cancellation from numeric exit codes. SIGTERM addressed to wt cancels its owned work even if the child catches it. Use err.interrupt_signal() from ErrorExt and propagate WorktrunkError::Interrupted through loops. Capture mode also classifies native SIGINT/SIGTERM exits; other child signals remain visible failures. See src/shell_exec.rs and src/signal_forwarder.rs for the contracts.
+Foreground commands share the caller's native job group. A child terminated by SIGINT or SIGTERM stops every foreground loop before its next step, including Warn hook pipelines and worktree loops. A terminal Ctrl-C that wt itself receives while a child runs cancels the command, as in make or cargo: the child handles the key its own way, then wt starts nothing more and exits interrupted, whatever status the child chose. wt's receipt is the evidence; never infer cancellation from numeric exit codes such as 130. A final interactive child (a pager, an --execute program, a custom subcommand, an alias's last serial step) owns the key as input instead, and its exit status stands. SIGTERM addressed to wt cancels its owned work even if the child catches it. Use err.interrupt_signal() from ErrorExt and propagate WorktrunkError::Interrupted through loops. Capture mode also classifies native SIGINT/SIGTERM exits; other child signals remain visible failures. See src/shell_exec.rs and src/signal_forwarder.rs for the contracts.
 
 ### Project Commands Run Only After Approval
 
@@ -94,9 +94,13 @@ codecov/patch is a merge gate even if GitHub marks it optional. Fix real gaps; d
 
 ### Use Existing Dependencies
 
-Check Cargo.toml and installed APIs before writing a utility. Prefer path_slash for path normalization, shell_escape for shell quoting, color_print for ANSI styling, and MiniJinja's undeclared_variables for template variables. Let dependencies own their own rules.
+Check Cargo.toml and installed APIs before writing a utility. Prefer path_slash for path normalization, shell_escape for shell quoting, color_print for ANSI styling, and MiniJinja's undeclared_variables for template variables.
 
 Name pure accessors as bare nouns, erroring preconditions require_*, network calls fetch_*, and file loads load_*; avoid get_*.
+
+### Other Tools Own Their Conventions
+
+Where another tool owns a convention, such as its config location, file format, URL syntax, or error reporting, ask that tool or a library that implements its rules instead of encoding them in Worktrunk: `nu` reports its own directories, and `gh auth token --hostname` reports whether a host is authenticated. Worktrunk's role is the standard uses of those conventions. Where neither the tool nor a library answers, support the standard case and remove rather than refine: an input that only misbehaves outside standard use is a reason to stop reading it, and a tool that isn't installed has nothing to integrate with, so needs no fallback table.
 
 ### System Docstrings
 

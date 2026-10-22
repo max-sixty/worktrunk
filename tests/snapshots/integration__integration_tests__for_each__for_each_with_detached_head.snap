@@ -64,9 +64,11 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mRunning in [1mmain[22m...[39m
-[0m[36m◎[39m [36mRunning in [1mrepo.detached-test[22m (detached)...[39m
+[0m[36m◎[39m [36mRunning in [1m_PARENT_/a/repo[22m (detached)...[39m
+[0m[36m◎[39m [36mRunning in [1mon-branch[22m @ [1m_PARENT_/on-branch/repo[22m...[39m
 [0m[36m◎[39m [36mRunning in [1mfeature-a[22m...[39m
 [0m[36m◎[39m [36mRunning in [1mfeature-b[22m...[39m
 [0m[36m◎[39m [36mRunning in [1mfeature-c[22m...[39m
+[0m[36m◎[39m [36mRunning in [1m_PARENT_/solo/worktrunk[22m (detached)...[39m
 [0m
-[32m✓[39m [32mCompleted in 5 worktrees[39m
+[32m✓[39m [32mCompleted in 7 worktrees[39m

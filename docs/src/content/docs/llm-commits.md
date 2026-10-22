@@ -46,7 +46,7 @@ Any of these replaces the `command` line above:
 
 ```toml
 # opencode — use a fast model variant
-command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"
+command = "opencode run -m anthropic/claude-haiku-5-5 --variant fast"
 
 # llm
 command = "llm -m claude-haiku-4.5"

@@ -24,8 +24,10 @@
 //! The shell owns the foreground job and the kernel delivers Ctrl-C, Ctrl-Z
 //! and hangup to it. No terminal handoff or private foreground group is needed.
 //!
-//! [`Cmd::forward_signals`] observes direct exit while waiting, preserving a
-//! child's normal exit when it handles Ctrl-C.
+//! [`Cmd::forward_signals`] observes direct exit while waiting. A terminal
+//! Ctrl-C that wt itself receives meanwhile cancels the command once the child
+//! exits, whatever status the child chose; [`Cmd::hand_off_terminal`] leaves
+//! the key to a final interactive child instead (see [`TerminalInterrupt`]).
 //! SIGTERM addressed only to wt is forwarded
 //! to owned direct children and cancels the command. Child signal exits propagate
 //! through `WorktrunkError::ChildProcessExited` to stop foreground loops.
@@ -89,9 +91,22 @@ use crate::trace::CommandTrace;
 pub mod pipe;
 
 /// Prepare complete input before spawning, with no producer that can block.
-/// The anonymous file is removed when its last handle closes, even on interruption.
-/// This is seekable stdin, unlike the pipes connecting live pipeline stages.
+///
+/// On Unix, input that fits in a pipe's buffer is written there before spawn,
+/// so it needs no temporary storage and works with an unusable `TMPDIR`.
+/// Larger input, and all input on Windows, goes through an anonymous file,
+/// removed when its last handle closes, even on interruption.
 pub fn buffered_stdin(bytes: &[u8]) -> std::io::Result<Stdio> {
+    #[cfg(unix)]
+    {
+        let (reader, mut writer) = with_process_creation_guard(std::io::pipe)?;
+        pipe::set_nonblocking(&writer)?;
+        // Writing to a fresh pipe whose reader we hold fails only with
+        // `WouldBlock`, once the input outgrows the buffer.
+        if writer.write_all(bytes).is_ok() {
+            return Ok(reader.into());
+        }
+    }
     let mut file = tempfile::tempfile()?;
     file.write_all(bytes)?;
     file.rewind()?;
@@ -252,6 +267,21 @@ fn track_if_cancellable(pid: u32) -> Option<BackgroundPid> {
         }
         guard
     })
+}
+
+/// What a terminal Ctrl-C that wt itself receives means while a foreground
+/// child runs. Either way the child handles the key its own way; wt never
+/// signals it for INT.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalInterrupt {
+    /// The child is one step of the command, such as a hook, an alias step or
+    /// a `for-each` visit. Once it exits the command starts nothing more and
+    /// exits interrupted, whatever status the child chose.
+    Cancels,
+    /// The command hands the terminal to its final, interactive child: a pager,
+    /// an `--execute` program, a custom subcommand, an alias's last serial step.
+    /// The key is that child's input, and its own exit status stands.
+    ChildInput,
 }
 
 /// Whether a cancellation would signal `pid` right now.
@@ -526,49 +556,32 @@ fn detect_windows_shell() -> Result<ShellConfig, String> {
 /// (WSL launcher) often comes before Git Bash in PATH.
 #[cfg(windows)]
 fn find_git_bash() -> Option<PathBuf> {
-    // Primary: find git in PATH and derive bash location
-    if let Ok(git_path) = which::which("git")
-        && let Some(bash_path) = git_bash_beside_git(&git_path)
-    {
-        return Some(bash_path);
+    // Ask Git itself so PATH shims resolve to the installation they launch.
+    let git_path = which::which("git").ok()?;
+    let output = Cmd::new(git_path.to_string_lossy())
+        .arg("--exec-path")
+        .env_remove("GIT_EXEC_PATH") // User overrides name helpers, not the install.
+        .run()
+        .ok()?;
+    if !output.status.success() {
+        return None;
     }
-
-    // Fallback: standard Git for Windows paths (needed on some CI environments
-    // where `which` doesn't find git even though it's installed)
-    let bash_path = PathBuf::from(r"C:\Program Files\Git\bin\bash.exe");
-    if bash_path.exists() {
-        return Some(bash_path);
-    }
-
-    // Per-user Git for Windows installation (default path when installed without admin rights)
-    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        let bash_path = PathBuf::from(local_app_data)
-            .join("Programs")
-            .join("Git")
-            .join("bin")
-            .join("bash.exe");
-        if bash_path.exists() {
-            return Some(bash_path);
-        }
-    }
-
-    None
+    let exec_path = std::str::from_utf8(&output.stdout).ok()?;
+    git_bash_from_exec_path(Path::new(exec_path.trim_end()))
 }
 
-/// Derive Git Bash's location from a Git for Windows `git.exe` path.
-///
-/// `git.exe` sits one level below the install root (`Git/cmd`, `Git/bin`) or
-/// below `usr` (`Git/usr/bin`), or two levels below the root in
-/// `Git/mingw64/bin` — the copy MSYS puts first on PATH inside a Git Bash
-/// session. bash.exe is at `Git/bin/bash.exe` or `Git/usr/bin/bash.exe`.
+/// Git for Windows reports `<install>/<runtime>/libexec/git-core` for --exec-path.
+/// The runtime name varies by architecture; Bash belongs to the install root.
 #[cfg(any(windows, test))]
-fn git_bash_beside_git(git_path: &Path) -> Option<PathBuf> {
-    git_path.ancestors().skip(2).take(2).find_map(|root| {
-        [root.join("bin"), root.join("usr").join("bin")]
-            .into_iter()
-            .map(|dir| dir.join("bash.exe"))
-            .find(|bash_path| bash_path.exists())
-    })
+fn git_bash_from_exec_path(exec_path: &Path) -> Option<PathBuf> {
+    if !exec_path.ends_with(Path::new("libexec").join("git-core")) {
+        return None;
+    }
+    let root = exec_path.parent()?.parent()?.parent()?;
+    [root.join("bin"), root.join("usr").join("bin")]
+        .into_iter()
+        .map(|dir| dir.join("bash.exe"))
+        .find(|bash_path| bash_path.is_file())
 }
 
 /// Environment variable naming the directive file for `cd` path changes.
@@ -691,7 +704,10 @@ pub fn apply_cd_directive_env(cmd: &mut std::process::Command, cd_file: &std::pa
 ///   into a relocated command misdirects every `git` call in it; with both
 ///   `GIT_DIR` and `GIT_WORK_TREE` present, a `git init` even writes
 ///   `core.worktree` into the *inherited* repo's config, silently redirecting
-///   every later plain git command there. See issue #3373.
+///   every later plain git command there. See issue #3373. Detached children
+///   (`spawn_detached_exec`: hook pipelines, trash drains) are relocated the
+///   same way, and outlive the parent, so removing the invoking worktree would
+///   also leave an inherited `GIT_DIR` naming a pruned gitdir.
 ///
 /// - **The child runs where the user already was** — aliases (the user's own
 ///   top-level command, run from the invoking worktree) and `commit.generation`
@@ -1060,10 +1076,23 @@ fn run_with_timeout_impl(
         let output = match collect() {
             Ok(output) => output,
             Err(error) => {
+                // A child already ended by a native INT/TERM stays cancelled even
+                // when a descendant holding its pipes ran the readers to the
+                // deadline; reporting `TimedOut` would let callers fall back as
+                // if the command were merely slow. The probe leaves the leader
+                // unreaped for the teardown, and signalling its zombie cannot
+                // change the status the final `wait` then reports.
+                let interrupted = exited_by_native_interrupt(child.id());
                 kill_timed_out_tree(child.id());
                 let _ = child.kill();
-                let _ = child.wait();
-                return Err(error);
+                return match child.wait() {
+                    Ok(status) if interrupted => Ok(std::process::Output {
+                        status,
+                        stdout: Vec::new(),
+                        stderr: Vec::new(),
+                    }),
+                    _ => Err(error),
+                };
             }
         };
         let status = match wait_shared_child(&child, Some(deadline)) {
@@ -1083,6 +1112,51 @@ fn run_with_timeout_impl(
             stderr: output.1,
         })
     })
+}
+
+/// Whether SIGINT/SIGTERM already ended `pid`, read with `WNOWAIT` so the
+/// child stays unreaped and keeps pinning its pgid for the teardown.
+#[cfg(target_os = "linux")]
+fn exited_by_native_interrupt(pid: u32) -> bool {
+    use nix::sys::signal::Signal;
+    use nix::sys::wait::{Id, WaitPidFlag, WaitStatus, waitid};
+    matches!(
+        waitid(
+            Id::Pid(nix::unistd::Pid::from_raw(pid as i32)),
+            WaitPidFlag::WEXITED | WaitPidFlag::WNOWAIT | WaitPidFlag::WNOHANG,
+        ),
+        Ok(WaitStatus::Signaled(_, Signal::SIGINT | Signal::SIGTERM, _))
+    )
+}
+
+/// Darwin's `waitid` with the same flags; nix doesn't wrap it there. Darwin
+/// leaves `siginfo` untouched for a running child, hence the zeroed buffer,
+/// and can report a stop through `WEXITED`, hence matching `CLD_KILLED` only.
+#[cfg(target_vendor = "apple")]
+#[allow(unsafe_code)]
+fn exited_by_native_interrupt(pid: u32) -> bool {
+    use nix::libc;
+    // SAFETY: `siginfo_t` is plain data; all-zero is a valid value.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    // SAFETY: `info` is a valid, exclusively borrowed `siginfo_t`.
+    let ret = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            pid as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOWAIT | libc::WNOHANG,
+        )
+    };
+    ret == 0
+        && info.si_signo == libc::SIGCHLD
+        && info.si_code == libc::CLD_KILLED
+        && matches!(info.si_status, libc::SIGINT | libc::SIGTERM)
+}
+
+/// No unreaped status probe here: a deadline-bound cancellation stays `TimedOut`.
+#[cfg(all(unix, not(target_os = "linux"), not(target_vendor = "apple")))]
+fn exited_by_native_interrupt(_pid: u32) -> bool {
+    false
 }
 
 /// Tear down the process tree of a child that outlived its timeout.
@@ -1163,7 +1237,7 @@ fn kill_timed_out_tree(pid: u32) {
 pub struct Cmd {
     /// Program name or shell command string (if shell_wrap is true)
     program: String,
-    args: Vec<String>,
+    args: Vec<OsString>,
     current_dir: Option<std::path::PathBuf>,
     context: Option<String>,
     stdin_data: Option<Vec<u8>>,
@@ -1180,10 +1254,10 @@ pub struct Cmd {
     shell_wrap: bool,
     /// Stdout configuration for stream() (defaults to inherit)
     stdout_cfg: Option<std::process::Stdio>,
-    /// Stdin configuration for stream() (defaults to null, or a file for stdin_data)
+    /// Stdin configuration for stream() (defaults to null; stdin_data takes precedence)
     stdin_cfg: Option<std::process::Stdio>,
     /// Observe terminal signals and forward PID-targeted cancellation during stream().
-    forward_signals: bool,
+    forward_signals: Option<TerminalInterrupt>,
     /// If true, treat a SIGPIPE exit as success. This is the default for pager
     /// producers, where the consumer closing early is expected. Direct user
     /// programs can opt out with [`Cmd::propagate_sigpipe`].
@@ -1497,7 +1571,7 @@ impl Cmd {
             shell_wrap,
             stdout_cfg: None,
             stdin_cfg: None,
-            forward_signals: false,
+            forward_signals: None,
             ignore_sigpipe: true,
             external_label: None,
             directive_cd_file: None,
@@ -1527,7 +1601,15 @@ impl Cmd {
         if self.shell_wrap || self.args.is_empty() {
             self.program.clone()
         } else {
-            format!("{} {}", self.program, self.args.join(" "))
+            format!(
+                "{} {}",
+                self.program,
+                self.args
+                    .iter()
+                    .map(|arg| arg.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
         }
     }
 
@@ -1628,8 +1710,8 @@ impl Cmd {
     }
 
     /// Add a single argument.
-    pub fn arg(mut self, arg: impl Into<String>) -> Self {
-        self.args.push(arg.into());
+    pub fn arg(mut self, arg: impl AsRef<OsStr>) -> Self {
+        self.args.push(arg.as_ref().to_os_string());
         self
     }
 
@@ -1637,9 +1719,10 @@ impl Cmd {
     pub fn args<I, S>(mut self, args: I) -> Self
     where
         I: IntoIterator<Item = S>,
-        S: Into<String>,
+        S: AsRef<OsStr>,
     {
-        self.args.extend(args.into_iter().map(Into::into));
+        self.args
+            .extend(args.into_iter().map(|arg| arg.as_ref().to_os_string()));
         self
     }
 
@@ -1655,7 +1738,7 @@ impl Cmd {
         self
     }
 
-    /// Set complete input bytes, delivered through an anonymous temporary file.
+    /// Set complete input bytes, prepared by [`buffered_stdin`] before spawn.
     ///
     /// The child reads these bytes followed by EOF, without a pipe writer that
     /// can block on an unread input. This takes precedence over `.stdin(Stdio)`.
@@ -1775,11 +1858,19 @@ impl Cmd {
 
     /// Preserve terminal Ctrl-C delivery and forward SIGTERM to live children.
     ///
-    /// The child shares the caller's foreground group. A handled Ctrl-C keeps
-    /// its normal status; cancellation and signal exits stop foreground loops.
+    /// The child shares the caller's foreground group, so it receives the key
+    /// alongside wt. wt's own receipt of SIGINT cancels the command once the
+    /// child exits ([`TerminalInterrupt::Cancels`]); signal exits do too.
     /// Only affects `.stream()` on Unix. No-op on Windows.
     pub fn forward_signals(mut self) -> Self {
-        self.forward_signals = true;
+        self.forward_signals = Some(TerminalInterrupt::Cancels);
+        self
+    }
+
+    /// [`Cmd::forward_signals`] for the command's final, interactive child,
+    /// which owns a terminal Ctrl-C as input ([`TerminalInterrupt::ChildInput`]).
+    pub fn hand_off_terminal(mut self) -> Self {
+        self.forward_signals = Some(TerminalInterrupt::ChildInput);
         self
     }
 
@@ -2215,10 +2306,9 @@ impl Cmd {
         // Install the SIGINT/SIGTERM handler BEFORE spawn so a signal arriving
         // mid-spawn is queued, not default-killed.
         #[cfg(unix)]
-        let signals = if self.forward_signals {
-            Some(crate::signal_forwarder::ForegroundSignals::install()?)
-        } else {
-            None
+        let signals = match self.forward_signals {
+            Some(mode) => Some(crate::signal_forwarder::ForegroundSignals::install(mode)?),
+            None => None,
         };
 
         // Apply environment and spawn
@@ -2988,34 +3078,29 @@ print(*counts)
     }
 
     #[test]
-    fn test_git_bash_beside_git_install_layouts() {
+    fn test_git_bash_from_exec_path() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("Git");
-        for sub in ["bin", "usr/bin", "cmd", "mingw64/bin"] {
-            std::fs::create_dir_all(root.join(sub)).unwrap();
-        }
-        let bin_bash = root.join("bin").join("bash.exe");
+        let bin_bash = root.join("bin/bash.exe");
+        let usr_bash = root.join("usr/bin/bash.exe");
+        std::fs::create_dir_all(bin_bash.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(usr_bash.parent().unwrap()).unwrap();
         std::fs::write(&bin_bash, "").unwrap();
-        std::fs::write(root.join("usr").join("bin").join("bash.exe"), "").unwrap();
+        std::fs::write(&usr_bash, "").unwrap();
 
-        for git in ["cmd/git.exe", "bin/git.exe", "mingw64/bin/git.exe"] {
-            assert_eq!(
-                git_bash_beside_git(&root.join(git)),
-                Some(bin_bash.clone()),
-                "{git}"
-            );
-        }
-        assert_eq!(
-            git_bash_beside_git(&root.join("usr/bin/git.exe")),
-            Some(root.join("usr").join("bin").join("bash.exe"))
-        );
-
-        // A minimal install with only usr/bin/bash.exe, reached from mingw64/bin
+        // ARM uses a different runtime prefix; discovery must not enumerate them.
+        let exec_path = root.join("clangarm64/libexec/git-core");
+        assert_eq!(git_bash_from_exec_path(&exec_path), Some(bin_bash.clone()));
+        assert_eq!(git_bash_from_exec_path(&root.join("x/y/z")), None);
         std::fs::remove_file(&bin_bash).unwrap();
-        assert_eq!(
-            git_bash_beside_git(&root.join("mingw64/bin/git.exe")),
-            Some(root.join("usr").join("bin").join("bash.exe"))
-        );
+        assert_eq!(git_bash_from_exec_path(&exec_path), Some(usr_bash.clone()));
+
+        // MinGit can report the same layout without shipping Bash. Never climb
+        // outside that installation to select an unrelated executable.
+        std::fs::remove_file(&usr_bash).unwrap();
+        std::fs::create_dir(dir.path().join("bin")).unwrap();
+        std::fs::write(dir.path().join("bin/bash.exe"), "outside install").unwrap();
+        assert_eq!(git_bash_from_exec_path(&exec_path), None);
     }
 
     #[test]
@@ -3161,6 +3246,26 @@ print(*counts)
             elapsed < Duration::from_secs(10),
             "timeout waited on the grandchild: {elapsed:?}"
         );
+    }
+
+    /// A child that INT/TERM already ended keeps that status when a descendant
+    /// holds its pipes past the deadline, instead of reading as `TimedOut`.
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_timeout_keeps_native_interrupt_with_pipe_holding_descendant() {
+        use signal_hook::consts::{SIGINT, SIGTERM};
+        use std::os::unix::process::ExitStatusExt;
+        for (name, signal) in [("INT", SIGINT), ("TERM", SIGTERM)] {
+            let start = std::time::Instant::now();
+            let output = Cmd::new("sh")
+                .args(["-c", &format!("sleep 30 & kill -{name} $$")])
+                // Long enough that `kill` lands first even under suite load.
+                .timeout(Duration::from_secs(2))
+                .run()
+                .unwrap();
+            assert_eq!(output.status.signal(), Some(signal));
+            assert!(start.elapsed() < Duration::from_secs(20));
+        }
     }
 
     #[test]

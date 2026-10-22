@@ -73,7 +73,7 @@ exit_code: 0
 [107m [0m Invoked as: [1m[PROJECT_ROOT]/target/[BUILD_MODE]/wt[22m
 
 [36mDIAGNOSTICS[39m
-[33m▲[39m [33m[1mtea[22m installed but not authenticated[39m
+[33m▲[39m [33m[1mtea[22m installed but not authenticated for [1mgitea.example.com[22m[39m
 [2m↳[22m [2mTo authenticate, run [4mtea login add[24m[22m
 [2m○[22m Up to date ([1m[VERSION][22m)
 [2m○[22m Commit generation not configured

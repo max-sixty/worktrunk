@@ -4,7 +4,7 @@ use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::UserConfig;
-use worktrunk::git::{Repository, WorkingTree};
+use worktrunk::git::WorkingTree;
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, println, progress_message,
     success_message, suggest_command,
@@ -17,7 +17,7 @@ use super::super::command_executor::FailureStrategy;
 use super::super::commit::{CommitGenerator, CommitOutcome, HookGate, StageMode};
 use super::super::context::CommandEnv;
 use super::super::hooks::{HookAnnouncer, execute_hook};
-use super::super::repository_ext::warn_about_untracked_files;
+use super::super::repository_ext::auto_stage;
 use super::super::template_vars::TemplateVars;
 use super::shared::print_dry_run;
 
@@ -80,7 +80,7 @@ pub fn handle_squash(
     // One-time LLM setup prompt (errors logged internally; don't block commit)
     let _ = crate::output::prompt_commit_generation(&mut config);
 
-    let env = CommandEnv::for_action(config)?;
+    let env = CommandEnv::for_selector(config, "@")?;
     handle_squash_in(
         &env,
         target,
@@ -139,7 +139,7 @@ pub fn handle_squash_in(
 
     // Check if any pre-commit hooks exist (needed for skip message and approval)
     let project_config = repo.load_project_config()?;
-    let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
+    let user_hooks = ctx.config.hooks(ctx.project_id().as_ref());
     let any_hooks_exist = user_hooks.get(HookType::PreCommit).is_some()
         || project_config
             .as_ref()
@@ -180,22 +180,19 @@ pub fn handle_squash_in(
         .unwrap_or_else(|| integration_target.clone());
     let template_vars = TemplateVars::new().with_target(&integration_target);
 
-    // Run pre-commit hooks (user first, then project) before staging, as
-    // `wt step commit` does, so the edits a formatter hook makes are staged
-    // into the squash commit rather than left in the working tree.
-    if hooks.run() {
-        execute_hook(
+    // Stage on both sides of the pre-commit hooks (user first, then project);
+    // `auto_stage` says why.
+    auto_stage(&wt, stage_mode)?;
+    if hooks.run()
+        && execute_hook(
             &ctx,
             HookType::PreCommit,
             &template_vars.as_extra_vars(),
             FailureStrategy::FailFast,
-        )?;
+        )?
+    {
+        auto_stage(&wt, stage_mode)?;
     }
-
-    if stage_mode == StageMode::All {
-        warn_about_untracked_files(&wt)?;
-    }
-    wt.stage(stage_mode)?;
 
     // Resolve HEAD once, so the span, the message's commit list, and the
     // compare-and-swap that finally moves the branch all describe one tip.
@@ -510,10 +507,9 @@ fn preview_squash(
     dry_run: bool,
     yes: bool,
 ) -> anyhow::Result<()> {
-    let repo = Repository::current()?;
-    let config = UserConfig::load().context("Failed to load config")?;
-    let project_id = repo.project_identifier().ok();
-    let commit_config = config.commit_generation(project_id.as_deref());
+    let env = CommandEnv::for_selector(UserConfig::load().context("Failed to load config")?, "@")?;
+    let repo = &env.repo;
+    let commit_config = env.config.commit_generation(env.project_id().as_ref());
 
     let integration_target = repo.require_target_ref(target)?;
     // #3519: preview against the same upstream-aware span the real squash uses.
@@ -541,7 +537,6 @@ fn preview_squash(
         .and_then(|n| n.to_str())
         .unwrap_or("repo");
 
-    let env = CommandEnv::for_action(config)?;
     let ctx = env.context(yes);
     let project_append = resolve_template_for_preview(&ctx, &commit_config, dry_run)?;
 

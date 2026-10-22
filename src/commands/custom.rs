@@ -34,9 +34,13 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use worktrunk::git::WorktrunkError;
+#[cfg(unix)]
+use worktrunk::shell_exec::TerminalInterrupt;
 #[cfg(not(unix))]
 use worktrunk::shell_exec::wait_shared_child;
 use worktrunk::shell_exec::{DIRECTIVE_EXEC_FILE_ENV_VAR, RETIRED_DIRECTIVE_FILE_ENV_VAR};
+#[cfg(unix)]
+use worktrunk::signal_forwarder::ForegroundSignals;
 use worktrunk::trace::CommandTrace;
 
 use crate::cli::build_command;
@@ -147,7 +151,7 @@ fn run_custom(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> Res
     }
 
     #[cfg(unix)]
-    let signals = worktrunk::signal_forwarder::ForegroundSignals::install()?;
+    let signals = ForegroundSignals::install(TerminalInterrupt::ChildInput)?;
     let mut trace = CommandTrace::new(None, &path.display().to_string());
     #[cfg(unix)]
     let spawned = signals.spawn(&mut cmd);
@@ -310,14 +314,17 @@ mod tests {
                     "--exact",
                     "commands::custom::tests::run_custom_propagates_signal_exit_code",
                 ])
-                .env(CHILD_ENV, "1");
-            assert!(
-                worktrunk::shell_exec::spawn(&mut command)
-                    .unwrap()
-                    .wait()
-                    .unwrap()
-                    .success()
-            );
+                .env(CHILD_ENV, "1")
+                .stdout(std::process::Stdio::piped());
+            let output = worktrunk::shell_exec::spawn(&mut command)
+                .unwrap()
+                .wait_with_output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(output.status.success(), "{stdout}");
+            // `--exact` matching nothing also exits 0; require that the child
+            // actually ran this test.
+            assert!(stdout.contains(" 1 passed;"), "{stdout}");
             return;
         }
 

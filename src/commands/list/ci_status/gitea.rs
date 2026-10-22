@@ -10,7 +10,7 @@ use worktrunk::git::{Repository, parse_owner_repo};
 
 use super::{
     CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrRef, PrStatus, branch_owner_repo,
-    is_retriable_error, non_interactive_cmd, output_error_text, parse_json,
+    non_interactive_cmd, parse_json,
 };
 
 /// Run `tea api --include <path>` from the worktree root.
@@ -19,7 +19,7 @@ use super::{
 /// status reaches us — see the [`gitea`](worktrunk::git::remote_ref::gitea)
 /// module docs.
 ///
-/// `is_tool_available` has already confirmed `tea` is on PATH, so a spawn
+/// `detect_ci` has already confirmed `tea` is on PATH, so a spawn
 /// failure here is an OS-level edge case — fall through to `None` (no CI status
 /// for this branch) rather than logging.
 fn tea_api(repo: &Repository, path: &str) -> Option<Output> {
@@ -31,49 +31,23 @@ fn tea_api(repo: &Repository, path: &str) -> Option<Output> {
         .ok()
 }
 
-/// Whether a `tea api` call failed, and if so whether a later `wt list` could
-/// get an answer where this one didn't. `None` when the response carries the
-/// resource.
+/// Whether a `tea api` call failed rather than returning the resource.
 ///
-/// Neither failure is an exit code. `tea api` exits 0 for every HTTP response,
-/// so a non-zero exit means `tea` itself failed and every HTTP error arrives as
-/// a successful spawn carrying a body in place of the resource — which
-/// [`api_status`] identifies. Branching on the exit code alone would let that
-/// body through as data: every field of [`GiteaCombinedStatus`] defaults, so a
-/// 500 would deserialize as "no statuses" and paint a blank CI cell.
-///
-/// Retriability then comes from whichever channel knows:
-///
-/// - **`tea` itself failed** — no response, so its own stderr is the only
-///   account of why (transport error, no login configured), and
-///   [`is_retriable_error`] reads it as it does for every other backend's CLI.
-/// - **the API answered** — the status settles it outright: 429 and 5xx are the
-///   server saying "later", while every other 4xx is a token or a missing
-///   resource that repeating the call won't change. Gitea is the only backend
-///   that can answer this way; `gh` and `glab` leave the status inside prose,
-///   which is why they still sniff for it.
-/// - **no status line from an exit-0 `tea`** — the response never arrived, and
-///   a call that can't be classified won't classify on a retry either.
-///
-/// Gitea's message is read nowhere here. It reached the user only through this
-/// sniff, and the status answers better than the sniff did: a 500 whose message
-/// Gitea blanked for a non-admin token used to leave nothing to match, so a
-/// server error painted the same blank cell as a healthy branch with no CI.
-fn tea_api_failure_is_retriable(output: &Output) -> Option<bool> {
-    if !output.status.success() {
-        return Some(is_retriable_error(&output_error_text(output)));
-    }
-    match api_status(&output.stderr) {
-        Some(status) if status < 400 => None,
-        Some(status) => Some(status == 429 || status >= 500),
-        None => Some(false),
-    }
+/// `tea api` exits 0 for every HTTP response, so a non-zero exit means `tea`
+/// itself failed, and an HTTP error arrives as a successful spawn carrying a
+/// body in place of the resource, which [`api_status`] identifies. Branching on
+/// the exit code alone would let that body through as data: every field of
+/// [`GiteaCombinedStatus`] defaults, so a 500 would deserialize as "no
+/// statuses" and paint a blank CI cell. A missing status line means the
+/// response never arrived.
+fn tea_api_failed(output: &Output) -> bool {
+    !output.status.success() || api_status(&output.stderr).is_none_or(|status| status >= 400)
 }
 
 /// Fetch the combined CI status for a commit SHA.
 ///
-/// Returns `Some(CiStatus::Error)` for retriable failures (rate limit, network),
-/// `None` when the commit has no statuses or the call fails non-retriably.
+/// Returns `Some(CiStatus::Error)` when the call fails, `None` when the commit
+/// has no statuses.
 fn fetch_combined_status(
     repo: &Repository,
     owner: &str,
@@ -82,10 +56,8 @@ fn fetch_combined_status(
 ) -> Option<CiStatus> {
     let path = format!("repos/{owner}/{repo_name}/commits/{sha}/status");
     let output = tea_api(repo, &path)?;
-    if let Some(retriable) = tea_api_failure_is_retriable(&output) {
-        // The PR-status warning from `retriable_pr_error` is the wrong shape
-        // here (this returns just CiStatus).
-        return retriable.then_some(CiStatus::Error);
+    if tea_api_failed(&output) {
+        return Some(CiStatus::Error);
     }
     let combined: GiteaCombinedStatus = parse_json(&output.stdout, "tea api commit status", sha)?;
     if combined.total_count == 0 {
@@ -116,8 +88,8 @@ pub(super) fn detect_gitea_pr(
     let path =
         format!("repos/{query_owner}/{query_repo}/pulls?state=open&limit={MAX_PRS_TO_FETCH}");
     let output = tea_api(repo, &path)?;
-    if let Some(retriable) = tea_api_failure_is_retriable(&output) {
-        return retriable.then(PrStatus::error);
+    if tea_api_failed(&output) {
+        return Some(PrStatus::error());
     }
 
     let prs: Vec<GiteaPr> = parse_json(&output.stdout, "tea api pulls", &branch.full_name)?;
@@ -182,6 +154,9 @@ pub(super) fn detect_gitea_commit_status(
     branch: &CiBranchName,
     local_head: &str,
 ) -> Option<PrStatus> {
+    if !branch.head_on_remote(repo, local_head) {
+        return None;
+    }
     let (owner, repo_name) = branch_owner_repo(repo, branch)?;
     let ci_status = fetch_combined_status(repo, &owner, &repo_name, local_head)?;
     Some(PrStatus {
@@ -301,12 +276,10 @@ mod tests {
         assert_eq!(pr(Some(2)).comment_count(), Some(2));
     }
 
-    /// The status line answers both questions the exit code can't: whether the
-    /// call failed, and whether repeating it could help. The body is not read —
-    /// each case below pairs a status with a body that would have said something
-    /// different, so a sniff surviving anywhere would show up here.
+    /// The status line, not the exit code or the body, says whether an exit-0
+    /// `tea api` call failed.
     #[test]
-    fn test_tea_api_failure_is_retriable_reads_the_http_status() {
+    fn test_tea_api_failed_reads_the_http_status() {
         // `ExitStatus::default()` is success on every platform, so these all
         // exercise the exit-0 path — the one the exit code can't classify.
         let response = |status: &str, stdout: &str| Output {
@@ -315,50 +288,22 @@ mod tests {
             stderr: format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\n\r\n")
                 .into_bytes(),
         };
-        let retriable =
-            |status: &str, stdout: &str| tea_api_failure_is_retriable(&response(status, stdout));
+        let failed = |status: &str, stdout: &str| tea_api_failed(&response(status, stdout));
 
-        // 2xx is the resource, whatever it holds — an `APIError` body served
-        // with a 200 is a Gitea API change, not an API error.
-        assert_eq!(retriable("200 OK", "[]"), None);
-        assert_eq!(retriable("200 OK", r#"{"message":"nope"}"#), None);
+        // 2xx is the resource, whatever it holds.
+        assert!(!failed("200 OK", "[]"));
+        assert!(!failed("200 OK", r#"{"message":"nope"}"#));
 
-        // The server saying "later".
-        assert_eq!(
-            retriable("500 Internal Server Error", r#"{"message":""}"#),
-            Some(true)
-        );
-        assert_eq!(
-            retriable("502 Bad Gateway", "<html>Bad Gateway</html>"),
-            Some(true)
-        );
-        assert_eq!(retriable("429 Too Many Requests", "{}"), Some(true));
+        assert!(failed("500 Internal Server Error", r#"{"message":""}"#));
+        assert!(failed("429 Too Many Requests", "{}"));
+        assert!(failed("404 Not Found", r#"{"message":"does not exist"}"#));
 
-        // A token or a missing resource: repeating the call changes nothing,
-        // even when the message reads like a network fault.
-        assert_eq!(
-            retriable("401 Unauthorized", r#"{"message":"token is required"}"#),
-            Some(false)
-        );
-        assert_eq!(
-            retriable("403 Forbidden", r#"{"message":"connection timeout"}"#),
-            Some(false)
-        );
-        assert_eq!(
-            retriable("404 Not Found", r#"{"message":"does not exist"}"#),
-            Some(false)
-        );
-
-        // No status line from an exit-0 `tea`: a failure, never the resource,
-        // and nothing a retry would classify differently.
-        assert_eq!(
-            tea_api_failure_is_retriable(&Output {
-                status: Default::default(),
-                stdout: b"[]".to_vec(),
-                stderr: Vec::new(),
-            }),
-            Some(false)
-        );
+        // No status line: the response never arrived.
+        assert!(tea_api_failed(&Output {
+            status: Default::default(),
+            stdout: b"[]".to_vec(),
+            stderr: Vec::new(),
+        }));
     }
 
     #[test]
