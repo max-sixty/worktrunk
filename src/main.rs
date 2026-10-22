@@ -790,8 +790,6 @@ fn parse_cli() -> Cli {
     // Exits the process on a help/version/doc request; otherwise returns.
     help::maybe_handle_help_with_pager(alias_help_context, subcommand.as_deref());
 
-    // When available, use built-in setting. Until then, could use try_parse() to intercept
-    // MissingRequiredArgument errors and print custom messages with ValueEnum::value_variants().
     let cmd = cli::build_command();
     let matches = cmd
         .try_get_matches_from(std::env::args_os())
