@@ -394,9 +394,15 @@ fn advance_target(
         new_sha,
         old_sha,
     ])
-    .map_err(|e| GitError::PushFailed {
-        target_branch: target_branch.to_string(),
-        error: format!("Failed to update ref: {}", e.display_message()),
+    .map_err(|e| {
+        if e.interrupt_signal().is_some() {
+            return e;
+        }
+        GitError::PushFailed {
+            target_branch: target_branch.to_string(),
+            error: format!("Failed to update ref: {}", e.display_message()),
+        }
+        .into()
     })?;
 
     let Some(wt_path) = target_worktree_path else {

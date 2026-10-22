@@ -30,6 +30,64 @@ fn test_push_fast_forward(mut repo: TestRepo) {
     snapshot_push("push_fast_forward", &repo, &["main"], Some(&feature_wt));
 }
 
+/// Formatting an update-ref failure must preserve native interruption. A
+/// numeric exit 130 still receives the ordinary push-failure diagnostic.
+#[cfg(unix)]
+#[rstest]
+#[case("kill -INT $$", Some(2))]
+#[case("kill -TERM $$", Some(15))]
+#[case("exit 130", None)]
+fn test_push_ref_update_interruption(
+    mut repo: TestRepo,
+    #[case] failure: &str,
+    #[case] signal: Option<i32>,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::ExitStatusExt;
+
+    let feature = repo.add_feature();
+    let target_before = repo.git_output(&["rev-parse", "main"]);
+    let wrapper = crate::common::test_tempdir();
+    let script = wrapper.path().join("git");
+    let reached = wrapper.path().join("reached");
+    let real_git = which::which("git").unwrap();
+    std::fs::write(
+        &script,
+        format!(
+            r#"#!/bin/sh
+if [ "$1" = update-ref ]; then
+  printf reached > {reached}
+  {failure}
+fi
+exec {real_git} "$@"
+"#,
+            reached = shell_escape::unix::escape(reached.to_string_lossy()),
+            real_git = shell_escape::unix::escape(real_git.to_string_lossy()),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut path = vec![wrapper.path().to_path_buf()];
+    path.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    let output = repo
+        .wt_command()
+        .env("PATH", std::env::join_paths(path).unwrap())
+        .args(["step", "push", "main"])
+        .current_dir(&feature)
+        .output()
+        .unwrap();
+    assert!(
+        reached.exists(),
+        "the failing update-ref must run: {output:?}"
+    );
+    assert_eq!(output.status.signal(), signal, "{output:?}");
+    if signal.is_none() {
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("Failed to update ref"));
+    }
+    assert_eq!(repo.git_output(&["rev-parse", "main"]), target_before);
+}
+
 /// With no detectable width (piped output, no COLUMNS), the diffstat omits
 /// `--stat-width` and lets git pick its default. Back when "no width" was a
 /// `usize::MAX` sentinel, it reached git as a real `--stat-width` and made
