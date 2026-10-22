@@ -28,6 +28,7 @@ use super::command_executor::{
     CommandContext, FailureStrategy, PreparedStep, prepare_steps, render_template_preview,
 };
 use super::context::CommandEnv;
+use super::hook_filter::selected_hook_configs;
 use super::hooks::{HookAnnouncer, prepare_and_check, run_hooks_foreground};
 use super::project_config::command_label;
 use super::template_vars::TemplateVars;
@@ -56,24 +57,17 @@ fn run_post_hook(
         .map(drop);
     }
 
-    // Filter path merges user + project matches into one pipeline (the user
-    // cherry-picked specific names across sources). The default path keeps
-    // sources independent so a user hook failure doesn't abort project hooks.
+    // Each source runs independently, including when names are filtered.
     let mut announcer = HookAnnouncer::new(ctx.repo, false);
-    if name_filters.is_empty() {
-        announcer.register(ctx, hook_type, extra_vars, None)?;
-    } else {
-        let flat = prepare_and_check(
-            ctx,
-            user_config,
-            project_config,
-            hook_type,
-            extra_vars,
-            name_filters,
-        )?;
-        // `flat` is non-empty: a filter that matches nothing errors above.
-        announcer.add_groups(ctx, hook_type, None, vec![flat]);
-    }
+    let steps = prepare_and_check(
+        ctx,
+        user_config,
+        project_config,
+        hook_type,
+        extra_vars,
+        name_filters,
+    )?;
+    announcer.add_steps(ctx, hook_type, None, steps);
     announcer.flush()
 }
 
@@ -146,26 +140,17 @@ fn parse_shorthand_token(raw: &str) -> anyhow::Result<(String, String, String)> 
     Ok((key.replace('-', "_"), key.to_string(), value.to_string()))
 }
 
-/// Union of top-level template variable names referenced across every command
-/// in both configs for this hook type. Matches alias pipeline semantics:
-/// referenced in any step is a binding candidate for the whole invocation.
+/// Union of top-level variables referenced by selected commands.
+/// A reference in any selected step makes the variable a binding candidate.
 fn referenced_vars_union(
-    user_config: Option<&CommandConfig>,
-    project_config: Option<&CommandConfig>,
+    selected: &[(HookSource, CommandConfig)],
     hook_type: HookType,
 ) -> anyhow::Result<std::collections::BTreeSet<String>> {
     let mut out = std::collections::BTreeSet::new();
-    if let Some(cfg) = user_config {
-        out.extend(referenced_vars_for_config(
-            cfg,
-            &format!("user {hook_type} hook"),
-        )?);
-    }
-    if let Some(cfg) = project_config {
-        out.extend(referenced_vars_for_config(
-            cfg,
-            &format!("project {hook_type} hook"),
-        )?);
+    for (source, config) in selected {
+        out.extend(referenced_vars_for_config(config, |name| {
+            source.hook_label(hook_type, name)
+        })?);
     }
     Ok(out)
 }
@@ -179,7 +164,7 @@ pub struct HookCliArgs<'a> {
     /// Explicit `--var KEY=VALUE` bindings (deprecated force-bind).
     pub explicit_vars: &'a [(String, String)],
     /// Raw `KEY=VALUE` tokens from the `--KEY=VALUE` shorthand. Smart-routed:
-    /// bind if any hook template references KEY, else forward to `{{ args }}`.
+    /// bind if a selected template references KEY, else forward to `{{ args }}`.
     pub shorthand_vars: &'a [String],
     /// Tokens after `--` that forward to `{{ args }}` verbatim.
     pub forwarded_args: &'a [String],
@@ -187,15 +172,14 @@ pub struct HookCliArgs<'a> {
 
 /// Handle `wt hook` command
 ///
-/// When explicitly invoking hooks, ALL hooks run (both user and project).
-/// There's no skip flag - if you explicitly run hooks, all configured hooks run.
+/// Runs configured user and project hooks selected by optional source/name filters.
 ///
 /// Works in detached HEAD state - the `{{ branch }}` template variable (and the
 /// `{{ base }}` / `{{ target }}` names derived from it) is simply unset there.
 ///
 /// Template variables come from three sources in [`HookCliArgs`], routed per
 /// alias semantics:
-/// - `shorthand_vars` (`--KEY=VALUE`): binds `{{ KEY }}` if any hook template
+/// - `shorthand_vars` (`--KEY=VALUE`): binds `{{ KEY }}` if a selected hook template
 ///   references it; otherwise forwards `--KEY=VALUE` into `{{ args }}`.
 /// - `forwarded_args` (tokens after `--`): forwards into `{{ args }}` verbatim.
 /// - `explicit_vars` (`--var KEY=VALUE`): deprecated force-bind. Always binds,
@@ -256,7 +240,8 @@ pub fn run_hook(
 
     // Smart-route shorthand: bind when the template references the key,
     // forward otherwise. Mirrors `AliasOptions::parse` for the alias path.
-    let referenced = referenced_vars_union(user_config, proj_config, hook_type)?;
+    let selected = selected_hook_configs(user_config, proj_config, name_filters);
+    let referenced = referenced_vars_union(&selected, hook_type)?;
     let mut bindings: Vec<(String, String)> = Vec::new();
     let mut args: Vec<String> = Vec::new();
     for raw in shorthand_vars {
@@ -276,7 +261,7 @@ pub fn run_hook(
         eprintln!(
             "{}",
             warning_message(
-                "--var is deprecated; use --KEY=VALUE shorthand (binds automatically when any hook template references KEY)",
+                "--var is deprecated; use --KEY=VALUE shorthand (binds automatically when a selected hook template references KEY)",
             )
         );
         bindings.extend(explicit_vars.iter().cloned());

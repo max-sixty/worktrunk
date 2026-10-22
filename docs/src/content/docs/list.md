@@ -138,7 +138,7 @@ Reuses the [`commit.generation`](/config/#commit) command — the same LLM that 
 
 <span class="badge-experimental"></span>
 
-Each `[list.custom-columns]` entry in user config adds a column: the key is the header, the template renders each row's cell. Templates read two per-branch namespaces — `{{ vars.* }}`, stored with [`wt config state vars set`](/config/#wt-config-state-vars), and `{{ git.branch.* }}`, the branch's own git config under `branch.<name>.*` (a `jira` key you set yourself, or the git-native `description`) — useful for tracking what each of many (often agent-driven) branches is for:
+Each `[list.custom-columns]` entry in user config adds a column. Its key sets the header; its template renders each row's cell. Templates read `{{ vars.* }}`, set with [`wt config state vars set`](/config/#wt-config-state-vars), and `{{ git.branch.* }}`, from `branch.<name>.*` in Git config:
 
 ```toml
 # ~/.config/worktrunk/config.toml

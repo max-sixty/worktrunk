@@ -353,12 +353,7 @@ fn custom_subcommand_alias_outside_repo_wins_over_path_binary() {
 
 #[cfg(unix)]
 #[test]
-fn custom_subcommand_alias_with_non_utf8_arg_never_self_suggests() {
-    // Non-UTF-8 args skip alias dispatch wholesale (the alias arg parser
-    // requires UTF-8), so inside a repo `wt co <raw byte>` with `co`
-    // configured still falls through to the clap-style error. The
-    // self-suggestion filter in similar_subcommands keeps that error's tip
-    // from suggesting 'co' — the name the user typed.
+fn custom_subcommand_alias_rejects_non_utf8_without_running_path_binary() {
     use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt;
 
@@ -368,33 +363,15 @@ fn custom_subcommand_alias_with_non_utf8_arg_never_self_suggests() {
 co = "echo hi"
 "#,
     );
-
+    let bin_dir = mock_bin_dir("wt-co", MockResponse::output("path binary ran\n"));
     let mut cmd = repo.wt_command();
+    prepend_path(&mut cmd, bin_dir.path());
+    cmd.env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", bin_dir.path());
     cmd.arg("co").arg(OsString::from_vec(vec![0xff]));
 
-    let output = cmd.output().expect("failed to run wt");
-    assert!(!output.status.success());
-    assert_eq!(output.status.code(), Some(2));
-    let stderr = String::from_utf8_lossy(&output.stderr)
-        .ansi_strip()
-        .into_owned();
-    assert!(
-        stderr.contains("unrecognized subcommand 'co'"),
-        "dispatch falls through to the clap-style error: {stderr}"
-    );
-    // The error line legitimately quotes 'co'; only the tip must not.
-    let tip = stderr
-        .lines()
-        .find(|line| line.contains("tip:"))
-        .unwrap_or_default();
-    assert!(
-        tip.contains("'config'"),
-        "tip should suggest the built-in it is similar to: {stderr}"
-    );
-    assert!(
-        !tip.contains("'co'"),
-        "the tip must not suggest the typed name itself: {tip}"
-    );
+    let settings = crate::common::setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+    assert_cmd_snapshot!(cmd);
 }
 
 #[test]

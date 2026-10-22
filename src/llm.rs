@@ -243,10 +243,7 @@ fn truncate_line(line: &str) -> Cow<'_, str> {
     if line.len() <= MAX_LINE_LEN {
         return Cow::Borrowed(line);
     }
-    let mut end = MAX_LINE_LEN;
-    while !line.is_char_boundary(end) {
-        end -= 1;
-    }
+    let end = line.floor_char_boundary(MAX_LINE_LEN);
     Cow::Owned(format!("{}... (line truncated)", &line[..end]))
 }
 

@@ -43,8 +43,8 @@
 //!
 //! **Invocation-resolved (no gate→exec mutation):** `pre-commit`,
 //! `post-commit`, `pre-switch`, `wt hook <type>`, aliases. They resolve config
-//! from `ctx.repo.load_project_config()` at invocation via [`execute_hook`] /
-//! [`HookAnnouncer::register`]. Two facts make that re-read safe, and a new
+//! from `ctx.repo.load_project_config()` at invocation; manual hooks pass the
+//! loaded configs directly to preparation. Two facts make a re-read safe, and a new
 //! call site must preserve **both**: (1) nothing between the gate and the
 //! executor mutates the worktree `.config/wt.toml`; (2) the executor reads
 //! through the **same `Repository` instance** the gate used —
@@ -82,14 +82,14 @@ use worktrunk::styling::{
 };
 
 use super::command_executor::{
-    CommandContext, FailureStrategy, ForegroundStep, PipelineKind, PreparedCommand, PreparedStep,
-    alias_error_wrapper, execute_pipeline_foreground, hook_error_wrapper, prepare_steps,
+    CommandContext, FailureStrategy, ForegroundStep, PipelineKind, alias_error_wrapper,
+    execute_pipeline_foreground, hook_error_wrapper, prepare_steps,
 };
 use super::hook_announcement::{SourcedStep, format_pipeline_summary};
 use crate::commands::process::{HookLog, spawn_detached_exec};
 use crate::output::DirectivePassthrough;
 
-use super::hook_filter::ParsedFilter;
+use super::hook_filter::{ParsedFilter, selected_hook_configs};
 use worktrunk::config::HookSource;
 
 /// Prepare hook steps from both user and project configs, preserving pipeline
@@ -100,12 +100,8 @@ use worktrunk::config::HookSource;
 /// name filter to individual commands within each step. The filter supports
 /// source prefixes: `user:foo` or `project:foo` to run only from one source.
 ///
-/// Shared by [`run_hooks_foreground`] and the dry-run branch of `run_hook`
-/// (in `hook_commands.rs`) so both paths produce the same "no commands
-/// matched" error when a filter mismatches. `run_post_hook`'s filter path
-/// additionally relies on the error as a guarantee: `Ok` under a non-empty
-/// filter implies non-empty steps, which [`HookAnnouncer::add_groups`]
-/// requires.
+/// Shared by foreground, background registration, and dry-run so each path
+/// produces the same "no commands matched" error when a filter mismatches.
 pub(crate) fn prepare_and_check(
     ctx: &CommandContext,
     user_config: Option<&CommandConfig>,
@@ -114,35 +110,8 @@ pub(crate) fn prepare_and_check(
     extra_vars: &[(&str, &str)],
     name_filters: &[String],
 ) -> anyhow::Result<Vec<SourcedStep>> {
-    let parsed_filters: Vec<ParsedFilter<'_>> = name_filters
-        .iter()
-        .map(|f| ParsedFilter::parse(f))
-        .collect();
-
-    let mut result = Vec::new();
-
-    let sources = [
-        (HookSource::User, user_config),
-        (HookSource::Project, project_config),
-    ];
-
-    for (source, config) in sources {
-        let Some(config) = config else { continue };
-
-        if !parsed_filters.is_empty() && !parsed_filters.iter().any(|f| f.matches_source(source)) {
-            continue;
-        }
-
-        let steps = prepare_steps(config, ctx, extra_vars, hook_type, source)?.validated()?;
-        for step in steps {
-            if let Some(filtered) = filter_step_by_name(step, source, &parsed_filters) {
-                result.push(SourcedStep {
-                    step: filtered,
-                    source,
-                });
-            }
-        }
-    }
+    let selected = selected_hook_configs(user_config, project_config, name_filters);
+    let result = prepare_selected(&selected, ctx, extra_vars, hook_type)?;
 
     // Every surviving step keeps at least one command, so an empty result
     // under a non-empty filter means nothing matched.
@@ -158,34 +127,22 @@ pub(crate) fn prepare_and_check(
     Ok(result)
 }
 
-/// Filter commands within a step by name. Returns `None` if all commands were
-/// filtered out. A `Concurrent` group reduced to one command collapses to `Single`.
-fn filter_step_by_name(
-    step: PreparedStep,
-    source: HookSource,
-    parsed_filters: &[ParsedFilter<'_>],
-) -> Option<PreparedStep> {
-    if parsed_filters.is_empty() {
-        return Some(step);
+/// Prepare frozen source/config selections without reading configuration.
+pub(crate) fn prepare_selected(
+    entries: &[(HookSource, CommandConfig)],
+    ctx: &CommandContext<'_>,
+    extra_vars: &[(&str, &str)],
+    hook_type: HookType,
+) -> anyhow::Result<Vec<SourcedStep>> {
+    let mut out = Vec::new();
+    for (source, config) in entries {
+        let steps = prepare_steps(config, ctx, extra_vars, hook_type, *source)?.validated()?;
+        out.extend(steps.into_iter().map(|step| SourcedStep {
+            step,
+            source: *source,
+        }));
     }
-
-    let matches = |cmd: &PreparedCommand| {
-        parsed_filters
-            .iter()
-            .any(|f| f.matches_command(source, cmd.name.as_deref()))
-    };
-
-    match step {
-        PreparedStep::Single(cmd) => matches(&cmd).then_some(PreparedStep::Single(cmd)),
-        PreparedStep::Concurrent(cmds) => {
-            let mut kept: Vec<_> = cmds.into_iter().filter(matches).collect();
-            match kept.len() {
-                0 => None,
-                1 => Some(PreparedStep::Single(kept.pop().unwrap())),
-                _ => Some(PreparedStep::Concurrent(kept)),
-            }
-        }
-    }
+    Ok(out)
 }
 
 /// Build the error for a filter that matched no commands.
@@ -294,7 +251,7 @@ pub struct HookAnnouncer<'a> {
 /// any short-lived `CommandContext`s at the registration site. Background flow
 /// only ever sees hook pipelines, so `hook_type` and `display_path` live on
 /// this struct directly rather than wrapped in a `PipelineKind` variant.
-/// `steps` is non-empty by construction (see [`HookAnnouncer::add_groups`]).
+/// `steps` is non-empty by construction (see [`HookAnnouncer::add_steps`]).
 struct PendingPipeline {
     worktree_path: PathBuf,
     branch: Option<String>,
@@ -316,22 +273,16 @@ impl<'a> HookAnnouncer<'a> {
         }
     }
 
-    /// Add one pipeline per step group, all sharing `hook_type` and
-    /// `display_path` and running in `ctx`'s worktree.
-    ///
-    /// Groups come from [`into_source_groups`] (one pipeline per source — the
-    /// canonical shape) or as a single merged group (`wt hook`'s filter path,
-    /// where the user cherry-picked names across sources). Callers never pass
-    /// empty groups.
-    pub fn add_groups(
+    /// Register one independent background pipeline per source.
+    /// Grouping here keeps user and project failures and logs separate.
+    pub fn add_steps(
         &mut self,
         ctx: &CommandContext<'_>,
         hook_type: HookType,
         display_path: Option<&Path>,
-        groups: Vec<Vec<SourcedStep>>,
+        steps: Vec<SourcedStep>,
     ) {
-        for steps in groups {
-            debug_assert!(!steps.is_empty(), "add_groups: empty step group");
+        for steps in into_source_groups(steps) {
             self.pending.push(PendingPipeline {
                 worktree_path: ctx.worktree_path.to_path_buf(),
                 branch: ctx.branch.map(String::from),
@@ -344,8 +295,7 @@ impl<'a> HookAnnouncer<'a> {
 
     /// Prepare and add user+project pipelines for a single hook type, reading
     /// the project config from `ctx.repo.load_project_config()` — the worktree
-    /// this hook acts on. Used by the invocation-resolved hooks
-    /// (`pre-commit` / `post-commit` and `wt hook <type>`'s no-filter path),
+    /// this hook acts on. Used by invocation-resolved `post-commit` hooks,
     /// where nothing mutates config between approval and execution. The
     /// plan-backed hooks use [`super::hook_plan::register_planned`] instead.
     ///
@@ -368,7 +318,7 @@ impl<'a> HookAnnouncer<'a> {
             extra_vars,
             &[],
         )?;
-        self.add_groups(ctx, hook_type, display_path, into_source_groups(flat));
+        self.add_steps(ctx, hook_type, display_path, flat);
         Ok(())
     }
 
@@ -427,7 +377,7 @@ impl Drop for HookAnnouncer<'_> {
 /// Announce and spawn background hook pipelines.
 ///
 /// Module-private implementation of [`HookAnnouncer::flush`] — sites construct
-/// a [`HookAnnouncer`] (one per command) and `register`/`add_groups` into it;
+/// a [`HookAnnouncer`] (one per command) and `register`/`add_steps` into it;
 /// `flush` lands here. The function stays separate to keep the announce/spawn
 /// formatting isolated from the announcer's pending-list bookkeeping.
 ///
@@ -556,10 +506,10 @@ fn report_dropped_pipelines(dropped: &[PendingPipeline]) {
 
 /// Group sourced steps into one Vec per source, preserving insertion order.
 ///
-/// Used by background callers that want one pipeline per source (the canonical
-/// shape — a user hook failure shouldn't abort project hooks). The flat input
-/// already lists user steps before project steps, so contiguous chunks suffice.
-pub(crate) fn into_source_groups(flat: Vec<SourcedStep>) -> Vec<Vec<SourcedStep>> {
+/// Background sources execute independently: a user hook failure must not abort
+/// project hooks. The flat input already lists user steps before project steps,
+/// so contiguous chunks suffice.
+fn into_source_groups(flat: Vec<SourcedStep>) -> Vec<Vec<SourcedStep>> {
     let mut groups: Vec<Vec<SourcedStep>> = Vec::new();
     for step in flat {
         match groups.last_mut() {
@@ -602,8 +552,7 @@ fn print_background_variable_table(pipelines: &[PendingPipeline], hook_type: Hoo
 fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: PendingPipeline) -> anyhow::Result<()> {
     use super::run_pipeline::PipelineSpec;
 
-    // Registration never adds an empty step group (asserted in `add_groups`),
-    // so `steps[0]` is safe.
+    // `add_steps` constructs non-empty groups with one source each.
     let source = pipeline.steps[0].source;
 
     // Only names the pipeline's log file, so a detached worktree needs some

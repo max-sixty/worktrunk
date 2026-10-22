@@ -97,9 +97,7 @@ Three verbosity levels. Each is a superset of the previous one.
 | `-v` | + Info: hook output, alias template variable resolution | — | Debugging hooks/aliases |
 | `-vv` | Same as `-v` | + `trace.log`, `trace.jsonl`, `subprocess.log`, `diagnostic.md` | Filing a bug |
 
-At `-vv`, debug-level records (command lines, in-process spans, bounded subprocess preview) route to `trace.log` instead of stderr — so the terminal stays readable while the deep trace lands on disk. A one-line pointer on stderr shows where the files went.
-
-The `-vv` files have distinct audiences: `trace.log` is the human trace (bounded, gistable), `trace.jsonl` the same records for machines, `subprocess.log` the raw uncapped subprocess output, and `diagnostic.md` a bug-report bundle. Each is described in [`wt config state logs`](/config/#wt-config-state-logs).
+With `-vv`, stderr shows the log directory. See [`wt config state logs`](/config/#wt-config-state-logs) for the file formats.
 
 `RUST_LOG` overrides the flag baseline when set (`RUST_LOG=debug wt -v` lifts `-v` to debug-on-stderr).
 
