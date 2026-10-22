@@ -204,8 +204,11 @@ fn run_plugin_removal(
     args: &[&str],
     still_present: impl Fn() -> Option<bool>,
 ) -> anyhow::Result<()> {
+    use worktrunk::git::ErrorExt;
+
     match run_plugin_cli(program, args) {
         Ok(()) => Ok(()),
+        Err(err) if err.interrupt_signal().is_some() => Err(err),
         Err(err) => match still_present() {
             Some(false) => Ok(()),
             _ => Err(err),
@@ -220,6 +223,33 @@ mod tests {
 
     use super::create::comment_out_config;
     use super::show::{render_ci_tool_status, warn_unknown_keys};
+
+    /// Cancellation does not trigger a fresh harness probe or become success
+    /// just because the plugin happens to be absent. Numeric 130 can still be
+    /// an ordinary "already gone" failure.
+    #[cfg(unix)]
+    #[test]
+    fn plugin_removal_preserves_native_interruption() {
+        use std::cell::Cell;
+        use worktrunk::git::ErrorExt;
+
+        for (command, signal) in [
+            ("kill -INT $$", Some(2)),
+            ("kill -TERM $$", Some(15)),
+            ("exit 130", None),
+        ] {
+            let probed = Cell::new(false);
+            let result = super::run_plugin_removal("sh", &["-c", command], || {
+                probed.set(true);
+                Some(false)
+            });
+            assert_eq!(probed.get(), signal.is_none(), "{command}");
+            match signal {
+                Some(signal) => assert_eq!(result.unwrap_err().interrupt_signal(), Some(signal)),
+                None => assert!(result.is_ok(), "{result:?}"),
+            }
+        }
+    }
 
     // ==================== comment_out_config tests ====================
 
