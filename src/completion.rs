@@ -61,7 +61,6 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
     worktrunk::config::suppress_warnings();
 
     let mut args: Vec<OsString> = std::env::args_os().collect();
-    CONTEXT.with(|ctx| *ctx.borrow_mut() = Some(CompletionContext { args: args.clone() }));
 
     // Remove the binary name and find the `--` separator
     args.remove(0);
@@ -107,6 +106,12 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
     // a config filename or directory. Reuse runtime parsing so attached flag
     // values and globals after built-in subcommands follow the same rules.
     let globals = crate::parse_early_globals(args.iter().take(index).cloned());
+    CONTEXT.with(|ctx| {
+        *ctx.borrow_mut() = Some(CompletionContext {
+            args: args.clone(),
+            hook_type: globals.hook_type,
+        });
+    });
     let current_dir = globals.directory.clone().or(current_dir);
     crate::apply_global_options(globals.directory, globals.config, globals.config_overrides);
 
@@ -343,12 +348,8 @@ impl ValueCompleter for HookCommandCompleter {
         // bash-specific prefix filter in maybe_handle_env_completion() handles bash.
 
         // Get the hook type from the command line context
-        let hook_type = CONTEXT.with(|ctx| ctx.borrow().as_ref().and_then(detect_hook_type));
-
-        let Some(hook_type_str) = hook_type else {
-            return Vec::new();
-        };
-        let Ok(hook_type) = hook_type_str.parse::<HookType>() else {
+        let hook_type = CONTEXT.with(|ctx| ctx.borrow().as_ref().and_then(|ctx| ctx.hook_type));
+        let Some(hook_type) = hook_type else {
             return Vec::new();
         };
 
@@ -465,6 +466,7 @@ fn suppress_switch_branch_completion() -> bool {
 
 struct CompletionContext {
     args: Vec<OsString>,
+    hook_type: Option<HookType>,
 }
 
 impl CompletionContext {
@@ -473,33 +475,6 @@ impl CompletionContext {
             .iter()
             .any(|arg| arg.to_string_lossy().as_ref() == needle)
     }
-}
-
-/// Identify which hook type the user is completing a command name for by
-/// scanning the command line for a hook-type argument. Returns the canonical
-/// name, mapping the silent `pre-create`/`post-create` aliases to
-/// `pre-start`/`post-start`.
-///
-/// The candidate list is derived from [`cli::HOOK_TYPE_NAMES`] rather than a
-/// local copy, so a newly added hook type completes its command names without a
-/// second edit here. `contains` is an exact match (not a substring test), so
-/// iterating the full list has no shadowing hazard between names like
-/// `pre-remove` and `post-remove`. `test_detect_hook_type_covers_all_names`
-/// pins the coverage.
-fn detect_hook_type(ctx: &CompletionContext) -> Option<&'static str> {
-    for &hook in cli::HOOK_TYPE_NAMES {
-        if ctx.contains(hook) {
-            return Some(hook);
-        }
-    }
-    // Silent aliases still complete, mapped to the canonical name.
-    if ctx.contains("pre-create") {
-        return Some("pre-start");
-    }
-    if ctx.contains("post-create") {
-        return Some("post-start");
-    }
-    None
 }
 
 // Thread-local context tracking is required because clap's ValueCompleter::complete()
@@ -1026,50 +1001,22 @@ fn hide_non_positional_options_for_completion(cmd: Command) -> Command {
 mod tests {
     use super::*;
 
-    /// Every canonical hook type must be detected so `wt hook <type> <Tab>`
-    /// completes its configured command names. A hook type listed in
-    /// HOOK_TYPE_NAMES but missing from `detect_hook_type`'s scan would
-    /// silently return no completions — this previously dropped `pre-switch`,
-    /// `post-switch`, and `post-remove`.
+    /// Clap supplies canonical hook names, including silent aliases, without
+    /// confusing option values or named filters with the selected hook type.
     #[test]
-    fn test_detect_hook_type_covers_all_names() {
+    fn test_parsed_hook_type() {
         for &name in cli::HOOK_TYPE_NAMES {
-            let ctx = CompletionContext {
-                args: vec!["hook".into(), name.into()],
-            };
-            assert_eq!(
-                detect_hook_type(&ctx),
-                Some(name),
-                "hook type `{name}` should be detected for completion"
-            );
-            // The detected name must round-trip through HookType parsing,
-            // mirroring complete()'s downstream `parse::<HookType>()`.
-            assert!(
-                name.parse::<HookType>().is_ok(),
-                "hook type `{name}` should parse"
-            );
+            let args = ["wt", "--config", "pre-switch", "hook", name, "post-start"];
+            let globals = crate::parse_early_globals(args.into_iter().map(Into::into));
+            assert_eq!(globals.hook_type, Some(name.parse().unwrap()), "{name}");
         }
-    }
-
-    /// The silent `pre-create`/`post-create` aliases map to their canonical
-    /// names so they still complete command names.
-    #[test]
-    fn test_detect_hook_type_maps_silent_aliases() {
         for (alias, canonical) in [("pre-create", "pre-start"), ("post-create", "post-start")] {
-            let ctx = CompletionContext {
-                args: vec!["hook".into(), alias.into()],
-            };
-            assert_eq!(detect_hook_type(&ctx), Some(canonical));
+            let args = ["wt", "hook", alias];
+            let globals = crate::parse_early_globals(args.into_iter().map(Into::into));
+            assert_eq!(globals.hook_type, Some(canonical.parse().unwrap()));
         }
-    }
-
-    /// No hook-type argument on the line means no hook-command completion.
-    #[test]
-    fn test_detect_hook_type_none_without_hook() {
-        let ctx = CompletionContext {
-            args: vec!["switch".into(), "main".into()],
-        };
-        assert_eq!(detect_hook_type(&ctx), None);
+        let globals = crate::parse_early_globals(["wt", "switch", "pre-switch"].map(Into::into));
+        assert_eq!(globals.hook_type, None);
     }
 
     #[test]

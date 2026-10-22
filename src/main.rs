@@ -841,6 +841,8 @@ struct EarlyGlobals {
     subcommand: Option<String>,
     /// Offset of an external command after clap has consumed global options.
     external_subcommand_index: Option<usize>,
+    /// The parsed hook subcommand, excluding option values and command filters.
+    hook_type: Option<worktrunk::git::HookType>,
 }
 
 /// Parse global options (`-C`, `--config`, `--config-set`), name the command,
@@ -896,6 +898,10 @@ fn parse_early_globals(args: impl IntoIterator<Item = std::ffi::OsString>) -> Ea
         alias_help_context,
         subcommand: matches.subcommand_name().map(str::to_owned),
         external_subcommand_index,
+        hook_type: matches
+            .subcommand_matches("hook")
+            .and_then(|hook| hook.subcommand_name())
+            .and_then(|name| name.parse().ok()),
     }
 }
 
