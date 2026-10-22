@@ -340,13 +340,13 @@
 //!
 //! | Directory | Module | Key | Staleness |
 //! |-----------|--------|-----|-----------|
-//! | `merge-tree-conflicts/` | `git::repository::sha_cache` | `{sha1}-{sha2}.json` (sorted) | Never — content-addressed |
-//! | `merge-add-probe/` | `git::repository::sha_cache` | `{branch_sha}-{target_sha}.json` | Never — content-addressed |
-//! | `is-ancestor/` | `git::repository::sha_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
-//! | `has-added-changes/` | `git::repository::sha_cache` | `{branch_sha}-{target_sha}.json` | Never — content-addressed |
-//! | `diff-stats/` | `git::repository::sha_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
-//! | `ahead-behind/` | `git::repository::sha_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
-//! | `merge-base/` | `git::repository::sha_cache` | `{sha1}-{sha2}.json` (sorted) | Never — content-addressed |
+//! | `merge-tree-conflicts/` | `git::repository::sha_cache` | `complete-{sha1}-{sha2}.json` (sorted) | Complete history only |
+//! | `merge-add-probe/` | `git::repository::sha_cache` | `complete-{branch_sha}-{target_sha}.json` | Complete history only |
+//! | `is-ancestor/` | `git::repository::sha_cache` | `complete-{base_sha}-{head_sha}.json` | Complete history only |
+//! | `has-added-changes/` | `git::repository::sha_cache` | `complete-{branch_sha}-{target_sha}.json` | Complete history only |
+//! | `diff-stats/` | `git::repository::sha_cache` | `complete-{base_sha}-{head_sha}.json` | Complete history only |
+//! | `ahead-behind/` | `git::repository::sha_cache` | `complete-{base_sha}-{head_sha}.json` | Complete history only |
+//! | `merge-base/` | `git::repository::sha_cache` | `complete-{sha1}-{sha2}.json` (sorted) | Complete history only |
 //! | `ci-status/` | `commands::list::ci_status::cache` | `{branch}.json` | TTL 30–60s + HEAD SHA check |
 //! | `summary/{branch}/` | `summary` | `{diff_hash}.json` | Miss if no file exists for the current hash; siblings pruned on write |
 //!

@@ -2,8 +2,12 @@
 //!
 //! Caches the results of expensive git operations keyed on pairs of
 //! content-addressed SHAs — diffing commit A against commit B is the same
-//! today as last week. One variant (working-tree conflict checks) uses a
-//! composite key that includes a tree SHA; see
+//! today as last week in a repository with complete history. Shallow clones
+//! bypass persistent reads and writes because deepening changes graph answers
+//! without changing the queried SHAs. The `complete-` key prefix excludes old
+//! entries that may have been written while history was shallow.
+//!
+//! Working-tree conflict checks use a composite key including a tree SHA; see
 //! [`Repository::has_merge_conflicts_by_tree_with_base_sha`]. No TTL, no invalidation
 //! logic, only a per-kind LRU size bound to prevent unbounded growth.
 //!
@@ -47,15 +51,28 @@ const ALL_KINDS: &[&str] = &[
 /// Build a symmetric filename from a SHA pair (order-independent).
 fn symmetric_key(sha1: &str, sha2: &str) -> String {
     if sha1 <= sha2 {
-        format!("{sha1}-{sha2}.json")
+        format!("complete-{sha1}-{sha2}.json")
     } else {
-        format!("{sha2}-{sha1}.json")
+        format!("complete-{sha2}-{sha1}.json")
     }
 }
 
 /// Build an asymmetric filename from a SHA pair (order preserved).
 fn asymmetric_key(first: &str, second: &str) -> String {
-    format!("{first}-{second}.json")
+    format!("complete-{first}-{second}.json")
+}
+
+fn read<T: serde::de::DeserializeOwned>(repo: &Repository, kind: &str, key: &str) -> Option<T> {
+    repo.cache
+        .complete_history
+        .then(|| cache::read(repo, kind, key))
+        .flatten()
+}
+
+fn write<T: serde::Serialize>(repo: &Repository, kind: &str, key: &str, value: &T) {
+    if repo.cache.complete_history {
+        cache::write_with_lru(repo, kind, key, value, MAX_ENTRIES_PER_KIND);
+    }
 }
 
 // merge-tree conflicts (symmetric)
@@ -64,18 +81,17 @@ fn asymmetric_key(first: &str, second: &str) -> String {
 ///
 /// The key is order-independent: `(A, B)` and `(B, A)` hit the same entry.
 pub(super) fn merge_conflicts(repo: &Repository, sha1: &str, sha2: &str) -> Option<bool> {
-    cache::read(repo, KIND_MERGE_TREE_CONFLICTS, &symmetric_key(sha1, sha2))
+    read(repo, KIND_MERGE_TREE_CONFLICTS, &symmetric_key(sha1, sha2))
 }
 
 /// Store a `has_merge_conflicts_by_sha(sha1, sha2)` result, triggering an LRU
 /// sweep if the per-kind entry bound is exceeded.
 pub(super) fn put_merge_conflicts(repo: &Repository, sha1: &str, sha2: &str, value: bool) {
-    cache::write_with_lru(
+    write(
         repo,
         KIND_MERGE_TREE_CONFLICTS,
         &symmetric_key(sha1, sha2),
         &value,
-        MAX_ENTRIES_PER_KIND,
     );
 }
 
@@ -97,7 +113,7 @@ pub(super) fn merge_add_probe(
     branch_sha: &str,
     target_sha: &str,
 ) -> Option<MergeProbeResult> {
-    cache::read::<MergeProbeEntry>(
+    read::<MergeProbeEntry>(
         repo,
         KIND_MERGE_ADD_PROBE,
         &asymmetric_key(branch_sha, target_sha),
@@ -113,12 +129,11 @@ pub(super) fn put_merge_add_probe(
     target_sha: &str,
     value: MergeProbeResult,
 ) {
-    cache::write_with_lru(
+    write(
         repo,
         KIND_MERGE_ADD_PROBE,
         &asymmetric_key(branch_sha, target_sha),
         &MergeProbeEntry { result: value },
-        MAX_ENTRIES_PER_KIND,
     );
 }
 
@@ -128,17 +143,16 @@ pub(super) fn put_merge_add_probe(
 ///
 /// Asymmetric: "is base ancestor of head?" differs from "is head ancestor of base?".
 pub(super) fn is_ancestor(repo: &Repository, base_sha: &str, head_sha: &str) -> Option<bool> {
-    cache::read(repo, KIND_IS_ANCESTOR, &asymmetric_key(base_sha, head_sha))
+    read(repo, KIND_IS_ANCESTOR, &asymmetric_key(base_sha, head_sha))
 }
 
 /// Store an `is_ancestor_by_sha(base_sha, head_sha)` result.
 pub(super) fn put_is_ancestor(repo: &Repository, base_sha: &str, head_sha: &str, value: bool) {
-    cache::write_with_lru(
+    write(
         repo,
         KIND_IS_ANCESTOR,
         &asymmetric_key(base_sha, head_sha),
         &value,
-        MAX_ENTRIES_PER_KIND,
     );
 }
 
@@ -152,7 +166,7 @@ pub(super) fn has_added_changes(
     branch_sha: &str,
     target_sha: &str,
 ) -> Option<bool> {
-    cache::read(
+    read(
         repo,
         KIND_HAS_ADDED_CHANGES,
         &asymmetric_key(branch_sha, target_sha),
@@ -166,12 +180,11 @@ pub(super) fn put_has_added_changes(
     target_sha: &str,
     value: bool,
 ) {
-    cache::write_with_lru(
+    write(
         repo,
         KIND_HAS_ADDED_CHANGES,
         &asymmetric_key(branch_sha, target_sha),
         &value,
-        MAX_ENTRIES_PER_KIND,
     );
 }
 
@@ -181,17 +194,16 @@ pub(super) fn put_has_added_changes(
 ///
 /// Asymmetric: diff from merge-base(base,head)..head is directional.
 pub(super) fn diff_stats(repo: &Repository, base_sha: &str, head_sha: &str) -> Option<LineDiff> {
-    cache::read(repo, KIND_DIFF_STATS, &asymmetric_key(base_sha, head_sha))
+    read(repo, KIND_DIFF_STATS, &asymmetric_key(base_sha, head_sha))
 }
 
 /// Store a `branch_diff_stats(base_sha, head_sha)` result.
 pub(super) fn put_diff_stats(repo: &Repository, base_sha: &str, head_sha: &str, value: LineDiff) {
-    cache::write_with_lru(
+    write(
         repo,
         KIND_DIFF_STATS,
         &asymmetric_key(base_sha, head_sha),
         &value,
-        MAX_ENTRIES_PER_KIND,
     );
 }
 
@@ -201,14 +213,14 @@ pub(super) fn put_diff_stats(repo: &Repository, base_sha: &str, head_sha: &str, 
 ///
 /// Asymmetric: the counts are relative to `base_sha`, so swapping the
 /// arguments swaps `ahead` and `behind` — a different question, a
-/// different entry. Content-addressed and never stale: the two commit
+/// different entry. With complete history, the two commit
 /// SHAs fix the merge-base and both rev-list counts.
 pub(super) fn ahead_behind(
     repo: &Repository,
     base_sha: &str,
     head_sha: &str,
 ) -> Option<(usize, usize)> {
-    cache::read(repo, KIND_AHEAD_BEHIND, &asymmetric_key(base_sha, head_sha))
+    read(repo, KIND_AHEAD_BEHIND, &asymmetric_key(base_sha, head_sha))
 }
 
 /// Store an `ahead_behind(base_sha, head_sha)` result.
@@ -218,12 +230,11 @@ pub(super) fn put_ahead_behind(
     head_sha: &str,
     value: (usize, usize),
 ) {
-    cache::write_with_lru(
+    write(
         repo,
         KIND_AHEAD_BEHIND,
         &asymmetric_key(base_sha, head_sha),
         &value,
-        MAX_ENTRIES_PER_KIND,
     );
 }
 
@@ -238,6 +249,9 @@ pub(super) fn put_ahead_behind_bulk<'a, I>(repo: &Repository, entries: I)
 where
     I: IntoIterator<Item = (&'a str, &'a str, (usize, usize))>,
 {
+    if !repo.cache.complete_history {
+        return;
+    }
     let dir = cache::cache_dir(repo, KIND_AHEAD_BEHIND);
     for (base_sha, head_sha, value) in entries {
         cache::write_json(&dir.join(asymmetric_key(base_sha, head_sha)), &value);
@@ -255,18 +269,12 @@ where
 /// `None` is a cached orphan. Symmetric — `(A, B)` and `(B, A)` hit the
 /// same entry, matching `merge-base(A, B) == merge-base(B, A)`.
 pub(super) fn merge_base(repo: &Repository, sha1: &str, sha2: &str) -> Option<Option<String>> {
-    cache::read(repo, KIND_MERGE_BASE, &symmetric_key(sha1, sha2))
+    read(repo, KIND_MERGE_BASE, &symmetric_key(sha1, sha2))
 }
 
 /// Store a `merge_base_by_sha(sha1, sha2)` result.
 pub(super) fn put_merge_base(repo: &Repository, sha1: &str, sha2: &str, value: &Option<String>) {
-    cache::write_with_lru(
-        repo,
-        KIND_MERGE_BASE,
-        &symmetric_key(sha1, sha2),
-        value,
-        MAX_ENTRIES_PER_KIND,
-    );
+    write(repo, KIND_MERGE_BASE, &symmetric_key(sha1, sha2), value);
 }
 
 // Maintenance
@@ -300,22 +308,83 @@ mod tests {
     use super::*;
     use crate::testing::TestRepo;
 
+    #[test]
+    fn shallow_ancestry_is_recomputed_after_unshallow() {
+        let test = TestRepo::with_initial_commit();
+        let base = test.git_output(&["rev-parse", "HEAD"]);
+        test.run_git(&["commit", "--allow-empty", "-m", "second"]);
+        let head = test.git_output(&["rev-parse", "HEAD"]);
+        let shallow =
+            test.root_path()
+                .join(test.git_output(&["rev-parse", "--git-path", "shallow"]));
+        fs::write(&shallow, format!("{head}\n")).unwrap();
+        let repo = Repository::at(test.root_path()).unwrap();
+        assert!(!repo.is_ancestor_by_sha(&base, &head).unwrap());
+        fs::remove_file(shallow).unwrap();
+        let repo = Repository::at(test.root_path()).unwrap();
+        assert!(repo.is_ancestor_by_sha(&base, &head).unwrap());
+    }
+
+    #[rstest::rstest]
+    #[case(false)]
+    #[case(true)]
+    fn shallow_history_ignores_complete_history_cache(#[case] prewarm: bool) {
+        let test = TestRepo::with_initial_commit();
+        let base = test.git_output(&["rev-parse", "HEAD"]);
+        test.run_git(&["commit", "--allow-empty", "-m", "second"]);
+        let head = test.git_output(&["rev-parse", "HEAD"]);
+        let repo = Repository::at(test.root_path()).unwrap();
+        assert!(repo.is_ancestor_by_sha(&base, &head).unwrap());
+        let shallow =
+            test.root_path()
+                .join(test.git_output(&["rev-parse", "--git-path", "shallow"]));
+        fs::write(&shallow, format!("{head}\n")).unwrap();
+        if prewarm {
+            Repository::prewarm_rev_parse(test.root_path());
+        }
+        let repo = Repository::at(test.root_path()).unwrap();
+        assert!(!repo.is_ancestor_by_sha(&base, &head).unwrap());
+        // Batch prewarming must not persist graph results either.
+        put_ahead_behind_bulk(&repo, [(&*base, &*head, (1, 1))]);
+        assert!(!cache::cache_dir(&repo, KIND_AHEAD_BEHIND).exists());
+    }
+
+    #[test]
+    fn legacy_shallow_merge_base_entries_are_recomputed() {
+        let test = TestRepo::with_initial_commit();
+        let base = test.git_output(&["rev-parse", "HEAD"]);
+        test.run_git(&["commit", "--allow-empty", "-m", "second"]);
+        let head = test.git_output(&["rev-parse", "HEAD"]);
+        let repo = Repository::at(test.root_path()).unwrap();
+        let mut pair = [&base, &head];
+        pair.sort();
+        let key = format!("{}-{}.json", pair[0], pair[1]);
+        cache::write_with_lru(
+            &repo,
+            KIND_MERGE_BASE,
+            &key,
+            &None::<String>,
+            MAX_ENTRIES_PER_KIND,
+        );
+        assert_eq!(repo.merge_base_by_sha(&base, &head).unwrap(), Some(base));
+    }
+
     // Key formatting
 
     #[test]
     fn test_symmetric_key_sorts_pair() {
-        assert_eq!(symmetric_key("aaaa", "bbbb"), "aaaa-bbbb.json");
-        assert_eq!(symmetric_key("bbbb", "aaaa"), "aaaa-bbbb.json");
+        assert_eq!(symmetric_key("aaaa", "bbbb"), "complete-aaaa-bbbb.json");
+        assert_eq!(symmetric_key("bbbb", "aaaa"), "complete-aaaa-bbbb.json");
         assert_eq!(
             symmetric_key("deadbeef", "deadbeef"),
-            "deadbeef-deadbeef.json"
+            "complete-deadbeef-deadbeef.json"
         );
     }
 
     #[test]
     fn test_asymmetric_key_preserves_order() {
-        assert_eq!(asymmetric_key("aaaa", "bbbb"), "aaaa-bbbb.json");
-        assert_eq!(asymmetric_key("bbbb", "aaaa"), "bbbb-aaaa.json");
+        assert_eq!(asymmetric_key("aaaa", "bbbb"), "complete-aaaa-bbbb.json");
+        assert_eq!(asymmetric_key("bbbb", "aaaa"), "complete-bbbb-aaaa.json");
     }
 
     // Round-trip file I/O

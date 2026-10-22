@@ -460,13 +460,13 @@ impl Repository {
     /// Inputs are commit SHAs, so no ref names are resolved; cache key is `(min(sha1, sha2), max(sha1, sha2))`.
     ///
     /// In-memory front over a persistent disk back
-    /// (`merge-base/{min}-{max}.json`): the `DashMap` dedups within one
+    /// (`merge-base/complete-{min}-{max}.json`): the `DashMap` dedups within one
     /// process, the disk cache serves re-runs without re-forking. The
     /// `wt list` orphan check calls this once per row
     /// even when the ahead/behind counts are themselves cache-warm, so on a
     /// repo with many branches the disk back turns that per-row
-    /// `git merge-base` fork into a file read. Content-addressed, never
-    /// stale. The `sha1 == sha2` short-circuit (a commit is its own
+    /// `git merge-base` fork into a file read. Persistent caching is disabled
+    /// for shallow repositories, whose graph changes when history is fetched. The `sha1 == sha2` short-circuit (a commit is its own
     /// merge-base) skips both git and the cache for items sitting exactly at
     /// the base tip — the common "freshly branched" case.
     pub fn merge_base_by_sha(&self, sha1: &str, sha2: &str) -> anyhow::Result<Option<String>> {
@@ -513,7 +513,7 @@ impl Repository {
     /// SHA-keyed ahead/behind counts.
     ///
     /// Inputs are commit SHAs. Backed by the persistent SHA-keyed cache
-    /// (`ahead-behind/{base_sha}-{head_sha}.json`) — content-addressed, so
+    /// (`ahead-behind/complete-{base_sha}-{head_sha}.json`) — content-addressed, so
     /// the entry is never stale. `wt list` populates this per branch (and
     /// in bulk from a `for-each-ref %(ahead-behind)` batch when most
     /// entries are cold); subsequent runs are pure cache reads. Returns

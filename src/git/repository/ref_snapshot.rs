@@ -683,7 +683,7 @@ mod tests {
         // One entry per local branch: main↔main and main↔feature.
         let feature_sha = test.git_output(&["rev-parse", "feature"]);
         let main_sha = test.git_output(&["rev-parse", "main"]);
-        let tampered_path = dir.join(format!("{main_sha}-{feature_sha}.json"));
+        let tampered_path = ahead_behind_cache_path(&repo, &main_sha, &feature_sha);
         assert!(
             entries.iter().any(|e| e.path() == tampered_path),
             "expected a cache entry for (main, feature)"
@@ -803,11 +803,8 @@ mod tests {
         let main_sha = test.git_output(&["rev-parse", "main"]);
         let orphan_sha = test.git_output(&["rev-parse", "orphanbr"]);
         let cached: (usize, usize) = serde_json::from_str(
-            &std::fs::read_to_string(
-                crate::cache::cache_dir(&repo, "ahead-behind")
-                    .join(format!("{main_sha}-{orphan_sha}.json")),
-            )
-            .expect("orphan pair should be cached"),
+            &std::fs::read_to_string(ahead_behind_cache_path(&repo, &main_sha, &orphan_sha))
+                .expect("orphan pair should be cached"),
         )
         .expect("cache entry is a (usize, usize)");
         assert_eq!(cached, (0, 0));
@@ -834,11 +831,7 @@ mod tests {
         };
         // Seeded the SHA cache keyed by the remote ref's SHA.
         let feature_sha = test.git_output(&["rev-parse", "feature"]);
-        assert!(
-            crate::cache::cache_dir(&repo, "ahead-behind")
-                .join(format!("{trunk_sha}-{feature_sha}.json"))
-                .exists()
-        );
+        assert!(ahead_behind_cache_path(&repo, &trunk_sha, &feature_sha).exists());
     }
 
     #[test]
@@ -1055,7 +1048,8 @@ mod tests {
     }
 
     fn ahead_behind_cache_path(repo: &Repository, base_sha: &str, head_sha: &str) -> PathBuf {
-        crate::cache::cache_dir(repo, "ahead-behind").join(format!("{base_sha}-{head_sha}.json"))
+        crate::cache::cache_dir(repo, "ahead-behind")
+            .join(format!("complete-{base_sha}-{head_sha}.json"))
     }
 
     use std::path::PathBuf;
@@ -1369,7 +1363,7 @@ mod tests {
     #[test]
     fn prime_upstream_caches_equal_branch_as_zero() {
         // Branch whose tip equals its upstream → (0, 0). The cache key
-        // uses the same SHA for both base and head (a-a.json), and a
+        // uses the same SHA for both base and head (complete-a-a.json), and a
         // later `ahead_behind_by_sha` of the equal pair must hit it.
         let test = TestRepo::with_initial_commit();
         let trunk_sha = test.git_output(&["rev-parse", "main"]);

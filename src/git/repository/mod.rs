@@ -231,6 +231,8 @@ pub use worktrees::{StaleWorktreeWork, duplicated_branches};
 /// ```
 #[derive(Debug, Default)]
 pub(super) struct RepoCache {
+    /// Invocation snapshot: SHA-only persistent caches require complete history.
+    pub(super) complete_history: bool,
     // ========== Repo-wide values (same for all worktrees) ==========
     /// Every git config key in the merged config (system + global + repo),
     /// populated by one `git config --list -z` read on first access.
@@ -493,6 +495,9 @@ static DEFAULT_BASE_PATH: LazyLock<PathBuf> = LazyLock::new(|| PathBuf::from("."
 /// callers go through `base_path()`) always passes the same `PathBuf`, so
 /// equality on the raw path is sufficient.
 static GIT_COMMON_DIR_CACHE: LazyLock<DashMap<PathBuf, PathBuf>> = LazyLock::new(DashMap::new);
+
+/// Shallow state from the discovery batch; reused within one invocation.
+static COMPLETE_HISTORY_PRELOAD: LazyLock<DashMap<PathBuf, bool>> = LazyLock::new(DashMap::new);
 
 /// Process-local coordination for repository mutations, keyed by the canonical
 /// Git common directory. Every [`Repository`] for the same common directory
@@ -842,7 +847,26 @@ impl Repository {
             .or_insert_with(|| Arc::new(RepositoryLocks::default()))
             .clone();
 
-        let cache = RepoCache::default();
+        let complete_history = if let Some(value) = COMPLETE_HISTORY_PRELOAD.get(&discovery_path) {
+            *value
+        } else {
+            let args = ["rev-parse", "--is-shallow-repository"];
+            let output = Cmd::new("git")
+                .args(args)
+                .current_dir(&discovery_path)
+                .context(path_to_logging_context(&discovery_path))
+                .run()?;
+            if !output.status.success() {
+                return Err(
+                    super::error::CommandError::from_failed_output("git", &args, &output).into(),
+                );
+            }
+            output.stdout == b"false\n"
+        };
+        let cache = RepoCache {
+            complete_history,
+            ..RepoCache::default()
+        };
         // Consume any `git config --list -z` map preloaded by
         // `Repository::prewarm` so the first `all_config()` call is a memory
         // hit. The preload is keyed by the same `discovery_path` value that
@@ -1118,6 +1142,7 @@ impl Repository {
             .args([
                 "rev-parse",
                 "--git-common-dir",
+                "--is-shallow-repository",
                 "--is-inside-work-tree",
                 "--show-toplevel",
                 "--git-dir",
@@ -1131,15 +1156,22 @@ impl Repository {
             return;
         };
 
-        // Bare discovery stops after the common directory and `false`.
-        let bare = output
-            .stdout
-            .strip_suffix(b"\nfalse\n")
-            .filter(|path| !path.contains(&b'\n'));
-        let fields = if let Some(common) = bare {
-            vec![common, b"false".as_slice()]
+        // Bare discovery stops after common-dir, shallow state, and `false`.
+        let bare = output.stdout.strip_suffix(b"\nfalse\n").and_then(|prefix| {
+            let mut parts = prefix.rsplitn(2, |byte| *byte == b'\n');
+            let shallow = parts.next()?;
+            let common = parts.next()?;
+            (!common.contains(&b'\n') && matches!(shallow, b"true" | b"false")).then_some(vec![
+                common,
+                shallow,
+                b"false".as_slice(),
+            ])
+        });
+        let fields = if let Some(fields) = bare {
+            fields
         } else {
-            let Some(fields) = rev_parse_fields(&output, 5).filter(|fields| fields[1] == b"true")
+            let Some(fields) = rev_parse_fields(&output, 6)
+                .filter(|fields| matches!(fields[1], b"true" | b"false") && fields[2] == b"true")
             else {
                 return;
             };
@@ -1160,6 +1192,10 @@ impl Repository {
             return;
         };
         GIT_COMMON_DIR_CACHE.insert(discovery_path.to_path_buf(), common_resolved);
+        COMPLETE_HISTORY_PRELOAD.insert(
+            discovery_path.to_path_buf(),
+            fields.next() == Some(b"false".as_slice()),
+        );
         let worktree_key =
             canonicalize(discovery_path).unwrap_or_else(|_| discovery_path.to_path_buf());
         if fields.next() != Some(b"true".as_slice()) {
