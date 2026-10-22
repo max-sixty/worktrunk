@@ -147,18 +147,17 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
         let binary = format!("wt-{subcommand}");
         if cli::build_command().find_subcommand(&*subcommand).is_none()
             && which::which(&binary).is_ok()
-        {
-            if let Some(forwarded) = forward_completion_to_custom(
+            && let Some(forwarded) = forward_completion_to_custom(
                 &binary,
                 &args[start..],
                 &shell_name,
                 start,
                 current_dir.as_deref(),
-            ) {
-                let _ = std::io::stdout().write_all(forwarded.as_bytes());
-                CONTEXT.with(|ctx| ctx.borrow_mut().take());
-                return true;
-            }
+            )
+        {
+            let _ = std::io::stdout().write_all(forwarded.as_bytes());
+            CONTEXT.with(|ctx| ctx.borrow_mut().take());
+            return true;
         }
     }
 
