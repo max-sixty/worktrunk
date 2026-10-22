@@ -8015,4 +8015,24 @@ fn test_config_show_non_utf8_config_paths(repo: TestRepo) {
     assert!(stdout.contains("encoding-user"), "{stdout}");
     assert!(stdout.contains("encoding-system"), "{stdout}");
     assert!(stdout.contains("approvals-�.toml"), "{stdout}");
+
+    fs::write(&approvals, "").unwrap();
+    let output = repo
+        .wt_command()
+        .env("WORKTRUNK_CONFIG_PATH", &user)
+        .env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system)
+        .env("WORKTRUNK_APPROVALS_PATH", &approvals)
+        .args(["config", "show", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["user"]["path"], user.to_string_lossy().as_ref());
+    assert_eq!(report["system"]["path"], system.to_string_lossy().as_ref());
+    assert_eq!(report["user"]["exists"], true);
+    assert_eq!(report["system"]["exists"], true);
+    assert_eq!(
+        report["user"]["config"]["worktree-path"],
+        "../encoding-user-{{ branch }}"
+    );
 }
