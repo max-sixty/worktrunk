@@ -792,12 +792,7 @@ fn truncate_template(template: &str) -> &str {
     let s = template.trim();
     let first_line = s.lines().next().unwrap_or(s);
     if first_line.len() > 60 {
-        // Find the last char boundary at or before byte 57
-        let mut end = 57;
-        while end > 0 && !first_line.is_char_boundary(end) {
-            end -= 1;
-        }
-        &first_line[..end]
+        &first_line[..first_line.floor_char_boundary(57)]
     } else {
         first_line
     }
