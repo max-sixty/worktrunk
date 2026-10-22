@@ -1200,8 +1200,7 @@ fn execute_switch(
                 } => {
                     // Check if local branch exists BEFORE git worktree add (for DWIM detection)
                     let branch_handle = repo.branch(&branch);
-                    let local_branch_existed =
-                        !create_branch && branch_handle.exists_locally().unwrap_or(false);
+                    let local_branch_existed = !create_branch && branch_handle.exists_locally()?;
 
                     // Build git worktree add command. Options come first, then
                     // `--` separates them from the path and any positional ref,

@@ -4,8 +4,9 @@
 //! content-addressed SHAs — diffing commit A against commit B is the same
 //! today as last week. One variant (working-tree conflict checks) uses a
 //! composite key that includes a tree SHA; see
-//! [`Repository::has_merge_conflicts_by_tree_with_base_sha`]. No TTL, no invalidation
-//! logic, only a per-kind LRU size bound to prevent unbounded growth.
+//! [`Repository::has_merge_conflicts_by_tree_with_base_sha`]. No TTL or state-based
+//! invalidation; each result format owns compatibility, and a per-kind LRU
+//! size bound prevents unbounded growth.
 //!
 //! Layout: `.git/wt/cache/{kind}/{key}.json` where `kind` is one of
 //! `merge-tree-conflicts`, `merge-add-probe`, `is-ancestor`,
@@ -116,11 +117,20 @@ pub(super) fn put_merge_add_probe(
 
 // is-ancestor (asymmetric)
 
+/// A structured entry distinguishes verified answers from older bare booleans,
+/// which could cache a failed Git query as false. Old entries are cache misses
+/// and are replaced after a successful query.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct AncestorResult {
+    is_ancestor: bool,
+}
+
 /// Look up a cached `is_ancestor_by_sha(base_sha, head_sha)` result.
 ///
 /// Asymmetric: "is base ancestor of head?" differs from "is head ancestor of base?".
 pub(super) fn is_ancestor(repo: &Repository, base_sha: &str, head_sha: &str) -> Option<bool> {
-    cache::read(repo, KIND_IS_ANCESTOR, &asymmetric_key(base_sha, head_sha))
+    cache::read::<AncestorResult>(repo, KIND_IS_ANCESTOR, &asymmetric_key(base_sha, head_sha))
+        .map(|entry| entry.is_ancestor)
 }
 
 /// Store an `is_ancestor_by_sha(base_sha, head_sha)` result.
@@ -129,7 +139,7 @@ pub(super) fn put_is_ancestor(repo: &Repository, base_sha: &str, head_sha: &str,
         repo,
         KIND_IS_ANCESTOR,
         &asymmetric_key(base_sha, head_sha),
-        &value,
+        &AncestorResult { is_ancestor: value },
         MAX_ENTRIES_PER_KIND,
     );
 }
@@ -645,6 +655,24 @@ mod tests {
     // Cache consultation: is_ancestor, has_added_changes, branch_diff_stats
 
     #[test]
+    fn old_ancestor_booleans_are_recomputed() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let head = test.git_output(&["rev-parse", "HEAD"]);
+        // Older code could write this after a failed query. A commit is
+        // always its own ancestor, so false must not survive the upgrade.
+        cache::write_with_lru(
+            &repo,
+            KIND_IS_ANCESTOR,
+            &asymmetric_key(&head, &head),
+            &false,
+            MAX_ENTRIES_PER_KIND,
+        );
+        assert!(repo.is_ancestor_by_sha(&head, &head).unwrap());
+        assert_eq!(is_ancestor(&repo, &head, &head), Some(true));
+    }
+
+    #[test]
     fn test_is_ancestor_reads_cache() {
         let test = TestRepo::with_initial_commit();
 
@@ -670,7 +698,7 @@ mod tests {
             .filter(|e| e.file_name().to_str().is_some_and(|s| s.ends_with(".json")))
             .collect();
         assert_eq!(entries.len(), 1);
-        fs::write(entries[0].path(), "true").unwrap();
+        cache::write_json(&entries[0].path(), &AncestorResult { is_ancestor: true });
 
         let repo2 = Repository::at(test.root_path()).unwrap();
         assert!(repo2.is_ancestor_by_sha(&feature_sha, &main_sha).unwrap());
