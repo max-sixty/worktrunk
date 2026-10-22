@@ -289,7 +289,7 @@ pub(crate) fn worktree_only_completer() -> ArgValueCompleter {
 }
 
 /// Hook command name completion for `wt hook <hook-type> <name>`.
-/// Completes with command names from the project config for the hook type being invoked.
+/// Completes with effective user and project command names for the hook type being invoked.
 pub(crate) fn hook_command_name_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(HookCommandCompleter)
 }
@@ -354,16 +354,21 @@ impl ValueCompleter for HookCommandCompleter {
                 );
             };
 
-        // Load user config and add user hook names
+        let repo = Repository::current().ok();
+        let project_id = repo
+            .as_ref()
+            .and_then(|repo| repo.project_identifier().ok());
+
+        // Use the same global + per-project merge as hook execution.
         if let Ok(user_config) = UserConfig::load()
-            && let Some(config) = user_config.hooks.get(hook_type)
+            && let Some(config) = user_config.hooks(project_id.as_ref()).get(hook_type)
         {
             add_named_commands(&mut candidates, config);
         }
 
         // Load project config and add project hook names
         // Pass write_hints=false to avoid side effects during completion
-        if let Ok(repo) = Repository::current()
+        if let Some(repo) = repo
             && let Ok(Some(project_config)) = ProjectConfig::load(&repo, false)
             && let Some(config) = project_config.hooks.get(hook_type)
         {
