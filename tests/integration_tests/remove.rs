@@ -5432,6 +5432,31 @@ fn test_remove_json_branch_only(repo: TestRepo) {
     assert_snapshot!(String::from_utf8_lossy(&output.stdout));
 }
 
+/// Force-delete bypasses integration checks, but must still report a retained
+/// branch when Git refuses its ref transaction.
+#[rstest]
+fn test_remove_json_force_branch_failure(repo: TestRepo) {
+    repo.create_branch("locked-branch");
+    fs::write(
+        repo.root_path().join(".git/refs/heads/locked-branch.lock"),
+        "locked",
+    )
+    .unwrap();
+    let output = repo
+        .wt_command()
+        .args(["remove", "locked-branch", "-D", "--format=json", "--yes"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result.as_array().unwrap().len(), 1, "{result}");
+    assert_eq!(result[0]["branch"], "locked-branch");
+    assert_eq!(result[0]["kind"], "branch_only");
+    assert_eq!(result[0]["branch_outcome"], "retained_failed");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("lock"));
+    repo.run_git(&["rev-parse", "--verify", "refs/heads/locked-branch"]);
+}
+
 /// `--format=json` carries the detached worktree too. The human output names it
 /// on stderr, which a script consuming stdout never sees — and "a script
 /// checking the exit code sees a clean run" is half of what #3769 reported.
