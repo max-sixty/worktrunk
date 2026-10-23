@@ -1087,6 +1087,32 @@ fn test_state_clear_marker_all(repo: TestRepo) {
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "");
 }
 
+/// A var named `marker` lives at `worktrunk.state.<branch>.vars.marker`, which
+/// the marker key pattern also matches. Clearing all markers must leave it,
+/// while still clearing the marker of a branch whose name ends in `.vars`.
+#[rstest]
+fn test_state_clear_marker_all_keeps_var_named_marker(repo: TestRepo) {
+    repo.set_marker("feature", "🔧");
+    repo.set_marker("topic.vars", "🚧");
+    repo.git_command()
+        .args(["config", "worktrunk.state.main.vars.marker", "hello"])
+        .run()
+        .unwrap();
+
+    let output = wt_state_cmd(&repo, "marker", "clear", &["--all"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m2[22m markers[39m");
+
+    let output = repo
+        .git_command()
+        .args(["config", "--get", "worktrunk.state.main.vars.marker"])
+        .run()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "hello");
+}
+
 #[rstest]
 fn test_state_clear_marker_all_empty(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "marker", "clear", &["--all"])

@@ -1783,8 +1783,27 @@ pub fn handle_vars_clear(
 /// It returns `Err` for real config errors. Both the listing step and each
 /// `unset_config` call propagate errors so user-initiated clears never report
 /// false success.
+///
+/// The marker pattern also matches a var named `marker`
+/// (`worktrunk.state.<branch>.vars.marker`). Such a key is skipped unless its
+/// value is marker JSON, in which case it is the marker of a branch whose name
+/// ends in `.vars`.
 fn clear_all_markers(repo: &Repository) -> anyhow::Result<usize> {
-    clear_matching_config(repo, r"^worktrunk\.state\..+\.marker$")
+    let entries = repo.config_regexp_entries(r"^worktrunk\.state\..+\.marker$")?;
+    let mut cleared = 0;
+    for (config_key, value) in entries {
+        if config_key.ends_with(".vars.marker") && !is_marker_json(&value) {
+            continue;
+        }
+        repo.unset_config(&config_key)?;
+        cleared += 1;
+    }
+    Ok(cleared)
+}
+
+fn is_marker_json(value: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(value)
+        .is_ok_and(|parsed| parsed.get("marker").is_some_and(|v| v.is_string()))
 }
 
 fn clear_matching_config(repo: &Repository, pattern: &str) -> anyhow::Result<usize> {
