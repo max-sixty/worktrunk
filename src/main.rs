@@ -604,16 +604,27 @@ fn handle_config_shell_command(action: ConfigShellCommand, yes: bool) -> anyhow:
                     // Show skipped shells first so user knows what was tried
                     if scan_result.configured.is_empty() {
                         crate::output::print_skipped_shells(&scan_result.skipped);
+                        if !scan_result.failures.is_empty() {
+                            return Err(anyhow::anyhow!(scan_result.failures.join("\n")));
+                        }
                         return Err(worktrunk::git::GitError::Other {
                             message: "No shell config files found".into(),
                         }
                         .into());
                     }
-                    // For --dry-run, preview was already shown by handler
-                    if dry_run {
-                        return Ok(());
+                    // For --dry-run, preview was already shown by handler.
+                    if !dry_run {
+                        crate::output::print_shell_install_result(&scan_result, &cmd);
                     }
-                    crate::output::print_shell_install_result(&scan_result, &cmd);
+                    if !scan_result.failures.is_empty() {
+                        for failure in &scan_result.failures {
+                            eprintln!("{}", warning_message(failure));
+                        }
+                        return Err(anyhow::anyhow!(
+                            "Could not configure {} shell(s)",
+                            scan_result.failures.len()
+                        ));
+                    }
                     Ok(())
                 })
         }

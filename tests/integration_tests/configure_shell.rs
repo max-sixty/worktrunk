@@ -178,6 +178,35 @@ fn test_configure_shell_bashrc_directory_fails(repo: TestRepo, temp_home: TempDi
 }
 
 #[rstest]
+fn test_configure_shell_continues_after_invalid_bashrc(repo: TestRepo, temp_home: TempDir) {
+    let bashrc = temp_home.path().join(".bashrc");
+    let zshrc = temp_home.path().join(".zshrc");
+    let utf16_bashrc = b"\xff\xfe#\0 \0t\0e\0s\0t\0\n\0";
+    fs::write(&bashrc, utf16_bashrc).unwrap();
+    fs::write(&zshrc, "# zsh config\n").unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/zsh");
+    cmd.args(["config", "shell", "install", "--yes"])
+        .current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(stderr.contains("Failed to configure bash"), "{stderr}");
+    assert!(stderr.contains("not UTF-8 (looks like UTF-16)"), "{stderr}");
+    assert!(stderr.contains("Configured 1 shell"), "{stderr}");
+    assert!(
+        fs::read_to_string(&zshrc)
+            .unwrap()
+            .contains("config shell init zsh")
+    );
+    assert_eq!(fs::read(&bashrc).unwrap(), utf16_bashrc);
+}
+
+#[rstest]
 fn test_configure_shell_already_exists(repo: TestRepo, temp_home: TempDir) {
     // Create a fake .zshrc file with the line already present
     let zshrc_path = temp_home.path().join(".zshrc");
