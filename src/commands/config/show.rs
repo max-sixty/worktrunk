@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use color_print::cformat;
-use serde::{Serialize, de::DeserializeOwned};
 use worktrunk::config::{
     ConfigError, ConfigFileKind, ConfigParseError, LoadError, ProjectConfig, UserConfig,
     require_config_path, system_config_path,
@@ -22,7 +21,7 @@ use worktrunk::shell::{
 };
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{
-    FormattedMessage, error_message, format_bash_with_gutter, format_heading, format_toml,
+    FormattedMessage, eprint, error_message, format_bash_with_gutter, format_heading, format_toml,
     format_with_gutter, hint_message, info_message, warning_message,
 };
 
@@ -144,17 +143,18 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
     Ok(())
 }
 
-/// JSON retains the report on invalid input and signals failure by exit code.
+/// JSON retains the report on invalid input, with diagnostics on stderr and a failing exit code.
 fn handle_config_show_json() -> anyhow::Result<()> {
     let repo = Repository::current().ok();
     let (merged_user_config, user_warnings) = UserConfig::load_with_warnings();
+    let mut diagnostics = String::new();
     let mut invalid = user_warnings
         .iter()
         .any(|warning| matches!(warning, LoadError::Validation(_)));
     let user_path = require_config_path()?;
     let user_exists = user_path.exists();
     let user_config = if user_exists {
-        match read_user_config(&user_path) {
+        match read_user_config(&user_path, ConfigFileKind::User, &mut diagnostics) {
             Some(_) => Some(serde_json::to_value(merged_user_config)?),
             None => {
                 invalid = true;
@@ -165,53 +165,56 @@ fn handle_config_show_json() -> anyhow::Result<()> {
         None
     };
 
-    let (project_path, project_exists, project_config, project_identifier) =
-        if let Some(repo) = repo.as_ref() {
-            let on_disk = repo.project_config_path()?;
-            let object_store = match &on_disk {
-                Some(path) if path.exists() => None,
-                _ => repo.default_branch_project_config_content(),
-            };
-            let object_store_exists = object_store.is_some();
-            let (path, config) = match &on_disk {
-                Some(path) if path.exists() => {
-                    let config = read_json_config::<ProjectConfig>(path)?;
-                    (on_disk.clone(), config)
-                }
-                _ => match object_store {
-                    Some((contents, spec)) => {
-                        let config = parse_json_config::<ProjectConfig>(&contents)?;
-                        (Some(spec), config)
-                    }
-                    None => (on_disk.clone(), None),
-                },
-            };
-            if (on_disk.as_ref().is_some_and(|path| path.exists()) || object_store_exists)
-                && config.is_none()
-            {
-                invalid = true;
-            }
-            let identifier = repo.project_identifier().ok().map(|id| id.to_string());
-            let exists = on_disk.as_ref().is_some_and(|path| path.exists()) || object_store_exists;
-            (path, exists, config, identifier)
-        } else {
-            (None, false, None, None)
+    let (project_path, project_exists, project_config, project_identifier) = if let Some(repo) =
+        repo.as_ref()
+    {
+        let on_disk = repo.project_config_path()?;
+        let object_store = match &on_disk {
+            Some(path) if path.exists() => None,
+            _ => repo.default_branch_project_config_content(),
         };
+        let object_store_exists = object_store.is_some();
+        let (path, config) = match &on_disk {
+            Some(path) if path.exists() => {
+                let config = read_config_contents(path, ConfigFileKind::Project, &mut diagnostics)
+                    .map(|contents| parse_project_config_json(&contents, path, &mut diagnostics))
+                    .transpose()?
+                    .flatten();
+                (on_disk.clone(), config)
+            }
+            _ => match object_store {
+                Some((contents, spec)) => {
+                    let config = parse_project_config_json(&contents, &spec, &mut diagnostics)?;
+                    (Some(spec), config)
+                }
+                None => (on_disk.clone(), None),
+            },
+        };
+        if (on_disk.as_ref().is_some_and(|path| path.exists()) || object_store_exists)
+            && config.is_none()
+        {
+            invalid = true;
+        }
+        let identifier = repo.project_identifier().ok().map(|id| id.to_string());
+        let exists = on_disk.as_ref().is_some_and(|path| path.exists()) || object_store_exists;
+        (path, exists, config, identifier)
+    } else {
+        (None, false, None, None)
+    };
 
     let system_path = system_config_path();
     let system_exists = system_path.as_ref().is_some_and(|p| p.exists());
     let system_invalid = if let Some(path) = system_path.as_deref().filter(|_| system_exists) {
-        match std::fs::read_to_string(path) {
-            Ok(contents) => parse_user_config(&contents, path, ConfigFileKind::System).is_err(),
-            Err(_) => true,
-        }
+        read_user_config(path, ConfigFileKind::System, &mut diagnostics).is_none()
     } else {
         false
     };
-    let approvals_invalid = matches!(
-        approvals_diagnostic(repo.as_ref()),
-        ApprovalsDiagnostic::Invalid(_)
-    );
+    invalid |= system_invalid;
+    if let ApprovalsDiagnostic::Invalid(error) = approvals_diagnostic(repo.as_ref()) {
+        render_config_error(&mut diagnostics, error, "Invalid approvals");
+        invalid = true;
+    }
+    invalid |= render_column_selection(&mut diagnostics, repo.as_ref())?;
 
     let output = serde_json::json!({
         "user": {
@@ -233,12 +236,8 @@ fn handle_config_show_json() -> anyhow::Result<()> {
             "exists": system_exists,
         },
     });
-    invalid |= system_invalid
-        || approvals_invalid
-        || repo
-            .as_ref()
-            .is_some_and(|repo| validate_column_selection(repo).is_err());
     print_json(&output)?;
+    eprint!("{diagnostics}");
 
     if invalid {
         return Err(WorktrunkError::AlreadyDisplayed { exit_code: 1 }.into());
@@ -247,19 +246,43 @@ fn handle_config_show_json() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn read_json_config<C>(path: &Path) -> anyhow::Result<Option<serde_json::Value>>
-where
-    C: DeserializeOwned + Serialize,
-{
-    let Ok(contents) = std::fs::read_to_string(path) else {
-        return Ok(None);
-    };
-    parse_json_config::<C>(&contents)
+fn read_config_contents(
+    path: &Path,
+    kind: ConfigFileKind,
+    diagnostics: &mut String,
+) -> Option<String> {
+    match std::fs::read_to_string(path) {
+        Ok(contents) => Some(contents),
+        Err(error) => {
+            let source = format!("{} @ {}", kind.label(), format_path_for_display(path));
+            let _ = writeln!(diagnostics, "{}", format_heading(&source, None));
+            render_config_read_error(diagnostics, &error);
+            None
+        }
+    }
 }
 
-fn read_user_config(path: &Path) -> Option<UserConfig> {
-    let contents = std::fs::read_to_string(path).ok()?;
-    parse_user_config(&contents, path, ConfigFileKind::User).ok()
+fn read_user_config(
+    path: &Path,
+    kind: ConfigFileKind,
+    diagnostics: &mut String,
+) -> Option<UserConfig> {
+    let contents = read_config_contents(path, kind, diagnostics)?;
+    match parse_user_config(&contents, path, kind) {
+        Ok(config) => Some(config),
+        // Startup's user-config preload already reports parser failures for
+        // both file layers, including outside a repository.
+        Err(ConfigError::Parse(_)) => None,
+        Err(error) => {
+            let fallback = format!(
+                "{} @ {} is invalid",
+                kind.label(),
+                format_path_for_display(path)
+            );
+            render_config_error(diagnostics, error, &fallback);
+            None
+        }
+    }
 }
 
 fn parse_user_config(
@@ -274,15 +297,23 @@ fn parse_user_config(
     Ok(config)
 }
 
-fn parse_json_config<C>(contents: &str) -> anyhow::Result<Option<serde_json::Value>>
-where
-    C: DeserializeOwned + Serialize,
-{
+fn parse_project_config_json(
+    contents: &str,
+    path: &Path,
+    diagnostics: &mut String,
+) -> anyhow::Result<Option<serde_json::Value>> {
     let migrated = worktrunk::config::migrate_content(contents);
-    toml::from_str::<C>(&migrated)
-        .ok()
-        .map(|config| serde_json::to_value(config).map_err(Into::into))
-        .transpose()
+    match toml::from_str::<ProjectConfig>(&migrated) {
+        Ok(config) => Ok(Some(serde_json::to_value(config)?)),
+        Err(error) => {
+            render_config_error(
+                diagnostics,
+                ConfigError::Parse(ConfigParseError::new(ConfigFileKind::Project, path, error)),
+                "Invalid project config",
+            );
+            Ok(None)
+        }
+    }
 }
 
 // ==================== Helper Functions ====================
@@ -642,14 +673,7 @@ fn render_diagnostics(out: &mut String, repo: Option<&Repository>) -> anyhow::Re
     let project_id = repo.and_then(|repo| repo.project_identifier().ok());
     let commit_config = config.commit_generation(project_id.as_ref());
 
-    if !commit_config.is_configured() {
-        writeln!(out, "{}", info_message("Commit generation not configured"))?;
-    } else {
-        // `is_configured()` guarantees `command` is `Some` and non-empty here;
-        // `unwrap_or_default()` avoids a panic-prone `unwrap()` in this
-        // `Result`-returning function (the default is unreachable).
-        let command_display = commit_config.command.clone().unwrap_or_default();
-
+    if let Some(command_display) = commit_config.command() {
         match test_commit_generation(&commit_config) {
             Ok(message) => {
                 writeln!(
@@ -675,6 +699,8 @@ fn render_diagnostics(out: &mut String, repo: Option<&Repository>) -> anyhow::Re
                 writeln!(out, "{}", format_with_gutter(&body, None))?;
             }
         }
+    } else {
+        writeln!(out, "{}", info_message("Commit generation not configured"))?;
     }
 
     Ok(())

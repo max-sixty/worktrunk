@@ -913,6 +913,44 @@ mod tests {
         fs::set_permissions(&trash, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
+    /// Same-basename worktrees need distinct staging paths. Test staging
+    /// directly: a prune batch may share one detached drain, so per-branch
+    /// cleanup logs do not prove whether each worktree was staged.
+    #[test]
+    fn stages_worktrees_sharing_a_basename() {
+        let mut test = TestRepo::with_initial_commit();
+        let parent = test.root_path().parent().unwrap().to_path_buf();
+        let worktrees = [
+            ("one", parent.join("aaaa/repo")),
+            ("two", parent.join("bbbb/repo")),
+        ];
+        for (branch, path) in &worktrees {
+            test.add_worktree_at_path(branch, path);
+        }
+        let repo = Repository::at(test.root_path()).unwrap();
+        let mut staged_paths = Vec::new();
+        for (branch, path) in &worktrees {
+            let git_dir = repo.worktree_at(path).git_dir().unwrap();
+            let registration = git_dir.file_name().unwrap().to_string_lossy();
+            let staged = stage_worktree_removal(&repo, path, Some(branch), false)
+                .unwrap()
+                .expect("each worktree must stage successfully");
+            assert!(!path.exists());
+            assert!(staged.exists());
+            // Pin the registration prefix independently of the wall clock.
+            assert!(
+                staged
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with(&format!("{registration}-"))
+            );
+            staged_paths.push(staged);
+        }
+        assert_ne!(staged_paths[0], staged_paths[1]);
+        assert!(staged_paths.iter().all(|path| path.exists()));
+    }
+
     /// A `git worktree lock` must stop the rename even when the caller skipped
     /// `prepare_worktree_removal` (merge used to construct a plan by hand).
     #[test]

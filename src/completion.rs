@@ -38,10 +38,10 @@ use clap_complete::engine::{ArgValueCompleter, CompletionCandidate, ValueComplet
 use clap_complete::env::CompleteEnv;
 
 use crate::cli;
-use crate::commands::{AliasMap, load_aliases};
+use crate::commands::{AliasMap, ParsedFilter, load_aliases};
 use crate::display::format_relative_time_short;
 use worktrunk::config::{
-    ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, template_references_var,
+    ALIAS_ARGS_KEY, CommandConfig, HookSource, ProjectConfig, UserConfig, template_references_var,
 };
 use worktrunk::git::{BranchCategory, HookType, Repository};
 
@@ -60,20 +60,7 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
     // warnings for the duration of this process.
     worktrunk::config::suppress_warnings();
 
-    // Completion exits before `main`'s `logging::init`, so the normal
-    // `-v`/`-vv` pipeline never runs here. `WORKTRUNK_VERBOSE` opts this
-    // short-lived subprocess into the same logging as a flagged command — the
-    // env-var equivalent of `-vv` — so humanized timing (`✓ git …`) and
-    // `$ git …` start records for a slow completion land in `.git/wt/logs/`
-    // just as `-vv` writes them. Left unset, completion stays silent so stray
-    // stderr never lands above the user's prompt.
-    let completion_verbose = crate::logging::env_verbose_level();
-    if completion_verbose > 0 {
-        crate::logging::init(completion_verbose);
-    }
-
     let mut args: Vec<OsString> = std::env::args_os().collect();
-    CONTEXT.with(|ctx| *ctx.borrow_mut() = Some(CompletionContext { args: args.clone() }));
 
     // Remove the binary name and find the `--` separator
     args.remove(0);
@@ -94,10 +81,9 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
         // A bare `Command` is all the registration needs: clap_complete 4.6.9's
         // `write_registration` reads `cmd.get_name()` and `self.bin` (set below,
         // so its `cmd.get_bin_name()` fallback never fires), and nothing else off
-        // the command. Handing it `completion_command()` instead would build the
-        // whole completion tree — `Repository::current()`, both config loads, and
-        // a scan of every `PATH` directory for `wt-*` — to produce one string, on
-        // the first TAB of every new shell.
+        // the command. Building the completion tree instead would load the
+        // repository and both configs and scan every PATH directory for
+        // `wt-*` to produce one string, on the first TAB of every new shell.
         let name = registration_name();
         let all_args: Vec<OsString> = std::env::args_os().collect();
         let _ = CompleteEnv::with_factory(move || Command::new(name))
@@ -107,45 +93,6 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
         return true;
     }
 
-    // Fill the git-discovery, git-config, and user-config caches on three
-    // concurrent threads, exactly as `main` does before dispatching a command.
-    // Completion answers and returns long before `main` reaches its own
-    // `Repository::prewarm` call, so without this every one of those reads is
-    // a separate fork taken serially, on the one path where the user is
-    // waiting with a finger on Tab: `completion_command`'s alias injection
-    // needs the configs, and the branch completers below need the discovery
-    // caches. Placed after the registration-script return, which resolves no
-    // repository at all, and after `suppress_warnings` above, since
-    // `prewarm_user_config` loads `UserConfig` eagerly and its deprecation
-    // warnings must not land above the user's prompt.
-    Repository::prewarm();
-
-    // If the subcommand word matches a custom-subcommand binary, forward the
-    // completion request to it (e.g., `wt sync --<tab>` → `wt-sync --<tab>`).
-    // args[0] is the binary name ("wt"), args[1] is the subcommand ("sync").
-    if args.len() >= 3 {
-        let subcommand = args[1].to_string_lossy();
-        // Only forward to the custom binary if no built-in subcommand has this
-        // name. Built-ins always take precedence at runtime, so completions
-        // must agree.
-        let binary = format!("wt-{subcommand}");
-        if cli::build_command().find_subcommand(&*subcommand).is_none()
-            && which::which(&binary).is_ok()
-        {
-            // Forward args[1..] to the custom binary
-            if let Some(forwarded) = forward_completion_to_custom(&binary, &args[1..], &shell_name)
-            {
-                let _ = std::io::stdout().write_all(forwarded.as_bytes());
-                CONTEXT.with(|ctx| ctx.borrow_mut().take());
-                return true;
-            }
-        }
-    }
-
-    // Generate completions with filtering
-    let mut cmd = completion_command();
-    cmd.build();
-
     // Determine the index of the word being completed.
     // - Bash/Zsh: Pass `_CLAP_COMPLETE_INDEX` env var with the cursor position
     // - Fish/Nushell: Append the current token as the last argument, so index = len - 1
@@ -153,6 +100,78 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
         .ok()
         .and_then(|i| i.parse().ok())
         .unwrap_or_else(|| args.len() - 1);
+
+    // Only completed words can set globals: the cursor may still be editing
+    // a config filename or directory. Reuse runtime parsing so attached flag
+    // values and globals after built-in subcommands follow the same rules.
+    let globals = crate::parse_early_globals(args.iter().take(index).cloned());
+    CONTEXT.with(|ctx| {
+        *ctx.borrow_mut() = Some(CompletionContext {
+            args: args.clone(),
+            hook_type: globals.hook_type,
+        });
+    });
+    let current_dir = globals.directory.clone().or(current_dir);
+    crate::apply_global_options(globals.directory, globals.config, globals.config_overrides);
+
+    // Completion exits before `main`'s `logging::init`, so the normal
+    // `-v`/`-vv` pipeline never runs here. `WORKTRUNK_VERBOSE` opts this
+    // short-lived subprocess into the same logging as a flagged command — the
+    // env-var equivalent of `-vv` — so humanized timing (`✓ git …`) and
+    // `$ git …` start records for a slow completion land in `.git/wt/logs/`
+    // just as `-vv` writes them. Left unset, completion stays silent so stray
+    // stderr never lands above the user's prompt.
+    let completion_verbose = crate::logging::env_verbose_level();
+    if completion_verbose > 0 {
+        crate::logging::init(completion_verbose);
+    }
+
+    // Fill the git-discovery, git-config, and user-config caches on three
+    // concurrent threads, exactly as `main` does before dispatching a command.
+    // Completion answers and returns long before `main` reaches its own
+    // `Repository::prewarm` call, so without this every one of those reads is
+    // a separate fork taken serially, on the one path where the user is
+    // waiting with a finger on Tab: the completion tree's alias injection
+    // needs the configs, and the branch completers below need the discovery
+    // caches. Placed after the registration-script return, which resolves no
+    // repository at all, and after `suppress_warnings` above, since
+    // `prewarm_user_config` loads `UserConfig` eagerly and its deprecation
+    // warnings must not land above the user's prompt.
+    Repository::prewarm();
+
+    // Resolve built-ins and aliases once, before considering PATH binaries.
+    // This tree owns the same precedence as runtime dispatch.
+    let cmd = inject_alias_subcommands(cli::build_command());
+
+    // If the subcommand word matches a custom-subcommand binary, forward the
+    // completion request to it (e.g., `wt sync --<tab>` → `wt-sync --<tab>`).
+    // The early parse includes only words before the cursor, so editing the
+    // subcommand itself never invokes a binary from PATH.
+    if let Some(start) = globals.external_subcommand_index {
+        let subcommand = args[start].to_string_lossy();
+        // The early parse excludes built-ins; configured aliases also take
+        // precedence over PATH binaries. Reuse the alias-injected tree.
+        let binary = format!("wt-{subcommand}");
+        if cmd.find_subcommand(&*subcommand).is_none()
+            && let Some(forwarded) = forward_completion_to_custom(
+                &binary,
+                &args[start..],
+                &shell_name,
+                start,
+                current_dir.as_deref(),
+            )
+        {
+            let _ = std::io::stdout().write_all(forwarded.as_bytes());
+            CONTEXT.with(|ctx| ctx.borrow_mut().take());
+            return true;
+        }
+    }
+
+    // Generate completions with filtering
+    let cmd = inject_hook_subcommands(cmd);
+    let cmd = inject_custom_subcommands(cmd);
+    let mut cmd = hide_non_positional_options_for_completion(cmd);
+    cmd.build();
 
     // Check if the current word is exactly "-" (single dash)
     // If so, we want to show both short flags (-h) AND long flags (--help)
@@ -180,8 +199,7 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
         if let Some(word) = args_with_double_dash.get_mut(index) {
             *word = OsString::from("--");
         }
-        let mut cmd2 = completion_command();
-        cmd2.build();
+        let mut cmd2 = cmd.clone();
         if let Ok(long_completions) = clap_complete::engine::complete(
             &mut cmd2,
             args_with_double_dash,
@@ -289,7 +307,7 @@ pub(crate) fn worktree_only_completer() -> ArgValueCompleter {
 }
 
 /// Hook command name completion for `wt hook <hook-type> <name>`.
-/// Completes with command names from the project config for the hook type being invoked.
+/// Completes with effective user and project command names for the hook type being invoked.
 pub(crate) fn hook_command_name_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(HookCommandCompleter)
 }
@@ -333,41 +351,49 @@ impl ValueCompleter for HookCommandCompleter {
         // bash-specific prefix filter in maybe_handle_env_completion() handles bash.
 
         // Get the hook type from the command line context
-        let hook_type = CONTEXT.with(|ctx| ctx.borrow().as_ref().and_then(detect_hook_type));
-
-        let Some(hook_type_str) = hook_type else {
-            return Vec::new();
-        };
-        let Ok(hook_type) = hook_type_str.parse::<HookType>() else {
+        let hook_type = CONTEXT.with(|ctx| ctx.borrow().as_ref().and_then(|ctx| ctx.hook_type));
+        let Some(hook_type) = hook_type else {
             return Vec::new();
         };
 
         let mut candidates = Vec::new();
 
+        let filter = ParsedFilter::parse(current.to_str().unwrap_or_default());
         let add_named_commands =
-            |candidates: &mut Vec<_>, config: &worktrunk::config::CommandConfig| {
-                candidates.extend(
-                    config
-                        .commands()
-                        .filter_map(|cmd| cmd.name.as_ref())
-                        .map(|name| CompletionCandidate::new(name.clone())),
-                );
+            |candidates: &mut Vec<_>, config: &CommandConfig, source: HookSource| {
+                if !filter.matches_source(source) {
+                    return;
+                }
+                candidates.extend(config.commands().filter_map(|cmd| {
+                    let name = cmd.name.as_ref()?;
+                    let name = if filter.source.is_some() {
+                        source.command_label(Some(name))
+                    } else {
+                        name.clone()
+                    };
+                    Some(CompletionCandidate::new(name))
+                }));
             };
 
-        // Load user config and add user hook names
+        let repo = Repository::current().ok();
+        let project_id = repo
+            .as_ref()
+            .and_then(|repo| repo.project_identifier().ok());
+
+        // Use the same global + per-project merge as hook execution.
         if let Ok(user_config) = UserConfig::load()
-            && let Some(config) = user_config.hooks.get(hook_type)
+            && let Some(config) = user_config.hooks(project_id.as_ref()).get(hook_type)
         {
-            add_named_commands(&mut candidates, config);
+            add_named_commands(&mut candidates, config, HookSource::User);
         }
 
         // Load project config and add project hook names
         // Pass write_hints=false to avoid side effects during completion
-        if let Ok(repo) = Repository::current()
+        if let Some(repo) = repo
             && let Ok(Some(project_config)) = ProjectConfig::load(&repo, false)
             && let Some(config) = project_config.hooks.get(hook_type)
         {
-            add_named_commands(&mut candidates, config);
+            add_named_commands(&mut candidates, config, HookSource::Project);
         }
 
         candidates
@@ -455,6 +481,7 @@ fn suppress_switch_branch_completion() -> bool {
 
 struct CompletionContext {
     args: Vec<OsString>,
+    hook_type: Option<HookType>,
 }
 
 impl CompletionContext {
@@ -463,33 +490,6 @@ impl CompletionContext {
             .iter()
             .any(|arg| arg.to_string_lossy().as_ref() == needle)
     }
-}
-
-/// Identify which hook type the user is completing a command name for by
-/// scanning the command line for a hook-type argument. Returns the canonical
-/// name, mapping the silent `pre-create`/`post-create` aliases to
-/// `pre-start`/`post-start`.
-///
-/// The candidate list is derived from [`cli::HOOK_TYPE_NAMES`] rather than a
-/// local copy, so a newly added hook type completes its command names without a
-/// second edit here. `contains` is an exact match (not a substring test), so
-/// iterating the full list has no shadowing hazard between names like
-/// `pre-remove` and `post-remove`. `test_detect_hook_type_covers_all_names`
-/// pins the coverage.
-fn detect_hook_type(ctx: &CompletionContext) -> Option<&'static str> {
-    for &hook in cli::HOOK_TYPE_NAMES {
-        if ctx.contains(hook) {
-            return Some(hook);
-        }
-    }
-    // Silent aliases still complete, mapped to the canonical name.
-    if ctx.contains("pre-create") {
-        return Some("pre-start");
-    }
-    if ctx.contains("post-create") {
-        return Some("post-start");
-    }
-    None
 }
 
 // Thread-local context tracking is required because clap's ValueCompleter::complete()
@@ -540,14 +540,6 @@ fn registration_name() -> &'static str {
         .or_else(|| Some(crate::binary_name()).filter(is_valid))
         .unwrap_or_else(|| "wt".to_string());
     Box::leak(name.into_boxed_str())
-}
-
-fn completion_command() -> Command {
-    let cmd = cli::build_command();
-    let cmd = inject_alias_subcommands(cmd);
-    let cmd = inject_hook_subcommands(cmd);
-    let cmd = inject_custom_subcommands(cmd);
-    hide_non_positional_options_for_completion(cmd)
 }
 
 /// Inject hook type names as subcommands of `hook` so both completion and
@@ -792,12 +784,7 @@ fn truncate_template(template: &str) -> &str {
     let s = template.trim();
     let first_line = s.lines().next().unwrap_or(s);
     if first_line.len() > 60 {
-        // Find the last char boundary at or before byte 57
-        let mut end = 57;
-        while end > 0 && !first_line.is_char_boundary(end) {
-            end -= 1;
-        }
-        &first_line[..end]
+        &first_line[..first_line.floor_char_boundary(57)]
     } else {
         first_line
     }
@@ -807,8 +794,14 @@ fn truncate_template(template: &str) -> &str {
 ///
 /// Rebuilds the args as if the user invoked `wt-sync <rest>` directly, passing
 /// the `COMPLETE` env var so the custom binary generates completions.
-fn forward_completion_to_custom(binary: &str, args: &[OsString], shell: &OsStr) -> Option<String> {
-    try_forward_completion_to_custom(binary, args, shell)
+fn forward_completion_to_custom(
+    binary: &str,
+    args: &[OsString],
+    shell: &OsStr,
+    removed_words: usize,
+    current_dir: Option<&std::path::Path>,
+) -> Option<String> {
+    try_forward_completion_to_custom(binary, args, shell, removed_words, current_dir)
         .ok()
         .flatten()
 }
@@ -821,18 +814,26 @@ fn try_forward_completion_to_custom(
     binary: &str,
     args: &[OsString],
     shell: &OsStr,
+    removed_words: usize,
+    current_dir: Option<&std::path::Path>,
 ) -> std::io::Result<Option<String>> {
     // Build args for the custom binary: [binary_name, rest_args...]
     let mut child_args: Vec<OsString> = vec![OsString::from(binary)];
     child_args.extend_from_slice(&args[1..]);
 
-    // Adjust the completion index: subtract 1 since we removed the subcommand name
+    // Drop wt and its global options from the child's cursor position.
     let index = std::env::var("_CLAP_COMPLETE_INDEX")
         .ok()
         .and_then(|i| i.parse::<usize>().ok())
-        .map(|i| i.saturating_sub(1));
+        .map(|i| i.saturating_sub(removed_words));
 
-    let mut cmd = std::process::Command::new(binary);
+    // Resolve before applying the child's cwd, as runtime custom dispatch
+    // does. Relative PATH entries must not select another executable in -C.
+    let path = which::which(binary).map_err(std::io::Error::other)?;
+    let mut cmd = std::process::Command::new(path);
+    if let Some(dir) = current_dir {
+        cmd.current_dir(dir);
+    }
     cmd.arg("--");
     cmd.args(&child_args);
     cmd.env("COMPLETE", shell);
@@ -908,7 +909,6 @@ fn discover_custom_subcommands() -> Vec<String> {
 /// (without the `wt-` prefix). On Windows, executable extensions (.exe, .cmd, etc.)
 /// are stripped so that `wt-sync.exe` produces the subcommand name `sync`.
 fn discover_custom_subcommands_in(path_var: &OsStr) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
     let mut result = Vec::new();
 
     for dir in std::env::split_paths(path_var) {
@@ -930,25 +930,19 @@ fn discover_custom_subcommands_in(path_var: &OsStr) -> Vec<String> {
                 .and_then(|s| s.to_str())
                 .unwrap_or(subcommand);
 
-            if subcommand.is_empty() || !seen.insert(subcommand.to_string()) {
-                continue;
-            }
-
-            // Verify it's executable (on Unix)
-            #[cfg(unix)]
+            // Use the dispatch resolver's executable rules, including symlink
+            // targets and Windows extensions. A non-executable entry must not
+            // hide a valid command in a later PATH directory.
+            if subcommand.is_empty() || which::which(dir.join(format!("wt-{subcommand}"))).is_err()
             {
-                use std::os::unix::fs::PermissionsExt;
-                if let Ok(meta) = entry.metadata()
-                    && meta.permissions().mode() & 0o111 == 0
-                {
-                    continue;
-                }
+                continue;
             }
             result.push(subcommand.to_string());
         }
     }
 
     result.sort();
+    result.dedup();
     result
 }
 
@@ -1002,50 +996,22 @@ fn hide_non_positional_options_for_completion(cmd: Command) -> Command {
 mod tests {
     use super::*;
 
-    /// Every canonical hook type must be detected so `wt hook <type> <Tab>`
-    /// completes its configured command names. A hook type listed in
-    /// HOOK_TYPE_NAMES but missing from `detect_hook_type`'s scan would
-    /// silently return no completions — this previously dropped `pre-switch`,
-    /// `post-switch`, and `post-remove`.
+    /// Clap supplies canonical hook names, including silent aliases, without
+    /// confusing option values or named filters with the selected hook type.
     #[test]
-    fn test_detect_hook_type_covers_all_names() {
+    fn test_parsed_hook_type() {
         for &name in cli::HOOK_TYPE_NAMES {
-            let ctx = CompletionContext {
-                args: vec!["hook".into(), name.into()],
-            };
-            assert_eq!(
-                detect_hook_type(&ctx),
-                Some(name),
-                "hook type `{name}` should be detected for completion"
-            );
-            // The detected name must round-trip through HookType parsing,
-            // mirroring complete()'s downstream `parse::<HookType>()`.
-            assert!(
-                name.parse::<HookType>().is_ok(),
-                "hook type `{name}` should parse"
-            );
+            let args = ["wt", "--config", "pre-switch", "hook", name, "post-start"];
+            let globals = crate::parse_early_globals(args.into_iter().map(Into::into));
+            assert_eq!(globals.hook_type, Some(name.parse().unwrap()), "{name}");
         }
-    }
-
-    /// The silent `pre-create`/`post-create` aliases map to their canonical
-    /// names so they still complete command names.
-    #[test]
-    fn test_detect_hook_type_maps_silent_aliases() {
         for (alias, canonical) in [("pre-create", "pre-start"), ("post-create", "post-start")] {
-            let ctx = CompletionContext {
-                args: vec!["hook".into(), alias.into()],
-            };
-            assert_eq!(detect_hook_type(&ctx), Some(canonical));
+            let args = ["wt", "hook", alias];
+            let globals = crate::parse_early_globals(args.into_iter().map(Into::into));
+            assert_eq!(globals.hook_type, Some(canonical.parse().unwrap()));
         }
-    }
-
-    /// No hook-type argument on the line means no hook-command completion.
-    #[test]
-    fn test_detect_hook_type_none_without_hook() {
-        let ctx = CompletionContext {
-            args: vec!["switch".into(), "main".into()],
-        };
-        assert_eq!(detect_hook_type(&ctx), None);
+        let globals = crate::parse_early_globals(["wt", "switch", "pre-switch"].map(Into::into));
+        assert_eq!(globals.hook_type, None);
     }
 
     #[test]
@@ -1161,6 +1127,48 @@ mod tests {
         assert!(result.is_empty());
     }
 
+    #[test]
+    fn test_discover_skips_directories() {
+        let dir = worktrunk::testing::test_tempdir();
+        std::fs::create_dir(dir.path().join("wt-directory")).unwrap();
+        assert!(discover_custom_subcommands_in(dir.path().as_os_str()).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_discover_checks_symlink_targets() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let dir = worktrunk::testing::test_tempdir();
+        let executable = dir.path().join("executable");
+        let non_executable = dir.path().join("data");
+        std::fs::write(&executable, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(&non_executable, "data").unwrap();
+        std::fs::set_permissions(&non_executable, std::fs::Permissions::from_mode(0o644)).unwrap();
+        symlink(&executable, dir.path().join("wt-valid")).unwrap();
+        symlink(&non_executable, dir.path().join("wt-invalid")).unwrap();
+        symlink(dir.path().join("missing"), dir.path().join("wt-broken")).unwrap();
+        assert_eq!(
+            discover_custom_subcommands_in(dir.path().as_os_str()),
+            vec!["valid"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_discover_finds_later_executable() {
+        use std::os::unix::fs::PermissionsExt;
+        let first = worktrunk::testing::test_tempdir();
+        let second = worktrunk::testing::test_tempdir();
+        for (dir, mode) in [(first.path(), 0o644), (second.path(), 0o755)] {
+            let path = dir.join("wt-visible");
+            std::fs::write(&path, "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        }
+        let path = std::env::join_paths([first.path(), second.path()]).unwrap();
+        assert_eq!(discover_custom_subcommands_in(&path), vec!["visible"]);
+    }
+
     #[cfg(unix)]
     #[test]
     fn test_discover_results_are_sorted() {
@@ -1228,6 +1236,8 @@ mod tests {
             "/nonexistent/binary/xxxxxxxx_wt_test",
             &[OsString::from("test")],
             OsStr::new("bash"),
+            1,
+            None,
         );
         assert!(result.is_none());
     }
@@ -1251,7 +1261,7 @@ mod tests {
         use std::io::ErrorKind;
         let mut result: Option<std::io::Result<Option<String>>> = None;
         worktrunk::testing::wait_for("ETXTBSY to clear and script to exec", || {
-            match try_forward_completion_to_custom(binary, args, shell) {
+            match try_forward_completion_to_custom(binary, args, shell, 1, None) {
                 Err(e) if e.kind() == ErrorKind::ExecutableFileBusy => false,
                 other => {
                     result = Some(other);

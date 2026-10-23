@@ -111,7 +111,7 @@ Most hooks don't need `[[hook]]` blocks. Reach for them when there's a dependenc
 
 To run a specific hook when user and project both define the same name, use `user:name` or `project:name` syntax.
 
-A `pre-*` hook blocks the command, so both sources run as one pipeline: user commands first, and a failure there skips the project's. A `post-*` hook runs in the background, where each source is its own detached pipeline — they start together, neither waits for the other, and a failure in one leaves the other running. Order within a source is still yours to set with `[[hook]]` blocks; across `post-*` sources there is none. Two `post-*` hooks that write the same file, or run `git` in the same worktree, will race, so put commands that depend on each other in one source.
+For `pre-*` hooks, a user-hook failure skips project hooks. For `post-*` hooks, a failure in one source does not stop the other. Concurrent hooks can race when writing the same file or running Git in the same worktree. Commands that depend on each other should use ordered `[[hook]]` blocks within one source.
 
 ## Template variables
 

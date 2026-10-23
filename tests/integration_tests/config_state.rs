@@ -3466,3 +3466,30 @@ fn state_branch_flag_resolves_selectors(mut repo: TestRepo) {
         String::from_utf8_lossy(&get.stderr)
     );
 }
+
+/// A key with repeated Git config entries must actually disappear after clear.
+#[rstest]
+#[case("example")]
+#[case("--all")]
+fn test_vars_clear_removes_repeated_values(repo: TestRepo, #[case] argument: &str) {
+    let key = "worktrunk.state.main.vars.example";
+    for value in ["first", "second"] {
+        let output = repo
+            .git_command()
+            .args(["config", "--add", key, value])
+            .run()
+            .unwrap();
+        assert!(output.status.success());
+    }
+    let output = wt_state_cmd(&repo, "vars", "clear", &[argument])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let remaining = repo
+        .git_command()
+        .args(["config", "--get-all", key])
+        .run()
+        .unwrap();
+    assert_eq!(remaining.status.code(), Some(1), "{remaining:?}");
+    assert!(remaining.stdout.is_empty());
+}

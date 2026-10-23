@@ -783,18 +783,14 @@ fn parse_cli() -> Cli {
         config_overrides,
         alias_help_context,
         subcommand,
-    } = parse_early_globals();
+        ..
+    } = parse_early_globals(std::env::args_os());
     apply_global_options(directory, config, config_overrides);
 
     // Handle --help with pager before clap processes it.
     // Exits the process on a help/version/doc request; otherwise returns.
     help::maybe_handle_help_with_pager(alias_help_context, subcommand.as_deref());
 
-    // TODO: Enhance error messages to show possible values for missing enum arguments
-    // Currently `wt config shell init` doesn't show available shells, but `wt config shell init invalid` does.
-    // Clap doesn't support this natively yet - see https://github.com/clap-rs/clap/issues/3320
-    // When available, use built-in setting. Until then, could use try_parse() to intercept
-    // MissingRequiredArgument errors and print custom messages with ValueEnum::value_variants().
     let cmd = cli::build_command();
     let matches = cmd
         .try_get_matches_from(std::env::args_os())
@@ -838,6 +834,10 @@ struct EarlyGlobals {
     /// arrives, through the `external_subcommand` arm that carries user
     /// aliases, so those entry points can name it back in their own errors.
     subcommand: Option<String>,
+    /// Offset of an external command after clap has consumed global options.
+    external_subcommand_index: Option<usize>,
+    /// The parsed hook subcommand, excluding option values and command filters.
+    hook_type: Option<worktrunk::git::HookType>,
 }
 
 /// Parse global options (`-C`, `--config`, `--config-set`), name the command,
@@ -854,13 +854,23 @@ struct EarlyGlobals {
 /// Using `cli::build_command()` rather than a hand-rolled mini-command keeps
 /// the global-flag definitions in one place (the derive on `Cli`), so renaming
 /// `-C` or adding a value-taking global doesn't silently desync this path.
-fn parse_early_globals() -> EarlyGlobals {
-    let cmd = cli::build_command()
+fn parse_early_globals(args: impl IntoIterator<Item = std::ffi::OsString>) -> EarlyGlobals {
+    let args: Vec<_> = args.into_iter().collect();
+    let mut cmd = cli::build_command()
         .ignore_errors(true)
         .disable_help_flag(true);
-    let Ok(matches) = cmd.try_get_matches_from(std::env::args_os()) else {
+    let Ok(matches) = cmd.try_get_matches_from_mut(&args) else {
         return EarlyGlobals::default();
     };
+    let external_subcommand_index = matches.subcommand().and_then(|(name, sub)| {
+        if cmd.find_subcommand(name).is_some() {
+            return None;
+        }
+        // Clap leaves every word after an external command unparsed, so its
+        // raw tail locates the name without scanning global flags ourselves.
+        let tail_len = sub.get_raw("").map_or(0, |args| args.len());
+        args.len().checked_sub(tail_len + 1)
+    });
     let directory = matches.get_one::<std::path::PathBuf>("directory").cloned();
     let config = matches.get_one::<std::path::PathBuf>("config").cloned();
     let config_overrides = matches
@@ -882,6 +892,11 @@ fn parse_early_globals() -> EarlyGlobals {
         config_overrides,
         alias_help_context,
         subcommand: matches.subcommand_name().map(str::to_owned),
+        external_subcommand_index,
+        hook_type: matches
+            .subcommand_matches("hook")
+            .and_then(|hook| hook.subcommand_name())
+            .and_then(|name| name.parse().ok()),
     }
 }
 
@@ -908,11 +923,13 @@ fn handle_merge_command(args: MergeArgs, yes: bool) -> anyhow::Result<()> {
 }
 
 /// True when the parsed command should silence prewarm-time deprecation
-/// warnings. Two reasons qualify:
+/// warnings. These surfaces qualify:
 ///
 /// - **TUI / stderr-sensitive output** (`select`, `switch` picker mode,
 ///   `list statusline`) — warnings on stderr would land above the picker
 ///   or shell prompt and visually break it.
+/// - **Alias discovery** (`config alias show`) — definitions remain readable
+///   without unrelated config migration warnings.
 /// - **`config update`** — the handler renders the deprecations and a diff
 ///   itself, so the prewarm-time warning + `wt config update` hint is
 ///   redundant noise above its own UI.
@@ -929,7 +946,11 @@ fn command_suppresses_warnings(command: Option<&Commands>) -> bool {
             matches!(args.subcommand, Some(ListSubcommand::Statusline { .. }))
         }
         Some(Commands::Config {
-            action: ConfigCommand::Update { .. },
+            action:
+                ConfigCommand::Update { .. }
+                | ConfigCommand::Alias {
+                    action: ConfigAliasCommand::Show { .. },
+                },
         }) => true,
         _ => false,
     }

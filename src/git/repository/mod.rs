@@ -1992,10 +1992,11 @@ impl Repository {
         Ok(output.stdout)
     }
 
-    /// Run a git command and return whether it succeeded (exit code 0).
+    /// Run a Git predicate: status 0 is true, 1 is false, and other statuses fail.
     ///
-    /// This is useful for commands that use exit codes for boolean results,
-    /// like `git merge-base --is-ancestor`.
+    /// Use for commands with this exit-code contract, such as
+    /// `git merge-base --is-ancestor` and `git rev-parse --verify --quiet`.
+    /// A failed query must not be treated or cached as a negative answer.
     ///
     /// # Examples
     /// ```no_run
@@ -2006,7 +2007,12 @@ impl Repository {
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn run_command_check(&self, args: &[&str]) -> anyhow::Result<bool> {
-        Ok(self.run_command_output(args)?.status.success())
+        let output = self.run_command_output(args)?;
+        match output.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => Err(CommandError::from_failed_output("git", args, &output).into()),
+        }
     }
 
     /// Abbreviate a commit SHA for display, honoring `core.abbrev` and

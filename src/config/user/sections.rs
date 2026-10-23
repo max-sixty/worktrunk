@@ -88,10 +88,12 @@ pub struct CommitGenerationConfig {
 impl CommitGenerationConfig {
     /// Returns true if an LLM command is configured
     pub fn is_configured(&self) -> bool {
-        self.command
-            .as_ref()
-            .map(|s| !s.trim().is_empty())
-            .unwrap_or(false)
+        self.command().is_some()
+    }
+
+    /// The configured LLM command, excluding empty or whitespace-only values.
+    pub fn command(&self) -> Option<&str> {
+        self.command.as_deref().filter(|s| !s.trim().is_empty())
     }
 }
 
