@@ -67,9 +67,10 @@ exit_code: 0
 [33m▲[39m [33mFailed to batch-fetch commit details: fatal: bad object 0000000000000000000000000000000000000001[39m
 
 [2m○[22m [2mShowing 5 worktrees, 3 ahead[0m
-[33m▲[39m [33m6 tasks failed:
+[33m▲[39m [33m7 tasks failed:
 [107m [0m [1m(detached)[22m: ahead/behind counts (fatal: Not a valid commit name 0000000000000000000000000000000000000001)
 [107m [0m [1m(detached)[22m: trees-match check (fatal: Needed a single revision)
+[107m [0m [1m(detached)[22m: ancestor check (fatal: Not a valid commit name 0000000000000000000000000000000000000001)
 [107m [0m [1m(detached)[22m: branch diff (fatal: Not a valid commit name 0000000000000000000000000000000000000001)
 [107m [0m [1m(detached)[22m: working-tree diff (fatal: bad object HEAD)
 [107m [0m [1m(detached)[22m: merge-conflict check (fatal: bad object HEAD)
