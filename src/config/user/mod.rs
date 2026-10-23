@@ -164,7 +164,10 @@ fn parse_worktrunk_env_vars() -> Vec<EnvVar> {
         "WORKTRUNK_APPROVALS_PATH",
     ];
 
-    let mut env_vars: Vec<_> = std::env::vars()
+    // `std::env::vars()` panics on any non-UTF-8 entry, including unrelated
+    // ones; skip those entries instead.
+    let mut env_vars: Vec<_> = std::env::vars_os()
+        .filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)))
         .filter(|(k, _)| k.starts_with("WORKTRUNK_"))
         .filter(|(k, _)| !INFRA_VARS.contains(&k.as_str()))
         .filter(|(k, _)| !k.starts_with("WORKTRUNK_TEST_"))
