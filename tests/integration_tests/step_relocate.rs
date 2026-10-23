@@ -352,14 +352,25 @@ command = "cat > {} && echo 'chore: auto-commit before relocate'"
 /// Keep that commit and validation skips visible even though no worktree moved.
 #[cfg(unix)]
 #[rstest]
-fn test_relocate_json_retains_commits_when_clobber_backup_fails(repo: TestRepo) {
+#[case::json(true)]
+#[case::text(false)]
+fn test_relocate_json_retains_commits_when_clobber_backup_fails(
+    repo: TestRepo,
+    #[case] json: bool,
+) {
     let parent = worktree_parent(&repo);
     let feature = parent.join("wrong-feature");
     let locked = parent.join("wrong-locked");
     for (branch, path) in [("feature", &feature), ("locked", &locked)] {
         repo.run_git(&["worktree", "add", "-b", branch, path.to_str().unwrap()]);
     }
-    repo.run_git(&["worktree", "lock", locked.to_str().unwrap()]);
+    repo.run_git(&[
+        "worktree",
+        "lock",
+        "--reason",
+        "in use",
+        locked.to_str().unwrap(),
+    ]);
     fs::write(feature.join("dirty.txt"), "work to retain").unwrap();
     let before = repo.git_output(&["rev-parse", "feature"]);
 
@@ -380,37 +391,42 @@ command = "cat >/dev/null && echo 'commit before failed relocation'"
         ),
     )
     .unwrap();
-    let output = repo
-        .wt_command()
-        .args([
-            "step",
-            "relocate",
-            "feature",
-            "locked",
-            "--commit",
-            "--clobber",
-            "--format=json",
-        ])
-        .output()
-        .unwrap();
+    let mut command = repo.wt_command();
+    command.args([
+        "step",
+        "relocate",
+        "feature",
+        "locked",
+        "--commit",
+        "--clobber",
+    ]);
+    if json {
+        command.arg("--format=json");
+    }
+    let output = command.output().unwrap();
     assert!(!output.status.success(), "{output:?}");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("Failed to move"), "{stderr}");
-    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    let commits = response["commits"].as_array().unwrap();
+    assert!(stderr.contains("locked: in use"), "{stderr}");
     let after = repo.git_output(&["rev-parse", "feature"]);
     assert_ne!(
         after, before,
         "validation must have committed the dirty work"
     );
-    assert_eq!(commits.len(), 1, "{response}");
-    assert_eq!(commits[0]["branch"], "feature");
-    assert_eq!(commits[0]["commit"], after);
-    assert_eq!(
-        response["skipped"],
-        serde_json::json!([{"branch": "locked", "reason": "locked"}])
-    );
-    assert!(response["entries"].as_array().unwrap().is_empty());
+    if json {
+        let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let commits = response["commits"].as_array().unwrap();
+        assert_eq!(commits.len(), 1, "{response}");
+        assert_eq!(commits[0]["branch"], "feature");
+        assert_eq!(commits[0]["commit"], after);
+        assert_eq!(
+            response["skipped"],
+            serde_json::json!([{"branch": "locked", "reason": "locked"}])
+        );
+        assert!(response["entries"].as_array().unwrap().is_empty());
+    } else {
+        assert!(output.stdout.is_empty(), "{output:?}");
+    }
     assert_eq!(
         fs::read_to_string(&destination).unwrap(),
         "existing blocker"

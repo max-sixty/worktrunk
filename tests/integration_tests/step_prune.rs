@@ -1254,7 +1254,12 @@ fn test_prune_json_current_worktree(mut repo: TestRepo) {
 /// that point must report both the earlier removal and the removed checkout.
 #[cfg(unix)]
 #[rstest]
-fn test_prune_json_current_branch_failure_retains_removals(mut repo: TestRepo) {
+#[case::foreground(true)]
+#[case::background(false)]
+fn test_prune_json_current_branch_failure_retains_removals(
+    mut repo: TestRepo,
+    #[case] foreground: bool,
+) {
     repo.commit("initial");
     let original_worktrees = repo.git_output(&["worktree", "list", "--porcelain"]);
     repo.create_branch("earlier-merged");
@@ -1265,12 +1270,14 @@ fn test_prune_json_current_branch_failure_retains_removals(mut repo: TestRepo) {
     )
     .unwrap();
 
-    let output = repo
-        .wt_command()
+    let mut command = repo.wt_command();
+    command
         .current_dir(&current)
-        .args(["step", "prune", "--min-age=0s", "--format=json", "--yes"])
-        .output()
-        .unwrap();
+        .args(["step", "prune", "--min-age=0s", "--format=json", "--yes"]);
+    if foreground {
+        command.arg("--foreground");
+    }
+    let output = command.output().unwrap();
     assert!(!output.status.success(), "{output:?}");
     let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let removed = result.as_array().unwrap();
