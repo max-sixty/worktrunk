@@ -10,7 +10,7 @@ Check if the configured tool is installed:
 
 ```bash
 wt config show  # shows the configured command
-which claude    # or: which codex, which llm, which aichat
+which claude    # or: which codex, which opencode, which llm, which aichat
 ```
 
 If empty, install one of the supported tools. See [LLM commits docs](https://worktrunk.dev/llm-commits/) for setup instructions.
