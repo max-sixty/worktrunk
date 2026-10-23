@@ -160,7 +160,7 @@ pub struct ListConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remotes: Option<bool>,
 
-    /// Enable LLM-generated branch summaries (picker tab 5 + list Summary column).
+    /// Enable LLM-generated branch summaries (picker tab 6 + list Summary column).
     /// Requires `[commit.generation] command` to be configured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<bool>,
