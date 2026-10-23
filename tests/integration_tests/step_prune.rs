@@ -496,11 +496,13 @@ fn test_prune_orphan_branch_min_age_without_reflog(repo: TestRepo) {
 /// candidates. Two month-old packed branches in a bare clone go through a
 /// `git` shim that holds `packed-b`'s reflog read until `packed-a`'s deletion
 /// has finished, so `packed-b` is aged after that rewrite; both must still be
-/// removed. Unix-only for the same `CreateProcess` shim reason as the canary
-/// below.
+/// removed. If that later read fails, JSON must retain the earlier removal.
+/// Unix-only for the same `CreateProcess` shim reason as the canary below.
 #[cfg(unix)]
 #[rstest]
-fn test_prune_removals_keep_packed_branch_ages(repo: TestRepo) {
+#[case::success(false)]
+#[case::scan_failure(true)]
+fn test_prune_removals_keep_packed_branch_ages(repo: TestRepo, #[case] scan_failure: bool) {
     repo.create_branch("packed-a");
     repo.create_branch("packed-b");
     let clone = bare_clone(&repo);
@@ -517,11 +519,26 @@ fn test_prune_removals_keep_packed_branch_ages(repo: TestRepo) {
     let barrier_dir = repo.home_path().join("barrier");
     std::fs::create_dir_all(&barrier_dir).unwrap();
     cmd.env("WT_TEST_BARRIER_DIR", &barrier_dir);
+    if scan_failure {
+        cmd.env("WORKTRUNK_TEST_FAIL_REFLOG_READ", "1");
+    }
 
-    let output = cmd.args(["step", "prune", "--yes"]).output().unwrap();
+    let output = cmd
+        .args(["step", "prune", "--yes", "--format=json"])
+        .output()
+        .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    assert!(output.status.success(), "prune should succeed:\n{stderr}");
+    assert_eq!(output.status.success(), !scan_failure, "{stderr}");
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let removed = result.as_array().unwrap();
+    assert_eq!(removed.len(), if scan_failure { 1 } else { 2 }, "{result}");
+    assert_eq!(removed[0]["branch"], "packed-a");
+    assert_eq!(removed[0]["branch_outcome"], "deleted");
+    if scan_failure {
+        assert!(stderr.contains("checking branch integration"), "{stderr}");
+        assert!(stderr.contains("reflog read failed"), "{stderr}");
+    }
     assert!(
         barrier_dir.join("deleted-packed-a").exists(),
         "the shim never saw packed-a deleted:\n{stderr}"
@@ -538,9 +555,10 @@ fn test_prune_removals_keep_packed_branch_ages(repo: TestRepo) {
         .unwrap();
     let branches = String::from_utf8_lossy(&output.stdout);
     for name in ["packed-a", "packed-b"] {
-        assert!(
-            !branches.lines().any(|branch| branch == name),
-            "{name} should have been pruned:\n{stderr}"
+        assert_eq!(
+            branches.lines().any(|branch| branch == name),
+            scan_failure && name == "packed-b",
+            "unexpected retention of {name}:\n{stderr}"
         );
     }
 }
@@ -1230,6 +1248,46 @@ fn test_prune_json_current_worktree(mut repo: TestRepo) {
     settings.bind(|| {
         assert_snapshot!(String::from_utf8_lossy(&output.stdout));
     });
+}
+
+/// Current-worktree removal runs after the workers finish. A branch lock at
+/// that point must report both the earlier removal and the removed checkout.
+#[cfg(unix)]
+#[rstest]
+fn test_prune_json_current_branch_failure_retains_removals(mut repo: TestRepo) {
+    repo.commit("initial");
+    let original_worktrees = repo.git_output(&["worktree", "list", "--porcelain"]);
+    repo.create_branch("earlier-merged");
+    let current = repo.add_worktree("current-merged");
+    std::fs::write(
+        repo.root_path().join(".git/refs/heads/current-merged.lock"),
+        "locked",
+    )
+    .unwrap();
+
+    let output = repo
+        .wt_command()
+        .current_dir(&current)
+        .args(["step", "prune", "--min-age=0s", "--format=json", "--yes"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let removed = result.as_array().unwrap();
+    assert_eq!(removed.len(), 2, "{result}");
+    assert_eq!(removed[0]["branch"], "earlier-merged");
+    assert_eq!(removed[0]["branch_outcome"], "deleted");
+    assert_eq!(removed[1]["branch"], "current-merged");
+    assert_eq!(removed[1]["kind"], "current");
+    assert_eq!(removed[1]["branch_outcome"], "retained_failed");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("lock"));
+    assert_eq!(
+        repo.git_output(&["worktree", "list", "--porcelain"]),
+        original_worktrees
+    );
+    let branches = repo.git_output(&["branch", "--format=%(refname:short)"]);
+    assert!(branches.lines().any(|branch| branch == "current-merged"));
+    assert!(!branches.lines().any(|branch| branch == "earlier-merged"));
 }
 
 #[rstest]
@@ -3267,6 +3325,10 @@ if [ "$1 $2" = "reflog show" ]; then
         fi
         sleep 0.05
       done
+      if [ -n "$WORKTRUNK_TEST_FAIL_REFLOG_READ" ]; then
+        echo 'reflog read failed' >&2
+        exit 7
+      fi
       ;;
   esac
 fi

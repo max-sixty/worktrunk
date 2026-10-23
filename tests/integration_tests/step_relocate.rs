@@ -348,6 +348,77 @@ command = "cat > {} && echo 'chore: auto-commit before relocate'"
     );
 }
 
+/// A clobber backup can fail after validation has already committed work.
+/// Keep that commit and validation skips visible even though no worktree moved.
+#[cfg(unix)]
+#[rstest]
+fn test_relocate_json_retains_commits_when_clobber_backup_fails(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+    let feature = parent.join("wrong-feature");
+    let locked = parent.join("wrong-locked");
+    for (branch, path) in [("feature", &feature), ("locked", &locked)] {
+        repo.run_git(&["worktree", "add", "-b", branch, path.to_str().unwrap()]);
+    }
+    repo.run_git(&["worktree", "lock", locked.to_str().unwrap()]);
+    fs::write(feature.join("dirty.txt"), "work to retain").unwrap();
+    let before = repo.git_output(&["rev-parse", "feature"]);
+
+    // The destination itself is valid on Unix filesystems, but appending the
+    // timestamped backup suffix exceeds the 255-byte filename limit. This
+    // exercises a real rename failure without depending on permissions/root.
+    let destination_name = "x".repeat(250);
+    let destination = parent.join(&destination_name);
+    fs::write(&destination, "existing blocker").unwrap();
+    fs::write(
+        repo.test_config_path(),
+        format!(
+            r#"
+worktree-path = "../{{% if branch == 'feature' %}}{destination_name}{{% else %}}repo.{{{{ branch }}}}{{% endif %}}"
+[commit.generation]
+command = "cat >/dev/null && echo 'commit before failed relocation'"
+"#
+        ),
+    )
+    .unwrap();
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "relocate",
+            "feature",
+            "locked",
+            "--commit",
+            "--clobber",
+            "--format=json",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Failed to move"), "{stderr}");
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let commits = response["commits"].as_array().unwrap();
+    let after = repo.git_output(&["rev-parse", "feature"]);
+    assert_ne!(
+        after, before,
+        "validation must have committed the dirty work"
+    );
+    assert_eq!(commits.len(), 1, "{response}");
+    assert_eq!(commits[0]["branch"], "feature");
+    assert_eq!(commits[0]["commit"], after);
+    assert_eq!(
+        response["skipped"],
+        serde_json::json!([{"branch": "locked", "reason": "locked"}])
+    );
+    assert!(response["entries"].as_array().unwrap().is_empty());
+    assert_eq!(
+        fs::read_to_string(&destination).unwrap(),
+        "existing blocker"
+    );
+    assert!(feature.is_dir());
+    assert!(locked.is_dir());
+}
+
 /// Auto-commits are durable even when validating a later worktree fails.
 #[rstest]
 fn test_relocate_json_retains_commits_before_validation_failure(repo: TestRepo) {
