@@ -568,6 +568,11 @@ pub fn scan_shell_configs(
     scan_shell_configs_inner(shell_filter, dry_run, cmd, false)
 }
 
+/// Preview an install while retaining rc-file failures so other shells can be offered.
+pub(crate) fn preview_shell_configs_for_install(cmd: &str) -> Result<ScanResult, ShellConfigError> {
+    scan_shell_configs_inner(None, true, cmd, true)
+}
+
 fn scan_shell_configs_inner(
     shell_filter: Option<Shell>,
     dry_run: bool,
