@@ -117,6 +117,7 @@ pub struct ScanResult {
     pub configured: Vec<ConfigureResult>,
     pub completion_results: Vec<CompletionResult>,
     pub skipped: Vec<(Shell, PathBuf)>, // Shell + first path that was checked
+    pub failures: Vec<String>,
     /// Zsh was configured but compinit is missing (completions won't work without it)
     pub zsh_needs_compinit: bool,
     /// Legacy/stranded files cleaned up during install, paired with the shell
@@ -359,7 +360,7 @@ pub fn handle_configure_shell(
     shell::validate_shell_command_name(&cmd)?;
 
     // First, do a dry-run to see what would be changed
-    let mut preview = scan_shell_configs(shell_filter, true, &cmd)?;
+    let mut preview = scan_shell_configs_inner(shell_filter, true, &cmd, true)?;
     preview.completion_results = preview_shell_completions(&preview.configured, &cmd)?;
 
     // If nothing to do, return early
@@ -435,7 +436,7 @@ pub(crate) fn apply_confirmed_shell_config(
         return Ok(preview);
     }
 
-    let mut result = scan_shell_configs(shell_filter, false, cmd)?;
+    let mut result = scan_shell_configs_inner(shell_filter, false, cmd, true)?;
     result.completion_results =
         apply_shell_completions(preview.completion_results, &result.configured, cmd)?;
 
@@ -564,6 +565,20 @@ pub fn scan_shell_configs(
     dry_run: bool,
     cmd: &str,
 ) -> Result<ScanResult, ShellConfigError> {
+    scan_shell_configs_inner(shell_filter, dry_run, cmd, false)
+}
+
+/// Preview an install while retaining rc-file failures so other shells can be offered.
+pub(crate) fn preview_shell_configs_for_install(cmd: &str) -> Result<ScanResult, ShellConfigError> {
+    scan_shell_configs_inner(None, true, cmd, true)
+}
+
+fn scan_shell_configs_inner(
+    shell_filter: Option<Shell>,
+    dry_run: bool,
+    cmd: &str,
+    continue_on_error: bool,
+) -> Result<ScanResult, ShellConfigError> {
     shell::validate_shell_command_name(cmd)?;
 
     // Iterate every supported shell. Shells the user doesn't have are filtered
@@ -585,6 +600,7 @@ pub fn scan_shell_configs(
 
     let mut results = Vec::new();
     let mut skipped = Vec::new();
+    let mut failures = Vec::new();
 
     for shell in shells {
         let paths = shell
@@ -645,9 +661,11 @@ pub fn scan_shell_configs(
                     Ok(Some(result)) => results.push(result),
                     Ok(None) => {} // No action needed
                     Err(e) => {
-                        // For non-critical errors, we could continue with other shells
-                        // but for now we'll fail fast
-                        return Err(format!("Failed to configure {shell}: {e}").into());
+                        let message = format!("Failed to configure {shell}: {e}");
+                        if !continue_on_error {
+                            return Err(message.into());
+                        }
+                        failures.push(message);
                     }
                 }
             }
@@ -674,6 +692,7 @@ pub fn scan_shell_configs(
         configured: results,
         completion_results: Vec::new(),
         skipped,
+        failures,
         zsh_needs_compinit: false,   // Caller handles compinit detection
         legacy_cleanups: Vec::new(), // Caller handles legacy cleanup
     })
@@ -863,6 +882,12 @@ fn contains_shell_integration(
     shell: Shell,
     cmd: &str,
 ) -> Result<bool, String> {
+    if content.starts_with(&[0xff, 0xfe]) || content.starts_with(&[0xfe, 0xff]) {
+        return Err(format!(
+            "{} is not UTF-8 (looks like UTF-16); re-save it as UTF-8 to configure {shell}",
+            format_path_for_display(path)
+        ));
+    }
     // Check for the canonical line and older/manual forms for this shell.
     for line in content.split(|byte| *byte == b'\n') {
         let line = std::str::from_utf8(line).map_err(|e| {
