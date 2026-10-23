@@ -159,6 +159,8 @@ Worktrunk has two force flags for different situations:
 [107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m-D[0m[2m            # Delete unmerged branch[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m--force[0m[2m [0m[2m[36m-D[0m[2m    # Both[0m
 
+Before [2m--force[0m discards uncommitted changes, Worktrunk saves them (except ignored files and changes inside submodules) to [2mrefs/wt-backup/<branch>[0m and prints a command to recover them in a new worktree.
+
 Use [2m--no-delete-branch[0m to keep the branch regardless of merge status.
 
 [1m[32mBackground removal[0m
