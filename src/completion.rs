@@ -60,18 +60,6 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
     // warnings for the duration of this process.
     worktrunk::config::suppress_warnings();
 
-    // Completion exits before `main`'s `logging::init`, so the normal
-    // `-v`/`-vv` pipeline never runs here. `WORKTRUNK_VERBOSE` opts this
-    // short-lived subprocess into the same logging as a flagged command — the
-    // env-var equivalent of `-vv` — so humanized timing (`✓ git …`) and
-    // `$ git …` start records for a slow completion land in `.git/wt/logs/`
-    // just as `-vv` writes them. Left unset, completion stays silent so stray
-    // stderr never lands above the user's prompt.
-    let completion_verbose = crate::logging::env_verbose_level();
-    if completion_verbose > 0 {
-        crate::logging::init(completion_verbose);
-    }
-
     let mut args: Vec<OsString> = std::env::args_os().collect();
     CONTEXT.with(|ctx| *ctx.borrow_mut() = Some(CompletionContext { args: args.clone() }));
 
@@ -106,6 +94,33 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
         return true;
     }
 
+    // Determine the index of the word being completed.
+    // - Bash/Zsh: Pass `_CLAP_COMPLETE_INDEX` env var with the cursor position
+    // - Fish/Nushell: Append the current token as the last argument, so index = len - 1
+    let index: usize = std::env::var("_CLAP_COMPLETE_INDEX")
+        .ok()
+        .and_then(|i| i.parse().ok())
+        .unwrap_or_else(|| args.len() - 1);
+
+    // Only completed words can set globals: the cursor may still be editing
+    // a config filename or directory. Reuse runtime parsing so attached flag
+    // values and globals after built-in subcommands follow the same rules.
+    let globals = crate::parse_early_globals(args.iter().take(index).cloned());
+    let current_dir = globals.directory.clone().or(current_dir);
+    crate::apply_global_options(globals.directory, globals.config, globals.config_overrides);
+
+    // Completion exits before `main`'s `logging::init`, so the normal
+    // `-v`/`-vv` pipeline never runs here. `WORKTRUNK_VERBOSE` opts this
+    // short-lived subprocess into the same logging as a flagged command — the
+    // env-var equivalent of `-vv` — so humanized timing (`✓ git …`) and
+    // `$ git …` start records for a slow completion land in `.git/wt/logs/`
+    // just as `-vv` writes them. Left unset, completion stays silent so stray
+    // stderr never lands above the user's prompt.
+    let completion_verbose = crate::logging::env_verbose_level();
+    if completion_verbose > 0 {
+        crate::logging::init(completion_verbose);
+    }
+
     // Fill the git-discovery, git-config, and user-config caches on three
     // concurrent threads, exactly as `main` does before dispatching a command.
     // Completion answers and returns long before `main` reaches its own
@@ -125,20 +140,25 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
 
     // If the subcommand word matches a custom-subcommand binary, forward the
     // completion request to it (e.g., `wt sync --<tab>` → `wt-sync --<tab>`).
-    // args[0] is the binary name ("wt"), args[1] is the subcommand ("sync").
-    if args.len() >= 3 {
-        let subcommand = args[1].to_string_lossy();
-        // Built-ins and configured aliases both take precedence over PATH
-        // binaries at runtime, so completions must agree.
+    // The early parse includes only words before the cursor, so editing the
+    // subcommand itself never invokes a binary from PATH.
+    if let Some(start) = globals.external_subcommand_index {
+        let subcommand = args[start].to_string_lossy();
+        // The early parse excludes built-ins; configured aliases also take
+        // precedence over PATH binaries. Reuse the alias-injected tree.
         let binary = format!("wt-{subcommand}");
-        if cmd.find_subcommand(&*subcommand).is_none() && which::which(&binary).is_ok() {
-            // Forward args[1..] to the custom binary
-            if let Some(forwarded) = forward_completion_to_custom(&binary, &args[1..], &shell_name)
-            {
-                let _ = std::io::stdout().write_all(forwarded.as_bytes());
-                CONTEXT.with(|ctx| ctx.borrow_mut().take());
-                return true;
-            }
+        if cmd.find_subcommand(&*subcommand).is_none()
+            && let Some(forwarded) = forward_completion_to_custom(
+                &binary,
+                &args[start..],
+                &shell_name,
+                start,
+                current_dir.as_deref(),
+            )
+        {
+            let _ = std::io::stdout().write_all(forwarded.as_bytes());
+            CONTEXT.with(|ctx| ctx.borrow_mut().take());
+            return true;
         }
     }
 
@@ -147,14 +167,6 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
     let cmd = inject_custom_subcommands(cmd);
     let mut cmd = hide_non_positional_options_for_completion(cmd);
     cmd.build();
-
-    // Determine the index of the word being completed.
-    // - Bash/Zsh: Pass `_CLAP_COMPLETE_INDEX` env var with the cursor position
-    // - Fish/Nushell: Append the current token as the last argument, so index = len - 1
-    let index: usize = std::env::var("_CLAP_COMPLETE_INDEX")
-        .ok()
-        .and_then(|i| i.parse().ok())
-        .unwrap_or_else(|| args.len() - 1);
 
     // Check if the current word is exactly "-" (single dash)
     // If so, we want to show both short flags (-h) AND long flags (--help)
@@ -807,8 +819,14 @@ fn truncate_template(template: &str) -> &str {
 ///
 /// Rebuilds the args as if the user invoked `wt-sync <rest>` directly, passing
 /// the `COMPLETE` env var so the custom binary generates completions.
-fn forward_completion_to_custom(binary: &str, args: &[OsString], shell: &OsStr) -> Option<String> {
-    try_forward_completion_to_custom(binary, args, shell)
+fn forward_completion_to_custom(
+    binary: &str,
+    args: &[OsString],
+    shell: &OsStr,
+    removed_words: usize,
+    current_dir: Option<&std::path::Path>,
+) -> Option<String> {
+    try_forward_completion_to_custom(binary, args, shell, removed_words, current_dir)
         .ok()
         .flatten()
 }
@@ -821,18 +839,26 @@ fn try_forward_completion_to_custom(
     binary: &str,
     args: &[OsString],
     shell: &OsStr,
+    removed_words: usize,
+    current_dir: Option<&std::path::Path>,
 ) -> std::io::Result<Option<String>> {
     // Build args for the custom binary: [binary_name, rest_args...]
     let mut child_args: Vec<OsString> = vec![OsString::from(binary)];
     child_args.extend_from_slice(&args[1..]);
 
-    // Adjust the completion index: subtract 1 since we removed the subcommand name
+    // Drop wt and its global options from the child's cursor position.
     let index = std::env::var("_CLAP_COMPLETE_INDEX")
         .ok()
         .and_then(|i| i.parse::<usize>().ok())
-        .map(|i| i.saturating_sub(1));
+        .map(|i| i.saturating_sub(removed_words));
 
-    let mut cmd = std::process::Command::new(binary);
+    // Resolve before applying the child's cwd, as runtime custom dispatch
+    // does. Relative PATH entries must not select another executable in -C.
+    let path = which::which(binary).map_err(std::io::Error::other)?;
+    let mut cmd = std::process::Command::new(path);
+    if let Some(dir) = current_dir {
+        cmd.current_dir(dir);
+    }
     cmd.arg("--");
     cmd.args(&child_args);
     cmd.env("COMPLETE", shell);
@@ -1263,6 +1289,8 @@ mod tests {
             "/nonexistent/binary/xxxxxxxx_wt_test",
             &[OsString::from("test")],
             OsStr::new("bash"),
+            1,
+            None,
         );
         assert!(result.is_none());
     }
@@ -1286,7 +1314,7 @@ mod tests {
         use std::io::ErrorKind;
         let mut result: Option<std::io::Result<Option<String>>> = None;
         worktrunk::testing::wait_for("ETXTBSY to clear and script to exec", || {
-            match try_forward_completion_to_custom(binary, args, shell) {
+            match try_forward_completion_to_custom(binary, args, shell, 1, None) {
                 Err(e) if e.kind() == ErrorKind::ExecutableFileBusy => false,
                 other => {
                     result = Some(other);

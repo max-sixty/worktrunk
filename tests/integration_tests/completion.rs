@@ -1518,6 +1518,94 @@ fn test_complete_single_dash_shows_both_short_and_long_flags(repo: TestRepo) {
     }
 }
 
+/// A completed -C option selects the repository used by branch completion.
+#[rstest]
+fn test_completion_respects_directory_option(repo: TestRepo) {
+    let other = TestRepo::with_initial_commit();
+    other.create_branch("only-in-selected-repo");
+    repo.create_branch("only-in-original-repo");
+    let path = other.root_path().to_str().unwrap();
+    for args in [
+        vec!["wt", "-C", path, "switch", ""],
+        vec!["wt", "switch", "-C", path, ""],
+    ] {
+        let output = repo
+            .completion_cmd(&args)
+            .env("WORKTRUNK_VERBOSE", "2")
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("only-in-selected-repo"), "{stdout}");
+        assert!(!stdout.contains("only-in-original-repo"), "{stdout}");
+        assert!(other.root_path().join(".git/wt/logs/trace.log").exists());
+        assert!(!repo.root_path().join(".git/wt/logs/trace.log").exists());
+    }
+}
+
+/// Relative path values use the same selected cwd as the eventual command.
+#[rstest]
+fn test_completion_respects_directory_for_paths(repo: TestRepo) {
+    let other = TestRepo::with_initial_commit();
+    std::fs::create_dir(other.root_path().join("selected-directory")).unwrap();
+    std::fs::create_dir(repo.root_path().join("original-directory")).unwrap();
+    let output = repo
+        .completion_cmd(&[
+            "wt",
+            "-C",
+            other.root_path().to_str().unwrap(),
+            "switch",
+            "feature",
+            "--path",
+            "",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("selected-directory"), "{stdout}");
+    assert!(!stdout.contains("original-directory"), "{stdout}");
+}
+
+/// Completion uses explicit config files and inline overrides, while a value
+/// still being edited at the cursor does not replace the active config.
+#[rstest]
+fn test_completion_respects_config_options(repo: TestRepo) {
+    repo.write_test_config("[aliases]\noriginal-alias = 'echo original'\n");
+    let config_dir = crate::common::test_tempdir();
+    let config = config_dir.path().join("config.toml");
+    std::fs::write(&config, "[aliases]\nselected-alias = 'echo selected'\n").unwrap();
+    let path = config.to_str().unwrap();
+    let attached = format!("--config={path}");
+    for args in [
+        vec!["wt", "--config", path, ""],
+        vec!["wt", &attached, ""],
+        vec![
+            "wt",
+            "--config-set",
+            "aliases.selected-alias='echo inline'",
+            "",
+        ],
+    ] {
+        let output = repo.completion_cmd(&args).output().unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("selected-alias"), "{stdout}");
+    }
+
+    // The shell reports a cursor in the middle of an existing command line.
+    // Its later --config words must not affect the alias candidates here.
+    let output = repo
+        .completion_cmd(&["wt", "", "--config", path])
+        .env("_CLAP_COMPLETE_INDEX", "1")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("original-alias"), "{stdout}");
+    assert!(!stdout.contains("selected-alias"), "{stdout}");
+}
+
 /// `wt config alias show <TAB>` and `wt config alias dry-run <TAB>` complete
 /// with the merged user + project alias name set.
 #[rstest]
@@ -2223,6 +2311,64 @@ fn test_complete_custom_subcommand_listed(repo: TestRepo) {
     );
 }
 
+/// Global options belong to wt; the external completer receives its own argv,
+/// cursor position, and the selected working directory.
+#[cfg(unix)]
+#[rstest]
+fn test_complete_custom_subcommand_after_globals(repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let other = TestRepo::with_initial_commit();
+    let relative_bin = std::path::Path::new("completion-bin");
+    let ext_dir = repo.root_path().join(relative_bin);
+    std::fs::create_dir(&ext_dir).unwrap();
+    let other_bin = other.root_path().join(relative_bin);
+    std::fs::create_dir(&other_bin).unwrap();
+    let wrong_script = other_bin.join("wt-testext");
+    std::fs::write(&wrong_script, "#!/bin/sh\nprintf wrong-executable\n").unwrap();
+    std::fs::set_permissions(&wrong_script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let script = ext_dir.join("wt-testext");
+    std::fs::write(
+        &script,
+        r#"#!/bin/sh
+printf 'index:%s\n' "$_CLAP_COMPLETE_INDEX"
+printf 'arg:%s\n' "$@"
+printf 'cwd:%s\n' "$PWD"
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let args = [
+        "wt",
+        "-C",
+        other.root_path().to_str().unwrap(),
+        "testext",
+        "value",
+        "--",
+    ];
+    let mut cmd = repo.completion_cmd(&args);
+    prepend_path(&mut cmd, relative_bin);
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        stdout,
+        format!(
+            "index:2\narg:--\narg:wt-testext\narg:value\narg:--\ncwd:{}\n",
+            other.root_path().display()
+        )
+    );
+
+    // With the cursor back on the command name, offer wt command names.
+    // Existing arguments to its right must not trigger external completion.
+    let mut cmd = repo.completion_cmd(&args);
+    prepend_path(&mut cmd, relative_bin);
+    let output = cmd.env("_CLAP_COMPLETE_INDEX", "3").output().unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("testext"), "{stdout}");
+    assert!(!stdout.contains("index:"), "{stdout}");
+}
+
 /// Completion for a custom subcommand's flags forwards to the `wt-*` binary.
 #[cfg(unix)]
 #[rstest]
@@ -2275,20 +2421,29 @@ printf '%s\n%s\n%s' '--custom-flag' '--another' "retired:${WORKTRUNK_DIRECTIVE_F
 }
 
 /// Alias completions must win over an executable with the same name, just
-/// like dispatch. The losing executable must not run even on a Tab press.
+/// like dispatch, including aliases from the repository selected by -C.
+/// The losing executable must not run even on a Tab press.
 #[cfg(unix)]
 #[rstest]
-#[case(false)]
-#[case(true)]
-fn test_complete_alias_shadows_custom_binary(repo: TestRepo, #[case] project: bool) {
+#[case(false, false)]
+#[case(true, false)]
+#[case(false, true)]
+#[case(true, true)]
+fn test_complete_alias_shadows_custom_binary(
+    repo: TestRepo,
+    #[case] project: bool,
+    #[case] select_other: bool,
+) {
     use std::os::unix::fs::PermissionsExt;
 
+    let other = TestRepo::with_initial_commit();
+    let selected = if select_other { &other } else { &repo };
     let config = r#"
 [aliases]
 co = "wt switch {{ args }}"
 "#;
     if project {
-        repo.write_project_config(config);
+        selected.write_project_config(config);
     } else {
         repo.write_test_config(config);
     }
@@ -2305,7 +2460,18 @@ printf -- '--external-flag\n'
     .unwrap();
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    let mut cmd = repo.completion_cmd(&["wt", "co", "--"]);
+    let args = if select_other {
+        vec![
+            "wt",
+            "-C",
+            selected.root_path().to_str().unwrap(),
+            "co",
+            "--",
+        ]
+    } else {
+        vec!["wt", "co", "--"]
+    };
+    let mut cmd = repo.completion_cmd(&args);
     prepend_path(&mut cmd, ext_dir.path());
     cmd.env("WORKTRUNK_TEST_COMPLETION_MARKER", &marker);
     let output = cmd.output().unwrap();
