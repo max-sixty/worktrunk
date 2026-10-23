@@ -3,6 +3,8 @@
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, bail};
 use dashmap::mapref::entry::Entry;
@@ -16,6 +18,40 @@ use super::{GitError, LineDiff, Repository};
 use crate::git::{CommandError, PlumbingDiff};
 
 const TEMP_INDEX_PREFIX: &str = "worktrunk-temp-index-";
+const TEMP_INDEX_MAX_AGE: Duration = Duration::from_secs(60 * 60);
+
+/// Reclaim index copies and Git's `.lock` siblings left by abrupt exits.
+/// Age is a retention policy, not proof that an owner has exited: a suspended
+/// operation or Git filter lasting over an hour can lose its scratch index.
+/// Keep indexes out of interactive approval waits. Cleanup is best-effort;
+/// normal exits still remove each index through `TempPath`.
+fn sweep_stale_temp_indexes(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let now = SystemTime::now();
+    for entry in entries.filter_map(Result::ok) {
+        if !entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with(TEMP_INDEX_PREFIX))
+        {
+            continue;
+        }
+        let expired = entry
+            .metadata()
+            .ok()
+            .and_then(|metadata| metadata.modified().ok())
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age >= TEMP_INDEX_MAX_AGE);
+        if expired && let Err(error) = std::fs::remove_file(entry.path()) {
+            tracing::debug!(
+                "Failed to remove stale temporary index {}: {error}",
+                entry.path().display()
+            );
+        }
+    }
+}
 
 /// A squash safety backup: an immutable snapshot of the index and the ref
 /// whose reflog retains it. The backup commit's parent is the pre-squash HEAD.
@@ -1085,11 +1121,19 @@ impl<'a> WorkingTree<'a> {
         // closes and removes the 0-byte file before Git creates a valid index.
         let mut builder = tempfile::Builder::new();
         builder.prefix(TEMP_INDEX_PREFIX);
+        // Parallel probes don't wait for the one caller doing this sweep.
+        static SWEPT_SYSTEM_TEMP: AtomicBool = AtomicBool::new(false);
+        if !SWEPT_SYSTEM_TEMP.swap(true, Ordering::Relaxed) {
+            sweep_stale_temp_indexes(&std::env::temp_dir());
+        }
         let mut temp_file = match builder.tempfile() {
             Ok(file) => file,
-            Err(temp_error) => builder.tempfile_in(&git_dir).context(format!(
-                "Failed to create temporary index in the system temp directory or Git directory; system temp error: {temp_error}"
-            ))?,
+            Err(temp_error) => {
+                sweep_stale_temp_indexes(&git_dir);
+                builder.tempfile_in(&git_dir).context(format!(
+                    "Failed to create temporary index in the system temp directory or Git directory; system temp error: {temp_error}"
+                ))?
+            }
         };
         let mut real_index_file = match std::fs::File::open(&real_index) {
             Ok(file) => Some(file),
@@ -1493,6 +1537,45 @@ mod tests {
     use crate::git::{LineDiff, Repository};
     use crate::shell_exec::Cmd;
     use crate::testing::TestRepo;
+
+    #[test]
+    fn sweep_stale_temp_indexes_preserves_recent_and_unrelated_entries() {
+        use super::{TEMP_INDEX_MAX_AGE, sweep_stale_temp_indexes};
+        use std::time::{Duration, SystemTime};
+
+        let dir = crate::testing::test_tempdir();
+        let now = SystemTime::now();
+        let old = now - TEMP_INDEX_MAX_AGE - Duration::from_secs(60);
+        for (name, modified) in [
+            ("worktrunk-temp-index-old", old),
+            ("worktrunk-temp-index-old.lock", old),
+            ("worktrunk-temp-index-recent", now),
+            ("worktrunk-temp-index-recent.lock", now),
+            ("worktrunk-temp-index-future", now + TEMP_INDEX_MAX_AGE),
+            ("unrelated", old),
+        ] {
+            let file = std::fs::File::create(dir.path().join(name)).unwrap();
+            file.set_times(std::fs::FileTimes::new().set_modified(modified))
+                .unwrap();
+        }
+
+        sweep_stale_temp_indexes(dir.path());
+        let mut remaining: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        remaining.sort();
+        assert_eq!(
+            remaining,
+            [
+                "unrelated",
+                "worktrunk-temp-index-future",
+                "worktrunk-temp-index-recent",
+                "worktrunk-temp-index-recent.lock",
+            ]
+        );
+        sweep_stale_temp_indexes(&dir.path().join("missing"));
+    }
 
     #[test]
     fn lock_reason_errors_when_locked_is_unreadable() {

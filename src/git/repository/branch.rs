@@ -86,14 +86,7 @@ impl<'a> Branch<'a> {
 
     /// Check if this branch exists locally.
     pub fn exists_locally(&self) -> anyhow::Result<bool> {
-        Ok(self
-            .repo
-            .run_command(&[
-                "rev-parse",
-                "--verify",
-                &format!("refs/heads/{}", self.name),
-            ])
-            .is_ok())
+        self.repo.ref_exists(&format!("refs/heads/{}", self.name))
     }
 
     /// Check if this branch exists (local or remote).

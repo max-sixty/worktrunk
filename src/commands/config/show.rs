@@ -673,14 +673,7 @@ fn render_diagnostics(out: &mut String, repo: Option<&Repository>) -> anyhow::Re
     let project_id = repo.and_then(|repo| repo.project_identifier().ok());
     let commit_config = config.commit_generation(project_id.as_ref());
 
-    if !commit_config.is_configured() {
-        writeln!(out, "{}", info_message("Commit generation not configured"))?;
-    } else {
-        // `is_configured()` guarantees `command` is `Some` and non-empty here;
-        // `unwrap_or_default()` avoids a panic-prone `unwrap()` in this
-        // `Result`-returning function (the default is unreachable).
-        let command_display = commit_config.command.clone().unwrap_or_default();
-
+    if let Some(command_display) = commit_config.command() {
         match test_commit_generation(&commit_config) {
             Ok(message) => {
                 writeln!(
@@ -706,6 +699,8 @@ fn render_diagnostics(out: &mut String, repo: Option<&Repository>) -> anyhow::Re
                 writeln!(out, "{}", format_with_gutter(&body, None))?;
             }
         }
+    } else {
+        writeln!(out, "{}", info_message("Commit generation not configured"))?;
     }
 
     Ok(())

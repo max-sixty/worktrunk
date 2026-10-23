@@ -11,7 +11,7 @@ const launchUrl = `${server}/launch?snapshot=${encodeURIComponent(snapshot)}`;
 
 <StarlightPage
   frontmatter={{
-    title: 'Try it',
+    title: 'Try Worktrunk in a demo shell',
     description: 'Try Worktrunk in a demo shell',
     editUrl: false,
     tableOfContents: false,
@@ -19,40 +19,62 @@ const launchUrl = `${server}/launch?snapshot=${encodeURIComponent(snapshot)}`;
     head: [{ tag: 'meta', attrs: { name: 'robots', content: 'noindex' } }],
   }}
 >
-  <p>
-    Try Worktrunk in a demo shell
-  </p>
-  <p>
-    <a href={launchUrl}>Open the full-page demo</a>
-  </p>
-
   <div class="wt-try-it" data-server={server} data-snapshot={snapshot}>
     <noscript>
       <p><a href={launchUrl}>Open the demo</a></p>
     </noscript>
   </div>
-  <p class="wt-try-it-credit">
-    Powered by <a href="https://demoshell.com">Demoshell</a>.
+  <p class="wt-try-it-link">
+    <a href={launchUrl}>Open the full-page demo in Demoshell</a>
   </p>
 </StarlightPage>
 
 <style>
-  /* The embed fills its container, so the container needs a definite height:
-     room for the terminal with the guide stacked under it. */
-  .wt-try-it {
-    height: 640px;
+  .wt-try-it-link {
+    margin-block: 0.75rem 0;
   }
 
-  .wt-try-it-credit {
-    font-size: var(--sl-text-sm);
-    color: var(--sl-color-gray-3);
-    text-align: right;
+  /* The workspace uses the main pane's width while the title stays in the docs rail. */
+  .wt-try-it {
+    height: var(--wt-workspace-height, max(420px, calc(100svh - 16rem)));
+    /* Keep Demoshell's attribution badge clear of the guide controls. */
+    padding-block-end: 2rem;
+  }
+
+  :global(html:has(.wt-try-it) main) {
+    padding-block-end: 0;
+  }
+
+  :global(html:has(.wt-try-it) main footer) {
+    display: none;
   }
 </style>
 
 <script is:inline type="module">
   const target = document.querySelector('.wt-try-it');
+  const fullPageLink = document.querySelector('.wt-try-it-link');
   const currentTheme = () => (document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
+
+  const fitWorkspace = () => {
+    const { top, bottom } = target.getBoundingClientRect();
+    const spaceBelowWorkspace = fullPageLink.getBoundingClientRect().bottom - bottom;
+    const panel = target.closest('.content-panel');
+    const panelStyle = getComputedStyle(panel);
+    const left = target.closest('.main-pane').getBoundingClientRect().left
+      + parseFloat(panelStyle.paddingInlineStart);
+    const rightPadding = parseFloat(panelStyle.paddingInlineEnd);
+    const bottomPadding = parseFloat(panelStyle.paddingBlockEnd);
+    target.style.marginInlineStart = `${left - target.parentElement.getBoundingClientRect().left}px`;
+    target.style.width = `${document.documentElement.clientWidth - left - rightPadding}px`;
+    const documentTop = top + window.scrollY;
+    target.style.setProperty('--wt-workspace-height', `${Math.max(420, window.innerHeight - documentTop - spaceBelowWorkspace - bottomPadding)}px`);
+  };
+  fitWorkspace();
+  window.addEventListener('resize', fitWorkspace);
+  // Refit when the heading or link reflows, including late font loads.
+  const layoutObserver = new ResizeObserver(fitWorkspace);
+  layoutObserver.observe(document.querySelector('h1'));
+  layoutObserver.observe(fullPageLink);
 
   try {
     const { default: Demoshell } = await import(`${target.dataset.server}/embed/demoshell-embed.js`);

@@ -7970,3 +7970,59 @@ fn test_config_show_reports_failed_migration_diff(repo: TestRepo) {
         "expected the failure to be reported, got:\n{stdout}"
     );
 }
+
+/// A non-UTF-8 environment entry must not panic config loading.
+#[cfg(unix)]
+#[rstest]
+fn test_config_show_non_utf8_environment(repo: TestRepo) {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let output = repo
+        .wt_command()
+        .env("UNRELATED", OsString::from_vec(vec![0xff]))
+        .env(OsString::from_vec(b"UNRELATED_\xff".to_vec()), "value")
+        .args(["config", "show"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+}
+
+/// An unreadable config must stop a mutation before it uses default settings.
+#[rstest]
+#[case("WORKTRUNK_CONFIG_PATH", false)]
+#[case("WORKTRUNK_SYSTEM_CONFIG_PATH", false)]
+#[case("WORKTRUNK_CONFIG_PATH", true)]
+#[case("WORKTRUNK_SYSTEM_CONFIG_PATH", true)]
+fn test_unreadable_config_stops_switch(
+    repo: TestRepo,
+    #[case] variable: &str,
+    #[case] invalid_utf8: bool,
+) {
+    let scratch = crate::common::test_tempdir();
+    let config = scratch.path().join("unreadable.toml");
+    if invalid_utf8 {
+        fs::write(&config, [0xff]).unwrap();
+    } else {
+        fs::create_dir(&config).unwrap();
+    }
+    let output = repo
+        .wt_command()
+        .env(variable, &config)
+        .args(["switch", "--create", "unreadable-config", "--yes"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Failed to read"), "{stderr}");
+    assert!(stderr.contains("unreadable.toml"), "{stderr}");
+    let branch = repo
+        .git_command()
+        .args(["show-ref", "--verify", "refs/heads/unreadable-config"])
+        .run()
+        .unwrap();
+    assert!(
+        !branch.status.success(),
+        "branch was created despite unreadable config"
+    );
+}

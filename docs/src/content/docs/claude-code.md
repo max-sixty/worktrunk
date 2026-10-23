@@ -126,7 +126,7 @@ $ git config worktrunk.state.feature.marker '{"marker":"💬","set_at":0}'  # Di
 
 ### Agent CLIs without a plugin
 
-Activity tracking is not plugin-specific. The plugins above only call `wt` on their host's session events, and the marker itself is plain git config — so any CLI that can run a command on session lifecycle events drives the same 🤖/💬 markers with no worktrunk plugin:
+For other agent CLIs, configure these commands to run on session events:
 
 | Host event | Command |
 |---|---|
@@ -152,7 +152,7 @@ Claude Code asks for confirmation before a session enters an existing worktree b
 
 <code>~/w/myproject.feature-auth  !🤖  @<span style='color:#0a0'>+42</span> <span style='color:#a00'>-8</span>  <span style='color:#0a0'>↑3</span>  <span style='color:#0a0'>⇡1</span>  <span style='color:#0a0'>#3035</span>  Opus  🌔 65%  <span style='color:#a70'>1.4×(10am–3pm)</span></code>
 
-Worktree state comes from the same cells [`wt list`](/list/) renders; Claude Code's stdin JSON adds the model, the `🌔 65%` context gauge, and the rate-limit pace notice. [`wt list statusline`](/list/#wt-list-statusline) documents every segment, how the links behave, and the JSON fields behind them.
+The statusline shows worktree status, model, context usage, and rate-limit pace. See [`wt list statusline`](/list/#wt-list-statusline) for details.
 
 <figure class="demo">
 <picture>

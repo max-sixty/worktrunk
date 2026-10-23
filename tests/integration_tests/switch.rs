@@ -11,6 +11,77 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
+/// A failed existence check must stop creation, not pretend a ref is absent.
+#[cfg(unix)]
+#[rstest]
+fn test_switch_create_propagates_ref_query_failure(repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let scratch = crate::common::test_tempdir();
+    let script = scratch.path().join("git");
+    let reached = scratch.path().join("reached");
+    let real_git = which::which("git").unwrap();
+    let mut path = vec![scratch.path().to_path_buf()];
+    path.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    let path = std::env::join_paths(path).unwrap();
+
+    for (reference, explicit_base) in [
+        ("main", true),
+        ("main", false),
+        ("refs/heads/new-branch", true),
+    ] {
+        fs::write(&reached, "").unwrap();
+        fs::write(
+            &script,
+            format!(
+                r#"#!/bin/sh
+if [ "$1" = rev-parse ]; then
+  for arg in "$@"; do
+    if [ "$arg" = '{reference}' ] || [ "$arg" = '{reference}^{{commit}}' ]; then
+      echo reached > {reached}
+      echo 'simulated query failure' >&2
+      exit 128
+    fi
+  done
+fi
+exec {real_git} "$@"
+"#,
+                reached = shell_escape::unix::escape(reached.to_string_lossy()),
+                real_git = shell_escape::unix::escape(real_git.to_string_lossy()),
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut cmd = repo.wt_command();
+        cmd.env("PATH", &path)
+            .args(["switch", "--create", "new-branch", "--yes"]);
+        if explicit_base {
+            cmd.args(["--base", "main"]);
+        }
+        let output = cmd.output().unwrap();
+        assert_eq!(
+            fs::read_to_string(&reached).unwrap(),
+            "reached\n",
+            "{reference}: {output:?}"
+        );
+        assert!(!output.status.success(), "{reference}: {output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("simulated query failure"),
+            "{reference}: {output:?}"
+        );
+        let probe = repo
+            .git_command()
+            .args(["show-ref", "--verify", "--quiet", "refs/heads/new-branch"])
+            .run()
+            .unwrap();
+        assert_eq!(
+            probe.status.code(),
+            Some(1),
+            "no branch may be created after a failed query"
+        );
+    }
+}
+
 // Snapshot helpers
 
 fn snapshot_switch(test_name: &str, repo: &TestRepo, args: &[&str]) {

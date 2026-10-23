@@ -89,6 +89,9 @@ fn preview_commit(
     let commit_config = env.resolved().commit_generation.clone();
     let wt = env.repo.worktree_at(&env.worktree_path);
 
+    let ctx = env.context(yes);
+    let project_append = resolve_template_for_preview(&ctx, &commit_config, dry_run)?;
+
     // For --dry-run, stage to a copy of the index so the preview reflects what a real
     // run would send. --show-prompt skips this — it's the cheap "what's already staged"
     // path. StageMode::None has nothing to stage, so we use the existing index as-is.
@@ -105,9 +108,6 @@ fn preview_commit(
         None
     };
     let staging_index = temp_index.as_ref();
-
-    let ctx = env.context(yes);
-    let project_append = resolve_template_for_preview(&ctx, &commit_config, dry_run)?;
 
     let prompt = crate::llm::build_commit_prompt(
         &commit_config,
