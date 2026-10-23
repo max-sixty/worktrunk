@@ -19,20 +19,19 @@ const launchUrl = `${server}/launch?snapshot=${encodeURIComponent(snapshot)}`;
     head: [{ tag: 'meta', attrs: { name: 'robots', content: 'noindex' } }],
   }}
 >
-  <p class="wt-try-it-link">
-    <a href={launchUrl}>Open the full-page demo in Demoshell</a>
-  </p>
-
   <div class="wt-try-it" data-server={server} data-snapshot={snapshot}>
     <noscript>
       <p><a href={launchUrl}>Open the demo</a></p>
     </noscript>
   </div>
+  <p class="wt-try-it-link">
+    <a href={launchUrl}>Open the full-page demo in Demoshell</a>
+  </p>
 </StarlightPage>
 
 <style>
   .wt-try-it-link {
-    margin-block-start: 0;
+    margin-block: 0.75rem 0;
   }
 
   /* The workspace uses the main pane's width while the title stays in the docs rail. */
@@ -53,10 +52,12 @@ const launchUrl = `${server}/launch?snapshot=${encodeURIComponent(snapshot)}`;
 
 <script is:inline type="module">
   const target = document.querySelector('.wt-try-it');
+  const fullPageLink = document.querySelector('.wt-try-it-link');
   const currentTheme = () => (document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
 
   const fitWorkspace = () => {
-    const { top } = target.getBoundingClientRect();
+    const { top, bottom } = target.getBoundingClientRect();
+    const spaceBelowWorkspace = fullPageLink.getBoundingClientRect().bottom - bottom;
     const panel = target.closest('.content-panel');
     const panelStyle = getComputedStyle(panel);
     const left = target.closest('.main-pane').getBoundingClientRect().left
@@ -66,12 +67,14 @@ const launchUrl = `${server}/launch?snapshot=${encodeURIComponent(snapshot)}`;
     target.style.marginInlineStart = `${left - target.parentElement.getBoundingClientRect().left}px`;
     target.style.width = `${document.documentElement.clientWidth - left - rightPadding}px`;
     const documentTop = top + window.scrollY;
-    target.style.setProperty('--wt-workspace-height', `${Math.max(420, window.innerHeight - documentTop - bottomPadding)}px`);
+    target.style.setProperty('--wt-workspace-height', `${Math.max(420, window.innerHeight - documentTop - spaceBelowWorkspace - bottomPadding)}px`);
   };
   fitWorkspace();
   window.addEventListener('resize', fitWorkspace);
-  // The heading can wrap or change height when its display font loads.
-  new ResizeObserver(fitWorkspace).observe(document.querySelector('h1'));
+  // Refit when the heading or link reflows, including late font loads.
+  const layoutObserver = new ResizeObserver(fitWorkspace);
+  layoutObserver.observe(document.querySelector('h1'));
+  layoutObserver.observe(fullPageLink);
 
   try {
     const { default: Demoshell } = await import(`${target.dataset.server}/embed/demoshell-embed.js`);
