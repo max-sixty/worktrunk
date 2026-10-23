@@ -160,6 +160,8 @@ impl MergeContext {
 
         // Snapshot target SHA early for TOCTOU safety (used by both strategies
         // for the fast-forward check; --no-ff also uses it for update-ref).
+        // Every later range reads this SHA rather than the bare branch name,
+        // which git would resolve to a same-named tag first.
         let target_ref = format!("refs/heads/{}", target_branch);
         let target_tip = repo
             .run_command(&["rev-parse", &target_ref])?
@@ -197,7 +199,12 @@ impl MergeContext {
         // Refuse when uncommitted changes in the target worktree overlap the
         // push range. Non-overlapping changes stay in place: the two-tree
         // merge in `advance_target` carries them through untouched.
-        repo.ensure_no_target_conflicts(target_worktree_path.as_ref(), &target_branch, &head_sha)?;
+        repo.ensure_no_target_conflicts(
+            target_worktree_path.as_ref(),
+            &target_branch,
+            &target_tip,
+            &head_sha,
+        )?;
 
         // TODO(#3519 follow-up): when `target_branch` was behind its upstream
         // (see `Repository::span_upstream`), this count mixes the carried
@@ -206,11 +213,11 @@ impl MergeContext {
         // overstates what the branch itself contributed. Splitting them needs
         // a carried-count threaded through `MergeContext`; deferred as
         // cosmetic.
-        let commit_count = repo.count_commits(&target_branch, &head_sha)?;
+        let commit_count = repo.count_commits(&target_tip, &head_sha)?;
 
         let stats_summary = if commit_count > 0 {
             repo.current_worktree()
-                .prepare_commit_diff(&target_branch, &head_sha)
+                .prepare_commit_diff(&target_tip, &head_sha)
                 .stats_summary()
         } else {
             Vec::new()
@@ -267,12 +274,12 @@ impl MergeContext {
             "--graph",
             "--oneline",
             "--end-of-options",
-            &format!("{}..{}", self.target_branch, self.head_sha),
+            &format!("{}..{}", self.target_tip, self.head_sha),
         ])?;
         eprintln!("{}", format_with_gutter(&log_output, None));
 
         // Diff statistics
-        crate::commands::show_diffstat(&self.repo, &self.target_branch, &self.head_sha)?;
+        crate::commands::show_diffstat(&self.repo, &self.target_tip, &self.head_sha)?;
 
         Ok(())
     }
