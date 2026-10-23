@@ -569,6 +569,16 @@ pub fn prompt_shell_integration(
 
     print_shell_install_result(&install_result, binary_name);
 
+    if !install_result.failures.is_empty() {
+        for failure in &install_result.failures {
+            eprintln!("{}", warning_message(failure));
+        }
+        anyhow::bail!(
+            "Could not configure {} shell(s)",
+            install_result.failures.len()
+        );
+    }
+
     Ok(true)
 }
 
