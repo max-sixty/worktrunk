@@ -3,7 +3,9 @@
 //! # Architecture
 //!
 //! For regular output, use `eprintln!`/`println!` directly (from `worktrunk::styling`
-//! for color support); [`print_json`] serializes a `--format=json` answer to stdout.
+//! for color support). Command handlers emit JSON with [`print_json`] or
+//! [`finish_output`] before returning their error to main. Inner operations
+//! retain typed partial results through [`CommandResult`]. Diagnostics stay on stderr.
 //! This module handles the cd directive that must be communicated to the
 //! parent shell.
 //!
@@ -56,4 +58,4 @@ pub(crate) use shell_integration::{
 // Re-export commit generation functions
 pub(crate) use commit_generation::prompt_commit_generation;
 // Re-export the JSON answer printer
-pub(crate) use json::print_json;
+pub(crate) use json::{CommandFailure, CommandResult, finish_output, print_json};

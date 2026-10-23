@@ -38,17 +38,19 @@ pub enum PreApprovedGuidance {
 }
 
 /// Result of a squash operation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum SquashResult {
     /// Squash or commit occurred. Carries the resulting commit's SHA, message,
     /// and resolved stage mode so callers can render structured output.
     Squashed {
+        #[serde(rename = "commit")]
         sha: String,
         message: String,
         stage_mode: StageMode,
     },
     /// Nothing to squash: no commits ahead of target branch
-    NoCommitsAhead(String),
+    NoCommitsAhead { target: String },
     /// Nothing to squash: already a single commit
     AlreadySingleCommit,
     /// Squash attempted but resulted in no net changes (commits canceled out)
@@ -74,7 +76,7 @@ pub fn handle_squash(
     stage: Option<StageMode>,
     announcer: &mut HookAnnouncer<'_>,
     pre_approved_guidance: PreApprovedGuidance,
-) -> anyhow::Result<SquashResult> {
+) -> crate::output::CommandResult<SquashResult> {
     // Load config once, run LLM setup prompt, then reuse config
     let mut config = UserConfig::load().context("Failed to load config")?;
     // One-time LLM setup prompt (errors logged internally; don't block commit)
@@ -102,7 +104,7 @@ pub fn handle_squash_in(
     stage: Option<StageMode>,
     announcer: &mut HookAnnouncer<'_>,
     pre_approved_guidance: PreApprovedGuidance,
-) -> anyhow::Result<SquashResult> {
+) -> crate::output::CommandResult<SquashResult> {
     let repo = &env.repo;
     // Rewriting history under a half-finished operation is never what the user
     // meant, and mid-rebase HEAD is detached — so this runs ahead of the branch
@@ -212,7 +214,9 @@ pub fn handle_squash_in(
     // Handle different scenarios
     if commit_count == 0 && !has_staged {
         // No commits and no staged changes - nothing to squash
-        return Ok(SquashResult::NoCommitsAhead(span_target));
+        return Ok(SquashResult::NoCommitsAhead {
+            target: span_target,
+        });
     }
 
     if commit_count == 1 && !has_staged {
@@ -230,7 +234,15 @@ pub fn handle_squash_in(
             sha,
             message,
             stage_mode,
-        } = generator.commit_staged_changes(&wt, true, true, stage_mode)?;
+        } = generator
+            .commit_staged_changes(&wt, true, true, stage_mode)
+            .map_err(|failure| {
+                failure.map_result(|outcome| SquashResult::Squashed {
+                    sha: outcome.sha,
+                    message: outcome.message,
+                    stage_mode: outcome.stage_mode,
+                })
+            })?;
         return Ok(SquashResult::Squashed {
             sha,
             message,
@@ -416,35 +428,35 @@ pub fn handle_squash_in(
         .and_then(|_| wt.run_command(&["rev-parse", "HEAD"]))
     {
         Ok(sha) => sha.trim().to_string(),
-        Err(err) => return Err(reattach_after_failure(&wt, &branch_ref, err)),
+        Err(err) => return Err(reattach_after_failure(&wt, &branch_ref, err).into()),
     };
 
     let subject = commit_message.lines().next().unwrap_or_default();
     if let Err(err) = move_branch(&commit_sha, &format!("wt squash: {subject}")) {
-        return Err(reattach_after_failure(&wt, &branch_ref, err));
+        return Err(reattach_after_failure(&wt, &branch_ref, err).into());
     }
-    reattach_head(&wt, &branch_ref)?;
-
-    // Full SHA for the JSON payload, abbreviated form for the success line.
-    let commit_hash = repo.short_sha(&commit_sha)?;
-
-    // Show success immediately after completing the squash
-    eprintln!(
-        "{}",
-        success_message(cformat!("Squashed @ <dim>{commit_hash}</>"))
-    );
-
-    // Register post-commit hooks onto the caller's announcer (respects --no-hooks).
-    if hooks.run() {
-        let extra_vars = template_vars.as_extra_vars();
-        announcer.register(&ctx, HookType::PostCommit, &extra_vars, None)?;
-    }
-
-    Ok(SquashResult::Squashed {
-        sha: commit_sha,
+    let result = SquashResult::Squashed {
+        sha: commit_sha.clone(),
         message: commit_message,
         stage_mode,
-    })
+    };
+    let completion = (|| -> anyhow::Result<()> {
+        reattach_head(&wt, &branch_ref)?;
+        let commit_hash = repo.short_sha(&commit_sha)?;
+        eprintln!(
+            "{}",
+            success_message(cformat!("Squashed @ <dim>{commit_hash}</>"))
+        );
+        if hooks.run() {
+            let extra_vars = template_vars.as_extra_vars();
+            announcer.register(&ctx, HookType::PostCommit, &extra_vars, None)?;
+        }
+        Ok(())
+    })();
+    match completion {
+        Ok(()) => Ok(result),
+        Err(error) => Err(crate::output::CommandFailure::with_result(error, result)),
+    }
 }
 
 /// Put HEAD back on the branch it was detached from for the squash commit.

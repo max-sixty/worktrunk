@@ -95,7 +95,7 @@ pub fn step_copy_ignored(
                 "entries": Vec::<serde_json::Value>::new(),
             });
             insert_empty_counts(&mut payload);
-            print_json(&payload)?;
+            return print_json(&payload);
         } else {
             eprintln!(
                 "{}",
@@ -128,7 +128,7 @@ pub fn step_copy_ignored(
             if !dry_run {
                 insert_empty_counts(&mut payload);
             }
-            print_json(&payload)?;
+            return print_json(&payload);
         } else {
             eprintln!(
                 "{}",
@@ -165,7 +165,7 @@ pub fn step_copy_ignored(
             if !dry_run {
                 insert_empty_counts(&mut payload);
             }
-            print_json(&payload)?;
+            return print_json(&payload);
         } else {
             eprintln!("{}", info_message("No matching files to copy"));
         }
@@ -195,8 +195,7 @@ pub fn step_copy_ignored(
                 "to": dest_path,
                 "entries": entries,
             });
-            print_json(&payload)?;
-            return Ok(());
+            return print_json(&payload);
         }
         let items: Vec<String> = entries_to_copy
             .iter()
@@ -254,34 +253,38 @@ pub fn step_copy_ignored(
         Progress::start("Copying")
     };
 
-    for (src_entry, is_dir) in &entries_to_copy {
-        let relative = src_entry
-            .strip_prefix(&source_path)
-            .unwrap_or(src_entry.as_path());
-        let dest_entry = dest_path.join(relative);
+    let copying = (|| -> anyhow::Result<()> {
+        for (src_entry, is_dir) in &entries_to_copy {
+            let relative = src_entry
+                .strip_prefix(&source_path)
+                .unwrap_or(src_entry.as_path());
+            let dest_entry = dest_path.join(relative);
 
-        if *is_dir {
-            // A pure copy deletes no source, so the skip count has nothing to guard.
-            let _skipped =
-                copy_dir_recursive(src_entry, &dest_entry, Some(&dest_path), force, &progress)
-                    .with_context(|| {
-                        format!("copying directory {}", format_path_for_display(relative))
+            if *is_dir {
+                // A pure copy deletes no source, so the skip count has nothing to guard.
+                let _skipped =
+                    copy_dir_recursive(src_entry, &dest_entry, Some(&dest_path), force, &progress)
+                        .with_context(|| {
+                            format!("copying directory {}", format_path_for_display(relative))
+                        })?;
+            } else {
+                if let Some(parent) = dest_entry.parent() {
+                    fs::create_dir_all(parent).with_context(|| {
+                        format!(
+                            "creating directory for {}",
+                            format_path_for_display(relative)
+                        )
                     })?;
-        } else {
-            if let Some(parent) = dest_entry.parent() {
-                fs::create_dir_all(parent).with_context(|| {
-                    format!(
-                        "creating directory for {}",
-                        format_path_for_display(relative)
-                    )
-                })?;
-            }
-            if let Some((bytes, data)) = copy_leaf(src_entry, &dest_entry, Some(&dest_path), force)?
-            {
-                progress.record(bytes, data);
+                }
+                if let Some((bytes, data)) =
+                    copy_leaf(src_entry, &dest_entry, Some(&dest_path), force)?
+                {
+                    progress.record(bytes, data);
+                }
             }
         }
-    }
+        Ok(())
+    })();
     let (copied_count, copied_bytes) = progress.totals();
     let (reflinked, written) = progress.copy_split();
     progress.finish();
@@ -318,7 +321,9 @@ pub fn step_copy_ignored(
             "written": written,
         });
         print_json(&payload)?;
+        return copying;
     } else {
+        copying?;
         // Show summary
         let file_word = if copied_count == 1 { "file" } else { "files" };
         eprintln!(

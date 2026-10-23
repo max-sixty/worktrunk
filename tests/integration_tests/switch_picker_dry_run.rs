@@ -39,8 +39,11 @@ fn install_summary_probe(repo: &mut TestRepo) {
 /// branch-only row collection, the base cache-dump path, and the `else` branch
 /// that inserts a config hint in place of real summaries.
 #[rstest]
+#[case::raw(false)]
+#[case::explicit_json(true)]
 fn test_picker_dry_run_emits_configured_rows_and_cache_json(
     #[from(main_only_repo)] mut repo: TestRepo,
+    #[case] json: bool,
 ) {
     repo.run_git(&["remote", "remove", "origin"]);
     repo.add_worktree("active-worktree");
@@ -64,10 +67,13 @@ fn test_picker_dry_run_emits_configured_rows_and_cache_json(
     install_summary_probe(&mut repo);
     let call_log = tempfile::tempdir().unwrap();
 
-    let output = repo
-        .wt_command()
-        // No `--branches`: the config setting must drive branch collection.
-        .args(["switch"])
+    let mut cmd = repo.wt_command();
+    // No `--branches`: the config setting must drive branch collection.
+    cmd.arg("switch");
+    if json {
+        cmd.arg("--format=json");
+    }
+    let output = cmd
         .env("WORKTRUNK_PICKER_DRY_RUN", "1")
         // A configured generator must still stay off while list.summary=false.
         .env("WORKTRUNK_COMMIT__GENERATION__COMMAND", "summary-probe")

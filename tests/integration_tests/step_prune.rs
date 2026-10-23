@@ -3162,12 +3162,13 @@ fi
 fn test_prune_removal_failure_aborts_remaining_queue(repo: TestRepo) {
     repo.commit("initial");
 
+    repo.create_branch("abort-0");
     repo.create_branch("abort-a");
     repo.create_branch("abort-b");
     repo.create_branch("abort-c");
 
     let mut cmd = repo.wt_command();
-    cmd.env("RAYON_NUM_THREADS", "1"); // FIFO: abort-a dispatches first
+    cmd.env("RAYON_NUM_THREADS", "1"); // FIFO: abort-0 completes before abort-a fails
     let git_wrapper_dir = repo.home_path().join("git-wrapper");
     std::fs::create_dir_all(&git_wrapper_dir).unwrap();
     write_failing_branch_delete_wrapper(&git_wrapper_dir, &which::which("git").unwrap());
@@ -3175,7 +3176,7 @@ fn test_prune_removal_failure_aborts_remaining_queue(repo: TestRepo) {
     cmd.env("WT_TEST_FAIL_DELETE_BRANCH", "abort-a");
 
     let output = cmd
-        .args(["step", "prune", "--yes", "--min-age=0s"])
+        .args(["step", "prune", "--yes", "--min-age=0s", "--format=json"])
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -3192,6 +3193,11 @@ fn test_prune_removal_failure_aborts_remaining_queue(repo: TestRepo) {
         !stderr.contains("Pruned "),
         "no summary after an aborted run:\n{stderr}"
     );
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let completed = response.as_array().unwrap();
+    assert_eq!(completed.len(), 1, "{response}");
+    assert_eq!(completed[0]["branch"], "abort-0");
+    assert_eq!(completed[0]["branch_outcome"], "deleted");
     let branches = repo.git_output(&["branch", "--format=%(refname:short)"]);
     assert!(
         !branches.lines().any(|b| b == "abort-a"),

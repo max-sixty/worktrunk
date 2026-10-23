@@ -35,6 +35,7 @@ use worktrunk::styling::{
 
 use super::types::MergeOperations;
 use crate::commands::repository_ext::RepositoryCliExt;
+use crate::output::{CommandFailure, CommandResult};
 
 /// Distinguishes a standalone push from a fast-forward push driven by `wt merge`.
 ///
@@ -72,12 +73,17 @@ impl PushKind {
 }
 
 /// Outcome of a push or no-ff merge, returned for JSON output.
+#[derive(Debug, serde::Serialize)]
 pub struct PushResult {
     pub target: String,
+    #[serde(rename = "commits")]
     pub commit_count: usize,
+    #[serde(flatten)]
     pub outcome: PushOutcome,
 }
 
+#[derive(Debug, serde::Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum PushOutcome {
     /// Target was fast-forwarded to HEAD.
     FastForwarded,
@@ -376,7 +382,8 @@ fn format_up_to_date_context(operations: Option<MergeOperations>) -> String {
 /// `reflog_message` labels the target branch's reflog entry — the recovery
 /// affordance for the one operation that moves a branch the user isn't
 /// standing on, where every other mover (`push`, `merge`, `reset`) names
-/// itself.
+/// itself. A failure of the final concurrency check carries completed work;
+/// ref-update and worktree-sync failures do not claim a completed advance.
 fn advance_target(
     repo: &Repository,
     target_branch: &str,
@@ -384,7 +391,7 @@ fn advance_target(
     old_sha: &str,
     new_sha: &str,
     reflog_message: &str,
-) -> anyhow::Result<()> {
+) -> CommandResult<()> {
     let target_ref = format!("refs/heads/{target_branch}");
     repo.run_command(&[
         "update-ref",
@@ -433,7 +440,9 @@ fn advance_target(
             // the ref. Re-read the ref so that interleaving surfaces instead
             // of being reported as a clean merge. The push range is in the
             // tip's ancestry either way, so this warns rather than fails.
-            let tip_after = repo.run_command(&["rev-parse", &target_ref])?;
+            let tip_after = repo
+                .run_command(&["rev-parse", &target_ref])
+                .map_err(|error| CommandFailure::with_result(error, ()))?;
             if tip_after.trim() != new_sha {
                 eprintln!(
                     "{}",
@@ -475,7 +484,7 @@ fn advance_target(
              was not synced"
         ),
     };
-    Err(e).context(context)
+    Err(e.context(context).into())
 }
 
 // ---------------------------------------------------------------------------
@@ -495,7 +504,7 @@ pub fn handle_push(
     target: Option<&str>,
     kind: PushKind,
     operations: Option<MergeOperations>,
-) -> anyhow::Result<PushResult> {
+) -> CommandResult<PushResult> {
     let ctx = MergeContext::prepare(repo, target, operations)?;
 
     ctx.show_progress(kind.verb_progressive(), "", operations)?;
@@ -511,21 +520,27 @@ pub fn handle_push(
         });
     }
 
-    advance_target(
+    let advancement = advance_target(
         &ctx.repo,
         &ctx.target_branch,
         ctx.target_worktree_path.as_ref(),
         &ctx.target_tip,
         &ctx.head_sha,
         kind.reflog_message(),
-    )?;
+    );
 
-    ctx.show_success(kind.verb_past(), "", "");
-    Ok(PushResult {
+    if advancement.is_ok() {
+        ctx.show_success(kind.verb_past(), "", "");
+    }
+    let result = PushResult {
         target: ctx.target_branch,
         commit_count: ctx.commit_count,
         outcome: PushOutcome::FastForwarded,
-    })
+    };
+    match advancement {
+        Ok(()) => Ok(result),
+        Err(failure) => Err(failure.map_result(|()| result)),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -545,7 +560,7 @@ pub fn handle_no_ff_merge(
     target: Option<&str>,
     operations: Option<MergeOperations>,
     feature_branch: &str,
-) -> anyhow::Result<PushResult> {
+) -> CommandResult<PushResult> {
     let ctx = MergeContext::prepare(repo, target, operations)?;
 
     ctx.show_progress("Merging", " (--no-ff)", operations)?;
@@ -594,7 +609,10 @@ pub fn handle_no_ff_merge(
         .trim()
         .to_string();
 
-    advance_target(
+    // Display uses `Repository::short_sha`; the JSON payload carries the full SHA.
+    let merge_sha_short = ctx.repo.short_sha(&merge_sha)?;
+
+    let advancement = advance_target(
         &ctx.repo,
         &ctx.target_branch,
         ctx.target_worktree_path.as_ref(),
@@ -605,18 +623,21 @@ pub fn handle_no_ff_merge(
         } else {
             "wt step push: no-ff"
         },
-    )?;
+    );
 
-    // Display uses `Repository::short_sha`; the JSON payload carries the full SHA.
-    let merge_sha_short = ctx.repo.short_sha(&merge_sha)?;
-    let sha_suffix = cformat!(" @ <dim>{merge_sha_short}</>");
-    ctx.show_success("Merged to", &sha_suffix, ", --no-ff");
-
-    Ok(PushResult {
+    if advancement.is_ok() {
+        let sha_suffix = cformat!(" @ <dim>{merge_sha_short}</>");
+        ctx.show_success("Merged to", &sha_suffix, ", --no-ff");
+    }
+    let result = PushResult {
         target: ctx.target_branch,
         commit_count: ctx.commit_count,
         outcome: PushOutcome::MergeCommit { merge_sha },
-    })
+    };
+    match advancement {
+        Ok(()) => Ok(result),
+        Err(failure) => Err(failure.map_result(|()| result)),
+    }
 }
 
 #[cfg(test)]
@@ -686,9 +707,11 @@ mod tests {
         std::fs::write(root.join("x.txt"), "local-edit").unwrap();
 
         let err = advance_target(&repo, "main", Some(&root), &new, &new2, "test").unwrap_err();
+        assert!(err.result.is_none());
         assert!(
-            err.to_string().contains("rolled back"),
-            "unexpected error: {err:#}"
+            err.error.to_string().contains("rolled back"),
+            "unexpected error: {:#}",
+            err.error
         );
         assert_eq!(test.git_output(&["rev-parse", "main"]), new);
         assert_eq!(
@@ -698,9 +721,11 @@ mod tests {
 
         // Stale old_sha: the compare-and-swap fails before anything moves.
         let err = advance_target(&repo, "main", Some(&root), &old, &new2, "test").unwrap_err();
+        assert!(err.result.is_none());
         assert!(
-            err.to_string().contains("Can't push"),
-            "unexpected error: {err:#}"
+            err.error.to_string().contains("Can't push"),
+            "unexpected error: {:#}",
+            err.error
         );
         assert_eq!(test.git_output(&["rev-parse", "main"]), new);
     }

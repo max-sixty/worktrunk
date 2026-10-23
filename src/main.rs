@@ -36,11 +36,11 @@ pub(crate) use invocation::{
 
 pub(crate) use crate::cli::{OutputFormat, StatuslineFormat};
 
-use crate::output::print_json;
+use crate::output::{CommandFailure, finish_output, print_json};
 
 use commands::commit::HookGate;
 use commands::handle_picker;
-use commands::worktree::{PushKind, PushOutcome, PushResult, handle_no_ff_merge, handle_push};
+use commands::worktree::{PushKind, handle_no_ff_merge, handle_push};
 use commands::{
     HookCliArgs, MergeFlagOverrides, MergeOptions, RebaseResult, SquashResult, add_approvals,
     clear_approvals, flag_pair, handle_alias_dry_run, handle_alias_show, handle_cache_clear,
@@ -208,25 +208,15 @@ fn handle_step_command(
             if format == SwitchFormat::Json && (args.show_prompt || args.dry_run) {
                 anyhow::bail!("--show-prompt / --dry-run cannot be combined with --format=json");
             }
-            let outcome = step_commit(
+            step_commit(
                 args.branch,
                 yes,
                 verify,
                 args.stage,
                 args.show_prompt,
                 args.dry_run,
-            )?;
-            if format == SwitchFormat::Json
-                && let Some(outcome) = outcome
-            {
-                let payload = serde_json::json!({
-                    "commit": outcome.sha,
-                    "message": outcome.message,
-                    "stage_mode": outcome.stage_mode,
-                });
-                print_json(&payload)?;
-            }
-            Ok(())
+                format,
+            )
         }
         StepCommand::Squash(args) => {
             let verify = args.hooks.resolve();
@@ -250,47 +240,28 @@ fn handle_step_command(
                 };
                 let mut announcer = HookAnnouncer::new(&repo, false);
                 let format = args.format;
-                let result = handle_squash(
+                let outcome = handle_squash(
                     args.target.as_deref(),
                     yes,
                     hooks,
                     args.stage,
                     &mut announcer,
                     commands::PreApprovedGuidance::RunOwnGate,
-                )?;
-                announcer.flush()?;
-                if format == SwitchFormat::Json {
-                    let payload = match &result {
-                        SquashResult::Squashed {
-                            sha,
-                            message,
-                            stage_mode,
-                        } => serde_json::json!({
-                            "outcome": "squashed",
-                            "commit": sha,
-                            "message": message,
-                            "stage_mode": stage_mode,
-                        }),
-                        SquashResult::NoCommitsAhead(target) => serde_json::json!({
-                            "outcome": "no_commits_ahead",
-                            "target": target,
-                        }),
-                        SquashResult::AlreadySingleCommit => serde_json::json!({
-                            "outcome": "already_single_commit",
-                        }),
-                        SquashResult::NoNetChanges => serde_json::json!({
-                            "outcome": "no_net_changes",
-                        }),
-                    };
-                    print_json(&payload)?;
-                } else {
+                )
+                .and_then(|result| match announcer.flush() {
+                    Ok(()) => Ok(result),
+                    Err(error) => Err(CommandFailure::with_result(error, result)),
+                });
+                if format != SwitchFormat::Json
+                    && let Ok(result) = &outcome
+                {
                     match result {
                         SquashResult::Squashed { .. } | SquashResult::NoNetChanges => {}
-                        SquashResult::NoCommitsAhead(branch) => {
+                        SquashResult::NoCommitsAhead { target } => {
                             eprintln!(
                                 "{}",
                                 info_message(cformat!(
-                                    "Nothing to squash; no commits ahead of <bold>{branch}</>"
+                                    "Nothing to squash; no commits ahead of <bold>{target}</>"
                                 ))
                             );
                         }
@@ -302,7 +273,7 @@ fn handle_step_command(
                         }
                     }
                 }
-                Ok(())
+                finish_output(outcome, format == SwitchFormat::Json)
             }
         }
         StepCommand::Push {
@@ -312,33 +283,13 @@ fn handle_step_command(
             ..
         } => {
             let repo = Repository::current()?;
-            let result = if no_ff {
+            let outcome = if no_ff {
                 let current_branch = repo.require_selected_branch("@", "step push --no-ff")?;
-                handle_no_ff_merge(&repo, target.as_deref(), None, &current_branch)?
+                handle_no_ff_merge(&repo, target.as_deref(), None, &current_branch)
             } else {
-                handle_push(&repo, target.as_deref(), PushKind::Standalone, None)?
+                handle_push(&repo, target.as_deref(), PushKind::Standalone, None)
             };
-            if format == SwitchFormat::Json {
-                let PushResult {
-                    target,
-                    commit_count,
-                    outcome,
-                } = result;
-                let mut payload = serde_json::json!({
-                    "target": target,
-                    "outcome": match outcome {
-                        PushOutcome::FastForwarded => "fast_forwarded",
-                        PushOutcome::UpToDate => "up_to_date",
-                        PushOutcome::MergeCommit { .. } => "merge_commit",
-                    },
-                    "commits": commit_count,
-                });
-                if let PushOutcome::MergeCommit { merge_sha } = outcome {
-                    payload["merge_sha"] = serde_json::Value::String(merge_sha);
-                }
-                print_json(&payload)?;
-            }
-            Ok(())
+            finish_output(outcome, format == SwitchFormat::Json)
         }
         StepCommand::Rebase { target, format } => {
             let result = handle_rebase(&Repository::current()?, target.as_deref())?;
@@ -999,8 +950,7 @@ fn format_command_error(error: &anyhow::Error) -> String {
     use std::fmt::Write;
     let mut out = String::new();
 
-    // An AlreadyDisplayed context retains a child failure as its source for
-    // structured output, but its presentation marker still suppresses stderr.
+    // AlreadyDisplayed retains the source error without printing its diagnostic again.
     if matches!(
         error.downcast_ref::<WorktrunkError>(),
         Some(WorktrunkError::AlreadyDisplayed { .. })
@@ -1124,24 +1074,7 @@ fn finish_command(verbose_level: u8, command_line: &str, error: Option<&anyhow::
     let _ = output::terminate_output();
 }
 
-fn handle_command_failure(
-    error: anyhow::Error,
-    verbose_level: u8,
-    command_line: &str,
-    switch_json: bool,
-) -> ! {
-    if switch_json {
-        // The JSON error carries what stderr shows. A child failure shows
-        // nothing there (the child spoke for itself), so name its exit instead.
-        let message = match error.interrupt_signal() {
-            Some(signal) => format!("Interrupted by signal {signal}"),
-            None => match format_command_error(&error) {
-                rendered if rendered.is_empty() => error.root_cause().to_string(),
-                rendered => rendered.trim_end().to_string(),
-            },
-        };
-        commands::worktree::print_switch_json_error(&message);
-    }
+fn handle_command_failure(error: anyhow::Error, verbose_level: u8, command_line: &str) -> ! {
     print_command_error(&error);
     print_cwd_removed_hint_if_needed();
 
@@ -1235,10 +1168,6 @@ fn main() {
         yes,
         command,
     } = cli;
-    let switch_json = matches!(
-        command.as_ref(),
-        Some(Commands::Switch(args)) if args.format == SwitchFormat::Json
-    );
     // `WORKTRUNK_VERBOSE` provides a baseline verbosity the `-v`/`-vv` flags
     // raise but never lower (`max`). It also drives shell completion, which
     // answers and returns above, before `parse_cli` — see
@@ -1296,7 +1225,7 @@ fn main() {
         })
     });
     if let Some(Err(error)) = git_version_result {
-        handle_command_failure(error, verbose, &command_line, switch_json);
+        handle_command_failure(error, verbose, &command_line);
     }
 
     {
@@ -1315,7 +1244,7 @@ fn main() {
     #[cfg(unix)]
     let operation = match worktrunk::signal_forwarder::CommandOperation::start() {
         Ok(operation) => operation,
-        Err(error) => handle_command_failure(error.into(), verbose, &command_line, switch_json),
+        Err(error) => handle_command_failure(error.into(), verbose, &command_line),
     };
     let result = dispatch_command(command, directory, yes);
     #[cfg(unix)]
@@ -1326,7 +1255,7 @@ fn main() {
 
     match result {
         Ok(()) => finish_command(verbose, &command_line, None),
-        Err(error) => handle_command_failure(error, verbose, &command_line, switch_json),
+        Err(error) => handle_command_failure(error, verbose, &command_line),
     }
 }
 

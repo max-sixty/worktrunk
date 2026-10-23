@@ -393,7 +393,8 @@ impl AltXRemover {
                     &plan,
                     /* quiet */ true,
                     &mut announcer,
-                )?;
+                )
+                .map_err(|failure| failure.error)?;
                 announcer.flush()?;
             }
             RemovalPlan::BranchOnly {

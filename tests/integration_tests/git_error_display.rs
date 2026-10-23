@@ -589,3 +589,76 @@ fn shell_init_remains_available_on_older_git() {
         String::from_utf8_lossy(&output.stdout)
     );
 }
+
+/// Errors before dispatch leave stdout empty and explain the failure on stderr.
+#[test]
+fn json_failure_before_dispatch() {
+    let (_mock_bin, mut cmd) = wt_with_git_version("git version 2.42.4");
+    let output = cmd.args(["list", "--format=json"]).output().unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("2.42.4"));
+}
+
+/// A dispatched command with no result leaves stdout empty on failure.
+#[test]
+fn json_failure_without_repository() {
+    let output = wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(!output.stderr.is_empty());
+}
+
+/// A display-only Git failure must not hide the commit already created.
+#[cfg(unix)]
+#[test]
+fn json_outcome_retains_commit_after_display_failure() {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo = crate::common::TestRepo::standard();
+    let previous_head = repo.git_output(&["rev-parse", "HEAD"]);
+    fs::write(repo.root_path().join("new.txt"), "new content").unwrap();
+
+    // Keep the real commit and full-OID lookup; fail only abbreviation for
+    // the success message, after the command has a complete result to retain.
+    let wrapper = test_tempdir();
+    let real_git = which::which("git").unwrap();
+    let script = format!(
+        r#"#!/bin/sh
+if [ "$1 $2" = 'rev-parse --short' ]; then
+  echo 'display abbreviation failed' >&2
+  exit 42
+fi
+exec {} "$@"
+"#,
+        shell_escape::unix::escape(real_git.to_string_lossy()),
+    );
+    let wrapper_git = wrapper.path().join("git");
+    fs::write(&wrapper_git, script).unwrap();
+    fs::set_permissions(&wrapper_git, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let mut paths = vec![wrapper.path().to_path_buf()];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let output = repo
+        .wt_command()
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .args(["step", "commit", "--format=json", "--no-hooks"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "{output:?}");
+    let head = repo.git_output(&["rev-parse", "HEAD"]);
+    assert_ne!(head, previous_head, "the commit must have completed");
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["commit"], head, "{response}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("display abbreviation failed"),
+        "{response}"
+    );
+}

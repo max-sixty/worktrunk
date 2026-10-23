@@ -1476,7 +1476,15 @@ exec {real_git} "$@"
         "stderr:\n{stderr}"
     );
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json, serde_json::json!([]), "no removal completed: {json}");
+    if boundary == "status" {
+        assert_eq!(json, serde_json::json!([]), "{json}");
+    } else {
+        assert!(!interrupted.exists(), "branch deletion follows removal");
+        let items = json.as_array().unwrap();
+        assert_eq!(items.len(), 1, "{json}");
+        assert_eq!(items[0]["branch"], "interrupted");
+        assert_eq!(items[0]["branch_outcome"], "retained_failed");
+    }
 }
 
 #[rstest]
@@ -5349,6 +5357,39 @@ fn test_remove_json(mut repo: TestRepo) {
     settings.bind(|| {
         assert_snapshot!(String::from_utf8_lossy(&output.stdout));
     });
+}
+
+/// A branch lock fails deletion after the worktree was already removed.
+/// The partial result must report both facts on foreground and staged removal.
+#[rstest]
+#[case::foreground(true)]
+#[case::background(false)]
+fn test_remove_json_branch_failure_has_partial_result(
+    mut repo: TestRepo,
+    #[case] foreground: bool,
+) {
+    let worktree = repo.add_worktree("feature");
+    fs::write(
+        repo.root_path().join(".git/refs/heads/feature.lock"),
+        "locked",
+    )
+    .unwrap();
+    let mut command = repo.wt_command();
+    command.args(["remove", "feature", "--format=json", "--yes", "--no-hooks"]);
+    if foreground {
+        command.arg("--foreground");
+    }
+    let output = command.output().unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json[0]["branch"], "feature");
+    assert_eq!(json[0]["branch_outcome"], "retained_failed");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("lock"),
+        "{json}"
+    );
+    assert!(!worktree.exists());
+    repo.run_git(&["rev-parse", "--verify", "refs/heads/feature"]);
 }
 
 #[rstest]

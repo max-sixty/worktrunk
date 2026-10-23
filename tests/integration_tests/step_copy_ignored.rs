@@ -1309,7 +1309,8 @@ fn test_copy_ignored_error_includes_path_directory(mut repo: TestRepo) {
     fs::create_dir_all(target_dir.join("sub")).unwrap();
     fs::write(target_dir.join("sub").join("file.txt"), "content").unwrap();
 
-    fs::write(repo.root_path().join(".gitignore"), "target/\n").unwrap();
+    fs::write(repo.root_path().join("aaa-cache"), "completed").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), "aaa-cache\ntarget/\n").unwrap();
 
     // Create destination target/sub as read-only so file copy fails
     let dest_sub = feature_path.join("target").join("sub");
@@ -1319,7 +1320,7 @@ fn test_copy_ignored_error_includes_path_directory(mut repo: TestRepo) {
     // Copy should fail — error message should mention the file path
     let output = repo
         .wt_command()
-        .args(["step", "copy-ignored"])
+        .args(["step", "copy-ignored", "--format=json"])
         .current_dir(&feature_path)
         .output()
         .unwrap();
@@ -1328,6 +1329,13 @@ fn test_copy_ignored_error_includes_path_directory(mut repo: TestRepo) {
     fs::set_permissions(&dest_sub, fs::Permissions::from_mode(0o755)).unwrap();
 
     assert!(!output.status.success());
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["files"], 1);
+    assert_eq!(response["bytes"], 9);
+    assert_eq!(
+        fs::read_to_string(feature_path.join("aaa-cache")).unwrap(),
+        "completed"
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("copying"),

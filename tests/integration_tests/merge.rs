@@ -2602,7 +2602,7 @@ fn test_merge_pre_remove_dirty_mutation_aborts_cleanup(mut repo: TestRepo) {
     let output = repo
         .wt_command()
         .current_dir(&feature_wt)
-        .args(["merge", "--yes"])
+        .args(["merge", "--yes", "--format=json"])
         .output()
         .unwrap();
 
@@ -2619,6 +2619,13 @@ fn test_merge_pre_remove_dirty_mutation_aborts_cleanup(mut repo: TestRepo) {
         "dirty feature worktree should not be removed"
     );
     repo.run_git(&["rev-parse", "--verify", &format!("refs/heads/{branch}")]);
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["merged"], true);
+    assert!(json["removed"].is_null());
+    assert_eq!(
+        repo.git_output(&["rev-parse", "main"]),
+        repo.git_output(&["rev-parse", branch])
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -4888,6 +4895,7 @@ fn test_step_commit_json(repo: TestRepo) {
     );
     let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     let sha = parsed["commit"].as_str().expect("commit SHA");
+    assert_eq!(sha, repo.git_output(&["rev-parse", "HEAD"]));
     assert_eq!(sha.len(), 40, "expected full 40-char SHA, got {sha}");
     assert_eq!(parsed["message"], "feat: add file");
     // Without --stage on the CLI, the resolved default ("all") is emitted —
@@ -5866,6 +5874,7 @@ fn test_merge_json(repo: TestRepo) {
       "committed": false,
       "squashed": false,
       "rebased": false,
+      "merged": true,
       "removed": true
     }
     "#);
@@ -6397,4 +6406,105 @@ fn test_merge_retains_branch_checked_out_in_another_worktree(mut repo: TestRepo)
         stderr.contains("retained") && stderr.contains("still checked out"),
         "output should explain the branch was retained:\n{stderr}",
     );
+}
+
+/// The final ref lookup detects concurrent changes after the target ref and
+/// worktree have moved. Its failure must retain that completed work for both
+/// standalone push and the composing merge command, for either push strategy.
+#[cfg(unix)]
+#[rstest]
+#[case::push_ff(false, false)]
+#[case::push_no_ff(false, true)]
+#[case::merge_ff(true, false)]
+#[case::merge_no_ff(true, true)]
+fn json_retains_target_advance_after_post_sync_lookup_failure(
+    mut repo: TestRepo,
+    #[case] merge: bool,
+    #[case] no_ff: bool,
+) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let feature = repo.add_feature();
+    let before = repo.git_output(&["rev-parse", "main"]);
+    let source = repo.git_output(&["rev-parse", "feature"]);
+    assert_ne!(before, source);
+    assert!(!repo.root_path().join("feature.txt").exists());
+
+    let wrapper = crate::common::test_tempdir();
+    let synced = wrapper.path().join("synced");
+    let script = r#"#!/bin/sh
+if [ "$1 $2" = 'rev-parse refs/heads/main' ] && [ -f "$WORKTRUNK_TEST_SYNCED" ]; then
+  echo 'injected post-sync lookup failure' >&2
+  exit 71
+fi
+if [ "$3" = 'read-tree' ]; then
+  "$WORKTRUNK_TEST_REAL_GIT" "$@" || exit $?
+  : > "$WORKTRUNK_TEST_SYNCED"
+  exit 0
+fi
+exec "$WORKTRUNK_TEST_REAL_GIT" "$@"
+"#;
+    let wrapper_git = wrapper.path().join("git");
+    fs::write(&wrapper_git, script).unwrap();
+    fs::set_permissions(&wrapper_git, fs::Permissions::from_mode(0o755)).unwrap();
+    let (path_var, path) = make_path_with_mock_bin(wrapper.path());
+    let mut command = repo.wt_command();
+    command
+        .current_dir(&feature)
+        .env(path_var, path)
+        .env("WORKTRUNK_TEST_REAL_GIT", which::which("git").unwrap())
+        .env("WORKTRUNK_TEST_SYNCED", &synced);
+    if merge {
+        command.args([
+            "merge",
+            "main",
+            "--no-commit",
+            "--no-squash",
+            "--no-rebase",
+            "--no-remove",
+            "--no-hooks",
+            "--yes",
+        ]);
+    } else {
+        command.args(["step", "push", "main"]);
+    }
+    command.arg("--format=json");
+    if no_ff {
+        command.arg("--no-ff");
+    }
+    let output = command.output().unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert!(synced.exists(), "the real worktree sync must have run");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("injected post-sync lookup failure"));
+    let after = repo.git_output(&["rev-parse", "main"]);
+    assert_ne!(after, before);
+    assert_eq!(
+        fs::read_to_string(repo.root_path().join("feature.txt")).unwrap(),
+        "feature content"
+    );
+    if no_ff {
+        assert_eq!(repo.git_output(&["rev-parse", "main^1"]), before);
+        assert_eq!(repo.git_output(&["rev-parse", "main^2"]), source);
+    } else {
+        assert_eq!(after, source);
+    }
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    if merge {
+        assert_eq!(result["merged"], true, "{result}");
+        assert_eq!(result["removed"], serde_json::Value::Null, "{result}");
+    } else {
+        assert_eq!(result["target"], "main");
+        assert_eq!(result["commits"], 1);
+        assert_eq!(
+            result["outcome"],
+            if no_ff {
+                "merge_commit"
+            } else {
+                "fast_forwarded"
+            }
+        );
+        if no_ff {
+            assert_eq!(result["merge_sha"], after);
+        }
+    }
 }

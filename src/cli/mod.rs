@@ -462,12 +462,11 @@ pub(crate) struct SwitchArgs {
     /// Output format
     ///
     /// JSON prints one structured result to stdout once the switch, including
-    /// any --execute command, completes.
-    /// Once arguments are accepted, failures print an object with an `error`
-    /// string. Argument errors use stderr only. Diagnostics and
-    /// --execute output go to stderr. A worktree created before a later failure
-    /// remains in place.
-    /// Canceling the interactive picker produces no result.
+    /// any --execute command, completes. A worktree created before a later
+    /// failure remains in place and is included in the result. Read stdout
+    /// even when the exit status is nonzero. Errors, diagnostics, and
+    /// --execute output go to stderr. Failure before a result exists and
+    /// canceling the interactive picker produce no result.
     /// Background hooks run independently of the result.
     /// Designed for tool integration (e.g., Claude Code WorktreeCreate hooks).
     #[arg(long, default_value = "text", help_heading = "Automation")]
