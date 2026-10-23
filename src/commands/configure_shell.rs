@@ -598,16 +598,9 @@ fn scan_shell_configs_inner(
     let mut failures = Vec::new();
 
     for shell in shells {
-        let paths = match shell.config_paths(cmd) {
-            Ok(paths) => paths,
-            Err(error) => match ShellConfigError::config_paths(shell, error) {
-                ShellConfigError::Failed(message) if continue_on_error => {
-                    failures.push(message);
-                    continue;
-                }
-                error => return Err(error),
-            },
-        };
+        let paths = shell
+            .config_paths(cmd)
+            .map_err(|e| ShellConfigError::config_paths(shell, e))?;
 
         // Find the first existing config file
         let target_path = paths.iter().find(|p| p.exists());
