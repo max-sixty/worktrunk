@@ -757,7 +757,9 @@ impl UserConfig {
                         Err(err) => warnings.push(err),
                     }
                 }
-                Err(err) => warnings.push(LoadError::Validation(err.to_string())),
+                Err(err) => {
+                    warnings.push(LoadError::Validation(err.to_string()));
+                }
             }
         }
 
