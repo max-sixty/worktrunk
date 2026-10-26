@@ -5062,6 +5062,31 @@ setup = "'{wt_toml}' switch --create hook-created --no-hooks && git worktree rem
     );
 }
 
+/// A directive to a directory whose name ends in a space names a directory
+/// that exists, so wt keeps it. Unix only: Windows drops trailing spaces from
+/// directory names.
+#[cfg(unix)]
+#[rstest]
+fn test_directive_to_directory_ending_in_space_is_kept(repo: TestRepo) {
+    let target = repo.home_path().join("dir ");
+    fs::create_dir(&target).unwrap();
+    let target = target.to_string_lossy().to_string();
+    repo.write_project_config(&format!(
+        r#"[pre-start]
+cd = '''printf '%s\n' '{target}' > "$WORKTRUNK_DIRECTIVE_CD_FILE"'''
+"#,
+    ));
+    let cd_file = repo.home_path().join("cd-directive");
+    let output = repo
+        .wt_command()
+        .args(["hook", "pre-start", "--yes"])
+        .env("WORKTRUNK_DIRECTIVE_CD_FILE", &cd_file)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(fs::read_to_string(cd_file).unwrap(), format!("{target}\n"));
+}
+
 // ============================================================================
 // Pre-* Pipeline Concurrent Execution Tests
 // ============================================================================

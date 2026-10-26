@@ -329,7 +329,8 @@ pub fn withdraw_missing_cd_target() {
     let Ok(target) = std::fs::read_to_string(&cd_file) else {
         return;
     };
-    let target = target.trim();
+    // Strip only the line terminator: a directory name can end in spaces.
+    let target = target.trim_end_matches(['\n', '\r']);
     if !target.is_empty() && !Path::new(target).is_dir() {
         let _ = std::fs::File::create(&cd_file);
     }
