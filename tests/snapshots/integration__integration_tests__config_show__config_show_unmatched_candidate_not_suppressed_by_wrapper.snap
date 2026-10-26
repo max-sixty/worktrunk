@@ -74,7 +74,7 @@ exit_code: 0
 [2m↳[22m [2mTo configure, run [4mwt config shell install[24m[22m
 [33m▲[39m [33mFound [1mwt[22m outside a recognized initialization line @ [1m~/.bashrc:2[22m:[39m
 [107m [0m [2m[0m[2m[34malias[0m[2m wt=[0m[2m[32m"git worktree"[0m
-[2m↳[22m [2mManage customized initialization lines manually; to see recognized setup lines, run [4mwt config shell init --help[24m[22m
+[2m↳[22m [2mTo see recognized initialization lines, run [4mwt config shell init --help[24m[22m
 
 [36mOTHER[39m
 [2m○[22m wt: [1m[VERSION][22m

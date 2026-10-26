@@ -1639,7 +1639,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
             out,
             "{}",
             hint_message(cformat!(
-                "Manage customized initialization lines manually; to see recognized setup lines, run <underline>{cmd} config shell init --help</>"
+                "To see recognized initialization lines, run <underline>{cmd} config shell init --help</>"
             ))
         )?;
     }
