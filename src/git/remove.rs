@@ -806,7 +806,6 @@ fn open_drain_lock(trash_dir: &Path) -> anyhow::Result<fs::File> {
 
 /// Delete every staged entry in `trash_dir`, unless another drain is running.
 ///
-/// Every staged removal starts a drain, so a prune starts one per worktree.
 /// Concurrent deletions on one filesystem add CPU without adding throughput:
 /// a 193-worktree prune ran 193 `rm -rf` processes using about three cores to
 /// delete 1,500 files/s, where one process alone deleted 3,000–5,000 files/s

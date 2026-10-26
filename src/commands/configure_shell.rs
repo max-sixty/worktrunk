@@ -117,6 +117,7 @@ pub struct ScanResult {
     pub configured: Vec<ConfigureResult>,
     pub completion_results: Vec<CompletionResult>,
     pub skipped: Vec<(Shell, PathBuf)>, // Shell + first path that was checked
+    pub failures: Vec<String>,
     /// Zsh was configured but compinit is missing (completions won't work without it)
     pub zsh_needs_compinit: bool,
     /// Legacy/stranded files cleaned up during install, paired with the shell
@@ -359,7 +360,7 @@ pub fn handle_configure_shell(
     shell::validate_shell_command_name(&cmd)?;
 
     // First, do a dry-run to see what would be changed
-    let mut preview = scan_shell_configs(shell_filter, true, &cmd)?;
+    let mut preview = scan_shell_configs_inner(shell_filter, true, &cmd, true)?;
     preview.completion_results = preview_shell_completions(&preview.configured, &cmd)?;
 
     // If nothing to do, return early
@@ -435,7 +436,7 @@ pub(crate) fn apply_confirmed_shell_config(
         return Ok(preview);
     }
 
-    let mut result = scan_shell_configs(shell_filter, false, cmd)?;
+    let mut result = scan_shell_configs_inner(shell_filter, false, cmd, true)?;
     result.completion_results =
         apply_shell_completions(preview.completion_results, &result.configured, cmd)?;
 
@@ -564,6 +565,20 @@ pub fn scan_shell_configs(
     dry_run: bool,
     cmd: &str,
 ) -> Result<ScanResult, ShellConfigError> {
+    scan_shell_configs_inner(shell_filter, dry_run, cmd, false)
+}
+
+/// Preview an install while retaining rc-file failures so other shells can be offered.
+pub(crate) fn preview_shell_configs_for_install(cmd: &str) -> Result<ScanResult, ShellConfigError> {
+    scan_shell_configs_inner(None, true, cmd, true)
+}
+
+fn scan_shell_configs_inner(
+    shell_filter: Option<Shell>,
+    dry_run: bool,
+    cmd: &str,
+    continue_on_error: bool,
+) -> Result<ScanResult, ShellConfigError> {
     shell::validate_shell_command_name(cmd)?;
 
     // Iterate every supported shell. Shells the user doesn't have are filtered
@@ -585,6 +600,7 @@ pub fn scan_shell_configs(
 
     let mut results = Vec::new();
     let mut skipped = Vec::new();
+    let mut failures = Vec::new();
 
     for shell in shells {
         let paths = shell
@@ -645,9 +661,11 @@ pub fn scan_shell_configs(
                     Ok(Some(result)) => results.push(result),
                     Ok(None) => {} // No action needed
                     Err(e) => {
-                        // For non-critical errors, we could continue with other shells
-                        // but for now we'll fail fast
-                        return Err(format!("Failed to configure {shell}: {e}").into());
+                        let message = format!("Failed to configure {shell}: {e}");
+                        if !continue_on_error {
+                            return Err(message.into());
+                        }
+                        failures.push(message);
                     }
                 }
             }
@@ -674,6 +692,7 @@ pub fn scan_shell_configs(
         configured: results,
         completion_results: Vec::new(),
         skipped,
+        failures,
         zsh_needs_compinit: false,   // Caller handles compinit detection
         legacy_cleanups: Vec::new(), // Caller handles legacy cleanup
     })
@@ -863,6 +882,12 @@ fn contains_shell_integration(
     shell: Shell,
     cmd: &str,
 ) -> Result<bool, String> {
+    if content.starts_with(&[0xff, 0xfe]) || content.starts_with(&[0xfe, 0xff]) {
+        return Err(format!(
+            "{} is not UTF-8 (looks like UTF-16); re-save it as UTF-8 to configure {shell}",
+            format_path_for_display(path)
+        ));
+    }
     // Check for the canonical line and older/manual forms for this shell.
     for line in content.split(|byte| *byte == b'\n') {
         let line = std::str::from_utf8(line).map_err(|e| {
@@ -871,18 +896,11 @@ fn contains_shell_integration(
                 format_path_for_display(path)
             )
         })?;
-        if is_install_shell_integration_line(line.trim_end_matches('\r'), shell, cmd) {
+        if shell::shell_integration(line, cmd) == Some(shell) {
             return Ok(true);
         }
     }
     Ok(false)
-}
-
-fn is_install_shell_integration_line(line: &str, shell: Shell, cmd: &str) -> bool {
-    shell::is_shell_integration_line(line, cmd)
-        && line
-            .to_ascii_lowercase()
-            .contains(&format!("config shell init {shell}"))
 }
 
 /// Extract non-comment, non-blank lines from fish/nushell source.
@@ -1789,53 +1807,6 @@ mod tests {
         assert_eq!(ConfigAction::AlreadyExists.symbol(), INFO_SYMBOL);
         assert_eq!(ConfigAction::WouldAdd.symbol(), INFO_SYMBOL);
         assert_eq!(ConfigAction::WouldCreate.symbol(), INFO_SYMBOL);
-    }
-
-    #[test]
-    fn test_is_shell_integration_line() {
-        // Valid integration lines for "wt"
-        assert!(shell::is_shell_integration_line(
-            "eval \"$(wt config shell init bash)\"",
-            "wt"
-        ));
-        assert!(shell::is_shell_integration_line(
-            "  eval \"$(wt config shell init zsh)\"  ",
-            "wt"
-        ));
-        assert!(shell::is_shell_integration_line(
-            "if command -v wt; then eval \"$(wt config shell init bash)\"; fi",
-            "wt"
-        ));
-        assert!(shell::is_shell_integration_line(
-            "source <(wt config shell init fish)",
-            "wt"
-        ));
-
-        // Valid integration lines for "git-wt"
-        assert!(shell::is_shell_integration_line(
-            "eval \"$(git-wt config shell init bash)\"",
-            "git-wt"
-        ));
-        assert!(!shell::is_shell_integration_line(
-            "eval \"$(wt config shell init bash)\"",
-            "git-wt"
-        ));
-
-        // Not integration lines (comments)
-        assert!(!shell::is_shell_integration_line(
-            "# eval \"$(wt config shell init bash)\"",
-            "wt"
-        ));
-
-        // Not integration lines (no eval/source/if)
-        assert!(!shell::is_shell_integration_line(
-            "wt config shell init bash",
-            "wt"
-        ));
-        assert!(!shell::is_shell_integration_line(
-            "echo wt config shell init bash",
-            "wt"
-        ));
     }
 
     #[test]

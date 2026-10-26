@@ -10,6 +10,8 @@ A subprocess can't change its parent shell's directory, so `wt` installs a shell
 
 See [`wt config shell install`](https://worktrunk.dev/config/#wt-config-shell-install) for automatic installation and [`wt config shell init`](https://worktrunk.dev/config/#wt-config-shell-init) for manual setup in each supported shell.
 
+Keep each initialization statement on its own line for automatic detection and removal. Customized initialization lines must be managed manually.
+
 ## Files created
 
 [`wt config shell install`](https://worktrunk.dev/config/#wt-config-shell-install) appends a line to the bash, zsh, and PowerShell files, and writes the fish and Nushell files whole:

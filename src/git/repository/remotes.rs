@@ -452,6 +452,11 @@ impl Repository {
             .and_then(|config| config.list.url)
     }
 
+    /// Split a remote-tracking branch at the longest configured remote prefix.
+    pub fn split_remote_branch_name<'a>(&self, ref_name: &'a str) -> Option<(&'a str, &'a str)> {
+        split_remote_branch_name(ref_name, &self.all_remote_urls())
+    }
+
     /// Strip the remote prefix from a remote-tracking branch name.
     ///
     /// Given a name like `origin/username/feature-1`, returns `Some("username/feature-1")`
@@ -502,6 +507,24 @@ fn refspec_side_matches(pattern: &str, refname: &str) -> bool {
         }
         None => pattern == refname,
     }
+}
+
+/// Remote refs use the longest matching configured prefix; orphaned refs retain
+/// the conventional first-segment split.
+pub(super) fn split_remote_branch_name<'a>(
+    name: &'a str,
+    remotes: &[(String, String)],
+) -> Option<(&'a str, &'a str)> {
+    let boundary = remotes
+        .iter()
+        .filter(|(remote, _)| {
+            name.strip_prefix(remote)
+                .is_some_and(|rest| rest.starts_with('/'))
+        })
+        .map(|(remote, _)| remote.len())
+        .max()
+        .or_else(|| name.find('/'))?;
+    Some((&name[..boundary], &name[boundary + 1..]))
 }
 
 #[cfg(test)]

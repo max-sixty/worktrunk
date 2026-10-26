@@ -707,7 +707,7 @@ time-to-first-output with work the user didn't ask for.
 Worktrunk marks the boundary with `WORKTRUNK_FIRST_OUTPUT`: handlers
 early-return where output begins, so work before that return is on the hot
 path, work after it is not. See `handle_remove_command` —
-`sweep_stale_trash` runs after `handle_remove_output`.
+`run_internal_sweep` runs after `handle_remove_output`.
 
 ## Information Display: Show Once, Not Twice
 

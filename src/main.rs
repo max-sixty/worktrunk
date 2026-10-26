@@ -555,16 +555,27 @@ fn handle_config_shell_command(action: ConfigShellCommand, yes: bool) -> anyhow:
                     // Show skipped shells first so user knows what was tried
                     if scan_result.configured.is_empty() {
                         crate::output::print_skipped_shells(&scan_result.skipped);
+                        if !scan_result.failures.is_empty() {
+                            return Err(anyhow::anyhow!(scan_result.failures.join("\n")));
+                        }
                         return Err(worktrunk::git::GitError::Other {
                             message: "No shell config files found".into(),
                         }
                         .into());
                     }
-                    // For --dry-run, preview was already shown by handler
-                    if dry_run {
-                        return Ok(());
+                    // For --dry-run, preview was already shown by handler.
+                    if !dry_run {
+                        crate::output::print_shell_install_result(&scan_result, &cmd);
                     }
-                    crate::output::print_shell_install_result(&scan_result, &cmd);
+                    if !scan_result.failures.is_empty() {
+                        for failure in &scan_result.failures {
+                            eprintln!("{}", warning_message(failure));
+                        }
+                        return Err(anyhow::anyhow!(
+                            "Could not configure {} shell(s)",
+                            scan_result.failures.len()
+                        ));
+                    }
                     Ok(())
                 })
         }
@@ -1151,7 +1162,8 @@ fn main() {
     // WORKTRUNK_TEST_MOCK_CONFIG_DIR; see `worktrunk::testing::mock_stub`.
     worktrunk::testing::mock_stub::maybe_run();
 
-    // Capture startup state before anything else: the working directory
+    // Initialize the Unix signal-receiving process owner before other threads
+    // exist, and capture startup state: the working directory
     // (used by shell_exec to resolve relative `GIT_*` path variables
     // inherited from a parent `git` — e.g. when invoked via `git wt ...`
     // with `alias.wt = "!wt"` — against a stable reference, rather than
@@ -1163,7 +1175,13 @@ fn main() {
     // `init_rayon_thread_pool`, `force_color_output`, `parse_cli` — isn't
     // attributed. If startup itself becomes the suspect, capture it as
     // wall-clock minus the sum of post-init spans.
-    worktrunk::shell_exec::init_startup();
+    if let Err(error) = worktrunk::shell_exec::init_startup() {
+        handle_command_failure(
+            anyhow::Error::new(error).context("Failed to initialize process execution"),
+            0,
+            "wt",
+        );
+    }
 
     // Shell completion answers and exits without running a command, and no
     // code it reaches uses rayon — so it returns before the pool below is

@@ -782,6 +782,44 @@ fn test_list_with_remotes_and_full(#[from(repo_with_remote)] repo: TestRepo) {
 }
 
 #[rstest]
+fn test_list_json_preserves_slash_named_remote(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.create_branch("remote-only");
+    repo.push_branch("remote-only");
+    repo.run_git(&["branch", "-D", "remote-only"]);
+    repo.run_git(&["remote", "rename", "origin", "team/fork"]);
+
+    // Both prefixes are configured; use the complete remote name.
+    repo.run_git(&["config", "remote.team.url", "https://example.com/team.git"]);
+    repo.run_git(&[
+        "symbolic-ref",
+        "refs/remotes/team/fork/HEAD",
+        "refs/remotes/team/fork/main",
+    ]);
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--remotes", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let items = json["items"].as_array().expect("schema 2 items");
+    let remote = items
+        .iter()
+        .find(|item| item.get("remote").is_some())
+        .expect("remote-only row");
+    assert_eq!(remote["branch"], "remote-only");
+    assert_eq!(remote["remote"], "team/fork");
+
+    let main = items
+        .iter()
+        .find(|item| item["branch"] == "main")
+        .expect("main row");
+    assert_eq!(main["upstream"]["remote"], "team/fork");
+}
+
+#[rstest]
 fn test_list_with_orphaned_remote_ref(#[from(repo_with_remote)] repo: TestRepo) {
     // Create a remote-tracking ref for a non-existent remote.
     // This simulates a ref that remains after a remote is deleted.
@@ -918,6 +956,47 @@ fn test_list_ordering_rules(mut repo: TestRepo) {
 
     // Run from feature-current worktree to test "current worktree" logic
     assert_cmd_snapshot!(list_snapshots::command(&repo, &current_path));
+}
+
+#[rstest]
+#[case("origin")]
+#[case(".")]
+fn test_list_upstream_remote_comes_from_tracking_config(
+    #[from(repo_with_remote)] repo: TestRepo,
+    #[case] remote: &str,
+) {
+    // The same short ref can mean remote origin + branch fork/main or
+    // remote origin/fork + branch main. Git's tracking config decides.
+    repo.run_git(&["config", "remote.origin/fork.url", "unused"]);
+    repo.run_git(&["config", "branch.main.remote", remote]);
+    repo.run_git(&["config", "branch.main.merge", "refs/heads/fork/main"]);
+    repo.run_git(&["update-ref", "refs/remotes/origin/fork/main", "HEAD"]);
+    repo.create_branch("fork/main");
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let main = json["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["branch"] == "main")
+        .unwrap();
+    if remote == "." {
+        // Local tracking has no remote upstream object.
+        assert!(main.get("upstream").is_none());
+    } else {
+        assert_eq!(main["upstream"]["remote"], "origin");
+        assert_eq!(main["upstream"]["branch"], "fork/main");
+    }
 }
 
 #[rstest]

@@ -75,8 +75,8 @@ const FIELD_SEP: char = '\0';
 /// Fields, in order: short name, object SHA, committer Unix timestamp,
 /// upstream short name (empty if none), upstream track (`[gone]` if the
 /// configured upstream no longer exists on the remote), push remote (a remote
-/// name or URL; empty if none).
-const LOCAL_BRANCH_FORMAT: &str = "--format=%(refname:lstrip=2)%00%(objectname)%00%(committerdate:unix)%00%(upstream:short)%00%(upstream:track)%00%(push:remotename)";
+/// name or URL; empty if none), upstream remote (empty if none).
+const LOCAL_BRANCH_FORMAT: &str = "--format=%(refname:lstrip=2)%00%(objectname)%00%(committerdate:unix)%00%(upstream:short)%00%(upstream:track)%00%(push:remotename)%00%(upstream:remotename)";
 
 /// Format string for the remote-branch scan.
 ///
@@ -207,12 +207,13 @@ impl Repository {
     /// One `for-each-ref refs/remotes/` scan, parsed (excluding
     /// `<remote>/HEAD` symrefs) and sorted by committer timestamp. The
     /// shared scan primitive behind both [`remote_branches`](Self::remote_branches)
-    /// and the snapshot path. No cache side-effect.
+    /// and the snapshot path. Does not populate the remote-branch cache.
     pub(super) fn scan_remote_branch_records(&self) -> anyhow::Result<Vec<RemoteBranch>> {
         let output = self.run_command(&["for-each-ref", REMOTE_BRANCH_FORMAT, "refs/remotes/"])?;
+        let remotes = self.all_remote_urls();
         let mut branches: Vec<RemoteBranch> = output
             .lines()
-            .filter_map(parse_remote_branch_line)
+            .filter_map(|line| parse_remote_branch_line(line, &remotes))
             .collect();
         branches.sort_by_key(|b| std::cmp::Reverse(b.committer_ts));
         Ok(branches)
@@ -393,27 +394,29 @@ fn parse_local_branch_line(line: &str) -> Option<LocalBranch> {
     let push_remote = Some(parts.next()?)
         .filter(|s| !s.is_empty())
         .map(str::to_string);
+    let upstream_remote = Some(parts.next()?)
+        .filter(|s| !s.is_empty() && *s != ".")
+        .map(str::to_string);
     Some(LocalBranch {
         name,
         commit_sha,
         committer_ts,
         upstream_short,
+        upstream_remote,
         push_remote,
     })
 }
 
 /// Parse one record from the remote-branch scan.
 ///
-/// Skips `<remote>/HEAD` symrefs — they duplicate another ref and would
+/// Skips `<remote>/HEAD` symrefs, which duplicate another ref and would
 /// confuse callers that key by local name.
-fn parse_remote_branch_line(line: &str) -> Option<RemoteBranch> {
+fn parse_remote_branch_line(line: &str, remotes: &[(String, String)]) -> Option<RemoteBranch> {
     let mut parts = line.split(FIELD_SEP);
     let short_name = parts.next()?;
     let commit_sha = parts.next()?.to_string();
     let committer_ts: i64 = parts.next()?.parse().ok()?;
-
-    // `<remote>/HEAD` is a symref to the remote's default branch; skip it.
-    let (remote_name, local_name) = short_name.split_once('/')?;
+    let (remote_name, local_name) = super::remotes::split_remote_branch_name(short_name, remotes)?;
     if local_name == "HEAD" {
         return None;
     }

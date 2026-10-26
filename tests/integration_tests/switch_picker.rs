@@ -859,7 +859,11 @@ fn test_switch_picker_abort_with_escape(repo: TestRepo) {
         &["switch"],
         repo.root_path(),
         &env_vars,
-        &[], // No inputs before abort
+        // Settle: the preview renders only after the list has a selected row,
+        // so gating on it confirms both panels before capture. Without a gate,
+        // a prompt that sits quiet for STABLE_DURATION on a slow runner gets
+        // captured before any rows arrive.
+        &[("", Some("has no file changes"))],
     );
 
     assert_valid_abort_exit_code(result.exit_code);

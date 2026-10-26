@@ -140,6 +140,15 @@ impl<'a> Branch<'a> {
             .and_then(|b| b.upstream_short.clone()))
     }
 
+    /// Configured upstream remote, as reported by git's local-branch inventory.
+    /// Local tracking (`.`) has no remote.
+    pub fn upstream_remote(&self) -> anyhow::Result<Option<String>> {
+        Ok(self
+            .repo
+            .local_branch(&self.name)?
+            .and_then(|b| b.upstream_remote.clone()))
+    }
+
     /// Where this branch pushes: a remote name, or a URL when
     /// `branch.<name>.pushRemote` is one (`gh pr checkout` sets that for a
     /// fork's PR). Resolves `pushRemote` → `remote.pushDefault` → the tracking

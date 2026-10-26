@@ -131,7 +131,7 @@ use crate::output::print_json;
 use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use super::hooks::HookAnnouncer;
 use super::list::collect;
-use super::list::model::{BranchScope, ListItem};
+use super::list::model::ListItem;
 use super::list::progressive::RenderTarget;
 use super::list::render::PLACEHOLDER;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
@@ -840,7 +840,7 @@ fn build_morph_branch_row(
     default_branch: Option<&str>,
 ) -> (String, LocalContent) {
     let mut branch_item = worktree_item.clone();
-    branch_item.reclassify_as_branch(BranchScope::Local, branch.to_string());
+    branch_item.reclassify_as_branch(branch.to_string());
     branch_item.status_symbols = Default::default();
     branch_item.refresh_status_symbols(default_branch);
     let line = layout
@@ -2566,7 +2566,7 @@ pub mod tests {
         resolve_shortcut_branch, resolve_shortcut_url, summary_command_and_hint,
         switch_pipeline_repo,
     };
-    use crate::commands::list::model::{BranchScope, ListItem, WorktreeData};
+    use crate::commands::list::model::{ListItem, WorktreeData};
     use crate::commands::worktree::RemovalPlan;
     use insta::assert_yaml_snapshot;
     use skim::prelude::SkimItem;
@@ -4346,7 +4346,7 @@ pub mod tests {
             local,
             LocalContent::from_item(&{
                 let mut b = ListItem::new_branch("abc123".to_string(), "feature".to_string());
-                b.reclassify_as_branch(BranchScope::Local, "feature".into());
+                b.reclassify_as_branch("feature".into());
                 b
             }),
             "the morphed row's diff signals are the branch's (working_tree empty)"

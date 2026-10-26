@@ -14,6 +14,8 @@
 //! SharedChild serializes those deliveries with reaping. No caller group is killed.
 //! A group-wide TERM may also reach a child through this PID forwarding;
 //! repeated TERM deliveries never trigger escalation here.
+//! The process owner receives signals and performs foreground admission on the
+//! same thread, so a handler cannot lag behind a spawn on a different thread.
 //! Spawn return commits admission. Startup cancellation retires an uncommitted
 //! child with TERM; its cleanup is best effort, while admitted children finish
 //! native-key cleanup. TERM is cooperative, with no escalation.
@@ -247,15 +249,20 @@ impl Drop for Registration {
 
 pub struct ForegroundSignals {
     signals: Signals,
+    admission: Admission,
+    terminal_interrupt: TerminalInterrupt,
+    lease: Lease,
+    registration: Registration,
+}
+
+#[derive(Clone)]
+struct Admission {
     terminated: Arc<AtomicBool>,
     /// SIGINT received since install. A `Cancels` scope shares the operation's
     /// flag and keeps observing it while children run; a `ChildInput` scope
     /// consults its own flag only until spawn commits admission.
     interrupted: Arc<AtomicBool>,
-    terminal_interrupt: TerminalInterrupt,
     scope: Arc<Interruption>,
-    lease: Lease,
-    registration: Registration,
 }
 
 /// Physical child status and independent foreground cancellation.
@@ -318,24 +325,15 @@ impl ForegroundSignals {
         drop(activity);
         Ok(Self {
             signals,
-            terminated,
-            interrupted,
+            admission: Admission {
+                terminated,
+                interrupted,
+                scope,
+            },
             terminal_interrupt,
-            scope,
             registration,
             lease: Lease(state),
         })
-    }
-
-    /// Synchronously latched startup cancellation, before a listener exists.
-    pub fn interrupt_signal(&self) -> Option<i32> {
-        if self.terminated.load(Ordering::SeqCst) {
-            Some(SIGTERM)
-        } else {
-            self.scope
-                .signal()
-                .or_else(|| self.interrupted.load(Ordering::SeqCst).then_some(SIGINT))
-        }
     }
 
     /// Admission commits when spawn returns. A cancelled in-flight child may
@@ -343,40 +341,8 @@ impl ForegroundSignals {
     /// Earlier admitted children finish native-key cleanup. Publish the admission
     /// origin before its teardown can report a different physical child signal.
     pub fn spawn(&self, command: &mut std::process::Command) -> anyhow::Result<SharedChild> {
-        if let Some(signal) = self.interrupt_signal() {
-            self.cancel_admission(signal);
-            return Err(crate::git::WorktrunkError::Interrupted { signal, hint: None }.into());
-        }
-        match crate::shell_exec::spawn_shared_child(command) {
-            Ok(child) => {
-                if let Some(signal) = self.interrupt_signal() {
-                    self.cancel_admission(signal);
-                    let _ = child.send_signal(SIGTERM);
-                    let _ = child.send_signal(SIGCONT);
-                } else if tracing::enabled!(target: crate::trace::WT_TRACE_TARGET, tracing::Level::DEBUG)
-                {
-                    crate::trace::instant(&format!("Foreground admitted:{}", child.id()));
-                }
-                Ok(child)
-            }
-            Err(error) => {
-                if let Some(signal) = self.interrupt_signal() {
-                    self.cancel_admission(signal);
-                    return Err(
-                        crate::git::WorktrunkError::Interrupted { signal, hint: None }.into(),
-                    );
-                }
-                Err(error.into())
-            }
-        }
-    }
-
-    fn cancel_admission(&self, signal: i32) {
-        let _ =
-            self.scope
-                .admission
-                .compare_exchange(0, signal, Ordering::SeqCst, Ordering::SeqCst);
-        cancel_foreground(signal);
+        let admission = self.admission.clone();
+        crate::shell_exec::with_process_owner(command, move |command| admission.spawn(command))?
     }
 
     /// Wait for the owned direct child and stop its signal listener on every path.
@@ -403,10 +369,13 @@ impl ForegroundSignals {
         let handle = self.signals.handle();
         let Self {
             mut signals,
-            terminated,
-            interrupted,
+            admission:
+                Admission {
+                    terminated,
+                    interrupted,
+                    scope,
+                },
             terminal_interrupt,
-            scope,
             registration,
             lease,
         } = self;
@@ -437,6 +406,55 @@ impl ForegroundSignals {
             _registration: registration,
             _lease: Some(lease),
         }
+    }
+}
+
+impl Admission {
+    fn interrupt_signal(&self) -> Option<i32> {
+        if self.terminated.load(Ordering::SeqCst) {
+            Some(SIGTERM)
+        } else {
+            self.scope
+                .signal()
+                .or_else(|| self.interrupted.load(Ordering::SeqCst).then_some(SIGINT))
+        }
+    }
+
+    fn spawn(&self, command: &mut std::process::Command) -> anyhow::Result<SharedChild> {
+        if let Some(signal) = self.interrupt_signal() {
+            self.cancel(signal);
+            return Err(crate::git::WorktrunkError::Interrupted { signal, hint: None }.into());
+        }
+        match crate::shell_exec::spawn_shared_child_here(command) {
+            Ok(child) => {
+                if let Some(signal) = self.interrupt_signal() {
+                    self.cancel(signal);
+                    let _ = child.send_signal(SIGTERM);
+                    let _ = child.send_signal(SIGCONT);
+                } else if tracing::enabled!(target: crate::trace::WT_TRACE_TARGET, tracing::Level::DEBUG)
+                {
+                    crate::trace::instant(&format!("Foreground admitted:{}", child.id()));
+                }
+                Ok(child)
+            }
+            Err(error) => {
+                if let Some(signal) = self.interrupt_signal() {
+                    self.cancel(signal);
+                    return Err(
+                        crate::git::WorktrunkError::Interrupted { signal, hint: None }.into(),
+                    );
+                }
+                Err(error.into())
+            }
+        }
+    }
+
+    fn cancel(&self, signal: i32) {
+        let _ =
+            self.scope
+                .admission
+                .compare_exchange(0, signal, Ordering::SeqCst, Ordering::SeqCst);
+        cancel_foreground(signal);
     }
 }
 
@@ -518,6 +536,171 @@ mod tests {
     use super::*;
     use crate::git::ErrorExt;
     use crate::shell_exec::Cmd;
+
+    /// Delay receipt before the flag callbacks, as when the kernel dequeues
+    /// SIGINT onto a thread that is then descheduled. Admission must wait for
+    /// that receipt instead of starting a child that missed the terminal key.
+    #[test]
+    #[allow(unsafe_code)]
+    fn signal_receipt_and_child_admission_have_one_owner() {
+        use nix::sys::signal::{SigSet, Signal, kill};
+        use nix::unistd::Pid;
+        use std::os::unix::process::CommandExt;
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
+
+        const CHILD_ENV: &str = "WORKTRUNK_TEST_SIGNAL_OWNER_CHILD";
+        let mut signals = SigSet::empty();
+        signals.add(Signal::SIGINT);
+        signals.add(Signal::SIGTERM);
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "signal_forwarder::tests::signal_receipt_and_child_admission_have_one_owner",
+                ])
+                .env(CHILD_ENV, "1")
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            // The child libtest harness also creates a thread before entering
+            // this test. Keep that harness thread out of signal delivery.
+            // SAFETY: pthread_sigmask is async-signal-safe and uses only the
+            // already-built signal set after fork.
+            unsafe {
+                command.pre_exec(move || signals.thread_block().map_err(Into::into));
+            }
+            let output = crate::shell_exec::spawn(&mut command)
+                .unwrap()
+                .wait_with_output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(output.status.success(), "{stdout}\n{stderr}");
+            assert!(stdout.contains(" 1 passed;"), "{stdout}");
+            return;
+        }
+
+        // This test thread stands in for main before it starts any workers.
+        signals.thread_unblock().unwrap();
+        crate::shell_exec::init_startup().unwrap();
+        let operation = CommandOperation::start().unwrap();
+        let entered = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(AtomicBool::new(false));
+        struct Release(Arc<AtomicBool>);
+        impl Drop for Release {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let release_on_panic = Release(release.clone());
+        let received = entered.clone();
+        let released = release.clone();
+        // SAFETY: the callback performs only lock-free atomic operations.
+        let delayed = unsafe {
+            signal_hook::low_level::register(SIGINT, move || {
+                received.store(true, Ordering::SeqCst);
+                while !released.load(Ordering::SeqCst) {
+                    std::hint::spin_loop();
+                }
+            })
+        }
+        .unwrap();
+        let foreground = ForegroundSignals::install(TerminalInterrupt::Cancels).unwrap();
+        kill(Pid::this(), Signal::SIGINT).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !entered.load(Ordering::SeqCst) {
+            assert!(Instant::now() < deadline, "signal receiver did not run");
+            thread::yield_now();
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let marker = temp.path().join("late-child");
+        let child_marker = marker.clone();
+        let (starting, started) = mpsc::channel();
+        let admission = thread::spawn(move || {
+            starting.send(()).unwrap();
+            let mut command = std::process::Command::new("sh");
+            command.args(["-c", "touch \"$1\"", "sh"]).arg(child_marker);
+            let result = foreground.spawn(&mut command);
+            // Always reap a child if the admission regression returns one.
+            match result {
+                Ok(child) => {
+                    child.wait().unwrap();
+                    None
+                }
+                Err(error) => error.interrupt_signal(),
+            }
+        });
+        started.recv_timeout(Duration::from_secs(20)).unwrap();
+        // Keep receipt delayed while the other thread attempts admission.
+        thread::sleep(crate::testing::SLEEP_FOR_ABSENCE_CHECK);
+        assert!(
+            !marker.exists(),
+            "child started before signal receipt finished"
+        );
+        drop(release_on_panic);
+        assert_eq!(admission.join().unwrap(), Some(SIGINT));
+        assert_eq!(operation.interrupt_signal(), Some(SIGINT));
+        assert!(!marker.exists());
+        signal_hook::low_level::unregister(delayed);
+
+        // Plain captures share the owner too: their children must inherit the
+        // original mask, and a reusable Command keeps its builder state.
+        let mut command = std::process::Command::new("python3");
+        command.args(["-c", "import signal; mask = signal.pthread_sigmask(signal.SIG_BLOCK, []); assert signal.SIGINT not in mask and signal.SIGTERM not in mask"]);
+        for _ in 0..2 {
+            assert!(
+                crate::shell_exec::spawn(&mut command)
+                    .unwrap()
+                    .wait()
+                    .unwrap()
+                    .success()
+            );
+        }
+
+        drop(operation);
+        // A signal during spawn must retire an uncommitted child, or take
+        // precedence over its exec error. Send TERM from pre_exec so receipt
+        // falls between the owner's two admission checks in both cases.
+        use std::os::unix::process::ExitStatusExt;
+        let parent = Pid::this();
+        for executable in [std::path::Path::new("sleep"), &temp.path().join("missing")] {
+            let operation = CommandOperation::start().unwrap();
+            let foreground = ForegroundSignals::install(TerminalInterrupt::Cancels).unwrap();
+            assert_eq!(foreground.admission.interrupt_signal(), None);
+            let mut command = std::process::Command::new(executable);
+            command.arg("30");
+            // SAFETY: kill is async-signal-safe; parent was captured before fork.
+            unsafe {
+                command.pre_exec(move || kill(parent, Signal::SIGTERM).map_err(Into::into));
+            }
+            match foreground.spawn(&mut command) {
+                Ok(child) => {
+                    assert_eq!(executable, std::path::Path::new("sleep"));
+                    // No listener forwards TERM here: admission itself must
+                    // retire this child, which missed the signal sent to wt.
+                    assert_eq!(child.wait().unwrap().signal(), Some(SIGTERM));
+                }
+                Err(error) => {
+                    assert_eq!(executable, temp.path().join("missing"));
+                    assert_eq!(error.interrupt_signal(), Some(SIGTERM));
+                }
+            }
+            assert_eq!(
+                foreground.admission.scope.admission.load(Ordering::SeqCst),
+                SIGTERM
+            );
+            assert_eq!(operation.interrupt_signal(), Some(SIGTERM));
+            assert_eq!(
+                foreground
+                    .spawn(&mut command)
+                    .unwrap_err()
+                    .interrupt_signal(),
+                Some(SIGTERM)
+            );
+        }
+    }
 
     #[test]
     fn operation_cancellation_survives_scope_retirement_and_resets() {

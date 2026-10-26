@@ -654,6 +654,71 @@ mod pty_tests {
     }
 
     #[rstest]
+    fn test_prompt_reports_shell_that_fails_after_confirmation(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        let bashrc = temp_home.path().join(".bashrc");
+        let zshrc = temp_home.path().join(".zshrc");
+        fs::write(&bashrc, "# bash config\n").unwrap();
+        fs::write(&zshrc, "# zsh config\n").unwrap();
+
+        let mut env_vars = repo.test_env_vars();
+        env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["switch", "--create", "feature"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let invalid_bashrc = b"\xff\xfe#\0 \0t\0e\0s\0t\0\n\0";
+        let (output, exit_code) = exec_cmd_in_pty_prompted_with(cmd, &["y\n"], "[y/N", |_| {
+            fs::write(&bashrc, invalid_bashrc).unwrap();
+        });
+
+        // The installation offer is best-effort; its failure does not undo the switch.
+        assert_eq!(exit_code, 0, "{output}");
+        assert!(output.contains("Failed to configure bash"), "{output}");
+        assert!(output.contains("Configured 1 shell"), "{output}");
+        assert_eq!(fs::read(&bashrc).unwrap(), invalid_bashrc);
+        assert!(
+            fs::read_to_string(&zshrc)
+                .unwrap()
+                .contains("config shell init zsh")
+        );
+    }
+
+    #[rstest]
+    fn test_prompt_installs_other_shells_when_bashrc_is_invalid(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        let bashrc = temp_home.path().join(".bashrc");
+        let zshrc = temp_home.path().join(".zshrc");
+        let invalid_bashrc = b"\xff\xfe#\0 \0t\0e\0s\0t\0\n\0";
+        fs::write(&bashrc, invalid_bashrc).unwrap();
+        fs::write(&zshrc, "# zsh config\n").unwrap();
+
+        let mut env_vars = repo.test_env_vars();
+        env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["switch", "--create", "feature"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, exit_code) = exec_cmd_in_pty_prompted_with(cmd, &["y\n"], "[y/N", |_| {});
+
+        assert_eq!(exit_code, 0, "{output}");
+        assert!(output.contains("Failed to configure bash"), "{output}");
+        assert!(output.contains("Configured 1 shell"), "{output}");
+        assert_eq!(fs::read(&bashrc).unwrap(), invalid_bashrc);
+        assert!(
+            fs::read_to_string(&zshrc)
+                .unwrap()
+                .contains("config shell init zsh")
+        );
+    }
+
+    #[rstest]
     #[case(false)]
     #[case(true)]
     fn test_first_run_completion_preview_controls_write(

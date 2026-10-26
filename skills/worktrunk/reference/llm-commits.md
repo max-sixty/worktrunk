@@ -200,4 +200,4 @@ Custom user templates that don't reference `{{ user_guidance }}` / `{{ project_g
 
 ## Fallback behavior
 
-When no LLM is configured, worktrunk generates deterministic messages based on changed filenames (e.g., "Changes to auth.rs & config.rs").
+When no LLM is configured, worktrunk generates deterministic messages: commits name the changed files (e.g., "Changes to auth.rs & config.rs"), and squashes get the subject `Squash commits from <branch>` with the combined commits listed in the body.

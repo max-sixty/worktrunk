@@ -71,6 +71,9 @@ pub trait RepositoryCliExt {
     /// so this only names the files that genuinely conflict, before anything
     /// moves.
     ///
+    /// The push range is `target_tip..source_sha`; `target_branch` only names
+    /// the branch in the error.
+    ///
     /// The caller has already established that `target_worktree` exists on disk
     /// (`MergeContext::prepare` refuses a registered-but-missing worktree), so
     /// the status read here is free to fail if the directory is gone.
@@ -83,6 +86,7 @@ pub trait RepositoryCliExt {
         &self,
         target_worktree: Option<&PathBuf>,
         target_branch: &str,
+        target_tip: &str,
         source_sha: &str,
     ) -> anyhow::Result<()>;
 
@@ -443,6 +447,7 @@ impl RepositoryCliExt for Repository {
         &self,
         target_worktree: Option<&PathBuf>,
         target_branch: &str,
+        target_tip: &str,
         source_sha: &str,
     ) -> anyhow::Result<()> {
         let Some(wt_path) = target_worktree else {
@@ -461,7 +466,7 @@ impl RepositoryCliExt for Repository {
             return Ok(());
         }
 
-        let push_files = self.changed_files(target_branch, source_sha)?;
+        let push_files = self.changed_files(target_tip, source_sha)?;
         let wt_files = parse_porcelain_z(&wt_status_output);
 
         let overlapping: Vec<String> = push_files
