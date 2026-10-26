@@ -424,6 +424,9 @@ pub struct LocalBranch {
     /// `None` when no upstream is set, or when the configured upstream is gone
     /// (git reports `[gone]` via `%(upstream:track)`).
     pub upstream_short: Option<String>,
+    /// Configured upstream remote, from `%(upstream:remotename)`.
+    /// `None` for local tracking (`.`) or when no remote is configured.
+    pub upstream_remote: Option<String>,
     /// Where this branch pushes, from `%(push:remotename)`: a remote name, or a
     /// URL when `branch.<name>.pushRemote` is one (`gh pr checkout` sets that
     /// for a fork's PR). `None` when no push remote is configured.
@@ -625,10 +628,8 @@ pub struct BranchRef {
     /// Path to worktree, if this branch has one.
     /// None for branch-only items (remote branches, local branches without worktrees).
     worktree_path: Option<PathBuf>,
-    /// Configured remote name for a remote-tracking branch.
-    remote_name: Option<String>,
-    /// Branch name after removing the exact configured remote prefix.
-    remote_branch_name: Option<String>,
+    /// Byte offset of the remote/branch separator in the short name.
+    remote_name_len: Option<usize>,
 }
 
 /// Canonical snapshot of a registered worktree.
@@ -733,8 +734,7 @@ impl BranchRef {
             full_ref: Some(full_ref),
             commit_sha: commit_sha.to_string(),
             worktree_path: None,
-            remote_name: None,
-            remote_branch_name: None,
+            remote_name_len: None,
         }
     }
 
@@ -752,8 +752,7 @@ impl BranchRef {
             full_ref: Some(full_ref),
             commit_sha: commit_sha.to_string(),
             worktree_path: None,
-            remote_name: Some(remote_name.to_string()),
-            remote_branch_name: Some(branch.to_string()),
+            remote_name_len: Some(remote_name.len()),
         }
     }
 
@@ -810,15 +809,14 @@ impl BranchRef {
 
     /// True if this is a remote-tracking ref (under `refs/remotes/`).
     pub fn is_remote(&self) -> bool {
-        self.remote_name.is_some()
+        self.remote_name_len.is_some()
     }
 
     /// Configured remote and branch names for a remote-tracking ref.
     pub fn remote_parts(&self) -> Option<(&str, &str)> {
-        Some((
-            self.remote_name.as_deref()?,
-            self.remote_branch_name.as_deref()?,
-        ))
+        let short = self.short_name()?;
+        let boundary = self.remote_name_len?;
+        Some((&short[..boundary], &short[boundary + 1..]))
     }
 }
 
@@ -832,8 +830,7 @@ impl WorktreeRef {
             full_ref: branch.map(local_ref),
             commit_sha: commit_sha.to_string(),
             worktree_path: Some(path),
-            remote_name: None,
-            remote_branch_name: None,
+            remote_name_len: None,
         })
     }
 
