@@ -817,7 +817,12 @@ pub fn handle_state_get(
 
             let branch_ref = match (local_sha, remote_sha) {
                 (Some(sha), _) => BranchRef::local_branch(&branch_name, sha),
-                (None, Some(sha)) => BranchRef::remote_branch(&branch_name, sha),
+                (None, Some(sha)) => {
+                    let (remote, branch) = repo
+                        .split_remote_branch_name(&branch_name)
+                        .context("remote branch has no remote prefix")?;
+                    BranchRef::remote_branch(remote, branch, sha)
+                }
                 (None, None) => {
                     return Err(worktrunk::git::GitError::BranchNotFound {
                         // Offering `--create` for a name git rejects sends the

@@ -774,7 +774,12 @@ fn test_state_get_ci_status_nonexistent_branch(repo: TestRepo) {
 /// Resolve a branch that exists only as a remote-tracking ref (no local
 /// counterpart). Exercises the `remote_branch` arm of the BranchRef match.
 #[rstest]
-fn test_state_get_ci_status_remote_only_branch(#[from(repo_with_remote)] repo: TestRepo) {
+#[case("team/fork/foo")]
+#[case("team/fork/HEAD")]
+fn test_state_get_ci_status_remote_only_branch(
+    #[from(repo_with_remote)] repo: TestRepo,
+    #[case] branch: &str,
+) {
     repo.create_branch("foo");
     repo.run_git(&["checkout", "foo"]);
     std::fs::write(repo.root_path().join("f.txt"), "f").unwrap();
@@ -784,7 +789,14 @@ fn test_state_get_ci_status_remote_only_branch(#[from(repo_with_remote)] repo: T
     repo.run_git(&["checkout", "main"]);
     repo.run_git(&["branch", "-D", "foo"]);
 
-    let output = wt_state_cmd(&repo, "ci-status", "get", &["--branch", "origin/foo"])
+    repo.run_git(&["remote", "rename", "origin", "team/fork"]);
+    repo.run_git(&[
+        "symbolic-ref",
+        "refs/remotes/team/fork/HEAD",
+        "refs/remotes/team/fork/foo",
+    ]);
+
+    let output = wt_state_cmd(&repo, "ci-status", "get", &["--branch", branch])
         .output()
         .unwrap();
     assert!(
