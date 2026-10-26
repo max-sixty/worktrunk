@@ -1103,6 +1103,7 @@ fn print_cwd_removed_hint_if_needed() {
 fn finish_command(verbose_level: u8, command_line: &str, error: Option<&anyhow::Error>) {
     let error_text = error.map(|err| err.to_string());
     diagnostic::write_if_verbose(verbose_level, command_line, error_text.as_deref());
+    output::withdraw_missing_cd_target();
     let _ = output::terminate_output();
 }
 

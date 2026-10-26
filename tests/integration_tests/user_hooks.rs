@@ -23,12 +23,14 @@ use worktrunk::config::HookSource;
 #[rstest]
 #[cfg(unix)]
 fn test_concurrent_hooks_log_labels_and_pass_cd_directive(repo: TestRepo) {
-    repo.write_project_config(
+    // The directive names a directory that exists, or wt withdraws it on exit.
+    let target = repo.home_path().to_string_lossy().to_string();
+    repo.write_project_config(&format!(
         r#"[pre-start]
-first = 'printf CD > "$WORKTRUNK_DIRECTIVE_CD_FILE"'
+first = "printf %s '{target}' > \"$WORKTRUNK_DIRECTIVE_CD_FILE\""
 second = 'true'
 "#,
-    );
+    ));
     let cd_file = repo.home_path().join("cd-directive");
     let output = repo
         .wt_command()
@@ -37,7 +39,7 @@ second = 'true'
         .output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");
-    assert_eq!(fs::read_to_string(cd_file).unwrap(), "CD");
+    assert_eq!(fs::read_to_string(cd_file).unwrap(), target);
     let log = fs::read_to_string(repo.root_path().join(".git/wt/logs/commands.jsonl")).unwrap();
     let mut labels: Vec<String> = log
         .lines()
@@ -5016,6 +5018,73 @@ setup = "'{wt_toml}' switch --create hook-created --no-hooks"
         !stderr.contains("shell integration"),
         "inner wt should not warn about shell integration being uninstalled, got: {stderr}",
     );
+}
+
+/// A nested wt's directive outlives its target when a later step removes the
+/// worktree it switched to. The outer wt withdraws it on exit, so the shell
+/// wrapper doesn't `cd` into a missing directory.
+#[rstest]
+fn test_directive_to_worktree_removed_by_later_step_is_withdrawn(repo: TestRepo) {
+    use crate::common::{configure_directive_file, directive_file, wt_bin};
+
+    repo.commit("initial");
+    let created = repo.root_path().parent().unwrap().join("repo.hook-created");
+
+    let wt_toml = wt_bin().to_string_lossy().replace('\\', r"\\");
+    let created_toml = created.to_string_lossy().replace('\\', r"\\");
+    repo.write_test_config(&format!(
+        r#"
+[pre-start]
+setup = "'{wt_toml}' switch --create hook-created --no-hooks && git worktree remove --force '{created_toml}'"
+"#,
+    ));
+
+    let (cd_path, _guard) = directive_file();
+    let mut cmd = repo.wt_command();
+    configure_directive_file(&mut cmd, &cd_path);
+    cmd.args(["hook", "pre-start", "setup"]);
+    let output = cmd.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "hook failed: stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        !created.exists(),
+        "the hook should remove the worktree it created"
+    );
+    assert_eq!(
+        fs::read_to_string(&cd_path).unwrap(),
+        "",
+        "wt left a cd directive to the removed worktree"
+    );
+}
+
+/// A directive to a directory whose name ends in a space names a directory
+/// that exists, so wt keeps it. Unix only: Windows drops trailing spaces from
+/// directory names.
+#[cfg(unix)]
+#[rstest]
+fn test_directive_to_directory_ending_in_space_is_kept(repo: TestRepo) {
+    let target = repo.home_path().join("dir ");
+    fs::create_dir(&target).unwrap();
+    let target = target.to_string_lossy().to_string();
+    repo.write_project_config(&format!(
+        r#"[pre-start]
+cd = '''printf '%s\n' '{target}' > "$WORKTRUNK_DIRECTIVE_CD_FILE"'''
+"#,
+    ));
+    let cd_file = repo.home_path().join("cd-directive");
+    let output = repo
+        .wt_command()
+        .args(["hook", "pre-start", "--yes"])
+        .env("WORKTRUNK_DIRECTIVE_CD_FILE", &cd_file)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(fs::read_to_string(cd_file).unwrap(), format!("{target}\n"));
 }
 
 // ============================================================================

@@ -8,7 +8,10 @@
 //!
 //! `WORKTRUNK_DIRECTIVE_CD_FILE` holds one raw path. The wrapper changes to it
 //! after wt exits. `--execute` needs no directive: wt starts the external
-//! program directly with its working directory set to the switch target. The
+//! program directly with its working directory set to the switch target.
+//! Because that program can remove the target before wt exits (a session that
+//! ends by removing its own worktree), wt withdraws a target that no longer
+//! exists as it finishes, leaving the shell where it started. The
 //! retired exec-file variable is recognized only to warn when an old wrapper
 //! redirects `--execute` output away from the terminal.
 //!
@@ -302,6 +305,34 @@ pub fn change_directory(path: impl AsRef<Path>) -> anyhow::Result<()> {
         DirectiveMode::ShellIntegration { cd_file } => {
             write_cd_path(&cd_file, &to_logical_path(path))
         }
+    }
+}
+
+/// Withdraw a directory change whose target no longer exists.
+///
+/// Called as wt finishes, after everything it runs in the foreground: an
+/// `--execute` program that removes the worktree it
+/// started in, or a hook or alias whose nested wt switches somewhere a later
+/// step removes. Emptying the file keeps the wrapper from `cd`-ing into a
+/// missing directory, so the shell stays where it was. Best-effort: if the
+/// file can't be read or emptied, the wrapper's own `cd` error names the
+/// directory.
+pub fn withdraw_missing_cd_target() {
+    let mode = state()
+        .lock()
+        .expect("OUTPUT_STATE lock poisoned")
+        .mode
+        .clone();
+    let DirectiveMode::ShellIntegration { cd_file } = mode else {
+        return;
+    };
+    let Ok(target) = std::fs::read_to_string(&cd_file) else {
+        return;
+    };
+    // Strip only the line terminator: a directory name can end in spaces.
+    let target = target.trim_end_matches(['\n', '\r']);
+    if !target.is_empty() && !Path::new(target).is_dir() {
+        let _ = std::fs::File::create(&cd_file);
     }
 }
 

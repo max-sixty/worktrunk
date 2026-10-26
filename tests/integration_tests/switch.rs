@@ -1132,6 +1132,55 @@ fn test_switch_no_cd_execute_runs_in_worktree(mut repo: TestRepo) {
     );
 }
 
+/// An `--execute` program can remove the worktree it started in, as a session
+/// does when it ends by removing its own worktree. The shell wrapper would then
+/// `cd` into a directory that no longer exists, so wt withdraws the directive
+/// and the shell stays where it was.
+///
+/// Unix only: Windows refuses to delete a directory that a running process
+/// holds as its cwd, so there the program can't remove the worktree it runs in.
+#[cfg(unix)]
+#[rstest]
+fn test_switch_execute_that_removes_worktree_withdraws_cd(mut repo: TestRepo) {
+    let worktree = repo.add_worktree("feature");
+    let root = repo.root_path().to_string_lossy().to_string();
+    let worktree_arg = worktree.to_string_lossy().to_string();
+
+    let (cd_path, _guard) = directive_file();
+    let mut cmd = repo.wt_command();
+    configure_directive_file(&mut cmd, &cd_path);
+    cmd.current_dir(repo.root_path()).args([
+        "switch",
+        "feature",
+        "--execute",
+        "git",
+        "--",
+        "-C",
+        &root,
+        "worktree",
+        "remove",
+        "--force",
+        &worktree_arg,
+    ]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "switch --execute failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !worktree.exists(),
+        "the --execute program should remove the worktree"
+    );
+    assert_eq!(
+        fs::read_to_string(&cd_path).unwrap(),
+        "",
+        "wt left a cd directive to the removed worktree"
+    );
+}
+
 /// A switch from a subdirectory keeps the user's position, so the `--execute`
 /// program starts in `<worktree>/<subdir>` — not at the worktree root the
 /// background hooks run in. The header names the program's own directory

@@ -42,7 +42,7 @@ pub(crate) use global::{
     change_directory, execute, is_shell_integration_active, mark_cwd_removed,
     post_hook_display_path, pre_hook_display_path, print_outdated_shell_wrapper_hint_once,
     retired_shell_wrapper_active, set_verbosity, terminate_output, to_logical_path,
-    was_cwd_removed,
+    was_cwd_removed, withdraw_missing_cd_target,
 };
 // Re-export output handlers
 pub(crate) use handlers::{
