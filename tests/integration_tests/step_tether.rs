@@ -176,3 +176,15 @@ fn test_tether_runs_command_in_working_dir(repo: TestRepo) {
         "the tethered command must run in the -C directory"
     );
 }
+
+#[rstest]
+fn test_tether_propagates_command_exit_status(repo: TestRepo) {
+    let status = repo
+        .wt_command()
+        .args(["step", "tether", "--", "sh", "-c", "exit 7"])
+        .current_dir(repo.path())
+        .status()
+        .expect("run wt step tether");
+
+    assert_eq!(status.code(), Some(7));
+}
