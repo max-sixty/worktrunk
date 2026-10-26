@@ -909,20 +909,32 @@ fn command_header(cmd: &str, context: Option<&str>) -> String {
 ///
 /// `output` is `None` for a command that never produced any (spawn or wait
 /// failure); its header and stdin still emit, so the input survives in the deep
-/// log even when nothing ran.
+/// log even when nothing ran. Sensitive commands emit only a redaction marker
+/// to each target, regardless of outcome.
 ///
 /// Below Debug both targets are disabled and this is a no-op.
-fn log_output(trace: &CommandTrace, stdin: Option<&[u8]>, output: Option<&std::process::Output>) {
-    // `log::max_level` (held at the verbosity/`RUST_LOG` ceiling by the
-    // `LogTracer` cap in `logging::init`) is the coarse "deep logging on at
-    // all?" gate that skips building the full *and* bounded output strings
-    // when nothing consumes them. It stays a `log::*` check on purpose: this
-    // body feeds both `SUBPROCESS_FULL_TARGET` and `SUBPROCESS_BOUNDED_TARGET`,
-    // so the gate must fire whenever *either* deep sink is live — exactly the
-    // verbosity cap. A per-target `tracing::enabled!(SUBPROCESS_FULL_TARGET …)`
-    // would wrongly skip the bounded preview in the rare case where `-vv`
-    // opened `trace.log` but `subprocess.log` failed to open.
-    if !log::log_enabled!(log::Level::Debug) {
+fn log_output(
+    trace: &CommandTrace,
+    stdin: Option<&[u8]>,
+    output: Option<&std::process::Output>,
+    sensitive: bool,
+) {
+    // Either sink can be active without the other (for example, if opening
+    // subprocess.log failed). Avoid formatting bytes unless one consumes them.
+    if !tracing::enabled!(target: SUBPROCESS_FULL_TARGET, tracing::Level::DEBUG)
+        && !tracing::enabled!(target: SUBPROCESS_BOUNDED_TARGET, tracing::Level::DEBUG)
+    {
+        return;
+    }
+    if sensitive {
+        tracing::debug!(
+            target: SUBPROCESS_FULL_TARGET,
+            "{}  [seq={} tid={}]\n  [redacted]",
+            command_header(trace.cmd(), trace.context()),
+            trace.seq(),
+            trace.tid(),
+        );
+        tracing::debug!(target: SUBPROCESS_BOUNDED_TARGET, "  [redacted]");
         return;
     }
     let stdin = stdin.unwrap_or_default();
@@ -1270,6 +1282,8 @@ pub struct Cmd {
     current_dir: Option<std::path::PathBuf>,
     context: Option<String>,
     stdin_data: Option<Vec<u8>>,
+    /// Redact captured stdin/stdout/stderr in both subprocess log targets.
+    sensitive_output: bool,
     timeout: Option<std::time::Duration>,
     /// Environment mutations in call order: `Some(value)` sets, `None`
     /// removes. One ordered list rather than a set list plus a remove list, so
@@ -1340,14 +1354,14 @@ fn record_captured(
     trace: &mut CommandTrace,
     stdin: Option<&[u8]>,
     result: &std::io::Result<std::process::Output>,
+    sensitive: bool,
 ) {
     match result {
         Ok(output) => trace.complete(output.status.success()),
         Err(e) => trace.fail(e),
     }
-    // stdin is logged either way; stdout/stderr only when the command produced
-    // output — a command that failed to spawn still leaves its input behind.
-    log_output(trace, stdin, result.as_ref().ok());
+    // Redact every stream together, including input when spawning failed.
+    log_output(trace, stdin, result.as_ref().ok(), sensitive);
 }
 
 /// A child from [`Cmd::spawn_captured`], traced from spawn until
@@ -1355,6 +1369,7 @@ fn record_captured(
 struct CapturedChild {
     child: std::process::Child,
     trace: CommandTrace,
+    sensitive_output: bool,
     _tracked: Option<BackgroundPid>,
 }
 
@@ -1363,10 +1378,11 @@ impl CapturedChild {
         let CapturedChild {
             child,
             mut trace,
+            sensitive_output,
             _tracked,
         } = self;
         let result = child.wait_with_output();
-        record_captured(&mut trace, None, &result);
+        record_captured(&mut trace, None, &result, sensitive_output);
         result
     }
 }
@@ -1595,6 +1611,7 @@ impl Cmd {
             current_dir: None,
             context: None,
             stdin_data: None,
+            sensitive_output: false,
             timeout: None,
             env_ops: Vec::new(),
             shell_wrap,
@@ -1773,6 +1790,16 @@ impl Cmd {
     /// can block on an unread input. This takes precedence over `.stdin(Stdio)`.
     pub fn stdin_bytes(mut self, data: impl Into<Vec<u8>>) -> Self {
         self.stdin_data = Some(data.into());
+        self
+    }
+
+    /// Redact captured stdin, stdout, and stderr from debug logs.
+    ///
+    /// Status and timing are still traced, and callers receive the original
+    /// output. In a pipeline, both commands' captured output is redacted.
+    /// Command arguments remain visible; streaming output is unaffected.
+    pub fn sensitive_output(mut self) -> Self {
+        self.sensitive_output = true;
         self
     }
 
@@ -1994,7 +2021,12 @@ impl Cmd {
             }
         })();
 
-        record_captured(&mut trace, self.stdin_data.as_deref(), &result);
+        record_captured(
+            &mut trace,
+            self.stdin_data.as_deref(),
+            &result,
+            self.sensitive_output,
+        );
 
         let exit_code = result.as_ref().ok().and_then(|output| output.status.code());
         external_log.record(exit_code);
@@ -2069,6 +2101,7 @@ impl Cmd {
                 Ok(CapturedChild {
                     child,
                     trace,
+                    sensitive_output: self.sensitive_output,
                     _tracked: tracked,
                 })
             }
@@ -2131,6 +2164,7 @@ impl Cmd {
 
         let first_cmd_str = self.command_string();
         let second_cmd_str = next.command_string();
+        let sensitive = self.sensitive_output || next.sensitive_output;
         self.log_run_start(&first_cmd_str);
         next.log_run_start(&second_cmd_str);
 
@@ -2235,7 +2269,7 @@ impl Cmd {
             // source's stdout (the OS pipe), not its own input, so it is logged
             // with `None` — the intermediate stream stays out of the deep log.
             let second_result = second_child.wait_with_output();
-            record_captured(&mut second_trace, None, &second_result);
+            record_captured(&mut second_trace, None, &second_result, sensitive);
 
             // Reap `first`. Its stderr is already being drained; combine
             // the captured stderr with the exit status into an Output.
@@ -2252,7 +2286,12 @@ impl Cmd {
             // The source's own stdin (the commit list) is logged under `  < `,
             // symmetric with `run`. Only the intermediate diff stream — the
             // source's stdout, routed to the sink via OS pipe — stays out.
-            record_captured(&mut first_trace, source_stdin.as_deref(), &first_result);
+            record_captured(
+                &mut first_trace,
+                source_stdin.as_deref(),
+                &first_result,
+                sensitive,
+            );
 
             (first_result, second_result)
         });
@@ -3191,6 +3230,92 @@ print(*counts)
     // ========================================================================
     // Cmd and timeout tests
     // ========================================================================
+
+    /// Captured secrets reach callers, never either debug target. The plain
+    /// command is a positive control for the scoped subscriber's output capture.
+    #[test]
+    #[cfg(all(feature = "cli", unix))]
+    fn test_sensitive_captured_output() {
+        const SECRET: &str = "fake-captured-token-4b8ad2";
+        for mode in ["run", "timeout", "concurrent", "source", "sink"] {
+            let log = tempfile::NamedTempFile::new().unwrap();
+            let subscriber = tracing_subscriber::fmt()
+                .without_time()
+                .with_ansi(false)
+                .with_max_level(tracing::Level::DEBUG)
+                .with_writer(Arc::new(log.reopen().unwrap()))
+                .finish();
+            tracing::subscriber::with_default(subscriber, || {
+                let command = || {
+                    Cmd::new("sh")
+                        .args(["-c", "cat; printf '%s' \"$TOKEN\" >&2; exit 1"])
+                        .env("TOKEN", SECRET)
+                };
+                // Log ordinary I/O first, then clear it before testing redaction.
+                command().stdin_bytes(SECRET).run().unwrap();
+                assert!(
+                    std::fs::read_to_string(log.path())
+                        .unwrap()
+                        .contains(SECRET)
+                );
+                log.as_file().set_len(0).unwrap();
+
+                let output = match mode {
+                    "run" => command().stdin_bytes(SECRET).sensitive_output().run(),
+                    "timeout" => command()
+                        .stdin_bytes(SECRET)
+                        .sensitive_output()
+                        .timeout(Duration::from_secs(10))
+                        .run(),
+                    "concurrent" => Cmd::run_concurrently(&[command().sensitive_output()])
+                        .pop()
+                        .unwrap(),
+                    "source" => {
+                        let (source, sink) = command()
+                            .stdin_bytes(SECRET)
+                            .sensitive_output()
+                            .pipe_into(Cmd::new("cat"))
+                            .unwrap();
+                        assert_eq!(sink.stdout, SECRET.as_bytes());
+                        Ok(source)
+                    }
+                    "sink" => {
+                        let (source, sink) = Cmd::new("cat")
+                            .stdin_bytes(SECRET)
+                            .pipe_into(command().sensitive_output())
+                            .unwrap();
+                        assert!(source.status.success());
+                        Ok(sink)
+                    }
+                    _ => unreachable!(),
+                }
+                .unwrap();
+                assert_eq!(output.status.code(), Some(1), "{mode}");
+                assert_eq!(output.stderr, SECRET.as_bytes(), "{mode}");
+                if matches!(mode, "run" | "timeout" | "sink") {
+                    assert_eq!(output.stdout, SECRET.as_bytes(), "{mode}");
+                }
+                // Spawn failure still has input, which must also be redacted.
+                assert!(
+                    Cmd::new("/no/such/sensitive-program")
+                        .stdin_bytes(SECRET)
+                        .sensitive_output()
+                        .run()
+                        .is_err()
+                );
+            });
+            let captured = std::fs::read_to_string(log.path()).unwrap();
+            assert!(!captured.contains(SECRET), "{mode}: {captured}");
+            for target in [SUBPROCESS_FULL_TARGET, SUBPROCESS_BOUNDED_TARGET] {
+                assert!(
+                    captured.lines().any(|line| line.contains(target)),
+                    "{mode}: missing {target}: {captured}"
+                );
+            }
+            assert!(captured.contains("[redacted]"), "{mode}: {captured}");
+            assert!(captured.contains("dur_us="), "{mode}: {captured}");
+        }
+    }
 
     #[test]
     fn test_cmd_completes_fast_command() {

@@ -2225,10 +2225,7 @@ fn test_removal_runs_post_remove_after_cleanup_spawn_failure(
             repo.git_output(&["rev-parse", "main"])
         );
     } else {
-        assert!(
-            stderr.contains("Failed to create log directory"),
-            "{stderr}"
-        );
+        assert!(stderr.contains("Failed to create log file"), "{stderr}");
     }
     // The trash entry may already be gone: `wt remove`'s sweep starts a drain
     // under the shared log, which the blocked branch log doesn't stop.

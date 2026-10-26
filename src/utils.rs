@@ -171,6 +171,57 @@ pub fn write_new_atomically(path: &Path, content: &str) -> io::Result<()> {
     write_atomically_with(path, content, false)
 }
 
+/// Open a regenerable log or diagnostic file, creating its directory as needed.
+///
+/// `relative_path` names a file within `log_dir`. On Unix, new directories
+/// are owner-only; every directory from the file's parent through `log_dir`
+/// is restricted to 0700 and the file to 0600, even when they already exist.
+/// Permissions are applied before writing or truncating an existing file.
+pub fn open_log_file(
+    log_dir: &Path,
+    relative_path: &Path,
+    append: bool,
+) -> io::Result<std::fs::File> {
+    let path = log_dir.join(relative_path);
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Log file needs a directory"))?;
+    let mut directory = std::fs::DirBuilder::new();
+    directory.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        directory.mode(0o700);
+        directory.create(parent)?;
+        for ancestor in parent
+            .ancestors()
+            .take_while(|dir| dir.starts_with(log_dir))
+        {
+            std::fs::set_permissions(ancestor, std::fs::Permissions::from_mode(0o700))?;
+        }
+    }
+    #[cfg(not(unix))]
+    directory.create(parent)?;
+
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).append(append);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options.open(&path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    if !append {
+        file.set_len(0)?;
+    }
+    Ok(file)
+}
+
 fn write_atomically_with(path: &Path, content: &str, overwrite: bool) -> io::Result<()> {
     let target = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     // A bare filename's parent is `Some("")`, which no directory call accepts.

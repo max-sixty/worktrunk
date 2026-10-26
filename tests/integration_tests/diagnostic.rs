@@ -15,10 +15,149 @@
 use std::fs;
 use std::path::PathBuf;
 
+use ansi_str::AnsiStr;
 use insta::assert_snapshot;
 use rstest::rstest;
 
-use crate::common::{TestRepo, repo, setup_snapshot_settings};
+use crate::common::{
+    TestRepo,
+    mock_commands::{MockConfig, MockResponse, mock_calls},
+    repo, setup_snapshot_settings,
+};
+
+/// Authentication probes must preserve their result without exposing credentials
+/// through either subprocess log route or the diagnostic that embeds the trace.
+#[rstest]
+#[case::github("gh", "github.com", "auth token --hostname github.com", 0)]
+#[case::github_failed("gh", "github.com", "auth token --hostname github.com", 1)]
+#[case::gitlab("glab", "gitlab.com", "config get token --host gitlab.com", 0)]
+fn test_auth_probe_output_is_redacted(
+    mut repo: TestRepo,
+    #[case] tool: &str,
+    #[case] host: &str,
+    #[case] probe: &str,
+    #[case] probe_exit_code: i32,
+) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        &format!("https://{host}/test-owner/test-repo.git"),
+    ]);
+    repo.setup_mock_gh_with_ci_data("[]");
+
+    let stdout_token = "fake-credential-on-stdout";
+    let stderr_token = "fake-credential-on-stderr";
+    // Mock playback matches at most the first three arguments.
+    let probe_key = probe
+        .split_whitespace()
+        .take(3)
+        .collect::<Vec<_>>()
+        .join(" ");
+    MockConfig::new(tool)
+        .version(&format!("{tool} version 2.0.0 (mock)"))
+        .command(
+            &probe_key,
+            MockResponse::output(stdout_token)
+                .with_stderr(stderr_token)
+                .with_exit_code(probe_exit_code),
+        )
+        .command("_default", MockResponse::output("[]"))
+        .write(repo.mock_bin_path().unwrap());
+
+    let call_log = tempfile::tempdir().unwrap();
+    let output = repo
+        .wt_command()
+        .args(["config", "show", "--full", "-vv"])
+        .env("RUST_LOG", "debug")
+        .env("NO_COLOR", "1")
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(
+        mock_calls(call_log.path(), tool)
+            .iter()
+            .any(|call| call == probe)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout)
+        .ansi_strip()
+        .into_owned();
+    assert_eq!(
+        stdout.contains(&format!("{tool} installed & authenticated")),
+        probe_exit_code == 0,
+        "probe must retain its authentication result: {stdout}"
+    );
+
+    let logs_dir = repo.root_path().join(".git/wt/logs");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    for token in [stdout_token, stderr_token] {
+        assert!(!stderr.contains(token), "stderr exposed {token}");
+    }
+    for filename in [
+        "trace.log",
+        "trace.jsonl",
+        "subprocess.log",
+        "diagnostic.md",
+    ] {
+        let content = fs::read_to_string(logs_dir.join(filename)).unwrap();
+        for token in [stdout_token, stderr_token] {
+            assert!(!content.contains(token), "{filename} exposed {token}");
+        }
+        if filename == "trace.log" || filename == "subprocess.log" {
+            assert!(
+                content.contains("[redacted]"),
+                "{filename} must record redaction"
+            );
+        }
+    }
+    assert!(
+        stderr.contains("[redacted]"),
+        "RUST_LOG=debug must record redaction on stderr"
+    );
+}
+
+/// Debug artifacts are private on creation and when replacing older logs whose
+/// permissions were set before Worktrunk restricted its log files.
+#[cfg(unix)]
+#[rstest]
+#[case::new(false)]
+#[case::existing(true)]
+fn test_debug_artifacts_have_private_permissions(repo: TestRepo, #[case] existing: bool) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let logs_dir = repo.root_path().join(".git/wt/logs");
+    let filenames = [
+        "trace.log",
+        "trace.jsonl",
+        "subprocess.log",
+        "diagnostic.md",
+    ];
+    if existing {
+        fs::create_dir_all(&logs_dir).unwrap();
+        fs::set_permissions(&logs_dir, fs::Permissions::from_mode(0o755)).unwrap();
+        for filename in filenames {
+            let path = logs_dir.join(filename);
+            fs::write(&path, "old log").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        }
+    }
+
+    let output = repo.wt_command().args(["list", "-vv"]).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        fs::metadata(&logs_dir).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    for filename in filenames {
+        let path = logs_dir.join(filename);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600,
+            "{filename}"
+        );
+    }
+}
 
 /// Helper to corrupt a worktree's HEAD file to trigger git errors.
 ///
@@ -741,6 +880,23 @@ fn test_rust_log_overrides_verbose_flag(repo: TestRepo) {
         env_stderr.contains("init_logging"),
         "RUST_LOG=debug at -v should surface trace records on stderr: {env_stderr}"
     );
+
+    // Lowering the filter must also suppress raw subprocess bodies at -vv.
+    let errors_only = repo
+        .wt_command()
+        .args(["list", "-vv"])
+        .env("RUST_LOG", "error")
+        .output()
+        .unwrap();
+    assert!(errors_only.status.success());
+    let logs_dir = repo.root_path().join(".git/wt/logs");
+    for filename in ["trace.log", "subprocess.log"] {
+        assert!(
+            fs::read_to_string(logs_dir.join(filename))
+                .unwrap()
+                .is_empty()
+        );
+    }
 }
 
 /// `RUST_LOG=debug` at `-v 0` activates Debug logging without creating the
