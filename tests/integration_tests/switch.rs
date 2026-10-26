@@ -1136,6 +1136,10 @@ fn test_switch_no_cd_execute_runs_in_worktree(mut repo: TestRepo) {
 /// does when it ends by removing its own worktree. The shell wrapper would then
 /// `cd` into a directory that no longer exists, so wt withdraws the directive
 /// and the shell stays where it was.
+///
+/// Unix only: Windows refuses to delete a directory that a running process
+/// holds as its cwd, so there the program can't remove the worktree it runs in.
+#[cfg(unix)]
 #[rstest]
 fn test_switch_execute_that_removes_worktree_withdraws_cd(mut repo: TestRepo) {
     let worktree = repo.add_worktree("feature");
