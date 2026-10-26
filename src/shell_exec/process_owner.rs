@@ -1,10 +1,11 @@
 //! One thread receives command interrupts and creates child processes.
 //!
-//! Startup blocks INT/TERM before application threads exist. Those threads and
-//! dependency workers inherit the blocked mask; this owner restores the original
-//! mask, which its children inherit. A signal cannot be dequeued to an unrelated
-//! worker while the owner admits a child. If spawn temporarily blocks signals,
-//! restoring its mask runs the pending handler before the admission check.
+//! Startup creates this owner with the original signal mask, then blocks
+//! INT/TERM on the initializing thread before application workers exist. Those
+//! workers inherit the blocked mask; the owner's children inherit the original
+//! mask. A signal cannot be dequeued to an unrelated worker while the owner
+//! admits a child. If spawn temporarily blocks signals, restoring its mask runs
+//! the pending handler before the admission check.
 //!
 //! Requests cover creation and admission, never child waits. Commands return to
 //! their callers for reuse. The descriptor-creation lock remains inside each raw
@@ -15,56 +16,36 @@
 use std::io;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::process::Command;
-use std::sync::{OnceLock, mpsc};
+use std::sync::mpsc;
 
 use nix::sys::signal::{SigSet, Signal};
+use once_cell::sync::OnceCell;
 
 type Request = Box<dyn FnOnce() + Send>;
-static OWNER: OnceLock<io::Result<mpsc::Sender<Request>>> = OnceLock::new();
+static OWNER: OnceCell<mpsc::Sender<Request>> = OnceCell::new();
 
 pub(super) fn init() -> io::Result<()> {
-    OWNER
-        .get_or_init(start)
-        .as_ref()
-        .map(|_| ())
-        .map_err(copy_error)
-}
-
-fn copy_error(error: &io::Error) -> io::Error {
-    io::Error::new(error.kind(), error.to_string())
+    OWNER.get_or_try_init(start).map(|_| ())
 }
 
 fn start() -> io::Result<mpsc::Sender<Request>> {
-    let original = SigSet::thread_get_mask()?;
-    let mut blocked = original;
+    let mut blocked = SigSet::thread_get_mask()?;
     blocked.add(Signal::SIGINT);
     blocked.add(Signal::SIGTERM);
-    blocked.thread_set_mask()?;
 
-    let result = (|| {
-        let (sender, receiver) = mpsc::channel::<Request>();
-        let (ready, started) = mpsc::channel();
-        std::thread::Builder::new()
-            .name("wt-process-owner".into())
-            .spawn(move || {
-                let restored = original.thread_set_mask();
-                let running = restored.is_ok();
-                if ready.send(restored).is_err() || !running {
-                    return;
-                }
-                for request in receiver {
-                    request();
-                }
-            })?;
-        started
-            .recv()
-            .map_err(|error| io::Error::other(error.to_string()))??;
-        Ok(sender)
-    })();
-    if result.is_err() {
-        original.thread_set_mask()?;
-    }
-    result
+    let (sender, receiver) = mpsc::channel::<Request>();
+    std::thread::Builder::new()
+        .name("wt-process-owner".into())
+        .spawn(move || {
+            for request in receiver {
+                request();
+            }
+        })?;
+    // No requests or application workers exist until initialization returns.
+    // Spawn failure leaves our mask intact; mask failure drops the sender and
+    // lets the unpublished owner exit.
+    blocked.thread_set_mask()?;
+    Ok(sender)
 }
 
 pub(super) fn with_command<T: Send + 'static>(
@@ -74,7 +55,6 @@ pub(super) fn with_command<T: Send + 'static>(
     let Some(owner) = OWNER.get() else {
         return Ok(create(command));
     };
-    let owner = owner.as_ref().map_err(copy_error)?;
     let mut owned = std::mem::replace(command, Command::new(""));
     let (sender, receiver) = mpsc::channel();
     owner
@@ -92,5 +72,75 @@ pub(super) fn with_command<T: Send + 'static>(
     match result {
         Ok(result) => Ok(result),
         Err(panic) => resume_unwind(panic),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn panicking_request_restores_command_and_keeps_owner() {
+        const CHILD_ENV: &str = "WORKTRUNK_TEST_PROCESS_OWNER_PANIC_CHILD";
+        let mut signals = SigSet::empty();
+        signals.add(Signal::SIGINT);
+        signals.add(Signal::SIGTERM);
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "shell_exec::process_owner::tests::panicking_request_restores_command_and_keeps_owner",
+                ])
+                .env(CHILD_ENV, "1")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            // Keep the child's libtest harness thread out of signal delivery.
+            // SAFETY: pthread_sigmask is async-signal-safe and only accesses
+            // the signal set constructed before fork.
+            unsafe {
+                command.pre_exec(move || signals.thread_block().map_err(Into::into));
+            }
+            let output = crate::shell_exec::spawn(&mut command)
+                .unwrap()
+                .wait_with_output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(output.status.success(), "{stdout}\n{stderr}");
+            assert!(stdout.contains(" 1 passed;"), "{stdout}");
+            return;
+        }
+
+        signals.thread_unblock().unwrap();
+        crate::shell_exec::init_startup().unwrap();
+        let mut command = Command::new("sh");
+        command.args(["-c", "test \"$1\" = after-panic", "owner-probe"]);
+        let panic = catch_unwind(AssertUnwindSafe(|| {
+            with_command(&mut command, |command| {
+                command.arg("after-panic");
+                std::panic::panic_any(std::thread::current().id());
+            })
+            .unwrap();
+        }))
+        .unwrap_err();
+        let owner = *panic.downcast::<std::thread::ThreadId>().unwrap();
+        assert_ne!(owner, std::thread::current().id());
+        assert_eq!(
+            with_command(&mut command, |_| std::thread::current().id()).unwrap(),
+            owner
+        );
+        // The request's changes return even when it panics, and the same owner
+        // still creates children with that reusable command.
+        assert!(
+            crate::shell_exec::spawn(&mut command)
+                .unwrap()
+                .wait()
+                .unwrap()
+                .success()
+        );
     }
 }

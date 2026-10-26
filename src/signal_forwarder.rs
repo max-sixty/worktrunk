@@ -336,11 +336,6 @@ impl ForegroundSignals {
         })
     }
 
-    /// Synchronously latched startup cancellation, before a listener exists.
-    pub fn interrupt_signal(&self) -> Option<i32> {
-        self.admission.interrupt_signal()
-    }
-
     /// Admission commits when spawn returns. A cancelled in-flight child may
     /// have missed the native key; retire only that uncommitted child with TERM.
     /// Earlier admitted children finish native-key cleanup. Publish the admission
@@ -661,6 +656,48 @@ mod tests {
                     .wait()
                     .unwrap()
                     .success()
+            );
+        }
+
+        drop(operation);
+        // A signal during spawn must retire an uncommitted child, or take
+        // precedence over its exec error. Send TERM from pre_exec so receipt
+        // falls between the owner's two admission checks in both cases.
+        use std::os::unix::process::ExitStatusExt;
+        let parent = Pid::this();
+        for executable in [std::path::Path::new("sleep"), &temp.path().join("missing")] {
+            let operation = CommandOperation::start().unwrap();
+            let foreground = ForegroundSignals::install(TerminalInterrupt::Cancels).unwrap();
+            assert_eq!(foreground.admission.interrupt_signal(), None);
+            let mut command = std::process::Command::new(executable);
+            command.arg("30");
+            // SAFETY: kill is async-signal-safe; parent was captured before fork.
+            unsafe {
+                command.pre_exec(move || kill(parent, Signal::SIGTERM).map_err(Into::into));
+            }
+            match foreground.spawn(&mut command) {
+                Ok(child) => {
+                    assert_eq!(executable, std::path::Path::new("sleep"));
+                    // No listener forwards TERM here: admission itself must
+                    // retire this child, which missed the signal sent to wt.
+                    assert_eq!(child.wait().unwrap().signal(), Some(SIGTERM));
+                }
+                Err(error) => {
+                    assert_eq!(executable, temp.path().join("missing"));
+                    assert_eq!(error.interrupt_signal(), Some(SIGTERM));
+                }
+            }
+            assert_eq!(
+                foreground.admission.scope.admission.load(Ordering::SeqCst),
+                SIGTERM
+            );
+            assert_eq!(operation.interrupt_signal(), Some(SIGTERM));
+            assert_eq!(
+                foreground
+                    .spawn(&mut command)
+                    .unwrap_err()
+                    .interrupt_signal(),
+                Some(SIGTERM)
             );
         }
     }
