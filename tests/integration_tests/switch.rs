@@ -7023,9 +7023,14 @@ fn test_switch_pr_azure_visualstudio_host(#[from(repo_with_remote)] mut repo: Te
 }
 
 #[rstest]
-#[case::regular(false)]
-#[case::conflict(true)]
-fn test_switch_pr_azure_fork(#[from(repo_with_remote)] repo: TestRepo, #[case] conflict: bool) {
+#[case::regular(false, false)]
+#[case::conflict(true, false)]
+#[case::missing_fork_url(true, true)]
+fn test_switch_pr_azure_fork(
+    #[from(repo_with_remote)] repo: TestRepo,
+    #[case] conflict: bool,
+    #[case] missing_fork_url: bool,
+) {
     repo.run_git(&["checkout", "-b", "azure-pr-source"]);
     fs::write(
         repo.root_path().join("azure-pr-file.txt"),
@@ -7074,19 +7079,34 @@ fn test_switch_pr_azure_fork(#[from(repo_with_remote)] repo: TestRepo, #[case] c
         }
     }"#;
 
-    let mock_bin = setup_mock_az(&repo, az_response);
+    let az_response = if missing_fork_url {
+        az_response
+            .replace(
+                "\"remoteUrl\": \"https://dev.azure.com/myorg/myproject/_git/test-repo-fork\"",
+                "\"remoteUrl\": null",
+            )
+            .replace(
+                "\"sshUrl\": \"git@ssh.dev.azure.com:v3/myorg/myproject/test-repo-fork\"",
+                "\"sshUrl\": null",
+            )
+    } else {
+        az_response.to_string()
+    };
+    let mock_bin = setup_mock_az(&repo, &az_response);
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
-        if conflict {
+        if missing_fork_url {
+            assert_cmd_snapshot!("switch_pr_azure_fork_missing_url", cmd);
+        } else if conflict {
             assert_cmd_snapshot!("switch_pr_azure_fork_conflict", cmd);
         } else {
             assert_cmd_snapshot!("switch_pr_azure_fork", cmd);
         }
     });
-    if conflict {
+    if conflict && !missing_fork_url {
         assert_eq!(
             repo.git_output(&["config", "branch.test-repo-fork/feature-fix.merge"])
                 .trim(),
