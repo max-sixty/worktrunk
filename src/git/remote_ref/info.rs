@@ -149,8 +149,8 @@ impl RemoteRefInfo {
             PlatformData::GitLab { .. } => self
                 .fork_push_url
                 .as_deref()
-                .and_then(extract_namespace_from_url)
-                .map(|namespace| format!("{namespace}/{}", self.source_branch)),
+                .and_then(crate::git::GitRemoteUrl::parse)
+                .map(|url| format!("{}/{}", url.owner(), self.source_branch)),
             PlatformData::AzureDevOps { .. } => self
                 .fork_push_url
                 .as_deref()
@@ -348,7 +348,7 @@ mod tests {
 
     #[test]
     fn test_prefixed_local_branch_name_gitlab() {
-        let info = RemoteRefInfo {
+        let mut info = RemoteRefInfo {
             number: 101,
             title: "Test".to_string(),
             author: "contributor".to_string(),
@@ -369,6 +369,12 @@ mod tests {
         assert_eq!(
             info.prefixed_local_branch_name(),
             Some("contributor/main".to_string())
+        );
+        info.fork_push_url =
+            Some("ssh://git@gitlab.example.com:2222/group/subgroup/repo.git".to_string());
+        assert_eq!(
+            info.prefixed_local_branch_name(),
+            Some("group/subgroup/main".to_string())
         );
     }
 
