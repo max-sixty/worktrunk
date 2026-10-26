@@ -896,18 +896,11 @@ fn contains_shell_integration(
                 format_path_for_display(path)
             )
         })?;
-        if is_install_shell_integration_line(line.trim_end_matches('\r'), shell, cmd) {
+        if shell::shell_integration(line, cmd) == Some(shell) {
             return Ok(true);
         }
     }
     Ok(false)
-}
-
-fn is_install_shell_integration_line(line: &str, shell: Shell, cmd: &str) -> bool {
-    shell::is_shell_integration_line(line, cmd)
-        && line
-            .to_ascii_lowercase()
-            .contains(&format!("config shell init {shell}"))
 }
 
 /// Extract non-comment, non-blank lines from fish/nushell source.
@@ -1814,53 +1807,6 @@ mod tests {
         assert_eq!(ConfigAction::AlreadyExists.symbol(), INFO_SYMBOL);
         assert_eq!(ConfigAction::WouldAdd.symbol(), INFO_SYMBOL);
         assert_eq!(ConfigAction::WouldCreate.symbol(), INFO_SYMBOL);
-    }
-
-    #[test]
-    fn test_is_shell_integration_line() {
-        // Valid integration lines for "wt"
-        assert!(shell::is_shell_integration_line(
-            "eval \"$(wt config shell init bash)\"",
-            "wt"
-        ));
-        assert!(shell::is_shell_integration_line(
-            "  eval \"$(wt config shell init zsh)\"  ",
-            "wt"
-        ));
-        assert!(shell::is_shell_integration_line(
-            "if command -v wt; then eval \"$(wt config shell init bash)\"; fi",
-            "wt"
-        ));
-        assert!(shell::is_shell_integration_line(
-            "source <(wt config shell init fish)",
-            "wt"
-        ));
-
-        // Valid integration lines for "git-wt"
-        assert!(shell::is_shell_integration_line(
-            "eval \"$(git-wt config shell init bash)\"",
-            "git-wt"
-        ));
-        assert!(!shell::is_shell_integration_line(
-            "eval \"$(wt config shell init bash)\"",
-            "git-wt"
-        ));
-
-        // Not integration lines (comments)
-        assert!(!shell::is_shell_integration_line(
-            "# eval \"$(wt config shell init bash)\"",
-            "wt"
-        ));
-
-        // Not integration lines (no eval/source/if)
-        assert!(!shell::is_shell_integration_line(
-            "wt config shell init bash",
-            "wt"
-        ));
-        assert!(!shell::is_shell_integration_line(
-            "echo wt config shell init bash",
-            "wt"
-        ));
     }
 
     #[test]
