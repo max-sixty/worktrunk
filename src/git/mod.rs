@@ -812,7 +812,7 @@ impl BranchRef {
         self.remote_name_len.is_some()
     }
 
-    /// Configured remote and branch names for a remote-tracking ref.
+    /// Remote and branch components of a remote-tracking ref.
     pub fn remote_parts(&self) -> Option<(&str, &str)> {
         let short = self.short_name()?;
         let boundary = self.remote_name_len?;
