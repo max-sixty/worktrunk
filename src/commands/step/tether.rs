@@ -89,16 +89,11 @@ pub(crate) fn step_tether(command: &[String], working_dir: Option<&Path>) -> Res
     }
 
     // Block until the child exits — killed by the reaper, or on its own.
-    let status = match child.wait() {
-        Ok(status) => {
-            trace.complete(status.success());
-            Ok(status)
-        }
-        Err(e) => {
-            trace.fail(&e);
-            Err(e)
-        }
-    };
+    let status = child.wait();
+    match &status {
+        Ok(status) => trace.complete(status.success()),
+        Err(e) => trace.fail(e),
+    }
 
     // Final sweep: on a self-exit, descendants may still be running (Unix:
     // reparented but in this pgid; Windows: while the tree is intact). On a
