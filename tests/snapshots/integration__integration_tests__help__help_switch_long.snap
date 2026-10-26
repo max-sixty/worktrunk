@@ -271,7 +271,7 @@ The [2mpr:<number>[0m / [2mmr:<number>[0m shortcut and the PR/MR's web URL b
 
 Both work anywhere a branch is accepted, including [2m--base[0m. The [2m--create[0m flag cannot be used with a PR/MR reference since the branch already exists.
 
-If the PR or MR is on a fork, the local branch uses its branch name directly, so [2mgit push[0m works normally. If a local branch with that name already tracks something else, a GitHub or Gitea PR checks out as [2m<owner>/<branch>[0m instead, which can't push to the fork; a GitLab MR or Azure DevOps PR requires renaming the existing branch first.
+If the PR or MR is on a fork, the local branch uses its branch name directly, so [2mgit push[0m works normally. If a local branch with that name already exists for a different ref, Worktrunk uses a prefixed branch instead. The prefixed branch can fetch the PR or MR but cannot push to the fork.
 
 The [2m--prs[0m flag adds the repository's open PRs (GitHub) or MRs (GitLab) that aren't already in the interactive picker. Selecting one switches to it as [2mpr:<number>[0m / [2mmr:<number>[0m would.
 

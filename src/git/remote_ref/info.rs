@@ -139,14 +139,23 @@ impl RemoteRefInfo {
 
     /// Generate a prefixed local branch name for when the unprefixed name conflicts.
     ///
-    /// Returns `<owner>/<branch>` (e.g., `contributor/main`).
-    /// Used for GitHub/Gitea fork PRs; GitLab and Azure DevOps don't support this pattern.
+    /// Uses the fork owner, GitLab namespace, or Azure DevOps fork repository name.
+    /// GitLab needs its deferred fork URL populated before calling this method.
     pub fn prefixed_local_branch_name(&self) -> Option<String> {
         match &self.platform_data {
             PlatformData::GitHub { head_owner, .. } | PlatformData::Gitea { head_owner, .. } => {
                 Some(format!("{}/{}", head_owner, self.source_branch))
             }
-            PlatformData::GitLab { .. } | PlatformData::AzureDevOps { .. } => None,
+            PlatformData::GitLab { .. } => self
+                .fork_push_url
+                .as_deref()
+                .and_then(extract_namespace_from_url)
+                .map(|namespace| format!("{namespace}/{}", self.source_branch)),
+            PlatformData::AzureDevOps { .. } => self
+                .fork_push_url
+                .as_deref()
+                .and_then(crate::git::GitRemoteUrl::parse)
+                .map(|url| format!("{}/{}", url.repo(), self.source_branch)),
         }
     }
 }
@@ -357,8 +366,10 @@ mod tests {
                 target_project_id: 123,
             },
         };
-        // GitLab doesn't support prefixed branch names
-        assert_eq!(info.prefixed_local_branch_name(), None);
+        assert_eq!(
+            info.prefixed_local_branch_name(),
+            Some("contributor/main".to_string())
+        );
     }
 
     #[test]
@@ -436,7 +447,7 @@ mod tests {
             source_branch: "main".to_string(),
             is_cross_repo: true,
             url: "https://dev.azure.com/myorg/myproject/_git/myrepo/pullrequest/550".to_string(),
-            fork_push_url: None,
+            fork_push_url: Some("git@ssh.dev.azure.com:v3/myorg/myproject/myrepo-fork".to_string()),
             platform_data: PlatformData::AzureDevOps {
                 host: "dev.azure.com".to_string(),
                 organization: "myorg".to_string(),
@@ -444,7 +455,10 @@ mod tests {
                 repo_name: "myrepo".to_string(),
             },
         };
-        assert_eq!(info.prefixed_local_branch_name(), None);
+        assert_eq!(
+            info.prefixed_local_branch_name(),
+            Some("myrepo-fork/main".to_string())
+        );
     }
 
     #[test]

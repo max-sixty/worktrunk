@@ -7023,7 +7023,9 @@ fn test_switch_pr_azure_visualstudio_host(#[from(repo_with_remote)] mut repo: Te
 }
 
 #[rstest]
-fn test_switch_pr_azure_fork(#[from(repo_with_remote)] repo: TestRepo) {
+#[case::regular(false)]
+#[case::conflict(true)]
+fn test_switch_pr_azure_fork(#[from(repo_with_remote)] repo: TestRepo, #[case] conflict: bool) {
     repo.run_git(&["checkout", "-b", "azure-pr-source"]);
     fs::write(
         repo.root_path().join("azure-pr-file.txt"),
@@ -7044,6 +7046,9 @@ fn test_switch_pr_azure_fork(#[from(repo_with_remote)] repo: TestRepo) {
 
     repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
     repo.run_git(&["checkout", "main"]);
+    if conflict {
+        repo.run_git(&["branch", "feature-fix", "main"]);
+    }
 
     set_azure_remote_url(
         &repo,
@@ -7075,8 +7080,19 @@ fn test_switch_pr_azure_fork(#[from(repo_with_remote)] repo: TestRepo) {
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
-        assert_cmd_snapshot!("switch_pr_azure_fork", cmd);
+        if conflict {
+            assert_cmd_snapshot!("switch_pr_azure_fork_conflict", cmd);
+        } else {
+            assert_cmd_snapshot!("switch_pr_azure_fork", cmd);
+        }
     });
+    if conflict {
+        assert_eq!(
+            repo.git_output(&["config", "branch.test-repo-fork/feature-fix.merge"])
+                .trim(),
+            "refs/pull/42/head"
+        );
+    }
 }
 
 /// With no `webUrl` in the response, the org and host come from the local
@@ -7411,10 +7427,27 @@ fn setup_mock_glab_for_mr(repo: &TestRepo, glab_response: &str) -> std::path::Pa
     MockConfig::new("glab")
         .version("glab version 1.40.0 (mock)")
         .command("api", MockResponse::file("mr_response.json"))
+        .command(
+            "api projects/456",
+            MockResponse::output(r#"{"ssh_url_to_repo":"git@gitlab.com:group/subgroup/test-repo.git","http_url_to_repo":"https://gitlab.com/group/subgroup/test-repo.git"}"#),
+        )
+        .command(
+            "api projects/123",
+            MockResponse::output(r#"{"ssh_url_to_repo":"git@gitlab.com:owner/test-repo.git","http_url_to_repo":"https://gitlab.com/owner/test-repo.git"}"#),
+        )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
 
     mock_bin
+}
+
+fn prepare_gitlab_conflicting_fork_ref(repo: &TestRepo) {
+    repo.run_git(&["push", "origin", "main:refs/merge-requests/42/head"]);
+    let bare_url = repo.git_output(&["config", "remote.origin.url"]);
+    let bare_url = bare_url.trim();
+    let gitlab_url = "https://gitlab.com/owner/test-repo.git";
+    repo.run_git(&["remote", "set-url", "origin", gitlab_url]);
+    repo.run_git(&["config", &format!("url.{bare_url}.insteadOf"), gitlab_url]);
 }
 
 /// Test that --create flag conflicts with mr: syntax
@@ -8171,7 +8204,7 @@ fn test_switch_mr_fork_existing_branch_tracks_mr(#[from(repo_with_remote)] repo:
         "https://gitlab.com/owner/test-repo.git",
     ]);
 
-    // Fork MR response (project URLs not needed since branch already exists)
+    // The branch already tracks this MR, so project URLs are not fetched.
     let glab_response = r#"{
         "title": "Add feature fix for edge case",
         "author": {"username": "contributor"},
@@ -8213,15 +8246,9 @@ fn test_switch_mr_fork_existing_branch_tracks_different(#[from(repo_with_remote)
     // Go back to main
     repo.run_git(&["checkout", "main"]);
 
-    // Set origin URL to GitLab-style
-    repo.run_git(&[
-        "remote",
-        "set-url",
-        "origin",
-        "https://gitlab.com/owner/test-repo.git",
-    ]);
+    prepare_gitlab_conflicting_fork_ref(&repo);
 
-    // Fork MR response for MR 42, but branch tracks MR 99 (error case)
+    // Fork MR response for MR 42, but branch tracks MR 99.
     let glab_response = r#"{
         "title": "Add feature fix for edge case",
         "author": {"username": "contributor"},
@@ -8241,6 +8268,11 @@ fn test_switch_mr_fork_existing_branch_tracks_different(#[from(repo_with_remote)
         configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_fork_existing_branch_tracks_different", cmd);
     });
+    assert_eq!(
+        repo.git_output(&["config", "branch.group/subgroup/feature-fix.merge"])
+            .trim(),
+        "refs/merge-requests/42/head"
+    );
 }
 
 /// Test fork MR checkout when branch exists but has no tracking config
@@ -8250,15 +8282,9 @@ fn test_switch_mr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: Test
     repo.run_git(&["branch", "feature-fix", "main"]);
     // No config set - branch exists but doesn't track anything
 
-    // Set origin URL to GitLab-style
-    repo.run_git(&[
-        "remote",
-        "set-url",
-        "origin",
-        "https://gitlab.com/owner/test-repo.git",
-    ]);
+    prepare_gitlab_conflicting_fork_ref(&repo);
 
-    // Fork MR response (project URLs not needed since branch already exists)
+    // The conflicting branch requires source project URLs for its prefix.
     let glab_response = r#"{
         "title": "Add feature fix for edge case",
         "author": {"username": "contributor"},
@@ -8278,6 +8304,11 @@ fn test_switch_mr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: Test
         configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_fork_existing_no_tracking", cmd);
     });
+    assert_eq!(
+        repo.git_output(&["config", "branch.group/subgroup/feature-fix.merge"])
+            .trim(),
+        "refs/merge-requests/42/head"
+    );
 }
 
 /// Test mr: with unknown glab error (falls through to general error handler)
