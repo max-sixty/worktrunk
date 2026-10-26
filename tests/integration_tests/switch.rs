@@ -7060,7 +7060,7 @@ fn test_switch_pr_azure_fork(
         "https://dev.azure.com/myorg/myproject/_git/test-repo",
     );
 
-    let az_response = r#"{
+    let az_response = serde_json::json!({
         "title": "Add feature fix for edge case",
         "createdBy": {"uniqueName": "contributor@example.com"},
         "status": "active",
@@ -7073,25 +7073,14 @@ fn test_switch_pr_azure_fork(
         },
         "forkSource": {
             "repository": {
-                "remoteUrl": "https://dev.azure.com/myorg/myproject/_git/test-repo-fork",
-                "sshUrl": "git@ssh.dev.azure.com:v3/myorg/myproject/test-repo-fork"
+                "remoteUrl": (!missing_fork_url)
+                    .then_some("https://dev.azure.com/myorg/myproject/_git/test-repo-fork"),
+                "sshUrl": (!missing_fork_url)
+                    .then_some("git@ssh.dev.azure.com:v3/myorg/myproject/test-repo-fork")
             }
         }
-    }"#;
-
-    let az_response = if missing_fork_url {
-        az_response
-            .replace(
-                "\"remoteUrl\": \"https://dev.azure.com/myorg/myproject/_git/test-repo-fork\"",
-                "\"remoteUrl\": null",
-            )
-            .replace(
-                "\"sshUrl\": \"git@ssh.dev.azure.com:v3/myorg/myproject/test-repo-fork\"",
-                "\"sshUrl\": null",
-            )
-    } else {
-        az_response.to_string()
-    };
+    })
+    .to_string();
     let mock_bin = setup_mock_az(&repo, &az_response);
 
     let settings = setup_snapshot_settings(&repo);
