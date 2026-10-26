@@ -133,6 +133,7 @@ fn test_debug_artifacts_have_private_permissions(repo: TestRepo, #[case] existin
         "subprocess.log",
         "diagnostic.md",
     ];
+    let audit_files = ["commands.jsonl", "commands.jsonl.old"];
     if existing {
         fs::create_dir_all(&logs_dir).unwrap();
         fs::set_permissions(&logs_dir, fs::Permissions::from_mode(0o755)).unwrap();
@@ -140,6 +141,11 @@ fn test_debug_artifacts_have_private_permissions(repo: TestRepo, #[case] existin
             let path = logs_dir.join(filename);
             fs::write(&path, "old log").unwrap();
             fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        for filename in audit_files {
+            let path = logs_dir.join(filename);
+            fs::write(&path, "old audit entry").unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o644)).unwrap();
         }
     }
 
@@ -156,6 +162,18 @@ fn test_debug_artifacts_have_private_permissions(repo: TestRepo, #[case] existin
             0o600,
             "{filename}"
         );
+    }
+    for filename in audit_files {
+        let path = logs_dir.join(filename);
+        if existing {
+            assert_eq!(fs::read_to_string(&path).unwrap(), "old audit entry");
+            assert_eq!(
+                fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        } else {
+            assert!(!path.exists());
+        }
     }
 }
 

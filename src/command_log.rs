@@ -31,6 +31,13 @@ struct CommandLog {
 
 impl CommandLog {
     fn new(log_dir: &Path, wt_command: &str) -> Self {
+        // Existing audit logs need private permissions even when this command
+        // writes no audit entry or never reaches the rotation threshold.
+        for filename in ["commands.jsonl", "commands.jsonl.old"] {
+            if log_dir.join(filename).exists() {
+                let _ = crate::utils::open_log_file(log_dir, Path::new(filename), true);
+            }
+        }
         Self {
             log_dir: log_dir.to_path_buf(),
             file: None,

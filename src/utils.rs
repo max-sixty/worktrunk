@@ -176,7 +176,7 @@ pub fn write_new_atomically(path: &Path, content: &str) -> io::Result<()> {
 /// `relative_path` names a file within `log_dir`. On Unix, new directories
 /// are owner-only; every directory from the file's parent through `log_dir`
 /// is restricted to 0700 and the file to 0600, even when they already exist.
-/// Permissions are applied before writing or truncating an existing file.
+/// Permissions are applied before writing.
 pub fn open_log_file(
     log_dir: &Path,
     relative_path: &Path,
@@ -204,7 +204,11 @@ pub fn open_log_file(
     directory.create(parent)?;
 
     let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).append(append);
+    options
+        .write(true)
+        .create(true)
+        .append(append)
+        .truncate(!append);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -215,9 +219,6 @@ pub fn open_log_file(
     {
         use std::os::unix::fs::PermissionsExt;
         file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    }
-    if !append {
-        file.set_len(0)?;
     }
     Ok(file)
 }
