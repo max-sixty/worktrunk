@@ -11,10 +11,16 @@
 //! ## Spawning children
 //!
 //! Worktrunk's command spawns use [`spawn`] or [`spawn_shared_child`]. Their
-//! shared lock covers descriptor setup and process creation, never child waits:
-//! children still execute concurrently. On macOS, the standard library creates
-//! pipes and sockets before marking them close-on-exec. Serializing their setup
-//! with spawns prevents a child from retaining another command's output or wake.
+//! Unix process owner receives INT/TERM and runs process creation and foreground
+//! admission on the same thread. [`init_startup`] establishes that owner before
+//! application threads exist; workers inherit blocked signals, while the owner
+//! and its children retain the caller's original mask. Requests serialize
+//! creation, never child waits, so children still execute concurrently.
+//!
+//! On macOS, the standard library creates pipes and sockets before marking them
+//! close-on-exec. A separate lock serializes descriptor setup with raw spawns,
+//! preventing children from retaining unrelated output or wake endpoints. That
+//! lock is never held while a caller waits for the process owner.
 //!
 //! ## Process groups and signal handling (Unix, `Cmd::stream`)
 //!
@@ -89,6 +95,8 @@ use crate::trace::CommandTrace;
 
 #[cfg(unix)]
 pub mod pipe;
+#[cfg(unix)]
+mod process_owner;
 
 /// Prepare complete input before spawning, with no producer that can block.
 ///
@@ -132,15 +140,34 @@ pub(crate) fn with_process_creation_guard<T>(
 
 /// Spawn a child under the shared process-creation guard.
 pub fn spawn(command: &mut Command) -> std::io::Result<std::process::Child> {
-    with_process_creation_guard(|| command.spawn()).map_err(|error| spawn_error(command, error))
+    let spawned = with_process_owner(command, |command| {
+        with_process_creation_guard(|| command.spawn())
+    })?;
+    spawned.map_err(|error| spawn_error(command, error))
 }
 
 /// Spawn a shared child under the same process-creation lock as [`spawn`].
 pub fn spawn_shared_child(command: &mut Command) -> std::io::Result<SharedChild> {
+    with_process_owner(command, spawn_shared_child_here)?
+}
+
+/// Raw creation on the process owner, also used inside foreground admission.
+pub(crate) fn spawn_shared_child_here(command: &mut Command) -> std::io::Result<SharedChild> {
     // SharedChild::new calls try_wait and can reap a short-lived child here.
     // Keep SharedChild::spawn's unreaped ownership for process-tree cleanup.
     with_process_creation_guard(|| SharedChild::spawn(command))
         .map_err(|error| spawn_error(command, error))
+}
+
+/// Run process creation and any admission checks on the signal-receiving owner.
+pub(crate) fn with_process_owner<T: Send + 'static>(
+    command: &mut Command,
+    create: impl FnOnce(&mut Command) -> T + Send + 'static,
+) -> std::io::Result<T> {
+    #[cfg(unix)]
+    return process_owner::with_command(command, create);
+    #[cfg(not(unix))]
+    Ok(create(command))
 }
 
 /// Create wakeup endpoints under the same guard as process creation.
@@ -359,17 +386,19 @@ pub const INHERITED_GIT_PATH_VARS: &[&str] = &[
     "GIT_OBJECT_DIRECTORY",
 ];
 
-/// Record process-startup facts: the current working directory (so relative
-/// `GIT_*` path variables inherited from a parent process can later be
-/// resolved to absolute paths by [`Cmd`]'s env setup) and the calling thread
-/// (the foreground thread, exempt from the command semaphore —
-/// see `CMD_SEMAPHORE`).
+/// Initialize the Unix process owner and record startup facts: the current
+/// directory (so [`Cmd`] can resolve inherited relative `GIT_*` paths) and the
+/// calling thread (exempt from `CMD_SEMAPHORE`).
 ///
 /// Call once from `main()`, before any code changes the process's working
-/// directory and before spawning threads. Subsequent calls are no-ops.
-pub fn init_startup() {
+/// directory or spawns threads. Workers inherit blocked INT/TERM; the process
+/// owner and its children retain the original mask. Subsequent calls are no-ops.
+pub fn init_startup() -> std::io::Result<()> {
+    #[cfg(unix)]
+    process_owner::init()?;
     STARTUP_CWD.get_or_init(|| std::env::current_dir().ok());
     FOREGROUND_THREAD.get_or_init(|| std::thread::current().id());
+    Ok(())
 }
 
 fn startup_cwd() -> Option<&'static PathBuf> {
@@ -2925,9 +2954,9 @@ print(*counts)
     /// set-once): with it unset, `is_foreground_thread()` is false everywhere,
     /// which is the state every other test runs under.
     #[test]
-    fn test_foreground_thread_exempt_after_init() {
+    fn test_foreground_thread_exempt() {
         assert!(!is_foreground_thread());
-        init_startup();
+        FOREGROUND_THREAD.get_or_init(|| std::thread::current().id());
         assert!(is_foreground_thread());
         // Threads other than the initializing one stay capped.
         let from_spawned = std::thread::spawn(is_foreground_thread).join().unwrap();

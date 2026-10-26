@@ -1161,7 +1161,8 @@ fn main() {
     // WORKTRUNK_TEST_MOCK_CONFIG_DIR; see `worktrunk::testing::mock_stub`.
     worktrunk::testing::mock_stub::maybe_run();
 
-    // Capture startup state before anything else: the working directory
+    // Initialize the Unix signal-receiving process owner before other threads
+    // exist, and capture startup state: the working directory
     // (used by shell_exec to resolve relative `GIT_*` path variables
     // inherited from a parent `git` — e.g. when invoked via `git wt ...`
     // with `alias.wt = "!wt"` — against a stable reference, rather than
@@ -1173,7 +1174,13 @@ fn main() {
     // `init_rayon_thread_pool`, `force_color_output`, `parse_cli` — isn't
     // attributed. If startup itself becomes the suspect, capture it as
     // wall-clock minus the sum of post-init spans.
-    worktrunk::shell_exec::init_startup();
+    if let Err(error) = worktrunk::shell_exec::init_startup() {
+        handle_command_failure(
+            anyhow::Error::new(error).context("Failed to initialize process execution"),
+            0,
+            "wt",
+        );
+    }
 
     // Shell completion answers and exits without running a command, and no
     // code it reaches uses rayon — so it returns before the pool below is
