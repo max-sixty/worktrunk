@@ -5073,7 +5073,7 @@ fn test_directive_to_directory_ending_in_space_is_kept(repo: TestRepo) {
     let target = target.to_string_lossy().to_string();
     repo.write_project_config(&format!(
         r#"[pre-start]
-cd = '''printf '%s\n' '{target}' > "$WORKTRUNK_DIRECTIVE_CD_FILE"'''
+cd = "printf %s '{target}' > \"$WORKTRUNK_DIRECTIVE_CD_FILE\""
 "#,
     ));
     let cd_file = repo.home_path().join("cd-directive");
@@ -5084,7 +5084,7 @@ cd = '''printf '%s\n' '{target}' > "$WORKTRUNK_DIRECTIVE_CD_FILE"'''
         .output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");
-    assert_eq!(fs::read_to_string(cd_file).unwrap(), format!("{target}\n"));
+    assert_eq!(fs::read_to_string(cd_file).unwrap(), target);
 }
 
 // ============================================================================

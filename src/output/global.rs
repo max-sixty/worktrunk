@@ -19,7 +19,6 @@
 //! sets only `WORKTRUNK_DIRECTIVE_FILE`, switch output diagnoses the outdated
 //! wrapper and tells the user to reinstall shell integration.
 
-use std::fs::OpenOptions;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
@@ -259,8 +258,9 @@ pub(crate) fn print_outdated_execute_wrapper_warning() {
     }
 }
 
-/// Truncate-write the given path to the CD directive file. The file holds one
-/// line: the absolute path the shell wrapper should `cd` to. Truncate-then-
+/// Truncate-write the given path to the CD directive file. The file holds the
+/// absolute path the shell wrapper should `cd` to, and nothing else: no
+/// trailing newline, so every reader can take the contents as-is. Truncate-then-
 /// write semantics mean the last writer wins, which matches how overlapping
 /// `change_directory()` calls should resolve (hook emits a cd after switch
 /// emits its own → hook wins).
@@ -268,21 +268,10 @@ pub(crate) fn print_outdated_execute_wrapper_warning() {
 /// A failure names the file because the operation has already completed by the
 /// time the directive write runs.
 fn write_cd_path(file: &Path, path: &Path) -> anyhow::Result<()> {
-    write_cd_path_io(file, path)
-        .with_context(|| format!("Failed to write the cd directive file {}", file.display()))
-}
-
-fn write_cd_path_io(file: &Path, path: &Path) -> io::Result<()> {
-    let mut f = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(file)?;
     // Lossy for non-UTF-8 paths (extremely rare in practice; worktrunk-
     // managed paths are always valid UTF-8).
-    f.write_all(path.as_os_str().to_string_lossy().as_bytes())?;
-    f.write_all(b"\n")?;
-    f.flush()
+    std::fs::write(file, path.as_os_str().to_string_lossy().as_bytes())
+        .with_context(|| format!("Failed to write the cd directive file {}", file.display()))
 }
 
 /// Request directory change (for shell integration).
@@ -329,9 +318,7 @@ pub fn withdraw_missing_cd_target() {
     let Ok(target) = std::fs::read_to_string(&cd_file) else {
         return;
     };
-    // Strip only the line terminator: a directory name can end in spaces.
-    let target = target.trim_end_matches(['\n', '\r']);
-    if !target.is_empty() && !Path::new(target).is_dir() {
+    if !target.is_empty() && !Path::new(&target).is_dir() {
         let _ = std::fs::File::create(&cd_file);
     }
 }
