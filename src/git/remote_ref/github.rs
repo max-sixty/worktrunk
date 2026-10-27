@@ -224,6 +224,7 @@ pub fn is_authed_for(host: &str) -> bool {
     Cmd::new("gh")
         .args(["auth", "token", "--hostname", host])
         .env("GH_PROMPT_DISABLED", "1")
+        .sensitive_output()
         .run()
         .map(|o| o.status.success())
         .unwrap_or(false)

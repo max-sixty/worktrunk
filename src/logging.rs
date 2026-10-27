@@ -492,10 +492,8 @@ pub(crate) fn init(verbose_level: u8) {
     // gate `log_enabled!` checks before a `log::*` record evaluates its
     // format args. Worktrunk's own emit sites are native `tracing::*`, gated
     // by the global level hint the layer filters now expose (see
-    // `target_filter`), so this cap is specifically for the two `log`-API
-    // consumers that hint can't reach: the `log::*` records forwarded from
-    // dependencies, and the `log::log_enabled!` deep-logging guard in
-    // `shell_exec::log_output`.
+    // `target_filter`), so this cap governs `log::*` records forwarded from
+    // dependencies.
     //
     // Mirror the env-wins-when-set semantics the layer filters use (PR #2901):
     // if `RUST_LOG` is set, its level wins; otherwise the verbosity flag
@@ -675,7 +673,8 @@ where
 }
 
 /// `subprocess.log` layer: only `SUBPROCESS_FULL_TARGET` records (raw bodies
-/// and their `$ cmd … seq=N` headers), written through verbatim.
+/// and their `$ cmd … seq=N` headers), written through verbatim. The Debug
+/// baseline and `RUST_LOG` overrides match the trace file layers.
 fn build_subprocess_layer<S>(verbose_level: u8) -> Option<impl Layer<S>>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
@@ -683,12 +682,15 @@ where
     if verbose_level < 2 || !log_files::SUBPROCESS.is_active() {
         return None;
     }
+    let env_filter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::DEBUG.into())
+        .from_env_lossy();
     let only_full = target_filter(|meta| meta.target() == SUBPROCESS_FULL_TARGET);
     let layer = tracing_subscriber::fmt::layer()
         .with_writer(SubprocessMakeWriter)
         .with_ansi(false)
         .event_format(SubprocessFileFormat)
-        .with_filter(only_full);
+        .with_filter(env_filter.and(only_full));
     Some(layer)
 }
 

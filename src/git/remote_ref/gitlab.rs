@@ -28,6 +28,7 @@ use super::{
     CliApiRequest, PlatformData, RemoteRefInfo, cli_api_error, cli_config_value, run_cli_api,
 };
 use crate::git::{ForgeKind, Repository};
+use crate::shell_exec::Cmd;
 
 /// Raw JSON response from `glab api projects/:id/merge_requests/<number>`.
 #[derive(Debug, Deserialize)]
@@ -252,7 +253,13 @@ fn fetch_project_urls(
 /// nothing for a host without a token. Returns `false` if `glab` is not
 /// installed.
 pub fn is_authed_for(host: &str) -> bool {
-    cli_config_value("glab", &["token", "--host", host]).is_some_and(|token| !token.is_empty())
+    Cmd::new("glab")
+        .args(["config", "get", "token", "--host", host])
+        .sensitive_output()
+        .run()
+        .is_ok_and(|output| {
+            output.status.success() && !String::from_utf8_lossy(&output.stdout).trim().is_empty()
+        })
 }
 
 /// Get the git protocol configured in `glab` (GitLab CLI).

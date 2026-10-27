@@ -171,6 +171,62 @@ pub fn write_new_atomically(path: &Path, content: &str) -> io::Result<()> {
     write_atomically_with(path, content, false)
 }
 
+/// Prepare a regenerable log or diagnostic path without opening the file.
+///
+/// `relative_path` names a file within `log_dir`. On Unix, new directories
+/// are owner-only; every directory from the file's parent through `log_dir`
+/// is restricted to 0700 and an existing regular file to 0600. Log-file
+/// symlinks and special files are left alone: repair must not change a file's
+/// symlink target or block on a FIFO even without a log write.
+pub fn prepare_log_file(log_dir: &Path, relative_path: &Path) -> io::Result<std::path::PathBuf> {
+    let path = log_dir.join(relative_path);
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Log file needs a directory"))?;
+    let mut directory = std::fs::DirBuilder::new();
+    directory.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        directory.mode(0o700);
+        directory.create(parent)?;
+        for ancestor in parent
+            .ancestors()
+            .take_while(|dir| dir.starts_with(log_dir))
+        {
+            std::fs::set_permissions(ancestor, std::fs::Permissions::from_mode(0o700))?;
+        }
+        if std::fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_file()) {
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        }
+    }
+    #[cfg(not(unix))]
+    directory.create(parent)?;
+    Ok(path)
+}
+
+/// Open a log file after preparing its directory and existing permissions.
+/// Newly created files are owner-only on Unix.
+pub fn open_log_file(
+    log_dir: &Path,
+    relative_path: &Path,
+    append: bool,
+) -> io::Result<std::fs::File> {
+    let path = prepare_log_file(log_dir, relative_path)?;
+    let mut options = std::fs::OpenOptions::new();
+    options
+        .write(true)
+        .create(true)
+        .append(append)
+        .truncate(!append);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(&path)
+}
+
 fn write_atomically_with(path: &Path, content: &str, overwrite: bool) -> io::Result<()> {
     let target = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     // A bare filename's parent is `Some("")`, which no directory call accepts.

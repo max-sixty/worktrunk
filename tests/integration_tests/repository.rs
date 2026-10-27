@@ -384,8 +384,7 @@ fn test_project_identifier_ipv6_hosts_are_distinct() {
 
 /// The identifier selects both saved approvals and `[projects]` settings. The
 /// ordinary SSH and HTTPS forms of one project share one entry. A remote on a
-/// non-default SSH port has its own identifier, but entries keyed on the
-/// port-less identifier v0.80.0 gave it still apply, below its own.
+/// non-default SSH port must not inherit entries for the default port.
 #[test]
 fn test_project_identifier_selects_approvals_and_project_settings() {
     use worktrunk::config::{Approvals, UserConfig};
@@ -396,7 +395,7 @@ fn test_project_identifier_selects_approvals_and_project_settings() {
         project_identifier_for_remote("ssh://git@gitlab.example.com:22/team/project.git");
     let https = project_identifier_for_remote("https://gitlab.example.com/team/project.git");
     assert_eq!(ported, "gitlab.example.com:2222/team/project");
-    assert_eq!(ported.legacy(), Some("gitlab.example.com/team/project"));
+    assert_eq!(ported.legacy(), None);
     assert_eq!(default_port, "gitlab.example.com/team/project");
     assert_eq!(default_port.legacy(), None);
     assert_eq!(https, default_port);
@@ -413,7 +412,7 @@ approved-commands = ["npm test"]
     .unwrap();
     assert!(approvals.is_command_approved(&https, "npm install"));
     assert!(!approvals.is_command_approved(&https, "npm test"));
-    assert!(approvals.is_command_approved(&ported, "npm install"));
+    assert!(!approvals.is_command_approved(&ported, "npm install"));
     assert!(approvals.is_command_approved(&ported, "npm test"));
 
     let config: UserConfig = toml::from_str(
@@ -426,7 +425,7 @@ worktree-path = "default-port"
     )
     .unwrap();
     assert_eq!(config.worktree_path_for_project(&https), "default-port");
-    assert_eq!(config.worktree_path_for_project(&ported), "default-port");
+    assert_eq!(config.worktree_path_for_project(&ported), "global");
 
     let config: UserConfig = toml::from_str(
         r#"
@@ -446,10 +445,6 @@ worktree-path = "port-2222"
 /// `wt switch --create` runs the approved hook, in the worktree path the
 /// legacy entry names.
 #[rstest::rstest]
-#[case::ssh_port(
-    "ssh://git@gitlab.example.com:2222/team/app.git",
-    "gitlab.example.com/team/app"
-)]
 #[case::uppercase_host("git@GitHub.com:team/app.git", "GitHub.com/team/app")]
 #[case::git_plus_ssh(
     "git+ssh://git@github.com/team/app.git",
@@ -483,6 +478,44 @@ fn test_switch_honors_entries_under_legacy_identifier(#[case] url: &str, #[case]
     );
     let worktree = repo.root_path().parent().unwrap().join("legacy.feature");
     assert!(worktree.join("hook-ran.txt").exists());
+}
+
+/// A port-less approval cannot authorize an alias on a different SSH server.
+#[test]
+fn test_project_alias_approval_respects_ssh_port() {
+    let mut repo = TestRepo::with_initial_commit();
+    repo.setup_remote("main");
+    repo.git_command()
+        .args([
+            "remote",
+            "set-url",
+            "origin",
+            "ssh://git@host.example:2222/o/r.git",
+        ])
+        .run()
+        .unwrap();
+    repo.write_project_config(
+        r#"[aliases]
+probe = "echo ran > alias-ran.txt"
+"#,
+    );
+    for (key, allowed) in [
+        ("host.example/o/r", false),
+        ("host.example/*", false),
+        ("host.example:2222/o/r", true),
+    ] {
+        repo.write_test_approvals(&format!(
+            "[projects.'{key}']\napproved-commands = [\"echo ran > alias-ran.txt\"]\n"
+        ));
+        let output = repo.wt_command().arg("probe").output().unwrap();
+        assert_eq!(
+            output.status.success(),
+            allowed,
+            "key: {key}, stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(repo.root_path().join("alias-ran.txt").exists(), allowed);
+    }
 }
 
 #[test]

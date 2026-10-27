@@ -407,7 +407,7 @@ impl Repository {
     ///
     /// This identifier keys approved commands and `[projects."…"]` settings.
     /// For a remote whose identifier changed after v0.80.0, it also carries
-    /// the old one, so keys saved under it keep applying.
+    /// the old one where it still identifies the same server.
     ///
     /// Result is cached in the repository's shared cache (same for all clones).
     pub fn project_identifier(&self) -> anyhow::Result<ProjectId> {
