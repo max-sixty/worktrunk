@@ -121,9 +121,10 @@ fn test_auth_probe_output_is_redacted(
 /// permissions were set before Worktrunk restricted its log files.
 #[cfg(unix)]
 #[rstest]
-#[case::new(false)]
-#[case::existing(true)]
-fn test_debug_artifacts_have_private_permissions(repo: TestRepo, #[case] existing: bool) {
+#[case::new(None)]
+#[case::existing(Some(0o644))]
+#[case::readonly(Some(0o444))]
+fn test_debug_artifacts_have_private_permissions(repo: TestRepo, #[case] mode: Option<u32>) {
     use std::os::unix::fs::PermissionsExt;
 
     let logs_dir = repo.root_path().join(".git/wt/logs");
@@ -134,18 +135,18 @@ fn test_debug_artifacts_have_private_permissions(repo: TestRepo, #[case] existin
         "diagnostic.md",
     ];
     let audit_files = ["commands.jsonl", "commands.jsonl.old"];
-    if existing {
+    if let Some(mode) = mode {
         fs::create_dir_all(&logs_dir).unwrap();
         fs::set_permissions(&logs_dir, fs::Permissions::from_mode(0o755)).unwrap();
         for filename in filenames {
             let path = logs_dir.join(filename);
             fs::write(&path, "old log").unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
         }
         for filename in audit_files {
             let path = logs_dir.join(filename);
             fs::write(&path, "old audit entry").unwrap();
-            fs::set_permissions(path, fs::Permissions::from_mode(0o644)).unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
         }
     }
 
@@ -165,7 +166,7 @@ fn test_debug_artifacts_have_private_permissions(repo: TestRepo, #[case] existin
     }
     for filename in audit_files {
         let path = logs_dir.join(filename);
-        if existing {
+        if mode.is_some() {
             assert_eq!(fs::read_to_string(&path).unwrap(), "old audit entry");
             assert_eq!(
                 fs::metadata(path).unwrap().permissions().mode() & 0o777,
@@ -174,6 +175,50 @@ fn test_debug_artifacts_have_private_permissions(repo: TestRepo, #[case] existin
         } else {
             assert!(!path.exists());
         }
+    }
+}
+
+/// Preparing audit permissions must not open a FIFO when no audit entry is written.
+#[cfg(unix)]
+#[rstest]
+fn test_audit_permission_repair_does_not_open_fifo(repo: TestRepo) {
+    use nix::sys::stat::Mode;
+    use nix::unistd::mkfifo;
+    use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+
+    let logs_dir = repo.root_path().join(".git/wt/logs");
+    fs::create_dir_all(&logs_dir).unwrap();
+    fs::set_permissions(&logs_dir, fs::Permissions::from_mode(0o755)).unwrap();
+    for filename in ["commands.jsonl", "commands.jsonl.old"] {
+        mkfifo(&logs_dir.join(filename), Mode::S_IRUSR | Mode::S_IWUSR).unwrap();
+    }
+    let mut command = repo.wt_command();
+    command
+        .args(["list", "-vv"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let child = worktrunk::shell_exec::spawn_shared_child(&mut command).unwrap();
+    let result = worktrunk::shell_exec::wait_shared_child(
+        &child,
+        Some(std::time::Instant::now() + std::time::Duration::from_secs(30)),
+    );
+    if result.is_err() {
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+    let status = result.unwrap();
+    assert!(status.success());
+    assert_eq!(
+        fs::metadata(&logs_dir).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    for filename in ["commands.jsonl", "commands.jsonl.old"] {
+        assert!(
+            fs::metadata(logs_dir.join(filename))
+                .unwrap()
+                .file_type()
+                .is_fifo()
+        );
     }
 }
 

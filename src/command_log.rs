@@ -35,7 +35,7 @@ impl CommandLog {
         // writes no audit entry or never reaches the rotation threshold.
         for filename in ["commands.jsonl", "commands.jsonl.old"] {
             if log_dir.join(filename).exists() {
-                let _ = crate::utils::open_log_file(log_dir, Path::new(filename), true);
+                let _ = crate::utils::prepare_log_file(log_dir, Path::new(filename));
             }
         }
         Self {
@@ -238,6 +238,19 @@ mod tests {
         assert_eq!(parsed["cmd"], "echo hi");
         assert_eq!(parsed["exit"], 0);
         assert_eq!(parsed["wt"], "wt test");
+    }
+
+    #[test]
+    fn test_write_tolerates_unavailable_log_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocked = dir.path().join("not-a-directory");
+        fs::write(&blocked, "preserved contents").unwrap();
+        let mut logger = CommandLog::new(&blocked, "wt test");
+
+        logger.write("test", "echo hi", Some(0), None);
+
+        assert!(logger.file.is_none());
+        assert_eq!(fs::read_to_string(blocked).unwrap(), "preserved contents");
     }
 
     #[test]

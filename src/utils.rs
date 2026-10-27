@@ -171,17 +171,13 @@ pub fn write_new_atomically(path: &Path, content: &str) -> io::Result<()> {
     write_atomically_with(path, content, false)
 }
 
-/// Open a regenerable log or diagnostic file, creating its directory as needed.
+/// Prepare a regenerable log or diagnostic path without opening the file.
 ///
 /// `relative_path` names a file within `log_dir`. On Unix, new directories
 /// are owner-only; every directory from the file's parent through `log_dir`
-/// is restricted to 0700 and the file to 0600, even when they already exist.
-/// Permissions are applied before writing.
-pub fn open_log_file(
-    log_dir: &Path,
-    relative_path: &Path,
-    append: bool,
-) -> io::Result<std::fs::File> {
+/// is restricted to 0700 and an existing regular file to 0600. Special files
+/// are left alone: opening a FIFO here would block even without a log write.
+pub fn prepare_log_file(log_dir: &Path, relative_path: &Path) -> io::Result<std::path::PathBuf> {
     let path = log_dir.join(relative_path);
     let parent = path
         .parent()
@@ -199,10 +195,23 @@ pub fn open_log_file(
         {
             std::fs::set_permissions(ancestor, std::fs::Permissions::from_mode(0o700))?;
         }
+        if path.is_file() {
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        }
     }
     #[cfg(not(unix))]
     directory.create(parent)?;
+    Ok(path)
+}
 
+/// Open a log file after preparing its directory and existing permissions.
+/// Newly created files are owner-only on Unix.
+pub fn open_log_file(
+    log_dir: &Path,
+    relative_path: &Path,
+    append: bool,
+) -> io::Result<std::fs::File> {
+    let path = prepare_log_file(log_dir, relative_path)?;
     let mut options = std::fs::OpenOptions::new();
     options
         .write(true)
@@ -214,13 +223,7 @@ pub fn open_log_file(
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let file = options.open(&path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(file)
+    options.open(&path)
 }
 
 fn write_atomically_with(path: &Path, content: &str, overwrite: bool) -> io::Result<()> {

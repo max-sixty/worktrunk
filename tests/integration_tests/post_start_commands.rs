@@ -1027,6 +1027,40 @@ capture = "echo captured-output"
     }
 }
 
+/// A background command whose output log cannot open reports the path in its
+/// runner log and leaves the command unexecuted.
+#[rstest]
+fn test_post_start_reports_unavailable_command_log(repo: TestRepo) {
+    repo.write_project_config(
+        r#"[post-start]
+capture = "echo executed > should-not-exist.txt"
+"#,
+    );
+    let hook_dir = resolve_git_common_dir(repo.root_path()).join("wt/logs/main/project/post-start");
+    let blocked_log = hook_dir.join("capture.log");
+    fs::create_dir_all(&blocked_log).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "post-start", "--yes"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "background spawn should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let runner_log = hook_dir.join("runner.log");
+    crate::common::wait_for("background command log failure", || {
+        fs::read_to_string(&runner_log).is_ok_and(|content| {
+            content.contains("failed to create log file:")
+                && content.contains(&blocked_log.display().to_string())
+        })
+    });
+    assert!(blocked_log.is_dir());
+    assert!(!repo.root_path().join("should-not-exist.txt").exists());
+}
+
 #[rstest]
 fn test_post_start_invalid_command_handling(repo: TestRepo) {
     // Create command with syntax error (missing quote)
