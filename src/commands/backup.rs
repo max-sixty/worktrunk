@@ -37,13 +37,11 @@ use color_print::cformat;
 use worktrunk::git::Repository;
 use worktrunk::path::{canonicalize_with_parents, format_path_for_display};
 
-/// Protect Git storage and registered worktrees before a clobber backup.
-/// Explicit switch paths also refuse directories inside worktrees. Template
-/// paths may replace stale directories there, but never tracked content.
+/// Refuse clobbering within or around registered checkouts and Git storage.
+/// The same namespace policy applies to explicit and template destinations.
 pub(crate) fn require_safe_clobber_target(
     repo: &Repository,
     requested: &Path,
-    explicit_path: bool,
 ) -> anyhow::Result<()> {
     if !requested.try_exists().with_context(|| {
         format!(
@@ -57,81 +55,27 @@ pub(crate) fn require_safe_clobber_target(
         );
     }
     let resolved = canonicalize_with_parents(requested);
-    // Rename moves the directory entry, not a symlink's referent. Normalize
-    // its parents while retaining the leaf for Git's tracked-entry lookup.
+    // A rename moves the leaf entry; a symlink also exposes its referent.
     let absolute = std::path::absolute(requested)?;
     let entry = match (absolute.parent(), absolute.file_name()) {
         (Some(parent), Some(name)) => canonicalize_with_parents(parent).join(name),
         _ => resolved.clone(),
     };
-    let git_dir = canonicalize_with_parents(repo.git_common_dir());
-    // Execution must not reuse planning's cached registrations.
-    let fresh = Repository::at(repo.git_common_dir())?;
+    // Execution must not reuse planning's cached registrations. Keep the
+    // checkout discovery context: a separate Git store may have no backlink.
+    let fresh = Repository::at(repo.discovery_path())?;
     let registered = fresh.list_worktrees()?;
     for requested in std::iter::once(&entry).chain((entry != resolved).then_some(&resolved)) {
-        if requested == &git_dir {
-            bail!(cformat!(
-                "Worktree path <bold>{}</> is the repository's Git directory; choose a directory outside the repository and its worktrees",
-                format_path_for_display(requested)
-            ));
-        }
         for existing in registered
             .iter()
             .map(|wt| wt.path.as_path())
-            .chain([git_dir.as_path()])
+            .chain([fresh.git_common_dir()])
         {
             let existing = canonicalize_with_parents(existing);
-            // Linked and separate-git-dir checkouts use a Git linkage file
-            // rather than storing Git data at this path.
-            if requested == &existing.join(".git") {
-                bail!(cformat!(
-                    "Worktree path <bold>{}</> is the worktree's Git entry; choose a different directory",
-                    format_path_for_display(requested)
-                ));
-            }
             let relation = if existing.starts_with(requested) {
                 "contains"
-            } else if let Ok(relative) = requested.strip_prefix(&existing) {
-                if explicit_path || existing == git_dir {
-                    "is inside"
-                } else {
-                    let relative = relative
-                        .to_str()
-                        .context("Cannot inspect a non-UTF-8 worktree destination")?;
-                    let worktree = fresh.worktree_at(&existing);
-                    // Read from the checkout owning this index, including its
-                    // config.worktree. Git supplies the canonical boolean.
-                    let ignore_case = worktree.run_command(&[
-                        "config",
-                        "--type=bool",
-                        "--default=false",
-                        "--get",
-                        "core.ignorecase",
-                    ])?;
-                    let (literal_mode, pathspec) = if ignore_case.trim() == "true" {
-                        (
-                            "--no-literal-pathspecs",
-                            format!(":(literal,icase){relative}"),
-                        )
-                    } else {
-                        ("--literal-pathspecs", relative.to_owned())
-                    };
-                    let output = worktree.run_command_bytes(&[
-                        literal_mode,
-                        "ls-files",
-                        "-z",
-                        "--",
-                        &pathspec,
-                    ])?;
-                    if output.is_empty() {
-                        continue;
-                    }
-                    bail!(cformat!(
-                        "Worktree path <bold>{}</> contains tracked files from <bold>{}</>; choose a different directory",
-                        format_path_for_display(requested),
-                        format_path_for_display(&existing),
-                    ));
-                }
+            } else if requested.starts_with(&existing) {
+                "is inside"
             } else {
                 continue;
             };
@@ -225,7 +169,7 @@ pub(crate) fn back_up_clobbered_path_now(
     repo: &Repository,
     blocking_path: &Path,
 ) -> anyhow::Result<PathBuf> {
-    require_safe_clobber_target(repo, blocking_path, false)?;
+    require_safe_clobber_target(repo, blocking_path)?;
     let timestamp_secs = worktrunk::utils::epoch_now() as i64;
     let datetime =
         chrono::DateTime::from_timestamp(timestamp_secs, 0).unwrap_or_else(chrono::Utc::now);
@@ -349,6 +293,93 @@ mod tests {
         assert_eq!(std::fs::read_link(&link).unwrap(), Path::new("loop"));
     }
 
+    #[test]
+    #[cfg(unix)]
+    fn test_backup_preserves_tracked_unicode_symlink() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let target = test.home_path().join("outside");
+        std::fs::create_dir(&target).unwrap();
+        let tracked = test.root_path().join("é");
+        std::os::unix::fs::symlink(&target, &tracked).unwrap();
+        test.run_git(&["add", "é"]);
+        test.run_git(&["config", "core.ignorecase", "true"]);
+        let renamed = test.root_path().join("É");
+        std::fs::rename(&tracked, &renamed).unwrap();
+
+        assert!(back_up_clobbered_path_now(&repo, &renamed).is_err());
+        assert_eq!(std::fs::read_link(&renamed).unwrap(), target);
+    }
+
+    /// An unrepaired separate Git store has no backlink to its checkout.
+    /// Inventory must use primary discovery rather than inventing a store-parent checkout.
+    #[test]
+    fn test_backup_preserves_unrepaired_separate_git_dir_checkout() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let checkout = test.home_path().join("checkout");
+        let store = test.home_path().join("store/git-data");
+        std::fs::create_dir_all(store.parent().unwrap()).unwrap();
+        test.run_git(&[
+            "clone",
+            "--separate-git-dir",
+            store.to_str().unwrap(),
+            test.root_path().to_str().unwrap(),
+            checkout.to_str().unwrap(),
+        ]);
+        let checkout = dunce::canonicalize(checkout).unwrap();
+        let store = dunce::canonicalize(store).unwrap();
+        assert!(!store.join("gitdir").exists());
+        let repo = Repository::at(&checkout).unwrap();
+        // A prior caller may have populated only the root cache.
+        assert_eq!(repo.current_worktree().root().unwrap(), checkout);
+        assert_eq!(repo.list_worktrees().unwrap()[0].path, checkout);
+        let stale = checkout.join("stale");
+        std::fs::create_dir(&stale).unwrap();
+        std::fs::write(stale.join("keep"), "checkout data").unwrap();
+
+        let error = back_up_clobbered_path_now(&repo, &stale).unwrap_err();
+        assert!(error.to_string().contains("is inside"), "{error:#}");
+        assert_eq!(
+            std::fs::read_to_string(stale.join("keep")).unwrap(),
+            "checkout data"
+        );
+        assert!(checkout.join(".git").is_file());
+        assert!(store.join("HEAD").is_file());
+
+        // Git's unrepaired inventory names this parent as the checkout, but
+        // a sibling of the store is outside both the real checkout and Git data.
+        let outside = store.parent().unwrap().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("keep"), "outside data").unwrap();
+        let backup = back_up_clobbered_path_now(&repo, &outside).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(backup.join("keep")).unwrap(),
+            "outside data"
+        );
+        assert!(store.join("HEAD").is_file());
+
+        // A linked checkout cannot identify an unrepaired primary checkout.
+        // Refuse rather than guessing a protected namespace from the store.
+        let linked = test.home_path().join("linked");
+        test.run_git_in(
+            &checkout,
+            &["worktree", "add", "-b", "linked", linked.to_str().unwrap()],
+        );
+        assert!(!store.join("gitdir").exists());
+        let linked_repo = Repository::at(&linked).unwrap();
+        let error = back_up_clobbered_path_now(&linked_repo, &backup).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Cannot determine main worktree path"),
+            "{error:#}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(backup.join("keep")).unwrap(),
+            "outside data"
+        );
+    }
+
     #[rstest::rstest]
     #[case::ordinary_directory(false)]
     #[case::git_directory(true)]
@@ -368,12 +399,7 @@ mod tests {
 
         let result = back_up_clobbered_path_now(&repo, &link);
         if git_directory {
-            assert!(
-                result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("is the repository's Git directory")
-            );
+            assert!(result.is_err());
             assert_eq!(std::fs::read_link(&link).unwrap(), target);
         } else {
             let backup = result.unwrap();
@@ -403,14 +429,21 @@ mod tests {
         assert!(!stale.exists(), "stale path should be moved away");
     }
 
-    #[test]
-    fn test_back_up_clobbered_path_now_uses_timestamped_suffix() {
+    #[rstest::rstest]
+    #[case::checkout(false)]
+    #[case::git_directory(true)]
+    fn test_back_up_clobbered_path_now_uses_timestamped_suffix(#[case] from_git_dir: bool) {
         let temp = tempfile::tempdir().unwrap();
         let stale = temp.path().join("feature");
         std::fs::create_dir(&stale).unwrap();
 
         let test = worktrunk::testing::TestRepo::with_initial_commit();
-        let repo = Repository::at(test.root_path()).unwrap();
+        let discovery = if from_git_dir {
+            test.root_path().join(".git")
+        } else {
+            test.root_path().to_path_buf()
+        };
+        let repo = Repository::at(&discovery).unwrap();
         let used = back_up_clobbered_path_now(&repo, &stale).unwrap();
 
         let name = used.file_name().unwrap().to_string_lossy();

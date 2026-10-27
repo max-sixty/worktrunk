@@ -483,7 +483,7 @@ impl<'a> RelocationExecutor<'a> {
                 continue;
             }
 
-            if let Err(error) = backup::require_safe_clobber_target(repo, expected_path, false) {
+            if let Err(error) = backup::require_safe_clobber_target(repo, expected_path) {
                 eprintln!(
                     "{}",
                     warning_message(cformat!("Skipping <bold>{branch}</> ({error})"))

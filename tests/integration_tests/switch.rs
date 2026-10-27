@@ -9607,7 +9607,7 @@ fn test_switch_clobber_preserves_git_linkage_file(mut repo: TestRepo) {
         .unwrap();
     assert!(!output.status.success(), "{output:?}");
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("is the worktree's Git entry"),
+        String::from_utf8_lossy(&output.stderr).contains("is inside"),
         "{output:?}"
     );
     assert_eq!(fs::read(&git_entry).unwrap(), original);
@@ -9621,120 +9621,70 @@ fn test_switch_clobber_preserves_git_linkage_file(mut repo: TestRepo) {
     assert_eq!(String::from_utf8_lossy(&head.stdout).trim(), "source");
 }
 
-/// Resolving a tracked symlink must not hide the entry that clobber would move.
+/// An entry inside a checkout stays protected even when its symlink referent
+/// is outside. Explicit and template destinations use the same policy.
 #[rstest]
-#[case::exact(false, false, false)]
-#[case::case_folded(true, false, false)]
-#[case::inherited_literal(true, true, false)]
-#[case::worktree_config(true, false, true)]
+#[case::explicit(true)]
+#[case::template(false)]
 #[cfg(unix)]
-fn test_switch_clobber_preserves_tracked_symlink(
-    mut repo: TestRepo,
-    #[case] change_case: bool,
-    #[case] inherited_literal: bool,
-    #[case] worktree_config: bool,
-) {
-    let root = if worktree_config {
-        repo.add_worktree("source")
-    } else {
-        repo.root_path().to_path_buf()
-    };
+fn test_switch_clobber_preserves_symlink_inside_worktree(repo: TestRepo, #[case] explicit: bool) {
     let target = repo.home_path().join("outside");
     fs::create_dir(&target).unwrap();
-    let link = root.join("tracked-link");
-    std::os::unix::fs::symlink(&target, &link).unwrap();
-    repo.run_git_in(&root, &["add", "tracked-link"]);
-    repo.run_git_in(&root, &["commit", "-m", "Track symlink"]);
-    repo.run_git(&[
-        "config",
-        "core.ignorecase",
-        if worktree_config { "false" } else { "true" },
-    ]);
-    if worktree_config {
-        repo.run_git(&["config", "extensions.worktreeConfig", "true"]);
-        repo.run_git_in(&root, &["config", "--worktree", "core.ignorecase", "true"]);
-    }
-    let name = if change_case {
-        "Tracked-Link"
-    } else {
-        "tracked-link"
-    };
-    let destination = root.join(name);
-    if change_case {
-        fs::rename(&link, &destination).unwrap();
-    }
+    let destination = repo.root_path().join("link");
+    std::os::unix::fs::symlink(&target, &destination).unwrap();
     repo.write_test_config(&format!(
         "worktree-path = {}",
         serde_json::to_string(destination.to_str().unwrap()).unwrap()
     ));
-
     let mut command = repo.wt_command();
     command.args(["switch", "--create", "feature", "--clobber", "--yes"]);
-    if inherited_literal {
-        command.env("GIT_LITERAL_PATHSPECS", "1");
+    if explicit {
+        command.arg("--path").arg(&destination);
     }
     let output = command.output().unwrap();
     assert!(!output.status.success(), "{output:?}");
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("contains tracked files"),
+        String::from_utf8_lossy(&output.stderr).contains("is inside"),
         "{output:?}"
     );
     assert_eq!(fs::read_link(&destination).unwrap(), target);
 }
 
-/// The documented in-repository template can clobber a stale ignored directory.
+/// Nested worktree creation remains valid, but an existing ignored directory
+/// within a checkout cannot be backed up by clobbering.
 #[rstest]
-fn test_switch_clobbers_stale_ignored_template_directory(repo: TestRepo) {
+fn test_switch_nested_template_requires_absent_destination(repo: TestRepo) {
     repo.write_test_config(r#"worktree-path = ".worktrees/{{ branch | sanitize }}""#);
-    std::fs::write(repo.root_path().join(".git/info/exclude"), ".worktrees/\n").unwrap();
+    fs::write(repo.root_path().join(".git/info/exclude"), ".worktrees/\n").unwrap();
     let stale = repo.root_path().join(".worktrees/feature");
-    std::fs::create_dir_all(&stale).unwrap();
-    std::fs::write(stale.join("keep.txt"), "stale contents").unwrap();
-
+    fs::create_dir_all(&stale).unwrap();
+    fs::write(stale.join("keep.txt"), "stale contents").unwrap();
     let output = repo
         .wt_command()
         .args(["switch", "--create", "feature", "--clobber", "--yes"])
         .output()
         .unwrap();
-    assert!(output.status.success(), "{output:?}");
-    assert!(stale.join(".git").is_file());
-    let backup = std::fs::read_dir(stale.parent().unwrap())
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .find(|path| {
-            path.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("feature.bak.")
-        })
-        .expect("stale directory must be backed up");
-    assert_eq!(
-        std::fs::read_to_string(backup.join("keep.txt")).unwrap(),
-        "stale contents"
-    );
-
-    // A template must not move tracked content out of the containing worktree.
-    let docs = repo.root_path().join("docs");
-    std::fs::create_dir(&docs).unwrap();
-    std::fs::write(docs.join("guide.md"), "tracked docs").unwrap();
-    repo.run_git(&["add", "docs/guide.md"]);
-    repo.run_git(&["commit", "-m", "Track docs"]);
-    repo.write_test_config(r#"worktree-path = "{{ branch | sanitize }}""#);
-    let output = repo
-        .wt_command()
-        .args(["switch", "--create", "docs", "--clobber", "--yes"])
-        .output()
-        .unwrap();
     assert!(!output.status.success(), "{output:?}");
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("contains tracked files"),
+        String::from_utf8_lossy(&output.stderr).contains("is inside"),
         "{output:?}"
     );
     assert_eq!(
-        std::fs::read_to_string(docs.join("guide.md")).unwrap(),
-        "tracked docs"
+        fs::read_to_string(stale.join("keep.txt")).unwrap(),
+        "stale contents"
     );
-    assert!(!docs.join(".git").exists());
+    assert!(!stale.join(".git").exists());
+    assert_eq!(fs::read_dir(stale.parent().unwrap()).unwrap().count(), 1);
+
+    let fresh = repo.root_path().join(".worktrees/fresh");
+    assert!(!fresh.exists());
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "fresh", "--clobber", "--yes"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(fresh.join(".git").is_file());
 }
 
 /// Invalid branch names are rejected before worktree creation.

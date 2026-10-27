@@ -835,7 +835,7 @@ fn validate_worktree_creation(
     if !path.exists() {
         return Ok(false);
     }
-    require_safe_clobber_target(repo, path, from_path_flag)?;
+    require_safe_clobber_target(repo, path)?;
     if clobber {
         return Ok(true);
     }
