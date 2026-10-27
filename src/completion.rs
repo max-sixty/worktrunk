@@ -449,9 +449,7 @@ impl ValueCompleter for BranchCompleter {
                     let _ = repo.remote_branches();
                 });
             });
-            let Ok(remotes) = repo.remote_branches() else {
-                return Vec::new();
-            };
+            let remotes = repo.remote_branches().unwrap_or_default();
             let local_names: Vec<_> = repo
                 .local_branches()
                 .into_iter()
