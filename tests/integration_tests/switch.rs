@@ -3587,6 +3587,38 @@ fn configure_mock_cli_env(cmd: &mut std::process::Command, mock_bin: &Path) {
     cmd.env(path_var_name, new_path);
 }
 
+#[rstest]
+fn test_switch_pr_escapes_context_controls(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    let response = serde_json::json!({
+        "title": "hello\n\u{1b}]52;c;YQ==\u{7} café",
+        "user": {"login": "alice\u{1b}[31m"},
+        "state": "open\r",
+        "draft": false,
+        "head": {"ref": "feature-auth", "repo": {"name": "test-repo", "owner": {"login": "owner"}}},
+        "base": {"ref": "main", "repo": {"name": "test-repo", "owner": {"login": "owner"}}},
+        "html_url": "https://github.com/owner/test-repo/pull/101"
+    });
+    let mock_bin = setup_mock_gh_for_pr(&repo, &response.to_string());
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "--create", "pr:101", "--no-hooks"])
+        .env("CLICOLOR_FORCE", "1");
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(!output.status.success()); // --create conflicts after displaying the PR.
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains(r"\u{1b}]52;c;YQ==\u{7} café"), "{stderr:?}");
+    assert!(stderr.contains(r"alice\u{1b}[31m"), "{stderr:?}");
+    assert!(stderr.contains(r"open\r"), "{stderr:?}");
+    assert!(!stderr.contains("\x1b]52;"), "{stderr:?}");
+    assert!(stderr.contains("\x1b["), "test must exercise styled output");
+}
+
 /// Test that --create flag conflicts with pr: syntax
 #[rstest]
 fn test_switch_pr_create_conflict(#[from(repo_with_remote)] repo: TestRepo) {

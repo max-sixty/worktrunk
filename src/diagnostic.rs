@@ -296,10 +296,11 @@ impl DiagnosticReport {
     /// Returns the path if successful, None if write failed.
     pub fn write_diagnostic_file(&self, repo: &Repository) -> Option<PathBuf> {
         let log_dir = repo.wt_logs_dir();
-        std::fs::create_dir_all(&log_dir).ok()?;
-
         let path = log_dir.join("diagnostic.md");
-        std::fs::write(&path, &self.content).ok()?;
+        let mut file =
+            worktrunk::utils::open_log_file(&log_dir, std::path::Path::new("diagnostic.md"), false)
+                .ok()?;
+        std::io::Write::write_all(&mut file, self.content.as_bytes()).ok()?;
 
         Some(path)
     }
