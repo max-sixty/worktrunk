@@ -1891,6 +1891,9 @@ fn test_complete_switch_excludes_remote_branches_when_over_threshold(mut repo: T
         "Remote-only branches should be excluded when total > 100: {stdout}"
     );
 
+    // `wt switch origin/remote/branch-0` resolves to this local branch.
+    repo.run_git(&["branch", "remote/branch-0"]);
+
     // An explicit remote prefix still gives access to that remote's branches.
     let output = repo
         .completion_cmd_for_shell(&["wt", "switch", "origin/remote/"], "fish")
@@ -1901,8 +1904,14 @@ fn test_complete_switch_excludes_remote_branches_when_over_threshold(mut repo: T
     assert!(
         value_suggestions(&stdout)
             .iter()
-            .any(|s| s.split('\t').next() == Some("origin/remote/branch-0")),
+            .any(|s| s.split('\t').next() == Some("origin/remote/branch-1")),
         "Remote-qualified branch should complete: {stdout}"
+    );
+    assert!(
+        !value_suggestions(&stdout)
+            .iter()
+            .any(|s| s.split('\t').next() == Some("origin/remote/branch-0")),
+        "A remote-qualified name that selects a local branch should not be offered: {stdout}"
     );
 
     let output = repo

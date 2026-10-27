@@ -450,15 +450,12 @@ impl ValueCompleter for BranchCompleter {
                 });
             });
             let remotes = repo.remote_branches().unwrap_or_default();
-            let local_names: Vec<_> = repo
-                .local_branches()
-                .into_iter()
-                .flatten()
-                .filter(|branch| branch.name.starts_with(current))
-                .collect();
-            let local_name_set: HashSet<_> = local_names
+            let locals = repo.local_branches().unwrap_or_default();
+            let local_name_set: HashSet<_> =
+                locals.iter().map(|branch| branch.name.as_str()).collect();
+            let local_names: Vec<_> = locals
                 .iter()
-                .map(|branch| branch.name.as_str())
+                .filter(|branch| branch.name.starts_with(current))
                 .collect();
             let mut candidates: Vec<_> = local_names
                 .iter()
@@ -473,6 +470,7 @@ impl ValueCompleter for BranchCompleter {
                     .filter(|remote| {
                         remote.short_name.starts_with(current)
                             && !local_name_set.contains(remote.short_name.as_str())
+                            && !local_name_set.contains(remote.local_name.as_str())
                     })
                     .map(|remote| {
                         let help = format!("⇣ {}", format_relative_time_short(remote.committer_ts));
