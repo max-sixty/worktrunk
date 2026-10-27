@@ -9540,7 +9540,7 @@ fn test_switch_path_rejects_directory_overlapping_repo(repo: TestRepo) {
 
     // `--path ..` holds the repository and `--path src` sits inside it; with
     // `--clobber` either would be moved aside, so both are refused outright.
-    for (path, relation) in [("..", "contains"), ("src", "is inside")] {
+    for (path, relation) in [("..", "contains"), ("src", "is inside"), ("/", "contains")] {
         let output = repo
             .wt_command()
             .args([
@@ -9619,6 +9619,49 @@ fn test_switch_clobber_preserves_git_linkage_file(mut repo: TestRepo) {
         .unwrap();
     assert!(head.status.success(), "{head:?}");
     assert_eq!(String::from_utf8_lossy(&head.stdout).trim(), "source");
+}
+
+/// Resolving a tracked symlink must not hide the entry that clobber would move.
+#[rstest]
+#[case::exact(false, false)]
+#[case::case_folded(true, false)]
+#[case::inherited_literal(true, true)]
+#[cfg(unix)]
+fn test_switch_clobber_preserves_tracked_symlink(
+    repo: TestRepo,
+    #[case] change_case: bool,
+    #[case] inherited_literal: bool,
+) {
+    let target = repo.home_path().join("outside");
+    fs::create_dir(&target).unwrap();
+    let link = repo.root_path().join("tracked-link");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    repo.run_git(&["add", "tracked-link"]);
+    repo.run_git(&["commit", "-m", "Track symlink"]);
+    repo.run_git(&["config", "core.ignorecase", "true"]);
+    let name = if change_case {
+        "Tracked-Link"
+    } else {
+        "tracked-link"
+    };
+    let destination = repo.root_path().join(name);
+    if change_case {
+        fs::rename(&link, &destination).unwrap();
+    }
+    repo.write_test_config(&format!("worktree-path = {name:?}"));
+
+    let mut command = repo.wt_command();
+    command.args(["switch", "--create", "feature", "--clobber", "--yes"]);
+    if inherited_literal {
+        command.env("GIT_LITERAL_PATHSPECS", "1");
+    }
+    let output = command.output().unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("contains tracked files"),
+        "{output:?}"
+    );
+    assert_eq!(fs::read_link(&destination).unwrap(), target);
 }
 
 /// The documented in-repository template can clobber a stale ignored directory.

@@ -56,60 +56,83 @@ pub(crate) fn require_safe_clobber_target(
             format_path_for_display(requested)
         );
     }
-    let requested = canonicalize_with_parents(requested);
+    let resolved = canonicalize_with_parents(requested);
+    // Rename moves the directory entry, not a symlink's referent. Normalize
+    // its parents while retaining the leaf for Git's tracked-entry lookup.
+    let absolute = std::path::absolute(requested)?;
+    let entry = match (absolute.parent(), absolute.file_name()) {
+        (Some(parent), Some(name)) => canonicalize_with_parents(parent).join(name),
+        _ => resolved.clone(),
+    };
     let git_dir = canonicalize_with_parents(repo.git_common_dir());
-    if requested == git_dir {
-        bail!(cformat!(
-            "Worktree path <bold>{}</> is the repository's Git directory; choose a directory outside the repository and its worktrees",
-            format_path_for_display(&requested)
-        ));
-    }
     // Execution must not reuse planning's cached registrations.
     let fresh = Repository::at(repo.git_common_dir())?;
-    let registered = fresh.list_worktrees()?.iter().map(|wt| wt.path.as_path());
-    for existing in registered.chain([git_dir.as_path()]) {
-        let existing = canonicalize_with_parents(existing);
-        // Linked and separate-git-dir checkouts use a Git linkage file rather
-        // than storing Git data at this path. It is never tracked content.
-        if requested == existing.join(".git") {
+    let registered = fresh.list_worktrees()?;
+    for requested in std::iter::once(&entry).chain((entry != resolved).then_some(&resolved)) {
+        if requested == &git_dir {
             bail!(cformat!(
-                "Worktree path <bold>{}</> is the worktree's Git entry; choose a different directory",
-                format_path_for_display(&requested)
+                "Worktree path <bold>{}</> is the repository's Git directory; choose a directory outside the repository and its worktrees",
+                format_path_for_display(requested)
             ));
         }
-        let relation = if existing.starts_with(&requested) {
-            "contains"
-        } else if let Ok(relative) = requested.strip_prefix(&existing) {
-            if explicit_path || existing == git_dir {
-                "is inside"
-            } else {
-                let relative = relative
-                    .to_str()
-                    .context("Cannot inspect a non-UTF-8 worktree destination")?;
-                let output = fresh.worktree_at(&existing).run_command_bytes(&[
-                    "--literal-pathspecs",
-                    "ls-files",
-                    "-z",
-                    "--",
-                    relative,
-                ])?;
-                if output.is_empty() {
-                    continue;
-                }
+        for existing in registered
+            .iter()
+            .map(|wt| wt.path.as_path())
+            .chain([git_dir.as_path()])
+        {
+            let existing = canonicalize_with_parents(existing);
+            // Linked and separate-git-dir checkouts use a Git linkage file
+            // rather than storing Git data at this path.
+            if requested == &existing.join(".git") {
                 bail!(cformat!(
-                    "Worktree path <bold>{}</> contains tracked files from <bold>{}</>; choose a different directory",
-                    format_path_for_display(&requested),
-                    format_path_for_display(&existing),
+                    "Worktree path <bold>{}</> is the worktree's Git entry; choose a different directory",
+                    format_path_for_display(requested)
                 ));
             }
-        } else {
-            continue;
-        };
-        bail!(cformat!(
-            "Worktree path <bold>{}</> {relation} <bold>{}</>; choose a directory outside the repository and its worktrees",
-            format_path_for_display(&requested),
-            format_path_for_display(&existing),
-        ));
+            let relation = if existing.starts_with(requested) {
+                "contains"
+            } else if let Ok(relative) = requested.strip_prefix(&existing) {
+                if explicit_path || existing == git_dir {
+                    "is inside"
+                } else {
+                    let relative = relative
+                        .to_str()
+                        .context("Cannot inspect a non-UTF-8 worktree destination")?;
+                    // Git's literal lookup needs explicit case folding when
+                    // its index treats differently cased paths as the same.
+                    let (literal_mode, pathspec) = if fresh.config_bool("core.ignorecase")? {
+                        (
+                            "--no-literal-pathspecs",
+                            format!(":(literal,icase){relative}"),
+                        )
+                    } else {
+                        ("--literal-pathspecs", relative.to_owned())
+                    };
+                    let output = fresh.worktree_at(&existing).run_command_bytes(&[
+                        literal_mode,
+                        "ls-files",
+                        "-z",
+                        "--",
+                        &pathspec,
+                    ])?;
+                    if output.is_empty() {
+                        continue;
+                    }
+                    bail!(cformat!(
+                        "Worktree path <bold>{}</> contains tracked files from <bold>{}</>; choose a different directory",
+                        format_path_for_display(requested),
+                        format_path_for_display(&existing),
+                    ));
+                }
+            } else {
+                continue;
+            };
+            bail!(cformat!(
+                "Worktree path <bold>{}</> {relation} <bold>{}</>; choose a directory outside the repository and its worktrees",
+                format_path_for_display(requested),
+                format_path_for_display(&existing),
+            ));
+        }
     }
     Ok(())
 }
@@ -303,6 +326,53 @@ mod tests {
             err.to_string().contains("Failed to move"),
             "expected wrapped error, got: {err}"
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_backup_preserves_unresolvable_symlink() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let link = test.root_path().join("loop");
+        std::os::unix::fs::symlink("loop", &link).unwrap();
+
+        let err = back_up_clobbered_path_now(&repo, &link).unwrap_err();
+        assert!(err.to_string().contains("Failed to resolve worktree path"));
+        assert_eq!(std::fs::read_link(&link).unwrap(), Path::new("loop"));
+    }
+
+    #[rstest::rstest]
+    #[case::ordinary_directory(false)]
+    #[case::git_directory(true)]
+    #[cfg(unix)]
+    fn test_backup_checks_symlink_referent(#[case] git_directory: bool) {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let target = if git_directory {
+            repo.git_common_dir().to_path_buf()
+        } else {
+            let target = test.home_path().join("outside");
+            std::fs::create_dir(&target).unwrap();
+            target
+        };
+        let link = test.home_path().join("alias");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let result = back_up_clobbered_path_now(&repo, &link);
+        if git_directory {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("is the repository's Git directory")
+            );
+            assert_eq!(std::fs::read_link(&link).unwrap(), target);
+        } else {
+            let backup = result.unwrap();
+            assert!(!link.exists());
+            assert_eq!(std::fs::read_link(backup).unwrap(), target);
+        }
+        assert!(target.is_dir());
     }
 
     #[test]
