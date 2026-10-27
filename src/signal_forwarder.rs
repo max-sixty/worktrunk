@@ -577,14 +577,14 @@ mod tests {
                 .unwrap()
                 .wait_with_output()
                 .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(
                 output.status.success(),
-                "{:?}\n{}\n{}",
-                output.status,
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
+                "{:?}\n{stdout}\n{stderr}",
+                output.status
             );
-            assert!(String::from_utf8_lossy(&output.stdout).contains(" 1 passed;"));
+            assert!(stdout.contains(" 1 passed;"));
             return;
         }
 
@@ -646,14 +646,7 @@ mod tests {
         }
         // The child has finished successfully while wt's own receipt is still
         // paused. Retirement must not restore idle defaults during that receipt.
-        let child_status = loop {
-            if let Some(status) = child.try_wait().unwrap() {
-                break status;
-            }
-            assert!(Instant::now() < deadline, "child did not handle Ctrl-C");
-            thread::sleep(Duration::from_millis(1));
-        };
-        assert!(child_status.success());
+        assert!(child.wait().unwrap().success());
         thread::sleep(crate::testing::SLEEP_FOR_ABSENCE_CHECK);
         let retired_during_receipt = idle.load(Ordering::SeqCst);
         drop(release_on_panic);

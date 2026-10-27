@@ -154,6 +154,17 @@ mod tests {
         .unwrap_err();
         let owner = *panic.downcast::<std::thread::ThreadId>().unwrap();
         assert_ne!(owner, std::thread::current().id());
+        // Generic requests propagate panic payloads too, and nested requests
+        // execute on the owner instead of waiting on that same thread.
+        let panic = catch_unwind(|| {
+            run(|| std::panic::panic_any(std::thread::current().id())).unwrap();
+        })
+        .unwrap_err();
+        assert_eq!(*panic.downcast::<std::thread::ThreadId>().unwrap(), owner);
+        assert_eq!(
+            run(|| run(|| std::thread::current().id()).unwrap()).unwrap(),
+            owner
+        );
         assert_eq!(
             with_command(&mut command, |_| std::thread::current().id()).unwrap(),
             owner
