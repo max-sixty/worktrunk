@@ -38,7 +38,11 @@
 //! applies `DirectivePassthrough`: the CD directive file is passed through so
 //! inner `wt` invocations can redirect the parent shell's cwd.
 
+use crate::commands::command_executor::ForegroundStdin;
+
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsString;
+use std::sync::LazyLock;
 
 use anyhow::{Context, bail};
 use color_print::cformat;
@@ -82,14 +86,22 @@ const BUILTIN_STEP_COMMANDS: &[&str] = &[
     "tether",
 ];
 
-/// Built-in top-level `wt` subcommand names — visible and hidden. Aliases
-/// with these names are fully unreachable: clap matches the built-in before
-/// alias dispatch sees the name, so `wt list` always runs the built-in even
-/// if `[aliases] list = …` is configured. Kept in sync with `Cli` via
-/// `test_top_level_builtins_match_clap`.
-pub(crate) const TOP_LEVEL_BUILTINS: &[&str] = &[
-    "config", "hook", "list", "merge", "remove", "select", "step", "switch",
-];
+/// Whether clap matches a visible or hidden top-level built-in before alias
+/// dispatch can see the name. Derive discovery from the same command schema
+/// as dispatch, so adding a hidden command also makes its shadowing visible.
+pub(crate) fn is_top_level_builtin(name: &str) -> bool {
+    static NAMES: LazyLock<BTreeSet<String>> = LazyLock::new(|| {
+        use clap::CommandFactory;
+
+        crate::cli::Cli::command()
+            .get_subcommands()
+            .map(|command| command.get_name())
+            .filter(|name| *name != "help")
+            .map(str::to_owned)
+            .collect()
+    });
+    NAMES.contains(name)
+}
 
 /// Whether `--help` or `-h` appears in `args` before any `--` literal-forward
 /// terminator. Aliases have no clap-style help page — the template *is* the
@@ -401,7 +413,7 @@ pub(crate) fn load_aliases(
 ) -> AliasMap {
     let project_id = repo.and_then(|r| r.project_identifier().ok());
     let mut result: AliasMap = user_config
-        .aliases(project_id.as_deref())
+        .aliases(project_id.as_ref())
         .into_iter()
         .map(|(n, c)| {
             (
@@ -435,7 +447,7 @@ pub(crate) fn load_aliases(
 fn referenced_vars_for_entry(name: &str, entry: &AliasEntry) -> anyhow::Result<BTreeSet<String>> {
     let mut out = BTreeSet::new();
     for (_, cfg) in entry.iter() {
-        out.extend(referenced_vars_for_config(cfg, name)?);
+        out.extend(referenced_vars_for_config(cfg, |_| name.to_owned())?);
     }
     Ok(out)
 }
@@ -460,7 +472,7 @@ fn referenced_vars_for_entry(name: &str, entry: &AliasEntry) -> anyhow::Result<B
 /// a broken `wt.toml` should fail loudly here just as it does for `wt list`,
 /// rather than silently turning into an "unrecognized subcommand" once we
 /// fall through to PATH lookup.
-pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::Result<Option<()>> {
+pub fn try_alias(name: String, rest: &[OsString], global_yes: bool) -> anyhow::Result<Option<()>> {
     let _span = Span::new(format!("try_alias:{}", name));
     let repo = match Repository::current() {
         Ok(repo) => repo,
@@ -475,6 +487,16 @@ pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::R
     let Some(entry) = aliases.get(&name) else {
         return Ok(None);
     };
+    // Argument encoding cannot change which command owns this name. Validate
+    // only after resolving the alias, leaving non-alias argv untouched.
+    let rest = rest
+        .iter()
+        .map(|arg| {
+            arg.to_str()
+                .map(str::to_owned)
+                .with_context(|| cformat!("Alias <bold>{name}</> requires UTF-8 arguments"))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
     let referenced = {
         let _span = Span::new("referenced_vars");
         referenced_vars_for_entry(&name, entry)?
@@ -489,9 +511,6 @@ pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::R
         let _span = Span::new("parse_alias_args");
         AliasOptions::parse(alias_args, &referenced)?
     };
-    let entry = aliases
-        .get(&opts.name)
-        .expect("entry verified above and `opts.name` matches the dispatched name");
     run_alias(
         opts,
         warnings,
@@ -546,9 +565,6 @@ pub fn step_alias(args: Vec<String>, global_yes: bool) -> anyhow::Result<()> {
         return Ok(());
     }
     let (opts, warnings) = AliasOptions::parse(args, &referenced)?;
-    let entry = aliases
-        .get(&opts.name)
-        .expect("entry verified above and `opts.name` matches the dispatched name");
     run_alias(
         opts,
         warnings,
@@ -735,7 +751,11 @@ fn run_alias(
                 sourced_steps.push(SourcedStep { step, source });
             }
         }
-        sourced_steps_to_foreground(sourced_steps, &PipelineKind::Alias { name: alias_name })
+        sourced_steps_to_foreground(
+            sourced_steps,
+            &PipelineKind::Alias { name: alias_name },
+            ForegroundStdin::Inherit,
+        )
     };
 
     execute_pipeline_foreground(&foreground_steps, repo, &wt_path, FailureStrategy::FailFast)
@@ -815,11 +835,6 @@ fn render_aliases_help_section(
 ) -> String {
     use std::fmt::Write as _;
 
-    let shadowed_names: &[&str] = match context {
-        HelpContext::TopLevel => TOP_LEVEL_BUILTINS,
-        HelpContext::Step => BUILTIN_STEP_COMMANDS,
-    };
-
     // `entries` is sorted by (name, source); collapse user/project duplicates.
     let mut names: Vec<&str> = Vec::new();
     for (name, _, _) in entries {
@@ -837,7 +852,11 @@ fn render_aliases_help_section(
     let list = names
         .iter()
         .map(|&name| {
-            let styled = if shadowed_names.contains(&name) {
+            let shadowed = match context {
+                HelpContext::TopLevel => is_top_level_builtin(name),
+                HelpContext::Step => BUILTIN_STEP_COMMANDS.contains(&name),
+            };
+            let styled = if shadowed {
                 cformat!("<bold><cyan>{name}</></> <yellow>(shadowed by built-in)</>")
             } else {
                 cformat!("<bold><cyan>{name}</></>")
@@ -863,7 +882,7 @@ fn render_aliases_help_section(
 /// separately preserves the individual command text; merging them would
 /// reduce to an uninformative step count when both are unnamed singles.
 ///
-/// Callers (`augment_help`, `wt config alias show` with no name) latch
+/// Callers (`augment_help`, `wt config alias show`) latch
 /// `suppress_warnings()` before reaching here so the standard `UserConfig::load()`
 /// stays quiet: no deprecation warnings, no `.new` file writes, no
 /// approved-commands copy. Project config is parsed directly from TOML rather
@@ -880,7 +899,7 @@ pub(crate) fn load_aliases_for_listing() -> Vec<(String, CommandConfig, HookSour
 
     let user_aliases = UserConfig::load()
         .ok()
-        .map(|uc| uc.aliases(project_id.as_deref()))
+        .map(|uc| uc.aliases(project_id.as_ref()))
         .unwrap_or_default();
 
     let project_aliases = repo
@@ -1585,7 +1604,8 @@ cmd = [
 ]
 "#,
         );
-        let refs = worktrunk::config::referenced_vars_for_config(&cfg, "deploy").unwrap();
+        let refs =
+            worktrunk::config::referenced_vars_for_config(&cfg, |_| "deploy".to_owned()).unwrap();
         let names: Vec<&str> = refs.iter().map(String::as_str).collect();
         assert_eq!(names, vec!["args", "env", "target"]);
     }
@@ -1626,38 +1646,29 @@ cmd = [
         }
     }
 
-    /// Verify TOP_LEVEL_BUILTINS stays in sync with the actual `Cli` enum.
-    ///
-    /// Hidden subcommands like `select` count — clap still matches them
-    /// before falling through to alias dispatch, so they shadow aliases of
-    /// the same name. Only `help` (clap-internal) and custom subcommands
-    /// are excluded.
+    /// Shadowing discovery agrees with actual clap dispatch for visible and
+    /// hidden commands, while step-only and unknown names reach aliases.
     #[test]
-    fn test_top_level_builtins_match_clap() {
-        use crate::cli::Cli;
-        use clap::CommandFactory;
+    fn test_top_level_shadowing_matches_clap_dispatch() {
+        use crate::cli::{Cli, Commands};
+        use clap::Parser;
 
-        let app = Cli::command();
-        let clap_names: Vec<&str> = app
-            .get_subcommands()
-            .map(|s| s.get_name())
-            .filter(|n| *n != "help")
-            .collect();
-
-        for name in &clap_names {
-            assert!(
-                TOP_LEVEL_BUILTINS.contains(name),
-                "Top-level subcommand '{name}' is missing from TOP_LEVEL_BUILTINS. \
-                 Add it so the help splice annotates aliases unreachable at the top level."
+        for (args, builtin) in [
+            (vec!["wt", "list"], true),
+            (vec!["wt", "select"], true),
+            (vec!["wt", "commit"], false),
+            (vec!["wt", "deploy"], false),
+        ] {
+            assert_eq!(is_top_level_builtin(args[1]), builtin, "{}", args[1]);
+            let parsed = Cli::try_parse_from(&args).unwrap();
+            assert_eq!(
+                !matches!(parsed.command, Some(Commands::Custom(_))),
+                builtin,
+                "{}",
+                args[1]
             );
         }
-        for name in TOP_LEVEL_BUILTINS {
-            assert!(
-                clap_names.contains(name),
-                "TOP_LEVEL_BUILTINS contains '{name}' but no such top-level subcommand exists. \
-                 Remove it from the list."
-            );
-        }
+        assert!(!is_top_level_builtin("help"));
     }
 
     #[test]

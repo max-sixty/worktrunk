@@ -622,7 +622,7 @@ See [`wt config shell`](#wt-config-shell) for setup, activation, and current-she
 
 ### First-run prompts
 
-On first run without shell integration, Worktrunk offers to install it. On first commit without LLM configuration, it offers to configure a detected tool (`claude`, `codex`). Declining sets `skip-shell-integration-prompt` or `skip-commit-generation-prompt` automatically.
+On first run without shell integration, Worktrunk offers to install it. On first commit without LLM configuration, it offers to configure a detected tool (`claude`, `codex`, `opencode`). Declining sets `skip-shell-integration-prompt` or `skip-commit-generation-prompt` automatically.
 
 # Other
 
@@ -918,9 +918,7 @@ $ wt config shell uninstall --yes
 
 ### Version tolerance
 
-Uninstall removes every worktrunk-managed integration it finds, regardless of:
-- Binary name it was installed under (`wt`, `git-wt`, …)
-- Minor syntax variations between versions
+Uninstall recognizes the standalone setup lines written by Worktrunk or shown in `wt config shell init --help`, including older generated forms and custom binary names. Customized initialization lines must be removed manually.
 
 ### Command reference
 
@@ -960,7 +958,7 @@ $ wt config show --full
 ```
 
 This tests:
-- **CI tool status** — Whether `gh` (GitHub) or `glab` (GitLab) is installed and authenticated
+- **CI tool status** — Whether the CLI for the repository's forge (`gh`, `glab`, `tea`, or `az`) is installed and authenticated
 - **Commit generation** — Whether the LLM command can generate commit messages
 - **Version check** — Whether a newer version is available on GitHub
 
@@ -1078,7 +1076,7 @@ $ wt config approvals list --format=json | jq -r .state
 
 Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval is required when the command template changes or the project moves.
 
-`--yes` bypasses the prompt, and what it leaves behind depends on the command it is passed to. On a command that runs project commands it grants consent for that run alone and records nothing, so the next run asks again. On `wt config approvals add` the record is the whole point, so the approvals are written — which is how an unattended environment pre-approves a project it has just cloned.
+`--yes` approves project commands for the current run without saving approval. `wt config approvals add --yes` saves approvals for future runs.
 
 ### Reading approval state
 
@@ -1236,7 +1234,7 @@ View or drop worktrunk's regenerable caches in one place. Everything here is reb
 
 ### What's cached
 
-- **CI status** — GitHub/GitLab CI per branch (30–60s TTL), shown in [`wt list`](/list/#ci-status)
+- **CI status** — forge CI per branch (30–60s TTL), shown in [`wt list`](/list/#ci-status)
 - **Summaries** — LLM-generated branch summaries (`wt list --full`, `wt switch` preview)
 - **Git commands** — cached merge-tree, ancestry, diff-stat, and `wt switch` preview results
 - **Hints** — one-time hints already shown in this repo

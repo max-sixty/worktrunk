@@ -25,7 +25,7 @@
 //! hold no [`ProjectConfig`] and call no `load_project_config()` for the
 //! covered hook types — re-derivation is a compile error, not a review check.
 //! The `Repository` an executor still holds is used only for *rendering*
-//! ([`render_planned`] takes the frozen [`CommandConfig`] list, never config),
+//! ([`prepare_selected`] takes the frozen [`CommandConfig`] list, never config),
 //! so it cannot re-select.
 //!
 //! The frozen unit is the *selected, source-tagged [`CommandConfig`] list* per
@@ -46,15 +46,14 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use worktrunk::HookType;
-use worktrunk::config::{Approvals, Command, CommandConfig, ProjectConfig, UserConfig};
+use worktrunk::config::{Approvals, Command, CommandConfig, ProjectConfig, ProjectId, UserConfig};
 use worktrunk::git::add_hook_skip_hint;
 
 use super::command_approval::approve_command_batch;
 use super::command_executor::{
-    CommandContext, FailureStrategy, PipelineKind, execute_pipeline_foreground, prepare_steps,
+    CommandContext, FailureStrategy, PipelineKind, execute_pipeline_foreground,
 };
-use super::hook_announcement::SourcedStep;
-use super::hooks::{HookAnnouncer, into_source_groups, sourced_steps_to_foreground};
+use super::hooks::{HookAnnouncer, prepare_selected, sourced_steps_to_foreground};
 use super::project_config::{ApprovableCommand, Phase};
 use worktrunk::config::HookSource;
 
@@ -91,7 +90,7 @@ pub struct HookPlanBuilder<'a> {
     entries: Vec<PlanEntry>,
     project_config: Option<&'a ProjectConfig>,
     user: &'a UserConfig,
-    project_id: Option<&'a str>,
+    project_id: Option<&'a ProjectId>,
 }
 
 impl<'a> HookPlanBuilder<'a> {
@@ -103,7 +102,7 @@ impl<'a> HookPlanBuilder<'a> {
     pub fn new(
         project_config: Option<&'a ProjectConfig>,
         user: &'a UserConfig,
-        project_id: Option<&'a str>,
+        project_id: Option<&'a ProjectId>,
     ) -> Self {
         Self {
             entries: Vec::new(),
@@ -203,7 +202,7 @@ impl HookPlan {
     /// path that has something to approve requires it.
     pub fn approve(
         self,
-        project_id: Option<&str>,
+        project_id: Option<&ProjectId>,
         yes: bool,
     ) -> anyhow::Result<Option<ApprovedHookPlan>> {
         let approvable = self.approvable();
@@ -214,14 +213,7 @@ impl HookPlan {
         }
         let project_id =
             project_id.context("project identifier is required to approve project commands")?;
-        // `approve_command_batch` with `yes = true` is an unconditional
-        // `Ok(true)`, so loading `Approvals` here would be dead work.
-        let approved = if yes {
-            true
-        } else {
-            let approvals = Approvals::load().context("Failed to load approvals")?;
-            approve_command_batch(&approvable, project_id, &approvals, false, false)?
-        };
+        let approved = approve_command_batch(&approvable, project_id, yes)?;
         if !approved {
             return Ok(None);
         }
@@ -243,7 +235,7 @@ impl HookPlan {
     pub fn approve_readonly(
         self,
         approvals: &Approvals,
-        project_id: Option<&str>,
+        project_id: Option<&ProjectId>,
     ) -> ApprovedHookPlan {
         let mut entries = self.entries;
         for entry in &mut entries {
@@ -267,7 +259,7 @@ impl HookPlan {
     pub fn unapproved_project_commands(
         &self,
         approvals: &Approvals,
-        project_id: Option<&str>,
+        project_id: Option<&ProjectId>,
     ) -> Vec<String> {
         let Some(pid) = project_id else {
             return Vec::new();
@@ -347,28 +339,6 @@ impl ApprovedHookPlan {
     }
 }
 
-/// Render the frozen selection into source-tagged steps. Takes the frozen
-/// `CommandConfig` list, never config — re-selection is impossible. `ctx`'s
-/// `Repository` is used only for template expansion.
-fn render_planned(
-    entries: &[(HookSource, CommandConfig)],
-    ctx: &CommandContext<'_>,
-    extra_vars: &[(&str, &str)],
-    hook_type: HookType,
-) -> anyhow::Result<Vec<SourcedStep>> {
-    let mut out = Vec::new();
-    for (source, cfg) in entries {
-        let steps = prepare_steps(cfg, ctx, extra_vars, hook_type, *source)?.validated()?;
-        for step in steps {
-            out.push(SourcedStep {
-                step,
-                source: *source,
-            });
-        }
-    }
-    Ok(out)
-}
-
 /// Foreground execution of a covered hook from the approved plan.
 ///
 /// Replaces `execute_hook` for `pre-merge` / `pre-remove` / `pre-start`. The
@@ -389,7 +359,7 @@ pub fn execute_planned_hook(
     failure_strategy: FailureStrategy,
     display_path: Option<&Path>,
 ) -> anyhow::Result<()> {
-    let sourced = render_planned(plan.lookup(hook_type, anchor), ctx, extra_vars, hook_type)?;
+    let sourced = prepare_selected(plan.lookup(hook_type, anchor), ctx, extra_vars, hook_type)?;
     if sourced.is_empty() {
         return Ok(());
     }
@@ -397,7 +367,7 @@ pub fn execute_planned_hook(
         hook_type,
         display_path: display_path.map(Path::to_path_buf),
     };
-    let foreground = sourced_steps_to_foreground(sourced, &kind);
+    let foreground = sourced_steps_to_foreground(sourced, &kind, ctx.stdin);
     execute_pipeline_foreground(&foreground, ctx.repo, ctx.worktree_path, failure_strategy)
         .map_err(add_hook_skip_hint)
 }
@@ -407,7 +377,7 @@ pub fn execute_planned_hook(
 ///
 /// The plan-backed counterpart of `HookAnnouncer::register`: steps are
 /// rendered from the frozen selection and added via the announcer's existing
-/// config-free `add_groups`, with no `load_project_config()` at execution.
+/// config-free `add_steps`, with no `load_project_config()` at execution.
 ///
 /// `anchor` is the worktree the hook runs in — the lookup key into the frozen
 /// plan (see [`execute_planned_hook`]).
@@ -420,9 +390,9 @@ pub fn register_planned(
     extra_vars: &[(&str, &str)],
     display_path: Option<&Path>,
 ) -> anyhow::Result<()> {
-    let sourced = render_planned(plan.lookup(hook_type, anchor), ctx, extra_vars, hook_type)
+    let sourced = prepare_selected(plan.lookup(hook_type, anchor), ctx, extra_vars, hook_type)
         .context("failed to render planned hooks")?;
-    announcer.add_groups(ctx, hook_type, display_path, into_source_groups(sourced));
+    announcer.add_steps(ctx, hook_type, display_path, sourced);
     Ok(())
 }
 
@@ -449,7 +419,7 @@ mod tests {
         // `--yes` ⇒ approved without writing approvals.
         let plan = builder
             .finish()
-            .approve(Some("proj"), true)
+            .approve(Some(&ProjectId::from("proj")), true)
             .unwrap()
             .expect("yes-approval never declines");
 
@@ -487,7 +457,7 @@ mod tests {
         let plan = builder
             .finish()
             // Empty approvals ⇒ the project pipeline is unapproved.
-            .approve_readonly(&Approvals::default(), Some("proj"));
+            .approve_readonly(&Approvals::default(), Some(&ProjectId::from("proj")));
 
         let sel = plan.lookup(HookType::PreRemove, Path::new("/wt"));
         assert_eq!(
@@ -511,7 +481,9 @@ mod tests {
             .unwrap();
         let mut builder = HookPlanBuilder::new(Some(&proj), &user, None);
         builder.add(Path::new("/wt"), &[HookType::PreRemove]);
-        let plan = builder.finish().approve_readonly(&approvals, Some("proj"));
+        let plan = builder
+            .finish()
+            .approve_readonly(&approvals, Some(&ProjectId::from("proj")));
         let sel = plan.lookup(HookType::PreRemove, Path::new("/wt"));
         assert_eq!(
             sel.iter().map(|(s, _)| *s).collect::<Vec<_>>(),
@@ -537,7 +509,7 @@ mod tests {
         builder.add(Path::new("/dest"), &[HookType::PostMerge]);
         let plan = builder
             .finish()
-            .approve(Some("proj"), true)
+            .approve(Some(&ProjectId::from("proj")), true)
             .unwrap()
             .unwrap();
         let sources: Vec<_> = plan

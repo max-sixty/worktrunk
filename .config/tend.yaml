@@ -1,4 +1,8 @@
 bot_name: worktrunk-bot
+harness: codex
+model: gpt-6-sol
+codex:
+  auth_refresh: false
 setup:
 - uses: ./.github/actions/tend-setup
 # Verify the toolchain installed above before the agent starts. Four tools

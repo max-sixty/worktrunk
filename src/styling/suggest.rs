@@ -99,13 +99,11 @@ fn format_command(
     // so they're always parsed as flags, not positional arguments.
     parts.extend(flags.iter().map(|s| s.to_string()));
 
-    // Check if any arg starts with dash (needs -- separator)
-    let needs_separator = args.iter().any(|arg| arg.starts_with('-'));
     let mut separator_inserted = false;
 
     for arg in args {
         // Insert -- before the first dash-prefixed arg
-        if needs_separator && arg.starts_with('-') && !separator_inserted {
+        if arg.starts_with('-') && !separator_inserted {
             parts.push("--".to_string());
             separator_inserted = true;
         }

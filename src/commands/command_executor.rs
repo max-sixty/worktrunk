@@ -13,8 +13,8 @@ use color_print::cformat;
 use serde::{Deserialize, Serialize};
 use worktrunk::HookType;
 use worktrunk::config::{
-    Command, CommandConfig, HookStep, TemplateContext, UserConfig, VarScope, VarsMode,
-    format_hook_variables, validate_template_syntax,
+    Command, CommandConfig, HookStep, TemplateContext, TemplateExpandError, UserConfig, VarScope,
+    VarsMode, format_hook_variables, validate_template_syntax,
 };
 use worktrunk::git::{ErrorExt, Repository, WorktrunkError};
 use worktrunk::path::{format_path_for_display, to_posix_path};
@@ -41,9 +41,7 @@ pub struct PreparedCommand {
     /// Template variables, frozen at preparation. Serialized to JSON only at
     /// the process boundary (the background pipeline spec).
     pub context: TemplateContext,
-    /// Name used in template expansion errors: `"user:foo"` for named hook
-    /// commands, `"user pre-merge hook"` for unnamed ones, the alias name for
-    /// aliases.
+    /// Hook identity from [`HookSource::hook_label`], or the alias name.
     pub template_name: String,
     /// Label for the per-command announcement summary and render span.
     /// For hooks: `"user:foo"` for named, `"user"` for unnamed. For aliases: alias name.
@@ -126,9 +124,25 @@ impl PipelineKind {
     }
 }
 
+/// Whether a foreground pipeline owns the caller's input.
+///
+/// An exclusive pipeline inherits stdin for interactive input. A pipeline
+/// running alongside another input consumer must read EOF instead. Foreground
+/// process-group membership is independent of this input allocation.
+#[derive(Clone, Copy, Debug)]
+pub enum ForegroundStdin {
+    Inherit,
+    /// [`Self::Inherit`] for the command's final interactive child, which also
+    /// owns a terminal Ctrl-C as input
+    /// ([`worktrunk::shell_exec::TerminalInterrupt::ChildInput`]).
+    HandOff,
+    Closed,
+}
+
 /// A pipeline step ready for foreground execution, with rendering / error policy.
 pub struct ForegroundStep {
     pub step: PreparedStep,
+    pub stdin: ForegroundStdin,
     /// Which pipeline this step belongs to. Drives how each command is
     /// announced before execution: hooks render a per-command "Running …"
     /// line plus the bash gutter; aliases stay silent (the caller emits one
@@ -178,6 +192,7 @@ pub struct CommandContext<'a> {
     pub branch: Option<&'a str>,
     pub worktree_path: &'a Path,
     pub yes: bool,
+    pub stdin: ForegroundStdin,
 }
 
 impl<'a> CommandContext<'a> {
@@ -194,20 +209,27 @@ impl<'a> CommandContext<'a> {
             branch,
             worktree_path,
             yes,
+            stdin: ForegroundStdin::Inherit,
         }
+    }
+
+    /// Set input ownership when the caller runs this pipeline concurrently.
+    pub fn with_stdin(mut self, stdin: ForegroundStdin) -> Self {
+        self.stdin = stdin;
+        self
     }
 
     /// Get the project identifier for per-project config lookup.
     ///
     /// Uses the remote URL if available, otherwise the canonical repository path.
     /// Returns None only if the path is not valid UTF-8.
-    pub fn project_id(&self) -> Option<String> {
+    pub fn project_id(&self) -> Option<worktrunk::config::ProjectId> {
         self.repo.project_identifier().ok()
     }
 
     /// Get the commit generation config, merging project-specific settings.
     pub fn commit_generation(&self) -> worktrunk::config::CommitGenerationConfig {
-        self.config.commit_generation(self.project_id().as_deref())
+        self.config.commit_generation(self.project_id().as_ref())
     }
 }
 
@@ -461,16 +483,28 @@ pub fn render_template_preview(
 ///
 /// `Single` steps run one at a time; `Concurrent` steps run all their
 /// commands in parallel via the prefixed-line executor.
+///
+/// A terminal Ctrl-C wt receives during a step stops the pipeline. An alias is
+/// the whole command, so its last `Single` step with inherited input is the
+/// command's final interactive child instead ([`ForegroundStdin::HandOff`]).
 pub fn execute_pipeline_foreground(
     steps: &[ForegroundStep],
     repo: &Repository,
     wt_path: &Path,
     failure_strategy: FailureStrategy,
 ) -> anyhow::Result<()> {
-    for fg_step in steps {
+    for (index, fg_step) in steps.iter().enumerate() {
         match &fg_step.step {
             PreparedStep::Single(cmd) => {
-                run_one_command(cmd, fg_step, repo, wt_path, failure_strategy)?;
+                let stdin = match fg_step.stdin {
+                    ForegroundStdin::Inherit
+                        if index + 1 == steps.len() && !fg_step.announce.is_hook() =>
+                    {
+                        ForegroundStdin::HandOff
+                    }
+                    stdin => stdin,
+                };
+                run_one_command(cmd, fg_step, stdin, repo, wt_path, failure_strategy)?;
             }
             PreparedStep::Concurrent(cmds) => {
                 run_concurrent_group(cmds, fg_step, repo, wt_path, failure_strategy)?;
@@ -486,9 +520,10 @@ pub fn execute_pipeline_foreground(
 /// expansion reads git config; racing on reads would produce inconsistent
 /// state), announces each command (per the step's `PipelineKind` — hooks
 /// render per-command announcements, aliases only announce the outer group),
-/// then dispatches to `run_concurrent_commands` which streams each child's
-/// output prefixed by its label and waits for all to complete before folding
-/// outcomes.
+/// skips failed expansions under `Warn` (or aborts before spawning under
+/// `FailFast`), then dispatches to `run_concurrent_commands` which streams each
+/// child's output prefixed by its label and waits for all to complete before
+/// folding outcomes.
 fn run_concurrent_group(
     cmds: &[PreparedCommand],
     fg_step: &ForegroundStep,
@@ -498,39 +533,45 @@ fn run_concurrent_group(
 ) -> anyhow::Result<()> {
     let directives = &fg_step.directives;
 
-    let expanded: Vec<String> = cmds
-        .iter()
-        .map(|cmd| {
+    let mut admitted = Vec::new();
+    for cmd in cmds {
+        let expanded = {
             let _span = Span::new(format!("template_render:{}", cmd.label));
             resolve_command_str(cmd, repo)
-        })
-        .collect::<Result<_>>()?;
+        };
+        match expanded {
+            Ok(command_str) => admitted.push((cmd, command_str)),
+            Err(err) => {
+                handle_command_error(err, cmd, &fg_step.error_wrapper, failure_strategy)?;
+            }
+        }
+    }
 
-    for (cmd, command_str) in cmds.iter().zip(&expanded) {
+    for (cmd, command_str) in &admitted {
         announce_command(cmd, &fg_step.announce, fg_step.source, command_str);
     }
 
     // Both alias tables and hook tables produce named commands (TOML keys
     // become `name`), so `cmd.name` is always `Some` here.
-    let labels: Vec<&str> = cmds
+    let labels: Vec<&str> = admitted
         .iter()
-        .map(|cmd| {
+        .map(|(cmd, _)| {
             cmd.name
                 .as_deref()
                 .expect("concurrent group commands are always named")
         })
         .collect();
 
-    let log_labels: Vec<Option<String>> = cmds
+    let log_labels: Vec<Option<String>> = admitted
         .iter()
-        .map(|cmd| fg_step.announce.log_label(cmd))
+        .map(|(cmd, _)| fg_step.announce.log_label(cmd))
         .collect();
 
     let scrub_git_discovery = fg_step.announce.is_hook();
-    let specs: Vec<ConcurrentCommand<'_>> = (0..cmds.len())
+    let specs: Vec<ConcurrentCommand<'_>> = (0..admitted.len())
         .map(|i| ConcurrentCommand {
             label: labels[i],
-            expanded: &expanded[i],
+            expanded: &admitted[i].1,
             working_dir: wt_path,
             log_label: log_labels[i].as_deref(),
             directives,
@@ -541,7 +582,7 @@ fn run_concurrent_group(
     let outcomes = run_concurrent_commands(&specs)?;
 
     let mut first_failure: Option<anyhow::Error> = None;
-    for (outcome, cmd) in outcomes.into_iter().zip(cmds) {
+    for (outcome, (cmd, _)) in outcomes.into_iter().zip(&admitted) {
         let Err(err) = outcome else { continue };
         match handle_command_error(err, cmd, &fg_step.error_wrapper, failure_strategy) {
             Ok(()) => {}
@@ -562,6 +603,7 @@ fn run_concurrent_group(
 fn run_one_command(
     cmd: &PreparedCommand,
     fg_step: &ForegroundStep,
+    stdin: ForegroundStdin,
     repo: &Repository,
     wt_path: &Path,
     failure_strategy: FailureStrategy,
@@ -570,21 +612,23 @@ fn run_one_command(
 
     let command_str = {
         let _span = Span::new(format!("template_render:{}", cmd.label));
-        resolve_command_str(cmd, repo)?
+        resolve_command_str(cmd, repo)
+    };
+    let command_str = match command_str {
+        Ok(command_str) => command_str,
+        Err(err) => {
+            return handle_command_error(err, cmd, &fg_step.error_wrapper, failure_strategy);
+        }
     };
     announce_command(cmd, &fg_step.announce, fg_step.source, &command_str);
 
-    // Foreground steps inherit the parent's stdin so an interactive child keeps
-    // its controlling terminal — a `pre-*` hook can prompt (e.g. `gum confirm`
-    // before `mise trust`), and an alias body's `wt switch` picker keeps the
-    // tty. Nothing is ever piped in: template variables are how a hook reads
-    // its context, whatever form it runs in.
     let log_label = fg_step.announce.log_label(cmd);
     let result = execute_shell_command(
         wt_path,
         &command_str,
         log_label.as_deref(),
         directives.clone(),
+        stdin,
         fg_step.redirect_stdout_to_stderr,
         fg_step.announce.is_hook(),
     );
@@ -640,14 +684,19 @@ fn announce_command(
 
 /// Build the standard `ErrorWrapper` for hook steps.
 ///
-/// Wraps non-signal failures in `WorktrunkError::HookCommandFailed`. Signal
-/// errors short-circuit upstream (see [`handle_command_error`]).
+/// Retains expansion diagnostics; wraps execution failures in
+/// `WorktrunkError::HookCommandFailed`. Signal errors short-circuit upstream
+/// (see [`handle_command_error`]).
 pub fn hook_error_wrapper(
     hook_type: HookType,
     source: HookSource,
     show_template: bool,
 ) -> ErrorWrapper {
     Box::new(move |cmd, error| {
+        // Expansion diagnostics already carry the full hook identity and template.
+        if error.downcast_ref::<TemplateExpandError>().is_some() {
+            return error;
+        }
         WorktrunkError::HookCommandFailed {
             hook_type,
             source,
@@ -661,16 +710,36 @@ pub fn hook_error_wrapper(
 
 /// Build the standard `ErrorWrapper` for alias steps.
 ///
-/// Children that report a child exit code surface as `AlreadyDisplayed` so
-/// `wt` propagates the alias's exit status. Anything else (template errors,
-/// spawn failures) is wrapped with the alias and configured member names.
+/// Children that exit with a code surface as `AlreadyDisplayed` so `wt`
+/// propagates the alias's exit status; the child reported its own failure.
+/// A child killed by any other signal than INT/TERM (those short-circuit in
+/// [`handle_command_error`]) surfaces as `Interrupted`, which renders
+/// `Killed by signal N` as a custom subcommand does: `wt` exits with
+/// `128 + N` rather than dying by the signal, so no shell reports it.
+/// Anything else (template errors, spawn failures) is wrapped with the alias
+/// and configured member names.
 pub fn alias_error_wrapper(alias_name: String) -> ErrorWrapper {
-    Box::new(move |cmd, error| match error.exit_code() {
-        Some(code) => WorktrunkError::AlreadyDisplayed { exit_code: code }.into(),
-        None => error.context(match &cmd.name {
-            Some(name) => format!("Failed to run alias '{alias_name}' command '{name}'"),
-            None => format!("Failed to run alias '{alias_name}'"),
-        }),
+    Box::new(move |cmd, error| {
+        if let Some(WorktrunkError::ChildProcessExited {
+            physical_signal: Some(signal),
+            ..
+        }) = error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<WorktrunkError>())
+        {
+            return WorktrunkError::Interrupted {
+                signal: *signal,
+                hint: None,
+            }
+            .into();
+        }
+        match error.exit_code() {
+            Some(code) => WorktrunkError::AlreadyDisplayed { exit_code: code }.into(),
+            None => error.context(match &cmd.name {
+                Some(name) => format!("Failed to run alias '{alias_name}' command '{name}'"),
+                None => format!("Failed to run alias '{alias_name}'"),
+            }),
+        }
     })
 }
 
@@ -799,10 +868,7 @@ pub fn prepare_steps(
             cmd_context.insert("hook_name", name.clone());
         }
 
-        let template_name = match &cmd.name {
-            Some(_) => source.command_label(cmd.name.as_deref()),
-            None => source.hook_label(hook_type, None),
-        };
+        let template_name = source.hook_label(hook_type, cmd.name.as_deref());
 
         Ok(PreparedCommand {
             name: cmd.name.clone(),

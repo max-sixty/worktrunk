@@ -9,7 +9,7 @@ use worktrunk::styling::{
 use super::command_executor::CommandContext;
 use super::command_executor::FailureStrategy;
 use super::hooks::{HookAnnouncer, execute_hook};
-use super::repository_ext::warn_about_untracked_files;
+use super::repository_ext::auto_stage;
 use super::template_vars::TemplateVars;
 
 // Re-export StageMode from config for use by CLI
@@ -20,7 +20,9 @@ pub use worktrunk::config::StageMode;
 ///
 /// `stage_mode` is the *resolved* mode that was actually applied (CLI flag
 /// merged with config defaults), not the user-supplied flag.
+#[derive(serde::Serialize)]
 pub struct CommitOutcome {
+    #[serde(rename = "commit")]
     pub sha: String,
     pub message: String,
     pub stage_mode: StageMode,
@@ -141,10 +143,10 @@ impl<'a> CommitGenerator<'a> {
         show_progress: bool,
         show_no_squash_note: bool,
         stage_mode: StageMode,
-    ) -> anyhow::Result<CommitOutcome> {
+    ) -> crate::output::CommandResult<CommitOutcome> {
         // Fail early if nothing is staged (avoids confusing LLM prompt with empty diff)
         if !wt.has_staged_changes()? {
-            anyhow::bail!("Nothing to commit");
+            return Err(anyhow::anyhow!("Nothing to commit").into());
         }
 
         if show_progress {
@@ -195,19 +197,21 @@ impl<'a> CommitGenerator<'a> {
             .context("Failed to commit")?;
 
         let commit_sha = wt.run_command(&["rev-parse", "HEAD"])?.trim().to_string();
-        // Display uses `Repository::short_sha`; the JSON payload carries the full SHA.
-        let commit_hash = wt.repo().short_sha(&commit_sha)?;
-
+        let outcome = CommitOutcome {
+            sha: commit_sha,
+            message: commit_message,
+            stage_mode,
+        };
+        // The commit identity is known even if display preparation fails.
+        let commit_hash = match wt.repo().short_sha(&outcome.sha) {
+            Ok(hash) => hash,
+            Err(error) => return Err(crate::output::CommandFailure::with_result(error, outcome)),
+        };
         eprintln!(
             "{}",
             success_message(cformat!("Committed changes @ <dim>{commit_hash}</>"))
         );
-
-        Ok(CommitOutcome {
-            sha: commit_sha,
-            message: commit_message,
-            stage_mode,
-        })
+        Ok(outcome)
     }
 }
 
@@ -219,7 +223,10 @@ impl CommitOptions<'_> {
     /// --squash` batching post-commit + post-remove + post-switch + post-merge)
     /// share one announce line; standalone callers (e.g. `wt commit`)
     /// construct an announcer of their own and flush right after.
-    pub fn commit(self, announcer: &mut HookAnnouncer<'_>) -> anyhow::Result<CommitOutcome> {
+    pub fn commit(
+        self,
+        announcer: &mut HookAnnouncer<'_>,
+    ) -> crate::output::CommandResult<CommitOutcome> {
         // Use the worktree path from context — this is the target worktree when
         // --branch is specified, or the current worktree otherwise.
         let wt = self.ctx.repo.worktree_at(self.ctx.worktree_path);
@@ -230,7 +237,7 @@ impl CommitOptions<'_> {
         wt.ensure_no_unmerged_paths("commit")?;
 
         let project_config = self.ctx.repo.load_project_config()?;
-        let user_hooks = self.ctx.config.hooks(self.ctx.project_id().as_deref());
+        let user_hooks = self.ctx.config.hooks(self.ctx.project_id().as_ref());
         let any_hooks_exist = user_hooks.get(HookType::PreCommit).is_some()
             || project_config
                 .as_ref()
@@ -247,24 +254,20 @@ impl CommitOptions<'_> {
             .target_branch
             .map_or_else(TemplateVars::new, |t| TemplateVars::new().with_target(t));
 
-        if self.hooks.run() {
-            // Run pre-commit hooks (user first, then project).
-            execute_hook(
+        // Stage on both sides of the pre-commit hooks (user first, then
+        // project); `auto_stage` says why. Each stage re-checks for unmerged
+        // paths, since a hook is free to leave them behind.
+        auto_stage(&wt, self.stage_mode)?;
+        if self.hooks.run()
+            && execute_hook(
                 self.ctx,
                 HookType::PreCommit,
                 &template_vars.as_extra_vars(),
                 FailureStrategy::FailFast,
-            )?;
+            )?
+        {
+            auto_stage(&wt, self.stage_mode)?;
         }
-
-        if self.stage_mode == StageMode::All {
-            warn_about_untracked_files(&wt)?;
-        }
-
-        // Stage changes based on mode. Re-gated inside `stage`: the refusal
-        // above ran before the pre-commit hooks, and a hook is free to leave
-        // unmerged paths behind.
-        wt.stage(self.stage_mode)?;
 
         let effective_config = self.ctx.commit_generation();
         // Skip the approval gate when the LLM isn't configured — the fallback
@@ -288,7 +291,11 @@ impl CommitOptions<'_> {
         // Register post-commit hooks onto the caller's announcer (respects --no-hooks).
         if self.hooks.run() {
             let extra_vars = template_vars.as_extra_vars();
-            announcer.register(self.ctx, HookType::PostCommit, &extra_vars, None)?;
+            if let Err(error) =
+                announcer.register(self.ctx, HookType::PostCommit, &extra_vars, None)
+            {
+                return Err(crate::output::CommandFailure::with_result(error, outcome));
+            }
         }
 
         Ok(outcome)

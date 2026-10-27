@@ -1,8 +1,8 @@
 use crate::common::{
-    SLEEP_FOR_ABSENCE_CHECK, TestRepo, configure_directive_file, directive_file, make_snapshot_cmd,
-    make_snapshot_cmd_with_global_flags, repo, repo_with_remote, set_temp_home_env,
-    setup_home_snapshot_settings, setup_snapshot_settings, temp_home, wait_for_file_content,
-    wt_command,
+    SLEEP_FOR_ABSENCE_CHECK, TestRepo, add_force_duplicate, configure_directive_file,
+    directive_file, make_snapshot_cmd, make_snapshot_cmd_with_global_flags, repo, repo_with_remote,
+    set_temp_home_env, setup_home_snapshot_settings, setup_snapshot_settings, temp_home,
+    wait_for_file_content, wt_command,
 };
 use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
@@ -10,6 +10,77 @@ use rstest::rstest;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
+
+/// A failed existence check must stop creation, not pretend a ref is absent.
+#[cfg(unix)]
+#[rstest]
+fn test_switch_create_propagates_ref_query_failure(repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let scratch = crate::common::test_tempdir();
+    let script = scratch.path().join("git");
+    let reached = scratch.path().join("reached");
+    let real_git = which::which("git").unwrap();
+    let mut path = vec![scratch.path().to_path_buf()];
+    path.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    let path = std::env::join_paths(path).unwrap();
+
+    for (reference, explicit_base) in [
+        ("main", true),
+        ("main", false),
+        ("refs/heads/new-branch", true),
+    ] {
+        fs::write(&reached, "").unwrap();
+        fs::write(
+            &script,
+            format!(
+                r#"#!/bin/sh
+if [ "$1" = rev-parse ]; then
+  for arg in "$@"; do
+    if [ "$arg" = '{reference}' ] || [ "$arg" = '{reference}^{{commit}}' ]; then
+      echo reached > {reached}
+      echo 'simulated query failure' >&2
+      exit 128
+    fi
+  done
+fi
+exec {real_git} "$@"
+"#,
+                reached = shell_escape::unix::escape(reached.to_string_lossy()),
+                real_git = shell_escape::unix::escape(real_git.to_string_lossy()),
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut cmd = repo.wt_command();
+        cmd.env("PATH", &path)
+            .args(["switch", "--create", "new-branch", "--yes"]);
+        if explicit_base {
+            cmd.args(["--base", "main"]);
+        }
+        let output = cmd.output().unwrap();
+        assert_eq!(
+            fs::read_to_string(&reached).unwrap(),
+            "reached\n",
+            "{reference}: {output:?}"
+        );
+        assert!(!output.status.success(), "{reference}: {output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("simulated query failure"),
+            "{reference}: {output:?}"
+        );
+        let probe = repo
+            .git_command()
+            .args(["show-ref", "--verify", "--quiet", "refs/heads/new-branch"])
+            .run()
+            .unwrap();
+        assert_eq!(
+            probe.status.code(),
+            Some(1),
+            "no branch may be created after a failed query"
+        );
+    }
+}
 
 // Snapshot helpers
 
@@ -234,6 +305,43 @@ fn test_switch_dwim_from_remote(#[from(repo_with_remote)] repo: TestRepo) {
     snapshot_switch("switch_dwim_from_remote", &repo, &["dwim-feature"]);
 }
 
+#[rstest]
+fn test_switch_dwim_from_remote_with_slash(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&["branch", "slash-remote-feature"]);
+    repo.run_git(&["push", "origin", "slash-remote-feature"]);
+    repo.run_git(&["branch", "-D", "slash-remote-feature"]);
+    repo.run_git(&["remote", "rename", "origin", "team/fork"]);
+
+    assert_eq!(repo.git_output(&["remote"]), "team/fork");
+    assert_eq!(
+        repo.git_output(&[
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/remotes/team/fork/slash-remote-feature",
+        ]),
+        "team/fork/slash-remote-feature",
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "slash-remote-feature"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch should find the branch on team/fork; stderr: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert_eq!(
+        repo.git_output(&[
+            "rev-parse",
+            "--abbrev-ref",
+            "slash-remote-feature@{upstream}",
+        ]),
+        "team/fork/slash-remote-feature",
+    );
+}
+
 /// When the branch argument includes the remote prefix (e.g., "origin/feature"),
 /// strip the prefix and switch to the local branch via DWIM.
 /// This happens when the interactive picker returns a remote branch name.
@@ -381,6 +489,40 @@ fn test_switch_create_with_remote_only_base(#[from(repo_with_remote)] repo: Test
     assert!(
         !upstream_check.status.success(),
         "new branch should NOT track origin/releases/4.x.x"
+    );
+}
+
+/// A default branch that is a remote-tracking ref with no local branch of the
+/// same name (git-p4 keeps its mainline only as `p4/master`) is the base for
+/// `--create`, not the current HEAD. Regression test for GitHub issue #4481.
+#[rstest]
+fn test_switch_create_from_remote_tracking_default_branch(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    // `origin/release` exists only as a remote-tracking ref.
+    repo.run_git(&["branch", "release"]);
+    repo.run_git(&["push", "origin", "release"]);
+    repo.run_git(&["branch", "-D", "release"]);
+    repo.run_git(&["config", "worktrunk.default-branch", "origin/release"]);
+
+    // Move HEAD past the default branch so the two bases differ.
+    repo.run_git(&["commit", "--allow-empty", "-m", "unrelated work"]);
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "probe", "--no-cd"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(
+        repo.git_output(&["rev-parse", "probe"]),
+        repo.git_output(&["rev-parse", "origin/release"]),
+        "probe should be created from the default branch, not HEAD"
     );
 }
 
@@ -705,7 +847,7 @@ fn test_switch_existing_as_git_subcommand(mut repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["git-subcommand-test"], None);
-        cmd.env("GIT_EXEC_PATH", "/usr/lib/git-core");
+        crate::common::configure_git_subcommand(&mut cmd, &repo);
         assert_cmd_snapshot!("switch_as_git_subcommand", cmd);
     });
 }
@@ -987,6 +1129,55 @@ fn test_switch_no_cd_execute_runs_in_worktree(mut repo: TestRepo) {
     assert!(
         header.contains('@'),
         "--no-cd leaves the shell behind, so the header must name the program's directory: {header}"
+    );
+}
+
+/// An `--execute` program can remove the worktree it started in, as a session
+/// does when it ends by removing its own worktree. The shell wrapper would then
+/// `cd` into a directory that no longer exists, so wt withdraws the directive
+/// and the shell stays where it was.
+///
+/// Unix only: Windows refuses to delete a directory that a running process
+/// holds as its cwd, so there the program can't remove the worktree it runs in.
+#[cfg(unix)]
+#[rstest]
+fn test_switch_execute_that_removes_worktree_withdraws_cd(mut repo: TestRepo) {
+    let worktree = repo.add_worktree("feature");
+    let root = repo.root_path().to_string_lossy().to_string();
+    let worktree_arg = worktree.to_string_lossy().to_string();
+
+    let (cd_path, _guard) = directive_file();
+    let mut cmd = repo.wt_command();
+    configure_directive_file(&mut cmd, &cd_path);
+    cmd.current_dir(repo.root_path()).args([
+        "switch",
+        "feature",
+        "--execute",
+        "git",
+        "--",
+        "-C",
+        &root,
+        "worktree",
+        "remove",
+        "--force",
+        &worktree_arg,
+    ]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "switch --execute failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !worktree.exists(),
+        "the --execute program should remove the worktree"
+    );
+    assert_eq!(
+        fs::read_to_string(&cd_path).unwrap(),
+        "",
+        "wt left a cd directive to the removed worktree"
     );
 }
 
@@ -3680,14 +3871,37 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         "html_url": "https://github.com/owner/test-repo/pull/42"
     }"#;
 
-    let mock_bin = setup_mock_gh_for_pr(&repo, gh_response);
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    // The CLI supplies the protocol; record its arguments to verify that the
+    // lookup selects the API host rather than a global preference.
+    MockConfig::new("gh")
+        .command("api", MockResponse::output(gh_response))
+        .command("config get git_protocol", MockResponse::output("ssh\n"))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    let call_log = tempfile::tempdir().unwrap();
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
+        cmd.env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path());
         assert_cmd_snapshot!("switch_pr_fork", cmd);
     });
+    let calls = fs::read_to_string(call_log.path().join("gh.calls")).unwrap();
+    assert_eq!(
+        calls
+            .lines()
+            .find(|line| line.starts_with("config get git_protocol")),
+        Some("config get git_protocol --host github.com")
+    );
+    assert_eq!(
+        repo.git_output(&["config", "branch.feature-fix.pushRemote"])
+            .trim(),
+        "git@github.com:contributor/test-repo.git"
+    );
 }
 
 /// A failed fork `pr:N` switch leaves a branch it did not create alone.
@@ -4467,7 +4681,7 @@ fn test_switch_pr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
 /// A 404 is the one GitHub failure worded by us rather than forwarded from
 /// `gh`, because it answers about an owner/repo we chose — so the message has to
 /// name where that choice came from. With `gh repo set-default` configured, that
-/// is the default, and the remedy is to check it rather than the remotes.
+/// is the default, and the hint names the command that changes it.
 #[rstest]
 fn test_switch_pr_not_found_gh_default(#[from(repo_with_remote)] repo: TestRepo) {
     set_github_remote_url(&repo);
@@ -5698,12 +5912,12 @@ fn test_switch_pr_gitea_create_conflict(#[from(repo_with_remote)] repo: TestRepo
         "head": {
             "label": "feature-auth",
             "ref": "feature-auth",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}
         },
         "base": {
             "label": "main",
             "ref": "main",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}
         },
         "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
     }"#;
@@ -5771,12 +5985,12 @@ fn test_switch_pr_gitea_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) 
         "head": {
             "label": "feature-auth",
             "ref": "feature-auth",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}
         },
         "base": {
             "label": "main",
             "ref": "main",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}
         },
         "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
     }"#;
@@ -5845,12 +6059,12 @@ fn test_switch_pr_gitea_fork(#[from(repo_with_remote)] repo: TestRepo) {
         "head": {
             "label": "contributor:feature-fix",
             "ref": "feature-fix",
-            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}, "clone_url": "http://gitea.example.com:3000/gitea/contributor/test-repo.git"}
         },
         "base": {
             "label": "main",
             "ref": "main",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}
         },
         "html_url": "https://gitea.example.com/owner/test-repo/pulls/42"
     }"#;
@@ -5862,6 +6076,51 @@ fn test_switch_pr_gitea_fork(#[from(repo_with_remote)] repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_gitea_fork", cmd);
+    });
+    assert_eq!(
+        repo.git_output(&["config", "branch.feature-fix.pushRemote"])
+            .trim(),
+        "http://gitea.example.com:3000/gitea/contributor/test-repo.git"
+    );
+}
+
+/// A renamed base repository can resolve through the API while no configured
+/// remote matches its current owner. The recovery hint must retain Gitea's
+/// canonical clone URL rather than reconstructing it from the PR's web URL.
+#[rstest]
+fn test_switch_pr_gitea_missing_remote_uses_api_clone_url(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/old-owner/test-repo.git",
+    ]);
+
+    let tea_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "head": {
+            "label": "contributor:feature-fix",
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}, "clone_url": "http://gitea.example.com:3000/gitea/contributor/test-repo.git"}
+        },
+        "base": {
+            "label": "main",
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "http://gitea.example.com:3000/gitea/owner/test-repo.git"}
+        },
+        "html_url": "https://gitea.example.com/owner/test-repo/pulls/42"
+    }"#;
+    let mock_bin = setup_mock_tea(&repo, "200 OK", tea_response);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_missing_remote_uses_api_clone_url", cmd);
     });
 }
 
@@ -5940,12 +6199,12 @@ fn test_switch_pr_gitea_forge_platform(#[from(repo_with_remote)] repo: TestRepo)
         "head": {
             "label": "feature-auth",
             "ref": "feature-auth",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://git.internal.example.com/owner/test-repo.git"}
         },
         "base": {
             "label": "main",
             "ref": "main",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://git.internal.example.com/owner/test-repo.git"}
         },
         "html_url": "https://git.internal.example.com/owner/test-repo/pulls/101"
     }"#;
@@ -6112,12 +6371,12 @@ fn test_switch_pr_self_hosted_tea_authed_dispatches_to_gitea(
         "head": {
             "label": "feature-auth",
             "ref": "feature-auth",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://forge.selfhosted.test/owner/test-repo.git"}
         },
         "base": {
             "label": "main",
             "ref": "main",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://forge.selfhosted.test/owner/test-repo.git"}
         },
         "html_url": "https://forge.selfhosted.test/owner/test-repo/pulls/101"
     }"#;
@@ -6410,12 +6669,12 @@ fn test_switch_pr_gitea_no_source_branch(#[from(repo_with_remote)] repo: TestRep
         "head": {
             "label": "",
             "ref": "",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}
         },
         "base": {
             "label": "main",
             "ref": "main",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}
         },
         "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
     }"#;
@@ -6454,7 +6713,7 @@ fn test_switch_pr_gitea_deleted_fork(#[from(repo_with_remote)] repo: TestRepo) {
         "base": {
             "label": "main",
             "ref": "main",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}
         },
         "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
     }"#;
@@ -6577,9 +6836,9 @@ fn test_switch_pr_gitea_no_status_line(#[from(repo_with_remote)] repo: TestRepo)
                 "user": {"login": "alice"},
                 "state": "open",
                 "head": {"label": "feature", "ref": "feature",
-                         "repo": {"name": "test-repo", "owner": {"login": "owner"}}},
+                         "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}},
                 "base": {"label": "main", "ref": "main",
-                         "repo": {"name": "test-repo", "owner": {"login": "owner"}}},
+                         "repo": {"name": "test-repo", "owner": {"login": "owner"}, "clone_url": "https://gitea.example.com/owner/test-repo.git"}},
                 "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
             }"#,
             ),
@@ -7723,6 +7982,13 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         "https://gitlab.com/owner/test-repo.git",
     ]);
 
+    repo.run_git(&[
+        "config",
+        "--add",
+        &format!("url.{}.insteadOf", bare_url),
+        "git@gitlab.com:owner/test-repo.git",
+    ]);
+
     // Set up mock glab with separate responses for MR API and project APIs.
     // Mock playback supports compound keys like "api projects/456" to match
     // different API paths.
@@ -7770,15 +8036,30 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
             "api projects/123",
             MockResponse::output(target_project_response),
         )
+        .command("config get git_protocol", MockResponse::output("ssh\n"))
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
 
+    let call_log = tempfile::tempdir().unwrap();
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
+        cmd.env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path());
         assert_cmd_snapshot!("switch_mr_fork", cmd);
     });
+    let calls = fs::read_to_string(call_log.path().join("glab.calls")).unwrap();
+    assert_eq!(
+        calls
+            .lines()
+            .find(|line| line.starts_with("config get git_protocol")),
+        Some("config get git_protocol --host gitlab.com")
+    );
+    assert_eq!(
+        repo.git_output(&["config", "branch.feature-fix.pushRemote"])
+            .trim(),
+        "git@gitlab.com:contributor/test-repo.git"
+    );
 }
 
 /// A failing `glab api projects/<id>` surfaces glab's own verdict.
@@ -8460,6 +8741,128 @@ fn test_switch_with_relative_worktree_paths(repo: TestRepo) {
     snapshot_switch("switch_to_relative_paths", &repo, &["relative-test"]);
 }
 
+/// `@` names the worktree the command runs in, by path, so it reaches the
+/// checkouts its branch name can't: the second copy of a branch checked out
+/// twice, and a detached worktree.
+#[rstest]
+#[case::second_checkout(false)]
+#[case::detached(true)]
+fn test_switch_at_names_the_current_worktree(mut repo: TestRepo, #[case] detached: bool) {
+    repo.add_worktree("feature");
+    let current = if detached {
+        repo.detach_head_in_worktree("feature");
+        repo.worktrees["feature"].clone()
+    } else {
+        add_force_duplicate(&repo, "feature", "feature-copy")
+    };
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "@", "--no-cd", "--yes", "--format=json"])
+        .current_dir(&current)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["action"], "already_at");
+    let path = std::path::Path::new(json["path"].as_str().unwrap());
+    assert_eq!(path.file_name(), current.file_name());
+}
+
+/// Outside every worktree, here the main worktree's `.git` directory, `@`
+/// names the branch HEAD points at: the switch lands in the main worktree
+/// rather than treating the `.git` directory as a detached worktree.
+#[rstest]
+fn test_switch_at_outside_a_worktree_names_the_head_branch(repo: TestRepo) {
+    let path = switch_json_path(&repo, &repo.root_path().join(".git"), &["@"]);
+    assert_eq!(path, repo.root_path());
+}
+
+/// Run `wt switch <args>` from `dir` with `--format=json` and return the
+/// path it lands in.
+fn switch_json_path(repo: &TestRepo, dir: &std::path::Path, args: &[&str]) -> std::path::PathBuf {
+    let output = repo
+        .wt_command()
+        .args(["switch", "--no-cd", "--yes", "--format=json"])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    std::path::PathBuf::from(json["path"].as_str().unwrap())
+}
+
+/// `wt switch -` returns to the worktree it left, by path, so it reaches the
+/// checkouts a branch name can't: the second copy of a branch checked out
+/// twice, and a detached worktree.
+#[rstest]
+#[case::second_checkout(false)]
+#[case::detached(true)]
+fn test_switch_previous_returns_to_the_worktree_left(mut repo: TestRepo, #[case] detached: bool) {
+    repo.add_worktree("feature");
+    let left = if detached {
+        repo.detach_head_in_worktree("feature");
+        repo.worktrees["feature"].clone()
+    } else {
+        add_force_duplicate(&repo, "feature", "feature-copy")
+    };
+
+    switch_json_path(&repo, &left, &["main"]);
+    let back = switch_json_path(&repo, repo.root_path(), &["-"]);
+    assert_eq!(back.file_name(), left.file_name());
+}
+
+/// The recorded path stands only while a worktree there still holds the
+/// recorded branch. When an older wt has since recorded a different branch
+/// without a path, `-` names that branch.
+#[rstest]
+fn test_switch_previous_falls_back_to_the_branch(mut repo: TestRepo) {
+    let feature = repo.add_worktree("feature");
+    repo.add_worktree("other");
+
+    switch_json_path(&repo, &feature, &["main"]);
+    // An older wt switching from `other` writes only the branch.
+    repo.run_git(&["config", "worktrunk.history", "other"]);
+
+    let back = switch_json_path(&repo, repo.root_path(), &["-"]);
+    assert_eq!(back.file_name(), repo.worktrees["other"].file_name());
+}
+
+/// When the worktree left has since been removed, `-` names its branch, which
+/// creates a worktree for it again.
+#[rstest]
+fn test_switch_previous_after_its_worktree_is_removed(mut repo: TestRepo) {
+    let feature = repo.add_worktree("feature");
+
+    switch_json_path(&repo, &feature, &["main"]);
+    repo.run_git(&["worktree", "remove", feature.to_str().unwrap()]);
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "-", "--no-cd", "--yes", "--format=json"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["action"], "created");
+    assert_eq!(json["branch"], "feature");
+}
+
 // -- JSON format tests --
 
 #[rstest]
@@ -8536,6 +8939,322 @@ fn test_switch_format_json_already_at(mut repo: TestRepo) {
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(json["action"], "already_at");
     assert_eq!(json["branch"], "already-json");
+}
+
+#[rstest]
+fn test_switch_format_json_preserves_output_on_failure(repo: TestRepo) {
+    let early = repo
+        .wt_command()
+        .args([
+            "switch",
+            "missing-json",
+            "--format=json",
+            "--no-cd",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(!early.status.success());
+    assert!(early.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&early.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(stderr.contains("No branch named missing-json"), "{stderr}");
+
+    // An invalid branch name is rejected before any worktree is created.
+    let rejected = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "bad..name",
+            "--format=json",
+            "--no-cd",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert!(rejected.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&rejected.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(stderr.contains("Invalid branch name bad..name"), "{stderr}");
+
+    // The worktree is created before --execute fails. The result must describe
+    // the completed creation while the exit status reports the execution failure.
+    let late = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "failed-json",
+            "--format=json",
+            "--no-cd",
+            "--yes",
+            "--execute=sh",
+            "--",
+            "-c",
+            "echo child-output; exit 7",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(late.status.code(), Some(7));
+    let json: serde_json::Value = serde_json::from_slice(&late.stdout).unwrap();
+    assert_eq!(json["action"], "created");
+    assert_eq!(json["branch"], "failed-json");
+    assert_eq!(
+        json["path"],
+        repo.root_path()
+            .parent()
+            .unwrap()
+            .join("repo.failed-json")
+            .to_string_lossy()
+            .as_ref()
+    );
+    assert!(String::from_utf8_lossy(&late.stderr).contains("child-output"));
+    assert!(
+        repo.root_path()
+            .parent()
+            .unwrap()
+            .join("repo.failed-json")
+            .is_dir()
+    );
+}
+
+/// Pre-start is synchronous but runs after creation. Its failure must keep
+/// the created path even though the switch pipeline did not reach its output.
+#[rstest]
+fn test_switch_format_json_pre_start_failure(repo: TestRepo) {
+    repo.write_test_config("pre-start = \"exit 7\"\n");
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "failed-start",
+            "--format=json",
+            "--no-cd",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["action"], "created");
+    assert_eq!(json["branch"], "failed-start");
+    let path = Path::new(json["path"].as_str().unwrap());
+    assert!(path.is_dir());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("failed"));
+}
+
+#[rstest]
+fn test_switch_format_json_fetch_failure(#[from(repo_with_remote)] repo: TestRepo) {
+    let github_url = "https://github.com/owner/test-repo.git";
+    repo.run_git(&["remote", "set-url", "origin", github_url]);
+    // Redirect the URL to an absent local repository: exercise real Git
+    // failure without a network request or an external authentication state.
+    let missing = repo.root_path().join("missing-remote");
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", missing.display()),
+        github_url,
+    ]);
+    let response = r#"{"title":"Missing branch","user":{"login":"owner"},"state":"open","draft":false,"head":{"ref":"missing-head","repo":{"name":"test-repo","owner":{"login":"owner"}}},"base":{"ref":"main","repo":{"name":"test-repo","owner":{"login":"owner"}}},"html_url":"https://github.com/owner/test-repo/pull/101"}"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, response);
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "pr:101", "--format=json", "--no-cd", "--yes"]);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let message = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        message.contains("does not appear to be a git repository"),
+        "{message}"
+    );
+    assert!(message.contains(missing.to_str().unwrap()), "{message}");
+}
+
+#[rstest]
+fn test_switch_format_json_retains_result_after_directive_failure(repo: TestRepo) {
+    // The directory cannot be opened as a CD directive file. That write runs
+    // after the worktree has already been created.
+    let mut cmd = repo.wt_command();
+    configure_directive_file(&mut cmd, repo.root_path());
+    let output = cmd
+        .args([
+            "switch",
+            "--create",
+            "failed-directive-json",
+            "--format=json",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let message = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        message.contains("Failed to write the cd directive file"),
+        "{message}"
+    );
+    assert!(message.contains(repo.root_path().to_str().unwrap()));
+    assert_eq!(json["action"], "created");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Failed to write the cd directive file")
+    );
+    assert!(
+        repo.root_path()
+            .parent()
+            .unwrap()
+            .join("repo.failed-directive-json")
+            .is_dir()
+    );
+}
+
+#[rstest]
+fn test_switch_format_json_early_validation_errors(repo: TestRepo) {
+    for args in [
+        vec!["switch", "main", "--format=json", "--base"],
+        vec!["switch", "main", "--oops", "--format=json"],
+        vec!["switch", "main", "--format=json", "--oops"],
+    ] {
+        let invalid_args = repo.wt_command().args(args).output().unwrap();
+        assert_eq!(invalid_args.status.code(), Some(2));
+        assert!(invalid_args.stdout.is_empty());
+        assert!(!invalid_args.stderr.is_empty());
+    }
+
+    // -C discovery fails before planning, with the requested JSON mode intact.
+    let missing_dir = repo.root_path().join("missing-cwd");
+    let invalid_cwd = repo
+        .wt_command()
+        .arg("-C")
+        .arg(&missing_dir)
+        .args(["switch", "main", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(!invalid_cwd.status.success());
+    assert!(invalid_cwd.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&invalid_cwd.stderr).contains("git rev-parse --git-common-dir")
+    );
+
+    // A spawn failure must describe its producer, rather than expose only an
+    // AlreadyDisplayed marker or append an error after a success object.
+    let missing_program = repo
+        .wt_command()
+        .args([
+            "switch",
+            "main",
+            "--format=json",
+            "--no-cd",
+            "--yes",
+            "--execute=wt-json-missing-executable-14",
+        ])
+        .output()
+        .unwrap();
+    assert!(!missing_program.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&missing_program.stdout).unwrap();
+    assert_eq!(json["action"], "already_at");
+    assert!(
+        String::from_utf8_lossy(&missing_program.stderr)
+            .contains("Failed to execute wt-json-missing-executable-14")
+    );
+}
+
+#[cfg(unix)]
+#[rstest]
+fn test_switch_format_json_execute_signal(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "main",
+            "--format=json",
+            "--no-cd",
+            "--yes",
+            "--execute=sh",
+            "--",
+            "-c",
+            "kill -TERM $$",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        std::os::unix::process::ExitStatusExt::signal(&output.status),
+        Some(15)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["action"], "already_at");
+
+    // Hook interruption has its own typed signal error whose terminal display
+    // is deliberately silent. The exit status still reports the actual signal.
+    repo.write_test_config("pre-switch = \"kill -INT $$\"\n");
+    let interrupted = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "interrupted-json",
+            "--format=json",
+            "--no-cd",
+            "--yes",
+            "--execute=sh",
+            "--",
+            "-c",
+            "echo should-not-run",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        std::os::unix::process::ExitStatusExt::signal(&interrupted.status),
+        Some(2)
+    );
+    assert!(
+        !repo
+            .root_path()
+            .parent()
+            .unwrap()
+            .join("repo.interrupted-json")
+            .exists()
+    );
+    assert!(!String::from_utf8_lossy(&interrupted.stderr).contains("should-not-run"));
+    assert!(interrupted.stdout.is_empty());
+}
+
+#[rstest]
+fn test_switch_execute_stdout_follows_format(repo: TestRepo) {
+    for format in ["json", "text"] {
+        let output = repo
+            .wt_command()
+            .args([
+                "switch",
+                "main",
+                "--no-cd",
+                "--yes",
+                "--format",
+                format,
+                "--execute=sh",
+                "--",
+                "-c",
+                "echo child-output",
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        if format == "json" {
+            // Parsing the complete stream rejects a second document or child
+            // output before/after the result.
+            let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(json["action"], "already_at");
+            assert_eq!(json["branch"], "main");
+            assert!(String::from_utf8_lossy(&output.stderr).contains("child-output"));
+        } else {
+            assert_eq!(String::from_utf8(output.stdout).unwrap(), "child-output\n");
+        }
+    }
 }
 
 #[rstest]
@@ -8660,7 +9379,9 @@ fn switch_base_accepts_worktree_path(mut repo: TestRepo) {
 }
 
 #[rstest]
-fn test_switch_create_names_branch_left_by_failed_worktree_add(repo: TestRepo) {
+#[case(false)]
+#[case(true)]
+fn test_switch_create_names_branch_left_by_failed_worktree_add(repo: TestRepo, #[case] json: bool) {
     // `git worktree add -b` writes the branch ref before it populates the
     // worktree, so a failure in between leaves the branch with nothing checked
     // out on it (issue #4108). A regular file where the worktree's leading
@@ -8668,11 +9389,12 @@ fn test_switch_create_names_branch_left_by_failed_worktree_add(repo: TestRepo) {
     repo.write_test_config(r#"worktree-path = "blocked/{{ branch | sanitize }}""#);
     fs::write(repo.root_path().join("blocked"), "not a directory").unwrap();
 
-    let output = repo
-        .wt_command()
-        .args(["switch", "--create", "stranded"])
-        .output()
-        .unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "--create", "stranded"]);
+    if json {
+        cmd.args(["--format=json", "--no-cd"]);
+    }
+    let output = cmd.output().unwrap();
     assert!(
         !output.status.success(),
         "switch --create should fail when git cannot create the worktree"
@@ -8705,6 +9427,13 @@ fn test_switch_create_names_branch_left_by_failed_worktree_add(repo: TestRepo) {
         stderr.contains("wt switch stranded"),
         "expected a recovery suggestion for the leftover branch, got: {stderr}"
     );
+    if json {
+        assert!(output.stdout.is_empty());
+        assert!(
+            stderr.contains("fatal: could not create leading directories"),
+            "{stderr}"
+        );
+    }
 }
 
 // `--path` tests
@@ -8774,13 +9503,35 @@ fn test_switch_path_occupied_suggests_path_in_clobber_hint(repo: TestRepo) {
     let custom = repo.root_path().parent().unwrap().join("occupied");
     std::fs::create_dir_all(&custom).unwrap();
 
-    // The `--clobber` suggestion must keep `--path`, or following it would
-    // back up the template's path instead of this one.
+    // `--path` can name any directory, so the hint suggests another path
+    // rather than deleting this one. The `--clobber` suggestion must keep
+    // `--path`, or following it would back up the template's path instead.
     snapshot_switch(
         "switch_path_occupied",
         &repo,
         &["--create", "feature-y", "--path", "../occupied"],
     );
+}
+
+#[rstest]
+fn test_switch_path_naming_another_worktree(mut repo: TestRepo) {
+    let occupied = repo.add_worktree("feature-z");
+
+    // Another branch's worktree is reported by its branch, never moved aside
+    // by `--clobber`.
+    snapshot_switch(
+        "switch_path_another_worktree",
+        &repo,
+        &[
+            "--create",
+            "feature-n",
+            "--clobber",
+            "--path",
+            "../repo.feature-z",
+        ],
+    );
+
+    assert!(occupied.join(".git").is_file());
 }
 
 #[rstest]
@@ -8836,6 +9587,38 @@ fn test_switch_path_never_moves_git_common_dir(#[case] explicit: bool) {
         insta::assert_snapshot!("switch_path_git_common_dir", stderr);
     });
     assert!(git_dir.join("HEAD").is_file());
+}
+
+/// A linked checkout's Git linkage file must survive template clobbering.
+#[rstest]
+fn test_switch_clobber_preserves_git_linkage_file(mut repo: TestRepo) {
+    let linked = repo.add_worktree("source");
+    let git_entry = linked.join(".git");
+    let original = fs::read(&git_entry).unwrap();
+    repo.write_test_config(&format!(
+        "worktree-path = {}",
+        serde_json::to_string(git_entry.to_str().unwrap()).unwrap()
+    ));
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "feature", "--clobber", "--yes"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("is the worktree's Git entry"),
+        "{output:?}"
+    );
+    assert_eq!(fs::read(&git_entry).unwrap(), original);
+    let head = repo
+        .git_command()
+        .current_dir(&linked)
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .run()
+        .unwrap();
+    assert!(head.status.success(), "{head:?}");
+    assert_eq!(String::from_utf8_lossy(&head.stdout).trim(), "source");
 }
 
 /// The documented in-repository template can clobber a stale ignored directory.

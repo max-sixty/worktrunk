@@ -34,9 +34,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 use color_print::cformat;
-use dunce::canonicalize;
 use worktrunk::git::Repository;
-use worktrunk::path::format_path_for_display;
+use worktrunk::path::{canonicalize_with_parents, format_path_for_display};
 
 /// Protect Git storage and registered worktrees before a clobber backup.
 /// Explicit switch paths also refuse directories inside worktrees. Template
@@ -46,14 +45,19 @@ pub(crate) fn require_safe_clobber_target(
     requested: &Path,
     explicit_path: bool,
 ) -> anyhow::Result<()> {
-    let requested = canonicalize(requested).with_context(|| {
+    if !requested.try_exists().with_context(|| {
         format!(
             "Failed to resolve worktree path {}",
             format_path_for_display(requested)
         )
-    })?;
-    let git_dir = canonicalize(repo.git_common_dir())
-        .context("Failed to resolve repository Git directory")?;
+    })? {
+        bail!(
+            "Failed to resolve worktree path {}: path does not exist",
+            format_path_for_display(requested)
+        );
+    }
+    let requested = canonicalize_with_parents(requested);
+    let git_dir = canonicalize_with_parents(repo.git_common_dir());
     if requested == git_dir {
         bail!(cformat!(
             "Worktree path <bold>{}</> is the repository's Git directory; choose a directory outside the repository and its worktrees",
@@ -64,7 +68,15 @@ pub(crate) fn require_safe_clobber_target(
     let fresh = Repository::at(repo.git_common_dir())?;
     let registered = fresh.list_worktrees()?.iter().map(|wt| wt.path.as_path());
     for existing in registered.chain([git_dir.as_path()]) {
-        let existing = canonicalize(existing).unwrap_or_else(|_| existing.to_path_buf());
+        let existing = canonicalize_with_parents(existing);
+        // Linked and separate-git-dir checkouts use a Git linkage file rather
+        // than storing Git data at this path. It is never tracked content.
+        if requested == existing.join(".git") {
+            bail!(cformat!(
+                "Worktree path <bold>{}</> is the worktree's Git entry; choose a different directory",
+                format_path_for_display(&requested)
+            ));
+        }
         let relation = if existing.starts_with(&requested) {
             "contains"
         } else if let Ok(relative) = requested.strip_prefix(&existing) {
