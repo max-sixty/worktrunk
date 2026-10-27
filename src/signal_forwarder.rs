@@ -392,6 +392,9 @@ impl ForegroundSignals {
         }
         let listener = thread::spawn(move || {
             for signal in signals.forever() {
+                if tracing::enabled!(target: crate::trace::WT_TRACE_TARGET, tracing::Level::DEBUG) {
+                    crate::trace::instant(&format!("Foreground signal received:{signal}"));
+                }
                 if signal == SIGTERM {
                     cancel_foreground(signal);
                     for child in &children {
