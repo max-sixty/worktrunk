@@ -7,9 +7,10 @@
 //! admits a child. If spawn temporarily blocks signals, restoring its mask runs
 //! the pending handler before the admission check.
 //!
-//! Requests cover creation and admission, never child waits. Commands return to
-//! their callers for reuse. The descriptor-creation lock remains inside each raw
-//! spawn: callers must not hold it while waiting for an owner request.
+//! Requests cover creation, admission, and signal-scope retirement, never child
+//! waits. Commands return to their callers for reuse. The descriptor-creation
+//! lock remains inside each raw spawn: callers must not hold it while waiting
+//! for an owner request.
 //! Library users that do not initialize process startup keep direct spawning;
 //! establishing inherited masks after arbitrary threads exist would be unsafe.
 
@@ -22,19 +23,24 @@ use nix::sys::signal::{SigSet, Signal};
 use once_cell::sync::OnceCell;
 
 type Request = Box<dyn FnOnce() + Send>;
-static OWNER: OnceCell<mpsc::Sender<Request>> = OnceCell::new();
+struct Owner {
+    sender: mpsc::Sender<Request>,
+    thread: std::thread::ThreadId,
+}
+
+static OWNER: OnceCell<Owner> = OnceCell::new();
 
 pub(super) fn init() -> io::Result<()> {
     OWNER.get_or_try_init(start).map(|_| ())
 }
 
-fn start() -> io::Result<mpsc::Sender<Request>> {
+fn start() -> io::Result<Owner> {
     let mut blocked = SigSet::thread_get_mask()?;
     blocked.add(Signal::SIGINT);
     blocked.add(Signal::SIGTERM);
 
     let (sender, receiver) = mpsc::channel::<Request>();
-    std::thread::Builder::new()
+    let owner = std::thread::Builder::new()
         .name("wt-process-owner".into())
         .spawn(move || {
             for request in receiver {
@@ -45,29 +51,48 @@ fn start() -> io::Result<mpsc::Sender<Request>> {
     // Spawn failure leaves our mask intact; mask failure drops the sender and
     // lets the unpublished owner exit.
     blocked.thread_set_mask()?;
-    Ok(sender)
+    Ok(Owner {
+        sender,
+        thread: owner.thread().id(),
+    })
+}
+
+pub(super) fn run<T: Send + 'static>(
+    operation: impl FnOnce() -> T + Send + 'static,
+) -> io::Result<T> {
+    let Some(owner) = OWNER.get() else {
+        return Ok(operation());
+    };
+    if std::thread::current().id() == owner.thread {
+        return Ok(operation());
+    }
+    let (sender, receiver) = mpsc::channel();
+    owner
+        .sender
+        .send(Box::new(move || {
+            // Keep the signal owner alive if a request panics.
+            let _ = sender.send(catch_unwind(AssertUnwindSafe(operation)));
+        }))
+        .map_err(|error| io::Error::other(error.to_string()))?;
+    match receiver
+        .recv()
+        .map_err(|error| io::Error::other(error.to_string()))?
+    {
+        Ok(result) => Ok(result),
+        Err(panic) => resume_unwind(panic),
+    }
 }
 
 pub(super) fn with_command<T: Send + 'static>(
     command: &mut Command,
     create: impl FnOnce(&mut Command) -> T + Send + 'static,
 ) -> io::Result<T> {
-    let Some(owner) = OWNER.get() else {
-        return Ok(create(command));
-    };
     let mut owned = std::mem::replace(command, Command::new(""));
-    let (sender, receiver) = mpsc::channel();
-    owner
-        .send(Box::new(move || {
-            // Keep the signal owner alive if a request panics, and put the
-            // reusable command back before propagating that panic to its caller.
-            let result = catch_unwind(AssertUnwindSafe(|| create(&mut owned)));
-            let _ = sender.send((owned, result));
-        }))
-        .map_err(|error| io::Error::other(error.to_string()))?;
-    let (returned, result) = receiver
-        .recv()
-        .map_err(|error| io::Error::other(error.to_string()))?;
+    let (returned, result) = run(move || {
+        // Return the reusable command even if its operation panics.
+        let result = catch_unwind(AssertUnwindSafe(|| create(&mut owned)));
+        (owned, result)
+    })?;
     *command = returned;
     match result {
         Ok(result) => Ok(result),

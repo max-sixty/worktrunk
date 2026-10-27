@@ -14,8 +14,11 @@
 //! SharedChild serializes those deliveries with reaping. No caller group is killed.
 //! A group-wide TERM may also reach a child through this PID forwarding;
 //! repeated TERM deliveries never trigger escalation here.
-//! The process owner receives signals and performs foreground admission on the
-//! same thread, so a handler cannot lag behind a spawn on a different thread.
+//! The process owner receives signals and performs foreground admission and
+//! retirement on the same thread, so a handler cannot lag behind a spawn on a
+//! different thread.
+//! Retirement restores idle defaults only after pending receipt completes;
+//! a child that already handled the key cannot turn that key into an idle signal.
 //! Spawn return commits admission. Startup cancellation retires an uncommitted
 //! child with TERM; its cleanup is best effort, while admitted children finish
 //! native-key cleanup. TERM is cooperative, with no escalation.
@@ -216,12 +219,16 @@ impl Lease {
 
 impl Drop for Lease {
     fn drop(&mut self) {
-        // Cleanup must restore defaults even if another owner panicked.
-        let mut activity = self.0.lock().unwrap_or_else(|error| error.into_inner());
-        activity.count -= 1;
-        if activity.count == 0 {
-            activity.idle.store(true, Ordering::SeqCst);
-        }
+        let state = self.0;
+        let _ = crate::shell_exec::on_process_owner(move || {
+            // Receipt must finish before restoring idle defaults, even when
+            // the direct child handled the key and has already exited.
+            let mut activity = state.lock().unwrap_or_else(|error| error.into_inner());
+            activity.count -= 1;
+            if activity.count == 0 {
+                activity.idle.store(true, Ordering::SeqCst);
+            }
+        });
     }
 }
 
@@ -536,6 +543,130 @@ mod tests {
     use super::*;
     use crate::git::ErrorExt;
     use crate::shell_exec::Cmd;
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn terminal_handoff_keeps_status_after_delayed_signal_receipt() {
+        use nix::sys::signal::{SigSet, Signal, killpg};
+        use nix::unistd::Pid;
+        use std::os::unix::process::CommandExt;
+        use std::time::{Duration, Instant};
+
+        const CHILD_ENV: &str = "WORKTRUNK_TEST_DELAYED_HANDOFF_CHILD";
+        let mut signals = SigSet::empty();
+        signals.add(Signal::SIGINT);
+        signals.add(Signal::SIGTERM);
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "signal_forwarder::tests::terminal_handoff_keeps_status_after_delayed_signal_receipt",
+                    "--nocapture",
+                ])
+                .env(CHILD_ENV, "1")
+                .process_group(0)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            // SAFETY: pthread_sigmask is async-signal-safe and accesses a set
+            // constructed before fork. The libtest harness stays blocked.
+            unsafe {
+                command.pre_exec(move || signals.thread_block().map_err(Into::into));
+            }
+            let output = crate::shell_exec::spawn(&mut command)
+                .unwrap()
+                .wait_with_output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{:?}\n{}\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(String::from_utf8_lossy(&output.stdout).contains(" 1 passed;"));
+            return;
+        }
+
+        signals.thread_unblock().unwrap();
+        crate::shell_exec::init_startup().unwrap();
+        let entered = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(AtomicBool::new(false));
+        struct Release(Arc<AtomicBool>);
+        impl Drop for Release {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let release_on_panic = Release(release.clone());
+        let received = entered.clone();
+        let released = release.clone();
+        // Register before the idle default action so receipt can pause before
+        // its decision, as when the signal-owning thread is descheduled.
+        // SAFETY: the callback performs only lock-free atomic operations.
+        let delayed = unsafe {
+            signal_hook::low_level::register(SIGINT, move || {
+                received.store(true, Ordering::SeqCst);
+                while !released.load(Ordering::SeqCst) {
+                    std::hint::spin_loop();
+                }
+            })
+        }
+        .unwrap();
+        let operation = CommandOperation::start().unwrap();
+        let foreground = ForegroundSignals::install(TerminalInterrupt::ChildInput).unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let marker = temp.path().join("ready");
+        let mut command = std::process::Command::new("sh");
+        command
+            .args([
+                "-c",
+                "trap 'echo child-handled >&2; exit 0' INT; echo ready > \"$1\"; while :; do sleep 0.01; done",
+                "sh",
+            ])
+            .arg(&marker);
+        let child = Arc::new(foreground.spawn(&mut command).unwrap());
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !marker.exists() {
+            assert!(Instant::now() < deadline, "child did not become ready");
+            thread::sleep(Duration::from_millis(1));
+        }
+        let idle = Lease::state().unwrap().lock().unwrap().idle.clone();
+        let waiting_child = child.clone();
+        let (waiting, started) = std::sync::mpsc::channel();
+        let waiter = thread::spawn(move || {
+            waiting.send(()).unwrap();
+            foreground.wait(&waiting_child).unwrap()
+        });
+        started.recv_timeout(Duration::from_secs(20)).unwrap();
+        killpg(Pid::this(), Signal::SIGINT).unwrap();
+        while !entered.load(Ordering::SeqCst) {
+            assert!(Instant::now() < deadline, "signal handler did not run");
+            thread::yield_now();
+        }
+        // The child has finished successfully while wt's own receipt is still
+        // paused. Retirement must not restore idle defaults during that receipt.
+        let child_status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            assert!(Instant::now() < deadline, "child did not handle Ctrl-C");
+            thread::sleep(Duration::from_millis(1));
+        };
+        assert!(child_status.success());
+        thread::sleep(crate::testing::SLEEP_FOR_ABSENCE_CHECK);
+        let retired_during_receipt = idle.load(Ordering::SeqCst);
+        drop(release_on_panic);
+        let outcome = waiter.join().unwrap();
+        signal_hook::low_level::unregister(delayed);
+        assert!(
+            !retired_during_receipt,
+            "idle defaults restored during receipt"
+        );
+        assert!(outcome.status.success());
+        assert_eq!(outcome.cancellation, None);
+        assert_eq!(operation.interrupt_signal(), None);
+    }
 
     /// Delay receipt before the flag callbacks, as when the kernel dequeues
     /// SIGINT onto a thread that is then descheduled. Admission must wait for

@@ -170,6 +170,14 @@ pub(crate) fn with_process_owner<T: Send + 'static>(
     Ok(create(command))
 }
 
+/// Retire a signal scope after the signal owner's pending receipt completes.
+#[cfg(unix)]
+pub(crate) fn on_process_owner<T: Send + 'static>(
+    operation: impl FnOnce() -> T + Send + 'static,
+) -> std::io::Result<T> {
+    process_owner::run(operation)
+}
+
 /// Create wakeup endpoints under the same guard as process creation.
 #[cfg(unix)]
 pub fn socket_pair() -> std::io::Result<(

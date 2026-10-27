@@ -1438,9 +1438,16 @@ fn test_alias_last_step_keeps_status_after_caught_ctrl_c(repo: TestRepo) {
     repo.write_test_config(
         "[aliases]\nsignal-test = \"trap 'exit 0' INT; echo $$ > pid; while :; do sleep 0.1; done\"\n",
     );
-    let mut job = SignalJob::spawn(&repo, &["-vv", "step", "signal-test"], Stdio::null());
+    let stderr_path = repo.root_path().join("stderr");
+    let stderr = std::fs::File::create(&stderr_path).unwrap();
+    let mut job = SignalJob::spawn(&repo, &["-vv", "step", "signal-test"], stderr.into());
     job.interrupt_admitted_child(&repo, &repo.root_path().join("pid"));
-    assert!(job.wait().success());
+    let status = job.wait();
+    assert!(
+        status.success(),
+        "the final child handled Ctrl-C successfully: {status:?}\n{}",
+        std::fs::read_to_string(stderr_path).unwrap()
+    );
 }
 
 /// Non-UTF-8 bytes and CRLF line endings in child output must not stall the
