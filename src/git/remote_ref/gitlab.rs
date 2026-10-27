@@ -77,6 +77,7 @@ pub(super) fn fetch_mr_info(mr_number: u32, repo: &Repository) -> anyhow::Result
             ForgeKind::GitLab.ref_type(),
             format!("glab api failed for MR !{}", mr_number),
             &output,
+            None,
         ));
     }
 
@@ -152,6 +153,7 @@ pub fn fetch_gitlab_project_urls(
     repo_root: &Path,
 ) -> anyhow::Result<GitLabForkUrls> {
     let PlatformData::GitLab {
+        host,
         source_project_id,
         target_project_id,
         ..
@@ -179,7 +181,7 @@ pub fn fetch_gitlab_project_urls(
         })?;
 
     // Compute URLs based on protocol preference
-    let use_ssh = git_protocol() == "ssh";
+    let use_ssh = git_protocol(host) == "ssh";
     let fork_push_url = if use_ssh {
         source_ssh.or(source_http)
     } else {
@@ -229,6 +231,7 @@ fn fetch_project_urls(
             ForgeKind::GitLab.ref_type(),
             format!("glab api failed for {} project {}", role, project_id),
             &output,
+            None,
         ));
     }
 
@@ -253,15 +256,15 @@ pub fn is_authed_for(host: &str) -> bool {
 }
 
 /// Get the git protocol configured in `glab` (GitLab CLI).
-pub fn git_protocol() -> String {
-    cli_config_value("glab", &["git_protocol"])
+fn git_protocol(host: &str) -> String {
+    cli_config_value("glab", &["git_protocol", "--host", host])
         .filter(|p| p == "ssh" || p == "https")
         .unwrap_or_else(|| "https".to_string())
 }
 
 /// Construct the remote URL for a GitLab project, respecting protocol preference.
 pub fn fork_remote_url(host: &str, owner: &str, repo: &str) -> String {
-    if git_protocol() == "ssh" {
+    if git_protocol(host) == "ssh" {
         format!("git@{host}:{owner}/{repo}.git")
     } else {
         format!("https://{host}/{owner}/{repo}.git")

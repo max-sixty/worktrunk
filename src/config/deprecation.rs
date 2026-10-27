@@ -1927,7 +1927,7 @@ pub fn format_deprecation_details(info: &DeprecationInfo, original_content: &str
         let _ = writeln!(
             out,
             "{}",
-            hint_message(cformat!("To apply: <underline>{cmd}</>"))
+            hint_message(cformat!("To apply these updates, run <underline>{cmd}</>"))
         );
         return out;
     }
@@ -1935,7 +1935,9 @@ pub fn format_deprecation_details(info: &DeprecationInfo, original_content: &str
     let _ = writeln!(
         out,
         "{}",
-        hint_message(cformat!("To apply: <underline>wt config update</>"))
+        hint_message(cformat!(
+            "To apply these updates, run <underline>wt config update</>"
+        ))
     );
 
     let migrated = compute_migrated_content(original_content);

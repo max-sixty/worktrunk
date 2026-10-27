@@ -100,7 +100,10 @@ export def --env --wrapped {{ cmd }} [...args] {
     } else {
         let cd_file = (mktemp --tmpdir)
         let stdout_file = (mktemp --tmpdir)
-        try {
+        # The return value comes from outside `try … finally`: under an output
+        # redirect (`o> file`), Nushell fails converting a `try … finally`
+        # that evaluates to nothing ("can't convert nothing to string").
+        let result = (try {
             let wt_args = ($arg_text | take until {|arg| $arg == "--" })
             # Before `-x`, `c`, `v`, and `y` are boolean flags clap may cluster with it.
             let has_execute = ($wt_args | any {|arg| $arg == "--execute" or ($arg | str starts-with "--execute=") or ($arg =~ '^-[cvy]*x') })
@@ -126,15 +129,9 @@ export def --env --wrapped {{ cmd }} [...args] {
             })
 
             let output = if $has_execute { "" } else { open $stdout_file --raw }
-
-            # Return captured stdout or reproduce the external failure without
-            # a source trace. Nu itself also works on Windows, where sh is absent.
-            if $exit_code != 0 {
-                if ($output | is-not-empty) { print -n $output }
-                ^$nu.current-exe --no-config-file --no-std-lib -c $"exit ($exit_code)"
-            } else if ($output | is-not-empty) {
-                $output
-            }
+            # A failure's stdout prints now, so a failing directive can't drop it.
+            if $exit_code != 0 and ($output | is-not-empty) { print -n $output }
+            { exit_code: $exit_code, output: $output }
         } finally {
             try {
                 # cd file holds a raw path — no shell parsing needed
@@ -151,6 +148,14 @@ export def --env --wrapped {{ cmd }} [...args] {
                     try { ^rm -f $cd_file $stdout_file }
                 }
             }
+        })
+
+        # Return captured stdout or reproduce the external failure without
+        # a source trace. Nu itself also works on Windows, where sh is absent.
+        if $result.exit_code != 0 {
+            ^$nu.current-exe --no-config-file --no-std-lib -c $"exit ($result.exit_code)"
+        } else if ($result.output | is-not-empty) {
+            $result.output
         }
     }
 }

@@ -6,10 +6,11 @@ use worktrunk::config::UserConfig;
 use worktrunk::styling::println;
 
 use super::super::command_approval::{approve_or_skip, resolve_template_for_preview};
-use super::super::commit::{CommitOptions, CommitOutcome, HookGate, StageMode};
+use super::super::commit::{CommitOptions, HookGate, StageMode};
 use super::super::context::CommandEnv;
 use super::super::hooks::HookAnnouncer;
 use super::shared::print_dry_run;
+use crate::output::{CommandFailure, finish_output};
 
 /// Handle `wt step commit` command
 ///
@@ -21,13 +22,14 @@ pub fn step_commit(
     stage: Option<StageMode>,
     show_prompt: bool,
     dry_run: bool,
-) -> anyhow::Result<Option<CommitOutcome>> {
+    format: crate::cli::SwitchFormat,
+) -> anyhow::Result<()> {
     // --show-prompt and --dry-run skip hooks and the commit itself; --dry-run still
     // mirrors --stage against a temp index so the previewed prompt matches what a real
     // run would send the LLM. Neither path produces a CommitOutcome.
     if show_prompt || dry_run {
         preview_commit(branch.as_deref(), stage, dry_run, yes)?;
-        return Ok(None);
+        return Ok(());
     }
 
     // Load config once, run LLM setup prompt, then reuse config
@@ -35,7 +37,7 @@ pub fn step_commit(
     // One-time LLM setup prompt (errors logged internally; don't block commit)
     let _ = crate::output::prompt_commit_generation(&mut config);
 
-    let env = resolve_env(config, branch.as_deref())?;
+    let env = CommandEnv::for_selector(config, branch.as_deref().unwrap_or("@"))?;
     let ctx = env.context(yes);
 
     // CLI flag overrides config value
@@ -57,19 +59,13 @@ pub fn step_commit(
     options.show_no_squash_note = false;
 
     let mut announcer = HookAnnouncer::new(ctx.repo, false);
-    let outcome = options.commit(&mut announcer)?;
-    announcer.flush()?;
-    Ok(Some(outcome))
-}
-
-/// Resolve the environment `wt step commit` acts in: the worktree named by
-/// `--branch`, or the invoking one. `for_selector` re-roots `repo` at that
-/// worktree, so the commit, its hooks, and its project config all follow.
-fn resolve_env(config: UserConfig, branch: Option<&str>) -> anyhow::Result<CommandEnv> {
-    match branch {
-        Some(b) => CommandEnv::for_selector(config, b),
-        None => CommandEnv::for_action(config),
-    }
+    let outcome = options
+        .commit(&mut announcer)
+        .and_then(|result| match announcer.flush() {
+            Ok(()) => Ok(result),
+            Err(error) => Err(CommandFailure::with_result(error, result)),
+        });
+    finish_output(outcome, format == crate::cli::SwitchFormat::Json)
 }
 
 /// Handle `wt step commit` in `--show-prompt` or `--dry-run` mode.
@@ -88,9 +84,13 @@ fn preview_commit(
     dry_run: bool,
     yes: bool,
 ) -> anyhow::Result<()> {
-    let env = resolve_env(UserConfig::load().context("Failed to load config")?, branch)?;
+    let config = UserConfig::load().context("Failed to load config")?;
+    let env = CommandEnv::for_selector(config, branch.unwrap_or("@"))?;
     let commit_config = env.resolved().commit_generation.clone();
     let wt = env.repo.worktree_at(&env.worktree_path);
+
+    let ctx = env.context(yes);
+    let project_append = resolve_template_for_preview(&ctx, &commit_config, dry_run)?;
 
     // For --dry-run, stage to a copy of the index so the preview reflects what a real
     // run would send. --show-prompt skips this — it's the cheap "what's already staged"
@@ -108,9 +108,6 @@ fn preview_commit(
         None
     };
     let staging_index = temp_index.as_ref();
-
-    let ctx = env.context(yes);
-    let project_append = resolve_template_for_preview(&ctx, &commit_config, dry_run)?;
 
     let prompt = crate::llm::build_commit_prompt(
         &commit_config,

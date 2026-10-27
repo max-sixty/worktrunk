@@ -17,7 +17,11 @@
 //! command's cancellation latch also stops admission before an interrupted
 //! sibling's cleanup completes. The
 //! current worktree is removed last, after the fan-out, because its removal
-//! cd's the shell to the primary.
+//! cd's the shell to the primary. Completed removals travel with execution
+//! errors through the worker channel, so aborting a scan or removal preserves
+//! confirmed results in the final command response.
+
+use crate::commands::command_executor::ForegroundStdin;
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -31,7 +35,7 @@ use color_print::cformat;
 use crossbeam_channel as chan;
 use rayon::prelude::*;
 use worktrunk::HookType;
-use worktrunk::config::{Approvals, ProjectConfig, UserConfig};
+use worktrunk::config::{Approvals, ProjectConfig, ProjectId, UserConfig};
 use worktrunk::git::{
     BranchDeletionMode, IntegrationReason, RefSnapshot, Repository, WorktreeInfo,
 };
@@ -41,7 +45,7 @@ use worktrunk::styling::{
 };
 use worktrunk::trace::Span;
 
-use crate::output::print_json;
+use crate::output::{CommandFailure, CommandResult, print_json};
 
 use super::super::hook_plan::{ApprovedHookPlan, HookPlan, HookPlanBuilder};
 use super::super::hooks::HookAnnouncer;
@@ -285,10 +289,9 @@ fn removal_needs_write(kind: CandidateKind, plan: &RemovalPlan, ctx: &RemovalCon
     }
 }
 
-/// Try to remove a candidate immediately. Returns `Ok(Some(fate))` if removed
-/// — the executed outcome the summary counts and `--format=json` names —
-/// `Ok(None)` if the removal turned out to be a no-op, `Err` on execution
-/// error.
+/// Try to remove a candidate immediately. A confirmed removal returns its fate,
+/// including through a late hook failure; a successful no-op returns `None`.
+/// The caller carries completion and execution error together.
 ///
 /// `plan` is the scan-time `prepare_worktree_removal` result from
 /// [`check_one`]; only `StaleDetached` candidates arrive without one (their
@@ -301,7 +304,7 @@ fn try_remove(
     candidate: &Candidate,
     plan: Option<RemovalPlan>,
     ctx: &RemovalContext<'_>,
-) -> anyhow::Result<Option<BranchFate>> {
+) -> CommandResult<Option<BranchFate>> {
     let _span = Span::new(format!("prune-remove:{}", candidate.label));
 
     // Cancellation may arrive while this admitted job waits for terminal output.
@@ -351,35 +354,49 @@ fn try_remove(
     } else {
         RemovalExecution::Background(BackgroundFallbackMode::SynchronousForNonCurrent)
     };
-    let fate = handle_remove_output(&plan, execution, ctx.hook_plan, true, &mut announcer)?;
-    announcer.flush()?;
-    let branch_deleted = fate.deleted();
-    // A branch-only candidate that kept its branch removed nothing at all —
-    // unless the removal pruned a stale worktree entry, a removal worth
-    // counting. Excluding the no-op keeps the summary and JSON honest when a
-    // concurrent writer advanced an orphan branch between scan and delete
-    // (the per-item retention warning has already told the user).
-    if !branch_deleted
-        && let RemovalPlan::BranchOnly {
-            prune_entry: None, ..
-        } = plan
-    {
-        return Ok(None);
-    }
-    Ok(Some(fate))
+    let stdin = if needs_write {
+        ForegroundStdin::Inherit
+    } else {
+        ForegroundStdin::Closed
+    };
+    // A branch-only candidate whose ref was not deleted removed nothing,
+    // unless it also pruned a stale worktree entry. Apply that same rule to
+    // successful outcomes and confirmed partial outcomes carried by errors.
+    let completed_fate = |fate: BranchFate| {
+        if !fate.deleted()
+            && matches!(
+                plan,
+                RemovalPlan::BranchOnly {
+                    prune_entry: None,
+                    ..
+                }
+            )
+        {
+            None
+        } else {
+            Some(fate)
+        }
+    };
+    let fate = handle_remove_output(&plan, execution, stdin, ctx.hook_plan, true, &mut announcer)
+        .map_err(|failure| failure.map_result(completed_fate))?;
+    let completed = completed_fate(fate);
+    announcer
+        .flush()
+        .map_err(|error| CommandFailure::with_result(error, completed))?;
+    Ok(completed)
 }
 
 /// One candidate skipped because its project hooks aren't yet approved.
 /// Carries enough context for the end-of-run hint to print a per-candidate
-/// `wt -C <path> remove` line and annotate candidates whose own
-/// `.config/wt.toml` differs from the invoking worktree's (so the user knows
-/// `wt config approvals add` from current can't approve their hooks).
+/// `wt -C <path> remove` line and annotate candidates whose resolved project
+/// config differs from the invoking worktree's (so the user knows `wt config
+/// approvals add` from current can't approve their hooks).
 struct SkippedApproval {
     /// `Some` for candidates whose plan removes a worktree (the only
     /// `(approval required)` source — branch-only plans and stale-detached
     /// entries run no hooks).
     path: Option<PathBuf>,
-    /// True when the candidate's `.config/wt.toml` doesn't match the
+    /// True when the candidate's resolved project config doesn't match the
     /// invoking worktree's bytes — `wt config approvals add` from current
     /// approves only invoking's templates, so this candidate needs the
     /// per-worktree `wt -C <path> remove` form to surface its own hooks.
@@ -849,8 +866,7 @@ fn render_dry_run(
                 })
             })
             .collect();
-        print_json(&items)?;
-        return Ok(());
+        return print_json(&items);
     }
 
     // The human preview mirrors the `--format=json` plan above (the worktrees
@@ -921,7 +937,7 @@ fn build_pessimistic_plan(
     current_root: &Path,
     project_config: Option<&ProjectConfig>,
     user_config: &UserConfig,
-    project_id: Option<&str>,
+    project_id: Option<&ProjectId>,
 ) -> anyhow::Result<HookPlan> {
     let mut builder = HookPlanBuilder::new(project_config, user_config, project_id);
     let mut has_current = false;
@@ -951,7 +967,7 @@ fn unapproved_for_hook(
     hook_type: HookType,
     project_config: Option<&ProjectConfig>,
     user_config: &UserConfig,
-    project_id: Option<&str>,
+    project_id: Option<&ProjectId>,
     approvals: &Approvals,
 ) -> Vec<String> {
     let Ok(home) = repo.home_path() else {
@@ -1108,7 +1124,7 @@ pub fn step_prune(
     //     (`wt config approvals add`) or remove individually
     //     (`wt -C <wt> remove`). Unapproved hooks never run silently.
     let project_id_owned = repo.project_identifier().ok();
-    let project_id = project_id_owned.as_deref();
+    let project_id = project_id_owned.as_ref();
     let project_config = repo.load_project_config()?;
     let approvals = if yes {
         Approvals::default()
@@ -1167,7 +1183,7 @@ pub fn step_prune(
     };
     // The invoking worktree's project-config bytes — load once so the per-
     // candidate "(different hooks on branch)" annotation in the skip hint
-    // can compare each candidate's own `.config/wt.toml` against this
+    // can compare each candidate's resolved project config against this
     // baseline. Byte-equal is approximate (whitespace differences flag too)
     // but the result drives a hint, not behavior.
     let invoking_project_bytes = repo
@@ -1196,191 +1212,197 @@ pub fn step_prune(
     // `removal_needs_write`). The current worktree is the one exception to
     // the fan-out: its removal cd's to the primary, so defer it until last.
     let scan_span = Span::new("prune-scan");
-    let (removed, deferred_current) = std::thread::scope(
-        |s| -> anyhow::Result<(Vec<Candidate>, Option<DeferredCurrent>)> {
-            let (tx, rx) = chan::unbounded::<(usize, anyhow::Result<CheckOutcome>)>();
-            // Pre-shadow with references so `move` on s.spawn moves only `tx`
-            // (so it's dropped when the spawn ends and `rx` can terminate),
-            // while the heavy state stays borrowed and remains usable by the
-            // main thread.
-            let repo_ref = &repo;
-            let snapshot_ref = &snapshot;
-            let check_items_ref = &check_items;
-            let integration_target_ref = integration_target.as_str();
-            let current_path_ref = current_root.as_path();
-            let ref_write_times_ref = &ref_write_times;
-            s.spawn(move || {
-                check_items_ref
-                    .par_iter()
-                    .enumerate()
-                    .for_each(|(idx, item)| {
-                        let outcome = check_one(
-                            item,
-                            repo_ref,
-                            snapshot_ref,
-                            integration_target_ref,
-                            worktrees,
-                            current_path_ref,
-                            min_age_duration,
-                            ref_write_times_ref,
-                            now_secs,
-                        );
-                        let _ = tx.send((idx, outcome));
-                    });
-            });
+    let (removed, deferred_current, mut first_err) = std::thread::scope(|s| {
+        let (tx, rx) = chan::unbounded::<(usize, anyhow::Result<CheckOutcome>)>();
+        // Pre-shadow with references so `move` on s.spawn moves only `tx`
+        // (so it's dropped when the spawn ends and `rx` can terminate),
+        // while the heavy state stays borrowed and remains usable by the
+        // main thread.
+        let repo_ref = &repo;
+        let snapshot_ref = &snapshot;
+        let check_items_ref = &check_items;
+        let integration_target_ref = integration_target.as_str();
+        let current_path_ref = current_root.as_path();
+        let ref_write_times_ref = &ref_write_times;
+        s.spawn(move || {
+            check_items_ref
+                .par_iter()
+                .enumerate()
+                .for_each(|(idx, item)| {
+                    let outcome = check_one(
+                        item,
+                        repo_ref,
+                        snapshot_ref,
+                        integration_target_ref,
+                        worktrees,
+                        current_path_ref,
+                        min_age_duration,
+                        ref_write_times_ref,
+                        now_secs,
+                    );
+                    let _ = tx.send((idx, outcome));
+                });
+        });
 
-            // Removal workers, sized like the scan's rayon pool so
-            // `RAYON_NUM_THREADS=1` serializes removals too (deterministic
-            // output for tests). Results flow back on `done_rx`; the channel
-            // closes once every worker has drained the job queue and exited,
-            // so draining it below also waits out all in-flight printing.
-            let (job_tx, job_rx) = chan::unbounded::<RemovalJob>();
-            let (done_tx, done_rx) =
-                chan::unbounded::<(Candidate, anyhow::Result<Option<BranchFate>>)>();
-            let abort_ref = &abort;
-            let removal_ctx_ref = &removal_ctx;
-            // Empty check_items → zero workers, correctly: no jobs can queue.
-            let workers = rayon::current_num_threads().min(check_items.len());
-            for _ in 0..workers {
-                let job_rx = job_rx.clone();
-                let done_tx = done_tx.clone();
-                s.spawn(move || {
-                    for job in job_rx {
-                        match job {
-                            RemovalJob::Remove { candidate, plan } => {
-                                // Skip (not print, not remove) once a sibling
-                                // failed; queued skip lines below still print
-                                // — they were discovered before the failure.
-                                if abort_ref.load(Ordering::Relaxed) {
-                                    continue;
-                                }
-                                let result = try_remove(&candidate, *plan, removal_ctx_ref)
-                                    .with_context(|| candidate.removal_context())
-                                    .inspect_err(|error| abort_removals(error, abort_ref));
-                                if done_tx.send((candidate, result)).is_err() {
-                                    return;
-                                }
+        // Removal workers, sized like the scan's rayon pool so
+        // `RAYON_NUM_THREADS=1` serializes removals too (deterministic
+        // output for tests). Results flow back on `done_rx`; the channel
+        // closes once every worker has drained the job queue and exited,
+        // so draining it below also waits out all in-flight printing.
+        let (job_tx, job_rx) = chan::unbounded::<RemovalJob>();
+        let (done_tx, done_rx) =
+            chan::unbounded::<(Candidate, CommandResult<Option<BranchFate>>)>();
+        let abort_ref = &abort;
+        let removal_ctx_ref = &removal_ctx;
+        // Empty check_items → zero workers, correctly: no jobs can queue.
+        let workers = rayon::current_num_threads().min(check_items.len());
+        for _ in 0..workers {
+            let job_rx = job_rx.clone();
+            let done_tx = done_tx.clone();
+            s.spawn(move || {
+                for job in job_rx {
+                    match job {
+                        RemovalJob::Remove { candidate, plan } => {
+                            // Skip (not print, not remove) once a sibling
+                            // failed; queued skip lines below still print
+                            // — they were discovered before the failure.
+                            if abort_ref.load(Ordering::Relaxed) {
+                                continue;
                             }
-                            RemovalJob::PrintSkip(line) => {
-                                // Hold the read side so a skip line can't
-                                // land inside a write-side removal's
-                                // exclusive output window (spinner).
-                                let _read = removal_ctx_ref
-                                    .output_lock
-                                    .read()
-                                    .unwrap_or_else(|e| e.into_inner());
-                                eprintln!("{line}");
+                            let result = try_remove(&candidate, *plan, removal_ctx_ref).map_err(
+                                |mut failure| {
+                                    failure.error =
+                                        failure.error.context(candidate.removal_context());
+                                    abort_removals(&failure.error, abort_ref);
+                                    failure
+                                },
+                            );
+                            if done_tx.send((candidate, result)).is_err() {
+                                return;
                             }
                         }
+                        RemovalJob::PrintSkip(line) => {
+                            // Hold the read side so a skip line can't
+                            // land inside a write-side removal's
+                            // exclusive output window (spinner).
+                            let _read = removal_ctx_ref
+                                .output_lock
+                                .read()
+                                .unwrap_or_else(|e| e.into_inner());
+                            eprintln!("{line}");
+                        }
                     }
+                }
+            });
+        }
+        drop(job_rx);
+        drop(done_tx);
+
+        let mut deferred_current: Option<DeferredCurrent> = None;
+        let mut first_err: Option<anyhow::Error> = None;
+        for (idx, outcome) in &rx {
+            // A failed check stops new removals, but drain both channels
+            // so the response retains every removal already completed.
+            let outcome = match outcome.context("checking branch integration") {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    abort_removals(&error, abort_ref);
+                    first_err.get_or_insert(error);
+                    continue;
+                }
+            };
+            let Some(_reason) = outcome.reason else {
+                continue;
+            };
+            if !outcome.removable {
+                continue;
+            }
+            let item = &check_items[idx];
+            let (label, branch, path, kind, _suffix) =
+                candidate_fields(item, &repo, worktrees, &current_root);
+            if let Some(age) = outcome.age
+                && age < min_age_duration
+            {
+                let line = info_message(cformat!(
+                    "Skipped <bold>{label}</> (younger than {min_age})"
+                ))
+                .to_string();
+                let _ = job_tx.send(RemovalJob::PrintSkip(line));
+                skipped_young.push(label);
+                continue;
+            }
+            // Keyed on the plan, not the candidate's shape: only a
+            // worktree removal runs `pre-remove`/`post-remove`. Branch-
+            // only plans and detached stale entries run no hooks.
+            let needs_approval = match &outcome.plan {
+                Some(RemovalPlan::Worktree { .. }) => {
+                    !pre_remove_unapproved.is_empty()
+                        || !post_remove_unapproved.is_empty()
+                        || (matches!(kind, CandidateKind::Current)
+                            && !post_switch_unapproved.is_empty())
+                }
+                Some(RemovalPlan::BranchOnly { .. }) | None => false,
+            };
+            if needs_approval {
+                let line = info_message(cformat!("Skipped <bold>{label}</> (approval required)"))
+                    .to_string();
+                let _ = job_tx.send(RemovalJob::PrintSkip(line));
+                let differs = path.as_deref().is_some_and(|wt_path| {
+                    let candidate_bytes = Repository::at(wt_path)
+                        .and_then(|candidate_repo| candidate_repo.project_config_path())
+                        .ok()
+                        .flatten()
+                        .and_then(|p| std::fs::read(p).ok());
+                    candidate_bytes != invoking_project_bytes
+                });
+                skipped_approval.push(SkippedApproval { path, differs });
+                continue;
+            }
+            let candidate = Candidate {
+                check_idx: idx,
+                label,
+                branch,
+                path,
+                kind,
+                deletes_branch: outcome.deletes_branch,
+                fate: None,
+            };
+            if matches!(candidate.kind, CandidateKind::Current) {
+                deferred_current = Some((candidate, outcome.plan));
+            } else {
+                let _ = job_tx.send(RemovalJob::Remove {
+                    candidate,
+                    plan: Box::new(outcome.plan),
                 });
             }
-            drop(job_rx);
-            drop(done_tx);
+        }
+        drop(job_tx);
 
-            let mut deferred_current: Option<DeferredCurrent> = None;
-            for (idx, outcome) in &rx {
-                // A check error fails the whole run — flip `abort` so the
-                // workers drain their queue without executing more removals
-                // (whose results this early return would silently drop).
-                let outcome = outcome
-                    .context("checking branch integration")
-                    .inspect_err(|error| abort_removals(error, abort_ref))?;
-                let Some(_reason) = outcome.reason else {
-                    continue;
-                };
-                if !outcome.removable {
-                    continue;
-                }
-                let item = &check_items[idx];
-                let (label, branch, path, kind, _suffix) =
-                    candidate_fields(item, &repo, worktrees, &current_root);
-                if let Some(age) = outcome.age
-                    && age < min_age_duration
-                {
-                    let line = info_message(cformat!(
-                        "Skipped <bold>{label}</> (younger than {min_age})"
-                    ))
-                    .to_string();
-                    let _ = job_tx.send(RemovalJob::PrintSkip(line));
-                    skipped_young.push(label);
-                    continue;
-                }
-                // Keyed on the plan, not the candidate's shape: only a
-                // worktree removal runs `pre-remove`/`post-remove`. Branch-
-                // only plans and detached stale entries run no hooks.
-                let needs_approval = match &outcome.plan {
-                    Some(RemovalPlan::Worktree { .. }) => {
-                        !pre_remove_unapproved.is_empty()
-                            || !post_remove_unapproved.is_empty()
-                            || (matches!(kind, CandidateKind::Current)
-                                && !post_switch_unapproved.is_empty())
-                    }
-                    Some(RemovalPlan::BranchOnly { .. }) | None => false,
-                };
-                if needs_approval {
-                    let line =
-                        info_message(cformat!("Skipped <bold>{label}</> (approval required)"))
-                            .to_string();
-                    let _ = job_tx.send(RemovalJob::PrintSkip(line));
-                    let differs = path.as_deref().is_some_and(|wt_path| {
-                        let candidate_bytes =
-                            std::fs::read(wt_path.join(".config").join("wt.toml")).ok();
-                        candidate_bytes != invoking_project_bytes
-                    });
-                    skipped_approval.push(SkippedApproval { path, differs });
-                    continue;
-                }
-                let candidate = Candidate {
-                    check_idx: idx,
-                    label,
-                    branch,
-                    path,
-                    kind,
-                    deletes_branch: outcome.deletes_branch,
-                    fate: None,
-                };
-                if matches!(candidate.kind, CandidateKind::Current) {
-                    deferred_current = Some((candidate, outcome.plan));
-                } else {
-                    let _ = job_tx.send(RemovalJob::Remove {
-                        candidate,
-                        plan: Box::new(outcome.plan),
-                    });
-                }
-            }
-            drop(job_tx);
-
-            let mut removed: Vec<Candidate> = Vec::new();
-            let mut first_err: Option<anyhow::Error> = None;
-            for (mut candidate, result) in &done_rx {
-                match result {
-                    // Record the executed outcome, not the scan's prediction —
-                    // what the summary and `--format=json` report.
-                    Ok(Some(fate)) => {
-                        candidate.record_fate(fate);
-                        removed.push(candidate);
-                    }
-                    Ok(None) => {}
-                    Err(err) if first_err.is_none() => first_err = Some(err),
-                    // Concurrent failures (e.g. one Ctrl-C killing every
-                    // in-flight child) all carry the same story; report the
-                    // first and keep the rest out of the terminal.
-                    Err(err) => {
+        let mut removed: Vec<Candidate> = Vec::new();
+        for (mut candidate, result) in &done_rx {
+            let completed = match result {
+                Ok(completed) => completed,
+                Err(failure) => {
+                    if first_err.is_none() {
+                        first_err = Some(failure.error);
+                    } else {
                         tracing::debug!(
-                            error = %err,
-                            "additional removal failure for {}: {err:#}",
-                            candidate.label
+                            error = %failure.error,
+                            "additional removal failure for {}: {:#}",
+                            candidate.label,
+                            failure.error,
                         );
                     }
+                    failure.result.and_then(|result| *result)
                 }
+            };
+            if let Some(fate) = completed {
+                candidate.record_fate(fate);
+                removed.push(candidate);
             }
-            if let Some(err) = first_err {
-                return Err(err);
-            }
-            Ok((removed, deferred_current))
-        },
-    )?;
+        }
+        (removed, deferred_current, first_err)
+    });
     drop(scan_span);
 
     let mut removed = removed;
@@ -1389,12 +1411,20 @@ pub fn step_prune(
     // current worktree stays last.
     removed.sort_by_key(|c| c.check_idx);
     // Remove deferred current worktree last (cd-to-primary happens here)
-    if let Some((mut current, plan)) = deferred_current
-        && let Some(fate) =
-            try_remove(&current, plan, &removal_ctx).with_context(|| current.removal_context())?
+    if first_err.is_none()
+        && let Some((mut current, plan)) = deferred_current
     {
-        current.record_fate(fate);
-        removed.push(current);
+        let completed = match try_remove(&current, plan, &removal_ctx) {
+            Ok(completed) => completed,
+            Err(failure) => {
+                first_err = Some(failure.error.context(current.removal_context()));
+                failure.result.and_then(|result| *result)
+            }
+        };
+        if let Some(fate) = completed {
+            current.record_fate(fate);
+            removed.push(current);
+        }
     }
 
     if format == crate::cli::SwitchFormat::Json {
@@ -1410,15 +1440,20 @@ pub fn step_prune(
             })
             .collect();
         print_json(&items)?;
-    } else if removed.is_empty() {
-        if skipped_young.is_empty() && skipped_approval.is_empty() {
-            eprintln!("{}", info_message("No merged worktrees to remove"));
-        }
     } else {
-        eprintln!(
-            "{}",
-            success_message(format!("Pruned {}", prune_summary(&removed)))
-        );
+        if let Some(error) = first_err {
+            return Err(error);
+        }
+        if removed.is_empty() {
+            if skipped_young.is_empty() && skipped_approval.is_empty() {
+                eprintln!("{}", info_message("No merged worktrees to remove"));
+            }
+        } else {
+            eprintln!(
+                "{}",
+                success_message(format!("Pruned {}", prune_summary(&removed)))
+            );
+        }
     }
 
     if !skipped_approval.is_empty() {
@@ -1433,7 +1468,10 @@ pub fn step_prune(
         }
     }
 
-    Ok(())
+    match first_err {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 /// One headline+gutter pair for the `(approval required)` end-of-run hint.
@@ -1445,7 +1483,7 @@ struct ApprovalHintBlock {
 /// Build the headline+gutter pairs for `(approval required)` skips: a
 /// `wt config approvals add` block listing the unapproved templates from the
 /// invoking worktree's config, and a per-worktree `wt -C <path> remove` block
-/// for the skipped candidates. Candidates whose own `.config/wt.toml` differs
+/// for the skipped candidates. Candidates whose resolved project config differs
 /// from the invoking worktree get a `(different hooks on branch)` annotation —
 /// `wt config approvals add` from current approves only current's templates,
 /// so the per-worktree form is the only path for them.

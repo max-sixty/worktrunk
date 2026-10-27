@@ -1,6 +1,7 @@
 //! OpenCode plugin installation.
 //!
-//! Installs the worktrunk activity tracking plugin for OpenCode.
+//! Installs the worktrunk plugin for OpenCode: activity tracking, and under
+//! OpenCode 2 a worktree strategy.
 //! The plugin source (`dev/opencode-plugin.ts`) is embedded in the binary via
 //! `include_str!()` and written under the OpenCode global-config directory (see
 //! `opencode_plugins_dir` for the precedence rules) at `…/plugins/worktrunk.ts`.

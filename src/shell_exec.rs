@@ -11,10 +11,16 @@
 //! ## Spawning children
 //!
 //! Worktrunk's command spawns use [`spawn`] or [`spawn_shared_child`]. Their
-//! shared lock covers descriptor setup and process creation, never child waits:
-//! children still execute concurrently. On macOS, the standard library creates
-//! pipes and sockets before marking them close-on-exec. Serializing their setup
-//! with spawns prevents a child from retaining another command's output or wake.
+//! Unix process owner receives INT/TERM and runs process creation and foreground
+//! admission on the same thread. [`init_startup`] establishes that owner before
+//! application threads exist; workers inherit blocked signals, while the owner
+//! and its children retain the caller's original mask. Requests serialize
+//! creation, never child waits, so children still execute concurrently.
+//!
+//! On macOS, the standard library creates pipes and sockets before marking them
+//! close-on-exec. A separate lock serializes descriptor setup with raw spawns,
+//! preventing children from retaining unrelated output or wake endpoints. That
+//! lock is never held while a caller waits for the process owner.
 //!
 //! ## Process groups and signal handling (Unix, `Cmd::stream`)
 //!
@@ -24,8 +30,10 @@
 //! The shell owns the foreground job and the kernel delivers Ctrl-C, Ctrl-Z
 //! and hangup to it. No terminal handoff or private foreground group is needed.
 //!
-//! [`Cmd::forward_signals`] observes direct exit while waiting, preserving a
-//! child's normal exit when it handles Ctrl-C.
+//! [`Cmd::forward_signals`] observes direct exit while waiting. A terminal
+//! Ctrl-C that wt itself receives meanwhile cancels the command once the child
+//! exits, whatever status the child chose; [`Cmd::hand_off_terminal`] leaves
+//! the key to a final interactive child instead (see [`TerminalInterrupt`]).
 //! SIGTERM addressed only to wt is forwarded
 //! to owned direct children and cancels the command. Child signal exits propagate
 //! through `WorktrunkError::ChildProcessExited` to stop foreground loops.
@@ -87,11 +95,26 @@ use crate::trace::CommandTrace;
 
 #[cfg(unix)]
 pub mod pipe;
+#[cfg(unix)]
+mod process_owner;
 
 /// Prepare complete input before spawning, with no producer that can block.
-/// The anonymous file is removed when its last handle closes, even on interruption.
-/// This is seekable stdin, unlike the pipes connecting live pipeline stages.
+///
+/// On Unix, input that fits in a pipe's buffer is written there before spawn,
+/// so it needs no temporary storage and works with an unusable `TMPDIR`.
+/// Larger input, and all input on Windows, goes through an anonymous file,
+/// removed when its last handle closes, even on interruption.
 pub fn buffered_stdin(bytes: &[u8]) -> std::io::Result<Stdio> {
+    #[cfg(unix)]
+    {
+        let (reader, mut writer) = with_process_creation_guard(std::io::pipe)?;
+        pipe::set_nonblocking(&writer)?;
+        // Writing to a fresh pipe whose reader we hold fails only with
+        // `WouldBlock`, once the input outgrows the buffer.
+        if writer.write_all(bytes).is_ok() {
+            return Ok(reader.into());
+        }
+    }
     let mut file = tempfile::tempfile()?;
     file.write_all(bytes)?;
     file.rewind()?;
@@ -117,15 +140,34 @@ pub(crate) fn with_process_creation_guard<T>(
 
 /// Spawn a child under the shared process-creation guard.
 pub fn spawn(command: &mut Command) -> std::io::Result<std::process::Child> {
-    with_process_creation_guard(|| command.spawn()).map_err(|error| spawn_error(command, error))
+    let spawned = with_process_owner(command, |command| {
+        with_process_creation_guard(|| command.spawn())
+    })?;
+    spawned.map_err(|error| spawn_error(command, error))
 }
 
 /// Spawn a shared child under the same process-creation lock as [`spawn`].
 pub fn spawn_shared_child(command: &mut Command) -> std::io::Result<SharedChild> {
+    with_process_owner(command, spawn_shared_child_here)?
+}
+
+/// Raw creation on the process owner, also used inside foreground admission.
+pub(crate) fn spawn_shared_child_here(command: &mut Command) -> std::io::Result<SharedChild> {
     // SharedChild::new calls try_wait and can reap a short-lived child here.
     // Keep SharedChild::spawn's unreaped ownership for process-tree cleanup.
     with_process_creation_guard(|| SharedChild::spawn(command))
         .map_err(|error| spawn_error(command, error))
+}
+
+/// Run process creation and any admission checks on the signal-receiving owner.
+pub(crate) fn with_process_owner<T: Send + 'static>(
+    command: &mut Command,
+    create: impl FnOnce(&mut Command) -> T + Send + 'static,
+) -> std::io::Result<T> {
+    #[cfg(unix)]
+    return process_owner::with_command(command, create);
+    #[cfg(not(unix))]
+    Ok(create(command))
 }
 
 /// Create wakeup endpoints under the same guard as process creation.
@@ -254,6 +296,21 @@ fn track_if_cancellable(pid: u32) -> Option<BackgroundPid> {
     })
 }
 
+/// What a terminal Ctrl-C that wt itself receives means while a foreground
+/// child runs. Either way the child handles the key its own way; wt never
+/// signals it for INT.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalInterrupt {
+    /// The child is one step of the command, such as a hook, an alias step or
+    /// a `for-each` visit. Once it exits the command starts nothing more and
+    /// exits interrupted, whatever status the child chose.
+    Cancels,
+    /// The command hands the terminal to its final, interactive child: a pager,
+    /// an `--execute` program, a custom subcommand, an alias's last serial step.
+    /// The key is that child's input, and its own exit status stands.
+    ChildInput,
+}
+
 /// Whether a cancellation would signal `pid` right now.
 #[cfg(all(test, unix))]
 pub(crate) fn is_cancellable_pid(pid: u32) -> bool {
@@ -329,17 +386,19 @@ pub const INHERITED_GIT_PATH_VARS: &[&str] = &[
     "GIT_OBJECT_DIRECTORY",
 ];
 
-/// Record process-startup facts: the current working directory (so relative
-/// `GIT_*` path variables inherited from a parent process can later be
-/// resolved to absolute paths by [`Cmd`]'s env setup) and the calling thread
-/// (the foreground thread, exempt from the command semaphore —
-/// see `CMD_SEMAPHORE`).
+/// Initialize the Unix process owner and record startup facts: the current
+/// directory (so [`Cmd`] can resolve inherited relative `GIT_*` paths) and the
+/// calling thread (exempt from `CMD_SEMAPHORE`).
 ///
 /// Call once from `main()`, before any code changes the process's working
-/// directory and before spawning threads. Subsequent calls are no-ops.
-pub fn init_startup() {
+/// directory or spawns threads. Workers inherit blocked INT/TERM; the process
+/// owner and its children retain the original mask. Subsequent calls are no-ops.
+pub fn init_startup() -> std::io::Result<()> {
+    #[cfg(unix)]
+    process_owner::init()?;
     STARTUP_CWD.get_or_init(|| std::env::current_dir().ok());
     FOREGROUND_THREAD.get_or_init(|| std::thread::current().id());
+    Ok(())
 }
 
 fn startup_cwd() -> Option<&'static PathBuf> {
@@ -526,49 +585,32 @@ fn detect_windows_shell() -> Result<ShellConfig, String> {
 /// (WSL launcher) often comes before Git Bash in PATH.
 #[cfg(windows)]
 fn find_git_bash() -> Option<PathBuf> {
-    // Primary: find git in PATH and derive bash location
-    if let Ok(git_path) = which::which("git")
-        && let Some(bash_path) = git_bash_beside_git(&git_path)
-    {
-        return Some(bash_path);
+    // Ask Git itself so PATH shims resolve to the installation they launch.
+    let git_path = which::which("git").ok()?;
+    let output = Cmd::new(git_path.to_string_lossy())
+        .arg("--exec-path")
+        .env_remove("GIT_EXEC_PATH") // User overrides name helpers, not the install.
+        .run()
+        .ok()?;
+    if !output.status.success() {
+        return None;
     }
-
-    // Fallback: standard Git for Windows paths (needed on some CI environments
-    // where `which` doesn't find git even though it's installed)
-    let bash_path = PathBuf::from(r"C:\Program Files\Git\bin\bash.exe");
-    if bash_path.exists() {
-        return Some(bash_path);
-    }
-
-    // Per-user Git for Windows installation (default path when installed without admin rights)
-    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        let bash_path = PathBuf::from(local_app_data)
-            .join("Programs")
-            .join("Git")
-            .join("bin")
-            .join("bash.exe");
-        if bash_path.exists() {
-            return Some(bash_path);
-        }
-    }
-
-    None
+    let exec_path = std::str::from_utf8(&output.stdout).ok()?;
+    git_bash_from_exec_path(Path::new(exec_path.trim_end()))
 }
 
-/// Derive Git Bash's location from a Git for Windows `git.exe` path.
-///
-/// `git.exe` sits one level below the install root (`Git/cmd`, `Git/bin`) or
-/// below `usr` (`Git/usr/bin`), or two levels below the root in
-/// `Git/mingw64/bin` — the copy MSYS puts first on PATH inside a Git Bash
-/// session. bash.exe is at `Git/bin/bash.exe` or `Git/usr/bin/bash.exe`.
+/// Git for Windows reports `<install>/<runtime>/libexec/git-core` for --exec-path.
+/// The runtime name varies by architecture; Bash belongs to the install root.
 #[cfg(any(windows, test))]
-fn git_bash_beside_git(git_path: &Path) -> Option<PathBuf> {
-    git_path.ancestors().skip(2).take(2).find_map(|root| {
-        [root.join("bin"), root.join("usr").join("bin")]
-            .into_iter()
-            .map(|dir| dir.join("bash.exe"))
-            .find(|bash_path| bash_path.exists())
-    })
+fn git_bash_from_exec_path(exec_path: &Path) -> Option<PathBuf> {
+    if !exec_path.ends_with(Path::new("libexec").join("git-core")) {
+        return None;
+    }
+    let root = exec_path.parent()?.parent()?.parent()?;
+    [root.join("bin"), root.join("usr").join("bin")]
+        .into_iter()
+        .map(|dir| dir.join("bash.exe"))
+        .find(|bash_path| bash_path.is_file())
 }
 
 /// Environment variable naming the directive file for `cd` path changes.
@@ -691,7 +733,10 @@ pub fn apply_cd_directive_env(cmd: &mut std::process::Command, cd_file: &std::pa
 ///   into a relocated command misdirects every `git` call in it; with both
 ///   `GIT_DIR` and `GIT_WORK_TREE` present, a `git init` even writes
 ///   `core.worktree` into the *inherited* repo's config, silently redirecting
-///   every later plain git command there. See issue #3373.
+///   every later plain git command there. See issue #3373. Detached children
+///   (`spawn_detached_exec`: hook pipelines, trash drains) are relocated the
+///   same way, and outlive the parent, so removing the invoking worktree would
+///   also leave an inherited `GIT_DIR` naming a pruned gitdir.
 ///
 /// - **The child runs where the user already was** — aliases (the user's own
 ///   top-level command, run from the invoking worktree) and `commit.generation`
@@ -1221,7 +1266,7 @@ fn kill_timed_out_tree(pid: u32) {
 pub struct Cmd {
     /// Program name or shell command string (if shell_wrap is true)
     program: String,
-    args: Vec<String>,
+    args: Vec<OsString>,
     current_dir: Option<std::path::PathBuf>,
     context: Option<String>,
     stdin_data: Option<Vec<u8>>,
@@ -1238,10 +1283,10 @@ pub struct Cmd {
     shell_wrap: bool,
     /// Stdout configuration for stream() (defaults to inherit)
     stdout_cfg: Option<std::process::Stdio>,
-    /// Stdin configuration for stream() (defaults to null, or a file for stdin_data)
+    /// Stdin configuration for stream() (defaults to null; stdin_data takes precedence)
     stdin_cfg: Option<std::process::Stdio>,
     /// Observe terminal signals and forward PID-targeted cancellation during stream().
-    forward_signals: bool,
+    forward_signals: Option<TerminalInterrupt>,
     /// If true, treat a SIGPIPE exit as success. This is the default for pager
     /// producers, where the consumer closing early is expected. Direct user
     /// programs can opt out with [`Cmd::propagate_sigpipe`].
@@ -1555,7 +1600,7 @@ impl Cmd {
             shell_wrap,
             stdout_cfg: None,
             stdin_cfg: None,
-            forward_signals: false,
+            forward_signals: None,
             ignore_sigpipe: true,
             external_label: None,
             directive_cd_file: None,
@@ -1585,7 +1630,15 @@ impl Cmd {
         if self.shell_wrap || self.args.is_empty() {
             self.program.clone()
         } else {
-            format!("{} {}", self.program, self.args.join(" "))
+            format!(
+                "{} {}",
+                self.program,
+                self.args
+                    .iter()
+                    .map(|arg| arg.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
         }
     }
 
@@ -1686,8 +1739,8 @@ impl Cmd {
     }
 
     /// Add a single argument.
-    pub fn arg(mut self, arg: impl Into<String>) -> Self {
-        self.args.push(arg.into());
+    pub fn arg(mut self, arg: impl AsRef<OsStr>) -> Self {
+        self.args.push(arg.as_ref().to_os_string());
         self
     }
 
@@ -1695,9 +1748,10 @@ impl Cmd {
     pub fn args<I, S>(mut self, args: I) -> Self
     where
         I: IntoIterator<Item = S>,
-        S: Into<String>,
+        S: AsRef<OsStr>,
     {
-        self.args.extend(args.into_iter().map(Into::into));
+        self.args
+            .extend(args.into_iter().map(|arg| arg.as_ref().to_os_string()));
         self
     }
 
@@ -1713,7 +1767,7 @@ impl Cmd {
         self
     }
 
-    /// Set complete input bytes, delivered through an anonymous temporary file.
+    /// Set complete input bytes, prepared by [`buffered_stdin`] before spawn.
     ///
     /// The child reads these bytes followed by EOF, without a pipe writer that
     /// can block on an unread input. This takes precedence over `.stdin(Stdio)`.
@@ -1833,11 +1887,19 @@ impl Cmd {
 
     /// Preserve terminal Ctrl-C delivery and forward SIGTERM to live children.
     ///
-    /// The child shares the caller's foreground group. A handled Ctrl-C keeps
-    /// its normal status; cancellation and signal exits stop foreground loops.
+    /// The child shares the caller's foreground group, so it receives the key
+    /// alongside wt. wt's own receipt of SIGINT cancels the command once the
+    /// child exits ([`TerminalInterrupt::Cancels`]); signal exits do too.
     /// Only affects `.stream()` on Unix. No-op on Windows.
     pub fn forward_signals(mut self) -> Self {
-        self.forward_signals = true;
+        self.forward_signals = Some(TerminalInterrupt::Cancels);
+        self
+    }
+
+    /// [`Cmd::forward_signals`] for the command's final, interactive child,
+    /// which owns a terminal Ctrl-C as input ([`TerminalInterrupt::ChildInput`]).
+    pub fn hand_off_terminal(mut self) -> Self {
+        self.forward_signals = Some(TerminalInterrupt::ChildInput);
         self
     }
 
@@ -2273,10 +2335,9 @@ impl Cmd {
         // Install the SIGINT/SIGTERM handler BEFORE spawn so a signal arriving
         // mid-spawn is queued, not default-killed.
         #[cfg(unix)]
-        let signals = if self.forward_signals {
-            Some(crate::signal_forwarder::ForegroundSignals::install()?)
-        } else {
-            None
+        let signals = match self.forward_signals {
+            Some(mode) => Some(crate::signal_forwarder::ForegroundSignals::install(mode)?),
+            None => None,
         };
 
         // Apply environment and spawn
@@ -2893,9 +2954,9 @@ print(*counts)
     /// set-once): with it unset, `is_foreground_thread()` is false everywhere,
     /// which is the state every other test runs under.
     #[test]
-    fn test_foreground_thread_exempt_after_init() {
+    fn test_foreground_thread_exempt() {
         assert!(!is_foreground_thread());
-        init_startup();
+        FOREGROUND_THREAD.get_or_init(|| std::thread::current().id());
         assert!(is_foreground_thread());
         // Threads other than the initializing one stay capped.
         let from_spawned = std::thread::spawn(is_foreground_thread).join().unwrap();
@@ -3046,34 +3107,29 @@ print(*counts)
     }
 
     #[test]
-    fn test_git_bash_beside_git_install_layouts() {
+    fn test_git_bash_from_exec_path() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("Git");
-        for sub in ["bin", "usr/bin", "cmd", "mingw64/bin"] {
-            std::fs::create_dir_all(root.join(sub)).unwrap();
-        }
-        let bin_bash = root.join("bin").join("bash.exe");
+        let bin_bash = root.join("bin/bash.exe");
+        let usr_bash = root.join("usr/bin/bash.exe");
+        std::fs::create_dir_all(bin_bash.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(usr_bash.parent().unwrap()).unwrap();
         std::fs::write(&bin_bash, "").unwrap();
-        std::fs::write(root.join("usr").join("bin").join("bash.exe"), "").unwrap();
+        std::fs::write(&usr_bash, "").unwrap();
 
-        for git in ["cmd/git.exe", "bin/git.exe", "mingw64/bin/git.exe"] {
-            assert_eq!(
-                git_bash_beside_git(&root.join(git)),
-                Some(bin_bash.clone()),
-                "{git}"
-            );
-        }
-        assert_eq!(
-            git_bash_beside_git(&root.join("usr/bin/git.exe")),
-            Some(root.join("usr").join("bin").join("bash.exe"))
-        );
-
-        // A minimal install with only usr/bin/bash.exe, reached from mingw64/bin
+        // ARM uses a different runtime prefix; discovery must not enumerate them.
+        let exec_path = root.join("clangarm64/libexec/git-core");
+        assert_eq!(git_bash_from_exec_path(&exec_path), Some(bin_bash.clone()));
+        assert_eq!(git_bash_from_exec_path(&root.join("x/y/z")), None);
         std::fs::remove_file(&bin_bash).unwrap();
-        assert_eq!(
-            git_bash_beside_git(&root.join("mingw64/bin/git.exe")),
-            Some(root.join("usr").join("bin").join("bash.exe"))
-        );
+        assert_eq!(git_bash_from_exec_path(&exec_path), Some(usr_bash.clone()));
+
+        // MinGit can report the same layout without shipping Bash. Never climb
+        // outside that installation to select an unrelated executable.
+        std::fs::remove_file(&usr_bash).unwrap();
+        std::fs::create_dir(dir.path().join("bin")).unwrap();
+        std::fs::write(dir.path().join("bin/bash.exe"), "outside install").unwrap();
+        assert_eq!(git_bash_from_exec_path(&exec_path), None);
     }
 
     #[test]

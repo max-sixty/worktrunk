@@ -61,8 +61,8 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mSkipping [1mbeta[22m (target blocked: _REPO_.beta)[39m
-[2m↳[22m [2mTo backup blocking paths, use [4m--clobber[24m[22m
+[33m▲[39m [33mSkipping [1mbeta[22m (path already exists @ _REPO_.beta)[39m
+[2m↳[22m [2mTo back up blocking paths before relocating, use [4m--clobber[24m[22m
 [33m▲[39m [33mSkipping [1malpha[22m (blocked by [1mbeta[22m, which can't be relocated)[39m
 
 [2m○[22m Relocated 0 worktrees, skipped 2 worktrees

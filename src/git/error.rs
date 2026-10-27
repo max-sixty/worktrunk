@@ -23,6 +23,7 @@
 
 use crate::config::HookSource;
 use std::borrow::Cow;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use color_print::cformat;
@@ -213,7 +214,7 @@ impl CommandError {
     /// Build from the captured `Output` of a non-zero exit.
     pub fn from_failed_output(
         program: impl Into<String>,
-        args: &[impl AsRef<str>],
+        args: &[impl AsRef<OsStr>],
         output: &std::process::Output,
     ) -> Self {
         let stderr = String::from_utf8_lossy(&output.stderr).replace('\r', "\n");
@@ -224,7 +225,10 @@ impl CommandError {
         let signal = None;
         Self {
             program: program.into(),
-            args: args.iter().map(|s| s.as_ref().to_string()).collect(),
+            args: args
+                .iter()
+                .map(|s| s.as_ref().to_string_lossy().into_owned())
+                .collect(),
             stderr,
             stdout,
             exit_code: output.status.code(),
@@ -508,10 +512,6 @@ pub enum GitError {
 
     // Worktree errors
     InteractivePickerRequiresTerminal,
-    NotInWorktree {
-        /// The action that requires being in a worktree
-        action: Option<String>,
-    },
     /// A registered worktree git calls prunable, or whose directory is gone.
     /// Built with [`GitError::worktree_missing`].
     WorktreeMissing {
@@ -548,6 +548,10 @@ pub enum GitError {
         branch: String,
         path: PathBuf,
         create: bool,
+        /// The path came from `--path`, so it can name any directory, such as
+        /// a project of its own, rather than the template's worktree location.
+        /// The hint then suggests another path instead of deleting this one.
+        from_path_flag: bool,
     },
     WorktreeCreationFailed {
         branch: String,
@@ -740,6 +744,8 @@ pub enum GitError {
         message: String,
         /// Full stderr output for debugging
         stderr: String,
+        /// Worktrunk-owned recovery advice, separate from the CLI verdict
+        hint: Option<String>,
     },
     Other {
         message: String,
@@ -872,10 +878,6 @@ impl GitError {
             GitError::InteractivePickerRequiresTerminal => {
                 "Interactive picker requires an interactive terminal".to_string()
             }
-            GitError::NotInWorktree { action } => match action {
-                Some(action) => format!("Cannot {action}: not in a worktree"),
-                None => "Not in a worktree".to_string(),
-            },
 
             GitError::WorktreeMissing { branch, .. } => {
                 cformat!("Worktree for <bold>{branch}</> is stale; its directory or .git is gone")
@@ -1251,17 +1253,6 @@ impl GitError {
                     ))
                 )
             }
-            GitError::NotInWorktree { .. } => {
-                let title = self.title();
-                write!(
-                    f,
-                    "{}\n{}",
-                    error_message(&title),
-                    hint_message(cformat!(
-                        "Run from inside a worktree, or specify a branch name"
-                    ))
-                )
-            }
 
             GitError::WorktreeMissing { repairable_at, .. } => {
                 let title = self.title();
@@ -1336,9 +1327,9 @@ impl GitError {
                 branch,
                 path,
                 create,
+                from_path_flag,
             } => {
                 let title = self.title();
-                let path_display = format_path_for_display(path);
                 let flags: &[&str] = if *create {
                     &["--create", "--clobber"]
                 } else {
@@ -1348,12 +1339,20 @@ impl GitError {
                 if let Some(ctx) = ctx {
                     switch_cmd = ctx.apply(switch_cmd);
                 }
+                let alternative = if *from_path_flag {
+                    cformat!(
+                        "To place the worktree elsewhere, choose a different <underline>--path</>"
+                    )
+                } else {
+                    let path_display = format_path_for_display(path);
+                    cformat!("To remove manually, run <underline>rm -rf {path_display}</>")
+                };
                 write!(
                     f,
                     "{}\n{}",
                     error_message(&title),
                     hint_message(cformat!(
-                        "To remove manually, run <underline>rm -rf {path_display}</>; to overwrite (with backup), run <underline>{switch_cmd}</>"
+                        "{alternative}; to overwrite (with backup), run <underline>{switch_cmd}</>"
                     ))
                 )
             }
@@ -1454,20 +1453,9 @@ impl GitError {
                 Ok(())
             }
 
-            GitError::CannotRemoveMainWorktree => {
+            GitError::CannotRemoveMainWorktree | GitError::CannotRemoveDefaultBranch { .. } => {
                 let title = self.title();
                 write!(f, "{}", error_message(&title))
-            }
-
-            GitError::CannotRemoveDefaultBranch { branch } => {
-                let title = self.title();
-                let cmd = suggest_command("remove", &[branch], &["-D"]);
-                write!(
-                    f,
-                    "{}\n{}",
-                    error_message(&title),
-                    hint_message(cformat!("To force-delete, run <underline>{cmd}</>"))
-                )
             }
 
             GitError::WorktreeLocked { path, .. } => {
@@ -1797,9 +1785,16 @@ impl GitError {
             }
 
             GitError::CliApiError {
-                message, stderr, ..
+                message,
+                stderr,
+                hint,
+                ..
             } => {
-                write!(f, "{}", format_error_block(error_message(message), stderr))
+                write!(f, "{}", format_error_block(error_message(message), stderr))?;
+                if let Some(hint) = hint {
+                    write!(f, "\n{}", hint_message(hint))?;
+                }
+                Ok(())
             }
 
             GitError::Other { message } => {
@@ -1835,7 +1830,8 @@ impl std::fmt::Display for GitError {
 #[derive(Debug)]
 pub enum WorktrunkError {
     /// Physical child outcome, independently of observed operation cancellation.
-    /// A caught interrupt may leave a normal child exit, including zero.
+    /// A child that catches Ctrl-C may exit normally, even with zero, while
+    /// `cancellation` records the interrupt wt itself received.
     ChildProcessExited {
         code: i32,
         physical_signal: Option<i32>,
@@ -1857,7 +1853,7 @@ pub enum WorktrunkError {
     ///
     /// Exits `128 + signal`; Unix INT/TERM are passed to the parent shell.
     /// Native job messages belong to that shell, while recovery hints belong
-    /// to wt. Custom commands may also report other signal-derived exits here.
+    /// to wt. Custom commands and aliases also report other signal deaths here.
     Interrupted { signal: i32, hint: Option<String> },
 }
 
@@ -2273,6 +2269,7 @@ mod tests {
             branch: "feature".to_string(),
             path: PathBuf::from("/some/path"),
             create: true,
+            from_path_flag: false,
         };
         assert_snapshot!(err.render(), @"
         [31m✗[39m [31mDirectory already exists: [1m/some/path[22m[39m
@@ -2390,6 +2387,9 @@ mod tests {
         }
         .into();
         assert_eq!(err.interrupt_signal(), Some(15));
+        let err = err.context(WorktrunkError::AlreadyDisplayed { exit_code: 143 });
+        assert_eq!(err.interrupt_signal(), Some(15));
+        assert_eq!(err.exit_code(), Some(143));
 
         // An already-classified interrupt stays one (idempotence for loops
         // that re-check errors bubbling through them).
@@ -2689,23 +2689,6 @@ mod tests {
         ✗ pre-start user hook failed
           echo test
           setup failed
-        ");
-    }
-
-    #[test]
-    fn snapshot_not_in_worktree() {
-        let err = GitError::NotInWorktree {
-            action: Some("resolve @".into()),
-        };
-        assert_snapshot!(err.render(), @"
-        [31m✗[39m [31mCannot resolve @: not in a worktree[39m
-        [2m↳[22m [2mRun from inside a worktree, or specify a branch name[22m
-        ");
-
-        let err = GitError::NotInWorktree { action: None };
-        assert_snapshot!(err.render(), @"
-        [31m✗[39m [31mNot in a worktree[39m
-        [2m↳[22m [2mRun from inside a worktree, or specify a branch name[22m
         ");
     }
 
@@ -3022,6 +3005,7 @@ mod tests {
             ref_type: RefType::Pr,
             message: "gh api failed for PR #42".into(),
             stderr: "error: unexpected response\ncode: 500".into(),
+            hint: None,
         };
         assert_snapshot!(err.render(), @"
         [31m✗[39m [31mgh api failed for PR #42[39m
@@ -3076,6 +3060,7 @@ mod tests {
                 branch: "emails".into(),
                 path: PathBuf::from("/tmp/repo.emails"),
                 create: true,
+                from_path_flag: false,
             }),
             ctx: SwitchSuggestionCtx {
                 extra_flags: vec!["--execute=claude".into()],

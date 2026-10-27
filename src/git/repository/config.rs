@@ -1,6 +1,6 @@
 //! Git config, hints, marker, and default branch operations for Repository.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -103,7 +103,7 @@ impl Repository {
         Ok(())
     }
 
-    /// Unset a config key and keep the bulk config map coherent.
+    /// Unset every value for a config key and keep the bulk config map coherent.
     ///
     /// Returns `true` if the key was cleared, `false` if it didn't exist.
     /// Propagates actual git config errors (corrupt config, permission denied).
@@ -111,12 +111,14 @@ impl Repository {
     /// Removes the canonical form (matching what git emits) to stay in
     /// sync with `set_config_value` and `config_last`.
     pub(super) fn unset_config_value(&self, key: &str) -> anyhow::Result<bool> {
-        let args = ["config", "--unset", key];
+        // --unset also returns 5 for repeated values without removing them.
+        // --unset-all makes 5 unambiguously mean that the key was absent.
+        let args = ["config", "--unset-all", key];
         let output = self.run_command_output(&args)?;
         let existed = if output.status.success() {
             true
         } else if output.status.code() == Some(5) {
-            // --unset exit code 5 = key didn't exist
+            // --unset-all exit code 5 = key didn't exist
             false
         } else {
             return Err(CommandError::from_failed_output("git", &args, &output).into());
@@ -287,15 +289,56 @@ impl Repository {
         Ok(result)
     }
 
-    /// Set the previous branch in worktrunk.history for `wt switch -` support.
+    /// Record the worktree `wt switch` is leaving, so `wt switch -` can
+    /// return to it.
     ///
-    /// Stores the branch we're switching FROM, so `wt switch -` can return to it.
-    pub fn set_switch_previous(&self, previous: Option<&str>) -> anyhow::Result<()> {
-        if let Some(prev) = previous {
-            self.set_config_value("worktrunk.history", prev)?;
+    /// The branch goes in `worktrunk.history` and the path in
+    /// `worktrunk.history-path`. The branch alone can't name a detached
+    /// worktree, or the second checkout of a branch checked out twice; the
+    /// path can. A detached worktree clears the branch, so the two keys always
+    /// describe the same worktree, which is what
+    /// [`switch_previous_worktree`](Self::switch_previous_worktree) checks.
+    pub fn record_switch_source(&self, path: &Path, branch: Option<&str>) -> anyhow::Result<()> {
+        match branch {
+            Some(branch) => self.set_config_value("worktrunk.history", branch)?,
+            None => {
+                self.unset_config("worktrunk.history")?;
+            }
         }
-        // If previous is None (detached HEAD), don't update history
+        self.set_config_value("worktrunk.history-path", &path.to_string_lossy())
+    }
+
+    /// Set the previous branch outright (`wt config state previous-branch
+    /// set`), dropping the path a switch recorded alongside the old one.
+    pub fn set_switch_previous(&self, branch: &str) -> anyhow::Result<()> {
+        self.set_config_value("worktrunk.history", branch)?;
+        self.unset_config("worktrunk.history-path")?;
         Ok(())
+    }
+
+    /// Forget the previous worktree. Returns whether anything was recorded.
+    pub fn clear_switch_previous(&self) -> anyhow::Result<bool> {
+        let branch = self.unset_config("worktrunk.history")?;
+        let path = self.unset_config("worktrunk.history-path")?;
+        Ok(branch || path)
+    }
+
+    /// The worktree `wt switch` last left, while it is still registered and
+    /// still holds the branch recorded with it.
+    ///
+    /// `None` sends `wt switch -` to [`switch_previous`](Self::switch_previous)
+    /// instead: the worktree is gone, its checkout changed since, or an older
+    /// wt recorded a different branch without a path. An older wt recording
+    /// the same branch leaves the stale path standing, which matters only for
+    /// a branch checked out twice.
+    pub fn switch_previous_worktree(&self) -> anyhow::Result<Option<(PathBuf, Option<String>)>> {
+        let Some(path) = self.config_last("worktrunk.history-path")? else {
+            return Ok(None);
+        };
+        let Some((path, branch)) = self.worktree_at_path(Path::new(&path))? else {
+            return Ok(None);
+        };
+        Ok((branch == self.switch_previous()).then_some((path, branch)))
     }
 
     /// Get the previous branch from worktrunk.history for `wt switch -`.
@@ -1100,7 +1143,33 @@ mod tests {
 
         let err = repo.unset_config("inva lid.key").unwrap_err();
         let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
-        assert_eq!(cmd_err.command_string(), "git config --unset inva lid.key");
+        assert_eq!(
+            cmd_err.command_string(),
+            "git config --unset-all inva lid.key"
+        );
+    }
+
+    #[test]
+    fn test_unset_config_clears_all_values_and_cache() {
+        let test = TestRepo::with_initial_commit();
+        let key = "worktrunk.state.main.vars.example";
+        for value in ["first", "second"] {
+            let output = test
+                .git_command()
+                .args(["config", "--add", key, value])
+                .run()
+                .unwrap();
+            assert!(output.status.success());
+        }
+        let repo = Repository::at(test.root_path()).unwrap();
+        // Populate the bulk cache before clearing, so both cached and fresh
+        // reads must agree with what was removed from disk.
+        assert_eq!(repo.config_value(key).unwrap().as_deref(), Some("second"));
+        assert!(repo.unset_config(key).unwrap());
+        assert_eq!(repo.config_value(key).unwrap(), None);
+        let fresh = Repository::at(test.root_path()).unwrap();
+        assert_eq!(fresh.config_value(key).unwrap(), None);
+        assert!(!repo.unset_config(key).unwrap());
     }
 
     #[test]

@@ -4,7 +4,9 @@
 
 use std::path::{Path, PathBuf};
 
-use worktrunk::git::{BranchDeletionMode, BranchDeletionOutcome, IntegrationReason, RefType};
+use worktrunk::git::{
+    BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, IntegrationReason, RefType,
+};
 
 /// Flags indicating which merge operations occurred
 #[derive(Debug, Clone, Copy)]
@@ -94,7 +96,7 @@ pub enum CreationMethod {
 /// Identity of the PR/MR a `pr:N` / `mr:N` argument resolved to.
 ///
 /// Resolved once, before `pre-switch` hooks run, then held by whoever needs it:
-/// the `ResolvedTarget` `pre-switch` reads, the plan `pre-start` reads, and the
+/// the `SwitchTarget` `pre-switch` reads, the plan `pre-start` reads, and the
 /// pipeline's own clone behind the post-* hooks — an `Existing` switch builds no
 /// `SwitchPlan::Create` at all. So `pr_number` / `pr_url` reach every switch
 /// hook whether the PR came from this repo or a fork. Reading it back off
@@ -120,8 +122,9 @@ pub enum SwitchPlan {
         path: PathBuf,
         /// The branch at this worktree. `None` for detached HEAD.
         branch: Option<String>,
-        /// Branch to record as "previous" for `wt switch -`
-        new_previous: Option<String>,
+        /// The worktree being left — path, and branch (`None` when detached) —
+        /// to record for `wt switch -`
+        new_previous: Option<(PathBuf, Option<String>)>,
     },
     /// Need to create a new worktree
     Create {
@@ -136,8 +139,8 @@ pub enum SwitchPlan {
         /// True when a stale path occupies `worktree_path` and `--clobber` was
         /// given — `execute_switch` backs it up before creating the worktree.
         needs_clobber_backup: bool,
-        /// Branch to record as "previous" for `wt switch -`
-        new_previous: Option<String>,
+        /// The worktree being left, to record for `wt switch -`
+        new_previous: Option<(PathBuf, Option<String>)>,
     },
 }
 
@@ -215,8 +218,8 @@ pub enum BranchFate {
 ///
 /// The distinctions matter to whoever is told about them: `Raced` is the one
 /// an automated caller retries (re-read the ref and try again), `Unmerged` the
-/// one a user resolves with `-D`, and `CheckedOut` requires removing the other
-/// checkout first. Collapsing them loses the retry signal: the
+/// one a user resolves with `-D`, and the other two report state that has to
+/// change elsewhere first. Collapsing them loses the retry signal: the
 /// fail-closed compare-and-swap in `delete_branch_if_safe` detects a moved ref
 /// precisely so the caller can act on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -228,10 +231,26 @@ pub enum RetainedReason {
     /// The compare-and-swap was refused: the ref moved between the integration
     /// check and the delete.
     Raced,
+    /// The delete command itself failed (already narrated at the site that
+    /// observed it).
+    Failed,
 }
 
 impl BranchFate {
-    /// Map a completed deletion's outcome.
+    /// Map a synchronous deletion attempt's result. `None` means no attempt
+    /// was made.
+    pub fn from_result(result: Option<&anyhow::Result<BranchDeletionResult>>) -> Self {
+        match result {
+            None => Self::NotAttempted,
+            Some(Ok(r)) => Self::from_outcome(&r.outcome),
+            Some(Err(_)) => Self::Retained(RetainedReason::Failed),
+        }
+    }
+
+    /// Map a completed deletion's outcome. The one place the mapping lives, so
+    /// the paths that hold an outcome without a `Result` around it
+    /// (the background fast path's post-execution read) can't classify it
+    /// differently from [`from_result`](Self::from_result).
     pub fn from_outcome(outcome: &BranchDeletionOutcome) -> Self {
         match outcome {
             BranchDeletionOutcome::Integrated(_) | BranchDeletionOutcome::ForceDeleted => {
@@ -265,6 +284,7 @@ impl BranchFate {
             Self::Retained(RetainedReason::Unmerged) => "retained_unmerged",
             Self::Retained(RetainedReason::CheckedOut) => "retained_checked_out",
             Self::Retained(RetainedReason::Raced) => "retained_raced",
+            Self::Retained(RetainedReason::Failed) => "retained_failed",
         }
     }
 }
@@ -522,6 +542,10 @@ mod tests {
                 BranchFate::Retained(RetainedReason::Raced),
                 "retained_raced",
             ),
+            (
+                BranchFate::Retained(RetainedReason::Failed),
+                "retained_failed",
+            ),
         ];
         for (fate, expected) in cases {
             assert_eq!(fate.json_outcome(), expected, "{fate:?}");
@@ -530,12 +554,19 @@ mod tests {
         assert_eq!(names.len(), cases.len(), "outcome names must be distinct");
     }
 
-    /// Completed deletion outcomes preserve each retention reason.
+    /// Synchronous deletion results map onto fates: deletions count, each
+    /// refusal keeps the reason that distinguishes it, an error reads as the
+    /// delete having failed, and absence as never attempted.
     #[test]
-    fn branch_fate_from_outcome_mapping() {
+    fn branch_fate_from_result_mapping() {
         use worktrunk::git::IntegrationReason;
 
-        let fate = |outcome| BranchFate::from_outcome(&outcome);
+        let fate = |outcome| {
+            BranchFate::from_result(Some(&Ok(BranchDeletionResult {
+                outcome,
+                integration_target: "main".to_string(),
+            })))
+        };
         assert_eq!(
             fate(BranchDeletionOutcome::Integrated(
                 IntegrationReason::SameCommit
@@ -560,6 +591,11 @@ mod tests {
             fate(BranchDeletionOutcome::RetainedRaced),
             BranchFate::Retained(RetainedReason::Raced)
         );
+        assert_eq!(
+            BranchFate::from_result(Some(&Err(anyhow::anyhow!("boom")))),
+            BranchFate::Retained(RetainedReason::Failed)
+        );
+        assert_eq!(BranchFate::from_result(None), BranchFate::NotAttempted);
     }
 
     #[test]

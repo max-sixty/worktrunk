@@ -96,7 +96,7 @@ Unix only; on Windows `--reap` is rejected.
 
 ## JSON output
 
-`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal. Branch-only results also include `detached_worktree`: the path of a detached worktree left behind, or `null`.
+`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal. Branch-only results also include `detached_worktree`: the path of a detached worktree at the branch's expected location, which the removal leaves in place, or `null`.
 
 `branch_outcome` names what happened to the branch, so a caller can tell a deletion the removal declined from one it was never asked to make:
 
@@ -108,6 +108,7 @@ Unix only; on Windows `--reap` is rejected.
 | `retained_unmerged` | Declined: the branch was not integrated into the target |
 | `retained_checked_out` | Declined: another worktree has the branch checked out |
 | `retained_raced` | Declined: the branch moved during the removal. Retry |
+| `retained_failed` | The delete command itself failed |
 
 ## Hooks
 

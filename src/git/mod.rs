@@ -2,6 +2,47 @@
 
 use std::path::{Path, PathBuf};
 
+fn git_path_from_bytes(bytes: &[u8]) -> std::io::Result<PathBuf> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        Ok(PathBuf::from(std::ffi::OsString::from_vec(bytes.to_vec())))
+    }
+    #[cfg(not(unix))]
+    {
+        // Windows accepts Git's forward slashes; preserve its output spelling.
+        std::str::from_utf8(bytes)
+            .map(PathBuf::from)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+    }
+}
+
+/// Decode one path from Git output, preserving bytes before its final LF.
+fn git_path_from_output(bytes: &[u8]) -> std::io::Result<PathBuf> {
+    let path = bytes.strip_suffix(b"\n").ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Unterminated Git path output",
+        )
+    })?;
+    git_path_from_bytes(path)
+}
+
+/// Gitfiles and backlinks terminate paths with CR/LF, unlike command output.
+fn git_path_from_file(bytes: &[u8]) -> std::io::Result<PathBuf> {
+    let mut path = bytes;
+    while matches!(path.last(), Some(b'\n' | b'\r')) {
+        path = &path[..path.len() - 1];
+    }
+    if path.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Empty Git path",
+        ));
+    }
+    git_path_from_bytes(path)
+}
+
 // Submodules
 mod ci_platform;
 mod diff;
@@ -97,8 +138,8 @@ pub use parse::{parse_porcelain_z, parse_untracked_files};
 pub use recover::{current_or_recover, cwd_removed_hint};
 pub use remove::{
     BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemovalOutput, RemoveOptions,
-    delete_branch_if_safe, execute_branch_deletion, remove_worktree_with_cleanup,
-    stage_worktree_removal, stop_fsmonitor_daemon,
+    delete_branch_if_safe, drain_trash, execute_branch_deletion, remove_worktree_with_cleanup,
+    stage_worktree_removal, staged_trash_entries, stop_fsmonitor_daemon, trash_drain_running,
 };
 pub use repository::sha_cache;
 pub use repository::{
@@ -110,7 +151,7 @@ pub use repository::{
 };
 pub use url::parse_owner_repo;
 pub use url::{GitRemoteUrl, GitRepoInfo, GitRepoProvider};
-pub(crate) use url::{canonical_url_path_segment, url_path_segments_eq};
+pub(crate) use url::{canonical_url_path_segment, legacy_project_identifier, url_path_segments_eq};
 pub use version::{git_version, require_minimum_git};
 
 /// Why branch content is considered integrated into the target branch.
@@ -383,6 +424,9 @@ pub struct LocalBranch {
     /// `None` when no upstream is set, or when the configured upstream is gone
     /// (git reports `[gone]` via `%(upstream:track)`).
     pub upstream_short: Option<String>,
+    /// Configured upstream remote, from `%(upstream:remotename)`.
+    /// `None` for local tracking (`.`) or when no remote is configured.
+    pub upstream_remote: Option<String>,
     /// Where this branch pushes, from `%(push:remotename)`: a remote name, or a
     /// URL when `branch.<name>.pushRemote` is one (`gh pr checkout` sets that
     /// for a fork's PR). `None` when no push remote is configured.
@@ -559,7 +603,7 @@ impl HookType {
 /// - From a worktree: `worktree_info.worktree_ref()` and then
 ///   [`WorktreeRef::into_branch_ref()`]
 /// - For a local branch: `BranchRef::local_branch("feature", "abc123")`
-/// - For a remote branch: `BranchRef::remote_branch("origin/feature", "abc123")`
+/// - For a remote branch: `BranchRef::remote_branch("origin", "feature", "abc123")`
 ///
 /// # Working Tree Access
 ///
@@ -584,6 +628,8 @@ pub struct BranchRef {
     /// Path to worktree, if this branch has one.
     /// None for branch-only items (remote branches, local branches without worktrees).
     worktree_path: Option<PathBuf>,
+    /// Byte offset of the remote/branch separator in the short name.
+    remote_name_len: Option<usize>,
 }
 
 /// Canonical snapshot of a registered worktree.
@@ -688,21 +734,25 @@ impl BranchRef {
             full_ref: Some(full_ref),
             commit_sha: commit_sha.to_string(),
             worktree_path: None,
+            remote_name_len: None,
         }
     }
 
     /// Create a BranchRef for a remote-tracking branch.
     ///
-    /// `branch` is the short remote-qualified name (e.g., `"origin/feature"`),
-    /// as produced by `%(refname:lstrip=2)` in `list_remote_branches`. It is
-    /// stored as `refs/remotes/<branch>`.
-    pub fn remote_branch(branch: &str, commit_sha: &str) -> Self {
-        let full_ref = remote_ref(branch);
+    /// `remote_name` and `branch` come from the remote-branch inventory, which
+    /// resolves their boundary against configured remote names. Keeping them
+    /// separate here avoids reparsing ambiguous names such as
+    /// `"team/fork/feature"`.
+    pub fn remote_branch(remote_name: &str, branch: &str, commit_sha: &str) -> Self {
+        let short_name = format!("{remote_name}/{branch}");
+        let full_ref = remote_ref(&short_name);
         Self {
-            id: GitItemId::remote_branch(branch),
+            id: GitItemId::remote_branch(&short_name),
             full_ref: Some(full_ref),
             commit_sha: commit_sha.to_string(),
             worktree_path: None,
+            remote_name_len: Some(remote_name.len()),
         }
     }
 
@@ -759,9 +809,14 @@ impl BranchRef {
 
     /// True if this is a remote-tracking ref (under `refs/remotes/`).
     pub fn is_remote(&self) -> bool {
-        self.full_ref
-            .as_deref()
-            .is_some_and(|r| r.starts_with("refs/remotes/"))
+        self.remote_name_len.is_some()
+    }
+
+    /// Remote and branch components of a remote-tracking ref.
+    pub fn remote_parts(&self) -> Option<(&str, &str)> {
+        let short = self.short_name()?;
+        let boundary = self.remote_name_len?;
+        Some((&short[..boundary], &short[boundary + 1..]))
     }
 }
 
@@ -775,6 +830,7 @@ impl WorktreeRef {
             full_ref: branch.map(local_ref),
             commit_sha: commit_sha.to_string(),
             worktree_path: Some(path),
+            remote_name_len: None,
         })
     }
 
@@ -827,7 +883,7 @@ impl WorktreeInfo {
 
     /// Build the canonical worktree subject for this inventory entry.
     pub fn worktree_ref(&self) -> WorktreeRef {
-        // `branch` is the short form produced by `parse_porcelain_list` (one
+        // `branch` is the short form produced by `parse_porcelain_list_z` (one
         // `refs/heads/` prefix stripped). Re-qualifying it in the worktree
         // constructor preserves even a pathological branch literally named
         // `refs/heads/foo` as `refs/heads/refs/heads/foo`.
@@ -1147,10 +1203,11 @@ mod tests {
 
     #[test]
     fn test_branch_ref_remote_branch() {
-        let branch_ref = BranchRef::remote_branch("origin/feature", "abc123");
+        let branch_ref = BranchRef::remote_branch("origin", "feature", "abc123");
 
         assert_eq!(branch_ref.full_ref(), Some("refs/remotes/origin/feature"));
         assert_eq!(branch_ref.short_name(), Some("origin/feature"));
+        assert_eq!(branch_ref.remote_parts(), Some(("origin", "feature")));
         assert_eq!(branch_ref.commit_sha, "abc123");
         assert_eq!(branch_ref.worktree_path, None);
         assert!(branch_ref.worktree_path().is_none());
@@ -1166,7 +1223,7 @@ mod tests {
         // `git rev-parse` picking the wrong ref lives at
         // `test_list_remote_row_not_shadowed_by_same_named_local_branch` in
         // `tests/integration_tests/list.rs`.
-        let remote = BranchRef::remote_branch("origin/foo", "abc");
+        let remote = BranchRef::remote_branch("origin", "foo", "abc");
         let local = BranchRef::local_branch("origin/foo", "def");
 
         assert_eq!(remote.full_ref(), Some("refs/remotes/origin/foo"));
@@ -1203,7 +1260,7 @@ mod tests {
         // A short name is presentation; the full ref is identity.
         assert_ne!(
             BranchRef::local_branch("origin/foo", "abc").id(),
-            BranchRef::remote_branch("origin/foo", "abc").id()
+            BranchRef::remote_branch("origin", "foo", "abc").id()
         );
     }
 

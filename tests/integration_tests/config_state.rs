@@ -774,7 +774,12 @@ fn test_state_get_ci_status_nonexistent_branch(repo: TestRepo) {
 /// Resolve a branch that exists only as a remote-tracking ref (no local
 /// counterpart). Exercises the `remote_branch` arm of the BranchRef match.
 #[rstest]
-fn test_state_get_ci_status_remote_only_branch(#[from(repo_with_remote)] repo: TestRepo) {
+#[case("team/fork/foo")]
+#[case("team/fork/HEAD")]
+fn test_state_get_ci_status_remote_only_branch(
+    #[from(repo_with_remote)] repo: TestRepo,
+    #[case] branch: &str,
+) {
     repo.create_branch("foo");
     repo.run_git(&["checkout", "foo"]);
     std::fs::write(repo.root_path().join("f.txt"), "f").unwrap();
@@ -784,7 +789,14 @@ fn test_state_get_ci_status_remote_only_branch(#[from(repo_with_remote)] repo: T
     repo.run_git(&["checkout", "main"]);
     repo.run_git(&["branch", "-D", "foo"]);
 
-    let output = wt_state_cmd(&repo, "ci-status", "get", &["--branch", "origin/foo"])
+    repo.run_git(&["remote", "rename", "origin", "team/fork"]);
+    repo.run_git(&[
+        "symbolic-ref",
+        "refs/remotes/team/fork/HEAD",
+        "refs/remotes/team/fork/foo",
+    ]);
+
+    let output = wt_state_cmd(&repo, "ci-status", "get", &["--branch", branch])
         .output()
         .unwrap();
     assert!(
@@ -1085,6 +1097,32 @@ fn test_state_clear_marker_all(repo: TestRepo) {
         .run()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "");
+}
+
+/// A var named `marker` lives at `worktrunk.state.<branch>.vars.marker`, which
+/// the marker key pattern also matches. Clearing all markers must leave it,
+/// while still clearing the marker of a branch whose name ends in `.vars`.
+#[rstest]
+fn test_state_clear_marker_all_keeps_var_named_marker(repo: TestRepo) {
+    repo.set_marker("feature", "🔧");
+    repo.set_marker("topic.vars", "🚧");
+    repo.git_command()
+        .args(["config", "worktrunk.state.main.vars.marker", "hello"])
+        .run()
+        .unwrap();
+
+    let output = wt_state_cmd(&repo, "marker", "clear", &["--all"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m2[22m markers[39m");
+
+    let output = repo
+        .git_command()
+        .args(["config", "--get", "worktrunk.state.main.vars.marker"])
+        .run()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "hello");
 }
 
 #[rstest]
@@ -2577,6 +2615,24 @@ fn test_vars_set_and_get(repo: TestRepo) {
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "staging");
 }
 
+/// Without `--branch`, state commands act on `@`. In a detached worktree that
+/// refuses without naming the worktree, since it's the one the user is in.
+#[rstest]
+fn test_vars_set_in_detached_worktree(mut repo: TestRepo) {
+    let worktree = repo.add_worktree("feature");
+    repo.detach_head_in_worktree("feature");
+
+    let output = wt_state_cmd(&repo, "vars", "set", &["env=staging"])
+        .current_dir(&worktree)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [31m✗[39m [31mCannot set variable: not on a branch (detached HEAD)[39m
+    [2m↳[22m [2mTo switch to a branch, run [4mgit switch <branch>[24m[22m
+    ");
+}
+
 #[rstest]
 fn test_vars_set_json_value(repo: TestRepo) {
     let json = r#"{"port":3000,"debug":true}"#;
@@ -3447,4 +3503,31 @@ fn state_branch_flag_resolves_selectors(mut repo: TestRepo) {
         "the marker set via @ should read back via the worktree's path: {}",
         String::from_utf8_lossy(&get.stderr)
     );
+}
+
+/// A key with repeated Git config entries must actually disappear after clear.
+#[rstest]
+#[case("example")]
+#[case("--all")]
+fn test_vars_clear_removes_repeated_values(repo: TestRepo, #[case] argument: &str) {
+    let key = "worktrunk.state.main.vars.example";
+    for value in ["first", "second"] {
+        let output = repo
+            .git_command()
+            .args(["config", "--add", key, value])
+            .run()
+            .unwrap();
+        assert!(output.status.success());
+    }
+    let output = wt_state_cmd(&repo, "vars", "clear", &[argument])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let remaining = repo
+        .git_command()
+        .args(["config", "--get-all", key])
+        .run()
+        .unwrap();
+    assert_eq!(remaining.status.code(), Some(1), "{remaining:?}");
+    assert!(remaining.stdout.is_empty());
 }

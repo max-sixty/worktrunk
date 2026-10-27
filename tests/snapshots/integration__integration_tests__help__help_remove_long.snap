@@ -185,7 +185,7 @@ Unix only; on Windows [2m--reap[0m is rejected.
 
 [1m[32mJSON output[0m
 
-[2m--format=json[0m prints one object per removal to stdout: [2m{kind, branch, path, branch_outcome, branch_checked_out_at}[0m for a worktree, with [2mpruned[0m in place of [2mpath[0m for a branch-only removal. Branch-only results also include [2mdetached_worktree[0m: the path of a detached worktree left behind, or [2mnull[0m.
+[2m--format=json[0m prints one object per removal to stdout: [2m{kind, branch, path, branch_outcome, branch_checked_out_at}[0m for a worktree, with [2mpruned[0m in place of [2mpath[0m for a branch-only removal. Branch-only results also include [2mdetached_worktree[0m: the path of a detached worktree at the branch's expected location, which the removal leaves in place, or [2mnull[0m.
 
 [2mbranch_outcome[0m names what happened to the branch, so a caller can tell a deletion the removal declined from one it was never asked to make:
 
@@ -197,6 +197,7 @@ Unix only; on Windows [2m--reap[0m is rejected.
  [2mretained_unmerged[0m    Declined: the branch was not integrated into the target                                          
  [2mretained_checked_out[0m Declined: another worktree has the branch checked out                                            
  [2mretained_raced[0m       Declined: the branch moved during the removal. Retry                                             
+ [2mretained_failed[0m      The delete command itself failed                                                                 
 
 [1m[32mHooks[0m
 
