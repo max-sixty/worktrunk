@@ -125,7 +125,7 @@ fn test_merge_as_git_subcommand(merge_scenario: (TestRepo, PathBuf)) {
     // Merge with GIT_EXEC_PATH set (simulating `git wt merge ...`)
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(&repo, "merge", &["main"], Some(&feature_wt));
-        cmd.env("GIT_EXEC_PATH", "/usr/lib/git-core");
+        crate::common::configure_git_subcommand(&mut cmd, &repo);
         cmd
     });
 }
@@ -1290,7 +1290,7 @@ fn test_merge_pre_commit_collected_for_squash_clean_worktree(
 }
 
 /// A pre-commit hook's edits land in the squash commit, as they do in the
-/// commit `wt step commit` makes: the hook runs before staging, not after.
+/// commit `wt step commit` makes: Worktrunk stages again after the hook runs.
 #[rstest]
 fn test_step_squash_includes_pre_commit_hook_edits(repo_with_multi_commit_feature: TestRepo) {
     let repo = &repo_with_multi_commit_feature;
@@ -1331,6 +1331,93 @@ fn test_step_squash_includes_pre_commit_hook_edits(repo_with_multi_commit_featur
         repo.git_output(&["-C", feature_wt.to_str().unwrap(), "status", "--porcelain"]),
         ""
     );
+}
+
+/// A pre-commit hook that reads the index (`pre-commit run`, lint-staged,
+/// `git diff --cached`) sees the uncommitted changes Worktrunk is about to
+/// commit, so a gate on them blocks the commit. `merge` covers the squash path
+/// and `step commit` the plain commit path.
+#[rstest]
+#[case::merge(&["merge", "main", "--yes"])]
+#[case::step_commit(&["step", "commit", "--yes"])]
+fn test_pre_commit_hook_sees_staged_changes(
+    repo_with_multi_commit_feature: TestRepo,
+    #[case] args: &[&str],
+) {
+    let repo = &repo_with_multi_commit_feature;
+    let feature_wt = repo.worktrees["feature"].clone();
+
+    let config_dir = feature_wt.join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        "pre-commit = \"! git diff --cached | grep -q FORBIDDEN\"",
+    )
+    .unwrap();
+    repo.run_git_in(&feature_wt, &["add", ".config/wt.toml"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Add config"]);
+    let feature_head = repo.git_output(&["rev-parse", "feature"]);
+    let main_head = repo.git_output(&["rev-parse", "main"]);
+
+    fs::write(feature_wt.join("new.txt"), "FORBIDDEN\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(args)
+        .current_dir(&feature_wt)
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: combined'",
+        )
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "pre-commit gate passed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(repo.git_output(&["rev-parse", "feature"]), feature_head);
+    assert_eq!(repo.git_output(&["rev-parse", "main"]), main_head);
+}
+
+/// With no pre-commit hook configured, a commit stages once. The second
+/// staging pass only picks up edits a hook made, so running it with no hook
+/// would repeat a full `git status` and `git add` for nothing.
+#[rstest]
+#[case::merge(&["-vv", "merge", "main", "--yes"])]
+#[case::step_commit(&["-vv", "step", "commit", "--yes"])]
+fn test_commit_stages_once_without_pre_commit_hook(
+    repo_with_multi_commit_feature: TestRepo,
+    #[case] args: &[&str],
+) {
+    let repo = &repo_with_multi_commit_feature;
+    let feature_wt = repo.worktrees["feature"].clone();
+    fs::write(feature_wt.join("new.txt"), "content\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(args)
+        .current_dir(&feature_wt)
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: combined'",
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "commit failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let trace_log =
+        crate::common::resolve_git_common_dir(repo.root_path()).join("wt/logs/trace.log");
+    let trace = fs::read_to_string(&trace_log).unwrap();
+    let untracked_scans = trace
+        .lines()
+        .filter(|line| line.contains("$ git status --porcelain -z -unormal"))
+        .count();
+    assert_eq!(untracked_scans, 1, "trace.log: {trace}");
 }
 
 // README EXAMPLE GENERATION TESTS
@@ -2515,7 +2602,7 @@ fn test_merge_pre_remove_dirty_mutation_aborts_cleanup(mut repo: TestRepo) {
     let output = repo
         .wt_command()
         .current_dir(&feature_wt)
-        .args(["merge", "--yes"])
+        .args(["merge", "--yes", "--format=json"])
         .output()
         .unwrap();
 
@@ -2532,6 +2619,13 @@ fn test_merge_pre_remove_dirty_mutation_aborts_cleanup(mut repo: TestRepo) {
         "dirty feature worktree should not be removed"
     );
     repo.run_git(&["rev-parse", "--verify", &format!("refs/heads/{branch}")]);
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["merged"], true);
+    assert!(json["removed"].is_null());
+    assert_eq!(
+        repo.git_output(&["rev-parse", "main"]),
+        repo.git_output(&["rev-parse", branch])
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -4584,10 +4678,14 @@ fn test_step_push_refuses_mid_rebase(mut repo: TestRepo) {
 /// this.
 #[rstest]
 fn test_step_commit_refuses_hook_created_conflict(mut repo: TestRepo) {
-    // A pre-commit hook that conflicts the index. `|| true` so the hook
-    // succeeds and the commit proceeds to staging; output suppressed to keep
-    // git's own wording out of the snapshot.
-    repo.write_project_config(r#"pre-commit = "git merge side >/dev/null 2>&1 || true""#);
+    // A pre-commit hook that conflicts the index. It unstages first because
+    // Worktrunk stages before the hooks run and `git merge` refuses to start
+    // with a dirty index. `|| true` so the hook succeeds and the commit
+    // proceeds to staging; output suppressed to keep git's own wording out of
+    // the snapshot.
+    repo.write_project_config(
+        r#"pre-commit = "git reset -q && git merge side >/dev/null 2>&1 || true""#,
+    );
     repo.run_git(&["add", ".config/wt.toml"]);
     repo.run_git(&["commit", "-m", "Add project config"]);
 
@@ -4797,6 +4895,7 @@ fn test_step_commit_json(repo: TestRepo) {
     );
     let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     let sha = parsed["commit"].as_str().expect("commit SHA");
+    assert_eq!(sha, repo.git_output(&["rev-parse", "HEAD"]));
     assert_eq!(sha.len(), 40, "expected full 40-char SHA, got {sha}");
     assert_eq!(parsed["message"], "feat: add file");
     // Without --stage on the CLI, the resolved default ("all") is emitted —
@@ -5775,6 +5874,7 @@ fn test_merge_json(repo: TestRepo) {
       "committed": false,
       "squashed": false,
       "rebased": false,
+      "merged": true,
       "removed": true
     }
     "#);
@@ -6306,4 +6406,105 @@ fn test_merge_retains_branch_checked_out_in_another_worktree(mut repo: TestRepo)
         stderr.contains("retained") && stderr.contains("still checked out"),
         "output should explain the branch was retained:\n{stderr}",
     );
+}
+
+/// The final ref lookup detects concurrent changes after the target ref and
+/// worktree have moved. Its failure must retain that completed work for both
+/// standalone push and the composing merge command, for either push strategy.
+#[cfg(unix)]
+#[rstest]
+#[case::push_ff(false, false)]
+#[case::push_no_ff(false, true)]
+#[case::merge_ff(true, false)]
+#[case::merge_no_ff(true, true)]
+fn json_retains_target_advance_after_post_sync_lookup_failure(
+    mut repo: TestRepo,
+    #[case] merge: bool,
+    #[case] no_ff: bool,
+) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let feature = repo.add_feature();
+    let before = repo.git_output(&["rev-parse", "main"]);
+    let source = repo.git_output(&["rev-parse", "feature"]);
+    assert_ne!(before, source);
+    assert!(!repo.root_path().join("feature.txt").exists());
+
+    let wrapper = crate::common::test_tempdir();
+    let synced = wrapper.path().join("synced");
+    let script = r#"#!/bin/sh
+if [ "$1 $2" = 'rev-parse refs/heads/main' ] && [ -f "$WORKTRUNK_TEST_SYNCED" ]; then
+  echo 'injected post-sync lookup failure' >&2
+  exit 71
+fi
+if [ "$3" = 'read-tree' ]; then
+  "$WORKTRUNK_TEST_REAL_GIT" "$@" || exit $?
+  : > "$WORKTRUNK_TEST_SYNCED"
+  exit 0
+fi
+exec "$WORKTRUNK_TEST_REAL_GIT" "$@"
+"#;
+    let wrapper_git = wrapper.path().join("git");
+    fs::write(&wrapper_git, script).unwrap();
+    fs::set_permissions(&wrapper_git, fs::Permissions::from_mode(0o755)).unwrap();
+    let (path_var, path) = make_path_with_mock_bin(wrapper.path());
+    let mut command = repo.wt_command();
+    command
+        .current_dir(&feature)
+        .env(path_var, path)
+        .env("WORKTRUNK_TEST_REAL_GIT", which::which("git").unwrap())
+        .env("WORKTRUNK_TEST_SYNCED", &synced);
+    if merge {
+        command.args([
+            "merge",
+            "main",
+            "--no-commit",
+            "--no-squash",
+            "--no-rebase",
+            "--no-remove",
+            "--no-hooks",
+            "--yes",
+        ]);
+    } else {
+        command.args(["step", "push", "main"]);
+    }
+    command.arg("--format=json");
+    if no_ff {
+        command.arg("--no-ff");
+    }
+    let output = command.output().unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert!(synced.exists(), "the real worktree sync must have run");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("injected post-sync lookup failure"));
+    let after = repo.git_output(&["rev-parse", "main"]);
+    assert_ne!(after, before);
+    assert_eq!(
+        fs::read_to_string(repo.root_path().join("feature.txt")).unwrap(),
+        "feature content"
+    );
+    if no_ff {
+        assert_eq!(repo.git_output(&["rev-parse", "main^1"]), before);
+        assert_eq!(repo.git_output(&["rev-parse", "main^2"]), source);
+    } else {
+        assert_eq!(after, source);
+    }
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    if merge {
+        assert_eq!(result["merged"], true, "{result}");
+        assert_eq!(result["removed"], serde_json::Value::Null, "{result}");
+    } else {
+        assert_eq!(result["target"], "main");
+        assert_eq!(result["commits"], 1);
+        assert_eq!(
+            result["outcome"],
+            if no_ff {
+                "merge_commit"
+            } else {
+                "fast_forwarded"
+            }
+        );
+        if no_ff {
+            assert_eq!(result["merge_sha"], after);
+        }
+    }
 }

@@ -192,7 +192,7 @@ mod tests {
             instant("Skeleton rendered", 3_000),
             span("user_config_load", 4_200, 280, 38),
         ];
-        // Wall = 6ms; traced = 4.48ms (4.2ms start → 4.48ms end);
+        // Wall = 6ms; traced = 4.48ms (0ms first start → 4.48ms last end);
         // untraced prelude/epilogue = 6 - 4.48 = 1.52ms.
         insta::assert_snapshot!(
             render_timeline(&entries, Duration::from_micros(6_000)),

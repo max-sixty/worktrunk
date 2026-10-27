@@ -344,45 +344,37 @@ fn test_switch_stops_after_cancelled_powershell_query(
     assert!(!stderr.contains("Cannot change directory"), "{stderr}");
 }
 
-/// With a current shell other than PowerShell, the first profile query is the
-/// install offer's all-shell scan. Cancelling it stops the switch before the
-/// `--execute` program runs; a query that merely fails (a plain exit 130)
-/// falls back and the program runs.
+/// A switch that can't prompt — here stdin isn't a terminal — prints the
+/// install hint without scanning every shell's config, so it spawns neither
+/// the `pwsh` nor the `nu` probe that scan runs.
 #[cfg(unix)]
 #[rstest]
-#[case::sigint("kill -INT $$", 130, false)]
-#[case::sigterm("kill -TERM $$", 143, false)]
-#[case::ordinary_failure("exit 130", 0, true)]
-fn test_switch_offer_after_powershell_query(
-    mut repo: TestRepo,
-    #[case] pwsh_body: &str,
-    #[case] exit_code: i32,
-    #[case] executed: bool,
-) {
-    use std::os::unix::fs::PermissionsExt;
+fn test_switch_hint_skips_shell_config_scan(mut repo: TestRepo) {
+    use crate::common::mock_commands::{MockConfig, MockResponse, mock_calls};
     use std::os::unix::process::CommandExt;
 
     repo.setup_mock_ci_tools_unauthenticated();
-    let pwsh = repo.mock_bin_path().unwrap().join("pwsh");
-    fs::write(&pwsh, format!("#!/bin/sh\n{pwsh_body}\n")).unwrap();
-    fs::set_permissions(&pwsh, fs::Permissions::from_mode(0o755)).unwrap();
+    let mock_bin = repo.mock_bin_path().unwrap();
+    for tool in ["pwsh", "nu"] {
+        MockConfig::new(tool)
+            .command("_default", MockResponse::output("\n"))
+            .write(mock_bin);
+    }
 
-    let marker = repo.root_path().join("executed");
+    let call_log = tempfile::TempDir::new().unwrap();
     let mut cmd = repo.wt_command();
     cmd.env("WORKTRUNK_TEST_PARENT_SHELL", "zsh")
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
         .arg0("wt")
-        .args(["switch", "--create", "feature", "--execute", "touch", "--"])
-        .arg(&marker)
+        .args(["switch", "--create", "feature"])
         .stdin(std::process::Stdio::null());
     let output = cmd.output().unwrap();
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(
-        crate::common::shell_exit_code(&output.status),
-        Some(exit_code),
-        "{stderr}"
-    );
-    assert_eq!(marker.exists(), executed, "{stderr}");
+    assert!(output.status.success(), "{stderr}");
+    assert!(stderr.contains("wt config shell install"), "{stderr}");
+    assert_eq!(mock_calls(call_log.path(), "pwsh"), Vec::<String>::new());
+    assert_eq!(mock_calls(call_log.path(), "nu"), Vec::<String>::new());
 }
 
 /// An ordinary shell scan failure — an rc path that can't be read as a file —
@@ -553,6 +545,58 @@ mod pty_tests {
         });
     }
 
+    /// On a terminal, the install offer scans every shell's config, which asks
+    /// `pwsh` for its profile. Cancelling that query stops the switch, failing
+    /// and with no offer; a query that merely fails (a plain exit 130) falls
+    /// back, and the offer appears. The PTY harness reports a signal death as
+    /// exit 1, so the cases differ by success rather than by exit code.
+    #[rstest]
+    #[case::sigint("kill -INT $$", false)]
+    #[case::sigterm("kill -TERM $$", false)]
+    #[case::ordinary_failure("exit 130", true)]
+    fn test_offer_stops_on_cancelled_powershell_query(
+        repo: TestRepo,
+        #[case] pwsh_body: &str,
+        #[case] offered: bool,
+    ) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_home = TempDir::new().unwrap();
+        fs::write(temp_home.path().join(".bashrc"), "# empty bashrc\n").unwrap();
+        let bin_dir = temp_home.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let pwsh = bin_dir.join("pwsh");
+        fs::write(&pwsh, format!("#!/bin/sh\n{pwsh_body}\n")).unwrap();
+        fs::set_permissions(&pwsh, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let mut env_vars = repo.test_env_vars();
+        env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
+        env_vars.push((
+            "PATH".to_string(),
+            crate::common::setup_minimal_path_with_git(&bin_dir),
+        ));
+
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["switch", "--create", "feature"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, exit_code) = if offered {
+            exec_cmd_in_pty_prompted(cmd, &["n\n"], "[y/N")
+        } else {
+            exec_cmd_in_pty(cmd, "")
+        };
+
+        assert_eq!(exit_code == 0, offered, "exit {exit_code}: {output}");
+        assert_eq!(
+            output.contains("Install shell integration"),
+            offered,
+            "{output}"
+        );
+    }
+
     /// Test: Not installed, user accepts → install and show success
     #[rstest]
     fn test_user_accepts_prompt(repo: TestRepo) {
@@ -607,6 +651,71 @@ mod pty_tests {
         prompt_pty_settings(&repo, temp_home.path()).bind(|| {
             assert_snapshot!("prompt_accept", &output);
         });
+    }
+
+    #[rstest]
+    fn test_prompt_reports_shell_that_fails_after_confirmation(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        let bashrc = temp_home.path().join(".bashrc");
+        let zshrc = temp_home.path().join(".zshrc");
+        fs::write(&bashrc, "# bash config\n").unwrap();
+        fs::write(&zshrc, "# zsh config\n").unwrap();
+
+        let mut env_vars = repo.test_env_vars();
+        env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["switch", "--create", "feature"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let invalid_bashrc = b"\xff\xfe#\0 \0t\0e\0s\0t\0\n\0";
+        let (output, exit_code) = exec_cmd_in_pty_prompted_with(cmd, &["y\n"], "[y/N", |_| {
+            fs::write(&bashrc, invalid_bashrc).unwrap();
+        });
+
+        // The installation offer is best-effort; its failure does not undo the switch.
+        assert_eq!(exit_code, 0, "{output}");
+        assert!(output.contains("Failed to configure bash"), "{output}");
+        assert!(output.contains("Configured 1 shell"), "{output}");
+        assert_eq!(fs::read(&bashrc).unwrap(), invalid_bashrc);
+        assert!(
+            fs::read_to_string(&zshrc)
+                .unwrap()
+                .contains("config shell init zsh")
+        );
+    }
+
+    #[rstest]
+    fn test_prompt_installs_other_shells_when_bashrc_is_invalid(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        let bashrc = temp_home.path().join(".bashrc");
+        let zshrc = temp_home.path().join(".zshrc");
+        let invalid_bashrc = b"\xff\xfe#\0 \0t\0e\0s\0t\0\n\0";
+        fs::write(&bashrc, invalid_bashrc).unwrap();
+        fs::write(&zshrc, "# zsh config\n").unwrap();
+
+        let mut env_vars = repo.test_env_vars();
+        env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["switch", "--create", "feature"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, exit_code) = exec_cmd_in_pty_prompted_with(cmd, &["y\n"], "[y/N", |_| {});
+
+        assert_eq!(exit_code, 0, "{output}");
+        assert!(output.contains("Failed to configure bash"), "{output}");
+        assert!(output.contains("Configured 1 shell"), "{output}");
+        assert_eq!(fs::read(&bashrc).unwrap(), invalid_bashrc);
+        assert!(
+            fs::read_to_string(&zshrc)
+                .unwrap()
+                .contains("config shell init zsh")
+        );
     }
 
     #[rstest]
@@ -821,7 +930,9 @@ mod pty_tests {
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 mod commit_generation_prompt_tests {
     use super::*;
-    use crate::common::pty::{build_pty_command, exec_cmd_in_pty, exec_cmd_in_pty_prompted};
+    use crate::common::pty::{
+        build_pty_command, exec_cmd_in_pty, exec_cmd_in_pty_prompted, exec_cmd_in_pty_prompted_with,
+    };
     use crate::common::wt_bin;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
@@ -1097,9 +1208,9 @@ mod commit_generation_prompt_tests {
 
     /// Test: LLM tool available, user accepts, but the config save fails
     ///
-    /// Points WORKTRUNK_CONFIG_PATH at a path whose parent is a regular file,
-    /// so the write fails with ENOTDIR — exercising the save-failure hint,
-    /// which names the resolved config path via `config_path_for_display`.
+    /// Makes the config path unwritable after the prompt appears, so loading
+    /// succeeds but saving fails with ENOTDIR. This exercises the save-failure
+    /// hint, which names the resolved path via `config_path_for_display`.
     #[rstest]
     fn test_user_accepts_but_save_fails_shows_manual_hint(repo: TestRepo) {
         let temp_home = TempDir::new().unwrap();
@@ -1110,10 +1221,10 @@ mod commit_generation_prompt_tests {
         fs::write(&test_file, "test content\n").unwrap();
         repo.run_git(&["add", "test.txt"]);
 
-        // A regular file standing in for the config's parent directory makes
-        // every write under it fail with ENOTDIR — root-proof, unlike chmod.
+        // Create the blocking file only after config loading has completed.
+        // This isolates a save failure from an earlier read failure and stays
+        // root-proof, unlike chmod.
         let blocker = temp_home.path().join("blocker");
-        fs::write(&blocker, "x").unwrap();
         let unwritable_config = blocker.join("config.toml");
 
         let mut env_vars = repo.test_env_vars();
@@ -1132,7 +1243,9 @@ mod commit_generation_prompt_tests {
             &env_vars,
             Some(temp_home.path()),
         );
-        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["y\n"], "[y/N");
+        let (output, exit_code) = exec_cmd_in_pty_prompted_with(cmd, &["y\n"], "[y/N", |_| {
+            fs::write(&blocker, "x").unwrap();
+        });
 
         // The commit still completes with a fallback message; only the config
         // save fails, so the manual-add hint fires.

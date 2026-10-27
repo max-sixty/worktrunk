@@ -65,11 +65,18 @@ impl Shell {
                     .iter()
                     .map(|pid| (*pid, nix::unistd::getpgid(Some(*pid))))
                     .collect();
+                // A timeout names the processes on the terminal, such as a stuck job.
+                let processes = std::process::Command::new("ps")
+                    .args(["-o", "pid,ppid,pgid,stat,wchan,etime,command", "-t"])
+                    .arg(self.master.tty_name().unwrap())
+                    .output()
+                    .unwrap();
                 panic!(
-                    "missing {marker:?}; shell={:?}, foreground={:?}, members={members:?}, termios={:?}; terminal output:\n{}",
+                    "missing {marker:?}; shell={:?}, foreground={:?}, members={members:?}, termios={:?}; processes:\n{}terminal output:\n{}",
                     self.child.process_id(),
                     self.master.process_group_leader(),
                     self.master.get_termios(),
+                    String::from_utf8_lossy(&processes.stdout),
                     self.output
                 )
             });
@@ -559,12 +566,15 @@ for line in sys.stdin:
     );
 }
 
+/// A real terminal Ctrl-C that the hook handles, once or twice, stops the
+/// pipeline: the worker exits successfully, then wt exits interrupted without
+/// running the next step.
 #[rstest]
 #[case::single_one(false, 1)]
 #[case::single_two(false, 2)]
 #[case::concurrent_one(true, 1)]
 #[case::concurrent_two(true, 2)]
-fn caught_keyboard_interrupt_preserves_success_and_following_step(
+fn caught_keyboard_interrupt_cancels_following_step(
     repo: TestRepo,
     #[case] concurrent: bool,
     #[case] keys: usize,
@@ -607,7 +617,7 @@ while count < {keys}:
     .unwrap();
     let mut shell = Shell::start(&repo);
     shell.send(&format!(
-        "RUST_LOG={} \"$WT_JOB_TEST_BINARY\" -vv hook post-start --yes --foreground; printf 'RESULT_%s\\n' \"$?\"\n",
+        "RUST_LOG={} \"$WT_JOB_TEST_BINARY\" -vv hook post-start --yes --foreground\n",
         crate::common::FOREGROUND_TRACE_FILTER
     ));
     let info = native_info(&repo, "worker-info");
@@ -633,19 +643,27 @@ while count < {keys}:
             std::thread::sleep(Duration::from_millis(10));
         }
     }
-    shell.wait_for("RESULT_0");
+    // The worker exits successfully after handling every key; wt's own
+    // receipt of the key still stops the pipeline. Bash aborts a compound
+    // command after wt's native SIGINT, so read the status from fresh input.
+    shell.wait_for("job-test> ");
+    shell.send("printf 'RESULT_%s\\n' \"$?\"\n");
+    shell.wait_for("RESULT_130");
     assert_eq!(
         std::fs::read_to_string(repo.root_path().join("count")).unwrap(),
         keys.to_string()
     );
-    assert!(repo.root_path().join("next").exists());
+    assert!(!repo.root_path().join("next").exists());
 }
 
 #[rstest]
 fn startup_interrupt_preserves_already_started_child_cleanup(repo: TestRepo) {
     let mut commands = vec![
         "a000 = 'exec python3 worker.py'".to_string(),
-        "a001 = 'while [ ! -f worker-info ]; do :; done; kill -STOP \"$PPID\"; printf ready > paused-admitted; while :; do :; done'".to_string(),
+        // Stop wt at once: waiting on the worker's startup lets wt spawn every
+        // later command first.
+        "a001 = 'kill -STOP \"$PPID\"; printf ready > paused-admitted; while :; do :; done'"
+            .to_string(),
     ];
     commands.extend((2..120).map(|index| {
         format!("a{index:03} = 'printf ready > admitted-{index:03}; while :; do :; done'")

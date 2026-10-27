@@ -1,8 +1,11 @@
-// Worktrunk activity tracking plugin for OpenCode.
+// Worktrunk plugin for OpenCode.
 //
 // Tracks OpenCode session activity per branch, showing status markers in `wt list`:
 //   🤖 — agent is working
 //   💬 — agent is waiting for input
+//
+// Under OpenCode 2 it also registers a worktree strategy, so worktrees OpenCode
+// creates and removes go through `wt switch --create` and `wt remove`.
 //
 // Installed globally via: wt config plugins opencode install
 // Or manually: copy to ~/.config/opencode/plugins/worktrunk.ts
@@ -20,6 +23,8 @@
 // versions, and a lone file in the config directory has no package to resolve.
 
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { basename, join } from "node:path";
 import { promisify } from "node:util";
 
 const execute = promisify(execFile);
@@ -50,12 +55,110 @@ type SessionEvent = {
   data?: { status?: { type?: string } };
 };
 
+type Signal = { signal: AbortSignal };
+
+type WorktreeDefinition = {
+  id: string;
+  create(
+    input: { sourceDirectory: string; directory: string; branch?: string },
+    context: Signal,
+  ): Promise<{ directory: string }>;
+  remove(input: { directory: string; force: boolean }, context: Signal): Promise<void>;
+  list(
+    sourceDirectory: string,
+    context: Signal,
+  ): Promise<{ directory: string; type: "root" | "worktree" }[]>;
+};
+
 type SetupContext = {
   location?: { directory: string };
   event?: { subscribe(options?: { signal?: AbortSignal }): AsyncIterable<SessionEvent> };
+  worktree?: {
+    transform(callback: (editor: { add(definition: WorktreeDefinition): void }) => void): Promise<unknown>;
+  };
 };
 
-function setup(context: SetupContext) {
+/**
+ * Run `wt` and return its stdout, surfacing its stderr as the error message.
+ *
+ * OpenCode reports a strategy's error to the user, and wt's own message (a
+ * dirty worktree, a branch that already exists) says more than the exit code.
+ */
+async function wt(args: string[], { signal }: Signal): Promise<string> {
+  try {
+    const { stdout } = await execute("wt", args, { signal, maxBuffer: 16 * 1024 * 1024 });
+    return stdout;
+  } catch (error) {
+    const stderr = (error as { stderr?: string }).stderr?.trim();
+    throw new Error(stderr || (error instanceof Error ? error.message : String(error)));
+  }
+}
+
+// OpenCode's own `git` strategy creates a detached checkout at a generated
+// path. This one keeps worktrunk's model instead: each worktree gets a branch,
+// named after the directory OpenCode suggests (the name the user typed, or a
+// generated slug), at the path the `worktree-path` template picks. OpenCode
+// accepts a strategy returning a different directory than it suggested.
+//
+// A dirty worktree fails removal with wt's message. OpenCode only offers to
+// force when the error is its own `Worktree.OperationError` class, which a lone
+// plugin file has no package to import from.
+const strategy: WorktreeDefinition = {
+  id: "worktrunk",
+  async create({ sourceDirectory, directory, branch }, context) {
+    const name = basename(directory);
+    // `branch` is the starting ref, not the new branch's name. Reopen a branch
+    // that already exists, as the Claude Code hook does, but refuse a starting
+    // ref for one rather than silently ignore it.
+    let exists = true;
+    try {
+      await execute("git", ["-C", sourceDirectory, "rev-parse", "--verify", "--quiet", `refs/heads/${name}`], context);
+    } catch {
+      exists = false;
+    }
+    if (exists && branch) {
+      throw new Error(`Branch ${name} already exists, so it can't start from ${branch}`);
+    }
+    const args = ["-C", sourceDirectory, "switch", name, "--no-cd", "--format=json"];
+    if (!exists) args.push("--create");
+    if (branch) args.push("--base", branch);
+    const { path } = JSON.parse(await wt(args, context)) as { path: string };
+    return { directory: path };
+  },
+  async remove({ directory, force }, context) {
+    // Already gone, whether removed by hand or by `wt remove` itself.
+    if (!existsSync(join(directory, ".git"))) return;
+    await wt(["-C", directory, "remove", "--foreground", ...(force ? ["--force"] : []), directory], context);
+  },
+  async list(sourceDirectory, context) {
+    const { stdout } = await execute("git", ["-C", sourceDirectory, "worktree", "list", "--porcelain", "-z"], context);
+    // Records are NUL-separated fields, each record ending in an empty field.
+    // The first record is the main worktree, or the bare repository, which has
+    // no checkout to report.
+    const entries: { directory: string; type: "root" | "worktree" }[] = [];
+    let fields: string[] = [];
+    let first = true;
+    for (const field of stdout.split("\0")) {
+      if (field) {
+        fields.push(field);
+        continue;
+      }
+      if (fields.length === 0) continue;
+      const path = fields[0].startsWith("worktree ") ? fields[0].slice("worktree ".length) : undefined;
+      const skip = fields.some((f) => f === "bare" || f === "prunable" || f.startsWith("prunable "));
+      if (path && !skip) entries.push({ directory: path, type: first ? "root" : "worktree" });
+      first = false;
+      fields = [];
+    }
+    return entries;
+  },
+};
+
+async function setup(context: SetupContext) {
+  // A host without worktree strategies passes no `worktree`, including the
+  // OpenCode 1.18 loader noted below; activity tracking doesn't depend on it.
+  await context.worktree?.transform((editor) => editor.add(strategy));
+
   const directory = context.location?.directory;
   const events = context.event;
   // OpenCode 1.18 also calls `setup`, from a second loader that passes neither

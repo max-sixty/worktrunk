@@ -9,7 +9,7 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 
 use color_print::cformat;
-use normalize_path::NormalizePath;
+use path_slash::PathExt as _;
 use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 use worktrunk::path::{format_path_for_display, paths_match};
@@ -30,36 +30,7 @@ pub fn compute_worktree_path(
     branch: &str,
     config: &UserConfig,
 ) -> anyhow::Result<PathBuf> {
-    let repo_root = repo.repo_path()?;
-    let default_branch = repo.default_branch().unwrap_or_default();
-    let is_bare = repo.is_bare()?;
-
-    // Default branch lives at repo root (main worktree), not a templated path.
-    // Exception: bare repos have no main worktree, so all branches use templated paths.
-    if !is_bare && branch == default_branch {
-        return Ok(repo_root.to_path_buf());
-    }
-
-    let repo_name = repo_root
-        .file_name()
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Repository path has no filename: {}",
-                format_path_for_display(repo_root)
-            )
-        })?
-        .to_str()
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Repository path contains invalid UTF-8: {}",
-                format_path_for_display(repo_root)
-            )
-        })?;
-
-    let project = repo.project_identifier().ok();
-    let expanded_path = config.format_path(repo_name, branch, repo, project.as_deref())?;
-
-    Ok(repo_root.join(expanded_path).normalize())
+    config.expected_worktree_path(repo, branch)
 }
 
 /// Check if a worktree is at its expected path based on config template.
@@ -86,8 +57,10 @@ pub fn is_worktree_at_expected_path(
 ///
 /// Returns styled content with branch names bolded:
 /// - If branch is consistent with worktree location: just the branch name (bolded)
-/// - If branch differs from expected location: `dir_name (on **branch**)` (both bolded)
-/// - If detached HEAD: `dir_name (detached)` (dir_name bolded)
+/// - If branch differs from expected location: `branch @ path` (both bolded)
+/// - If detached HEAD: `path (detached)` (path bolded)
+///
+/// Paths use the full display path, including home-directory abbreviation.
 ///
 /// "Consistent" means the worktree path matches `compute_worktree_path(branch)`,
 /// which returns repo root for default branch and templated path for others.
@@ -96,17 +69,17 @@ pub fn worktree_display_name(
     repo: &Repository,
     config: &UserConfig,
 ) -> String {
-    let dir_name = wt.dir_name();
+    let path = format_path_for_display(&wt.path);
 
     match &wt.branch {
         Some(branch) => {
             if is_worktree_at_expected_path(wt, repo, config) {
                 cformat!("<bold>{branch}</>")
             } else {
-                cformat!("<bold>{dir_name}</> (on <bold>{branch}</>)")
+                cformat!("<bold>{branch}</> @ <bold>{path}</>")
             }
         }
-        None => cformat!("<bold>{dir_name}</> (detached)"),
+        None => cformat!("<bold>{path}</> (detached)"),
     }
 }
 
@@ -130,6 +103,7 @@ fn template_references_repo_name(template: &str) -> bool {
 /// When a bare repo lives at a hidden path like `.git` or `.bare`, the `{{ repo }}`
 /// template variable resolves to that directory name, producing broken worktree paths.
 /// This function detects the situation and offers to set a project-level override.
+/// `branch` is the branch the switch resolved to, which the example paths show.
 ///
 /// Returns `true` if config was modified (caller should use the updated config).
 pub fn offer_bare_repo_worktree_path_fix(
@@ -138,13 +112,6 @@ pub fn offer_bare_repo_worktree_path_fix(
     branch: &str,
 ) -> anyhow::Result<bool> {
     if !repo.is_bare()? {
-        return Ok(false);
-    }
-
-    // Symbolic identifiers (-, @, ^, pr:N, mr:N) haven't been resolved to a real
-    // branch name yet, so the example paths would be misleading. Skip the prompt;
-    // it will surface on the next switch with a concrete branch name.
-    if branch == "-" || branch == "@" || branch == "^" || branch.contains(':') {
         return Ok(false);
     }
 
@@ -175,11 +142,19 @@ pub fn offer_bare_repo_worktree_path_fix(
         .and_then(|n| n.to_str())
         .unwrap_or("project");
 
-    // Use the actual branch being switched to in example paths. Calling
-    // `sanitize_branch_name` keeps the displayed example aligned with what
-    // the `sanitize` Jinja filter applies inside `BARE_REPO_WORKTREE_PATH`.
+    // Use the actual branch being switched to in example paths. The bad
+    // example is where the configured template puts it, shown relative to
+    // the project's parent when it lands there. Calling
+    // `sanitize_branch_name` keeps the good example aligned with what the
+    // `sanitize` Jinja filter applies inside `BARE_REPO_WORKTREE_PATH`.
+    let bad_path = compute_worktree_path(repo, branch, config)?;
+    let example_bad = repo_path
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|root| bad_path.strip_prefix(root).ok())
+        .map(|rel| rel.to_slash_lossy().into_owned())
+        .unwrap_or_else(|| format_path_for_display(&bad_path).to_string());
     let sanitized = worktrunk::config::sanitize_branch_name(branch);
-    let example_bad = format!("{parent_name}/{repo_name}.{sanitized}");
     let example_good = format!("{parent_name}/{sanitized}");
 
     let config_path_display = worktrunk::config::config_path_for_display();

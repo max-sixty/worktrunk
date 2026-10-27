@@ -64,7 +64,7 @@ exit_code: 0
 [36mPROJECT CONFIG[39m @ _REPO_/.config/wt.toml
 [2m○[22m Identifier: [1m../origin[22m
 [33m▲[39m [33mProject config: [1m[commit-generation][22m is deprecated in favor of [1m[commit.generation][22m[39m
-[2m↳[22m [2mTo apply: [4mwt config update[24m[22m
+[2m↳[22m [2mTo apply these updates, run [4mwt config update[24m[22m
 [2m○[22m Proposed diff:
 [107m [0m [1mdiff --git a/wt.toml/current b/wt.toml/migrated[m
 [107m [0m [1mindex 074c30f..bcaf404 100644[m

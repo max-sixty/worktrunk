@@ -178,6 +178,35 @@ fn test_configure_shell_bashrc_directory_fails(repo: TestRepo, temp_home: TempDi
 }
 
 #[rstest]
+fn test_configure_shell_continues_after_invalid_bashrc(repo: TestRepo, temp_home: TempDir) {
+    let bashrc = temp_home.path().join(".bashrc");
+    let zshrc = temp_home.path().join(".zshrc");
+    let utf16_bashrc = b"\xff\xfe#\0 \0t\0e\0s\0t\0\n\0";
+    fs::write(&bashrc, utf16_bashrc).unwrap();
+    fs::write(&zshrc, "# zsh config\n").unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/zsh");
+    cmd.args(["config", "shell", "install", "--yes"])
+        .current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(stderr.contains("Failed to configure bash"), "{stderr}");
+    assert!(stderr.contains("not UTF-8 (looks like UTF-16)"), "{stderr}");
+    assert!(stderr.contains("Configured 1 shell"), "{stderr}");
+    assert!(
+        fs::read_to_string(&zshrc)
+            .unwrap()
+            .contains("config shell init zsh")
+    );
+    assert_eq!(fs::read(&bashrc).unwrap(), utf16_bashrc);
+}
+
+#[rstest]
 fn test_configure_shell_already_exists(repo: TestRepo, temp_home: TempDir) {
     // Create a fake .zshrc file with the line already present
     let zshrc_path = temp_home.path().join(".zshrc");
@@ -1567,7 +1596,11 @@ fn test_install_uninstall_roundtrip(repo: TestRepo, temp_home: TempDir) {
 }
 
 #[rstest]
-fn test_uninstall_scan_removes_all_worktrunk_zsh_lines(repo: TestRepo, temp_home: TempDir) {
+fn test_uninstall_scan_removes_all_worktrunk_zsh_lines(
+    repo: TestRepo,
+    temp_home: TempDir,
+    #[values("git-wt", "git-wt.exe")] command_name: &str,
+) {
     let zshrc_path = temp_home.path().join(".zshrc");
     fs::write(
         &zshrc_path,
@@ -1582,7 +1615,13 @@ fn test_uninstall_scan_removes_all_worktrunk_zsh_lines(repo: TestRepo, temp_home
     install_cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
     install_cmd
         .args([
-            "config", "shell", "install", "zsh", "--yes", "--cmd", "git-wt",
+            "config",
+            "shell",
+            "install",
+            "zsh",
+            "--yes",
+            "--cmd",
+            command_name,
         ])
         .current_dir(repo.root_path());
 
@@ -1593,7 +1632,9 @@ fn test_uninstall_scan_removes_all_worktrunk_zsh_lines(repo: TestRepo, temp_home
         String::from_utf8_lossy(&install_output.stderr)
     );
     let installed = fs::read_to_string(&zshrc_path).unwrap();
-    assert!(installed.contains("git-wt config shell init zsh"));
+    assert!(installed.contains(&format!("{command_name} config shell init zsh")));
+    assert!(install_cmd.output().unwrap().status.success());
+    assert_eq!(fs::read_to_string(&zshrc_path).unwrap(), installed);
 
     // A hand-written line in the `git wt` dispatch form, which install never
     // emits: uninstall recognizes worktrunk's integration by whatever name it
@@ -1621,7 +1662,7 @@ fn test_uninstall_scan_removes_all_worktrunk_zsh_lines(repo: TestRepo, temp_home
 
     let content = fs::read_to_string(&zshrc_path).unwrap();
     assert!(
-        !content.contains("git-wt config shell init zsh"),
+        !content.contains(&format!("{command_name} config shell init zsh")),
         "Custom command integration should be removed"
     );
     assert!(
@@ -1642,11 +1683,12 @@ fn test_uninstall_preserves_user_lines_quoting_the_init_command(
     repo: TestRepo,
     temp_home: TempDir,
 ) {
-    // Each survivor puts `wt config shell init` in argument position while an
-    // exec keyword sits elsewhere on the line — the shape that makes the
-    // whole-line execution-context check alone insufficient.
+    // Mentioning or wrapping an init invocation does not make the user's
+    // entire statement Worktrunk-owned.
     let survivors = [
         r#"alias setup='echo "run: wt config shell init fish | source"'"#,
+        r#"alias setup='eval "$(wt config shell init zsh)"'"#,
+        r#"eval "$(wt config shell init zsh)"; echo keep-me"#,
         r#"echo "wt config shell init bash | source""#,
     ];
     let zshrc_path = temp_home.path().join(".zshrc");
@@ -3577,8 +3619,10 @@ fn test_configure_shell_absolute_zdotdir_is_honoured(repo: TestRepo, temp_home: 
     set_temp_home_env(&mut cmd, temp_home.path());
     cmd.env("SHELL", "/bin/zsh");
     cmd.env("ZDOTDIR", &zdotdir);
-    cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
-    cmd.args(["config", "shell", "install", "zsh", "--yes"]);
+    cmd.env("WORKTRUNK_TEST_COMPINIT_MISSING", "1");
+    cmd.args([
+        "config", "shell", "install", "zsh", "--yes", "--cmd", "git-wt",
+    ]);
     cmd.current_dir(repo.root_path());
 
     let output = cmd.output().expect("install command should run");
@@ -3588,6 +3632,17 @@ fn test_configure_shell_absolute_zdotdir_is_honoured(repo: TestRepo, temp_home: 
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
+
+    setup_home_snapshot_settings(&temp_home).bind(|| {
+        insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+        [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m_PARENT_/zsh-config/.zshrc[22m[39m
+
+        [32m✓[39m [32mConfigured 1 shell[39m
+        [33m▲[39m [33mCompletions require compinit; add to _PARENT_/zsh-config/.zshrc before the git-wt line:[39m
+        [107m [0m [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m
+        [2m↳[22m [2mRestart shell to activate shell integration[22m
+        ");
+    });
 
     let zdotdir_contents = fs::read_to_string(zdotdir.join(".zshrc")).unwrap();
     assert!(

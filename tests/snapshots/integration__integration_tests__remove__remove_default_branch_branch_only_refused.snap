@@ -51,4 +51,3 @@ exit_code: 1
 
 ----- stderr -----
 ✗ Cannot remove the default branch main
-↳ To force-delete, run wt remove -D main

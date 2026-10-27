@@ -15,10 +15,10 @@
 //! Commands retain EOF semantics, including output from surviving descendants,
 //! regardless of ordinary exit status. Cancellation drains queued bytes and
 //! releases pipes even when an unowned descendant retains a write end.
-//! Once direct waits finish, the signal listener releases its command lease;
-//! a newly delivered interrupt cancels any remaining output wait.
-//! Ctrl-C reaches the native job through the kernel; a caught key preserves
-//! each child's normal status. PID-targeted SIGTERM reaches owned direct children.
+//! Once direct waits finish, the signal listener releases its command lease.
+//! Ctrl-C reaches the native job through the kernel. Each child handles it its
+//! own way; wt's receipt of the key cancels the group once they exit, including
+//! any remaining output wait. PID-targeted SIGTERM reaches owned direct children.
 //!
 //! Every admitted child runs to completion. Spawn failures occupy the same
 //! per-command outcome slots as child exits; the pipeline owns identity and
@@ -43,6 +43,8 @@ use worktrunk::command_log::log_command;
 #[cfg(unix)]
 use worktrunk::git::ErrorExt;
 use worktrunk::git::WorktrunkError;
+#[cfg(unix)]
+use worktrunk::shell_exec::TerminalInterrupt;
 use worktrunk::shell_exec::{
     ShellConfig, apply_cd_directive_env, scrub_directive_env_vars, scrub_git_discovery_env_vars,
     wait_foreground_child,
@@ -97,7 +99,7 @@ pub fn run_concurrent_commands(
 
     // Install before spawn so startup signals remain queued.
     #[cfg(unix)]
-    let signals = ForegroundSignals::install()?;
+    let signals = ForegroundSignals::install(TerminalInterrupt::Cancels)?;
 
     let mut children = Vec::with_capacity(cmds.len());
     let mut outcomes = (0..cmds.len()).map(|_| Ok(())).collect::<Vec<_>>();
@@ -218,9 +220,9 @@ fn drain_children(
                     outcomes.push(outcome);
                 }
                 if outcomes.len() == child_count {
-                    // The execution lease ends here; the provider observes only
-                    // newly delivered INT while descendants retain output pipes.
-                    signal_thread.finish_children()?;
+                    // The execution lease ends here. A Ctrl-C received at any
+                    // point stops waiting for descendants that hold the pipes.
+                    signal_thread.finish_children();
                 }
                 if outcomes.len() == child_count && signal_thread.interrupt_signal().is_some() {
                     for pipe in &mut pipes {
@@ -447,7 +449,7 @@ fn run_serial_with_prefix(
     let mut outcomes = Vec::with_capacity(cmds.len());
     for (index, cmd) in cmds.iter().enumerate() {
         #[cfg(unix)]
-        let signals = ForegroundSignals::install()?;
+        let signals = ForegroundSignals::install(TerminalInterrupt::Cancels)?;
         match spawn_child(
             shell,
             index,

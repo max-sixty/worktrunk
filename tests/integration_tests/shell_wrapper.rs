@@ -1303,6 +1303,31 @@ mod unix_tests {
         assert_eq!(fs::read_dir(tmp.path()).unwrap().count(), 0, "{combined}");
     }
 
+    /// Redirecting the wrapper's stdout must not abort it when the command
+    /// prints nothing there. Under `o>`, Nushell fails to convert a
+    /// `try … finally` that evaluates to nothing, and the script stopped
+    /// after the directory change was lost.
+    #[rstest]
+    fn test_nu_wrapper_redirected_stdout_applies_cd(mut repo: TestRepo) {
+        repo.add_worktree("nu-redirect");
+        let target = canonicalize(repo.worktree_path("nu-redirect")).unwrap();
+        let mut script = String::new();
+        append_wrapper_setup(&mut script, "nu", &repo);
+        script.push_str(&format!(
+            "wt switch nu-redirect o> /dev/null\nprint $\"WT_CD:($env.PWD == {})\"\n",
+            nushell_quote(&target.to_string_lossy()),
+        ));
+
+        let config_path = repo.test_config_path().to_string_lossy().to_string();
+        let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
+        let env_vars = build_test_env_vars(&config_path, &approvals_path);
+        let (combined, exit_code) =
+            exec_in_pty_interactive("nu", &script, repo.root_path(), &env_vars, &[]);
+
+        assert_eq!(exit_code, 0, "Output:\n{combined}");
+        assert!(combined.contains("WT_CD:true"), "Output:\n{combined}");
+    }
+
     /// Native signal deaths must cross Nushell's negative-status boundary
     /// before the wrapper propagates the status, after applying CD and cleanup.
     #[rstest]

@@ -34,9 +34,13 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use worktrunk::git::WorktrunkError;
+#[cfg(unix)]
+use worktrunk::shell_exec::TerminalInterrupt;
 #[cfg(not(unix))]
 use worktrunk::shell_exec::wait_shared_child;
 use worktrunk::shell_exec::{DIRECTIVE_EXEC_FILE_ENV_VAR, RETIRED_DIRECTIVE_FILE_ENV_VAR};
+#[cfg(unix)]
+use worktrunk::signal_forwarder::ForegroundSignals;
 use worktrunk::trace::CommandTrace;
 
 use crate::cli::build_command;
@@ -87,13 +91,7 @@ pub(crate) fn handle_custom_command(
     // requires UTF-8, but we only run it after confirming the name is a
     // configured alias, so non-UTF-8 args meant for a custom subcommand binary
     // don't surface as alias parse errors.
-    let alias_args: Option<Vec<String>> = rest
-        .iter()
-        .map(|a| a.to_str().map(|s| s.to_owned()))
-        .collect();
-    if let Some(alias_args) = alias_args
-        && let Some(()) = try_alias(name.clone(), alias_args, yes)?
-    {
+    if let Some(()) = try_alias(name.clone(), &rest, yes)? {
         return Ok(());
     }
 
@@ -147,7 +145,7 @@ fn run_custom(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> Res
     }
 
     #[cfg(unix)]
-    let signals = worktrunk::signal_forwarder::ForegroundSignals::install()?;
+    let signals = ForegroundSignals::install(TerminalInterrupt::ChildInput)?;
     let mut trace = CommandTrace::new(None, &path.display().to_string());
     #[cfg(unix)]
     let spawned = signals.spawn(&mut cmd);

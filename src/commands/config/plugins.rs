@@ -152,8 +152,10 @@ struct PermissionRequest {
 ///   session 💬 while the dialog waits. One hook does both because Claude Code
 ///   runs every matching hook in parallel.
 /// - `WorktreeCreate` runs `wt switch --create` and prints the new worktree's
-///   path, which Claude Code reads as the hook's answer. A failure exits
-///   nonzero with nothing on stdout (#3545).
+///   path, which Claude Code reads as the hook's answer. A name whose branch
+///   already exists switches to it without `--create`, since Claude Code fires
+///   the hook again when `claude --worktree <name>` reopens a kept worktree
+///   (#4486). A failure exits nonzero with nothing on stdout (#3545).
 /// - `WorktreeRemove` resolves against the worktree path Claude Code hands
 ///   over, never `CLAUDE_PROJECT_DIR`: the `claude agents` view spans
 ///   repositories, so no single project dir is right for every session
@@ -185,11 +187,17 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
             set_marker(&project_dir, &["set", "💬"])
         }
         ClaudeHook::WorktreeCreate { name } => {
-            let stdout = run_wt(
-                Cmd::new(wt_binary()?)
-                    .args(["switch", "--create", &name, "--no-cd", "--format=json"])
-                    .current_dir(&project_dir),
-            )?;
+            // A directory no repository resolves from falls through to
+            // `--create`, which reports wt's own error.
+            let exists = Repository::at(&project_dir)
+                .and_then(|repo| repo.branch(&name).exists_locally())
+                .unwrap_or(false);
+            let mut args = vec!["switch"];
+            if !exists {
+                args.push("--create");
+            }
+            args.extend([name.as_str(), "--no-cd", "--format=json"]);
+            let stdout = run_wt(Cmd::new(wt_binary()?).args(args).current_dir(&project_dir))?;
             let created: serde_json::Value = serde_json::from_slice(&stdout)
                 .context("Failed to parse `wt switch --format=json` output")?;
             let path = created["path"]
