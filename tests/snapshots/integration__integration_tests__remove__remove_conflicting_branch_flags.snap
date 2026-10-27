@@ -61,4 +61,4 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mCannot use --force-delete with delete-branch=false (set via --no-delete-branch or [remove] delete-branch = false)[39m
+[31m✗[39m [31mCannot use --force-delete with --no-delete-branch[39m

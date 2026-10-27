@@ -51,6 +51,7 @@ Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...[0m
 
 [1m[32mOptions:[0m
       [1m[36m--no-delete-branch[0m  Keep branch after removal
+      [1m[36m--delete-branch[0m     Delete branch after removal (overrides config [1m[remove] delete-branch = false[0m)
   [1m[36m-D[0m, [1m[36m--force-delete[0m      Delete unmerged branches
       [1m[36m--foreground[0m        Run removal in foreground (block until complete)
       [1m[36m--reap[0m              Kill processes started in the worktree [experimental]

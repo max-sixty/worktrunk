@@ -34,6 +34,12 @@ Keep the branch:
 $ wt remove --no-delete-branch feature-branch
 ```
 
+If `[remove] delete-branch = false` is configured, use `--delete-branch` to delete a branch for one removal:
+
+```console
+$ wt remove --delete-branch feature-branch
+```
+
 Force-delete an unmerged branch:
 
 ```console
@@ -147,6 +153,9 @@ Arguments:
 Options:
       --no-delete-branch
           Keep branch after removal
+
+      --delete-branch
+          Delete branch after removal (overrides config [remove] delete-branch = false)
 
   -D, --force-delete
           Delete unmerged branches
