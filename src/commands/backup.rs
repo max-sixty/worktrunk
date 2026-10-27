@@ -98,9 +98,17 @@ pub(crate) fn require_safe_clobber_target(
                     let relative = relative
                         .to_str()
                         .context("Cannot inspect a non-UTF-8 worktree destination")?;
-                    // Git's literal lookup needs explicit case folding when
-                    // its index treats differently cased paths as the same.
-                    let (literal_mode, pathspec) = if fresh.config_bool("core.ignorecase")? {
+                    let worktree = fresh.worktree_at(&existing);
+                    // Read from the checkout owning this index, including its
+                    // config.worktree. Git supplies the canonical boolean.
+                    let ignore_case = worktree.run_command(&[
+                        "config",
+                        "--type=bool",
+                        "--default=false",
+                        "--get",
+                        "core.ignorecase",
+                    ])?;
+                    let (literal_mode, pathspec) = if ignore_case.trim() == "true" {
                         (
                             "--no-literal-pathspecs",
                             format!(":(literal,icase){relative}"),
@@ -108,7 +116,7 @@ pub(crate) fn require_safe_clobber_target(
                     } else {
                         ("--literal-pathspecs", relative.to_owned())
                     };
-                    let output = fresh.worktree_at(&existing).run_command_bytes(&[
+                    let output = worktree.run_command_bytes(&[
                         literal_mode,
                         "ls-files",
                         "-z",

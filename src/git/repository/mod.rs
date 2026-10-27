@@ -1720,7 +1720,7 @@ impl Repository {
     ///
     /// Returns `Err` only when the bulk config read itself fails. A missing
     /// key is `Ok(false)`, matching git's own behaviour for unset booleans.
-    pub fn config_bool(&self, key: &str) -> anyhow::Result<bool> {
+    pub(super) fn config_bool(&self, key: &str) -> anyhow::Result<bool> {
         Ok(self
             .config_last(key)?
             .as_deref()
