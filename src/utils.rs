@@ -175,8 +175,9 @@ pub fn write_new_atomically(path: &Path, content: &str) -> io::Result<()> {
 ///
 /// `relative_path` names a file within `log_dir`. On Unix, new directories
 /// are owner-only; every directory from the file's parent through `log_dir`
-/// is restricted to 0700 and an existing regular file to 0600. Special files
-/// are left alone: opening a FIFO here would block even without a log write.
+/// is restricted to 0700 and an existing regular file to 0600. Log-file
+/// symlinks and special files are left alone: repair must not change a file's
+/// symlink target or block on a FIFO even without a log write.
 pub fn prepare_log_file(log_dir: &Path, relative_path: &Path) -> io::Result<std::path::PathBuf> {
     let path = log_dir.join(relative_path);
     let parent = path
@@ -195,7 +196,7 @@ pub fn prepare_log_file(log_dir: &Path, relative_path: &Path) -> io::Result<std:
         {
             std::fs::set_permissions(ancestor, std::fs::Permissions::from_mode(0o700))?;
         }
-        if path.is_file() {
+        if std::fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_file()) {
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
         }
     }

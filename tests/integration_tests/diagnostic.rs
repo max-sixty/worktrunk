@@ -222,6 +222,35 @@ fn test_audit_permission_repair_does_not_open_fifo(repo: TestRepo) {
     }
 }
 
+/// Inspect the log entry itself so permission repair cannot chmod its symlink target.
+#[cfg(unix)]
+#[rstest]
+fn test_audit_permission_repair_preserves_symlink_target(repo: TestRepo) {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let logs_dir = repo.root_path().join(".git/wt/logs");
+    fs::create_dir_all(&logs_dir).unwrap();
+    let target = repo.home_path().join("unrelated-file");
+    fs::write(&target, "preserved contents").unwrap();
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+    let rotated = logs_dir.join("commands.jsonl.old");
+    symlink(&target, &rotated).unwrap();
+
+    let output = repo.wt_command().args(["list", "-vv"]).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(fs::read_to_string(&target).unwrap(), "preserved contents");
+    assert_eq!(
+        fs::metadata(target).unwrap().permissions().mode() & 0o777,
+        0o755
+    );
+    assert!(
+        fs::symlink_metadata(rotated)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+}
+
 /// Helper to corrupt a worktree's HEAD file to trigger git errors.
 ///
 /// Writes a non-null invalid SHA so the worktree is treated as "valid but
