@@ -1036,7 +1036,12 @@ fn test_post_start_reports_unavailable_command_log(repo: TestRepo) {
 capture = "echo executed > should-not-exist.txt"
 "#,
     );
-    let hook_dir = resolve_git_common_dir(repo.root_path()).join("wt/logs/main/project/post-start");
+    let hook_dir = resolve_git_common_dir(repo.root_path())
+        .join("wt")
+        .join("logs")
+        .join("main")
+        .join("project")
+        .join("post-start");
     let blocked_log = hook_dir.join("capture.log");
     fs::create_dir_all(&blocked_log).unwrap();
 
