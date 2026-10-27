@@ -392,6 +392,12 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         &worktree_paths,
         no_excludes,
     )?;
+    let recovery_error = |error: anyhow::Error, restore: anyhow::Error| {
+        error.context(format!(
+            "Could not restore original state: {restore:#}. Recover staged files from: {}",
+            format_path_for_display(&staging_path)
+        ))
+    };
 
     // Stage ignored files before switching; excluded metadata stays in place.
     let staged = if !main_entries.is_empty() || !target_entries.is_empty() {
@@ -412,10 +418,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
                 false,
             ) {
                 Ok(_) => error,
-                Err(restore) => error.context(format!(
-                    "Failed to restore staged files: {restore:#}. Recover files from: {}",
-                    format_path_for_display(&staging_path)
-                )),
+                Err(restore) => recovery_error(error, restore),
             }
         })?;
         if count > 0 { Some((dir, count)) } else { None }
@@ -451,10 +454,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         });
         return Err(match restore {
             Ok(()) => error,
-            Err(restore) => error.context(format!(
-                "Could not restore original worktrees: {restore:#}. Recover staged files from: {}",
-                format_path_for_display(&staging_path)
-            )),
+            Err(restore) => recovery_error(error, restore),
         });
     }
 

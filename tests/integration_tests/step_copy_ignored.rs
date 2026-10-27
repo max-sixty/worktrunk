@@ -265,6 +265,27 @@ fn test_copy_ignored_exclude_directory_pattern_covers_files(mut repo: TestRepo) 
     );
 }
 
+/// Invalid configured exclusions fail before copying any ignored files.
+#[rstest]
+fn test_copy_ignored_invalid_configured_exclude(mut repo: TestRepo) {
+    let feature = repo.add_worktree("feature");
+    fs::write(repo.root_path().join(".gitignore"), ".env\n").unwrap();
+    fs::write(repo.root_path().join(".env"), "secret").unwrap();
+    repo.write_test_config("[step.copy-ignored]\nexclude = [\"{unclosed\"]\n");
+
+    assert_cmd_snapshot!(snapshot_cmd(
+        &repo,
+        "step",
+        &["copy-ignored"],
+        Some(&feature),
+    ));
+    assert_eq!(
+        fs::read_to_string(repo.root_path().join(".env")).unwrap(),
+        "secret"
+    );
+    assert!(!feature.join(".env").exists());
+}
+
 /// Test error handling when .worktreeinclude has invalid syntax
 #[rstest]
 fn test_copy_ignored_invalid_worktreeinclude(mut repo: TestRepo) {
