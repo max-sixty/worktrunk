@@ -28,6 +28,7 @@ use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, suggest_command,
     warning_message,
 };
+use worktrunk::utils::escape_controls;
 
 use super::resolve::{compute_worktree_path, offer_bare_repo_worktree_path_fix};
 use super::types::{CreationMethod, RefIdentity, SwitchBranchInfo, SwitchPlan, SwitchResult};
@@ -192,13 +193,14 @@ fn format_ref_context(info: &RemoteRefInfo) -> String {
     }
     status_parts.push(info.source_ref());
     let status_line = status_parts.join(" · ");
+    let status_line = escape_controls(&status_line);
 
     cformat!(
         "<bold>{}</> ({}{})\n{status_line} · <bright-black>{}</>",
-        info.title,
+        escape_controls(&info.title),
         info.ref_type().symbol(),
         info.number,
-        info.url
+        escape_controls(&info.url)
     )
 }
 
