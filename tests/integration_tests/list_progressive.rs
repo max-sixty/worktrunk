@@ -5,7 +5,7 @@
 #![cfg(all(unix, feature = "shell-integration-tests"))]
 
 use crate::common::progressive_output::{ProgressiveCaptureOptions, capture_progressive_output};
-use crate::common::pty::{build_pty_command, exec_cmd_in_pty};
+use crate::common::pty::{build_pty_command, exec_cmd_in_pty, exec_cmd_in_pty_prompted_with};
 use crate::common::{TestRepo, repo, wt_bin};
 use ansi_str::AnsiStr;
 use rstest::rstest;
@@ -107,6 +107,50 @@ fn test_list_progressive_loading_footer() {
             "final summary missing: {output}"
         );
     }
+}
+
+/// Keep one summary pending until the stall footer is visible, then let it
+/// finish. Dropping the gate also releases the command if the test panics.
+#[test]
+fn test_list_progressive_stall_keeps_task_progress() {
+    let mut repo = TestRepo::standard_main_only();
+    repo.add_worktree("clean");
+    std::fs::write(repo.root_path().join("file.txt"), "changed\n").unwrap();
+    repo.write_test_config(
+        r#"
+[list]
+columns = ["branch", "summary"]
+
+[commit.generation]
+command = 'cat >/dev/null; while [ -e "$WORKTRUNK_TEST_SUMMARY_GATE" ]; do sleep 0.05; done; echo Update content'
+"#,
+    );
+    let mut gate = Some(tempfile::NamedTempFile::new_in(repo.home_path()).unwrap());
+    let mut env = repo.test_env_vars();
+    env.push((
+        "WORKTRUNK_TEST_SUMMARY_GATE".to_owned(),
+        gate.as_ref().unwrap().path().to_str().unwrap().to_owned(),
+    ));
+    let cmd = build_pty_command(
+        wt_bin().to_str().unwrap(),
+        &["list", "--progressive"],
+        repo.root_path(),
+        &env,
+        None,
+    );
+    let stall_marker = "1/2 tasks complete — no recent progress;";
+    let (raw, exit_code) = exec_cmd_in_pty_prompted_with(cmd, &[""], stall_marker, |_| {
+        gate.take();
+    });
+    assert_eq!(exit_code, 0);
+    let output = raw.ansi_strip();
+    let stall = output
+        .lines()
+        .find(|line| line.contains(stall_marker))
+        .unwrap();
+    insta::assert_snapshot!(stall.trim(), @"○ 1/2 tasks complete — no recent progress; waiting on summary generation for main — 2 worktrees");
+    assert!(output.contains("○ 2/2 tasks complete — 2 worktrees"));
+    assert!(output.contains("Showing 2 worktrees"));
 }
 
 /// Tests progressive rendering with multiple worktrees.
