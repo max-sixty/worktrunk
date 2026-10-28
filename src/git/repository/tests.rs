@@ -3243,6 +3243,118 @@ fn unknown_operation_identity_blocks_branch_deletion() {
     assert!(repo.branch("feature").exists_locally().unwrap());
 }
 
+/// An operation whose held refs cannot be read must retain even an unrelated,
+/// integrated branch: its unknown identity could be the one being deleted.
+#[test]
+fn corrupt_operation_state_blocks_branch_deletion() {
+    let zero = "0000000000000000000000000000000000000000";
+    let invalid_update_ref = format!("refs/heads/bad..branch\n{zero}\n{zero}\n");
+    for (relative, contents) in [
+        ("rebase-merge/head-name", Some("refs/heads/bad..branch\n")),
+        ("BISECT_START", Some("bad..branch\n")),
+        ("BISECT_START", None),
+        ("rebase-merge/update-refs", Some("refs/heads/feature\n")),
+        (
+            "rebase-merge/update-refs",
+            Some(invalid_update_ref.as_str()),
+        ),
+        ("rebase-merge/update-refs", None),
+    ] {
+        let mut test = TestRepo::with_initial_commit();
+        let linked = paused_linked_rebase(&mut test);
+        test.create_branch("candidate");
+        let registration = Repository::git_dir_at(&linked).unwrap();
+        if relative == "BISECT_START" {
+            std::fs::write(registration.join("BISECT_LOG"), "").unwrap();
+        }
+        let path = registration.join(relative);
+        if let Some(contents) = contents {
+            std::fs::write(&path, contents).unwrap();
+        } else {
+            std::fs::create_dir(&path).unwrap();
+        }
+        let repo = Repository::at(test.root_path()).unwrap();
+        let result = crate::git::delete_branch_if_safe(
+            &repo,
+            &repo.capture_refs().unwrap(),
+            "candidate",
+            "main",
+            false,
+        );
+        assert!(
+            result.is_err(),
+            "must retain candidate after damaging {relative}"
+        );
+        assert!(repo.branch("candidate").exists_locally().unwrap());
+    }
+}
+
+/// Failure to inspect an operation marker is not evidence that no operation
+/// holds a branch. Symlink loops provide a deterministic filesystem refusal.
+#[cfg(unix)]
+#[test]
+fn unreadable_operation_markers_block_branch_deletion() {
+    for marker in ["rebase-apply", "BISECT_LOG"] {
+        let mut test = TestRepo::with_initial_commit();
+        let linked = paused_linked_rebase(&mut test);
+        test.create_branch("candidate");
+        let registration = Repository::git_dir_at(&linked).unwrap();
+        std::os::unix::fs::symlink(marker, registration.join(marker)).unwrap();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let result = crate::git::delete_branch_if_safe(
+            &repo,
+            &repo.capture_refs().unwrap(),
+            "candidate",
+            "main",
+            false,
+        );
+        assert!(
+            result.is_err(),
+            "must retain candidate after damaging {marker}"
+        );
+        assert!(repo.branch("candidate").exists_locally().unwrap());
+    }
+}
+
+/// Ambiguous ownership and an unreadable registry both prevent a complete
+/// checkout topology from authorizing branch deletion.
+#[test]
+fn uncertain_registry_blocks_branch_deletion() {
+    for duplicate in [false, true] {
+        let mut test = TestRepo::with_initial_commit();
+        let linked = test.add_worktree("feature");
+        test.create_branch("candidate");
+        let repo = Repository::at(test.root_path()).unwrap();
+        if duplicate {
+            let sibling = test.add_worktree("sibling");
+            let registration = Repository::git_dir_at(&sibling).unwrap();
+            std::fs::write(
+                registration.join("gitdir"),
+                format!("{}\n", linked.join(".git").to_str().unwrap()),
+            )
+            .unwrap();
+            assert!(repo.registration_at(&linked).is_err());
+        } else {
+            let registry = repo.git_common_dir().join("worktrees");
+            std::fs::rename(&registry, registry.with_file_name("unreadable-worktrees")).unwrap();
+            std::fs::write(&registry, "not a directory").unwrap();
+        }
+        assert!(repo.worktree_registrations().is_err());
+        let result = crate::git::delete_branch_if_safe(
+            &repo,
+            &repo.capture_refs().unwrap(),
+            "candidate",
+            "main",
+            false,
+        );
+        assert!(
+            result.is_err(),
+            "must retain candidate; duplicate={duplicate}"
+        );
+        assert!(repo.branch("candidate").exists_locally().unwrap());
+    }
+}
+
 /// Git protects a named bisect's starting branch, but a bisect begun detached
 /// holds only an object id. The CAS deletion path must preserve that contrast.
 #[test]
