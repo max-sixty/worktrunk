@@ -162,8 +162,8 @@ struct PermissionRequest {
 ///   (#3754). It never force-deletes, since Claude Code fires it on session
 ///   exit for any clean worktree (#2939).
 ///
-/// Each action runs this `wt` binary again with the command a user would type,
-/// so the hook behaves exactly as that command does.
+/// Worktree actions run this `wt` binary again with the command a user would
+/// type. Marker actions write through the discovered repository directly.
 pub fn handle_claude_hook() -> anyhow::Result<()> {
     let hook: ClaudeHook = serde_json::from_reader(std::io::stdin().lock())
         .context("Failed to parse Claude Code hook payload")?;
@@ -173,18 +173,18 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
     };
 
     match hook {
-        ClaudeHook::UserPromptSubmit {} => set_marker(&project_dir, &["set", "🤖"]),
+        ClaudeHook::UserPromptSubmit {} => set_marker(&project_dir, Some("🤖")),
         ClaudeHook::Notification {} | ClaudeHook::PreToolUse {} | ClaudeHook::Stop {} => {
-            set_marker(&project_dir, &["set", "💬"])
+            set_marker(&project_dir, Some("💬"))
         }
-        ClaudeHook::SessionEnd {} => set_marker(&project_dir, &["clear"]),
+        ClaudeHook::SessionEnd {} => set_marker(&project_dir, None),
         ClaudeHook::PermissionRequest(request) => {
             // A payload `wt` can't resolve, such as a `cwd` in no repository,
             // declines, leaving the dialog.
             if approves_enter_worktree(&request).unwrap_or(false) {
                 return print_allow_decision();
             }
-            set_marker(&project_dir, &["set", "💬"])
+            set_marker(&project_dir, Some("💬"))
         }
         ClaudeHook::WorktreeCreate { name } => {
             // A directory no repository resolves from falls through to
@@ -248,15 +248,26 @@ fn print_allow_decision() -> anyhow::Result<()> {
     }))
 }
 
-/// Sets or clears the activity marker of the worktree at `dir`, ignoring
-/// failure.
-fn set_marker(dir: &Path, args: &[&str]) -> anyhow::Result<()> {
-    let dir = dir.to_string_lossy();
-    let _ = run_wt(
-        Cmd::new(wt_binary()?)
-            .args(["-C", dir.as_ref(), "config", "state", "marker"])
-            .args(args.iter().copied()),
-    );
+/// Sets or clears the activity marker in the session's launch worktree.
+/// Marker failures never fail a Claude hook.
+fn set_marker(dir: &Path, marker: Option<&str>) -> anyhow::Result<()> {
+    let _ = (|| -> anyhow::Result<()> {
+        let repo = Repository::at(dir)?;
+        let Some(branch) = repo.current_worktree().branch()? else {
+            return Ok(());
+        };
+        let key = format!("worktrunk.state.{branch}.marker");
+        if let Some(marker) = marker {
+            let value = serde_json::json!({
+                "marker": marker,
+                "set_at": worktrunk::utils::epoch_now(),
+            });
+            repo.set_config(&key, &value.to_string())?;
+        } else {
+            repo.unset_config(&key)?;
+        }
+        Ok(())
+    })();
     Ok(())
 }
 
