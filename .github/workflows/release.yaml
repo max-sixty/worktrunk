@@ -376,7 +376,7 @@ jobs:
         # continue-on-error only covers a step that exits; bound a stalled
         # Sigstore call so it cannot hold the release until the job timeout.
         timeout-minutes: 10
-        uses: jdx/packslip@ddcddd9c8c33977d2d08d5db91caec579da59aab # v1.11.0
+        uses: jdx/packslip@3a4afb16b29d3ac639fcd35cbe99124184f71859 # v1.11.1
         with:
           artifacts: artifacts/worktrunk-*.tar.xz artifacts/worktrunk-*.zip
           bin: wt git-wt
