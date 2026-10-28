@@ -961,6 +961,111 @@ approved-commands = ["echo 'stdout output' && echo 'stderr output' >&2"]
     ");
 }
 
+/// Both the detached runner and its command logs restrict every directory in
+/// their branch subtree, including directories left by older versions.
+#[cfg(unix)]
+#[rstest]
+#[case::new(false)]
+#[case::existing(true)]
+fn test_post_start_logs_have_private_permissions(repo: TestRepo, #[case] existing: bool) {
+    use std::os::unix::fs::PermissionsExt;
+
+    repo.write_project_config(
+        r#"[post-start]
+capture = "echo captured-output"
+"#,
+    );
+    let log_dir = resolve_git_common_dir(repo.root_path()).join("wt/logs");
+    let hook_dir = log_dir.join("main/project/post-start");
+    let directories = [
+        log_dir.clone(),
+        log_dir.join("main"),
+        log_dir.join("main/project"),
+        hook_dir.clone(),
+    ];
+    let files = [hook_dir.join("runner.log"), hook_dir.join("capture.log")];
+    if existing {
+        fs::create_dir_all(&hook_dir).unwrap();
+        for directory in &directories {
+            fs::set_permissions(directory, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        for file in &files {
+            fs::write(file, "old log").unwrap();
+            fs::set_permissions(file, fs::Permissions::from_mode(0o644)).unwrap();
+        }
+    }
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "post-start", "--yes"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // Old content must not satisfy the background completion condition.
+    crate::common::wait_for("captured background output", || {
+        fs::read_to_string(&files[1]).is_ok_and(|content| content == "captured-output\n")
+    });
+    for directory in &directories {
+        assert_eq!(
+            fs::metadata(directory).unwrap().permissions().mode() & 0o777,
+            0o700,
+            "{}",
+            directory.display()
+        );
+    }
+    for file in &files {
+        assert_eq!(
+            fs::metadata(file).unwrap().permissions().mode() & 0o777,
+            0o600,
+            "{}",
+            file.display()
+        );
+    }
+}
+
+/// A background command whose output log cannot open reports the path in its
+/// runner log and leaves the command unexecuted.
+#[rstest]
+fn test_post_start_reports_unavailable_command_log(repo: TestRepo) {
+    repo.write_project_config(
+        r#"[post-start]
+capture = "echo executed > should-not-exist.txt"
+"#,
+    );
+    let hook_dir = resolve_git_common_dir(repo.root_path())
+        .join("wt")
+        .join("logs")
+        .join("main")
+        .join("project")
+        .join("post-start");
+    let blocked_log = hook_dir.join("capture.log");
+    fs::create_dir_all(&blocked_log).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "post-start", "--yes"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "background spawn should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let runner_log = hook_dir.join("runner.log");
+    crate::common::wait_for("background command log failure", || {
+        fs::read_to_string(&runner_log).is_ok_and(|content| {
+            content.contains("failed to create log file:")
+                && content.contains(&blocked_log.display().to_string())
+        })
+    });
+    assert!(blocked_log.is_dir());
+    assert!(!repo.root_path().join("should-not-exist.txt").exists());
+}
+
 #[rstest]
 fn test_post_start_invalid_command_handling(repo: TestRepo) {
     // Create command with syntax error (missing quote)

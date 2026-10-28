@@ -87,7 +87,7 @@ pub fn verbosity() -> u8 {
 /// sets `COLUMNS`/`LINES` to the terminal dimensions before running the script
 /// (since v2.1.153). Statusline callers route through
 /// [`terminal_width_for_statusline`], which reserves a margin for Claude Code's
-/// own UI chrome.
+/// footer spacing.
 pub fn terminal_dimensions() -> Option<(usize, Option<usize>)> {
     // Prefer direct terminal detection (more accurate than COLUMNS which may be stale/wrong).
     // Check stderr first (status messages), then stdout (table output).
@@ -119,21 +119,21 @@ pub fn terminal_width() -> Option<usize> {
     terminal_dimensions().map(|(width, _)| width)
 }
 
-/// Columns reserved for Claude Code's own UI chrome (e.g. an "Approaching
-/// context limit" message) when sizing the statusline, so the line doesn't
-/// render flush to the terminal edge.
+/// Approximate allowance for Claude Code's footer padding and column gap.
+/// `COLUMNS` is the full terminal width; neighboring content takes additional,
+/// variable space, and Claude Code truncates the statusline to fit.
 const STATUSLINE_UI_RESERVED_COLUMNS: usize = 5;
 
-/// Terminal width for `wt statusline`, reserving a margin for Claude Code's UI.
+/// Terminal width for `wt list statusline`, reserving approximate footer spacing.
 ///
-/// Claude Code invokes `wt statusline` as a subprocess with pipes for stdin,
-/// stdout, and stderr, so direct detection ([`terminal_width`]) returns `None`.
+/// Claude Code invokes `wt list statusline` with pipes for stdin, stdout, and
+/// stderr, so direct TTY detection fails.
 /// Since v2.1.153 Claude Code sets `COLUMNS`/`LINES` to the terminal dimensions
 /// before running the script, so [`terminal_width`]'s `COLUMNS` fallback
-/// supplies the width. A few columns are reserved for Claude Code's own UI
-/// messages. Returns `None` when no width is detectable (e.g. an older Claude
-/// Code that doesn't set `COLUMNS`), in which case the statusline renders
-/// everything untruncated.
+/// supplies the width. The margin is `STATUSLINE_UI_RESERVED_COLUMNS`.
+/// Returns `None` when no width is detectable (e.g. an older Claude Code that
+/// doesn't set `COLUMNS`), in which case the statusline renders everything
+/// untruncated.
 ///
 /// Every other caller should use [`terminal_width`] — the reserved margin is a
 /// statusline-specific concern.

@@ -59,7 +59,7 @@ exit_code: 0
 ----- stdout -----
 [36mUSER CONFIG[39m @ ~/.config/worktrunk/config.toml
 [33m▲[39m [33mUser config: [1m[ci][22m is deprecated in favor of [1m[forge][22m[39m
-[2m↳[22m [2mTo apply: [4mwt config update[24m[22m
+[2m↳[22m [2mTo apply these updates, run [4mwt config update[24m[22m
 [2m○[22m Proposed diff:
 [107m [0m [1mdiff --git a/config.toml/current b/config.toml/migrated[m
 [107m [0m [1mindex 2e0e0bb..9d78d51 100644[m

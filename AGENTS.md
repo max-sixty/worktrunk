@@ -42,7 +42,7 @@ Be conservative across the gap between a safety check and the operation. If file
 
 Full-file rewrites of user-owned or externally owned files use utils::write_atomically; creation of an observed-missing file uses write_new_atomically. Shell rc additions append under the installer lock; removal rewrites atomically. A user-named --output path is an intentional replacement. Regenerable caches and diagnostic reports may use ordinary writes. See the write helper contracts for symlink and mode behavior.
 
-Git itself may overwrite an ignored destination file when a tracked file arrives. Git's dirty-worktree gates for merge and push target updates follow core.fsmonitor; non-forced removal rescans without fsmonitor before deleting a checkout. The inventory is in the FAQ sections “What files does Worktrunk create?” and “What can Worktrunk delete?”
+Git itself may overwrite an ignored destination file when a tracked file arrives, and core.fsmonitor controls Git's final dirty-worktree gate. The inventory is in the FAQ sections “What files does Worktrunk create?” and “What can Worktrunk delete?”
 
 ## Command Execution Principles
 
@@ -76,7 +76,7 @@ Worktrunk touches the network only when the user asks for it. The first Reposito
 
 ### Signal Handling: Ctrl-C Cancels the Current Command
 
-Foreground commands share the caller's native job group. A child terminated by SIGINT or SIGTERM stops every foreground loop before its next step, including Warn hook pipelines and worktree loops. A caught Ctrl-C retains the child's normal exit semantics, including an ordinary exit code 130; do not infer cancellation from numeric exit codes. SIGTERM addressed to wt cancels its owned work even if the child catches it. Use err.interrupt_signal() from ErrorExt and propagate WorktrunkError::Interrupted through loops. Capture mode also classifies native SIGINT/SIGTERM exits; other child signals remain visible failures. See src/shell_exec.rs and src/signal_forwarder.rs for the contracts.
+Foreground commands share the caller's native job group. A child terminated by SIGINT or SIGTERM stops every foreground loop before its next step, including Warn hook pipelines and worktree loops. A terminal Ctrl-C that wt itself receives while a child runs cancels the command, as in make or cargo: the child handles the key its own way, then wt starts nothing more and exits interrupted, whatever status the child chose. wt's receipt is the evidence; never infer cancellation from numeric exit codes such as 130. A final interactive child (a pager, an --execute program, a custom subcommand, an alias's last serial step) owns the key as input instead, and its exit status stands. SIGTERM addressed to wt cancels its owned work even if the child catches it. Use err.interrupt_signal() from ErrorExt and propagate WorktrunkError::Interrupted through loops. Capture mode also classifies native SIGINT/SIGTERM exits; other child signals remain visible failures. See src/shell_exec.rs and src/signal_forwarder.rs for the contracts.
 
 ### Project Commands Run Only After Approval
 

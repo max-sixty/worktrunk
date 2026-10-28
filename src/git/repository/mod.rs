@@ -143,7 +143,7 @@ use once_cell::sync::OnceCell;
 use anyhow::Context;
 use dunce::canonicalize;
 
-use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
+use crate::config::{LoadError, ProjectConfig, ProjectId, ResolvedConfig, UserConfig};
 
 // Import types from parent module
 use super::{
@@ -175,7 +175,6 @@ pub use branch::is_valid_branch_name;
 pub use diff::{CommitMessageDetail, PreparedDiff};
 pub use integration::{BranchDiffSpec, IntegrationTargets, select_comparison_base};
 pub use ref_snapshot::RefSnapshot;
-pub(crate) use working_tree::CleanCheckMode;
 pub(super) use working_tree::path_to_logging_context;
 use working_tree::registration_worktree_path;
 pub use working_tree::{InProgressOperation, SafetyBackup, TempIndex, WorkingTree};
@@ -259,7 +258,7 @@ pub(super) struct RepoCache {
     /// [`Repository::branch_diff_spec`]. `None` when no default branch resolves.
     pub(super) comparison_base: OnceCell<Option<integration::ComparisonBase>>,
     /// Project identifier derived from remote URL
-    pub(super) project_identifier: OnceCell<String>,
+    pub(super) project_identifier: OnceCell<ProjectId>,
     /// Project config (loaded from .config/wt.toml in main worktree)
     pub(super) project_config: OnceCell<Option<ProjectConfig>>,
     /// CI platform from project config (`forge.platform` / `ci.platform`).
@@ -438,11 +437,7 @@ impl ResolvedWorktree {
 /// So the producers state it. A token nobody touched may name a path
 /// ([`Selector::literal`]). One an earlier step produced may not
 /// ([`Selector::rewritten_to`]) — a shortcut expansion, a `pr:`/`mr:` lookup, a
-/// stripped remote prefix, a default branch read from cache. Neither does one
-/// that names a branch by construction ([`Selector::branch_only`]), which is
-/// `wt switch --create <name>`: nothing rewrote the argument, but it names a
-/// branch that does not exist yet, so a directory sitting at that spelling is
-/// not what the user meant.
+/// stripped remote prefix, a default branch read from cache.
 #[derive(Debug, Clone)]
 pub struct Selector {
     token: String,
@@ -464,14 +459,6 @@ impl Selector {
         Self {
             token: token.into(),
             may_name_path: false,
-        }
-    }
-
-    /// Take the path arm off a token that names a branch by construction.
-    pub fn branch_only(self) -> Self {
-        Self {
-            may_name_path: false,
-            ..self
         }
     }
 
@@ -1321,7 +1308,7 @@ impl Repository {
     pub fn config(&self) -> &ResolvedConfig {
         self.cache.resolved_config.get_or_init(|| {
             let project_id = self.project_identifier().ok();
-            self.user_config().resolved(project_id.as_deref())
+            self.user_config().resolved(project_id.as_ref())
         })
     }
 
@@ -1504,19 +1491,6 @@ impl Repository {
         }
     }
 
-    /// Get the current branch name, or error if in detached HEAD state.
-    ///
-    /// `action` describes what requires being on a branch (e.g., "merge").
-    pub fn require_current_branch(&self, action: &str) -> anyhow::Result<String> {
-        self.current_worktree().branch()?.ok_or_else(|| {
-            GitError::DetachedHead {
-                action: Some(action.into()),
-                worktree: None,
-            }
-            .into()
-        })
-    }
-
     // =========================================================================
     // Core repository properties
     // =========================================================================
@@ -1596,8 +1570,8 @@ impl Repository {
     /// |----------------------------|----------------------------|-------------------------------|
     /// | Bare `.git`                | `core.bare = true`         | `git_common_dir` is the repo  |
     /// | Submodule `.git/modules/X` | `core.worktree` set by git | `rev-parse --show-toplevel`   |
-    /// | Separate git dir           | `<common>/gitdir` backlink | `parent(backlink)`            |
-    /// | Normal `.git`              | none of the above          | `parent(git_common_dir)`      |
+    /// | Separate git dir           | Backlink or primary checkout discovery | Confirmed checkout root |
+    /// | Normal `.git`              | Parent points back to common dir | `parent(git_common_dir)` |
     ///
     /// Submodules need `core.worktree` because their git data lives in the
     /// parent's `.git/modules/` — the `parent(.git)` rule would point at
@@ -1610,19 +1584,19 @@ impl Repository {
     /// discovery. So when the bulk map reports it, we delegate to
     /// `rev-parse --show-toplevel` and let git apply its scope rules; if
     /// the probe fails (non-local value, git ignored it) we fall through
-    /// to the normal-repo path. The common case — no `core.worktree`
-    /// anywhere — skips the subprocess, which is the point.
+    /// to discovery and the confirmed normal-repo parent.
     ///
     /// A repository whose git directory lives outside its work tree
     /// (`--separate-git-dir`) has neither signal, and `parent(git_common_dir)`
     /// names the store's parent rather than the work tree. The backlink git
-    /// writes there covers it where it exists; see
-    /// `separate_git_dir_work_tree` for when that is.
+    /// writes there covers it where it exists; otherwise discovery from the
+    /// primary checkout confirms its root. Linked-checkout discovery cannot
+    /// identify an unrepaired primary checkout, so it fails rather than guessing.
     ///
     /// # Errors
     ///
-    /// Returns an error if the bulk config read fails (e.g., git timeout). This
-    /// surfaces the failure early rather than caching a potentially wrong path.
+    /// Returns an error if discovery fails or no main worktree path can be
+    /// confirmed, rather than caching a potentially wrong path.
     pub fn repo_path(&self) -> anyhow::Result<&Path> {
         self.cache
             .repo_path
@@ -1650,11 +1624,25 @@ impl Repository {
                     return Ok(work_tree);
                 }
 
-                Ok(self
+                // An unrepaired separate Git store has no backlink. When
+                // discovery is in its primary checkout, Git directly confirms
+                // both the root and its ownership of this common directory.
+                let current = self.current_worktree();
+                if let Some(root) = current.prewarm_info()?.root
+                    && current.git_dir()? == self.git_common_dir()
+                {
+                    return Ok(root);
+                }
+
+                let parent = self
                     .git_common_dir
                     .parent()
                     .expect("Git directory has no parent")
-                    .to_path_buf())
+                    .to_path_buf();
+                if Self::git_dir_at(&parent).as_deref() == Some(self.git_common_dir()) {
+                    return Ok(parent);
+                }
+                anyhow::bail!("Cannot determine main worktree path; run git worktree repair from the main worktree")
             })
             .map(|p| p.as_path())
     }
@@ -1677,8 +1665,8 @@ impl Repository {
     /// [`registration_worktree_path`] reads it. Only
     /// `git worktree repair` writes it; `git init --separate-git-dir` and
     /// `git clone --separate-git-dir` leave the store with no backlink, so a
-    /// repository that has never been repaired records its work tree nowhere
-    /// and still falls through to `parent(git_common_dir)`. Running
+    /// repository that has never been repaired records its work tree nowhere.
+    /// Discovery from that checkout can still confirm its root. Running
     /// `git worktree repair` from the work tree is what materializes it.
     ///
     /// The backlink is one-way, so it is confirmed rather than trusted:
@@ -1686,9 +1674,8 @@ impl Repository {
     /// names, and only a work tree that points back at this common dir is
     /// accepted. A backlink left behind by a work tree that has since moved,
     /// been deleted, or been re-pointed at another repository resolves to
-    /// something else and falls through to `parent(git_common_dir)` — the
-    /// same answer as before, rather than a path that no longer holds this
-    /// repository. That round trip is also why a normal repository or a
+    /// something else and is declined rather than protecting an unrelated
+    /// directory. That round trip is also why a normal repository or a
     /// submodule can't misfire here on a stray `gitdir` file.
     fn separate_git_dir_work_tree(&self) -> Option<PathBuf> {
         let work_tree = registration_worktree_path(&self.git_common_dir).ok()?;
@@ -2019,10 +2006,11 @@ impl Repository {
         Ok(output.stdout)
     }
 
-    /// Run a git command and return whether it succeeded (exit code 0).
+    /// Run a Git predicate: status 0 is true, 1 is false, and other statuses fail.
     ///
-    /// This is useful for commands that use exit codes for boolean results,
-    /// like `git merge-base --is-ancestor`.
+    /// Use for commands with this exit-code contract, such as
+    /// `git merge-base --is-ancestor` and `git rev-parse --verify --quiet`.
+    /// A failed query must not be treated or cached as a negative answer.
     ///
     /// # Examples
     /// ```no_run
@@ -2033,7 +2021,12 @@ impl Repository {
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn run_command_check(&self, args: &[&str]) -> anyhow::Result<bool> {
-        Ok(self.run_command_output(args)?.status.success())
+        let output = self.run_command_output(args)?;
+        match output.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => Err(CommandError::from_failed_output("git", args, &output).into()),
+        }
     }
 
     /// Abbreviate a commit SHA for display, honoring `core.abbrev` and

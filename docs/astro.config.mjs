@@ -81,7 +81,7 @@ export default defineConfig({
       sidebar,
     }),
     sitemap({
-      filter: (page) => ![`${site}/404/`, `${site}/worktrunk/`].includes(page),
+      filter: (page) => ![`${site}/404/`, `${site}/worktrunk/`, `${site}/try-it/`].includes(page),
     }),
     sitemapCompatibility(),
   ],

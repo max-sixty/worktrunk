@@ -105,15 +105,12 @@ only when the pipe is a courier rather than the destination; anything a person
 reads directly stays on plain anstream, which is what strips color on a pipe
 and honors `NO_COLOR`.
 
-**`--format=json` answers** go through `crate::output::print_json`, never a
-hand-rolled `println!("{}", serde_json::to_string_pretty(&v)?)`. It serializes
-pretty with one trailing newline and prints through anstream, so no
-`--format=json` surface panics when its consumer stops reading. Before that,
-thirty call sites had open-coded those two lines, and whether any one of them
-panicked under `| head -3` came down to which `println!` its module happened to
-import. `wt switch --format=json` is the one non-caller: it emits its single
-result as one compact line (still through anstream's `println!`), because that
-is what a shell loop reads.
+**`--format=json` answers** use `crate::output::print_json` at the command
+handler. Inner operations return typed facts; when work can complete before a
+later failure, retain those facts in `CommandFailure<T>`. The outer handler can
+use `finish_output` to emit the available result once and return the original
+error for main's readable stderr diagnostics and native exit handling. A path
+with no result emits nothing; a legitimate JSON null remains a result.
 
 **Shell integration functions** (`src/output/global.rs`):
 
@@ -710,7 +707,7 @@ time-to-first-output with work the user didn't ask for.
 Worktrunk marks the boundary with `WORKTRUNK_FIRST_OUTPUT`: handlers
 early-return where output begins, so work before that return is on the hot
 path, work after it is not. See `handle_remove_command` —
-`sweep_stale_trash` runs after `handle_remove_output`.
+`run_internal_sweep` runs after `handle_remove_output`.
 
 ## Information Display: Show Once, Not Twice
 

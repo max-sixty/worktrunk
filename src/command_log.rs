@@ -9,7 +9,7 @@
 //! renamed to `commands.jsonl.old` and a fresh file is started. This bounds
 //! storage to ~2MB worst case.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -24,15 +24,22 @@ const MAX_CMD_LENGTH: usize = 2000;
 static COMMAND_LOG: OnceLock<Mutex<CommandLog>> = OnceLock::new();
 
 struct CommandLog {
-    log_path: PathBuf,
+    log_dir: PathBuf,
     file: Option<File>,
     wt_command: String,
 }
 
 impl CommandLog {
     fn new(log_dir: &Path, wt_command: &str) -> Self {
+        // Existing audit logs need private permissions even when this command
+        // writes no audit entry or never reaches the rotation threshold.
+        for filename in ["commands.jsonl", "commands.jsonl.old"] {
+            if log_dir.join(filename).exists() {
+                let _ = crate::utils::prepare_log_file(log_dir, Path::new(filename));
+            }
+        }
         Self {
-            log_path: log_dir.join("commands.jsonl"),
+            log_dir: log_dir.to_path_buf(),
             file: None,
             wt_command: wt_command.to_string(),
         }
@@ -45,25 +52,25 @@ impl CommandLog {
         exit_code: Option<i32>,
         duration: Option<Duration>,
     ) {
-        // Rotate if needed
-        if let Ok(metadata) = fs::metadata(&self.log_path)
-            && metadata.len() > MAX_LOG_SIZE
-        {
-            let old_path = self.log_path.with_extension("jsonl.old");
-            let _ = fs::rename(&self.log_path, &old_path);
-            self.file = None; // Force re-open after rotation
+        // Restrict an existing file before it can become the rotated log.
+        if self.file.is_none() {
+            self.file =
+                crate::utils::open_log_file(&self.log_dir, Path::new("commands.jsonl"), true).ok();
+        }
+        if self.file.is_none() {
+            return;
         }
 
-        // Lazily open the file on first write (or after rotation)
-        if self.file.is_none() {
-            if let Some(parent) = self.log_path.parent() {
-                let _ = fs::create_dir_all(parent);
-            }
-            self.file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&self.log_path)
-                .ok();
+        // Rotate if needed
+        if let Ok(metadata) = fs::metadata(self.log_dir.join("commands.jsonl"))
+            && metadata.len() > MAX_LOG_SIZE
+        {
+            let _ = fs::rename(
+                self.log_dir.join("commands.jsonl"),
+                self.log_dir.join("commands.jsonl.old"),
+            );
+            self.file =
+                crate::utils::open_log_file(&self.log_dir, Path::new("commands.jsonl"), true).ok();
         }
 
         let cmd_display = truncate_cmd(command);
@@ -234,6 +241,19 @@ mod tests {
     }
 
     #[test]
+    fn test_write_tolerates_unavailable_log_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocked = dir.path().join("not-a-directory");
+        fs::write(&blocked, "preserved contents").unwrap();
+        let mut logger = CommandLog::new(&blocked, "wt test");
+
+        logger.write("test", "echo hi", Some(0), None);
+
+        assert!(logger.file.is_none());
+        assert_eq!(fs::read_to_string(blocked).unwrap(), "preserved contents");
+    }
+
+    #[test]
     fn test_write_appends_multiple_entries() {
         let dir = tempfile::tempdir().unwrap();
         let mut logger = CommandLog::new(dir.path(), "wt test");
@@ -259,10 +279,13 @@ mod tests {
         // Write a file just over MAX_LOG_SIZE
         let filler = "x".repeat(MAX_LOG_SIZE as usize + 1);
         fs::write(&log_path, &filler).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&log_path, fs::Permissions::from_mode(0o644)).unwrap();
+        }
 
         let mut logger = CommandLog::new(dir.path(), "wt test");
-        // Open the existing oversized file so the logger has a handle
-        logger.file = OpenOptions::new().append(true).open(&log_path).ok();
 
         logger.write(
             "rotated",
@@ -280,5 +303,15 @@ mod tests {
         let content = fs::read_to_string(&log_path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(content.trim()).unwrap();
         assert_eq!(parsed["label"], "rotated");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for path in [&log_path, &old_path] {
+                assert_eq!(
+                    fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                    0o600
+                );
+            }
+        }
     }
 }

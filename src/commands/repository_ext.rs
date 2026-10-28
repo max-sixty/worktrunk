@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use super::worktree::{RemovalPlan, SharedBranchCheckout};
 use anyhow::{Context, bail};
 use color_print::cformat;
+use worktrunk::config::StageMode;
 use worktrunk::git::{
     BranchDeletionMode, GitError, IntegrationReason, RefSnapshot, Repository, WorkingTree,
     WorktreeInfo, parse_porcelain_z, parse_untracked_files,
@@ -70,6 +71,9 @@ pub trait RepositoryCliExt {
     /// so this only names the files that genuinely conflict, before anything
     /// moves.
     ///
+    /// The push range is `target_tip..source_sha`; `target_branch` only names
+    /// the branch in the error.
+    ///
     /// The caller has already established that `target_worktree` exists on disk
     /// (`MergeContext::prepare` refuses a registered-but-missing worktree), so
     /// the status read here is free to fail if the directory is gone.
@@ -82,6 +86,7 @@ pub trait RepositoryCliExt {
         &self,
         target_worktree: Option<&PathBuf>,
         target_branch: &str,
+        target_tip: &str,
         source_sha: &str,
     ) -> anyhow::Result<()>;
 
@@ -442,6 +447,7 @@ impl RepositoryCliExt for Repository {
         &self,
         target_worktree: Option<&PathBuf>,
         target_branch: &str,
+        target_tip: &str,
         source_sha: &str,
     ) -> anyhow::Result<()> {
         let Some(wt_path) = target_worktree else {
@@ -460,7 +466,7 @@ impl RepositoryCliExt for Repository {
             return Ok(());
         }
 
-        let push_files = self.changed_files(target_branch, source_sha)?;
+        let push_files = self.changed_files(target_tip, source_sha)?;
         let wt_files = parse_porcelain_z(&wt_status_output);
 
         let overlapping: Vec<String> = push_files
@@ -623,6 +629,21 @@ pub(crate) fn check_not_default_branch(
     Ok(())
 }
 
+/// Stage the paths `mode` selects for a commit, first warning about any
+/// untracked paths that all-files mode is about to add.
+///
+/// Commit paths call this on both sides of the `pre-commit` hooks: before them
+/// so a hook that reads the index (`pre-commit run`, lint-staged,
+/// `git diff --cached`) sees the changes about to be committed, and, when a
+/// hook ran, after them so a formatter hook's edits land in the commit. The
+/// second call warns only about untracked paths the hooks created.
+pub(crate) fn auto_stage(wt: &WorkingTree, mode: StageMode) -> anyhow::Result<()> {
+    if mode == StageMode::All {
+        warn_about_untracked_files(wt)?;
+    }
+    wt.stage(mode)
+}
+
 /// Warn about untracked files that will be auto-staged.
 ///
 /// Paths come from git's `normal` untracked mode, which overrides a
@@ -632,7 +653,7 @@ pub(crate) fn check_not_default_branch(
 ///
 /// The listing has at most `MAX_ROWS` rows. Past that many paths, the last row
 /// is a hint counting the rest, which is always at least two paths.
-pub(crate) fn warn_about_untracked_files(wt: &WorkingTree) -> anyhow::Result<()> {
+fn warn_about_untracked_files(wt: &WorkingTree) -> anyhow::Result<()> {
     const MAX_ROWS: usize = 10;
 
     let status = wt

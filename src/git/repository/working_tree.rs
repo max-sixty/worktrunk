@@ -3,6 +3,8 @@
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, bail};
 use dashmap::mapref::entry::Entry;
@@ -16,15 +18,39 @@ use super::{GitError, LineDiff, Repository};
 use crate::git::{CommandError, PlumbingDiff};
 
 const TEMP_INDEX_PREFIX: &str = "worktrunk-temp-index-";
+const TEMP_INDEX_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 
-/// Whether a cleanliness gate uses Git's configured fsmonitor or rescans the
-/// filesystem without starting a daemon. Removal rescans after daemon shutdown.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CleanCheckMode {
-    /// Follow `core.fsmonitor`, as an ordinary `git status` does.
-    ConfiguredFsmonitor,
-    /// Bypass fsmonitor to observe changes made during shutdown.
-    FullScan,
+/// Reclaim index copies and Git's `.lock` siblings left by abrupt exits.
+/// Age is a retention policy, not proof that an owner has exited: a suspended
+/// operation or Git filter lasting over an hour can lose its scratch index.
+/// Keep indexes out of interactive approval waits. Cleanup is best-effort;
+/// normal exits still remove each index through `TempPath`.
+fn sweep_stale_temp_indexes(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let now = SystemTime::now();
+    for entry in entries.filter_map(Result::ok) {
+        if !entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with(TEMP_INDEX_PREFIX))
+        {
+            continue;
+        }
+        let expired = entry
+            .metadata()
+            .ok()
+            .and_then(|metadata| metadata.modified().ok())
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age >= TEMP_INDEX_MAX_AGE);
+        if expired && let Err(error) = std::fs::remove_file(entry.path()) {
+            tracing::debug!(
+                "Failed to remove stale temporary index {}: {error}",
+                entry.path().display()
+            );
+        }
+    }
 }
 
 /// A squash safety backup: an immutable snapshot of the index and the ref
@@ -119,6 +145,26 @@ fn temporary_path_exclusion(worktree_root: &Path, temporary_path: &Path) -> Opti
         .ok()
         .filter(|relative| !relative.as_os_str().is_empty())
         .map(|relative| format!(":(top,exclude,literal){}", relative.to_slash_lossy()))
+}
+
+/// Refuse `action` when `dirty_files` (status porcelain lines) is non-empty.
+fn require_no_dirty_files(
+    dirty_files: Vec<String>,
+    action: &str,
+    branch: Option<&str>,
+    force_hint: bool,
+) -> anyhow::Result<()> {
+    if !dirty_files.is_empty() {
+        return Err(GitError::UncommittedChanges {
+            action: Some(action.into()),
+            branch: branch.map(String::from),
+            force_hint,
+            dirty_files,
+        }
+        .into());
+    }
+
+    Ok(())
 }
 
 /// Parse `git submodule status` output and detect whether any submodule is initialized.
@@ -629,14 +675,12 @@ impl<'a> WorkingTree<'a> {
     /// [`GitError::UncommittedChanges`] in [`Self::ensure_clean`]. The same
     /// caveats as [`Self::is_dirty`] apply (skip-worktree files are invisible).
     pub fn dirty_files(&self) -> anyhow::Result<Vec<String>> {
-        self.dirty_files_with_mode(CleanCheckMode::ConfiguredFsmonitor)
+        self.dirty_files_with(&[])
     }
 
-    fn dirty_files_with_mode(&self, mode: CleanCheckMode) -> anyhow::Result<Vec<String>> {
-        let mut args = Vec::new();
-        if mode == CleanCheckMode::FullScan {
-            args.extend(["-c", "core.fsmonitor=false"]);
-        }
+    /// [`Self::dirty_files`] with `git -c` overrides ahead of `status`.
+    fn dirty_files_with(&self, config: &[&str]) -> anyhow::Result<Vec<String>> {
+        let mut args = config.to_vec();
         args.extend([
             "status",
             "--porcelain",
@@ -928,34 +972,19 @@ impl<'a> WorkingTree<'a> {
         branch: Option<&str>,
         force_hint: bool,
     ) -> anyhow::Result<()> {
-        self.ensure_clean_with_mode(
-            action,
-            branch,
-            force_hint,
-            CleanCheckMode::ConfiguredFsmonitor,
-        )
+        require_no_dirty_files(self.dirty_files()?, action, branch, force_hint)
     }
 
-    /// Internal removal gate, which can bypass fsmonitor after daemon shutdown.
-    pub(crate) fn ensure_clean_with_mode(
+    /// [`Self::ensure_clean`] with fsmonitor disabled, for a worktree whose
+    /// daemon was just stopped: a full rescan, and no daemon restarted.
+    pub fn ensure_clean_without_fsmonitor(
         &self,
         action: &str,
         branch: Option<&str>,
         force_hint: bool,
-        mode: CleanCheckMode,
     ) -> anyhow::Result<()> {
-        let dirty_files = self.dirty_files_with_mode(mode)?;
-        if !dirty_files.is_empty() {
-            return Err(GitError::UncommittedChanges {
-                action: Some(action.into()),
-                branch: branch.map(String::from),
-                force_hint,
-                dirty_files,
-            }
-            .into());
-        }
-
-        Ok(())
+        let dirty_files = self.dirty_files_with(&["-c", "core.fsmonitor=false"])?;
+        require_no_dirty_files(dirty_files, action, branch, force_hint)
     }
 
     /// Get line diff statistics for working tree changes (unstaged + staged).
@@ -1048,11 +1077,19 @@ impl<'a> WorkingTree<'a> {
         // closes and removes the 0-byte file before Git creates a valid index.
         let mut builder = tempfile::Builder::new();
         builder.prefix(TEMP_INDEX_PREFIX);
+        // Parallel probes don't wait for the one caller doing this sweep.
+        static SWEPT_SYSTEM_TEMP: AtomicBool = AtomicBool::new(false);
+        if !SWEPT_SYSTEM_TEMP.swap(true, Ordering::Relaxed) {
+            sweep_stale_temp_indexes(&std::env::temp_dir());
+        }
         let mut temp_file = match builder.tempfile() {
             Ok(file) => file,
-            Err(temp_error) => builder.tempfile_in(&git_dir).context(format!(
-                "Failed to create temporary index in the system temp directory or Git directory; system temp error: {temp_error}"
-            ))?,
+            Err(temp_error) => {
+                sweep_stale_temp_indexes(&git_dir);
+                builder.tempfile_in(&git_dir).context(format!(
+                    "Failed to create temporary index in the system temp directory or Git directory; system temp error: {temp_error}"
+                ))?
+            }
         };
         let mut real_index_file = match std::fs::File::open(&real_index) {
             Ok(file) => Some(file),
@@ -1151,6 +1188,21 @@ impl<'a> WorkingTree<'a> {
     pub fn has_initialized_submodules(&self) -> anyhow::Result<bool> {
         let output = self.run_command(&["submodule", "status", "--recursive"])?;
         Ok(has_initialized_submodules_from_status(&output))
+    }
+
+    /// Initialized submodules, recursively, holding commits that no
+    /// remote-tracking ref reaches, by display path. Reflog-only commits
+    /// count: removing the worktree deletes a module store along with them.
+    /// A shallow or SHA-fetched pin can report commits a remote does hold.
+    pub fn submodules_with_local_commits(&self) -> anyhow::Result<Vec<String>> {
+        let output = self.run_command(&[
+            "submodule",
+            "foreach",
+            "--quiet",
+            "--recursive",
+            r#"test -z "$(git rev-list --all --reflog --not --remotes --max-count=1)" || echo "$displaypath""#,
+        ])?;
+        Ok(output.lines().map(String::from).collect())
     }
 
     /// Back up the index, as a squash is about to commit it, to `refs/wt-backup/<branch>`.
@@ -1441,6 +1493,45 @@ mod tests {
     use crate::git::{LineDiff, Repository};
     use crate::shell_exec::Cmd;
     use crate::testing::TestRepo;
+
+    #[test]
+    fn sweep_stale_temp_indexes_preserves_recent_and_unrelated_entries() {
+        use super::{TEMP_INDEX_MAX_AGE, sweep_stale_temp_indexes};
+        use std::time::{Duration, SystemTime};
+
+        let dir = crate::testing::test_tempdir();
+        let now = SystemTime::now();
+        let old = now - TEMP_INDEX_MAX_AGE - Duration::from_secs(60);
+        for (name, modified) in [
+            ("worktrunk-temp-index-old", old),
+            ("worktrunk-temp-index-old.lock", old),
+            ("worktrunk-temp-index-recent", now),
+            ("worktrunk-temp-index-recent.lock", now),
+            ("worktrunk-temp-index-future", now + TEMP_INDEX_MAX_AGE),
+            ("unrelated", old),
+        ] {
+            let file = std::fs::File::create(dir.path().join(name)).unwrap();
+            file.set_times(std::fs::FileTimes::new().set_modified(modified))
+                .unwrap();
+        }
+
+        sweep_stale_temp_indexes(dir.path());
+        let mut remaining: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        remaining.sort();
+        assert_eq!(
+            remaining,
+            [
+                "unrelated",
+                "worktrunk-temp-index-future",
+                "worktrunk-temp-index-recent",
+                "worktrunk-temp-index-recent.lock",
+            ]
+        );
+        sweep_stale_temp_indexes(&dir.path().join("missing"));
+    }
 
     #[test]
     fn lock_reason_errors_when_locked_is_unreadable() {

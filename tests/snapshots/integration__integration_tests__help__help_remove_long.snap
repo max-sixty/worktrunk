@@ -163,7 +163,7 @@ Use [2m--no-delete-branch[0m to keep the branch regardless of merge status.
 
 [1m[32mBackground removal[0m
 
-Removal runs in the background by default — the command returns immediately, and output goes to [2m.git/wt/logs/{branch}/internal/remove.log[0m. Use [2m--foreground[0m to wait for it.
+By default, Worktrunk moves the checkout into trash and deletes its contents in the background. Use [2m--foreground[0m to wait for trash cleanup. If the move fails, removal runs synchronously so failures and branch outcomes are reported before the command returns.
 
 [1m[32mReaping processes [experimental][0m
 
@@ -185,19 +185,18 @@ Unix only; on Windows [2m--reap[0m is rejected.
 
 [1m[32mJSON output[0m
 
-[2m--format=json[0m prints one object per removal to stdout: [2m{kind, branch, path, branch_outcome, branch_checked_out_at}[0m for a worktree, with [2mpruned[0m in place of [2mpath[0m for a branch-only removal. Branch-only results also include [2mdetached_worktree[0m: the path of a detached worktree left behind, or [2mnull[0m.
+[2m--format=json[0m prints one object per removal to stdout: [2m{kind, branch, path, branch_outcome, branch_checked_out_at}[0m for a worktree, with [2mpruned[0m in place of [2mpath[0m for a branch-only removal. Branch-only results also include [2mdetached_worktree[0m: the path of a detached worktree at the branch's expected location, which the removal leaves in place, or [2mnull[0m.
 
 [2mbranch_outcome[0m names what happened to the branch, so a caller can tell a deletion the removal declined from one it was never asked to make:
 
-        Value                                                     Meaning                                              
- ──────────────────── ──────────────────────────────────────────────────────────────────────────────────────────────── 
- [2mdeleted[0m              The branch is gone                                                                               
- [2mdeferred[0m             Left to the background removal, whose result this run doesn't see. [2m--foreground[0m never reports it 
- [2mnot_attempted[0m        No deletion was tried: a detached worktree, a sibling checkout, or [2m--no-delete-branch[0m            
- [2mretained_unmerged[0m    Declined: the branch was not integrated into the target                                          
- [2mretained_checked_out[0m Declined: another worktree has the branch checked out                                            
- [2mretained_raced[0m       Declined: the branch moved during the removal. Retry                                             
- [2mretained_failed[0m      The delete command itself failed                                                                 
+        Value                                                Meaning                                        
+ ──────────────────── ───────────────────────────────────────────────────────────────────────────────────── 
+ [2mdeleted[0m              The branch is gone                                                                    
+ [2mnot_attempted[0m        No deletion was tried: a detached worktree, a sibling checkout, or [2m--no-delete-branch[0m 
+ [2mretained_unmerged[0m    Declined: the branch was not integrated into the target                               
+ [2mretained_checked_out[0m Declined: another worktree has the branch checked out                                 
+ [2mretained_raced[0m       Declined: the branch moved during the removal. Retry                                  
+ [2mretained_failed[0m      The delete command itself failed                                                      
 
 [1m[32mHooks[0m
 

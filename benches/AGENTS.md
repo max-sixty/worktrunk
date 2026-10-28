@@ -1,6 +1,6 @@
 # Benchmark guidelines
 
-Bench groups and examples are documented at the top of their Rust files. Criterion takes a positional substring filter or --exact; it has no --skip. For example, cargo bench --bench list skeleton/warm runs one warm group. Large imported fixtures are opt-in and must not run on hosted CI.
+Bench groups and examples are documented at the top of their Rust files. Criterion takes a positional substring filter or --exact; it has no --skip. For example, cargo bench --bench list skeleton/warm runs one warm group. The large-repository prune fixture is opt-in through the large-repository-benches feature and must not run on hosted CI.
 
 ## Fixtures and benches
 

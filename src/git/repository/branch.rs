@@ -86,14 +86,7 @@ impl<'a> Branch<'a> {
 
     /// Check if this branch exists locally.
     pub fn exists_locally(&self) -> anyhow::Result<bool> {
-        Ok(self
-            .repo
-            .run_command(&[
-                "rev-parse",
-                "--verify",
-                &format!("refs/heads/{}", self.name),
-            ])
-            .is_ok())
+        self.repo.ref_exists(&format!("refs/heads/{}", self.name))
     }
 
     /// Check if this branch exists (local or remote).
@@ -145,6 +138,15 @@ impl<'a> Branch<'a> {
             .repo
             .local_branch(&self.name)?
             .and_then(|b| b.upstream_short.clone()))
+    }
+
+    /// Configured upstream remote, as reported by git's local-branch inventory.
+    /// Local tracking (`.`) has no remote.
+    pub fn upstream_remote(&self) -> anyhow::Result<Option<String>> {
+        Ok(self
+            .repo
+            .local_branch(&self.name)?
+            .and_then(|b| b.upstream_remote.clone()))
     }
 
     /// Where this branch pushes: a remote name, or a URL when

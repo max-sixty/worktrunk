@@ -78,7 +78,7 @@ Use `--no-delete-branch` to keep the branch regardless of merge status.
 
 ## Background removal
 
-Removal runs in the background by default — the command returns immediately, and output goes to `.git/wt/logs/{branch}/internal/remove.log`. Use `--foreground` to wait for it.
+By default, Worktrunk moves the checkout into trash and deletes its contents in the background. Use `--foreground` to wait for trash cleanup. If the move fails, removal runs synchronously so failures and branch outcomes are reported before the command returns.
 
 ## Reaping processes
 
@@ -104,14 +104,13 @@ Unix only; on Windows `--reap` is rejected.
 
 ## JSON output
 
-`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal. Branch-only results also include `detached_worktree`: the path of a detached worktree left behind, or `null`.
+`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal. Branch-only results also include `detached_worktree`: the path of a detached worktree at the branch's expected location, which the removal leaves in place, or `null`.
 
 `branch_outcome` names what happened to the branch, so a caller can tell a deletion the removal declined from one it was never asked to make:
 
 | Value | Meaning |
 |-------|---------|
 | `deleted` | The branch is gone |
-| `deferred` | Left to the background removal, whose result this run doesn't see. `--foreground` never reports it |
 | `not_attempted` | No deletion was tried: a detached worktree, a sibling checkout, or `--no-delete-branch` |
 | `retained_unmerged` | Declined: the branch was not integrated into the target |
 | `retained_checked_out` | Declined: another worktree has the branch checked out |
