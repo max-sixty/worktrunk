@@ -101,6 +101,29 @@ fn test_claude_hook_marker_failure_succeeds(repo: TestRepo) {
     assert_eq!(stdout(&output), "");
 }
 
+/// A detached worktree has no branch to attach a marker to.
+#[rstest]
+fn test_claude_hook_marker_detached_worktree(repo: TestRepo) {
+    let root = repo.root_path();
+    let prompt = run_hook(
+        &repo,
+        root,
+        root,
+        r#"{"hook_event_name":"UserPromptSubmit"}"#,
+    );
+    assert!(prompt.status.success(), "{prompt:?}");
+    assert_eq!(marker(&repo, root), "🤖");
+
+    repo.run_git(&["checkout", "--detach"]);
+    let output = run_hook(&repo, root, root, r#"{"hook_event_name":"Stop"}"#);
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    assert_eq!(stdout(&output), "");
+
+    repo.run_git(&["checkout", "main"]);
+    assert_eq!(marker(&repo, root), "🤖");
+}
+
 /// `PermissionRequest` answers an `EnterWorktree` into a managed worktree with
 /// the allow decision and leaves the marker unset; any other request prints
 /// nothing, so the dialog stays, and marks the session 💬 while it waits.
