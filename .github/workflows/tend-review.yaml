@@ -53,7 +53,7 @@ jobs:
       - uses: ./.github/actions/tend-setup
       - run: for t in cargo-insta cargo-nextest pre-commit nu nix; do command -v "$t" >/dev/null || { echo "::error::tend setup is missing $t; see Sandbox toolchain in .github/AGENTS.md"; exit 1; }; done
 
-      - uses: max-sixty/tend/codex@0.3.15
+      - uses: max-sixty/tend/codex@0.3.16
         with:
           github_token: ${{ secrets.TEND_BOT_TOKEN }}
           merge: restricted
