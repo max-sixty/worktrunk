@@ -7,7 +7,7 @@ use crate::common::{
 // Used only by the `#[cfg(unix)]` signal tests below; gate the import to match,
 // or it reads as unused on Windows under `-D warnings`.
 #[cfg(unix)]
-use crate::common::SLEEP_FOR_ABSENCE_CHECK;
+use crate::common::{SLEEP_FOR_ABSENCE_CHECK, SignalJob};
 use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -36,6 +36,21 @@ hello = "echo Hello from {{ branch }}"
         Some(&feature_path),
         &["-y"],
     ));
+}
+
+/// Alias expansion errors retain the alias identity and underlying diagnostic.
+#[rstest]
+fn test_step_alias_runtime_undefined_variable(repo: TestRepo) {
+    repo.write_test_config(
+        r#"
+[aliases]
+deploy = "echo {{ nope }}"
+"#,
+    );
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        assert_cmd_snapshot!(make_snapshot_cmd(&repo, "step", &["deploy"], None));
+    });
 }
 
 /// `wt config alias dry-run <name>` shows the expanded command without running it
@@ -407,6 +422,25 @@ fail = "exit 42"
         Some(&feature_path),
         &["-y"],
     ));
+}
+
+/// An alias child killed by a signal other than INT/TERM is reported: the
+/// child printed nothing about its death, and wt exits `128 + signal` rather
+/// than dying by it, so no shell reports it either.
+#[cfg(unix)]
+#[rstest]
+fn test_step_alias_killed_by_signal(repo: TestRepo) {
+    repo.write_test_config(
+        r#"
+[aliases]
+crash = "kill -KILL $$"
+"#,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "step", &["crash"], None));
 }
 
 /// Alias from user config works
@@ -1144,100 +1178,6 @@ fail = "exit 1"
     );
 }
 
-// Signal fixtures synchronize through files and avoid background descendants.
-// An owned, unreaped keeper reserves the native group for scoped cleanup.
-#[cfg(unix)]
-struct AliasSignalJob {
-    child: Option<std::process::Child>,
-    keeper: std::process::Child,
-    release: std::path::PathBuf,
-}
-
-#[cfg(unix)]
-impl AliasSignalJob {
-    fn spawn(repo: &TestRepo) -> Self {
-        Self::spawn_with_stderr(repo, Stdio::null())
-    }
-
-    fn spawn_with_stderr(repo: &TestRepo, stderr: Stdio) -> Self {
-        Self::spawn_command(repo, &["step", "signal-test"], stderr)
-    }
-
-    fn spawn_traced(repo: &TestRepo, stderr: Stdio) -> Self {
-        Self::spawn_command(repo, &["-vv", "step", "signal-test"], stderr)
-    }
-
-    fn spawn_command(repo: &TestRepo, args: &[&str], stderr: Stdio) -> Self {
-        use std::os::unix::process::CommandExt;
-        // This owned, unreaped child reserves the caller group's numeric ID
-        // even after wt finishes or a group interrupt kills the keeper.
-        let keeper = std::process::Command::new("sleep")
-            .arg("300")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .process_group(0)
-            .spawn()
-            .unwrap();
-        let mut job = Self {
-            child: None,
-            keeper,
-            release: repo.root_path().join("release"),
-        };
-        let mut command = repo.wt_command();
-        command.args(args);
-        command
-            .current_dir(repo.root_path())
-            .env("RUST_LOG", crate::common::FOREGROUND_TRACE_FILTER)
-            .stdout(Stdio::null())
-            .stderr(stderr)
-            .process_group(job.group().as_raw());
-        job.child = Some(command.spawn().unwrap());
-        job
-    }
-
-    fn pid(&self) -> nix::unistd::Pid {
-        nix::unistd::Pid::from_raw(self.child.as_ref().unwrap().id() as i32)
-    }
-
-    fn group(&self) -> nix::unistd::Pid {
-        nix::unistd::Pid::from_raw(self.keeper.id() as i32)
-    }
-
-    fn running(&mut self) -> bool {
-        self.child.as_mut().unwrap().try_wait().unwrap().is_none()
-    }
-
-    fn release(&self) {
-        std::fs::write(&self.release, "release").unwrap();
-    }
-
-    fn wait(&mut self) -> std::process::ExitStatus {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        loop {
-            if let Some(status) = self.child.as_mut().unwrap().try_wait().unwrap() {
-                return status;
-            }
-            assert!(std::time::Instant::now() < deadline, "alias did not finish");
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-    }
-}
-
-#[cfg(unix)]
-impl Drop for AliasSignalJob {
-    fn drop(&mut self) {
-        let _ = std::fs::write(&self.release, "release");
-        // No wait for the keeper precedes this signal. Its reserved PID pins
-        // the group's identity, independently of wt's cached wait status.
-        let _ = nix::sys::signal::killpg(self.group(), nix::sys::signal::Signal::SIGKILL);
-        if let Some(child) = &mut self.child {
-            let _ = child.wait();
-        }
-        let _ = self.keeper.wait();
-    }
-}
-
 #[cfg(unix)]
 fn signal_alias(repo: &TestRepo, concurrent: bool, caught_int: Option<bool>) -> Vec<&'static str> {
     let labels = if concurrent {
@@ -1319,7 +1259,7 @@ os.kill(os.getpid(), signal.SIGKILL)
     )
     .unwrap();
     let stderr_path = repo.root_path().join("stderr");
-    let mut job = AliasSignalJob::spawn_command(
+    let mut job = SignalJob::spawn(
         &repo,
         &["hook", "post-start", "--yes", "--foreground"],
         Stdio::from(std::fs::File::create(&stderr_path).unwrap()),
@@ -1346,7 +1286,8 @@ os.kill(os.getpid(), signal.SIGKILL)
 }
 
 /// Native policy: TERM aimed at wt cancels owned work even when its
-/// child handles TERM successfully; PID-only INT is observed without delivery.
+/// child handles TERM successfully. PID-only INT is never delivered to the
+/// child, which runs to completion; wt's receipt still cancels the next step.
 #[rstest]
 #[case::single_term(false, true)]
 #[case::concurrent_term(true, true)]
@@ -1358,7 +1299,7 @@ fn test_alias_pid_signal_policy(repo: TestRepo, #[case] concurrent: bool, #[case
     let labels = signal_alias(&repo, concurrent, Some(true));
     let stderr_path = repo.root_path().join("stderr");
     let stderr = std::fs::File::create(&stderr_path).unwrap();
-    let mut job = AliasSignalJob::spawn_traced(&repo, stderr.into());
+    let mut job = SignalJob::spawn(&repo, &["-vv", "step", "signal-test"], stderr.into());
     let children = ready_alias_children(&repo, &labels, job.group());
     // A child can announce readiness before wt returns from spawn. This test
     // sends its signal to an admitted command, not during startup cancellation.
@@ -1394,13 +1335,14 @@ fn test_alias_pid_signal_policy(repo: TestRepo, #[case] concurrent: bool, #[case
             );
         }
         job.release();
+        use std::os::unix::process::ExitStatusExt;
         let status = job.wait();
         assert!(
-            status.success(),
-            "PID-only INT changed an admitted command's status: {status:?}\n{}",
+            status.code() == Some(130) || status.signal() == Some(2),
+            "PID-only INT must cancel after the child's success: {status:?}\n{}",
             std::fs::read_to_string(stderr_path).unwrap()
         );
-        assert!(repo.root_path().join("next").exists());
+        assert!(!repo.root_path().join("next").exists());
     }
 }
 
@@ -1410,7 +1352,7 @@ fn test_alias_pid_signal_policy(repo: TestRepo, #[case] concurrent: bool, #[case
 #[cfg(unix)]
 fn test_alias_concurrent_receives_sigint(repo: TestRepo) {
     let labels = signal_alias(&repo, true, None);
-    let mut job = AliasSignalJob::spawn(&repo);
+    let mut job = SignalJob::spawn(&repo, &["step", "signal-test"], Stdio::null());
     ready_alias_children(&repo, &labels, job.group());
     nix::sys::signal::killpg(job.group(), nix::sys::signal::Signal::SIGINT).unwrap();
     use std::os::unix::process::ExitStatusExt;
@@ -1422,8 +1364,10 @@ fn test_alias_concurrent_receives_sigint(repo: TestRepo) {
     assert!(!repo.root_path().join("next").exists());
 }
 
-/// Repeated group interrupts retain the child's disposition and status. One
-/// contrast per handler/key/cardinality covers both stream execution paths.
+/// Repeated group interrupts retain the child's disposition and never kill wt
+/// while the child runs, yet wt's receipt cancels the following step even after
+/// the child succeeds. One contrast per handler/key/cardinality covers both
+/// stream execution paths.
 #[rstest]
 #[case::single_caught_once(false, true, 1)]
 #[case::concurrent_caught_twice(true, true, 2)]
@@ -1437,7 +1381,7 @@ fn test_alias_group_sigint_does_not_escalate(
     #[case] presses: usize,
 ) {
     let labels = signal_alias(&repo, concurrent, Some(caught));
-    let mut job = AliasSignalJob::spawn_traced(&repo, Stdio::null());
+    let mut job = SignalJob::spawn(&repo, &["-vv", "step", "signal-test"], Stdio::null());
     let children = ready_alias_children(&repo, &labels, job.group());
     crate::common::wait_for_foreground_admission(&repo, &children);
     for press in 1..=presses {
@@ -1465,11 +1409,13 @@ fn test_alias_group_sigint_does_not_escalate(
         ready_alias_children(&repo, &labels, job.group());
     }
     job.release();
+    use std::os::unix::process::ExitStatusExt;
+    let status = job.wait();
     assert!(
-        job.wait().success(),
-        "caught/ignored interrupts must preserve child success"
+        status.code() == Some(130) || status.signal() == Some(2),
+        "caught/ignored interrupts must still cancel the alias: {status:?}"
     );
-    assert!(repo.root_path().join("next").exists());
+    assert!(!repo.root_path().join("next").exists());
     if caught {
         for label in &labels {
             assert_eq!(
@@ -1481,6 +1427,43 @@ fn test_alias_group_sigint_does_not_escalate(
             );
         }
     }
+}
+
+/// An alias is the whole command, so its last serial step owns Ctrl-C as input,
+/// like `--execute`: a child that handles the key and exits successfully keeps
+/// that status. Earlier steps cancel instead (`test_alias_group_sigint_does_not_escalate`).
+#[rstest]
+#[cfg(unix)]
+fn test_alias_last_step_keeps_status_after_caught_ctrl_c(repo: TestRepo) {
+    repo.write_test_config(
+        "[aliases]\nsignal-test = \"trap 'echo handled > int; while [ ! -e release ]; do sleep 0.01; done; exit 0' INT; echo $$ > pid; while :; do sleep 0.1; done\"\n",
+    );
+    let stderr_path = repo.root_path().join("stderr");
+    let stderr = std::fs::File::create(&stderr_path).unwrap();
+    let mut job = SignalJob::spawn(&repo, &["-vv", "step", "signal-test"], stderr.into());
+    job.interrupt_admitted_child(&repo, &repo.root_path().join("pid"));
+    crate::common::wait_for_file_content(&repo.root_path().join("int"));
+    // Keep the child alive until wt has received the group signal. Otherwise
+    // the child can exit before SIGINT reaches wt, turning it into an idle key.
+    let trace = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/logs/trace.jsonl");
+    let receipt = format!(
+        "Foreground signal received:{}",
+        nix::sys::signal::Signal::SIGINT as i32
+    );
+    crate::common::wait_for("wt to receive SIGINT", || {
+        std::fs::read_to_string(&trace).is_ok_and(|records| {
+            worktrunk::trace::parse_lines(&records).iter().any(|entry| {
+                matches!(&entry.kind, worktrunk::trace::TraceEntryKind::Instant { name } if name == &receipt)
+            })
+        })
+    });
+    job.release();
+    let status = job.wait();
+    assert!(
+        status.success(),
+        "the final child handled Ctrl-C successfully: {status:?}\n{}",
+        std::fs::read_to_string(stderr_path).unwrap()
+    );
 }
 
 /// Non-UTF-8 bytes and CRLF line endings in child output must not stall the
@@ -1602,7 +1585,7 @@ good = "(sleep .6; printf 'LATE_%s' TAIL) & printf EARLY_"
     );
     let output_path = repo.root_path().join("output");
     let stderr = std::fs::File::create(&output_path).unwrap();
-    let mut job = AliasSignalJob::spawn_with_stderr(&repo, stderr.into());
+    let mut job = SignalJob::spawn(&repo, &["step", "signal-test"], stderr.into());
     assert_eq!(job.wait().code(), Some(17));
     let output = std::fs::read_to_string(output_path).unwrap();
     assert!(
@@ -1612,43 +1595,6 @@ good = "(sleep .6; printf 'LATE_%s' TAIL) & printf EARLY_"
     assert!(
         output.contains("FAILED_TAIL"),
         "failure diagnostics lost: {output}"
-    );
-}
-
-/// Ctrl-C handled successfully by a direct child must not truncate its later
-/// descendant output or change the child's successful result.
-#[rstest]
-#[cfg(unix)]
-fn test_alias_caught_sigint_preserves_successful_descendant_output(repo: TestRepo) {
-    // `two` ignores SIGINT: the group interrupt can land after it writes its
-    // marker but before it exits, and a native SIGINT death there would
-    // legitimately cancel the alias.
-    repo.write_test_config(
-        r#"[aliases.signal-test]
-one = "trap 'printf handled > caught' INT; echo $$ > worker-pid; printf ready > first-ready; while test ! -f caught; do :; done; (sleep .6; printf 'LATE_%s' TAIL) & printf EARLY_"
-two = "trap '' INT; echo $$ > second-pid; printf ready > second-ready"
-"#,
-    );
-    let output_path = repo.root_path().join("output");
-    let stderr = std::fs::File::create(&output_path).unwrap();
-    let mut job = AliasSignalJob::spawn_traced(&repo, stderr.into());
-    for marker in ["first-ready", "second-ready"] {
-        crate::common::wait_for_file_content(&repo.root_path().join(marker));
-    }
-    let worker = std::fs::read_to_string(repo.root_path().join("worker-pid")).unwrap();
-    let worker = nix::unistd::Pid::from_raw(worker.trim().parse().unwrap());
-    assert_eq!(nix::unistd::getpgid(Some(worker)).unwrap(), job.group());
-    let second = std::fs::read_to_string(repo.root_path().join("second-pid")).unwrap();
-    crate::common::wait_for_foreground_admission(
-        &repo,
-        &[worker.as_raw(), second.trim().parse().unwrap()],
-    );
-    nix::sys::signal::killpg(job.group(), nix::sys::signal::Signal::SIGINT).unwrap();
-    assert!(job.wait().success());
-    let output = std::fs::read_to_string(output_path).unwrap();
-    assert!(
-        output.contains("EARLY_LATE_TAIL"),
-        "caught key truncated output: {output}"
     );
 }
 
@@ -1685,7 +1631,7 @@ good = "true"
     );
     let output_path = repo.root_path().join("output");
     let stderr = std::fs::File::create(&output_path).unwrap();
-    let mut job = AliasSignalJob::spawn_with_stderr(&repo, stderr.into());
+    let mut job = SignalJob::spawn(&repo, &["step", "signal-test"], stderr.into());
     crate::common::wait_for_file_content(&repo.root_path().join("descendant-ready"));
     nix::sys::signal::kill(job.pid(), nix::sys::signal::Signal::SIGTERM).unwrap();
     let release = job.release.clone();
@@ -1972,6 +1918,56 @@ greet = "echo hi {{ branch }}"
         &["alias", "show"],
         Some(&feature_path),
     ));
+}
+
+/// User alias discovery does not require a Git repository, with or without a
+/// name. A typo still gets alias suggestions rather than a repository error.
+#[rstest]
+fn test_config_alias_show_outside_repository(repo: TestRepo) {
+    let outside = crate::common::test_tempdir();
+    repo.write_test_config(
+        r#"
+[aliases]
+deploy = "echo {{ branch }}"
+"#,
+    );
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    for (snapshot, args) in [
+        ("alias_show_outside_all", vec!["alias", "show"]),
+        ("alias_show_outside_named", vec!["alias", "show", "deploy"]),
+        ("alias_show_outside_typo", vec!["alias", "show", "deplyo"]),
+    ] {
+        assert_cmd_snapshot!(
+            snapshot,
+            make_snapshot_cmd(&repo, "config", &args, Some(outside.path()))
+        );
+    }
+}
+
+/// Discovery stays quiet even when prewarm reads a deprecated user setting.
+#[rstest]
+fn test_config_alias_show_suppresses_deprecation_warnings(repo: TestRepo) {
+    repo.write_test_config(
+        r#"
+[aliases]
+deploy = "echo hi"
+[commit-generation]
+command = "echo message"
+"#,
+    );
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+    for (snapshot, args) in [
+        ("alias_show_deprecated_all", vec!["alias", "show"]),
+        (
+            "alias_show_deprecated_named",
+            vec!["alias", "show", "deploy"],
+        ),
+    ] {
+        assert_cmd_snapshot!(snapshot, make_snapshot_cmd(&repo, "config", &args, None));
+    }
 }
 
 /// `wt config alias show` with no name and no aliases configured prints a note

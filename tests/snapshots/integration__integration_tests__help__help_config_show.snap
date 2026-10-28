@@ -88,7 +88,7 @@ Use [2m--full[0m to run diagnostic checks:
 [107m [0m [2m[0m[2m[34mwt[0m[2m config show [0m[2m[36m--full[0m
 
 This tests:
-- [1mCI tool status[0m — Whether [2mgh[0m (GitHub) or [2mglab[0m (GitLab) is installed and authenticated
+- [1mCI tool status[0m — Whether the CLI for the repository's forge ([2mgh[0m, [2mglab[0m, [2mtea[0m, or [2maz[0m) is installed and authenticated
 - [1mCommit generation[0m — Whether the LLM command can generate commit messages
 - [1mVersion check[0m — Whether a newer version is available on GitHub
 

@@ -315,8 +315,10 @@ mod tests {
                 max_width: 40,
                 priority: 9,
             },
+            // A header that looks like a file extension renders raw, not
+            // JSON-quoted as MiniJinja's name-based autoescape would.
             ResolvedCustomColumn {
-                name: "Tag".to_string(),
+                name: "json".to_string(),
                 template: "{{ branch }}!".to_string(),
                 max_width: 40,
                 priority: 9,

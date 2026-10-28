@@ -429,7 +429,9 @@ use color_print::cformat;
 use crossbeam_channel as chan;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
-use worktrunk::git::{ErrorExt, LocalBranch, Repository, WorktreeId, WorktreeInfo, WorktreeRef};
+use worktrunk::git::{
+    ErrorExt, LocalBranch, RemoteBranch, Repository, WorktreeId, WorktreeInfo, WorktreeRef,
+};
 use worktrunk::styling::{
     INFO_SYMBOL, eprintln, format_with_gutter, hint_message, info_message, terminal_width,
     truncate_visible, warning_message,
@@ -749,9 +751,13 @@ fn render_reveal(
         .collect()
 }
 
-fn format_loading_footer(footer_base: &str) -> String {
+fn format_loading_footer(footer_base: &str, progress: Option<(usize, usize)>) -> String {
     let dim = Style::new().dimmed();
-    format!("{INFO_SYMBOL} {dim}{footer_base} — loading details…{dim:#}")
+    let message = match progress {
+        Some((completed, total)) => format!("{completed}/{total} tasks complete — {footer_base}"),
+        None => format!("{footer_base} — loading details…"),
+    };
+    format!("{INFO_SYMBOL} {dim}{message}{dim:#}")
 }
 
 /// Build the progressive-table footer shown while the drain is stalled.
@@ -761,11 +767,12 @@ fn format_loading_footer(footer_base: &str) -> String {
 /// `pending_count` is the total outstanding-result count (≥ 1).
 fn format_stall_footer(
     footer_base: &str,
+    completed: usize,
+    total: usize,
     pending_count: usize,
     first_kind: TaskKind,
     first_name: &str,
 ) -> String {
-    let dim = Style::new().dimmed();
     let kind_name = first_kind.display_name();
     let waiting_clause = if pending_count == 1 {
         cformat!("waiting on <underline>{kind_name}</> for <underline>{first_name}</>")
@@ -774,7 +781,10 @@ fn format_stall_footer(
             "waiting on {pending_count} tasks, including <underline>{kind_name}</> for <underline>{first_name}</>"
         )
     };
-    cformat!("{INFO_SYMBOL} {dim}{footer_base} — no recent progress; {waiting_clause}{dim:#}")
+    format_loading_footer(
+        &format!("no recent progress; {waiting_clause} — {footer_base}"),
+        Some((completed, total)),
+    )
 }
 
 /// Caps on the message shown per failed task: at most `MAX_LINES` lines,
@@ -1125,7 +1135,7 @@ pub fn collect(
     };
     // Remote branches that aren't tracked by any local branch. Filtering
     // happens over the cached inventories — no extra subprocess.
-    let remote_branches: Vec<(String, String)> = if show_remotes {
+    let remote_branches: Vec<RemoteBranch> = if show_remotes {
         let tracked: HashSet<&str> = repo
             .local_branches()?
             .iter()
@@ -1134,7 +1144,7 @@ pub fn collect(
         repo.remote_branches()?
             .iter()
             .filter(|r| !tracked.contains(r.short_name.as_str()))
-            .map(|r| (r.short_name.clone(), r.commit_sha.clone()))
+            .cloned()
             .collect()
     } else {
         Vec::new()
@@ -1196,7 +1206,11 @@ pub fn collect(
                 .iter()
                 .map(|(_, sha)| sha.as_str()),
         )
-        .chain(remote_branches.iter().map(|(_, sha)| sha.as_str()))
+        .chain(
+            remote_branches
+                .iter()
+                .map(|branch| branch.commit_sha.as_str()),
+        )
         .filter(|sha| *sha != worktrunk::git::NULL_OID)
         .collect();
     let commit_details_map = repo.commit_details_many(&all_shas).unwrap_or_else(|err| {
@@ -1224,8 +1238,8 @@ pub fn collect(
         |(_, sha)| sha.as_str(),
     );
     let remote_branches =
-        sort_by_timestamp_desc_with_cache(remote_branches, &commit_details_map, |(_, sha)| {
-            sha.as_str()
+        sort_by_timestamp_desc_with_cache(remote_branches, &commit_details_map, |branch| {
+            branch.commit_sha.as_str()
         });
 
     // Branches living in more than one worktree. Every row on such a branch
@@ -1272,11 +1286,13 @@ pub fn collect(
     );
 
     let remote_start_idx = all_items.len();
-    all_items.extend(
-        remote_branches
-            .iter()
-            .map(|(name, sha)| ListItem::new_remote_branch(sha.clone(), name.clone())),
-    );
+    all_items.extend(remote_branches.iter().map(|branch| {
+        ListItem::new_remote_branch(
+            branch.commit_sha.clone(),
+            branch.remote_name.clone(),
+            branch.local_name.clone(),
+        )
+    }));
 
     // Abbreviated SHAs land here, before layout and the skeleton, rather than
     // with the rest of the commit bundle below. The Commit cell and a detached
@@ -1552,7 +1568,7 @@ pub fn collect(
                 all_items.len()
             );
         }
-        table.update_footer(format_loading_footer(&footer_base));
+        table.update_footer(format_loading_footer(&footer_base, None));
         table.render_skeleton()?;
         worktrunk::trace::instant("Skeleton rendered");
         Some(table)
@@ -1745,14 +1761,20 @@ pub fn collect(
         .and(integration_targets.clone());
     options.snapshot = snapshot;
 
-    // Update is_previous on items
-    if let Some(prev) = previous_branch.as_deref() {
-        for item in &mut all_items {
-            if item.branch() == Some(prev)
-                && let Some(wt_data) = item.worktree_data_mut()
-            {
-                wt_data.is_previous = true;
-            }
+    // Update is_previous on items: the worktree `wt switch -` returns to,
+    // by its recorded path, or else every worktree of the previous branch.
+    let previous_path = repo
+        .switch_previous_worktree()
+        .ok()
+        .flatten()
+        .map(|(path, _)| path);
+    for item in &mut all_items {
+        let is_previous = match &previous_path {
+            Some(path) => item.worktree_path() == Some(path.as_path()),
+            None => previous_branch.is_some() && item.branch() == previous_branch.as_deref(),
+        };
+        if is_previous && let Some(wt_data) = item.worktree_data_mut() {
+            wt_data.is_previous = true;
         }
     }
 
@@ -1885,6 +1907,10 @@ pub fn collect(
             .map(|item| layout.render_skeleton_row(item, placeholder).render())
             .collect();
         if let Some(table) = progressive_table.as_mut() {
+            table.update_footer(format_loading_footer(
+                &footer_base,
+                Some((0, expected_results.count())),
+            ));
             for (idx, row) in commit_rows.iter().enumerate() {
                 table.update_row(idx, row.clone());
             }
@@ -1981,7 +2007,10 @@ pub fn collect(
                             s.progress_overflow = true;
                         }
 
-                        let footer_msg = format_loading_footer(&footer_base);
+                        let footer_msg = format_loading_footer(
+                            &footer_base,
+                            Some((s.completed_results, total_results)),
+                        );
                         s.table.update_footer(footer_msg);
                         s.table.update_row(item_idx, rendered.clone());
 
@@ -2025,6 +2054,8 @@ pub fn collect(
                         let mut s = state_cell.borrow_mut();
                         let footer_msg = format_stall_footer(
                             &footer_base,
+                            s.completed_results,
+                            total_results,
                             pending_count,
                             first_kind,
                             first_name,
@@ -2430,10 +2461,10 @@ mod tests {
 
     #[test]
     fn test_format_stall_footer_single_pending() {
-        let rendered = format_stall_footer("3 worktrees", 1, TaskKind::CiStatus, "feat");
+        let rendered = format_stall_footer("3 worktrees", 11, 12, 1, TaskKind::CiStatus, "feat");
         assert_snapshot!(
             rendered.ansi_strip(),
-            @"○ 3 worktrees — no recent progress; waiting on CI status for feat"
+            @"○ 11/12 tasks complete — no recent progress; waiting on CI status for feat — 3 worktrees"
         );
     }
 
@@ -2441,13 +2472,15 @@ mod tests {
     fn test_format_stall_footer_many_pending() {
         let rendered = format_stall_footer(
             "3 worktrees — first 2 of 3 shown",
+            9,
+            12,
             3,
             TaskKind::CiStatus,
             "feat",
         );
         assert_snapshot!(
             rendered.ansi_strip(),
-            @"○ 3 worktrees — first 2 of 3 shown — no recent progress; waiting on 3 tasks, including CI status for feat"
+            @"○ 9/12 tasks complete — no recent progress; waiting on 3 tasks, including CI status for feat — 3 worktrees — first 2 of 3 shown"
         );
     }
 

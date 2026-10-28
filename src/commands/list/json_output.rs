@@ -78,7 +78,7 @@ pub struct JsonItem {
     /// This is the current worktree (matches repo discovery path: PWD or `-C`)
     pub is_current: bool,
 
-    /// This was the previous worktree (from `worktrunk.history`)
+    /// This was the previous worktree (the `wt switch -` target)
     pub is_previous: bool,
 
     /// CI status from PR or branch workflow

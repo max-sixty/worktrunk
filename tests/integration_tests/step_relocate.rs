@@ -348,6 +348,133 @@ command = "cat > {} && echo 'chore: auto-commit before relocate'"
     );
 }
 
+/// A clobber backup can fail after validation has already committed work.
+/// Keep that commit and validation skips visible even though no worktree moved.
+#[cfg(unix)]
+#[rstest]
+#[case::json(true)]
+#[case::text(false)]
+fn test_relocate_json_retains_commits_when_clobber_backup_fails(
+    repo: TestRepo,
+    #[case] json: bool,
+) {
+    let parent = worktree_parent(&repo);
+    let feature = parent.join("wrong-feature");
+    let locked = parent.join("wrong-locked");
+    for (branch, path) in [("feature", &feature), ("locked", &locked)] {
+        repo.run_git(&["worktree", "add", "-b", branch, path.to_str().unwrap()]);
+    }
+    repo.run_git(&[
+        "worktree",
+        "lock",
+        "--reason",
+        "in use",
+        locked.to_str().unwrap(),
+    ]);
+    fs::write(feature.join("dirty.txt"), "work to retain").unwrap();
+    let before = repo.git_output(&["rev-parse", "feature"]);
+
+    // The destination itself is valid on Unix filesystems, but appending the
+    // timestamped backup suffix exceeds the 255-byte filename limit. This
+    // exercises a real rename failure without depending on permissions/root.
+    let destination_name = "x".repeat(250);
+    let destination = parent.join(&destination_name);
+    fs::write(&destination, "existing blocker").unwrap();
+    fs::write(
+        repo.test_config_path(),
+        format!(
+            r#"
+worktree-path = "../{{% if branch == 'feature' %}}{destination_name}{{% else %}}repo.{{{{ branch }}}}{{% endif %}}"
+[commit.generation]
+command = "cat >/dev/null && echo 'commit before failed relocation'"
+"#
+        ),
+    )
+    .unwrap();
+    let mut command = repo.wt_command();
+    command.args([
+        "step",
+        "relocate",
+        "feature",
+        "locked",
+        "--commit",
+        "--clobber",
+    ]);
+    if json {
+        command.arg("--format=json");
+    }
+    let output = command.output().unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Failed to move"), "{stderr}");
+    assert!(stderr.contains("locked: in use"), "{stderr}");
+    let after = repo.git_output(&["rev-parse", "feature"]);
+    assert_ne!(
+        after, before,
+        "validation must have committed the dirty work"
+    );
+    if json {
+        let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let commits = response["commits"].as_array().unwrap();
+        assert_eq!(commits.len(), 1, "{response}");
+        assert_eq!(commits[0]["branch"], "feature");
+        assert_eq!(commits[0]["commit"], after);
+        assert_eq!(
+            response["skipped"],
+            serde_json::json!([{"branch": "locked", "reason": "locked"}])
+        );
+        assert!(response["entries"].as_array().unwrap().is_empty());
+    } else {
+        assert!(output.stdout.is_empty(), "{output:?}");
+    }
+    assert_eq!(
+        fs::read_to_string(&destination).unwrap(),
+        "existing blocker"
+    );
+    assert!(feature.is_dir());
+    assert!(locked.is_dir());
+}
+
+/// Auto-commits are durable even when validating a later worktree fails.
+#[rstest]
+fn test_relocate_json_retains_commits_before_validation_failure(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+    for branch in ["a", "b"] {
+        let path = parent.join(format!("wrong-{branch}"));
+        repo.run_git(&["worktree", "add", "-b", branch, path.to_str().unwrap()]);
+        fs::write(path.join("dirty.txt"), "new work").unwrap();
+    }
+    let marker = repo.home_path().join("first-commit-generated");
+    let marker = shell_escape::unix::escape(marker.to_slash_lossy());
+    fs::write(
+        repo.test_config_path(),
+        format!(
+            r#"
+[commit.generation]
+command = "if test -e {marker}; then exit 1; fi; touch {marker}; echo 'commit before relocation'"
+"#
+        ),
+    )
+    .unwrap();
+    let output = repo
+        .wt_command()
+        .args(["step", "relocate", "--commit", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let commits = response["commits"].as_array().unwrap();
+    assert_eq!(commits.len(), 1, "{response}");
+    assert_eq!(commits[0]["branch"], "a");
+    assert_eq!(commits[0]["stage_mode"], "all");
+    assert_eq!(commits[0]["commit"], repo.git_output(&["rev-parse", "a"]));
+    assert!(response["entries"].as_array().unwrap().is_empty());
+    assert!(!String::from_utf8_lossy(&output.stderr).is_empty());
+    assert!(parent.join("wrong-a").is_dir());
+    assert!(parent.join("wrong-b").is_dir());
+    assert!(!parent.join("repo.a").exists());
+}
+
 /// Create a worktree for `branch` at `path`, stopped on an unresolved
 /// conflict: `git merge side` leaves the index at stages 1–3 with `<<<<<<<` on
 /// disk — the state `git add -A` would silently resolve.
@@ -458,6 +585,14 @@ command = "cat >/dev/null && echo 'chore: auto-commit before relocate'"
         String::from_utf8_lossy(&output.stderr)
     );
     let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+
+    let commits = parsed["commits"].as_array().unwrap();
+    assert_eq!(commits.len(), 1);
+    assert_eq!(commits[0]["branch"], "clean");
+    assert_eq!(
+        commits[0]["commit"],
+        repo.git_output(&["rev-parse", "clean"])
+    );
 
     let skipped = parsed["skipped"].as_array().expect("skipped array");
     assert!(
@@ -1479,8 +1614,10 @@ worktree-path = "../{{ undefined_var }}.{{ branch }}"
 /// Windows user hits this too: their shell holds the cwd across the move. So the
 /// preservation path is reachable, and testable, only on Unix.
 #[rstest]
+#[case::success(false)]
+#[case::directive_failure(true)]
 #[cfg_attr(windows, ignore)]
-fn test_relocate_preserves_subdir(repo: TestRepo) {
+fn test_relocate_preserves_subdir(repo: TestRepo, #[case] directive_failure: bool) {
     let parent = worktree_parent(&repo);
     let (cd_path, _guard) = directive_file();
 
@@ -1496,17 +1633,35 @@ fn test_relocate_preserves_subdir(repo: TestRepo) {
     ]);
     let subdir = Path::new("apps").join("gateway");
     fs::create_dir_all(wrong_path.join(&subdir)).unwrap();
+    fs::write(wrong_path.join(&subdir).join("dirty.txt"), "new work").unwrap();
 
     let mut cmd = repo.wt_command();
+    if directive_failure {
+        fs::remove_file(&cd_path).unwrap();
+        fs::create_dir(&cd_path).unwrap();
+    }
     configure_directive_file(&mut cmd, &cd_path);
-    cmd.args(["step", "relocate"])
+    cmd.args(["step", "relocate", "--commit", "--format=json"])
         .current_dir(wrong_path.join(&subdir));
 
     let output = cmd.output().unwrap();
-    assert!(
-        output.status.success(),
-        "wt step relocate failed: {output:?}"
+    assert_eq!(output.status.success(), !directive_failure, "{output:?}");
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let entries = response["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["branch"], "feature");
+    let commits = response["commits"].as_array().unwrap();
+    assert_eq!(commits.len(), 1);
+    assert_eq!(commits[0]["branch"], "feature");
+    assert_eq!(
+        commits[0]["commit"],
+        repo.git_output(&["rev-parse", "feature"])
     );
+    assert!(parent.join("repo.feature").join(&subdir).is_dir());
+    if directive_failure {
+        assert!(!String::from_utf8_lossy(&output.stderr).is_empty());
+        return;
+    }
 
     // The cd directive should land in the equivalent subdirectory of the
     // worktree's new location, not at its root.

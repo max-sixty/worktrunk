@@ -464,6 +464,55 @@ fn test_statusline_reflects_checked_out_branch(mut repo: TestRepo) {
     );
 }
 
+/// A configured custom name can stand in for its branch, but must stop doing
+/// so after Git checks out a different branch in that directory.
+#[rstest]
+fn test_statusline_custom_layout_preserves_branch_drift(mut repo: TestRepo) {
+    repo.write_test_config(
+        "worktree-path = \"{{ repo_path }}/../{{ repo }}-{{ branch | sanitize }}\"\n",
+    );
+    let path = repo.root_path().parent().unwrap().join("repo-feature-auth");
+    let path = repo.add_worktree_at_path("feature-auth", &path);
+    let mut output = format!(
+        "configured layout:\n{}",
+        run_statusline_from_dir(&repo, &["--format=claude-code"], None, &path)
+    );
+    for branch in ["feature", "auth"] {
+        let checkout = repo
+            .git_command()
+            .args(["switch", "-c", branch])
+            .current_dir(&path)
+            .run()
+            .unwrap();
+        assert!(checkout.status.success());
+        output.push_str(&format!(
+            "\nafter git switch {branch}:\n{}",
+            run_statusline_from_dir(&repo, &["--format=claude-code"], None, &path)
+        ));
+    }
+
+    repo.run_git(&["switch", "-c", "repo"]);
+    output.push_str(&format!(
+        "\nprimary worktree:\n{}",
+        run_statusline(&repo, &["--format=claude-code"], None)
+    ));
+    claude_code_snapshot_settings().bind(|| {
+        assert_snapshot!(output, @"
+        configured layout:
+        [0m [PATH]-feature-auth  [2m_[22m
+
+        after git switch feature:
+        [0m [PATH]-feature-auth  feature  [2m_[22m
+
+        after git switch auth:
+        [0m [PATH]-feature-auth  auth  [2m_[22m
+
+        primary worktree:
+        [0m [PATH]  repo  [2m^[22m
+        ");
+    });
+}
+
 #[rstest]
 fn test_statusline_detached_head(mut repo: TestRepo) {
     // Create a feature worktree

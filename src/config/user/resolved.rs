@@ -9,6 +9,7 @@ use super::sections::{
     CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, RemoveConfig, StepConfig,
     SwitchConfig, SwitchPickerConfig,
 };
+use crate::config::ProjectId;
 
 /// All resolved configuration for a specific project context.
 ///
@@ -46,7 +47,7 @@ pub struct ResolvedConfig {
 
 impl ResolvedConfig {
     /// Resolve all configuration for a project.
-    pub fn for_project(config: &UserConfig, project: Option<&str>) -> Self {
+    pub fn for_project(config: &UserConfig, project: Option<&ProjectId>) -> Self {
         Self {
             list: config.list(project),
             merge: config.merge(project),

@@ -143,7 +143,7 @@ use once_cell::sync::OnceCell;
 use anyhow::Context;
 use dunce::canonicalize;
 
-use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
+use crate::config::{LoadError, ProjectConfig, ProjectId, ResolvedConfig, UserConfig};
 
 // Import types from parent module
 use super::{
@@ -258,7 +258,7 @@ pub(super) struct RepoCache {
     /// [`Repository::branch_diff_spec`]. `None` when no default branch resolves.
     pub(super) comparison_base: OnceCell<Option<integration::ComparisonBase>>,
     /// Project identifier derived from remote URL
-    pub(super) project_identifier: OnceCell<String>,
+    pub(super) project_identifier: OnceCell<ProjectId>,
     /// Project config (loaded from .config/wt.toml in main worktree)
     pub(super) project_config: OnceCell<Option<ProjectConfig>>,
     /// CI platform from project config (`forge.platform` / `ci.platform`).
@@ -437,11 +437,7 @@ impl ResolvedWorktree {
 /// So the producers state it. A token nobody touched may name a path
 /// ([`Selector::literal`]). One an earlier step produced may not
 /// ([`Selector::rewritten_to`]) — a shortcut expansion, a `pr:`/`mr:` lookup, a
-/// stripped remote prefix, a default branch read from cache. Neither does one
-/// that names a branch by construction ([`Selector::branch_only`]), which is
-/// `wt switch --create <name>`: nothing rewrote the argument, but it names a
-/// branch that does not exist yet, so a directory sitting at that spelling is
-/// not what the user meant.
+/// stripped remote prefix, a default branch read from cache.
 #[derive(Debug, Clone)]
 pub struct Selector {
     token: String,
@@ -463,14 +459,6 @@ impl Selector {
         Self {
             token: token.into(),
             may_name_path: false,
-        }
-    }
-
-    /// Take the path arm off a token that names a branch by construction.
-    pub fn branch_only(self) -> Self {
-        Self {
-            may_name_path: false,
-            ..self
         }
     }
 
@@ -1320,7 +1308,7 @@ impl Repository {
     pub fn config(&self) -> &ResolvedConfig {
         self.cache.resolved_config.get_or_init(|| {
             let project_id = self.project_identifier().ok();
-            self.user_config().resolved(project_id.as_deref())
+            self.user_config().resolved(project_id.as_ref())
         })
     }
 
@@ -1501,19 +1489,6 @@ impl Repository {
             repo: self,
             name: name.to_string(),
         }
-    }
-
-    /// Get the current branch name, or error if in detached HEAD state.
-    ///
-    /// `action` describes what requires being on a branch (e.g., "merge").
-    pub fn require_current_branch(&self, action: &str) -> anyhow::Result<String> {
-        self.current_worktree().branch()?.ok_or_else(|| {
-            GitError::DetachedHead {
-                action: Some(action.into()),
-                worktree: None,
-            }
-            .into()
-        })
     }
 
     // =========================================================================
@@ -2017,10 +1992,11 @@ impl Repository {
         Ok(output.stdout)
     }
 
-    /// Run a git command and return whether it succeeded (exit code 0).
+    /// Run a Git predicate: status 0 is true, 1 is false, and other statuses fail.
     ///
-    /// This is useful for commands that use exit codes for boolean results,
-    /// like `git merge-base --is-ancestor`.
+    /// Use for commands with this exit-code contract, such as
+    /// `git merge-base --is-ancestor` and `git rev-parse --verify --quiet`.
+    /// A failed query must not be treated or cached as a negative answer.
     ///
     /// # Examples
     /// ```no_run
@@ -2031,7 +2007,12 @@ impl Repository {
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn run_command_check(&self, args: &[&str]) -> anyhow::Result<bool> {
-        Ok(self.run_command_output(args)?.status.success())
+        let output = self.run_command_output(args)?;
+        match output.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => Err(CommandError::from_failed_output("git", args, &output).into()),
+        }
     }
 
     /// Abbreviate a commit SHA for display, honoring `core.abbrev` and

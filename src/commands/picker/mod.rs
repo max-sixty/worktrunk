@@ -103,6 +103,8 @@ mod progressive_handler;
 mod prs;
 mod summary;
 
+use crate::commands::command_executor::ForegroundStdin;
+
 use std::cell::RefCell;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -129,7 +131,7 @@ use crate::output::print_json;
 use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use super::hooks::HookAnnouncer;
 use super::list::collect;
-use super::list::model::{BranchScope, ListItem};
+use super::list::model::ListItem;
 use super::list::progressive::RenderTarget;
 use super::list::render::PLACEHOLDER;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
@@ -387,10 +389,12 @@ impl AltXRemover {
                 handle_remove_output(
                     result,
                     RemovalExecution::Silent,
+                    ForegroundStdin::Closed,
                     &plan,
                     /* quiet */ true,
                     &mut announcer,
-                )?;
+                )
+                .map_err(|failure| failure.error)?;
                 announcer.flush()?;
             }
             RemovalPlan::BranchOnly {
@@ -836,7 +840,7 @@ fn build_morph_branch_row(
     default_branch: Option<&str>,
 ) -> (String, LocalContent) {
     let mut branch_item = worktree_item.clone();
-    branch_item.reclassify_as_branch(BranchScope::Local, branch.to_string());
+    branch_item.reclassify_as_branch(branch.to_string());
     branch_item.status_symbols = Default::default();
     branch_item.refresh_status_symbols(default_branch);
     let line = layout
@@ -1327,7 +1331,7 @@ fn approved_removal_plan(
     // pipeline can be matched against approvals — `approve_readonly` then
     // drops them (fail-closed), rather than aborting the picker removal.
     let project_id = repo.project_identifier().ok();
-    let pid = project_id.as_deref();
+    let pid = project_id.as_ref();
     let user = repo.user_config();
     let project_config = repo.load_project_config()?;
 
@@ -2562,7 +2566,7 @@ pub mod tests {
         resolve_shortcut_branch, resolve_shortcut_url, summary_command_and_hint,
         switch_pipeline_repo,
     };
-    use crate::commands::list::model::{BranchScope, ListItem, WorktreeData};
+    use crate::commands::list::model::{ListItem, WorktreeData};
     use crate::commands::worktree::RemovalPlan;
     use insta::assert_yaml_snapshot;
     use skim::prelude::SkimItem;
@@ -3969,7 +3973,7 @@ pub mod tests {
         let approvals_path = approvals_dir.path().join("approvals.toml");
         let mut approvals = Approvals::default();
         approvals
-            .approve_commands(pid, vec!["false".to_string()], &approvals_path)
+            .approve_commands(pid.to_string(), vec!["false".to_string()], &approvals_path)
             .unwrap();
 
         // Build the row from the git-reported worktree path, not the raw temp
@@ -4342,7 +4346,7 @@ pub mod tests {
             local,
             LocalContent::from_item(&{
                 let mut b = ListItem::new_branch("abc123".to_string(), "feature".to_string());
-                b.reclassify_as_branch(BranchScope::Local, "feature".into());
+                b.reclassify_as_branch("feature".into());
                 b
             }),
             "the morphed row's diff signals are the branch's (working_tree empty)"

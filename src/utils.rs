@@ -171,6 +171,75 @@ pub fn write_new_atomically(path: &Path, content: &str) -> io::Result<()> {
     write_atomically_with(path, content, false)
 }
 
+/// Prepare a regenerable log or diagnostic path without opening the file.
+///
+/// `relative_path` names a file within `log_dir`. On Unix, new directories
+/// are owner-only; every directory from the file's parent through `log_dir`
+/// is restricted to 0700 and an existing regular file to 0600. Symlinked
+/// directories are rejected so repair cannot change permissions outside the
+/// log tree. Log-file symlinks and special files are left alone: repair must
+/// not change a file's symlink target or block on a FIFO without a log write.
+pub fn prepare_log_file(log_dir: &Path, relative_path: &Path) -> io::Result<std::path::PathBuf> {
+    let path = log_dir.join(relative_path);
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Log file needs a directory"))?;
+    let mut directory = std::fs::DirBuilder::new();
+    directory.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        directory.mode(0o700);
+        directory.create(log_dir)?;
+        for ancestor in parent
+            .ancestors()
+            .take_while(|dir| dir.starts_with(log_dir))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+        {
+            if ancestor != log_dir {
+                directory.create(ancestor)?;
+            }
+            if !std::fs::symlink_metadata(ancestor)?.file_type().is_dir() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("Log directory is not a directory: {}", ancestor.display()),
+                ));
+            }
+            std::fs::set_permissions(ancestor, std::fs::Permissions::from_mode(0o700))?;
+        }
+        if std::fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_file()) {
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        }
+    }
+    #[cfg(not(unix))]
+    directory.create(parent)?;
+    Ok(path)
+}
+
+/// Open a log file after preparing its directory and existing permissions.
+/// Newly created files are owner-only on Unix.
+pub fn open_log_file(
+    log_dir: &Path,
+    relative_path: &Path,
+    append: bool,
+) -> io::Result<std::fs::File> {
+    let path = prepare_log_file(log_dir, relative_path)?;
+    let mut options = std::fs::OpenOptions::new();
+    options
+        .write(true)
+        .create(true)
+        .append(append)
+        .truncate(!append);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(&path)
+}
+
 fn write_atomically_with(path: &Path, content: &str, overwrite: bool) -> io::Result<()> {
     let target = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     // A bare filename's parent is `Some("")`, which no directory call accepts.
@@ -208,6 +277,35 @@ fn write_atomically_with(path: &Path, content: &str, overwrite: bool) -> io::Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn prepare_log_file_does_not_chmod_symlinked_directory() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let log_dir = dir.path().join("logs");
+        symlink(&outside, &log_dir).unwrap();
+
+        assert!(prepare_log_file(&log_dir, Path::new("commands.jsonl")).is_err());
+        assert_eq!(
+            std::fs::metadata(&outside).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+
+        let real_log_dir = dir.path().join("real-logs");
+        std::fs::create_dir(&real_log_dir).unwrap();
+        symlink(&outside, real_log_dir.join("nested")).unwrap();
+        assert!(prepare_log_file(&real_log_dir, Path::new("nested/hook.log")).is_err());
+        assert!(!outside.join("hook.log").exists());
+        assert_eq!(
+            std::fs::metadata(&outside).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+    }
 
     #[test]
     fn test_write_atomically_creates_then_replaces() {

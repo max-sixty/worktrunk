@@ -24,8 +24,6 @@ pub enum PlatformData {
     },
     /// Gitea-specific data.
     Gitea {
-        /// Gitea host (e.g., "gitea.com", "git.example.com").
-        host: String,
         /// Owner of the head (source) repository.
         head_owner: String,
         /// Name of the head (source) repository.
@@ -34,6 +32,8 @@ pub enum PlatformData {
         base_owner: String,
         /// Name of the base (target) repository.
         base_repo: String,
+        /// Clone URL supplied by Gitea, including its scheme, port, and path.
+        base_clone_url: String,
     },
     /// GitLab-specific data.
     GitLab {
@@ -227,11 +227,11 @@ mod tests {
             url: "https://git.example.com/owner/repo/pulls/42".to_string(),
             fork_push_url: Some("https://git.example.com/contributor/repo.git".to_string()),
             platform_data: PlatformData::Gitea {
-                host: "git.example.com".to_string(),
                 head_owner: "contributor".to_string(),
                 head_repo: "repo".to_string(),
                 base_owner: "owner".to_string(),
                 base_repo: "repo".to_string(),
+                base_clone_url: "https://git.example.com/owner/repo.git".to_string(),
             },
         };
         assert_eq!(info.ref_type(), RefType::Pr);
@@ -324,11 +324,11 @@ mod tests {
             url: "https://git.example.com/owner/repo/pulls/101".to_string(),
             fork_push_url: Some("https://git.example.com/contributor/repo.git".to_string()),
             platform_data: PlatformData::Gitea {
-                host: "git.example.com".to_string(),
                 head_owner: "contributor".to_string(),
                 head_repo: "repo".to_string(),
                 base_owner: "owner".to_string(),
                 base_repo: "repo".to_string(),
+                base_clone_url: "https://git.example.com/owner/repo.git".to_string(),
             },
         };
         assert_eq!(

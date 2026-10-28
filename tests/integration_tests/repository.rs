@@ -177,6 +177,54 @@ fn test_operation_in_progress_reads_the_queued_sequencer() {
     assert_eq!(repository.operation_in_progress().unwrap(), None);
 }
 
+/// A broken registration must not hide a healthy rebase from ordinary
+/// inventory or switching; branch deletion still needs the complete topology.
+#[test]
+fn test_rebase_identity_survives_an_unreadable_sibling_registration() {
+    let mut test = TestRepo::with_initial_commit();
+    let feature = test.add_worktree("feature");
+    test.run_git_in(&feature, &["commit", "--allow-empty", "-m", "Feature"]);
+    test.run_git(&["merge", "--ff-only", "feature"]);
+    let paused = test
+        .git_command()
+        .current_dir(&feature)
+        .args(["rebase", "--exec", "false", "HEAD~1"])
+        .run()
+        .unwrap();
+    assert!(!paused.status.success(), "{paused:?}");
+
+    let sibling = test.add_worktree("broken");
+    let repo = Repository::at(test.root_path()).unwrap();
+    let registration = repo.worktree_at(&sibling).git_dir().unwrap();
+    fs::remove_file(registration.join("gitdir")).unwrap();
+
+    let worktree = repo
+        .list_worktrees()
+        .unwrap()
+        .iter()
+        .find(|wt| wt.path == feature)
+        .unwrap();
+    assert!(worktree.detached);
+    assert_eq!(worktree.branch.as_deref(), Some("feature"));
+    let switched = test
+        .wt_command()
+        .args(["switch", "feature", "--no-hooks"])
+        .output()
+        .unwrap();
+    assert!(switched.status.success(), "{switched:?}");
+    assert!(
+        worktrunk::git::delete_branch_if_safe(
+            &repo,
+            &repo.capture_refs().unwrap(),
+            "feature",
+            "main",
+            false,
+        )
+        .is_err()
+    );
+    assert!(repo.branch("feature").exists_locally().unwrap());
+}
+
 /// `wt list` clones one repository into parallel tasks, so hot cache entries
 /// must remain usable across both the clone and thread boundaries.
 #[test]
@@ -359,7 +407,7 @@ fn test_project_identifier_ssh_protocol_with_port() {
 }
 
 /// The project identifier of a repository whose `origin` is `url`.
-fn project_identifier_for_remote(url: &str) -> String {
+fn project_identifier_for_remote(url: &str) -> worktrunk::config::ProjectId {
     let mut repo = TestRepo::with_initial_commit();
     repo.setup_remote("main");
     repo.git_command()
@@ -382,10 +430,9 @@ fn test_project_identifier_ipv6_hosts_are_distinct() {
     assert_eq!(second, "[2001:db8::2]/owner/repo");
 }
 
-/// The identifier selects both saved approvals and `[projects]` settings: an
-/// entry keyed on the port-less identifier an SSH port remote used to share
-/// does not carry over, while the ordinary SSH and HTTPS forms of one project
-/// still share one entry.
+/// The identifier selects both saved approvals and `[projects]` settings. The
+/// ordinary SSH and HTTPS forms of one project share one entry. A remote on a
+/// non-default SSH port must not inherit entries for the default port.
 #[test]
 fn test_project_identifier_selects_approvals_and_project_settings() {
     use worktrunk::config::{Approvals, UserConfig};
@@ -395,19 +442,26 @@ fn test_project_identifier_selects_approvals_and_project_settings() {
     let default_port =
         project_identifier_for_remote("ssh://git@gitlab.example.com:22/team/project.git");
     let https = project_identifier_for_remote("https://gitlab.example.com/team/project.git");
+    assert_eq!(ported, "gitlab.example.com:2222/team/project");
+    assert_eq!(ported.legacy(), None);
     assert_eq!(default_port, "gitlab.example.com/team/project");
+    assert_eq!(default_port.legacy(), None);
     assert_eq!(https, default_port);
 
     let approvals: Approvals = toml::from_str(
         r#"
 [projects."gitlab.example.com/team/project"]
 approved-commands = ["npm install"]
+
+[projects."gitlab.example.com:2222/team/project"]
+approved-commands = ["npm test"]
 "#,
     )
     .unwrap();
     assert!(approvals.is_command_approved(&https, "npm install"));
-    assert!(approvals.is_command_approved(&default_port, "npm install"));
+    assert!(!approvals.is_command_approved(&https, "npm test"));
     assert!(!approvals.is_command_approved(&ported, "npm install"));
+    assert!(approvals.is_command_approved(&ported, "npm test"));
 
     let config: UserConfig = toml::from_str(
         r#"
@@ -415,14 +469,101 @@ worktree-path = "global"
 
 [projects."gitlab.example.com/team/project"]
 worktree-path = "default-port"
-
-[projects."gitlab.example.com:2222/team/project"]
-worktree-path = "port-2222"
 "#,
     )
     .unwrap();
     assert_eq!(config.worktree_path_for_project(&https), "default-port");
+    assert_eq!(config.worktree_path_for_project(&ported), "global");
+
+    let config: UserConfig = toml::from_str(
+        r#"
+[projects."gitlab.example.com/team/project"]
+worktree-path = "default-port"
+
+[projects."gitlab.example.com:2222/*"]
+worktree-path = "port-2222"
+"#,
+    )
+    .unwrap();
     assert_eq!(config.worktree_path_for_project(&ported), "port-2222");
+}
+
+/// Approvals and `[projects]` settings saved under the identifier v0.80.0 gave
+/// a remote keep applying after its identifier changed: a non-interactive
+/// `wt switch --create` runs the approved hook, in the worktree path the
+/// legacy entry names.
+#[rstest::rstest]
+#[case::uppercase_host("git@GitHub.com:team/app.git", "GitHub.com/team/app")]
+#[case::git_plus_ssh(
+    "git+ssh://git@github.com/team/app.git",
+    "git+ssh://git@github.com/team/app"
+)]
+fn test_switch_honors_entries_under_legacy_identifier(#[case] url: &str, #[case] legacy: &str) {
+    let mut repo = TestRepo::with_initial_commit();
+    repo.setup_remote("main");
+    repo.git_command()
+        .args(["remote", "set-url", "origin", url])
+        .run()
+        .unwrap();
+    repo.write_project_config(r#"pre-start = "echo ran > hook-ran.txt""#);
+    repo.commit("Add config");
+    repo.write_test_config(&format!(
+        "[projects.'{legacy}']\nworktree-path = \"{{{{ repo_path }}}}/../legacy.{{{{ branch }}}}\"\n"
+    ));
+    repo.write_test_approvals(&format!(
+        "[projects.'{legacy}']\napproved-commands = [\"echo ran > hook-ran.txt\"]\n"
+    ));
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "feature"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let worktree = repo.root_path().parent().unwrap().join("legacy.feature");
+    assert!(worktree.join("hook-ran.txt").exists());
+}
+
+/// A port-less approval cannot authorize an alias on a different SSH server.
+#[test]
+fn test_project_alias_approval_respects_ssh_port() {
+    let mut repo = TestRepo::with_initial_commit();
+    repo.setup_remote("main");
+    repo.git_command()
+        .args([
+            "remote",
+            "set-url",
+            "origin",
+            "ssh://git@host.example:2222/o/r.git",
+        ])
+        .run()
+        .unwrap();
+    repo.write_project_config(
+        r#"[aliases]
+probe = "echo ran > alias-ran.txt"
+"#,
+    );
+    for (key, allowed) in [
+        ("host.example/o/r", false),
+        ("host.example/*", false),
+        ("host.example:2222/o/r", true),
+    ] {
+        repo.write_test_approvals(&format!(
+            "[projects.'{key}']\napproved-commands = [\"echo ran > alias-ran.txt\"]\n"
+        ));
+        let output = repo.wt_command().arg("probe").output().unwrap();
+        assert_eq!(
+            output.status.success(),
+            allowed,
+            "key: {key}, stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(repo.root_path().join("alias-ran.txt").exists(), allowed);
+    }
 }
 
 #[test]
@@ -658,11 +799,11 @@ fn test_switch_previous_roundtrip() {
     // Populate the cache first to hit the in-memory update branch.
     let _ = r.is_bare();
     assert_eq!(r.switch_previous(), None);
-    r.set_switch_previous(Some("feature-a")).unwrap();
+    r.set_switch_previous("feature-a").unwrap();
     assert_eq!(r.switch_previous(), Some("feature-a".to_string()));
-    // `None` is a no-op — doesn't clear.
-    r.set_switch_previous(None).unwrap();
-    assert_eq!(r.switch_previous(), Some("feature-a".to_string()));
+    assert!(r.clear_switch_previous().unwrap());
+    assert_eq!(r.switch_previous(), None);
+    assert!(!r.clear_switch_previous().unwrap());
 }
 
 /// `primary_remote_url` composes `primary_remote` + `remote_url`,

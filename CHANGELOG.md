@@ -1,5 +1,91 @@
 # Changelog
 
+## 0.81.0
+
+### Improved
+
+- **Hooks can prompt**: hooks that run serially in the foreground (`pre-*` hooks, `wt hook <type> --foreground`) inherit wt's stdin, so `gum confirm 'trust this worktree?' && mise trust` works as a hook. Concurrent and background hooks read EOF. (Breaking: hooks no longer receive their context as JSON on stdin; pass values as template arguments, or whole objects with the new `tojson` filter. `wt step for-each` keeps its JSON.) [Docs](https://worktrunk.dev/hook/#interactive-hooks) ([#3129](https://github.com/max-sixty/worktrunk/pull/3129), [#4451](https://github.com/max-sixty/worktrunk/pull/4451), [#4524](https://github.com/max-sixty/worktrunk/pull/4524), thanks @endigma for [#3093](https://github.com/max-sixty/worktrunk/issues/3093))
+
+- **Experimental `wt switch --path`**: places one worktree outside the `worktree-path` template and keeps its branch name, as in `wt switch --create feature/JIRA-1234 --path ../dark-mode`. Commands reach it by branch or by path. [Docs](https://worktrunk.dev/switch/#custom-path) ([#4317](https://github.com/max-sixty/worktrunk/pull/4317), thanks @christowiz for [#1982](https://github.com/max-sixty/worktrunk/issues/1982))
+
+- **`wt merge --branch`**: merges another worktree's branch without leaving the current worktree. Commit, squash, rebase, and hooks run in the source worktree, and cleanup removes it. [Docs](https://worktrunk.dev/merge/) ([#4360](https://github.com/max-sixty/worktrunk/pull/4360), thanks @liuyinchu)
+
+- **OpenCode 2 worktrees go through Worktrunk**: after re-running `wt config plugins opencode install`, worktrees OpenCode creates and removes use `wt switch --create` and `wt remove`, as the Claude Code plugin's do. OpenCode's `worktree.directory` stops applying, and new branches start from the default branch. Like the Claude Code plugin, it opens an existing branch's worktree, which OpenCode's remove then removes. [Docs](https://worktrunk.dev/claude-code/#worktree-isolation-claude-code-and-opencode) ([#4489](https://github.com/max-sixty/worktrunk/pull/4489), thanks @rzane for [#4488](https://github.com/max-sixty/worktrunk/issues/4488))
+
+- **Faster bulk removal**: removal hands files to one background deleter per repository, not one `rm -rf` each, and deletes read-only directories it used to leave in `.git/wt/trash`. `wt step prune` no longer stalls when two worktrees share a directory name, as Codex worktrees do. (Breaking: prune runs pre-remove hooks concurrently; hooks writing shared state must coordinate.) ([#4516](https://github.com/max-sixty/worktrunk/pull/4516), [#4361](https://github.com/max-sixty/worktrunk/pull/4361), [#4337](https://github.com/max-sixty/worktrunk/pull/4337))
+
+- **`wt switch -` returns to the worktree it left**, including a detached worktree or the second checkout of a branch, and `wt remove -` targets the same worktree. Pre-switch hooks see the resolved destination, so `wt switch origin/feature` passes `branch=feature`. (Breaking: from a bare repository's directory, commands given no argument act on the worktree of the branch HEAD names.) ([#4497](https://github.com/max-sixty/worktrunk/pull/4497), [#4496](https://github.com/max-sixty/worktrunk/pull/4496), [#4521](https://github.com/max-sixty/worktrunk/pull/4521))
+
+- **Template errors name the variable**: `{{ brnch }}` reports `undefined variable brnch` and suggests `branch`. (Breaking: filters such as `sanitize` reject an undefined input, so `{{ upstream | sanitize }}` needs a guard or `default` on a branch with no upstream.) ([#4350](https://github.com/max-sixty/worktrunk/pull/4350), [#4440](https://github.com/max-sixty/worktrunk/pull/4440))
+
+- **Templates use MiniJinja 3** (Breaking): objects and lists render Python-style (`{'port': 3000}`) instead of as JSON, so use `| tojson` where JSON is needed; `round` rounds half to even; `title` capitalizes fewer word boundaries (`feat/x-y` becomes `Feat/x-Y`); division by zero errors. ([#4442](https://github.com/max-sixty/worktrunk/pull/4442), [#4524](https://github.com/max-sixty/worktrunk/pull/4524))
+
+- **CI status shows ⚠ for any failed forge call**, where some failures, such as a Gitea 404, used to leave the cell blank. A forge CLI with no login for the host still leaves it blank, and `wt config show --full` names the host it checked. ([#4436](https://github.com/max-sixty/worktrunk/pull/4436), [#4449](https://github.com/max-sixty/worktrunk/pull/4449))
+
+- **Removal explains itself**: `--force` lists the changes it discards, and a refusal over untracked files suggests `git stash -u`. A multi-target `wt remove` continues past a target whose pre-remove hook or removal fails, and exits 1. A branch-only removal names the detached worktree left at the branch's path. ([#4347](https://github.com/max-sixty/worktrunk/pull/4347), [#4357](https://github.com/max-sixty/worktrunk/pull/4357), [#3791](https://github.com/max-sixty/worktrunk/pull/3791), [#4313](https://github.com/max-sixty/worktrunk/pull/4313), thanks @chachi for [#3769](https://github.com/max-sixty/worktrunk/issues/3769))
+
+- **The picker can open without its preview**: `[switch.picker] preview = false` hides it until `Alt-p`. ([#4428](https://github.com/max-sixty/worktrunk/pull/4428), thanks @emacampolo for [#4072](https://github.com/max-sixty/worktrunk/issues/4072))
+
+- **Squash backups print a recovery command**: squashing staged changes prints the `refs/wt-backup/<branch>` ref and a `wt switch --create --base <sha>` command that restores them in a new worktree, even after `wt merge` removed the original. ([#4347](https://github.com/max-sixty/worktrunk/pull/4347))
+
+- **Shell integration**: `wt merge` and `wt remove` suggest restarting the shell when integration is installed but inactive. On Unix, the PowerShell profile comes from the installed `pwsh`, so a custom `XDG_CONFIG_HOME` works. (Breaking: installing for Nushell requires `nu`, and for PowerShell on Unix, `pwsh`.) ([#4343](https://github.com/max-sixty/worktrunk/pull/4343), [#4422](https://github.com/max-sixty/worktrunk/pull/4422), [#4436](https://github.com/max-sixty/worktrunk/pull/4436))
+
+- **System config has one path per platform**: `/Library/Application Support/worktrunk/config.toml` on macOS, `%PROGRAMDATA%\worktrunk\config.toml` on Windows, `/etc/xdg/worktrunk/config.toml` elsewhere, or `WORKTRUNK_SYSTEM_CONFIG_PATH`. (Breaking: `$XDG_CONFIG_DIRS` is ignored and macOS no longer falls back to `/etc/xdg`; a file there stops loading without a warning.) ([#4169](https://github.com/max-sixty/worktrunk/pull/4169))
+
+- **`expected_worktree_path_of_branch()` template function**: returns where `wt switch --create` would put a branch's worktree, even after the worktree at that path has moved to another branch. ([#4502](https://github.com/max-sixty/worktrunk/pull/4502), thanks @BenJurewicz for [#4480](https://github.com/max-sixty/worktrunk/pull/4480))
+
+- **Smaller improvements**: `wt switch --create` reports an invalid branch name in one line instead of Git's error; hook failures name the hook's source (`pre-merge user:lint failed (exit code 7)`); the `wt list` loading footer says how many rows fit; `wt step for-each` labels detached worktrees by path; `install-statusline` keeps `settings.json`'s key order; the Codex plugin shows the Worktrunk icon. ([#4349](https://github.com/max-sixty/worktrunk/pull/4349), [#4352](https://github.com/max-sixty/worktrunk/pull/4352), [#4333](https://github.com/max-sixty/worktrunk/pull/4333), [#4498](https://github.com/max-sixty/worktrunk/pull/4498), [#4420](https://github.com/max-sixty/worktrunk/pull/4420), [#4327](https://github.com/max-sixty/worktrunk/pull/4327))
+
+### Fixed
+
+- **Foreground hooks that change terminal settings**: a hook that touched the terminal, such as turbo on a cache miss, was stopped by `SIGTTOU` and wt hung. Hooks now run in the shell's job group. (Breaking: Nushell integration requires Nushell 0.113+; on Ctrl-C wt dies by the signal instead of exiting 130, so a calling script stops too.) ([#4400](https://github.com/max-sixty/worktrunk/pull/4400), [#3129](https://github.com/max-sixty/worktrunk/pull/3129), thanks @user753 for [#4389](https://github.com/max-sixty/worktrunk/issues/4389) and @willparsons for the turbo report)
+
+- **Formatter pre-commit hooks during a squash**: in `wt merge` and `wt step squash`, a hook's edits missed the squash commit, and the dirty worktree blocked removal. All commit paths now stage, run the hooks, and stage again. (Breaking: `wt step commit` and `wt merge --no-squash` stage first too, so index-reading hooks like `pre-commit run` can block them.) ([#4321](https://github.com/max-sixty/worktrunk/pull/4321), [#4520](https://github.com/max-sixty/worktrunk/pull/4520))
+
+- **`wt step copy-ignored` on Linux**: copied files took the copy's time, so cargo rebuilt much of a copied `target/`; they now keep the source's mtime, as they already did on macOS and Windows. A reflink rejected with `EPERM` now falls back to a copy. ([#4319](https://github.com/max-sixty/worktrunk/pull/4319), [#4518](https://github.com/max-sixty/worktrunk/pull/4518), [#4434](https://github.com/max-sixty/worktrunk/pull/4434), thanks @dmy-gh for [#4248](https://github.com/max-sixty/worktrunk/issues/4248), @paul-hansen for the repro, and @HN05 for [#4433](https://github.com/max-sixty/worktrunk/issues/4433))
+
+- **Directory patterns in `.worktreeinclude` and `[step.copy-ignored] exclude`**: a pattern such as `config/` skipped ignored files that sit beside tracked files in `config/`, so `wt step copy-ignored` left out included files and copied excluded ones. It now covers them, as `.gitignore` does. ([#4406](https://github.com/max-sixty/worktrunk/pull/4406))
+
+- **`wt list` status symbols**: JSON `symbols` strings use the table's order (`⊘_`, was `_⊘`), and the flag for an off-template path or duplicate checkout is a dim `⚐` instead of `⚑`. (Breaking: consumers matching these strings need updating.) ([#4335](https://github.com/max-sixty/worktrunk/pull/4335), [#4334](https://github.com/max-sixty/worktrunk/pull/4334))
+
+- **`wt switch`**: `--create` branches from a remote-tracking default branch such as git-p4's `p4/master` instead of `HEAD`; switching by path, as the picker does, gives pre-switch hooks the destination's variables; the bare-repo warning names the configured path. ([#4482](https://github.com/max-sixty/worktrunk/pull/4482), [#4493](https://github.com/max-sixty/worktrunk/pull/4493), [#4491](https://github.com/max-sixty/worktrunk/pull/4491), thanks @cazador481 for [#4481](https://github.com/max-sixty/worktrunk/issues/4481) and @dlecan for [#4492](https://github.com/max-sixty/worktrunk/issues/4492))
+
+- **Agent plugins**: `claude --worktree NAME` opens the worktree of an existing branch `NAME` rather than failing, so a kept session can be reopened. A clean exit then runs `wt remove` on it, which deletes its ignored files and, if integrated, the branch. The Codex plugin's Windows hooks parse under PowerShell. ([#4487](https://github.com/max-sixty/worktrunk/pull/4487), [#4241](https://github.com/max-sixty/worktrunk/pull/4241), thanks @edziegle for [#4486](https://github.com/max-sixty/worktrunk/issues/4486) and @wstczyw for [#4239](https://github.com/max-sixty/worktrunk/issues/4239))
+
+- **`wt switch` picker**: a per-project `pager` applies to the diff preview; a selected branch-only row no longer draws light text on the light selection bar; an orphan branch's log tab shows its commits. ([#4398](https://github.com/max-sixty/worktrunk/pull/4398), [#4408](https://github.com/max-sixty/worktrunk/pull/4408), [#4470](https://github.com/max-sixty/worktrunk/pull/4470), thanks @willparsons for reporting the contrast bug)
+
+- **`wt step relocate`**: a swap moves the shell with its worktree; relocating the main worktree leaves a shell in a nested worktree where it is; branches whose sanitized names collide no longer relocate partway. ([#4325](https://github.com/max-sixty/worktrunk/pull/4325), [#4256](https://github.com/max-sixty/worktrunk/pull/4256), thanks @Duang777)
+
+- **Aliases**: `--args=X` and `--vars=X` reach `{{ args }}` instead of being dropped, and completion after an alias no longer offers `--dry-run` or `--var`. ([#4391](https://github.com/max-sixty/worktrunk/pull/4391), [#4329](https://github.com/max-sixty/worktrunk/pull/4329))
+
+- **Config errors**: a malformed `approvals.toml` no longer aborts hooks, aliases, or commits run with `--yes`; one invalid `WORKTRUNK_*` override no longer discards the valid ones. ([#4467](https://github.com/max-sixty/worktrunk/pull/4467), [#4348](https://github.com/max-sixty/worktrunk/pull/4348))
+
+- **Windows**: an Azure CLI installed through WinGet (`az.cmd`) is found, and Git Bash is found through the first `git` on `PATH`, including custom installs where it resolves under `Git\mingw64\bin`. (Breaking: without `git` on `PATH`, Git Bash is no longer found at its default install locations.) ([#4402](https://github.com/max-sixty/worktrunk/pull/4402), [#4411](https://github.com/max-sixty/worktrunk/pull/4411), [#4452](https://github.com/max-sixty/worktrunk/pull/4452), thanks @wmmc88 for [#4401](https://github.com/max-sixty/worktrunk/issues/4401) and @LeoWSY-hashblue for [#4410](https://github.com/max-sixty/worktrunk/issues/4410))
+
+- **Forge fixes**: Azure DevOps CI no longer shows a same-named branch's PR from another repository in the project, and `pr:N` suggests a `dev.azure.com` URL for SSH remotes; Gitea fork pushes keep the server's clone URL; `tea` logins in its default macOS and Windows locations are found; `gh` and `glab` protocol settings apply per host. ([#4326](https://github.com/max-sixty/worktrunk/pull/4326), [#4364](https://github.com/max-sixty/worktrunk/pull/4364), [#4495](https://github.com/max-sixty/worktrunk/pull/4495), [#4420](https://github.com/max-sixty/worktrunk/pull/4420))
+
+- **Fixes for unusual setups**: valueless git config keys such as `core.fsmonitor` read as true; untracked files named like `:x` no longer break `wt list`'s diff; worktree paths containing newlines or non-UTF-8 bytes; the statusline's branch label with custom `worktree-path` templates; zsh `compinit` advice names the right file; IPv6 `ssh://` remotes get distinct approvals and `[projects]` settings (Breaking: re-save them). ([#4314](https://github.com/max-sixty/worktrunk/pull/4314), [#4320](https://github.com/max-sixty/worktrunk/pull/4320), [#4453](https://github.com/max-sixty/worktrunk/pull/4453), [#4495](https://github.com/max-sixty/worktrunk/pull/4495), [#4421](https://github.com/max-sixty/worktrunk/pull/4421), [#4526](https://github.com/max-sixty/worktrunk/pull/4526))
+
+### Documentation
+
+- **`wt config shell --help` is the shell setup reference**, covering init, install, uninstall, and diagnostics. ([#4344](https://github.com/max-sixty/worktrunk/pull/4344))
+
+- **Doc corrections**: the `wt config state vars clear` example, `wt list` JSON `null` causes, every supported forge in CI help, `--path` worktrees in `wt list`, the bare-repo navigation example, and Alt as Option on macOS. ([#4363](https://github.com/max-sixty/worktrunk/pull/4363), [#4359](https://github.com/max-sixty/worktrunk/pull/4359), [#4439](https://github.com/max-sixty/worktrunk/pull/4439), [#4328](https://github.com/max-sixty/worktrunk/pull/4328), [#4483](https://github.com/max-sixty/worktrunk/pull/4483), [#4412](https://github.com/max-sixty/worktrunk/pull/4412), thanks @wmcnamee-coreweave for [#4474](https://github.com/max-sixty/worktrunk/issues/4474))
+
+- **Recipes**: the bare repository layout sets `origin`'s fetch refspec; the aichat example passes `--code` to drop a reasoning model's `<think>` block; the OpenCode command uses Claude Haiku 5.5; `wt-tui` joins the custom subcommand examples. ([#4323](https://github.com/max-sixty/worktrunk/pull/4323), [#4332](https://github.com/max-sixty/worktrunk/pull/4332), [#4432](https://github.com/max-sixty/worktrunk/pull/4432), [#4386](https://github.com/max-sixty/worktrunk/pull/4386), thanks @gitNetw0rk for [#4322](https://github.com/max-sixty/worktrunk/issues/4322), @FenjuFu, and @marcusjihansson)
+
+- **The `wt-switch-create` skill reads the new repository's root `CLAUDE.md` and `AGENTS.md`** when it moves a session into another repository's worktree. ([#4414](https://github.com/max-sixty/worktrunk/pull/4414))
+
+### Internal
+
+- **Library API changes** (Breaking library API): `Repository::project_identifier` returns a `ProjectId`, which config accessors take in place of `&str`; `Repository::require_worktree` also returns the branch; `Repository::run_command` takes `AsRef<OsStr>` arguments; `UserConfig::expected_worktree_path` is new. ([#4526](https://github.com/max-sixty/worktrunk/pull/4526), [#4496](https://github.com/max-sixty/worktrunk/pull/4496), [#4453](https://github.com/max-sixty/worktrunk/pull/4453), [#4502](https://github.com/max-sixty/worktrunk/pull/4502))
+
+- **MSRV is Rust 1.98.** ([#4367](https://github.com/max-sixty/worktrunk/pull/4367))
+
+- **A hidden `wt config plugins claude hook` subcommand** handles every hook event the Claude Code plugin uses, toward listing the plugin in Anthropic's plugin directory. ([#4304](https://github.com/max-sixty/worktrunk/pull/4304))
+
+- **Release signing and crates.io OIDC run in the tag-only `release` environment.** ([#4415](https://github.com/max-sixty/worktrunk/pull/4415))
+
 ## 0.80.0
 
 ### Improved

@@ -83,10 +83,10 @@ Give each a distinct charter. At least two receive no grep and no keyword list, 
 - **Behavioral (no grep):** read each change and ask what it could destroy: files, branches, worktrees, uncommitted or untracked work, committed-but-unpushed commits. Flag any change whose worst case is lost user data.
 - **Blast-radius (no grep):** for every function and file the diff touches, trace callers and callees. Flag any path that can now reach a destructive primitive (branch deletion, worktree removal, filesystem removal, history rewrite), even when that call sits outside the diff.
 - **Automation diff (no grep):** compare shipped automation before and after: `plugins/*/hooks/hooks.json`, `hooks/hooks.json`, `hooks/wt.sh`, and skill or alias examples users copy. Flag any new or altered invocation that removes or force-overwrites anything.
-- **Keyword scan (grep):** one finder runs the pattern filter over the full diff as a cross-check, never as the primary method. It takes no pathspec; a path allowlist would recreate the blind spots the no-grep finders exist to avoid (the densest destructive code, the trash sweep in `src/commands/process.rs`, sits outside `src/git/`).
+- **Keyword scan (grep):** one finder runs the pattern filter over the full diff as a cross-check, never as the primary method. It takes no pathspec; a path allowlist would recreate the blind spots the no-grep finders exist to avoid (the densest destructive code, the tree walk in `src/remove_dir.rs`, sits outside `src/git/`).
   ```bash
   git log v<last-version>..HEAD -p \
-    | grep -nE -- '--force-delete|--force| -D| -f |branch -[dD]|worktree remove|reset --hard|checkout -f|clean -[fdx]|remove_dir_all|remove_file|rm -rf'
+    | grep -nE -- '--force-delete|--force| -D| -f |branch -[dD]|worktree remove|reset --hard|checkout -f|clean -[fdx]|remove_dir_all|remove_file|unlinkat|rm -rf'
   ```
 
 ### Analyze: adjudicate each candidate

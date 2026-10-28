@@ -112,8 +112,6 @@ pub fn run_pipeline() -> anyhow::Result<()> {
         Repository::at(&spec.worktree_path).context("failed to open repository for pipeline")?;
 
     let log_dir = repo.wt_logs_dir();
-    fs::create_dir_all(&log_dir)
-        .with_context(|| format!("failed to create log directory: {}", log_dir.display()))?;
 
     let error_wrapper = hook_error_wrapper(spec.hook_type, spec.source, true);
     let mut cmd_index = 0usize;
@@ -299,13 +297,15 @@ fn command_log_name(name: Option<&str>, index: usize) -> String {
 }
 
 /// Create a per-command log file in the repository's log directory.
-///
-/// Caller must ensure `log_dir` exists (created once at pipeline startup).
 fn create_command_log(spec: &PipelineSpec, log_dir: &Path, name: &str) -> anyhow::Result<fs::File> {
     let hook_log = HookLog::hook(spec.source, spec.hook_type, name);
-    let path = hook_log.path(log_dir, &spec.branch);
-    fs::File::create(&path)
-        .with_context(|| format!("failed to create log file: {}", path.display()))
+    let relative_path = hook_log.path(Path::new(""), &spec.branch);
+    worktrunk::utils::open_log_file(log_dir, &relative_path, false).with_context(|| {
+        format!(
+            "failed to create log file: {}",
+            log_dir.join(relative_path).display()
+        )
+    })
 }
 
 #[cfg(all(test, unix))]

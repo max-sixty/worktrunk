@@ -2,8 +2,7 @@
 
 Git worktree management CLI integration with activity tracking.
 
-Requires the `wt` CLI ([worktrunk.dev](https://worktrunk.dev)) and `jq` (used
-by the worktree-lifecycle hooks).
+Requires `wt` v0.81.0 or later ([worktrunk.dev](https://worktrunk.dev)).
 
 ## Features
 
@@ -13,19 +12,17 @@ by the worktree-lifecycle hooks).
 
 ## What the hooks run
 
-Every hook calls `wt` through `hooks/wt.sh`:
+Every hook runs `wt config plugins claude hook` through `hooks/wt.sh`; that subcommand reads Claude Code's hook payload and acts on its event:
 
 - **Activity markers**: `UserPromptSubmit`, `Notification`, `Stop`, and `PreToolUse` on `AskUserQuestion` set the branch's marker with `wt config state marker set`; `SessionEnd` clears it.
-- **Worktree creation and removal**: when Claude Code creates or removes a worktree, the `WorktreeCreate` and `WorktreeRemove` hooks run `wt switch --create` and `wt remove` in place of Claude Code's own `git worktree` commands, so the worktree follows worktrunk's path layout and runs the project's approved worktrunk hooks.
+- **Worktree creation and removal**: when Claude Code creates or removes a worktree, the `WorktreeCreate` and `WorktreeRemove` hooks run `wt switch --create` (plain `wt switch` when the branch already exists, which returns its worktree) and `wt remove` in place of Claude Code's own `git worktree` commands, so the worktree follows worktrunk's path layout and runs the project's approved worktrunk hooks.
 - **`EnterWorktree` approval**: the `PermissionRequest` hook allows an `EnterWorktree` call without a dialog when its path is a worktree of the current repository at the location worktrunk's `worktree-path` template gives its branch. Every other request shows Claude Code's usual dialog and sets the branch's marker to 💬 while it waits.
 
 ## Examples
 
 **Activity tracking across worktrees**
 
-The plugin installs Claude Code hooks that track session activity per branch. When a prompt is submitted, the hook sets 🤖 on that branch. When Claude finishes and waits for input, it switches to 💬. When the session ends, the marker clears.
-
-These markers appear in `wt list` output, making it easy to see which worktrees have active Claude sessions — useful when running multiple instances in parallel.
+The 🤖 and 💬 markers appear in `wt list` output, making it easy to see which worktrees have active Claude sessions — useful when running multiple instances in parallel.
 
 **Set up LLM commit message generation**
 
