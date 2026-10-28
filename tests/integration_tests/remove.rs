@@ -4647,8 +4647,10 @@ fn test_remove_drains_trash_under_inherited_git_dir(mut repo: TestRepo) {
     assert!(!git_dir.exists());
 
     let trash_dir = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/trash");
-    crate::common::wait_for("trash drained", || {
-        fs::read_dir(&trash_dir).unwrap().next().is_none()
+    crate::common::wait_for("trash drained", || match fs::read_dir(&trash_dir) {
+        Ok(mut entries) => entries.next().transpose().unwrap().is_none(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Err(error) => panic!("Failed to read trash: {error}"),
     });
 }
 
