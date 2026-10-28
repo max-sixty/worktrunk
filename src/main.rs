@@ -946,6 +946,9 @@ fn dispatch_command(
         Commands::InternalDrainTrash => {
             worktrunk::git::drain_trash(&Repository::current()?.wt_trash_dir())
         }
+        Commands::InternalRemoveWorktree { path, registration } => {
+            output::handlers::complete_background_removal(&path, &registration)
+        }
         // `working_dir` is the top-level `-C <path>` flag, applied as the
         // child's current directory so global `-C` works for custom
         // subcommands the same way it does for built-ins.

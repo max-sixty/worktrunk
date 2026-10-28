@@ -35,7 +35,9 @@ fn removal_execution(foreground: bool) -> RemovalExecution {
     if foreground {
         RemovalExecution::Foreground
     } else {
-        RemovalExecution::Background
+        RemovalExecution::Background {
+            wait_for_noncurrent_fallback: false,
+        }
     }
 }
 

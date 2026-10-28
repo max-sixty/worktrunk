@@ -198,6 +198,8 @@ pub enum BranchFate {
     /// or retained it (`deletion_mode` Keep — a shared checkout, an unborn
     /// branch with no ref to delete, or `--no-delete-branch`).
     NotAttempted,
+    /// A detached removal worker owns the deletion; this run cannot observe it.
+    Deferred,
     /// The deletion ran and the branch is gone.
     Deleted,
     /// The deletion ran and the branch survives, for the carried reason.
@@ -267,6 +269,7 @@ impl BranchFate {
     pub fn json_outcome(&self) -> &'static str {
         match self {
             Self::NotAttempted => "not_attempted",
+            Self::Deferred => "deferred",
             Self::Deleted => "deleted",
             Self::Retained(RetainedReason::Unmerged) => "retained_unmerged",
             Self::Retained(RetainedReason::CheckedOut) => "retained_checked_out",
@@ -498,6 +501,7 @@ mod tests {
     fn branch_fate_deleted_mapping() {
         let cases = [
             (BranchFate::Deleted, true),
+            (BranchFate::Deferred, false),
             (BranchFate::Retained(RetainedReason::Raced), false),
             (BranchFate::NotAttempted, false),
         ];
@@ -514,6 +518,7 @@ mod tests {
     fn branch_fate_json_outcome_is_distinct_per_fate() {
         let cases = [
             (BranchFate::NotAttempted, "not_attempted"),
+            (BranchFate::Deferred, "deferred"),
             (BranchFate::Deleted, "deleted"),
             (
                 BranchFate::Retained(RetainedReason::Unmerged),

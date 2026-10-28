@@ -211,7 +211,9 @@ pub fn finish_after_merge(
         // handler has already narrated any retention.
         handle_remove_output(
             &remove_result,
-            RemovalExecution::Background,
+            RemovalExecution::Background {
+                wait_for_noncurrent_fallback: false,
+            },
             ForegroundStdin::Inherit,
             plan,
             false,

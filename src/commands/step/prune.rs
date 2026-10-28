@@ -346,13 +346,14 @@ fn try_remove(
 
     let plan = plan.context("candidate arrived without a removal plan")?;
     let mut announcer = HookAnnouncer::new(ctx.repo, true);
-    // A rename-failure fallback completes inline,
-    // so the candidate counts as removed only once the worktree and branch
-    // are actually gone — before the final summary prints.
+    // Noncurrent fallback worktrees and their branches must be gone before
+    // the summary. Current checkouts still need a detached worker on Windows.
     let execution = if ctx.foreground {
         RemovalExecution::Foreground
     } else {
-        RemovalExecution::Background
+        RemovalExecution::Background {
+            wait_for_noncurrent_fallback: true,
+        }
     };
     let stdin = if needs_write {
         ForegroundStdin::Inherit

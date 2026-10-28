@@ -526,9 +526,18 @@ impl Repository {
     /// backstop git would otherwise have provided. (For an explicit
     /// user-requested `force`, the user opted into destructive removal, so no
     /// re-check.)
-    pub fn remove_worktree(&self, path: &std::path::Path, force: bool) -> anyhow::Result<()> {
+    ///
+    /// `expected_registration` pins a removal selected in another process;
+    /// replacing the checkout while a detached worker waits must not retarget it.
+    pub fn remove_worktree(
+        &self,
+        path: &std::path::Path,
+        force: bool,
+        expected_registration: Option<&Path>,
+    ) -> anyhow::Result<()> {
         let worktree = self.worktree_at(path);
-        let registration = crate::git::remove::require_removal_allowed(&worktree, None, None)?;
+        let registration =
+            crate::git::remove::require_removal_allowed(&worktree, None, expected_registration)?;
         let use_force = if force {
             true
         } else {

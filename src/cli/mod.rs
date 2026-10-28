@@ -1375,7 +1375,7 @@ Use `--no-delete-branch` to keep the branch regardless of merge status.
 
 ## Background removal
 
-By default, Worktrunk moves the checkout into trash and deletes its contents in the background. Use `--foreground` to wait for trash cleanup. If the move fails, removal runs synchronously so failures and branch outcomes are reported before the command returns.
+By default, Worktrunk moves the checkout into trash and deletes its contents in the background. If the move fails, a background worker removes the checkout after repeating the safety checks; its output goes to `.git/wt/logs/{branch}/internal/remove.log`. Use `--foreground` to wait for removal and cleanup.
 
 ## Reaping processes [experimental]
 
@@ -1406,6 +1406,7 @@ Unix only; on Windows `--reap` is rejected.
 | Value | Meaning |
 |-------|---------|
 | `deleted` | The branch is gone |
+| `deferred` | Left to background removal, whose result this run doesn't see. `--foreground` never reports it |
 | `not_attempted` | No deletion was tried: a detached worktree, a sibling checkout, or `--no-delete-branch` |
 | `retained_unmerged` | Declined: the branch was not integrated into the target |
 | `retained_checked_out` | Declined: another worktree has the branch checked out |
@@ -2690,6 +2691,13 @@ Hooks, aliases and `step.copy-ignored.exclude` accumulate rather than replace, s
     /// Delete the worktrees staged in this repository's trash directory.
     #[command(name = "_drain-trash", hide = true)]
     InternalDrainTrash,
+
+    /// Complete an already selected removal after the invoking process exits.
+    #[command(name = "_remove-worktree", hide = true)]
+    InternalRemoveWorktree {
+        path: std::path::PathBuf,
+        registration: std::path::PathBuf,
+    },
 
     /// Run a custom `wt-<name>` command found on PATH.
     ///

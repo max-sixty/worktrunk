@@ -12,7 +12,9 @@
 //! The split exists because the default path defers its deletion: `wt remove`
 //! and `wt merge --remove` stage the worktree here, then hand the deletion to
 //! a detached [`drain_trash`] so the command returns as soon as the workspace
-//! is clear. They build that tail themselves rather than calling
+//! is clear. If staging fails, they delegate guarded direct removal to a
+//! detached worker so the caller and its shell can release the current path;
+//! prune waits for noncurrent fallback removals. They build that tail rather than calling
 //! [`remove_worktree_with_cleanup`]. The callers that run to completion —
 //! `--foreground` removals, the TUI picker, and external tooling (e.g.
 //! `worktrunk-sync`) — call it and get the fallback and integration-checked
@@ -391,7 +393,7 @@ pub fn remove_worktree_with_cleanup(
         options.force_worktree,
     )?;
     if staged_path.is_none() {
-        repo.remove_worktree(worktree_path, options.force_worktree)?;
+        repo.remove_worktree(worktree_path, options.force_worktree, None)?;
     }
 
     // Delete branch if safe
@@ -949,7 +951,7 @@ mod tests {
             let path = &outer;
             let fallback = scope.spawn(move || {
                 started.send(()).unwrap();
-                fallback_repo.remove_worktree(path, true)
+                fallback_repo.remove_worktree(path, true, None)
             });
             waiting.recv().unwrap();
             let inner = outer.join("inner");
@@ -1193,15 +1195,6 @@ mod tests {
         test.commit("Ignore storage");
         let outer = test.add_worktree("outer");
         let inner_path = outer.join(".storage/inner");
-        #[cfg(windows)]
-        let inner_path = {
-            test.run_git(&["config", "core.longpaths", "true"]);
-            let mut deep = inner_path;
-            while deep.as_os_str().len() < 320 {
-                deep.push("nested-checkout-directory");
-            }
-            deep
-        };
         let inner = test.add_worktree_at_path("inner", &inner_path);
         std::fs::write(inner.join("notes.txt"), "independent work").unwrap();
         let repo = Repository::at(test.root_path()).unwrap();
