@@ -358,7 +358,7 @@ pub fn run_internal_sweep(repo: &Repository) {
 /// ignored. The sweep is purely additive — the primary `wt remove` operation
 /// proceeds regardless of outcome.
 pub fn sweep_trash(repo: &Repository) {
-    // A committed removal can remain in retained storage when its move to
+    // A committed removal can remain in transaction storage when its move to
     // trash failed. Retry preparation without exposing uncommitted checkouts
     // to the drain; state inspection and clearing use this same inventory.
     match repo.disposal_entries() {

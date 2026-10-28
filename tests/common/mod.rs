@@ -1547,15 +1547,15 @@ pub fn shell_exit_code(status: &std::process::ExitStatus) -> Option<i32> {
     status.code()
 }
 
-/// Block the initial retained staging move for `worktree_path` by pre-creating
+/// Block the initial staging move for `worktree_path` by pre-creating
 /// a regular file at its deterministic destination. Returns that path so the
 /// caller can clean it up. (On POSIX a directory cannot be renamed onto an
 /// existing file, so `stage_worktree_removal` falls back to legacy removal.)
-pub fn block_retained_rename(
+pub fn block_staging_rename(
     repo: &TestRepo,
     worktree_path: &std::path::Path,
 ) -> std::path::PathBuf {
-    let retained_dir = resolve_git_common_dir(repo.root_path()).join("wt/retained");
+    let retained_dir = resolve_git_common_dir(repo.root_path()).join("wt/removing");
     std::fs::create_dir_all(&retained_dir).unwrap();
     let git_dir = repo
         .git_command()

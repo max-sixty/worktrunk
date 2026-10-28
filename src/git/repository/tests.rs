@@ -2395,6 +2395,49 @@ fn prune_worktree_entry_keeps_an_entry_it_cannot_check() {
     );
 }
 
+/// Disposal setup must finish before unregistering; cleanup failure after the
+/// atomic unregister leaves only disposable metadata, not a damaged registration.
+#[cfg(unix)]
+#[test]
+fn prune_worktree_entry_keeps_registration_until_disposal_is_ready() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut test = TestRepo::with_initial_commit();
+    let checkout = test.add_worktree("feature");
+    let repo = super::Repository::at(test.root_path()).unwrap();
+    let registration = repo.worktree_at(&checkout).git_dir().unwrap();
+    let index = std::fs::read(registration.join("index")).unwrap();
+    std::fs::remove_dir_all(&checkout).unwrap();
+    std::fs::create_dir_all(repo.wt_dir()).unwrap();
+    let trash = repo.wt_trash_dir();
+
+    std::fs::write(&trash, "blocked disposal root").unwrap();
+    assert!(repo.prune_worktree_entry(&checkout).is_err());
+    assert_eq!(std::fs::read(registration.join("index")).unwrap(), index);
+    std::fs::remove_file(&trash).unwrap();
+
+    std::fs::create_dir(&trash).unwrap();
+    let blocked = registration.join("blocked");
+    std::fs::create_dir(&blocked).unwrap();
+    std::fs::write(blocked.join("payload"), "deferred metadata cleanup").unwrap();
+    std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let cleanup_is_blocked = std::fs::read_dir(&blocked).is_err();
+    if !cleanup_is_blocked {
+        std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    assert!(cleanup_is_blocked, "fixture must deny metadata cleanup");
+    let result = repo.prune_worktree_entry(&checkout);
+    let garbage = repo.disposal_entries().unwrap();
+    let blocked = garbage[0].path.join("registration/blocked");
+    std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    result.unwrap();
+    assert!(!registration.exists());
+    assert_eq!(
+        std::fs::read_to_string(blocked.join("payload")).unwrap(),
+        "deferred metadata cleanup"
+    );
+}
+
 /// A stale registration is asked what unregistering it would destroy: its
 /// index against `HEAD`, and git's in-progress state files. A registration
 /// with no index has nothing staged, and on an unborn branch the index is

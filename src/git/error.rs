@@ -2642,16 +2642,27 @@ mod tests {
         );
     }
 
-    #[test]
-    fn branch_deletion_error_preserves_cancellation() {
-        let error: anyhow::Error = GitError::BranchDeletionFailed {
-            branch: "feature".into(),
-            removed_worktree: None,
-            error: WorktrunkError::Interrupted {
-                signal: 15,
-                hint: None,
+    #[rstest::rstest]
+    #[case::branch(false)]
+    #[case::recovery(true)]
+    fn removal_error_preserves_cancellation(#[case] recovery: bool) {
+        let interrupted = WorktrunkError::Interrupted {
+            signal: 15,
+            hint: None,
+        }
+        .into();
+        let error: anyhow::Error = if recovery {
+            GitError::WorktreeRemovalPreserved {
+                path: "/tmp/checkout".into(),
+                git_common_dir: "/tmp/git-data".into(),
+                error: interrupted,
             }
-            .into(),
+        } else {
+            GitError::BranchDeletionFailed {
+                branch: "feature".into(),
+                removed_worktree: None,
+                error: interrupted,
+            }
         }
         .into();
         assert_eq!(error.interrupt_signal(), Some(15));

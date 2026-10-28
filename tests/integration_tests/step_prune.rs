@@ -251,7 +251,7 @@ fn test_prune_detached_worktree_rename_fallback(mut repo: TestRepo) {
     let wt_path = repo.add_worktree("detached-fallback");
     repo.detach_head_in_worktree("detached-fallback");
 
-    let staged_path = crate::common::block_retained_rename(&repo, &wt_path);
+    let staged_path = crate::common::block_staging_rename(&repo, &wt_path);
 
     let output = repo
         .wt_command()
@@ -1860,7 +1860,7 @@ fn test_prune_fallback_config_race_canary(mut repo: TestRepo) {
     // synchronous fallback while integration checks for later refs continue.
     let blocked = names[3].clone();
     let blocked_wt_path = repo.worktree_path(&blocked).to_path_buf();
-    let staged_path = crate::common::block_retained_rename(&repo, &blocked_wt_path);
+    let staged_path = crate::common::block_staging_rename(&repo, &blocked_wt_path);
 
     // Parallel fan-out is the point — do NOT pin RAYON_NUM_THREADS=1.
     let mut cmd = repo.wt_command();

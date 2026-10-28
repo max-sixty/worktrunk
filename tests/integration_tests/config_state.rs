@@ -3517,6 +3517,14 @@ fn test_state_clear_preserves_retained_recovery(mut repo: TestRepo) {
     fs::rename(&pending_worktree, pending.join("checkout")).unwrap();
     fs::write(pending.join("checkout/payload"), "recoverable work").unwrap();
 
+    // Existing recovery storage holds checkout roots directly. A user-owned
+    // directory named registration must never authorize deleting that checkout.
+    let legacy_worktree = repo.add_worktree("saved-recovery");
+    let legacy = repository.wt_dir().join("retained/saved-1234567890");
+    fs::rename(&legacy_worktree, &legacy).unwrap();
+    fs::create_dir(legacy.join("registration")).unwrap();
+    fs::write(legacy.join("registration/payload"), "user files").unwrap();
+
     let committed_worktree = repo.add_worktree("committed-removal");
     let staged = worktrunk::git::stage_worktree_removal(
         &repository,
@@ -3529,7 +3537,7 @@ fn test_state_clear_preserves_retained_recovery(mut repo: TestRepo) {
     let blocker = staged.cleanup_path().unwrap().to_path_buf();
     let committed = repository
         .wt_dir()
-        .join("retained")
+        .join("removing")
         .join(blocker.file_name().unwrap());
     fs::rename(&blocker, &committed).unwrap();
     // Even an empty destination belongs to another disposal. Refuse to replace
@@ -3559,6 +3567,17 @@ fn test_state_clear_preserves_retained_recovery(mut repo: TestRepo) {
             .into_iter()
             .collect()
     );
+    // The automatic sweep shares this inventory. A blocked committed move
+    // must leave both old recovery checkouts untouched before explicit clear.
+    repo.add_worktree("sweep-trigger");
+    let output = repo
+        .wt_command()
+        .args(["remove", "--yes", "--foreground", "sweep-trigger"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(legacy.join("registration/payload").is_file());
+    assert!(pending.join("checkout/.git").is_file());
     let output = wt_state_clear_all_cmd(&repo).output().unwrap();
     assert!(output.status.success(), "{output:?}");
     assert!(!payload.exists());
@@ -3567,6 +3586,11 @@ fn test_state_clear_preserves_retained_recovery(mut repo: TestRepo) {
     assert_eq!(
         fs::read_to_string(pending.join("checkout/payload")).unwrap(),
         "recoverable work"
+    );
+    assert!(legacy.join(".git").is_file());
+    assert_eq!(
+        fs::read_to_string(legacy.join("registration/payload")).unwrap(),
+        "user files"
     );
 }
 

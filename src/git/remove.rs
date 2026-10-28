@@ -37,7 +37,7 @@
 //!    Without this, a daemon that has stopped answering its socket leaks
 //!    forever once its worktree is removed. With fsmonitor configured, the
 //!    clean check then reruns without it, catching writes during shutdown.
-//! 3. **Fast-path staging.** The checkout moves into a `wt/retained/` container,
+//! 3. **Fast-path staging.** The checkout moves into a `wt/removing/` container,
 //!    then its complete Git registration moves beside it. That atomic unregister
 //!    authorizes disposal of the container, which moves to ordinary trash before
 //!    cleanup. Failed unregister leaves the checkout and full registration
@@ -1035,7 +1035,8 @@ mod tests {
         );
         assert!(worktree.join(".git").is_file());
         // A concurrent occupant can prevent rollback; preserve both checkouts.
-        let retained = repo.wt_dir().join("retained/occupied");
+        let retained = repo.worktree_staging_dir().join("occupied/checkout");
+        std::fs::create_dir_all(retained.parent().unwrap()).unwrap();
         std::fs::rename(&worktree, &retained).unwrap();
         std::fs::create_dir(&worktree).unwrap();
         std::fs::write(worktree.join("new-occupant"), "preserve occupant").unwrap();
@@ -1046,7 +1047,7 @@ mod tests {
             panic!("{error:#}");
         };
         let retained = retained.clone();
-        assert!(retained.starts_with(repo.wt_dir().join("retained")));
+        assert!(retained.starts_with(repo.worktree_staging_dir()));
         assert_eq!(
             std::fs::read_to_string(retained.join("payload")).unwrap(),
             "keep my work"
@@ -1076,6 +1077,28 @@ mod tests {
             std::fs::read_to_string(worktree.join("new-occupant")).unwrap(),
             "preserve occupant",
         );
+    }
+
+    /// A failed checkout move must leave both checkout and registration intact
+    /// so the caller can use Git's direct-removal fallback.
+    #[cfg(unix)]
+    #[test]
+    fn staging_rename_failure_preserves_checkout_and_registration() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut test = TestRepo::with_initial_commit();
+        let parent = test.home_path().join("readonly-parent");
+        let checkout = test.add_worktree_at_path("feature", &parent.join("checkout"));
+        let repo = Repository::at(test.root_path()).unwrap();
+        let registration = repo.worktree_at(&checkout).git_dir().unwrap();
+        let head = fs::read(registration.join("HEAD")).unwrap();
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o555)).unwrap();
+        let result = rename_into_trash(&repo, &checkout, &registration);
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(result.unwrap().is_none());
+        assert!(checkout.join(".git").is_file());
+        assert_eq!(fs::read(registration.join("HEAD")).unwrap(), head);
+        assert!(repo.disposal_entries().unwrap().is_empty());
     }
 
     /// A `git worktree lock` must stop the rename even when the caller skipped

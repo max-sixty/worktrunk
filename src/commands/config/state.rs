@@ -252,24 +252,9 @@ fn clear_trash(repo: &Repository) -> anyhow::Result<usize> {
             format_path_for_display(&path)
         );
     }
-    // An absent or non-empty payload-trash directory needs no further action.
-    let trash = repo.wt_trash_dir();
-    match std::fs::remove_dir(&trash) {
-        Ok(()) => {}
-        Err(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
-            ) => {}
-        Err(error) => {
-            return Err(error).with_context(|| {
-                format!(
-                    "Failed to clear trash @ {}",
-                    format_path_for_display(&trash)
-                )
-            });
-        }
-    }
+    // Disposal is complete; an empty container that cannot be unlinked needs
+    // no further action, and concurrent trash arrivals must stay in place.
+    let _ = std::fs::remove_dir(repo.wt_trash_dir());
     Ok(cleared)
 }
 

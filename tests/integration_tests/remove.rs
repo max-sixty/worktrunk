@@ -4312,7 +4312,7 @@ fn test_remove_background_fallback_on_rename_failure(mut repo: TestRepo) {
     // Create a worktree
     let worktree_path = repo.add_worktree("feature-fallback");
 
-    let staged_path = crate::common::block_retained_rename(&repo, &worktree_path);
+    let staged_path = crate::common::block_staging_rename(&repo, &worktree_path);
 
     // Verify worktree exists before removal
     assert!(
@@ -4361,7 +4361,7 @@ fn test_remove_background_fallback_force_delete_branch(mut repo: TestRepo) {
     // `BranchDeletionMode::ForceDelete` arm of the fallback command builder.
     let worktree_path =
         repo.add_worktree_with_commit("feature-force", "f.txt", "content", "unmerged commit");
-    let staged_path = crate::common::block_retained_rename(&repo, &worktree_path);
+    let staged_path = crate::common::block_staging_rename(&repo, &worktree_path);
 
     let output = repo
         .wt_command()
@@ -4399,7 +4399,7 @@ fn test_remove_background_fallback_force_deletes_flag_like_branch(mut repo: Test
     repo.run_git(&["update-ref", "refs/heads/-x", "HEAD"]);
     repo.run_git_in(&worktree_path, &["symbolic-ref", "HEAD", "refs/heads/-x"]);
     repo.run_git(&["branch", "-D", "flag-like-holder"]);
-    let staged_path = crate::common::block_retained_rename(&repo, &worktree_path);
+    let staged_path = crate::common::block_staging_rename(&repo, &worktree_path);
 
     let output = repo
         .wt_command()
@@ -4436,7 +4436,7 @@ fn test_remove_background_fallback_detached_worktree(mut repo: TestRepo) {
     repo.commit("initial");
     let worktree_path = repo.add_worktree("feature-detached");
     repo.detach_head_in_worktree("feature-detached");
-    let staged_path = crate::common::block_retained_rename(&repo, &worktree_path);
+    let staged_path = crate::common::block_staging_rename(&repo, &worktree_path);
 
     let output = repo
         .wt_command()
@@ -5676,17 +5676,17 @@ fn test_remove_json_branch_outcome_distinguishes_requested_retention(mut repo: T
 /// on the fast path.
 ///
 /// The fast path is forced to fail portably by planting a file where the
-/// retained staging directory belongs, before any payload has moved.
+/// removal staging directory belongs, before any payload has moved.
 #[rstest]
 fn test_remove_fallback_warns_when_no_cas_tail(mut repo: TestRepo) {
     repo.commit("initial");
     let feature_wt = repo.add_worktree("feature");
 
-    // Occupy the retained path with a file so the staging fast path
+    // Occupy the staging path with a file so the staging fast path
     // cannot stage, forcing the detached-fallback arm.
     let wt_dir = repo.root_path().join(".git").join("wt");
     std::fs::create_dir_all(&wt_dir).unwrap();
-    std::fs::write(wt_dir.join("retained"), b"not a directory").unwrap();
+    std::fs::write(wt_dir.join("removing"), b"not a directory").unwrap();
 
     // Same divergence as the fast-path test above: planner sees `feature`
     // integrated, the hook then commits on it, the re-check declines.
@@ -5709,10 +5709,10 @@ fn test_remove_fallback_warns_when_no_cas_tail(mut repo: TestRepo) {
         "the fallback must correct the deletion promise, not stay silent:\n{stderr}",
     );
     // Discriminates fallback from fast path (which prints the same warning):
-    // the retained-path blocker prevents the initial move, leaving direct
+    // the staging-path blocker prevents the initial move, leaving direct
     // removal as the only path that could have removed the worktree.
     assert!(
-        wt_dir.join("retained").is_file(),
+        wt_dir.join("removing").is_file(),
         "the planted trash file should have kept the fast path from staging",
     );
     let json: serde_json::Value =
@@ -6509,7 +6509,7 @@ approved-commands = [{hook:?}]
 "#
     ));
     let removed = repo.add_worktree_at_path(branch, &removed);
-    let staged_path = crate::common::block_retained_rename(&repo, &removed);
+    let staged_path = crate::common::block_staging_rename(&repo, &removed);
     let output = repo
         .wt_command()
         .args(["remove", "--yes", branch])

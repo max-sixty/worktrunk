@@ -1,7 +1,9 @@
 //! Inventory of authorized worktree disposal, shared by inspection, clearing,
-//! and the trash drain. Trash entries are disposable. A retained staging
-//! container enters disposal only when it holds the complete registration moved
-//! out of Git by the atomic unregister commit. Recoverable checkouts stay out.
+//! and the trash drain. Trash entries are disposable. A transaction container
+//! under `wt/removing/` enters disposal only after its complete registration
+//! moves out of Git by the atomic unregister commit. These owned containers
+//! are separate from recovery checkout roots in `wt/retained/`: directories
+//! inside a user's checkout never authorize disposal.
 
 use std::path::{Path, PathBuf};
 
@@ -22,7 +24,7 @@ pub struct DisposalEntry {
 impl Repository {
     /// Containers reserved before unregister commits.
     pub(crate) fn worktree_staging_dir(&self) -> PathBuf {
-        self.wt_dir().join("retained")
+        self.wt_dir().join("removing")
     }
 
     /// Put committed disposal in trash before generic recursive cleanup. There,
@@ -109,5 +111,46 @@ impl Repository {
             }
         }
         Ok(entries)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::TestRepo;
+
+    #[test]
+    fn disposal_requires_a_committed_owned_container() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let staging = repo.worktree_staging_dir();
+        std::fs::create_dir_all(&staging).unwrap();
+        std::fs::write(staging.join("stray"), "not a transaction").unwrap();
+        let pending = staging.join("pending");
+        std::fs::create_dir(&pending).unwrap();
+        std::fs::write(pending.join(CHECKOUT), "recoverable checkout").unwrap();
+        assert!(repo.prepare_disposal(&pending).is_err());
+        std::fs::write(pending.join(REGISTRATION), "not a Git registration").unwrap();
+        assert!(repo.prepare_disposal(&pending).is_err());
+        assert!(repo.disposal_entries().unwrap().is_empty());
+        assert_eq!(
+            std::fs::read_to_string(pending.join(CHECKOUT)).unwrap(),
+            "recoverable checkout"
+        );
+    }
+
+    #[test]
+    fn disposal_inventory_refuses_partial_reads() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let trash = repo.wt_trash_dir();
+        std::fs::create_dir_all(&trash).unwrap();
+        let disposable = trash.join("disposable");
+        std::fs::write(&disposable, "committed disposal").unwrap();
+        // The first root is readable; an invalid second root must fail the
+        // entire inventory instead of returning the disposable subset.
+        std::fs::write(repo.worktree_staging_dir(), "invalid inventory root").unwrap();
+        assert!(repo.disposal_entries().is_err());
+        assert!(disposable.is_file());
     }
 }

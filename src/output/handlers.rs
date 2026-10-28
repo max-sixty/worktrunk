@@ -2519,7 +2519,7 @@ mod tests {
             std::fs::read_to_string(repo.wt_trash_dir()).unwrap(),
             "occupied trash namespace"
         );
-        let retained = repo.wt_dir().join("retained");
+        let retained = repo.wt_dir().join("removing");
         let container = std::fs::read_dir(retained)
             .unwrap()
             .next()
@@ -2541,7 +2541,7 @@ mod tests {
         let mut test = worktrunk::testing::TestRepo::with_initial_commit();
         let checkout = test.add_worktree("feature");
         let repo = Repository::at(test.root_path()).unwrap();
-        let staging = repo.wt_dir().join("retained");
+        let staging = repo.wt_dir().join("removing");
         std::fs::create_dir_all(staging.parent().unwrap()).unwrap();
         std::fs::write(&staging, "block staging").unwrap();
         let outcome = execute_instant_removal_or_fallback(
