@@ -8,7 +8,10 @@
 //!
 //! `WORKTRUNK_DIRECTIVE_CD_FILE` holds one raw path. The wrapper changes to it
 //! after wt exits. `--execute` needs no directive: wt starts the external
-//! program directly with its working directory set to the switch target. The
+//! program directly with its working directory set to the switch target.
+//! Because that program can remove the target before wt exits (a session that
+//! ends by removing its own worktree), wt withdraws a target that no longer
+//! exists as it finishes, leaving the shell where it started. The
 //! retired exec-file variable is recognized only to warn when an old wrapper
 //! redirects `--execute` output away from the terminal.
 //!
@@ -16,7 +19,6 @@
 //! sets only `WORKTRUNK_DIRECTIVE_FILE`, switch output diagnoses the outdated
 //! wrapper and tells the user to reinstall shell integration.
 
-use std::fs::OpenOptions;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
@@ -256,8 +258,9 @@ pub(crate) fn print_outdated_execute_wrapper_warning() {
     }
 }
 
-/// Truncate-write the given path to the CD directive file. The file holds one
-/// line: the absolute path the shell wrapper should `cd` to. Truncate-then-
+/// Truncate-write the given path to the CD directive file. The file holds the
+/// absolute path the shell wrapper should `cd` to, and nothing else: no
+/// trailing newline, so every reader can take the contents as-is. Truncate-then-
 /// write semantics mean the last writer wins, which matches how overlapping
 /// `change_directory()` calls should resolve (hook emits a cd after switch
 /// emits its own → hook wins).
@@ -265,21 +268,10 @@ pub(crate) fn print_outdated_execute_wrapper_warning() {
 /// A failure names the file because the operation has already completed by the
 /// time the directive write runs.
 fn write_cd_path(file: &Path, path: &Path) -> anyhow::Result<()> {
-    write_cd_path_io(file, path)
-        .with_context(|| format!("Failed to write the cd directive file {}", file.display()))
-}
-
-fn write_cd_path_io(file: &Path, path: &Path) -> io::Result<()> {
-    let mut f = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(file)?;
     // Lossy for non-UTF-8 paths (extremely rare in practice; worktrunk-
     // managed paths are always valid UTF-8).
-    f.write_all(path.as_os_str().to_string_lossy().as_bytes())?;
-    f.write_all(b"\n")?;
-    f.flush()
+    std::fs::write(file, path.as_os_str().to_string_lossy().as_bytes())
+        .with_context(|| format!("Failed to write the cd directive file {}", file.display()))
 }
 
 /// Request directory change (for shell integration).
@@ -302,6 +294,32 @@ pub fn change_directory(path: impl AsRef<Path>) -> anyhow::Result<()> {
         DirectiveMode::ShellIntegration { cd_file } => {
             write_cd_path(&cd_file, &to_logical_path(path))
         }
+    }
+}
+
+/// Withdraw a directory change whose target no longer exists.
+///
+/// Called as wt finishes, after everything it runs in the foreground: an
+/// `--execute` program that removes the worktree it
+/// started in, or a hook or alias whose nested wt switches somewhere a later
+/// step removes. Emptying the file keeps the wrapper from `cd`-ing into a
+/// missing directory, so the shell stays where it was. Best-effort: if the
+/// file can't be read or emptied, the wrapper's own `cd` error names the
+/// directory.
+pub fn withdraw_missing_cd_target() {
+    let mode = state()
+        .lock()
+        .expect("OUTPUT_STATE lock poisoned")
+        .mode
+        .clone();
+    let DirectiveMode::ShellIntegration { cd_file } = mode else {
+        return;
+    };
+    let Ok(target) = std::fs::read_to_string(&cd_file) else {
+        return;
+    };
+    if !target.is_empty() && !Path::new(&target).is_dir() {
+        let _ = std::fs::File::create(&cd_file);
     }
 }
 
@@ -338,7 +356,12 @@ pub(crate) fn format_exec_argv(argv: &[String]) -> String {
 /// The caller names the directory rather than reading one the shell directive
 /// left behind: the program goes where the switch pointed, whether or not the
 /// user's shell follows it there.
-pub fn execute(argv: Vec<String>, dir: &Path) -> anyhow::Result<()> {
+/// JSON callers route stdout to stderr to keep their result stream separate.
+pub fn execute(
+    argv: Vec<String>,
+    dir: &Path,
+    redirect_stdout_to_stderr: bool,
+) -> anyhow::Result<()> {
     if argv.first().is_none_or(String::is_empty) {
         anyhow::bail!("--execute requires a non-empty program");
     }
@@ -350,9 +373,14 @@ pub fn execute(argv: Vec<String>, dir: &Path) -> anyhow::Result<()> {
     let cmd = Cmd::new(program)
         .args(argv)
         .inherit_stdin()
-        .forward_signals()
+        .hand_off_terminal()
         .current_dir(dir)
         .scrub_git_discovery_env();
+    let cmd = if redirect_stdout_to_stderr {
+        cmd.stdout(std::process::Stdio::from(std::io::stderr()))
+    } else {
+        cmd
+    };
     #[cfg(unix)]
     let cmd = cmd.propagate_sigpipe();
 
@@ -368,7 +396,10 @@ fn suppress_child_exit_message(result: anyhow::Result<()>) -> anyhow::Result<()>
         if let Some(WorktrunkError::ChildProcessExited { code, .. }) =
             err.downcast_ref::<WorktrunkError>()
         {
-            return Err(WorktrunkError::AlreadyDisplayed { exit_code: *code }.into());
+            let exit_code = *code;
+            // Retain the typed child failure for structured output while the
+            // context marker keeps the normal stderr presentation silent.
+            return Err(err.context(WorktrunkError::AlreadyDisplayed { exit_code }));
         }
         return Err(err);
     }

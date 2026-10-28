@@ -28,6 +28,7 @@ use super::{
     CliApiRequest, PlatformData, RemoteRefInfo, cli_api_error, cli_config_value, run_cli_api,
 };
 use crate::git::{ForgeKind, Repository};
+use crate::shell_exec::Cmd;
 
 /// Raw JSON response from `glab api projects/:id/merge_requests/<number>`.
 #[derive(Debug, Deserialize)]
@@ -77,6 +78,7 @@ pub(super) fn fetch_mr_info(mr_number: u32, repo: &Repository) -> anyhow::Result
             ForgeKind::GitLab.ref_type(),
             format!("glab api failed for MR !{}", mr_number),
             &output,
+            None,
         ));
     }
 
@@ -152,6 +154,7 @@ pub fn fetch_gitlab_project_urls(
     repo_root: &Path,
 ) -> anyhow::Result<GitLabForkUrls> {
     let PlatformData::GitLab {
+        host,
         source_project_id,
         target_project_id,
         ..
@@ -179,7 +182,7 @@ pub fn fetch_gitlab_project_urls(
         })?;
 
     // Compute URLs based on protocol preference
-    let use_ssh = git_protocol() == "ssh";
+    let use_ssh = git_protocol(host) == "ssh";
     let fork_push_url = if use_ssh {
         source_ssh.or(source_http)
     } else {
@@ -229,6 +232,7 @@ fn fetch_project_urls(
             ForgeKind::GitLab.ref_type(),
             format!("glab api failed for {} project {}", role, project_id),
             &output,
+            None,
         ));
     }
 
@@ -249,19 +253,25 @@ fn fetch_project_urls(
 /// nothing for a host without a token. Returns `false` if `glab` is not
 /// installed.
 pub fn is_authed_for(host: &str) -> bool {
-    cli_config_value("glab", &["token", "--host", host]).is_some_and(|token| !token.is_empty())
+    Cmd::new("glab")
+        .args(["config", "get", "token", "--host", host])
+        .sensitive_output()
+        .run()
+        .is_ok_and(|output| {
+            output.status.success() && !String::from_utf8_lossy(&output.stdout).trim().is_empty()
+        })
 }
 
 /// Get the git protocol configured in `glab` (GitLab CLI).
-pub fn git_protocol() -> String {
-    cli_config_value("glab", &["git_protocol"])
+fn git_protocol(host: &str) -> String {
+    cli_config_value("glab", &["git_protocol", "--host", host])
         .filter(|p| p == "ssh" || p == "https")
         .unwrap_or_else(|| "https".to_string())
 }
 
 /// Construct the remote URL for a GitLab project, respecting protocol preference.
 pub fn fork_remote_url(host: &str, owner: &str, repo: &str) -> String {
-    if git_protocol() == "ssh" {
+    if git_protocol(host) == "ssh" {
         format!("git@{host}:{owner}/{repo}.git")
     } else {
         format!("https://{host}/{owner}/{repo}.git")

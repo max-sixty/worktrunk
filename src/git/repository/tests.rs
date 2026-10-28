@@ -1871,7 +1871,7 @@ fn path_selector_error_checks_for_a_registered_worktree() {
     );
 
     // Reached through the shortcut, which is the route with no prior lookup.
-    test.repo.set_switch_previous(Some(selector)).unwrap();
+    test.repo.set_switch_previous(selector).unwrap();
     let err = test.repo.require_worktree("-").unwrap_err();
     assert!(
         !err.to_string().contains("No worktree @"),
@@ -2227,7 +2227,7 @@ fn selector_reports_rewriting_rather_than_inferring_it() {
 
     // The degenerate case string equality gets wrong: history pointing at the
     // branch already checked out. Output == input, yet a shortcut fired.
-    repo.set_switch_previous(Some(&current)).unwrap();
+    repo.set_switch_previous(&current).unwrap();
     let previous = repo.expand_selector("-").unwrap();
     assert_eq!(previous.token(), current);
     assert!(

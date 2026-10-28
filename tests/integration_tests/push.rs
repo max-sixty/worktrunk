@@ -65,6 +65,73 @@ fn test_push_to_default_branch(#[from(repo_with_feature_worktree)] repo: TestRep
     snapshot_push("push_to_default", &repo, &[], Some(feature_wt));
 }
 
+/// A tag named after the target branch must not stand in for the branch. Git
+/// resolves a bare `main` to `refs/tags/main` before `refs/heads/main`, so
+/// with such a tag at the feature commit, `main..HEAD` counted zero commits
+/// and the push reported "Already up to date" without moving the branch.
+#[rstest]
+fn test_push_ignores_tag_named_like_target(mut repo: TestRepo) {
+    repo.add_main_worktree();
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "test.txt", "test content", "Add test file");
+    let feature_sha = repo.head_sha_in(&feature_wt);
+    repo.run_git(&["tag", "main", &feature_sha]);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "push", "main"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("failed to run command");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "push failed: {stderr}");
+    assert!(
+        !stderr.contains("Already up to date"),
+        "push should not compare against the tag: {stderr}"
+    );
+
+    let main_sha = repo
+        .git_command()
+        .args(["rev-parse", "refs/heads/main"])
+        .run()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&main_sha.stdout).trim(),
+        feature_sha
+    );
+}
+
+/// The overlap check against the target worktree's uncommitted changes reads
+/// the push range from the branch, not a same-named tag. With the tag at the
+/// feature commit, the range looked empty and the overlap went unreported.
+#[rstest]
+fn test_push_dirty_target_overlap_ignores_tag_named_like_target(mut repo: TestRepo) {
+    std::fs::write(repo.root_path().join("conflict.txt"), "old content").unwrap();
+    let feature_wt = repo.add_worktree_with_commit(
+        "feature",
+        "conflict.txt",
+        "new content",
+        "Add conflict file",
+    );
+    let feature_sha = repo.head_sha_in(&feature_wt);
+    repo.run_git(&["tag", "main", &feature_sha]);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "push", "main"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("failed to run command");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "push should refuse: {stderr}");
+    assert!(
+        stderr.contains("conflicting uncommitted changes") && stderr.contains("conflict.txt"),
+        "the overlap check should refuse and name the file: {stderr}"
+    );
+    let main_contents = std::fs::read_to_string(repo.root_path().join("conflict.txt")).unwrap();
+    assert_eq!(main_contents, "old content");
+}
+
 #[rstest]
 fn test_push_with_dirty_target(mut repo: TestRepo) {
     // Make main worktree (repo root) dirty with a conflicting file

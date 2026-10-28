@@ -18,7 +18,7 @@ Keep displayed commands natural; put recording-only flags in setup. Pause long e
 
 For Alt keybindings, the VHS fork passes macOptionIsMeta to ttyd; quote digit keys as Alt+"8". If a key seems wrong, verify its bytes in a recording before changing the tape.
 
-The mock forge data is written by write_gh_mock_data in shared/lib.py and served by fixtures/gh-mock.sh. A parseable origin, successful gh --version and gh auth status, and matching DEMO_PROJECT_ID are required before CI cells appear. Staggered response delays demonstrate progressive rows; keep the longest within the tape's wait.
+The mock forge data is written by write_gh_mock_data in shared/lib.py and served by fixtures/gh-mock.sh. A parseable origin, a successful gh --version, and matching DEMO_PROJECT_ID are required before CI cells appear. Staggered response delays demonstrate progressive rows; keep the longest within the tape's wait.
 
 The picker recording uses prepare_picker and its own smaller text size to fit the CI, summary, and preview columns. Its filter searches PR metadata as well as branch names, and narrowing preserves cursor row index; use an unambiguous query before cursor movement.
 

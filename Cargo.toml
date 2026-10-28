@@ -56,7 +56,7 @@ filterset = "test(/aur_pkgbuild/)"
 
 [package]
 name = "worktrunk"
-version = "0.80.0"
+version = "0.81.0"
 edition = "2024"
 rust-version = "1.98"
 build = "build.rs"
@@ -198,9 +198,11 @@ tracing-subscriber = { version = "0.3.17", default-features = false, features = 
 # Only enable needed features; macros and multi-template loading remain disabled.
 # `unstable_machinery` supplies syntax analysis for migrations and diagnostics;
 # `debug` supplies error source spans, including release builds.
-minijinja = { version = "2.24", default-features = false, features = [
+# `json` supplies the `tojson` filter for passing structured vars to commands.
+minijinja = { version = "3.0", default-features = false, features = [
     "builtins",
     "debug",
+    "json",
     "serde",
     "std_collections",
     "unstable_machinery",
@@ -229,7 +231,6 @@ supports-hyperlinks = "3"
 home = "0.5.12"
 humantime = { version = "2.2", optional = true }
 once_cell = "1.21.4"
-dirs = "7.0"
 normalize-path = "0.2.1"
 path-slash = "0.2"
 pathdiff = "0.2"
@@ -332,8 +333,13 @@ open = { version = "5.3", optional = true }
 # Gating keeps both out of the Windows dependency graph.
 nix = { version = "0.31.3", default-features = false, features = ["event", "fs", "poll", "process", "signal"] }
 signal-hook = "0.4.1"
-# Safe FIONREAD snapshots bound cancellation drains even with continuous writers.
-rustix = "1.1.4"
+# Safe FIONREAD snapshots bound cancellation drains even with continuous writers;
+# directory-relative `*at` calls let tree removal never follow a symlink.
+rustix = { version = "1.1.4", features = ["fs"] }
+
+[target.'cfg(windows)'.dependencies]
+# The localized Documents folder that holds PowerShell profiles.
+dirs = "7.0"
 
 [build-dependencies]
 vergen-gitcl = { version = "10.0.0", features = ["build"] }

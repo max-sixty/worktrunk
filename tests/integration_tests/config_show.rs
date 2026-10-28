@@ -99,7 +99,7 @@ fn test_config_show_rejects_invalid_approvals_file(repo: TestRepo) {
 fn test_config_show_hides_fully_approved_commands(repo: TestRepo) {
     repo.write_project_config("pre-start = \"npm install\"\n");
     let project = repo.repo.project_identifier().unwrap();
-    let project = toml::Value::String(project).to_string();
+    let project = toml::Value::String(project.to_string()).to_string();
     fs::write(
         repo.test_approvals_path(),
         format!("[projects.{project}]\napproved-commands = [\"npm install\"]\n"),
@@ -753,16 +753,20 @@ fn test_config_show_zsh_compinit_warning(mut repo: TestRepo, temp_home: TempDir)
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(global_config_dir.join("config.toml"), "").unwrap();
 
-    // Create .zshrc WITHOUT compinit - completions won't work
+    // Use a custom zsh config directory so the advisory must name the same
+    // file as the integration detector.
+    let zdotdir = canonical_temp_home(&temp_home).join("zsh-config");
+    fs::create_dir_all(&zdotdir).unwrap();
     fs::write(
-        temp_home.path().join(".zshrc"),
+        zdotdir.join(".zshrc"),
         r#"# wt integration but no compinit!
 if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)"; fi
 "#,
     )
     .unwrap();
 
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    let mut settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.add_redaction(".env.ZDOTDIR", "[TEST_ZDOTDIR]");
     settings.bind(|| {
         let mut cmd = repo.wt_command();
         // Force compinit warning for deterministic tests across environments
@@ -770,6 +774,7 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
+        cmd.env("ZDOTDIR", &zdotdir);
 
         assert_cmd_snapshot!(cmd);
     });
@@ -929,8 +934,8 @@ fn test_config_show_fish_without_completions(
 /// Test that config show displays "Outdated" when fish wrapper exists but has different code.
 ///
 /// The wrapper file contains `function wt` which matches the command name at a word boundary,
-/// but `is_shell_integration_line()` won't match it (it looks for eval/source patterns).
-/// This should NOT trigger a "Found wt ... but not detected as integration" warning because
+/// but `shell_integration()` won't match it (it recognizes initialization statements).
+/// This should NOT trigger an unrecognized-line warning because
 /// the wrapper file IS the integration — `scan_shell_configs` already identified it (as
 /// outdated). Only the "Outdated shell extension" warning should appear.
 #[rstest]
@@ -966,7 +971,7 @@ fn test_config_show_fish_outdated_wrapper(mut repo: TestRepo, temp_home: TempDir
 /// Same false-positive suppression as the fish variant: the wrapper file contains `def --wrapped wt`
 /// which matches the command name, but `scan_shell_configs` already recognized the file as
 /// integration (outdated). Only the "Outdated" warning should appear, not the generic
-/// "not detected as integration" warning.
+/// unrecognized-line warning.
 #[rstest]
 fn test_config_show_nushell_outdated_wrapper(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
@@ -2021,9 +2026,7 @@ fn test_config_show_no_user_config(mut repo: TestRepo, temp_home: TempDir) {
     });
 }
 
-///
-/// When a shell config contains `wt` at a word boundary but it's NOT detected as
-/// shell integration, show a warning with file:line format to help debug detection.
+/// Customized initialization is identified by location and left for manual management.
 #[rstest]
 fn test_config_show_unmatched_candidate_warning(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
@@ -2034,13 +2037,12 @@ fn test_config_show_unmatched_candidate_warning(mut repo: TestRepo, temp_home: T
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(global_config_dir.join("config.toml"), "").unwrap();
 
-    // Create .bashrc with a line containing `wt` but NOT a valid integration pattern
-    // This should trigger the "unmatched candidate" warning
+    // This runs Worktrunk's initialization but is not a standard setup statement.
     fs::write(
         temp_home.path().join(".bashrc"),
         r#"# Some bash config
 export PATH="$HOME/bin:$PATH"
-alias wt="git worktree"
+source <(wt config shell init bash)
 "#,
     )
     .unwrap();
@@ -2119,7 +2121,7 @@ fn test_config_show_unmatched_candidate_not_suppressed_by_wrapper(
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(global_config_dir.join("config.toml"), "").unwrap();
 
-    // Fish wrapper (outdated) — should NOT trigger "not detected" warning
+    // The outdated fish wrapper is already recognized as integration.
     let functions = temp_home.path().join(".config/fish/functions");
     fs::create_dir_all(&functions).unwrap();
     fs::write(
@@ -2128,7 +2130,7 @@ fn test_config_show_unmatched_candidate_not_suppressed_by_wrapper(
     )
     .unwrap();
 
-    // Bash alias — SHOULD trigger "not detected" warning
+    // An unrelated bash alias still appears as an unrecognized reference.
     fs::write(
         temp_home.path().join(".bashrc"),
         r#"# Some bash config
@@ -2199,8 +2201,8 @@ pre-start = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
     );
 }
 
-/// With -v flag, the brief deprecation warning includes the mv command hint
-/// and template expansion logs are shown
+/// With -v flag, template expansion logs appear alongside the deprecation
+/// warnings
 #[rstest]
 fn test_deprecated_template_variables_verbose_shows_content(repo: TestRepo, temp_home: TempDir) {
     // Write config with deprecated variables
@@ -2795,7 +2797,7 @@ fn test_config_show_gemini_extension_installed(mut repo: TestRepo, temp_home: Te
 /// override the harness sets, so the production `which::which` PATH lookup is
 /// otherwise never exercised. `setup_mock_clis_on_path()` drops the overrides
 /// and prepends real mock executables, so this single run covers the
-/// PATH-detection path for all five AI CLIs at once.
+/// PATH-detection path for all six AI CLIs at once.
 #[rstest]
 fn test_config_show_clis_detected_via_path(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
@@ -3092,7 +3094,7 @@ fn test_opencode_install_ignores_relative_xdg_config_home(temp_home: TempDir) {
 }
 
 /// Install prompt declined (no `--yes`, piped stdin → empty → declined).
-/// Exercises the `return Ok(())` branch at lines 83-84 of opencode.rs.
+/// Exercises the declined-prompt branch of `install_file_plugin` in config/mod.rs.
 #[rstest]
 fn test_opencode_install_prompt_declined(temp_home: TempDir) {
     let settings = setup_home_snapshot_settings(&temp_home);
@@ -3115,7 +3117,7 @@ fn test_opencode_install_prompt_declined(temp_home: TempDir) {
 }
 
 /// Uninstall prompt declined (no `--yes`, piped stdin → empty → declined).
-/// Exercises the `return Ok(())` branch at lines 129-130 of opencode.rs.
+/// Exercises the declined-prompt branch of `uninstall_file_plugin` in config/mod.rs.
 #[rstest]
 fn test_opencode_uninstall_prompt_declined(temp_home: TempDir) {
     // Pre-install the plugin so we reach the prompt
@@ -3661,7 +3663,8 @@ fn test_config_show_runs_real_ancestry_walk(mut repo: TestRepo, temp_home: TempD
     );
 }
 
-/// Test that deprecated [commit-generation] section shows warning and creates migration file
+/// Test that deprecated [commit-generation] section shows warning and that
+/// `wt config update` migrates it in place
 #[rstest]
 fn test_deprecated_commit_generation_section_shows_warning(repo: TestRepo, temp_home: TempDir) {
     // Write user config with deprecated [commit-generation] section
@@ -5764,110 +5767,66 @@ fn test_plugin_layout_is_consolidated() {
     }
     assert!(skill_dirs > 0, "skills/ holds no skill directories");
 
-    // The WorktreeRemove hook must not force-delete unmerged branches (#2939).
-    // Claude Code auto-fires WorktreeRemove on session exit for any worktree
-    // with a clean working tree, so a hook command containing `-D` /
-    // `--force-delete` silently discards committed-but-unpushed work — the only
-    // recovery path is `git fsck`. The safe default retains unmerged branches
-    // and prints a `wt remove -D <branch>` hint for the user to act on.
-    let hooks = read("plugins/worktrunk/hooks/hooks.json");
     let hooks_json = json("plugins/worktrunk/hooks/hooks.json");
-
-    // Claude hands each hook command to the user's LOGIN shell before `bash`
-    // launches, so the outer command line must parse under fish/zsh/bash. fish
-    // rejects bash brace syntax ("Variables cannot be bracketed"), so the plugin
-    // root must be referenced as `$CLAUDE_PLUGIN_ROOT`, never `${CLAUDE_PLUGIN_ROOT}`.
-    let all_commands: Vec<&str> = hooks_json["hooks"]
+    let commands: Vec<(&str, &str)> = hooks_json["hooks"]
         .as_object()
         .expect("hooks.json must have a `hooks` object")
-        .values()
-        .flat_map(|event| event.as_array().expect("each hook event must be an array"))
-        .flat_map(|group| {
-            group["hooks"]
+        .iter()
+        .flat_map(|(event, groups)| {
+            groups
                 .as_array()
-                .expect("each hook group must have a `hooks` array")
-        })
-        .map(|hook| {
-            hook["command"]
-                .as_str()
-                .expect("each hook must define a command")
+                .expect("each hook event must be an array")
+                .iter()
+                .flat_map(|group| {
+                    group["hooks"]
+                        .as_array()
+                        .expect("each hook group must have a `hooks` array")
+                })
+                .map(move |hook| {
+                    (
+                        event.as_str(),
+                        hook["command"]
+                            .as_str()
+                            .expect("each hook must define a command"),
+                    )
+                })
         })
         .collect();
-    for cmd in &all_commands {
-        assert!(
-            cmd.contains("$CLAUDE_PLUGIN_ROOT") && !cmd.contains("${CLAUDE_PLUGIN_ROOT}"),
-            "hook command must use unbraced $CLAUDE_PLUGIN_ROOT (braces break fish \
-             login-shell parsing: \"fish: Variables cannot be bracketed\"). command:\n{cmd}"
-        );
-    }
 
-    let marker_commands = all_commands
-        .iter()
-        .filter(|command| command.contains("config state marker"))
-        .collect::<Vec<_>>();
+    // Every hook runs the same literal command: `wt config plugins claude
+    // hook` reads Claude Code's payload and dispatches on the event, so the
+    // behavior lives in `wt` and is tested in `claude_hook.rs`. Anthropic's
+    // plugin directory refuses a hook command whose path the shell computes or
+    // that carries an inline program. The root stays unbraced: Claude hands
+    // each command to the user's login shell before `bash` launches, and fish
+    // rejects `${CLAUDE_PLUGIN_ROOT}` ("Variables cannot be bracketed"). The
+    // marker events end in `|| true`: a `wt` too old to have `hook` exits 2,
+    // which Claude Code reads as blocking the prompt, tool call, permission,
+    // or stop. The worktree events must fail when `wt` does.
+    const HOOK: &str = r#"bash "$CLAUDE_PLUGIN_ROOT/hooks/wt.sh" config plugins claude hook"#;
+    let mut events: Vec<&str> = commands.iter().map(|(event, _)| *event).collect();
+    events.sort_unstable();
     assert_eq!(
-        marker_commands.len(),
-        6,
-        "expected all 6 Claude marker hooks (UserPromptSubmit, Notification, \
-         PreToolUse, PermissionRequest, Stop, SessionEnd); a newly added one \
-         must be pinned too. hooks.json:\n{hooks}"
+        events,
+        [
+            "Notification",
+            "PermissionRequest",
+            "PreToolUse",
+            "SessionEnd",
+            "Stop",
+            "UserPromptSubmit",
+            "WorktreeCreate",
+            "WorktreeRemove",
+        ]
     );
-    for command in marker_commands {
-        assert!(
-            command.contains(r#"-C "$CLAUDE_PROJECT_DIR""#),
-            "marker hook must pin the directory it resolves against, or a shell \
-             `cd` during a turn retargets it to another repository (#3921). \
-             command:\n{command}"
-        );
+    for (event, command) in &commands {
+        let expected = if event.starts_with("Worktree") {
+            HOOK.to_string()
+        } else {
+            format!("{HOOK} || true")
+        };
+        assert_eq!(*command, expected, "{event} hook command drifted");
     }
-    let worktree_remove_cmd = hooks_json["hooks"]["WorktreeRemove"][0]["hooks"][0]["command"]
-        .as_str()
-        .expect("WorktreeRemove hook must define a command");
-    assert!(
-        !worktree_remove_cmd.contains(" -D") && !worktree_remove_cmd.contains("--force-delete"),
-        "WorktreeRemove hook must not pass -D / --force-delete (silently destroys \
-         committed-but-unpushed work on session-exit auto-remove; see #2939). \
-         hooks.json:\n{hooks}"
-    );
-
-    // The WorktreeRemove hook must resolve against the worktree path Claude
-    // Code hands it, not the session's project dir. The `claude agents` view
-    // spans every repo with a background session and is often launched from a
-    // parent directory that merely contains them, so `CLAUDE_PROJECT_DIR` names
-    // the wrong repo or none at all, `wt remove <path>` dies with `fatal: not a
-    // git repository`, and the session row is left undeletable (#3754, after
-    // the #3489 anchor proved insufficient). `-C "$p"` is layout-independent: a
-    // linked worktree carries a `.git` file pointing at its owning repository.
-    assert!(
-        worktree_remove_cmd.contains("-C \"$p\"")
-            && !worktree_remove_cmd.contains("CLAUDE_PROJECT_DIR"),
-        "WorktreeRemove hook must resolve via -C \"$p\" (the worktree path Claude Code \
-         handed it), never CLAUDE_PROJECT_DIR — the agents view is multi-repo, so no \
-         single project dir is correct for every session (#3754). \
-         command:\n{worktree_remove_cmd}"
-    );
-
-    // The WorktreeCreate hook pipes `wt … --format=json | jq -er .path`. Without
-    // `set -o pipefail` the pipeline's exit status is jq's, and `jq -er .path`
-    // on the empty stdout of a failed `wt` exits 0 on jq 1.6 — so a `wt` failure
-    // (e.g. an existing-branch collision after the branch/worktree were already
-    // created) is swallowed and Claude Code reports the misleading "hook
-    // succeeded but returned no worktree path" instead of wt's real error
-    // (#3545). pipefail makes the pipeline surface wt's nonzero exit regardless
-    // of jq version. The wrapper must be `bash -c` (dash rejects `set -o
-    // pipefail` fatally; some login shells are fish, which has no shell options)
-    // — see skills/wt-switch-create/rationale.md, "The hooks.json pipefail wrapper".
-    let worktree_create_cmd = hooks_json["hooks"]["WorktreeCreate"][0]["hooks"][0]["command"]
-        .as_str()
-        .expect("WorktreeCreate hook must define a command");
-    assert!(
-        worktree_create_cmd.contains("set -o pipefail"),
-        "WorktreeCreate hook pipes `wt … | jq -er .path`; without `set -o pipefail` a \
-         failed wt with empty stdout is swallowed (jq 1.6 exits 0 on empty input) and \
-         Claude Code reports \"hook succeeded but returned no worktree path\" instead \
-         of wt's real error (#3545). command:\n{worktree_create_cmd}"
-    );
-
     // The product description must not drift across tools. Byte-identical is
     // schema-impossible (Codex omits the activity clause, Gemini says
     // "extension"), but every manifest shares the canonical opening sentence.
@@ -6203,21 +6162,11 @@ fn test_wt_sh_ignores_an_inherited_wt(repo: TestRepo) {
     );
 }
 
-/// `where git.exe` searches the current directory before it searches PATH, and
-/// cmd resolves a bare `git.exe` the same way — so with the lookup unscoped, a
-/// `git.exe` committed to a repo decides which `bash.exe` every prompt,
-/// permission request, stop, and session end runs, since the hook runs with the
-/// user's project as its current directory. `wt.sh` carries no such surface:
-/// `command -v` consults PATH only.
-///
-/// Neither decoy planted here is a valid executable, which is what makes the
-/// shim's choice observable: the version line can only be printed by the real
-/// bash the pinned PATH leads to. Taking the decoy `git.exe` would derive the
-/// `bash.exe` beside it — planted so that the wrong branch *resolves* rather
-/// than falling through to the standard install locations and passing anyway.
+/// Never execute a project's git.exe when finding the PATH installation.
 #[cfg(windows)]
 #[rstest]
 fn test_shim_ignores_a_git_in_the_current_directory(repo: TestRepo) {
+    use crate::common::mock_commands::{MockConfig, mock_calls};
     use std::os::windows::process::CommandExt;
 
     let shim =
@@ -6229,17 +6178,12 @@ fn test_shim_ignores_a_git_in_the_current_directory(repo: TestRepo) {
     fs::create_dir_all(&path_dir).unwrap();
     fs::copy(crate::common::wt_bin(), path_dir.join("git-wt.exe")).unwrap();
 
-    // ...and the decoys: a `git.exe` in the directory the hook runs from, plus
-    // the `bash.exe` the shim would derive from it (`<cwd>\..\bin\bash.exe`).
     let project = repo.root_path().join("project");
     fs::create_dir_all(&project).unwrap();
-    fs::write(project.join("git.exe"), b"not an executable").unwrap();
-    fs::create_dir_all(repo.root_path().join("bin")).unwrap();
-    fs::write(
-        repo.root_path().join("bin").join("bash.exe"),
-        b"not an executable",
-    )
-    .unwrap();
+    MockConfig::new("git")
+        .command("--exec-path", MockResponse::output("not-an-install"))
+        .write(&project);
+    let call_log = TempDir::new().unwrap();
 
     let mut cmd = std::process::Command::new("cmd.exe");
     repo.configure_wt_cmd(&mut cmd);
@@ -6247,6 +6191,8 @@ fn test_shim_ignores_a_git_in_the_current_directory(repo: TestRepo) {
         .arg("/C")
         .raw_arg(format!("\"\"{}\" --version\"", shim.display()))
         .env("PATH", pinned_windows_path(&[path_dir]))
+        .env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", &project)
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
         .env_remove("WORKTRUNK_BIN")
         .current_dir(&project)
         .output()
@@ -6263,113 +6209,11 @@ fn test_shim_ignores_a_git_in_the_current_directory(repo: TestRepo) {
         output.status,
         String::from_utf8_lossy(&output.stderr)
     );
+    assert!(mock_calls(call_log.path(), "git").is_empty());
 }
 
-/// The scoping above is only as good as the command doing it. `where` is not a
-/// cmd built-in — it is `System32\where.exe` — so cmd resolves that name the
-/// way it resolves any other: current directory first, then PATH. A `where`
-/// committed to a repo therefore picks the `git.exe` that picks the `bash.exe`
-/// every prompt, permission request, stop, and session end runs, which is the
-/// surface `$PATH:` closes one level down.
-///
-/// The decoy is a `.bat` rather than an inert `where.exe`, and it names a Git
-/// install whose `bin\bash.exe` exists, because both are what make the wrong
-/// answer *observable*: a decoy that cannot run leaves the lookup empty, and a
-/// decoy install without a `bash.exe` falls through — either way the shim
-/// reaches `%ProgramFiles%\Git\bin\bash.exe`, which resolves on any Windows
-/// box, and the test would pass on the unscoped shim for the wrong reason.
-/// Reaching `:derive` with a decoy instead leaves `BASH` set and unrunnable.
-///
-/// The probe below pins the premise separately, so this cannot go green
-/// because the planted `where` was never the one cmd would have chosen.
-#[cfg(windows)]
-#[rstest]
-fn test_shim_ignores_a_where_in_the_current_directory(repo: TestRepo) {
-    use std::os::windows::process::CommandExt;
-
-    let shim =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins/worktrunk/hooks/wt.cmd");
-
-    // The only worktrunk the shim is allowed to find: a real one, in a
-    // directory on the PATH this test pins.
-    let path_dir = repo.root_path().join("path-dir");
-    fs::create_dir_all(&path_dir).unwrap();
-    fs::copy(crate::common::wt_bin(), path_dir.join("git-wt.exe")).unwrap();
-
-    // The decoy Git install the planted `where` names. `:derive` takes
-    // `<install>\cmd\` and accepts `<install>\bin\bash.exe`, so that file has
-    // to exist for the wrong branch to win rather than fall through.
-    let decoy = repo.root_path().join("decoy-git");
-    fs::create_dir_all(decoy.join("bin")).unwrap();
-    fs::write(decoy.join("bin").join("bash.exe"), b"not an executable").unwrap();
-
-    // ...and the lookup that names it, in the directory the hook runs from.
-    // `.bat` is enough to shadow `System32\where.exe`: cmd tries every PATHEXT
-    // extension in one directory before it moves to the next.
-    let project = repo.root_path().join("project");
-    fs::create_dir_all(&project).unwrap();
-    let decoy_git = decoy.join("cmd").join("git.exe");
-    fs::write(
-        project.join("where.bat"),
-        format!("@echo {}\r\n", decoy_git.display()),
-    )
-    .unwrap();
-
-    // The premise, checked directly: without it the decoy is never consulted
-    // and every assertion below would hold on the unscoped shim too.
-    let mut probe = std::process::Command::new("cmd.exe");
-    repo.configure_wt_cmd(&mut probe);
-    let probe_output = probe
-        .arg("/C")
-        .raw_arg("\"where $PATH:git.exe\"")
-        .env("PATH", pinned_windows_path(&[]))
-        .current_dir(&project)
-        .output()
-        .unwrap();
-    let probed = String::from_utf8_lossy(&probe_output.stdout);
-    assert!(
-        probed.contains("decoy-git"),
-        "a `where.bat` in the current directory must shadow System32's `where.exe`, \
-         or this test pins nothing; got {probed:?}"
-    );
-
-    let mut cmd = std::process::Command::new("cmd.exe");
-    repo.configure_wt_cmd(&mut cmd);
-    let output = cmd
-        .arg("/C")
-        .raw_arg(format!("\"\"{}\" --version\"", shim.display()))
-        .env("PATH", pinned_windows_path(&[path_dir]))
-        .env_remove("WORKTRUNK_BIN")
-        .current_dir(&project)
-        .output()
-        .unwrap();
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        output.status.success() && stdout.trim_start().starts_with("wt "),
-        "the shim must run System32's `where.exe`, not one from the current \
-         directory; got {}\nstdout:\n{stdout}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-/// The two scoping tests above see only the *wrong* bash: they go red because
-/// the shim picks a decoy. Neither sees a lookup that finds nothing at all — a
-/// mis-quoted `for /f`, a `where` spelling cmd cannot run — because the shim
-/// then falls through to `%ProgramFiles%\Git\bin\bash.exe`, which resolves on
-/// any Windows box, and every assertion still holds. So the derive branch is
-/// the one route to a bash that nothing observes.
-///
-/// This takes the fallbacks away: `ProgramFiles` and `LOCALAPPDATA` point at an
-/// empty directory, leaving `:derive` as the only way to a bash, so the
-/// `%SystemRoot%\System32\where.exe` line has to return the Git install — under
-/// the quoting `for /f` wraps it in — for the shim to reach `wt.sh` at all.
-///
-/// Both variables reach a real hook: Codex's strictest `inherit = "core"`
-/// policy keeps `SYSTEMROOT`, `PROGRAMFILES` and `LOCALAPPDATA`
-/// (`WINDOWS_CORE_ENV_VARS` in `codex-rs/protocol/src/shell_environment.rs`),
-/// and `scrub_non_inheritable_env_vars` drops only auth-token names.
+/// The hook must use Git's installed runtime, even if GIT_EXEC_PATH names a
+/// different helper directory. Run through cmd's real for/f quoting.
 #[cfg(windows)]
 #[rstest]
 fn test_shim_derives_bash_from_the_git_on_path(repo: TestRepo) {
@@ -6384,9 +6228,8 @@ fn test_shim_derives_bash_from_the_git_on_path(repo: TestRepo) {
     fs::create_dir_all(&path_dir).unwrap();
     fs::copy(crate::common::wt_bin(), path_dir.join("git-wt.exe")).unwrap();
 
-    // Where the two standard-install fallbacks now point: no Git under either.
-    let no_git = repo.root_path().join("no-git");
-    fs::create_dir_all(&no_git).unwrap();
+    let helper_override = repo.root_path().join("other-helpers");
+    fs::create_dir_all(&helper_override).unwrap();
 
     let mut cmd = std::process::Command::new("cmd.exe");
     repo.configure_wt_cmd(&mut cmd);
@@ -6394,8 +6237,7 @@ fn test_shim_derives_bash_from_the_git_on_path(repo: TestRepo) {
         .arg("/C")
         .raw_arg(format!("\"\"{}\" --version\"", shim.display()))
         .env("PATH", pinned_windows_path(&[path_dir]))
-        .env("ProgramFiles", &no_git)
-        .env("LOCALAPPDATA", &no_git)
+        .env("GIT_EXEC_PATH", &helper_override)
         .env_remove("WORKTRUNK_BIN")
         .current_dir(repo.root_path())
         .output()
@@ -6404,8 +6246,8 @@ fn test_shim_derives_bash_from_the_git_on_path(repo: TestRepo) {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success() && stdout.trim_start().starts_with("wt "),
-        "the shim must derive Git Bash from the git.exe PATH names, with no install \
-         default left to fall back on; got {}\nstdout:\n{stdout}\nstderr:\n{}",
+        "the shim must query the installed Git runtime, ignoring GIT_EXEC_PATH; \
+         got {}\nstdout:\n{stdout}\nstderr:\n{}",
         output.status,
         String::from_utf8_lossy(&output.stderr)
     );
@@ -6482,7 +6324,7 @@ fn test_claude_hook_commands_parse_in_all_shells() {
 /// directions are pinned below — a skeleton is a no-op, a clean worktree is
 /// still removed, a dirty one still fails — so neither a blanket `exit 0` nor a
 /// swallowed `wt remove` failure can satisfy this test. It runs the real command
-/// out of `hooks.json`, which parses its stdin with `jq`.
+/// out of `hooks.json`.
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 #[rstest]
 fn test_worktree_remove_hook_skips_path_holding_no_worktree(mut repo: TestRepo) {
@@ -6507,9 +6349,8 @@ fn test_worktree_remove_hook_skips_path_holding_no_worktree(mut repo: TestRepo) 
 
     // Fire the hook exactly as Claude Code does: the recorded path on stdin, the
     // plugin root in the environment. No `CLAUDE_PROJECT_DIR` — the hook
-    // resolves the repository from the worktree path via `-C "$p"` and must
-    // never consult a project dir (#3754), so setting one here would be dead
-    // setup.
+    // resolves the repository from the worktree path and must never consult a
+    // project dir (#3754), so setting one here would be dead setup.
     let run_hook = |worktree_path: &Path| -> Output {
         let mut cmd = std::process::Command::new("bash");
         repo.configure_wt_cmd(&mut cmd);
@@ -6523,7 +6364,10 @@ fn test_worktree_remove_hook_skips_path_holding_no_worktree(mut repo: TestRepo) 
             .stderr(Stdio::piped())
             .spawn()
             .expect("failed to spawn bash");
-        let payload = serde_json::json!({ "worktree_path": worktree_path.to_str().unwrap() });
+        let payload = serde_json::json!({
+            "hook_event_name": "WorktreeRemove",
+            "worktree_path": worktree_path.to_str().unwrap(),
+        });
         child
             .stdin
             .take()
@@ -7489,6 +7333,9 @@ fn test_config_show_rejects_semantically_invalid_user_config(
     assert_eq!(output.status.code(), Some(1));
     if args.contains(&"--format=json") {
         serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("User config @"), "{stderr}");
+        assert!(stderr.contains("worktree-path cannot be empty"), "{stderr}");
     } else {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let user_section = stdout
@@ -7526,6 +7373,9 @@ fn test_config_show_rejects_semantically_invalid_system_config(
     assert_eq!(output.status.code(), Some(1));
     if args.contains(&"--format=json") {
         serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("System config @"), "{stderr}");
+        assert!(stderr.contains("worktree-path cannot be empty"), "{stderr}");
         return;
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -7581,13 +7431,12 @@ fn test_config_show_json_rejects_invalid_custom_column(repo: TestRepo, temp_home
     let output = cmd.output().unwrap();
     assert_eq!(output.status.code(), Some(1));
     serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
-    assert!(output.stderr.is_empty());
+    insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr).ansi_strip(), @"✗ Invalid [list.custom-columns.ticket] width: must be at least 1");
 }
 
 #[rstest]
 fn test_config_show_json_rejects_invalid_system_config(repo: TestRepo, temp_home: TempDir) {
-    let system_config_dir = tempfile::tempdir().unwrap();
-    let system_config_path = system_config_dir.path().join("config.toml");
+    let system_config_path = repo.root_path().join("system-config.toml");
     fs::write(&system_config_path, "invalid = [toml\n").unwrap();
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
@@ -7609,6 +7458,22 @@ fn test_config_show_json_rejects_invalid_system_config(repo: TestRepo, temp_home
         json["user"]["config"].is_object(),
         "a broken system source must not erase valid user config"
     );
+    let mut settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    crate::common::add_path_placeholder_filter(
+        &mut settings,
+        r"_REPO_/system-config\.toml",
+        "[SYSTEM_CONFIG]",
+    );
+    settings.bind(|| {
+        insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr).ansi_strip(), @"
+        ▲ System config @ [SYSTEM_CONFIG] failed to parse, skipping
+          TOML parse error at line 1, column 16
+            |
+          1 | invalid = [toml
+            |                ^
+          unclosed array, expected `]`
+        ");
+    });
 }
 
 #[rstest]
@@ -7627,6 +7492,9 @@ fn test_config_show_json_rejects_unreadable_system_config(repo: TestRepo, temp_h
     assert_eq!(output.status.code(), Some(1));
     let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
     assert_eq!(json["system"]["exists"], true);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("System config @"), "{stderr}");
+    assert!(stderr.contains("Cannot read config"), "{stderr}");
 }
 
 #[rstest]
@@ -7641,6 +7509,16 @@ fn test_config_show_json_rejects_invalid_approvals_file(repo: TestRepo) {
 
     assert_eq!(output.status.code(), Some(1));
     serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    setup_snapshot_settings(&repo).bind(|| {
+        insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr).ansi_strip(), @"
+        ✗ Approvals @ [TEST_APPROVALS] failed to parse
+          TOML parse error at line 1, column 5
+            |
+          1 | not valid TOML [[[
+            |     ^
+          key with no value, expected `=`
+        ");
+    });
 }
 
 #[rstest]
@@ -7657,6 +7535,16 @@ fn test_config_show_json_rejects_invalid_user_config(repo: TestRepo) {
     let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
     assert_eq!(json["user"]["exists"], true);
     assert!(json["user"]["config"].is_null());
+    setup_snapshot_settings(&repo).bind(|| {
+        insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr).ansi_strip(), @"
+        ▲ User config @ [TEST_CONFIG] failed to parse, skipping
+          TOML parse error at line 1, column 16
+            |
+          1 | invalid = [toml
+            |                ^
+          unclosed array, expected `]`
+        ");
+    });
 }
 
 #[rstest]
@@ -7673,6 +7561,9 @@ fn test_config_show_json_rejects_unreadable_user_config(repo: TestRepo) {
     let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
     assert_eq!(json["user"]["exists"], true);
     assert!(json["user"]["config"].is_null());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("User config @"), "{stderr}");
+    assert!(stderr.contains("Cannot read config"), "{stderr}");
 }
 
 #[rstest]
@@ -7689,6 +7580,16 @@ fn test_config_show_json_rejects_invalid_project_config(repo: TestRepo) {
     let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
     assert_eq!(json["project"]["exists"], true);
     assert!(json["project"]["config"].is_null());
+    setup_snapshot_settings(&repo).bind(|| {
+        insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr).ansi_strip(), @"
+        ✗ Project config @ _REPO_/.config/wt.toml failed to parse
+          TOML parse error at line 1, column 16
+            |
+          1 | invalid = [toml
+            |                ^
+          unclosed array, expected `]`
+        ");
+    });
 }
 
 #[rstest]
@@ -7706,6 +7607,9 @@ fn test_config_show_json_rejects_unreadable_project_config(repo: TestRepo) {
     let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
     assert_eq!(json["project"]["exists"], true);
     assert!(json["project"]["config"].is_null());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Project config @"), "{stderr}");
+    assert!(stderr.contains("Cannot read config"), "{stderr}");
 }
 
 #[rstest]
@@ -8061,5 +7965,61 @@ fn test_config_show_reports_failed_migration_diff(repo: TestRepo) {
     assert!(
         stdout.contains("Could not render the proposed diff"),
         "expected the failure to be reported, got:\n{stdout}"
+    );
+}
+
+/// A non-UTF-8 environment entry must not panic config loading.
+#[cfg(unix)]
+#[rstest]
+fn test_config_show_non_utf8_environment(repo: TestRepo) {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let output = repo
+        .wt_command()
+        .env("UNRELATED", OsString::from_vec(vec![0xff]))
+        .env(OsString::from_vec(b"UNRELATED_\xff".to_vec()), "value")
+        .args(["config", "show"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+}
+
+/// An unreadable config must stop a mutation before it uses default settings.
+#[rstest]
+#[case("WORKTRUNK_CONFIG_PATH", false)]
+#[case("WORKTRUNK_SYSTEM_CONFIG_PATH", false)]
+#[case("WORKTRUNK_CONFIG_PATH", true)]
+#[case("WORKTRUNK_SYSTEM_CONFIG_PATH", true)]
+fn test_unreadable_config_stops_switch(
+    repo: TestRepo,
+    #[case] variable: &str,
+    #[case] invalid_utf8: bool,
+) {
+    let scratch = crate::common::test_tempdir();
+    let config = scratch.path().join("unreadable.toml");
+    if invalid_utf8 {
+        fs::write(&config, [0xff]).unwrap();
+    } else {
+        fs::create_dir(&config).unwrap();
+    }
+    let output = repo
+        .wt_command()
+        .env(variable, &config)
+        .args(["switch", "--create", "unreadable-config", "--yes"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Failed to read"), "{stderr}");
+    assert!(stderr.contains("unreadable.toml"), "{stderr}");
+    let branch = repo
+        .git_command()
+        .args(["show-ref", "--verify", "refs/heads/unreadable-config"])
+        .run()
+        .unwrap();
+    assert!(
+        !branch.status.success(),
+        "branch was created despite unreadable config"
     );
 }

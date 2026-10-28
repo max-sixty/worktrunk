@@ -6,9 +6,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 use color_print::cformat;
-use path_slash::PathExt as _;
 use worktrunk::copy::{copy_dir_recursive, copy_leaf};
-use worktrunk::git::Repository;
+use worktrunk::git::{Repository, duplicated_branches};
 use worktrunk::path::format_path_for_display;
 use worktrunk::progress::Progress;
 use worktrunk::styling::{eprintln, hint_message, info_message, success_message, warning_message};
@@ -19,8 +18,12 @@ use super::shared::list_and_filter_ignored_entries;
 fn move_entry(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
     // Ensure parent directory exists
     if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .context(format!("creating parent directory for {}", dest.display()))?;
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "creating parent directory for {}",
+                format_path_for_display(dest)
+            )
+        })?;
     }
 
     match fs::rename(src, dest) {
@@ -28,8 +31,8 @@ fn move_entry(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
         Err(e) if e.kind() == ErrorKind::CrossesDevices => copy_and_remove(src, dest, is_dir),
         Err(e) => Err(anyhow::Error::from(e).context(format!(
             "moving {} to {}",
-            src.display(),
-            dest.display()
+            format_path_for_display(src),
+            format_path_for_display(dest)
         ))),
     }
 }
@@ -42,21 +45,24 @@ fn move_entry(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
 /// refusing over one would abort a promote after the branch exchange.
 fn copy_and_remove(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
     let skipped = if is_dir {
-        copy_dir_recursive(src, dest, None, true, None, &Progress::disabled())?
+        copy_dir_recursive(src, dest, None, true, &Progress::disabled())?
     } else {
-        usize::from(copy_leaf(src, dest, None, true, None)?.is_none())
+        usize::from(copy_leaf(src, dest, None, true)?.is_none())
     };
     if skipped > 0 {
         bail!(
-            "{} was not fully copied, so the source is left in place; run with -vv to list what was skipped",
+            "{} was not fully copied; refusing to remove the source; run with -vv to list what was skipped",
             format_path_for_display(src)
         );
     }
 
     if is_dir {
-        fs::remove_dir_all(src).context(format!("removing source directory {}", src.display()))?;
+        fs::remove_dir_all(src).with_context(|| {
+            format!("removing source directory {}", format_path_for_display(src))
+        })?;
     } else {
-        fs::remove_file(src).context(format!("removing source file {}", src.display()))?;
+        fs::remove_file(src)
+            .with_context(|| format!("removing source file {}", format_path_for_display(src)))?;
     }
     Ok(())
 }
@@ -91,7 +97,7 @@ fn stage_ignored(
         let staging_entry = staging_a.join(relative);
         if fs::symlink_metadata(src_entry).is_ok() {
             move_entry(src_entry, &staging_entry, *is_dir)
-                .context(format!("staging {}", relative.display()))?;
+                .with_context(|| format!("staging {}", format_path_for_display(relative)))?;
             count += 1;
         }
     }
@@ -104,7 +110,7 @@ fn stage_ignored(
         let staging_entry = staging_b.join(relative);
         if fs::symlink_metadata(src_entry).is_ok() {
             move_entry(src_entry, &staging_entry, *is_dir)
-                .context(format!("staging {}", relative.display()))?;
+                .with_context(|| format!("staging {}", format_path_for_display(relative)))?;
             count += 1;
         }
     }
@@ -142,7 +148,7 @@ fn distribute_staged(
         let dest_entry = path_a.join(relative);
         if fs::symlink_metadata(&staging_entry).is_ok() {
             move_entry(&staging_entry, &dest_entry, *is_dir)
-                .context(format!("distributing {}", relative.display()))?;
+                .with_context(|| format!("distributing {}", format_path_for_display(relative)))?;
             count += 1;
         }
     }
@@ -156,7 +162,7 @@ fn distribute_staged(
         let dest_entry = path_b.join(relative);
         if fs::symlink_metadata(&staging_entry).is_ok() {
             move_entry(&staging_entry, &dest_entry, *is_dir)
-                .context(format!("distributing {}", relative.display()))?;
+                .with_context(|| format!("distributing {}", format_path_for_display(relative)))?;
             count += 1;
         }
     }
@@ -184,36 +190,28 @@ pub enum PromoteResult {
     AlreadyInMain(String),
 }
 
-/// Resolve the branch to promote.
+/// Resolve the worktree to promote, and its branch.
 ///
-/// An explicit argument goes through the worktree selector, so the branch can be
-/// named by its worktree's path as well as by name. With no argument: from the
-/// main worktree, restore the default branch; from a linked worktree, promote
-/// the current branch.
-fn resolve_target_branch(branch: Option<&str>, repo: &Repository) -> anyhow::Result<String> {
+/// An explicit argument goes through the worktree selector, so it can name the
+/// branch or its worktree's path. With no argument: from the main worktree,
+/// restore the default branch (`^`); from a linked worktree, promote the
+/// current one (`@`).
+fn resolve_target(branch: Option<&str>, repo: &Repository) -> anyhow::Result<(PathBuf, String)> {
     use worktrunk::git::GitError;
 
-    if let Some(b) = branch {
-        // Promoting swaps two branches between worktrees, so a detached
-        // worktree has nothing to swap in.
-        return repo.require_selected_branch(b, "promote");
-    }
-
-    let current_wt = repo.current_worktree();
-    if !current_wt.is_linked()? {
-        // From main worktree with no args: restore default branch
-        repo.default_branch()
-            .ok_or_else(|| anyhow::anyhow!("Could not determine default branch"))
-    } else {
-        // From other worktree with no args: promote current branch
-        current_wt.branch()?.ok_or_else(|| {
-            GitError::DetachedHead {
-                action: Some("promote".into()),
-                worktree: None,
-            }
-            .into()
-        })
-    }
+    let selector = match branch {
+        Some(b) => b,
+        None if repo.current_worktree().is_linked()? => "@",
+        None => "^",
+    };
+    let (path, branch) = repo.require_worktree(selector)?;
+    // Promoting swaps two branches between worktrees, so a detached worktree
+    // has nothing to swap in.
+    let branch = branch.ok_or_else(|| GitError::DetachedHead {
+        action: Some("promote".into()),
+        worktree: Some(path.clone()),
+    })?;
+    Ok((path, branch))
 }
 
 /// Bail if a leftover staging dir exists from a previous interrupted promote —
@@ -223,10 +221,10 @@ fn check_leftover_staging(staging_path: &Path) -> anyhow::Result<()> {
     if !staging_path.exists() {
         return Ok(());
     }
-    let display = staging_path.to_slash_lossy();
+    let display = format_path_for_display(staging_path);
     Err(anyhow::anyhow!(
         "Files may need manual recovery from: {display}\n\
-         Remove it to retry: rm -rf \"{display}\""
+         Remove it to retry: rm -rf {display}"
     )
     .context("Found leftover staging directory from an interrupted promote"))
 }
@@ -336,24 +334,31 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
             worktree: Some(main_path.clone()),
         })?;
 
-    // Resolve the branch to promote (default_branch computed lazily, only when needed)
-    let target_branch = resolve_target_branch(branch, &repo)?;
+    let (target_path, target_branch) = resolve_target(branch, &repo)?;
 
     // Check if target is already in main worktree
     if target_branch == main_branch {
         return Ok(PromoteResult::AlreadyInMain(target_branch));
     }
 
-    // Find the worktree with the target branch
-    let target_wt = worktrees
-        .iter()
-        .skip(1) // Skip main worktree
-        .find(|wt| wt.branch.as_deref() == Some(&target_branch))
-        .ok_or_else(|| GitError::WorktreeNotFound {
-            branch: target_branch.clone(),
-        })?;
-
-    let target_path = &target_wt.path;
+    // The exchange checks each branch out in the other worktree, which git
+    // refuses while a third worktree holds it — and by then both worktrees are
+    // detached. Worktrunk never creates such a duplicate, but `git worktree
+    // add --force` can.
+    let duplicated = duplicated_branches(worktrees);
+    for branch in [&main_branch, &target_branch] {
+        if duplicated.contains(branch.as_str()) {
+            let paths: Vec<_> = worktrees
+                .iter()
+                .filter(|wt| wt.branch.as_ref() == Some(branch))
+                .map(|wt| format_path_for_display(&wt.path).to_string())
+                .collect();
+            return Err(anyhow::anyhow!(paths.join("\n")).context(cformat!(
+                "Cannot promote: <bold>{branch}</> is checked out in {} worktrees",
+                paths.len()
+            )));
+        }
+    }
 
     // Bail early if a leftover staging dir exists from a previous interrupted promote —
     // checked before `ensure_clean` so users see the recovery path first.
@@ -362,7 +367,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
 
     // Ensure both worktrees are clean
     let main_working_tree = repo.worktree_at(main_path);
-    let target_working_tree = repo.worktree_at(target_path);
+    let target_working_tree = repo.worktree_at(&target_path);
 
     main_working_tree.ensure_clean("promote", Some(&main_branch), false)?;
     target_working_tree.ensure_clean("promote", Some(&target_branch), false)?;
@@ -379,8 +384,12 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     let no_excludes: &[String] = &[];
     let main_entries =
         list_and_filter_ignored_entries(main_path, &main_branch, &worktree_paths, no_excludes)?;
-    let target_entries =
-        list_and_filter_ignored_entries(target_path, &target_branch, &worktree_paths, no_excludes)?;
+    let target_entries = list_and_filter_ignored_entries(
+        &target_path,
+        &target_branch,
+        &worktree_paths,
+        no_excludes,
+    )?;
 
     // Move gitignored files to staging BEFORE branch exchange.
     // `git switch` silently overwrites ignored files that collide with tracked
@@ -390,12 +399,12 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
             &repo,
             main_path,
             &main_entries,
-            target_path,
+            &target_path,
             &target_entries,
         )
         .context(format!(
             "Failed to stage ignored files. Already-staged files may be recoverable from: {}",
-            staging_path.to_slash_lossy()
+            format_path_for_display(&staging_path)
         ))?;
         if count > 0 { Some((dir, count)) } else { None }
     } else {
@@ -418,12 +427,12 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
             staging_dir,
             main_path,
             &main_entries,
-            target_path,
+            &target_path,
             &target_entries,
         )
         .context(format!(
             "Failed to distribute staged files. Staged files may be recoverable from: {}",
-            staging_dir.display()
+            format_path_for_display(staging_dir)
         ))?
     } else {
         0
@@ -436,7 +445,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         "{}",
         success_message(cformat!(
             "Promoted: main worktree now has <bold>{target_branch}</>; {} now has <bold>{main_branch}</>",
-            worktrunk::path::format_path_for_display(target_path)
+            worktrunk::path::format_path_for_display(&target_path)
         ))
     );
     if swapped > 0 {
@@ -490,6 +499,49 @@ mod tests {
             "nested"
         );
         assert_eq!(fs::read_to_string(dest.join("root.txt")).unwrap(), "root");
+    }
+
+    #[test]
+    fn test_move_entry_failure_keeps_source_and_destination() {
+        use path_slash::PathExt;
+
+        let tmp = worktrunk::testing::test_tempdir();
+        let src = tmp.path().join("source file");
+        let blocker = tmp.path().join("existing file");
+        fs::write(&src, b"source data").unwrap();
+        fs::write(&blocker, b"existing data").unwrap();
+        let blocked_parent = blocker.join("destination");
+
+        let error = move_entry(&src, &blocked_parent, false).unwrap_err();
+        assert!(error.downcast_ref::<std::io::Error>().is_some());
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "creating parent directory for '{}'",
+                blocked_parent.to_slash_lossy()
+            )
+        );
+        assert_eq!(fs::read(&src).unwrap(), b"source data");
+        assert_eq!(fs::read(&blocker).unwrap(), b"existing data");
+
+        let occupied = tmp.path().join("existing directory");
+        fs::create_dir(&occupied).unwrap();
+        fs::write(occupied.join("protected"), b"existing data").unwrap();
+        let error = move_entry(&src, &occupied, false).unwrap_err();
+        assert!(error.downcast_ref::<std::io::Error>().is_some());
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "moving '{}' to '{}'",
+                src.to_slash_lossy(),
+                occupied.to_slash_lossy()
+            )
+        );
+        assert_eq!(fs::read(&src).unwrap(), b"source data");
+        assert_eq!(
+            fs::read(occupied.join("protected")).unwrap(),
+            b"existing data"
+        );
     }
 
     #[test]

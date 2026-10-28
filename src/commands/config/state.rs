@@ -15,7 +15,7 @@
 //! **Authoritative** (hand-authored or override state; lost permanently if
 //! cleared). `state clear` prompts before removing these unless `--yes`:
 //!
-//! - Default branch override (git config `worktrunk.default_branch.*`)
+//! - Default branch override (git config `worktrunk.default-branch`)
 //! - Branch markers (git config `worktrunk.state.<branch>.marker`)
 //! - Vars (git config `worktrunk.state.<branch>.vars.*`)
 //! - Logs (`.git/wt/logs/`)
@@ -25,7 +25,7 @@
 //! (`handle_cache_get`) and dropped by `wt config state cache clear`
 //! (`handle_cache_clear`), which needs no prompt:
 //!
-//! - Previous branch (git config `worktrunk.history`)
+//! - Previous branch (git config `worktrunk.history`, with `worktrunk.history-path`)
 //! - CI status cache (`.git/wt/cache/ci-status/`, plus the PR-number width
 //!   ratchet in `.git/wt/cache/pr-number/`)
 //! - Summary cache (`.git/wt/cache/summary/`)
@@ -79,6 +79,8 @@ use color_print::cformat;
 use path_slash::PathExt as _;
 use worktrunk::git::{BranchRef, CommandError, Repository, resolve_input_path, sha_cache};
 use worktrunk::path::{format_path_for_display, sanitize_for_filename};
+use worktrunk::progress::Progress;
+use worktrunk::remove_dir::remove_dir_with_progress;
 use worktrunk::styling::{
     eprintln, format_heading, format_with_gutter, hint_message, info_message, println,
     success_message, warning_message,
@@ -244,12 +246,11 @@ fn clear_trash(repo: &Repository) -> anyhow::Result<usize> {
     let cleared = entries.len();
     for entry in entries {
         let path = repo.prepare_disposal(&entry.path)?;
-        if entry.metadata.is_dir() {
-            std::fs::remove_dir_all(&path)
-        } else {
-            std::fs::remove_file(&path)
-        }
-        .with_context(|| format!("Failed to clear trash @ {}", format_path_for_display(&path)))?;
+        anyhow::ensure!(
+            remove_dir_with_progress(&path, &Progress::disabled()),
+            "Failed to remove {}",
+            format_path_for_display(&path)
+        );
     }
     // An absent or non-empty payload-trash directory needs no further action.
     let trash = repo.wt_trash_dir();
@@ -745,10 +746,8 @@ pub fn handle_state_get(
             None => println!(""),
         },
         "marker" => {
-            let branch_name = match branch {
-                Some(b) => repo.require_selected_branch(&b, "get marker")?,
-                None => repo.require_current_branch("get marker for current branch")?,
-            };
+            let branch_name =
+                repo.require_selected_branch(branch.as_deref().unwrap_or("@"), "get marker")?;
             if format == SwitchFormat::Json {
                 // Read raw config to get both marker and set_at
                 let config_key = format!("worktrunk.state.{branch_name}.marker");
@@ -778,10 +777,8 @@ pub fn handle_state_get(
             }
         }
         "ci-status" => {
-            let branch_name = match branch {
-                Some(b) => repo.require_selected_branch(&b, "get ci-status")?,
-                None => repo.require_current_branch("get ci-status for current branch")?,
-            };
+            let branch_name =
+                repo.require_selected_branch(branch.as_deref().unwrap_or("@"), "get ci-status")?;
 
             // Ask git for both qualified forms in one call so the remote/local
             // determination and the HEAD SHA come from the same ref. A local
@@ -811,7 +808,12 @@ pub fn handle_state_get(
 
             let branch_ref = match (local_sha, remote_sha) {
                 (Some(sha), _) => BranchRef::local_branch(&branch_name, sha),
-                (None, Some(sha)) => BranchRef::remote_branch(&branch_name, sha),
+                (None, Some(sha)) => {
+                    let (remote, branch) = repo
+                        .split_remote_branch_name(&branch_name)
+                        .context("remote branch has no remote prefix")?;
+                    BranchRef::remote_branch(remote, branch, sha)
+                }
                 (None, None) => {
                     return Err(worktrunk::git::GitError::BranchNotFound {
                         // Offering `--create` for a name git rejects sends the
@@ -906,17 +908,15 @@ pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> any
             );
         }
         "previous-branch" => {
-            repo.set_switch_previous(Some(&value))?;
+            repo.set_switch_previous(&value)?;
             eprintln!(
                 "{}",
                 success_message(cformat!("Set previous branch to <bold>{value}</>"))
             );
         }
         "marker" => {
-            let branch_name = match branch {
-                Some(b) => repo.require_selected_branch(&b, "set marker")?,
-                None => repo.require_current_branch("set marker for current branch")?,
-            };
+            let branch_name =
+                repo.require_selected_branch(branch.as_deref().unwrap_or("@"), "set marker")?;
 
             // Store as JSON with timestamp
             let now = epoch_now();
@@ -964,7 +964,7 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
             }
         }
         "previous-branch" => {
-            if repo.unset_config("worktrunk.history")? {
+            if repo.clear_switch_previous()? {
                 eprintln!("{}", success_message("Cleared previous branch"));
             } else {
                 eprintln!("{}", info_message("No previous branch to clear"));
@@ -979,10 +979,8 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                 }
             } else {
                 // Clear CI status for specific branch
-                let branch_name = match branch {
-                    Some(b) => repo.require_selected_branch(&b, "clear ci-status")?,
-                    None => repo.require_current_branch("clear ci-status for current branch")?,
-                };
+                let branch_name = repo
+                    .require_selected_branch(branch.as_deref().unwrap_or("@"), "clear ci-status")?;
                 if CachedCiStatus::clear_one(&repo, &branch_name)? {
                     eprintln!(
                         "{}",
@@ -1011,10 +1009,8 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                     );
                 }
             } else {
-                let branch_name = match branch {
-                    Some(b) => repo.require_selected_branch(&b, "clear marker")?,
-                    None => repo.require_current_branch("clear marker for current branch")?,
-                };
+                let branch_name =
+                    repo.require_selected_branch(branch.as_deref().unwrap_or("@"), "clear marker")?;
 
                 let config_key = format!("worktrunk.state.{branch_name}.marker");
                 if repo.unset_config(&config_key)? {
@@ -1133,7 +1129,7 @@ fn clear_default_branch_reported(repo: &Repository) -> anyhow::Result<bool> {
 }
 
 fn clear_previous_branch_reported(repo: &Repository) -> anyhow::Result<bool> {
-    if repo.unset_config("worktrunk.history")? {
+    if repo.clear_switch_previous()? {
         eprintln!("{}", success_message("Cleared previous branch"));
         return Ok(true);
     }
@@ -1664,10 +1660,8 @@ fn validate_vars_key(key: &str) -> anyhow::Result<()> {
 pub fn handle_vars_get(key: &str, branch: Option<String>) -> anyhow::Result<()> {
     validate_vars_key(key)?;
     let repo = Repository::current()?;
-    let branch_name = match branch {
-        Some(b) => repo.require_selected_branch(&b, "get variable")?,
-        None => repo.require_current_branch("get variable for current branch")?,
-    };
+    let branch_name =
+        repo.require_selected_branch(branch.as_deref().unwrap_or("@"), "get variable")?;
 
     let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
     if let Some(value) = repo.config_value(&config_key)? {
@@ -1680,10 +1674,8 @@ pub fn handle_vars_get(key: &str, branch: Option<String>) -> anyhow::Result<()> 
 pub fn handle_vars_set(key: &str, value: &str, branch: Option<String>) -> anyhow::Result<()> {
     validate_vars_key(key)?;
     let repo = Repository::current()?;
-    let branch_name = match branch {
-        Some(b) => repo.require_selected_branch(&b, "set variable")?,
-        None => repo.require_current_branch("set variable for current branch")?,
-    };
+    let branch_name =
+        repo.require_selected_branch(branch.as_deref().unwrap_or("@"), "set variable")?;
 
     let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
     repo.set_config(&config_key, value)?;
@@ -1698,10 +1690,8 @@ pub fn handle_vars_set(key: &str, value: &str, branch: Option<String>) -> anyhow
 /// Handle vars list
 pub fn handle_vars_list(branch: Option<String>, format: SwitchFormat) -> anyhow::Result<()> {
     let repo = Repository::current()?;
-    let branch_name = match branch {
-        Some(b) => repo.require_selected_branch(&b, "list variables")?,
-        None => repo.require_current_branch("list variables for current branch")?,
-    };
+    let branch_name =
+        repo.require_selected_branch(branch.as_deref().unwrap_or("@"), "list variables")?;
 
     let entries: Vec<_> = repo.vars_entries(&branch_name).into_iter().collect();
 
@@ -1731,10 +1721,8 @@ pub fn handle_vars_clear(
     branch: Option<String>,
 ) -> anyhow::Result<()> {
     let repo = Repository::current()?;
-    let branch_name = match branch {
-        Some(b) => repo.require_selected_branch(&b, "clear variable")?,
-        None => repo.require_current_branch("clear variable for current branch")?,
-    };
+    let branch_name =
+        repo.require_selected_branch(branch.as_deref().unwrap_or("@"), "clear variable")?;
 
     match (all, key) {
         (false, None) => {
@@ -1792,8 +1780,27 @@ pub fn handle_vars_clear(
 /// It returns `Err` for real config errors. Both the listing step and each
 /// `unset_config` call propagate errors so user-initiated clears never report
 /// false success.
+///
+/// The marker pattern also matches a var named `marker`
+/// (`worktrunk.state.<branch>.vars.marker`). Such a key is skipped unless its
+/// value is marker JSON, in which case it is the marker of a branch whose name
+/// ends in `.vars`.
 fn clear_all_markers(repo: &Repository) -> anyhow::Result<usize> {
-    clear_matching_config(repo, r"^worktrunk\.state\..+\.marker$")
+    let entries = repo.config_regexp_entries(r"^worktrunk\.state\..+\.marker$")?;
+    let mut cleared = 0;
+    for (config_key, value) in entries {
+        if config_key.ends_with(".vars.marker") && !is_marker_json(&value) {
+            continue;
+        }
+        repo.unset_config(&config_key)?;
+        cleared += 1;
+    }
+    Ok(cleared)
+}
+
+fn is_marker_json(value: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(value)
+        .is_ok_and(|parsed| parsed.get("marker").is_some_and(|v| v.is_string()))
 }
 
 fn clear_matching_config(repo: &Repository, pattern: &str) -> anyhow::Result<usize> {

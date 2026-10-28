@@ -62,7 +62,7 @@ Invoke-Expression (& wt config shell init powershell | Out-String)
     )]
     Init {
         /// Shell to generate code for
-        #[arg(value_enum)]
+        #[arg(value_enum, value_name = super::shell_value_name())]
         shell: Shell,
 
         /// Command name for shell integration (defaults to binary name)
@@ -95,7 +95,7 @@ Use --yes to skip confirmation."#
     )]
     Install {
         /// Shell to install (default: all)
-        #[arg(value_enum)]
+        #[arg(value_enum, value_name = super::shell_value_name())]
         shell: Option<Shell>,
 
         /// Show what would be changed
@@ -134,13 +134,11 @@ $ wt config shell uninstall --yes
 
 ## Version tolerance
 
-Uninstall removes every worktrunk-managed integration it finds, regardless of:
-- Binary name it was installed under (`wt`, `git-wt`, …)
-- Minor syntax variations between versions"#
+Uninstall recognizes the standalone setup lines written by Worktrunk or shown in `wt config shell init --help`, including older generated forms and custom binary names. Customized initialization lines must be removed manually."#
     )]
     Uninstall {
         /// Shell to uninstall (default: all)
-        #[arg(value_enum)]
+        #[arg(value_enum, value_name = super::shell_value_name())]
         shell: Option<Shell>,
 
         /// Show what would be changed
@@ -700,7 +698,7 @@ $ wt config show --full
 ```
 
 This tests:
-- **CI tool status** — Whether `gh` (GitHub) or `glab` (GitLab) is installed and authenticated
+- **CI tool status** — Whether the CLI for the repository's forge (`gh`, `glab`, `tea`, or `az`) is installed and authenticated
 - **Commit generation** — Whether the LLM command can generate commit messages
 - **Version check** — Whether a newer version is available on GitHub"#
     )]
@@ -793,7 +791,7 @@ $ wt config approvals list --format=json | jq -r .state
 
 Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval is required when the command template changes or the project moves.
 
-`--yes` bypasses the prompt, and what it leaves behind depends on the command it is passed to. On a command that runs project commands it grants consent for that run alone and records nothing, so the next run asks again. On `wt config approvals add` the record is the whole point, so the approvals are written — which is how an unattended environment pre-approves a project it has just cloned.
+`--yes` approves project commands for the current run without saving approval. `wt config approvals add --yes` saves approvals for future runs.
 
 ## Reading approval state
 
@@ -951,7 +949,7 @@ pub enum StateCommand {
 - **Previous branch**: Previous branch for `wt switch -`
 - **Branch markers**: User-defined branch notes
 - **Vars**: Custom variables per branch
-- **CI status**: Cached GitHub/GitLab CI status per branch (30-60s TTL)
+- **CI status**: Cached forge CI status per branch (30-60s TTL)
 - **Summaries**: Cached LLM-generated branch summaries (shown in `wt list --full` and `wt switch` preview)
 - **Git commands cache**: Cached merge-tree, ancestry, diff-stat, and `wt switch` preview results
 - **Hints**: One-time hints that have been shown
@@ -994,7 +992,7 @@ untouched."#)]
 
 ## What's cached
 
-- **CI status** — GitHub/GitLab CI per branch (30–60s TTL), shown in [`wt list`](/list/#ci-status)
+- **CI status** — forge CI per branch (30–60s TTL), shown in [`wt list`](/list/#ci-status)
 - **Summaries** — LLM-generated branch summaries (`wt list --full`, `wt switch` preview)
 - **Git commands** — cached merge-tree, ancestry, diff-stat, and `wt switch` preview results
 - **Hints** — one-time hints already shown in this repo
@@ -1071,7 +1069,7 @@ Enables `wt switch -` to return to the previous worktree, similar to `cd -` or `
 
 ## How it works
 
-Updated automatically on every `wt switch`. Stored in git config as `worktrunk.history`.
+Updated automatically on every `wt switch`. Stored in git config as `worktrunk.history`, with the worktree's path in `worktrunk.history-path`.
 
 Without a subcommand, runs `get`. Use `set` to override or `clear` to reset."#
     )]

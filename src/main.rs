@@ -36,11 +36,11 @@ pub(crate) use invocation::{
 
 pub(crate) use crate::cli::{OutputFormat, StatuslineFormat};
 
-use crate::output::print_json;
+use crate::output::{CommandFailure, finish_output, print_json};
 
 use commands::commit::HookGate;
 use commands::handle_picker;
-use commands::worktree::{PushKind, PushOutcome, PushResult, handle_no_ff_merge, handle_push};
+use commands::worktree::{PushKind, handle_no_ff_merge, handle_push};
 use commands::{
     HookCliArgs, MergeFlagOverrides, MergeOptions, RebaseResult, SquashResult, add_approvals,
     clear_approvals, flag_pair, handle_alias_dry_run, handle_alias_show, handle_cache_clear,
@@ -208,25 +208,15 @@ fn handle_step_command(
             if format == SwitchFormat::Json && (args.show_prompt || args.dry_run) {
                 anyhow::bail!("--show-prompt / --dry-run cannot be combined with --format=json");
             }
-            let outcome = step_commit(
+            step_commit(
                 args.branch,
                 yes,
                 verify,
                 args.stage,
                 args.show_prompt,
                 args.dry_run,
-            )?;
-            if format == SwitchFormat::Json
-                && let Some(outcome) = outcome
-            {
-                let payload = serde_json::json!({
-                    "commit": outcome.sha,
-                    "message": outcome.message,
-                    "stage_mode": outcome.stage_mode,
-                });
-                print_json(&payload)?;
-            }
-            Ok(())
+                format,
+            )
         }
         StepCommand::Squash(args) => {
             let verify = args.hooks.resolve();
@@ -250,47 +240,28 @@ fn handle_step_command(
                 };
                 let mut announcer = HookAnnouncer::new(&repo, false);
                 let format = args.format;
-                let result = handle_squash(
+                let outcome = handle_squash(
                     args.target.as_deref(),
                     yes,
                     hooks,
                     args.stage,
                     &mut announcer,
                     commands::PreApprovedGuidance::RunOwnGate,
-                )?;
-                announcer.flush()?;
-                if format == SwitchFormat::Json {
-                    let payload = match &result {
-                        SquashResult::Squashed {
-                            sha,
-                            message,
-                            stage_mode,
-                        } => serde_json::json!({
-                            "outcome": "squashed",
-                            "commit": sha,
-                            "message": message,
-                            "stage_mode": stage_mode,
-                        }),
-                        SquashResult::NoCommitsAhead(target) => serde_json::json!({
-                            "outcome": "no_commits_ahead",
-                            "target": target,
-                        }),
-                        SquashResult::AlreadySingleCommit => serde_json::json!({
-                            "outcome": "already_single_commit",
-                        }),
-                        SquashResult::NoNetChanges => serde_json::json!({
-                            "outcome": "no_net_changes",
-                        }),
-                    };
-                    print_json(&payload)?;
-                } else {
+                )
+                .and_then(|result| match announcer.flush() {
+                    Ok(()) => Ok(result),
+                    Err(error) => Err(CommandFailure::with_result(error, result)),
+                });
+                if format != SwitchFormat::Json
+                    && let Ok(result) = &outcome
+                {
                     match result {
                         SquashResult::Squashed { .. } | SquashResult::NoNetChanges => {}
-                        SquashResult::NoCommitsAhead(branch) => {
+                        SquashResult::NoCommitsAhead { target } => {
                             eprintln!(
                                 "{}",
                                 info_message(cformat!(
-                                    "Nothing to squash; no commits ahead of <bold>{branch}</>"
+                                    "Nothing to squash; no commits ahead of <bold>{target}</>"
                                 ))
                             );
                         }
@@ -302,7 +273,7 @@ fn handle_step_command(
                         }
                     }
                 }
-                Ok(())
+                finish_output(outcome, format == SwitchFormat::Json)
             }
         }
         StepCommand::Push {
@@ -312,33 +283,13 @@ fn handle_step_command(
             ..
         } => {
             let repo = Repository::current()?;
-            let result = if no_ff {
-                let current_branch = repo.require_current_branch("step push --no-ff")?;
-                handle_no_ff_merge(&repo, target.as_deref(), None, &current_branch)?
+            let outcome = if no_ff {
+                let current_branch = repo.require_selected_branch("@", "step push --no-ff")?;
+                handle_no_ff_merge(&repo, target.as_deref(), None, &current_branch)
             } else {
-                handle_push(&repo, target.as_deref(), PushKind::Standalone, None)?
+                handle_push(&repo, target.as_deref(), PushKind::Standalone, None)
             };
-            if format == SwitchFormat::Json {
-                let PushResult {
-                    target,
-                    commit_count,
-                    outcome,
-                } = result;
-                let mut payload = serde_json::json!({
-                    "target": target,
-                    "outcome": match outcome {
-                        PushOutcome::FastForwarded => "fast_forwarded",
-                        PushOutcome::UpToDate => "up_to_date",
-                        PushOutcome::MergeCommit { .. } => "merge_commit",
-                    },
-                    "commits": commit_count,
-                });
-                if let PushOutcome::MergeCommit { merge_sha } = outcome {
-                    payload["merge_sha"] = serde_json::Value::String(merge_sha);
-                }
-                print_json(&payload)?;
-            }
-            Ok(())
+            finish_output(outcome, format == SwitchFormat::Json)
         }
         StepCommand::Rebase { target, format } => {
             let result = handle_rebase(&Repository::current()?, target.as_deref())?;
@@ -597,23 +548,34 @@ fn handle_config_shell_command(action: ConfigShellCommand, yes: bool) -> anyhow:
         } => {
             // Auto-write to shell config files and completions
             let cmd = cmd.unwrap_or_else(binary_name);
-            handle_configure_shell(shell, yes, dry_run, cmd)
+            handle_configure_shell(shell, yes, dry_run, cmd.clone())
                 .map_err(anyhow::Error::from)
                 .and_then(|scan_result| {
                     // Exit with error if no shells configured
                     // Show skipped shells first so user knows what was tried
                     if scan_result.configured.is_empty() {
                         crate::output::print_skipped_shells(&scan_result.skipped);
+                        if !scan_result.failures.is_empty() {
+                            return Err(anyhow::anyhow!(scan_result.failures.join("\n")));
+                        }
                         return Err(worktrunk::git::GitError::Other {
                             message: "No shell config files found".into(),
                         }
                         .into());
                     }
-                    // For --dry-run, preview was already shown by handler
-                    if dry_run {
-                        return Ok(());
+                    // For --dry-run, preview was already shown by handler.
+                    if !dry_run {
+                        crate::output::print_shell_install_result(&scan_result, &cmd);
                     }
-                    crate::output::print_shell_install_result(&scan_result);
+                    if !scan_result.failures.is_empty() {
+                        for failure in &scan_result.failures {
+                            eprintln!("{}", warning_message(failure));
+                        }
+                        return Err(anyhow::anyhow!(
+                            "Could not configure {} shell(s)",
+                            scan_result.failures.len()
+                        ));
+                    }
                     Ok(())
                 })
         }
@@ -783,18 +745,14 @@ fn parse_cli() -> Cli {
         config_overrides,
         alias_help_context,
         subcommand,
-    } = parse_early_globals();
+        ..
+    } = parse_early_globals(std::env::args_os());
     apply_global_options(directory, config, config_overrides);
 
     // Handle --help with pager before clap processes it.
     // Exits the process on a help/version/doc request; otherwise returns.
     help::maybe_handle_help_with_pager(alias_help_context, subcommand.as_deref());
 
-    // TODO: Enhance error messages to show possible values for missing enum arguments
-    // Currently `wt config shell init` doesn't show available shells, but `wt config shell init invalid` does.
-    // Clap doesn't support this natively yet - see https://github.com/clap-rs/clap/issues/3320
-    // When available, use built-in setting. Until then, could use try_parse() to intercept
-    // MissingRequiredArgument errors and print custom messages with ValueEnum::value_variants().
     let cmd = cli::build_command();
     let matches = cmd
         .try_get_matches_from(std::env::args_os())
@@ -838,6 +796,10 @@ struct EarlyGlobals {
     /// arrives, through the `external_subcommand` arm that carries user
     /// aliases, so those entry points can name it back in their own errors.
     subcommand: Option<String>,
+    /// Offset of an external command after clap has consumed global options.
+    external_subcommand_index: Option<usize>,
+    /// The parsed hook subcommand, excluding option values and command filters.
+    hook_type: Option<worktrunk::git::HookType>,
 }
 
 /// Parse global options (`-C`, `--config`, `--config-set`), name the command,
@@ -854,13 +816,23 @@ struct EarlyGlobals {
 /// Using `cli::build_command()` rather than a hand-rolled mini-command keeps
 /// the global-flag definitions in one place (the derive on `Cli`), so renaming
 /// `-C` or adding a value-taking global doesn't silently desync this path.
-fn parse_early_globals() -> EarlyGlobals {
-    let cmd = cli::build_command()
+fn parse_early_globals(args: impl IntoIterator<Item = std::ffi::OsString>) -> EarlyGlobals {
+    let args: Vec<_> = args.into_iter().collect();
+    let mut cmd = cli::build_command()
         .ignore_errors(true)
         .disable_help_flag(true);
-    let Ok(matches) = cmd.try_get_matches_from(std::env::args_os()) else {
+    let Ok(matches) = cmd.try_get_matches_from_mut(&args) else {
         return EarlyGlobals::default();
     };
+    let external_subcommand_index = matches.subcommand().and_then(|(name, sub)| {
+        if cmd.find_subcommand(name).is_some() {
+            return None;
+        }
+        // Clap leaves every word after an external command unparsed, so its
+        // raw tail locates the name without scanning global flags ourselves.
+        let tail_len = sub.get_raw("").map_or(0, |args| args.len());
+        args.len().checked_sub(tail_len + 1)
+    });
     let directory = matches.get_one::<std::path::PathBuf>("directory").cloned();
     let config = matches.get_one::<std::path::PathBuf>("config").cloned();
     let config_overrides = matches
@@ -882,6 +854,11 @@ fn parse_early_globals() -> EarlyGlobals {
         config_overrides,
         alias_help_context,
         subcommand: matches.subcommand_name().map(str::to_owned),
+        external_subcommand_index,
+        hook_type: matches
+            .subcommand_matches("hook")
+            .and_then(|hook| hook.subcommand_name())
+            .and_then(|name| name.parse().ok()),
     }
 }
 
@@ -908,11 +885,13 @@ fn handle_merge_command(args: MergeArgs, yes: bool) -> anyhow::Result<()> {
 }
 
 /// True when the parsed command should silence prewarm-time deprecation
-/// warnings. Two reasons qualify:
+/// warnings. These surfaces qualify:
 ///
 /// - **TUI / stderr-sensitive output** (`select`, `switch` picker mode,
 ///   `list statusline`) — warnings on stderr would land above the picker
 ///   or shell prompt and visually break it.
+/// - **Alias discovery** (`config alias show`) — definitions remain readable
+///   without unrelated config migration warnings.
 /// - **`config update`** — the handler renders the deprecations and a diff
 ///   itself, so the prewarm-time warning + `wt config update` hint is
 ///   redundant noise above its own UI.
@@ -929,7 +908,11 @@ fn command_suppresses_warnings(command: Option<&Commands>) -> bool {
             matches!(args.subcommand, Some(ListSubcommand::Statusline { .. }))
         }
         Some(Commands::Config {
-            action: ConfigCommand::Update { .. },
+            action:
+                ConfigCommand::Update { .. }
+                | ConfigCommand::Alias {
+                    action: ConfigAliasCommand::Show { .. },
+                },
         }) => true,
         _ => false,
     }
@@ -971,6 +954,9 @@ fn dispatch_command(
             expected_tip.as_deref(),
             force_delete,
         ),
+        Commands::InternalDrainTrash => {
+            worktrunk::git::drain_trash(&Repository::current()?.wt_trash_dir())
+        }
         // `working_dir` is the top-level `-C <path>` flag, applied as the
         // child's current directory so global `-C` works for custom
         // subcommands the same way it does for built-ins.
@@ -995,6 +981,14 @@ fn print_command_error(error: &anyhow::Error) {
 fn format_command_error(error: &anyhow::Error) -> String {
     use std::fmt::Write;
     let mut out = String::new();
+
+    // AlreadyDisplayed retains the source error without printing its diagnostic again.
+    if matches!(
+        error.downcast_ref::<WorktrunkError>(),
+        Some(WorktrunkError::AlreadyDisplayed { .. })
+    ) {
+        return out;
+    }
 
     // Locate the first error in the chain that implements `Diagnostic`.
     // Most typed errors render directly even when wrapped in
@@ -1109,6 +1103,7 @@ fn print_cwd_removed_hint_if_needed() {
 fn finish_command(verbose_level: u8, command_line: &str, error: Option<&anyhow::Error>) {
     let error_text = error.map(|err| err.to_string());
     diagnostic::write_if_verbose(verbose_level, command_line, error_text.as_deref());
+    output::withdraw_missing_cd_target();
     let _ = output::terminate_output();
 }
 
@@ -1167,7 +1162,8 @@ fn main() {
     // WORKTRUNK_TEST_MOCK_CONFIG_DIR; see `worktrunk::testing::mock_stub`.
     worktrunk::testing::mock_stub::maybe_run();
 
-    // Capture startup state before anything else: the working directory
+    // Initialize the Unix signal-receiving process owner before other threads
+    // exist, and capture startup state: the working directory
     // (used by shell_exec to resolve relative `GIT_*` path variables
     // inherited from a parent `git` — e.g. when invoked via `git wt ...`
     // with `alias.wt = "!wt"` — against a stable reference, rather than
@@ -1179,7 +1175,13 @@ fn main() {
     // `init_rayon_thread_pool`, `force_color_output`, `parse_cli` — isn't
     // attributed. If startup itself becomes the suspect, capture it as
     // wall-clock minus the sum of post-init spans.
-    worktrunk::shell_exec::init_startup();
+    if let Err(error) = worktrunk::shell_exec::init_startup() {
+        handle_command_failure(
+            anyhow::Error::new(error).context("Failed to initialize process execution"),
+            0,
+            "wt",
+        );
+    }
 
     // Shell completion answers and exits without running a command, and no
     // code it reaches uses rayon — so it returns before the pool below is

@@ -458,6 +458,66 @@ impl GitRemoteUrl {
     }
 }
 
+/// The project identifier Worktrunk v0.80.0 and earlier derived from a remote
+/// URL, frozen so `approvals.toml` and `[projects."…"]` keys written under it
+/// keep applying where they identify the same server
+/// (read by [`ProjectId`](crate::config::ProjectId)).
+///
+/// The release after v0.80.0 moved remote parsing to `gix-url`, which changed
+/// the identifier for three kinds of remote. Saved keys use the old spelling:
+///
+/// - `ssh://git@host:2222/o/r`: the port was dropped (`host/o/r`).
+/// - `git@GitHub.com:o/r`: the host kept its case (`GitHub.com/o/r`).
+/// - `git+ssh://` and `ssh+git://`: these didn't parse, so the identifier was
+///   the raw URL minus `.git`, as for any other unparsed URL.
+///
+/// For `ssh://` URLs, returns `None` when parsing fails or the old identifier
+/// lost server identity: non-default ports were dropped, and IPv6 hosts were
+/// truncated at their first `:` (`[2001/o/r`). The SCP form kept the rest of
+/// the address in the path, so its identifier stayed distinct and still counts.
+pub(crate) fn legacy_project_identifier(url: &str) -> Option<String> {
+    let trimmed = url.trim();
+    if trimmed.starts_with("ssh://")
+        && GitRemoteUrl::parse(trimmed).is_none_or(|remote| remote.ssh_port.is_some())
+    {
+        return None;
+    }
+    let parse = || -> Option<(&str, String, String)> {
+        let (host, path) = if let Some(rest) = trimmed
+            .strip_prefix("https://")
+            .or_else(|| trimmed.strip_prefix("http://"))
+            .or_else(|| trimmed.strip_prefix("git://"))
+        {
+            let (authority, path) = rest.split_once('/')?;
+            (authority_host(authority)?, path)
+        } else if let Some(rest) = trimmed.strip_prefix("ssh://") {
+            let (authority, path) = rest.split_once('/')?;
+            let host = authority_host(authority)?;
+            (host.split(':').next().unwrap_or(host), path)
+        } else if let Some((authority, path)) = trimmed.split_once(':')
+            && !authority.contains('/')
+        {
+            let (user, host) = authority.rsplit_once('@')?;
+            if user.is_empty() {
+                return None;
+            }
+            (host, path)
+        } else {
+            return None;
+        };
+        if host.is_empty() {
+            return None;
+        }
+        let (namespace, repo) = split_namespace_repo(path)?;
+        Some((host, namespace, repo))
+    };
+    match parse() {
+        Some((host, _, _)) if trimmed.starts_with("ssh://") && host.starts_with('[') => None,
+        Some((host, namespace, repo)) => Some(format!("{host}/{namespace}/{repo}")),
+        None => Some(url.strip_suffix(".git").unwrap_or(url).to_string()),
+    }
+}
+
 /// Extract owner and repository name from a git remote URL.
 pub fn parse_owner_repo(url: &str) -> Option<(String, String)> {
     GitRemoteUrl::parse(url).map(|u| (u.owner().to_string(), u.repo().to_string()))
@@ -829,6 +889,44 @@ mod tests {
         for (input, expected) in cases {
             let url = GitRemoteUrl::parse(input).unwrap();
             assert_eq!(url.project_identifier(), expected, "input: {input}");
+        }
+    }
+
+    /// The v0.80.0 identifier, for remotes whose identifier changed and for
+    /// ordinary ones where it didn't. Values are what the v0.80.0 binary's
+    /// `wt config show` printed, except ambiguous port-less and truncated
+    /// IPv6 identifiers, which get none.
+    #[test]
+    fn test_legacy_project_identifier() {
+        let cases = [
+            ("ssh://git@host.example:2222/o/r.git", None),
+            ("ssh://git@Host.example:2222/o/r.git", None),
+            ("ssh://git@host.example:65536/o/r.git", None),
+            (
+                "ssh://git@Host.example:22/o/r.git",
+                Some("Host.example/o/r"),
+            ),
+            ("ssh://git@host.example/o/r.git", Some("host.example/o/r")),
+            ("git@GitHub.com:o/r.git", Some("GitHub.com/o/r")),
+            ("https://GitHub.com/O/R.git", Some("GitHub.com/O/R")),
+            (
+                "git+ssh://git@github.com/o/r.git",
+                Some("git+ssh://git@github.com/o/r"),
+            ),
+            (
+                "https://host.example:8443/o/r",
+                Some("host.example:8443/o/r"),
+            ),
+            ("git@github.com:o/r.git", Some("github.com/o/r")),
+            ("ssh://git@[2001:db8::1]/o/r.git", None),
+            ("git@[2001:db8::1]:o/r.git", Some("[2001/db8::1]:o/r")),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                legacy_project_identifier(input).as_deref(),
+                expected,
+                "input: {input}"
+            );
         }
     }
 

@@ -8,7 +8,7 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 
 ## Full mode
 
-`--full` adds the two columns that reach off-machine: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail, over the network) and [LLM-generated summaries](#llm-summaries) of each branch's changes.
+`--full` adds the two columns that reach off-machine: [CI status](#ci-status) (forge pipeline pass/fail, over the network) and [LLM-generated summaries](#llm-summaries) of each branch's changes.
 
 ## Examples
 
@@ -122,7 +122,7 @@ Reuses the [`commit.generation`](https://worktrunk.dev/config/#commit) command �
 
 ### Custom columns [experimental]
 
-Each `[list.custom-columns]` entry in user config adds a column: the key is the header, the template renders each row's cell. Templates read two per-branch namespaces — `{{ vars.* }}`, stored with [`wt config state vars set`](https://worktrunk.dev/config/#wt-config-state-vars), and `{{ git.branch.* }}`, the branch's own git config under `branch.<name>.*` (a `jira` key you set yourself, or the git-native `description`) — useful for tracking what each of many (often agent-driven) branches is for:
+Each `[list.custom-columns]` entry in user config adds a column. Its key sets the header; its template renders each row's cell. Templates read `{{ vars.* }}`, set with [`wt config state vars set`](https://worktrunk.dev/config/#wt-config-state-vars), and `{{ git.branch.* }}`, from `branch.<name>.*` in Git config:
 
 ```toml
 # ~/.config/worktrunk/config.toml

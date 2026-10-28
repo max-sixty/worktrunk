@@ -1,5 +1,5 @@
 //! Inventory of authorized worktree disposal, shared by inspection, clearing,
-//! and the age-based janitor. Trash entries are disposable. A retained staging
+//! and the trash drain. Trash entries are disposable. A retained staging
 //! container enters disposal only when it holds the complete registration moved
 //! out of Git by the atomic unregister commit. Recoverable checkouts stay out.
 
@@ -17,8 +17,6 @@ pub struct DisposalEntry {
     pub path: PathBuf,
     /// Do not follow symlinks when inspecting or choosing how to remove an entry.
     pub metadata: std::fs::Metadata,
-    /// Filename-encoded staging time. Stray payload-trash files have none.
-    pub staged_at: Option<u64>,
 }
 
 impl Repository {
@@ -48,7 +46,7 @@ impl Repository {
             )
         })?;
         let destination = trash.join(path.file_name().context("Disposal path has no name")?);
-        std::fs::rename(path, &destination).with_context(|| {
+        renamore::rename_exclusive_fallback(path, &destination).with_context(|| {
             format!(
                 "Failed to prepare cleanup of committed removal @ {}",
                 format_path_for_display(path)
@@ -84,7 +82,6 @@ impl Repository {
             }
             for entry in std::fs::read_dir(&directory).with_context(context)? {
                 let entry = entry.with_context(context)?;
-                let staged_at = entry.file_name().to_str().and_then(disposal_timestamp);
                 let path = entry.path();
                 let metadata = match std::fs::symlink_metadata(&path) {
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
@@ -108,35 +105,9 @@ impl Repository {
                         }
                     }
                 }
-                entries.push(DisposalEntry {
-                    path,
-                    metadata,
-                    staged_at,
-                });
+                entries.push(DisposalEntry { path, metadata });
             }
         }
         Ok(entries)
-    }
-}
-
-fn disposal_timestamp(name: &str) -> Option<u64> {
-    let (_, suffix) = name.rsplit_once('-')?;
-    suffix.parse().ok()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_disposal_timestamp() {
-        assert_eq!(disposal_timestamp("feature-1700000000"), Some(1700000000));
-        assert_eq!(
-            disposal_timestamp("my-project.feature-branch-1700000000"),
-            Some(1700000000)
-        );
-        assert_eq!(disposal_timestamp("no-timestamp"), None);
-        assert_eq!(disposal_timestamp("notimestamp"), None);
-        assert_eq!(disposal_timestamp(""), None);
     }
 }

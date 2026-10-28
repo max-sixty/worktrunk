@@ -38,7 +38,7 @@
 //!     ones) route to the file layers only — `-vv` is a strict superset
 //!     of `-v` on stderr.
 
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
@@ -196,14 +196,9 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for SubprocessMakeWriter {
 fn try_create(filename: &str) -> Option<(PathBuf, File)> {
     let repo = worktrunk::git::Repository::current().ok()?;
     let log_dir = repo.wt_logs_dir();
-    std::fs::create_dir_all(&log_dir).ok()?;
     let path = log_dir.join(filename);
-    let file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&path)
-        .ok()?;
+    let file =
+        worktrunk::utils::open_log_file(&log_dir, std::path::Path::new(filename), false).ok()?;
     Some((path, file))
 }
 

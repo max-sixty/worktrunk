@@ -55,7 +55,7 @@ Some requests span both: commit-message generation is user config, while the tea
 
 ### Setting up commit message generation (user config)
 
-Detect which tools are installed (`which claude codex llm aichat`); if none, recommend Claude Code. Take the exact command for the chosen tool from `reference/llm-commits.md`, propose the `[commit.generation]` change, and apply it after approval (`wt config create` first if no config exists). To verify, `wt step commit --dry-run` renders the prompt, runs the LLM, and prints the message without committing.
+Detect which tools are installed (`which claude codex opencode llm aichat`); if none, recommend Claude Code. Take the exact command for the chosen tool from `reference/llm-commits.md`, propose the `[commit.generation]` change, and apply it after approval (`wt config create` first if no config exists). To verify, `wt step commit --dry-run` renders the prompt, runs the LLM, and prints the message without committing.
 
 ### Configuring project hooks
 

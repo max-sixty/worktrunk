@@ -96,7 +96,7 @@ pub enum CreationMethod {
 /// Identity of the PR/MR a `pr:N` / `mr:N` argument resolved to.
 ///
 /// Resolved once, before `pre-switch` hooks run, then held by whoever needs it:
-/// the `ResolvedTarget` `pre-switch` reads, the plan `pre-start` reads, and the
+/// the `SwitchTarget` `pre-switch` reads, the plan `pre-start` reads, and the
 /// pipeline's own clone behind the post-* hooks — an `Existing` switch builds no
 /// `SwitchPlan::Create` at all. So `pr_number` / `pr_url` reach every switch
 /// hook whether the PR came from this repo or a fork. Reading it back off
@@ -122,8 +122,9 @@ pub enum SwitchPlan {
         path: PathBuf,
         /// The branch at this worktree. `None` for detached HEAD.
         branch: Option<String>,
-        /// Branch to record as "previous" for `wt switch -`
-        new_previous: Option<String>,
+        /// The worktree being left — path, and branch (`None` when detached) —
+        /// to record for `wt switch -`
+        new_previous: Option<(PathBuf, Option<String>)>,
     },
     /// Need to create a new worktree
     Create {
@@ -138,8 +139,8 @@ pub enum SwitchPlan {
         /// True when a stale path occupies `worktree_path` and `--clobber` was
         /// given — `execute_switch` backs it up before creating the worktree.
         needs_clobber_backup: bool,
-        /// Branch to record as "previous" for `wt switch -`
-        new_previous: Option<String>,
+        /// The worktree being left, to record for `wt switch -`
+        new_previous: Option<(PathBuf, Option<String>)>,
     },
 }
 
