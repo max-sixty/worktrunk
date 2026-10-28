@@ -716,7 +716,7 @@ mod tests {
         let checkout = test.home_path().join("repo.feature-raced-checkout");
         test.run_git(&["worktree", "add", checkout.to_str().unwrap(), "feature"]);
 
-        let result = execute_branch_deletion(&repo, "feature", "main", false).unwrap();
+        let result = execute_branch_deletion(&repo, "feature", "main", false, None).unwrap();
         let BranchDeletionOutcome::RetainedCheckedOut { path } = result.outcome else {
             panic!("safe deletion must report the checkout added after planning");
         };

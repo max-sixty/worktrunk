@@ -78,6 +78,7 @@ use worktrunk::config::HookSource;
 /// supplied at conversion time so this struct stays neutral. `source` is
 /// genuinely per-step: alias flows mix steps from both sources into one flat
 /// vec.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct SourcedStep {
     pub step: PreparedStep,
     pub source: HookSource,

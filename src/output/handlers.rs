@@ -15,7 +15,7 @@ use worktrunk::styling::{eprint, format_bash_with_gutter, stderr};
 use crate::commands::command_executor::CommandContext;
 use crate::commands::command_executor::{FailureStrategy, ForegroundStdin};
 use crate::commands::hook_plan::{ApprovedHookPlan, execute_planned_hook, register_planned};
-use crate::commands::hooks::HookAnnouncer;
+use crate::commands::hooks::{HookAnnouncer, PreparedHooks};
 use crate::commands::process::{
     HookLog, InternalOp, build_drain_trash_command, build_remove_placeholder_command,
     spawn_detached, spawn_detached_exec,
@@ -31,8 +31,7 @@ use worktrunk::git::IntegrationReason;
 use worktrunk::git::Repository;
 use worktrunk::git::{
     BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemoveOptions,
-    delete_branch_if_safe, execute_branch_deletion, remove_worktree_with_cleanup,
-    stage_worktree_removal,
+    execute_branch_deletion, remove_worktree_with_cleanup, stage_worktree_removal,
 };
 use worktrunk::path::{canonicalize_with_parents, format_path_for_display};
 use worktrunk::progress::{Progress, format_stats_paren};
@@ -131,28 +130,30 @@ pub enum RemovalExecution {
 struct BackgroundRemovalOutcome {
     cleanup: anyhow::Result<()>,
     branch_fate: anyhow::Result<BranchFate>,
+    post_remove_delegated: bool,
 }
 
 /// Spawn background worktree removal: clean-check, stop fsmonitor,
 /// rename-then-prune, spawn a detached trash drain.
 ///
 /// Shared sequence for both detached HEAD and branch background removal paths.
-/// The caller is responsible for output messages before this call, and hooks
-/// after. An error without a partial fate means removal was neither completed
+/// The caller owns output and post-switch; post-remove follows confirmed
+/// deletion here or in the worker. An error without a partial fate means removal was neither completed
 /// nor scheduled. A partial fate records branch deletion or cleanup scheduling
 /// failure after removal, so callers still register teardown. Failed staging
 /// returns a deferred branch fate when its worker owns a deletion attempt;
 /// prune waits instead for noncurrent fallback removals and their branch fate.
 fn spawn_background_removal(
     repo: &Repository,
-    main_path: &Path,
+    ctx: &WorktreeRemovalContext<'_>,
     removal: &BackgroundRemoval<'_>,
     log_label: &str,
+    announcer: &mut HookAnnouncer<'_>,
 ) -> CommandResult<BranchFate> {
     let spawn = |remove_command: &[OsString], operation: InternalOp| {
         spawn_detached(
             repo,
-            main_path,
+            ctx.main_path,
             remove_command,
             log_label,
             &HookLog::Internal(operation),
@@ -164,7 +165,7 @@ fn spawn_background_removal(
             std::env::current_exe().context("Failed to locate Worktrunk executable")?;
         spawn_detached_exec(
             repo,
-            main_path,
+            ctx.main_path,
             &executable,
             args,
             log_label,
@@ -173,13 +174,24 @@ fn spawn_background_removal(
         )
         .map(|_| ())
     };
-    let outcome = execute_instant_removal_or_fallback(repo, removal, spawn, fallback)?;
+    let outcome = execute_instant_removal_or_fallback(repo, removal, spawn, fallback, || {
+        announcer.prepare(|pending| register_post_remove(repo, ctx, removal.branch_name, pending))
+    })?;
+    // Earlier hooks anchored in this checkout must not race its scheduled
+    // deletion. Only post-remove itself belongs to the successful worker.
+    announcer.mark_worktree_removed(ctx.worktree_path);
+    let post_remove = if outcome.post_remove_delegated {
+        Ok(())
+    } else {
+        register_post_remove(repo, ctx, removal.branch_name, announcer)
+    };
     let branch_fate = outcome.branch_fate.map_err(|error| {
         CommandFailure::with_result(error, BranchFate::Retained(RetainedReason::Failed))
     });
     branch_fate.and_then(|fate| {
         outcome
             .cleanup
+            .and(post_remove)
             .map(|_| fate)
             .map_err(|error| CommandFailure::with_result(error, fate))
     })
@@ -199,6 +211,7 @@ fn execute_instant_removal_or_fallback(
     removal: &BackgroundRemoval<'_>,
     spawn_cleanup: impl Fn(&[OsString], InternalOp) -> anyhow::Result<()>,
     spawn_fallback: impl Fn(&[OsString], &[u8]) -> anyhow::Result<()>,
+    prepare_post_remove: impl FnOnce() -> anyhow::Result<PreparedHooks>,
 ) -> anyhow::Result<BackgroundRemovalOutcome> {
     let BackgroundRemoval {
         worktree_path,
@@ -270,6 +283,7 @@ fn execute_instant_removal_or_fallback(
         Ok(BackgroundRemovalOutcome {
             cleanup: cleanup.and(placeholder_cleanup),
             branch_fate: fate,
+            post_remove_delegated: false,
         })
     } else {
         if wait_for_noncurrent_fallback && !changed_directory {
@@ -291,6 +305,7 @@ fn execute_instant_removal_or_fallback(
             return Ok(BackgroundRemovalOutcome {
                 cleanup: Ok(()),
                 branch_fate: fate,
+                post_remove_delegated: false,
             });
         }
         // Windows cannot delete the invoking process's current directory.
@@ -331,6 +346,7 @@ fn execute_instant_removal_or_fallback(
             force_worktree,
             changed_directory,
             deletion,
+            post_remove: Some(prepare_post_remove()?),
         };
         let args = [
             "_remove-worktree".into(),
@@ -341,18 +357,20 @@ fn execute_instant_removal_or_fallback(
         Ok(BackgroundRemovalOutcome {
             cleanup: Ok(()),
             branch_fate,
+            post_remove_delegated: true,
         })
     }
 }
 
 /// Worktree and registration paths travel as native argv, not JSON strings.
-/// Only already selected deletion intent crosses stdin; the worker never
-/// repeats public selection, approval, or hooks.
+/// Selected deletion intent and prepared post-remove hooks cross stdin;
+/// the worker never repeats public selection, approval, or hook preparation.
 #[derive(Serialize, Deserialize)]
 struct DeferredRemoval {
     force_worktree: bool,
     changed_directory: bool,
     deletion: Option<DeferredBranchDeletion>,
+    post_remove: Option<PreparedHooks>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -416,30 +434,27 @@ pub(crate) fn complete_background_removal(path: &Path, registration: &Path) -> a
 impl DeferredRemoval {
     fn execute(self, repo: &Repository, path: &Path, registration: &Path) -> anyhow::Result<()> {
         repo.remove_worktree(path, self.force_worktree, Some(registration))?;
-        if let Some(deletion) = self.deletion {
-            let snapshot = repo.capture_refs()?;
-            let result = if deletion.expected_tip.as_deref().is_some_and(|tip| {
-                snapshot
-                    .local_branch(&deletion.branch)
-                    .map(|branch| branch.commit_sha.as_str())
-                    != Some(tip)
-            }) {
-                BranchDeletionResult {
-                    outcome: BranchDeletionOutcome::RetainedRaced,
-                    integration_target: deletion.target,
-                }
-            } else {
-                delete_branch_if_safe(
+        let branch_deletion = (|| -> anyhow::Result<()> {
+            if let Some(deletion) = self.deletion {
+                let result = execute_branch_deletion(
                     repo,
-                    &snapshot,
                     &deletion.branch,
                     &deletion.target,
                     deletion.force,
-                )?
-            };
-            warn_if_branch_retained(&deletion.branch, &Ok(result), false);
-        }
-        Ok(())
+                    deletion.expected_tip.as_deref(),
+                )?;
+                warn_if_branch_retained(&deletion.branch, &Ok(result), false);
+            }
+            Ok(())
+        })();
+        // Finish the branch decision before the event, matching foreground
+        // removal. A branch failure must not suppress a completed removal's
+        // hooks; independent sources still use the existing pipeline runner.
+        let post_remove = match self.post_remove {
+            Some(hooks) => hooks.dispatch(repo),
+            None => Ok(()),
+        };
+        branch_deletion.and(post_remove)
     }
 }
 
@@ -458,6 +473,7 @@ fn delete_removed_worktree_branch(
         branch,
         target_branch.unwrap_or("HEAD"),
         deletion_mode.is_force(),
+        None,
     );
     warn_if_branch_retained(branch, &result, planner_expected_retention);
     result
@@ -1363,7 +1379,7 @@ fn handle_branch_only_output(
     {
         let repo = worktrunk::git::Repository::current()?;
         let result =
-            execute_branch_deletion(&repo, branch_name, check_target, false).map(|mut r| {
+            execute_branch_deletion(&repo, branch_name, check_target, false, None).map(|mut r| {
                 // Preserve the planner's recorded reason so a CAS-accepted
                 // delete still reports the original "integrated because X"
                 // explanation. The fresh integration target stays as the
@@ -1378,7 +1394,7 @@ fn handle_branch_only_output(
         })?
     } else if deletion_mode.is_force() {
         let repo = worktrunk::git::Repository::current()?;
-        let result = execute_branch_deletion(&repo, branch_name, check_target, true);
+        let result = execute_branch_deletion(&repo, branch_name, check_target, true, None);
         handle_branch_deletion_result(result, branch_name).map_err(|error| {
             CommandFailure::with_result(error, BranchFate::Retained(RetainedReason::Failed))
         })?
@@ -1477,7 +1493,24 @@ fn spawn_hooks_after_remove(
     // The worktree is gone, so a pipeline anchored on it must not be spawned
     // into it.
     announcer.mark_worktree_removed(ctx.worktree_path);
+    register_post_remove(repo, ctx, removed_branch, announcer)?;
+    register_post_switch(repo, ctx, announcer)
+}
 
+fn removal_hook_display_path<'a>(ctx: &WorktreeRemovalContext<'a>) -> Option<&'a Path> {
+    if ctx.changed_directory {
+        super::post_hook_display_path(ctx.main_path)
+    } else {
+        super::pre_hook_display_path(ctx.main_path)
+    }
+}
+
+fn register_post_remove(
+    repo: &Repository,
+    ctx: &WorktreeRemovalContext<'_>,
+    removed_branch: Option<&str>,
+    announcer: &mut HookAnnouncer<'_>,
+) -> anyhow::Result<()> {
     // The startup snapshot, not a reload: `pre-remove` and the removal itself
     // may have rewritten the user config since the approval gate read it.
     let config = repo.user_config();
@@ -1486,11 +1519,7 @@ fn spawn_hooks_after_remove(
     // (suppresses path if shell integration will cd there).
     // When removing a different worktree, user stays at cwd → use pre_hook logic
     // (shows path if main_path differs from cwd).
-    let display_path = if ctx.changed_directory {
-        super::post_hook_display_path(ctx.main_path)
-    } else {
-        super::pre_hook_display_path(ctx.main_path)
-    };
+    let display_path = removal_hook_display_path(ctx);
 
     // Build post-remove template variables from the removed worktree identity.
     let remove_vars =
@@ -1501,7 +1530,7 @@ fn spawn_hooks_after_remove(
     // branch since both post-remove and post-switch are consequences of that removal.
     let remove_ctx = CommandContext::new(repo, config, removed_branch, ctx.main_path, false);
 
-    // `post-remove` is *about* the removed worktree (gone or delegated); it was
+    // `post-remove` is *about* the removed worktree; it was
     // selected and frozen into `hook_plan` at the gate, anchored at the removed
     // worktree path. `remove_ctx` (rooted at `ctx.main_path`) only renders.
     register_planned(
@@ -1512,14 +1541,25 @@ fn spawn_hooks_after_remove(
         worktrunk::HookType::PostRemove,
         &extra_vars,
         display_path,
-    )?;
+    )
+}
 
+fn register_post_switch(
+    repo: &Repository,
+    ctx: &WorktreeRemovalContext<'_>,
+    announcer: &mut HookAnnouncer<'_>,
+) -> anyhow::Result<()> {
     // Post-switch: only when the user actually changed directory. Anchored at
     // the destination worktree (where the user landed) at the gate.
     if ctx.changed_directory {
         let dest_branch = repo.worktree_at(ctx.main_path).branch()?;
-        let switch_ctx =
-            CommandContext::new(repo, config, dest_branch.as_deref(), ctx.main_path, false);
+        let switch_ctx = CommandContext::new(
+            repo,
+            repo.user_config(),
+            dest_branch.as_deref(),
+            ctx.main_path,
+            false,
+        );
         register_planned(
             announcer,
             ctx.hook_plan,
@@ -1527,7 +1567,7 @@ fn spawn_hooks_after_remove(
             &switch_ctx,
             worktrunk::HookType::PostSwitch,
             &[],
-            display_path,
+            removal_hook_display_path(ctx),
         )?;
     }
 
@@ -1907,7 +1947,7 @@ fn handle_detached_removed_worktree_output(
 
         spawn_background_removal(
             repo,
-            ctx.main_path,
+            ctx,
             &BackgroundRemoval {
                 worktree_path: ctx.worktree_path,
                 branch_name: None,
@@ -1926,6 +1966,7 @@ fn handle_detached_removed_worktree_output(
                 planner_expected_retention: true,
             },
             "detached",
+            announcer,
         )
     };
 
@@ -1944,7 +1985,11 @@ fn handle_detached_removed_worktree_output(
                 ctx.changed_directory,
             )?;
         }
-        spawn_hooks_after_remove(repo, ctx, None, announcer)?;
+        if matches!(ctx.execution, RemovalExecution::Foreground) {
+            spawn_hooks_after_remove(repo, ctx, None, announcer)?;
+        } else {
+            register_post_switch(repo, ctx, announcer)?;
+        }
         stderr().flush()?;
         Ok(())
     })();
@@ -2042,7 +2087,7 @@ fn handle_named_removed_worktree_background(
 
     let fate = spawn_background_removal(
         repo,
-        ctx.main_path,
+        ctx,
         &BackgroundRemoval {
             worktree_path: ctx.worktree_path,
             branch_name: Some(branch_name),
@@ -2059,6 +2104,7 @@ fn handle_named_removed_worktree_background(
             planner_expected_retention,
         },
         branch_name,
+        announcer,
     );
 
     // No removal took place on an early error, so there is no teardown to run.
@@ -2070,7 +2116,7 @@ fn handle_named_removed_worktree_background(
     let finish =
         prepare_remove_directory_change(ctx.main_path, ctx.worktree_path, ctx.changed_directory)
             .and_then(|()| print_switch_message_if_changed(ctx.changed_directory, ctx.main_path))
-            .and_then(|()| spawn_hooks_after_remove(repo, ctx, Some(branch_name), announcer))
+            .and_then(|()| register_post_switch(repo, ctx, announcer))
             .and_then(|()| stderr().flush().map_err(Into::into));
     fate.and_then(|fate| {
         finish
@@ -2473,6 +2519,7 @@ mod tests {
                 queued.replace(Some((args.to_vec(), input.to_vec())));
                 Ok(())
             },
+            || HookAnnouncer::new(&repo, false).prepare(|_| Ok(())),
         )
         .unwrap();
         let error = outcome.branch_fate.unwrap_err();
@@ -2544,6 +2591,7 @@ mod tests {
                 let spec: DeferredRemoval = serde_json::from_slice(input).unwrap();
                 spec.execute(&repo, Path::new(&args[1]), Path::new(&args[2]))
             },
+            || HookAnnouncer::new(&repo, false).prepare(|_| Ok(())),
         )
         .unwrap();
         assert!(!checkout.exists());

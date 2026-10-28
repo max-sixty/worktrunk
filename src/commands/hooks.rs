@@ -26,6 +26,9 @@
 //! that frozen value via [`super::hook_plan::execute_planned_hook`] /
 //! [`super::hook_plan::register_planned`], holding no `ProjectConfig` to
 //! re-derive from. See the [`super::hook_plan`] module spec.
+//! A deferred removal captures that prepared post-remove batch without
+//! dispatching it. Only its successful removal worker dispatches the batch;
+//! post-switch stays with the parent command's actual directory change.
 //!
 //! | Plan-backed hook | Runs in (the anchor) | Gate |
 //! |---|---|---|
@@ -252,6 +255,7 @@ pub struct HookAnnouncer<'a> {
 /// only ever sees hook pipelines, so `hook_type` and `display_path` live on
 /// this struct directly rather than wrapped in a `PipelineKind` variant.
 /// `steps` is non-empty by construction (see [`HookAnnouncer::add_steps`]).
+#[derive(serde::Serialize, serde::Deserialize)]
 struct PendingPipeline {
     worktree_path: PathBuf,
     branch: Option<String>,
@@ -260,7 +264,38 @@ struct PendingPipeline {
     steps: Vec<SourcedStep>,
 }
 
+/// Frozen, rendered hooks whose event has not happened yet. A deferred owner
+/// may transport this value and dispatch it only after its mutation succeeds.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct PreparedHooks {
+    pipelines: Vec<PendingPipeline>,
+    show_branch: bool,
+}
+
+impl PreparedHooks {
+    pub fn dispatch(self, repo: &Repository) -> anyhow::Result<()> {
+        run_hooks_background(repo, self.pipelines, &[], self.show_branch)
+    }
+}
+
 impl<'a> HookAnnouncer<'a> {
+    /// Render approved hooks without starting them, including on preparation
+    /// failure. Draining before Drop preserves the normal announcer's
+    /// early-error flushing while keeping a deferred event side-effect free.
+    pub fn prepare(
+        &self,
+        prepare: impl FnOnce(&mut HookAnnouncer<'a>) -> anyhow::Result<()>,
+    ) -> anyhow::Result<PreparedHooks> {
+        let mut pending = Self::new(self.repo, self.show_branch);
+        let result = prepare(&mut pending);
+        let pipelines = std::mem::take(&mut pending.pending);
+        result?;
+        Ok(PreparedHooks {
+            pipelines: keep_live_pipelines(pipelines, &pending.removed_worktrees),
+            show_branch: self.show_branch,
+        })
+    }
+
     /// `show_branch=true` includes the branch name for disambiguation in batch
     /// contexts (e.g., prune removing multiple worktrees):
     /// `Running post-remove for feature: docs (user); post-switch for feature: zellij-tab (user)`
@@ -374,35 +409,28 @@ impl Drop for HookAnnouncer<'_> {
     }
 }
 
-/// Announce and spawn background hook pipelines.
-///
-/// Module-private implementation of [`HookAnnouncer::flush`] — sites construct
-/// a [`HookAnnouncer`] (one per command) and `register`/`add_steps` into it;
-/// `flush` lands here. The function stays separate to keep the announce/spawn
-/// formatting isolated from the announcer's pending-list bookkeeping.
-///
-/// Emits a single combined `Running ...` line covering every registered hook
-/// type (see module-level grammar), with the path suffix at the end. Pipelines
-/// may carry different worktrees (e.g., post-remove uses the removed branch
-/// while post-switch uses the destination branch); the announce shares one
-/// line because every bundled clause shares the same path.
-///
-/// When `show_branch` is true, the announce includes the branch name for
-/// disambiguation in batch contexts (e.g., prune removing multiple worktrees):
-/// `Running post-remove for feature: docs (user)`.
-///
-/// Pipelines anchored on one of `removed_worktrees` are dropped first, so the
-/// announce describes only what starts — see [`report_dropped_pipelines`].
+/// Apply the same removed-anchor rule at normal flush and deferred capture.
+fn keep_live_pipelines(
+    pipelines: Vec<PendingPipeline>,
+    removed_worktrees: &[PathBuf],
+) -> Vec<PendingPipeline> {
+    let (pipelines, dropped): (Vec<_>, Vec<_>) = pipelines
+        .into_iter()
+        .partition(|p| !removed_worktrees.contains(&p.worktree_path));
+    report_dropped_pipelines(&dropped);
+    pipelines
+}
+
+/// Announce one combined hook summary, then start independent source pipelines.
+/// Normal flush and deferred event dispatch share this execution owner.
 fn run_hooks_background(
     repo: &Repository,
     pipelines: Vec<PendingPipeline>,
     removed_worktrees: &[PathBuf],
     show_branch: bool,
 ) -> anyhow::Result<()> {
-    let (pipelines, dropped): (Vec<_>, Vec<_>) = pipelines
-        .into_iter()
-        .partition(|p| !removed_worktrees.contains(&p.worktree_path));
-    report_dropped_pipelines(&dropped);
+    require_hook_dispatch_allowed()?;
+    let pipelines = keep_live_pipelines(pipelines, removed_worktrees);
     if pipelines.is_empty() {
         return Ok(());
     }
@@ -461,9 +489,20 @@ fn run_hooks_background(
     eprintln!("{}", progress_message(message));
 
     for pipeline in pipelines {
+        require_hook_dispatch_allowed()?;
         spawn_hook_pipeline_quiet(repo, pipeline)?;
     }
 
+    Ok(())
+}
+
+/// Detached hooks belong to the current command until spawn. In particular,
+/// an announcer's best-effort Drop must not admit work after cancellation.
+fn require_hook_dispatch_allowed() -> anyhow::Result<()> {
+    #[cfg(unix)]
+    if let Some(signal) = worktrunk::signal_forwarder::operation_interrupt_signal() {
+        return Err(worktrunk::git::WorktrunkError::Interrupted { signal, hint: None }.into());
+    }
     Ok(())
 }
 
@@ -723,6 +762,109 @@ pub(crate) fn execute_hook(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_deferred_preparation_never_flushes_pending_hooks() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let user = worktrunk::config::UserConfig::default();
+        let ctx = CommandContext::new(&repo, &user, Some("main"), test.root_path(), false);
+        let config: CommandConfig =
+            serde_json::from_value(serde_json::json!("printf ran > premature-hook.txt")).unwrap();
+        let steps = prepare_selected(
+            &[(HookSource::Project, config)],
+            &ctx,
+            &[],
+            HookType::PostRemove,
+        )
+        .unwrap();
+        let announcer = HookAnnouncer::new(&repo, false);
+        let result = announcer.prepare(|pending| {
+            pending.add_steps(&ctx, HookType::PostRemove, None, steps);
+            anyhow::bail!("later preparation failed")
+        });
+        assert!(result.is_err());
+        // A runner log is created synchronously before spawning its child.
+        assert!(
+            !repo
+                .wt_logs_dir()
+                .join("main/project/post-remove/runner.log")
+                .exists()
+        );
+        assert!(!test.root_path().join("premature-hook.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancelled_operation_admits_no_prepared_or_drop_pipelines() {
+        const CHILD: &str = "WORKTRUNK_TEST_HOOK_CANCELLED_ADMISSION_CHILD";
+        let Some(mode) = std::env::var_os(CHILD) else {
+            for mode in ["prepared", "drop"] {
+                let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+                command
+                    .args(["--exact", "commands::hooks::tests::cancelled_operation_admits_no_prepared_or_drop_pipelines"])
+                    .env(CHILD, mode)
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped());
+                let output = worktrunk::shell_exec::spawn(&mut command)
+                    .unwrap()
+                    .wait_with_output()
+                    .unwrap();
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                assert!(output.status.success(), "{output:?}");
+                assert!(stdout.contains("1 passed"), "{stdout}");
+            }
+            return;
+        };
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let user = worktrunk::config::UserConfig::default();
+        let ctx = CommandContext::new(&repo, &user, Some("main"), test.root_path(), false);
+        let config = || {
+            serde_json::from_value::<CommandConfig>(serde_json::json!(
+                "printf ran > cancelled-hook.txt"
+            ))
+            .unwrap()
+        };
+        let steps = prepare_selected(
+            &[
+                (HookSource::User, config()),
+                (HookSource::Project, config()),
+            ],
+            &ctx,
+            &[],
+            HookType::PostRemove,
+        )
+        .unwrap();
+        let operation = worktrunk::signal_forwarder::CommandOperation::start().unwrap();
+        let mut announcer = HookAnnouncer::new(&repo, false);
+        if mode == "prepared" {
+            let prepared = announcer
+                .prepare(|pending| {
+                    pending.add_steps(&ctx, HookType::PostRemove, None, steps);
+                    Ok(())
+                })
+                .unwrap();
+            worktrunk::signal_forwarder::cancel_foreground(signal_hook::consts::SIGTERM);
+            let error = prepared.dispatch(&repo).unwrap_err();
+            use worktrunk::git::ErrorExt;
+            assert_eq!(error.interrupt_signal(), Some(signal_hook::consts::SIGTERM));
+        } else {
+            announcer.add_steps(&ctx, HookType::PostRemove, None, steps);
+            worktrunk::signal_forwarder::cancel_foreground(signal_hook::consts::SIGTERM);
+        }
+        drop(announcer);
+        for source in ["user", "project"] {
+            assert!(
+                !repo
+                    .wt_logs_dir()
+                    .join(format!("main/{source}/post-remove/runner.log"))
+                    .exists()
+            );
+        }
+        assert!(!test.root_path().join("cancelled-hook.txt").exists());
+        drop(operation);
+    }
 
     #[test]
     fn test_hook_source_display() {

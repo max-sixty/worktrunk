@@ -1072,13 +1072,13 @@ fn test_prune_skips_default_branch_orphan() {
         .unwrap();
 
     // Create a feature branch (integrated, at same commit as main)
-    let feature_wt = test.create_worktree("feature", "feature");
+    test.create_worktree("feature", "feature");
 
     let settings = setup_temp_snapshot_settings(test.temp_path());
     settings.bind(|| {
         let mut cmd = test.wt_command();
         cmd.args(["step", "prune", "--yes"])
-            .current_dir(&feature_wt)
+            .current_dir(test.bare_repo_path())
             // Far-future epoch: branches appear old enough to pass min-age guard
             .env("WORKTRUNK_TEST_EPOCH", "1893456000");
 

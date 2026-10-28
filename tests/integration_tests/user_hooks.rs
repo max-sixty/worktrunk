@@ -1862,7 +1862,12 @@ notify = "echo switched"
 /// `pre-remove` makes the user config unreadable, `post-remove` must still run
 /// from that frozen plan rather than silently disappearing on a second load.
 #[rstest]
-fn test_post_remove_uses_config_snapshot_after_pre_remove_mutates_file(mut repo: TestRepo) {
+#[case::foreground(false)]
+#[case::worker(true)]
+fn test_post_remove_uses_config_snapshot_after_pre_remove_mutates_file(
+    mut repo: TestRepo,
+    #[case] worker: bool,
+) {
     let feature_wt = repo.add_worktree("feature");
     let config_path = repo.test_config_path().to_slash_lossy();
     let marker = repo
@@ -1881,27 +1886,35 @@ marker = "printf POST_REMOVE_RAN > '{marker_path}'"
 "#
     ));
 
-    let output = repo
-        .wt_command()
-        .args(["remove", "--foreground", "--force-delete", "feature"])
-        .output()
-        .unwrap();
+    let mut command = repo.wt_command();
+    command.args(["remove", "--force-delete", "feature"]);
+    if worker {
+        let trash = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/trash");
+        fs::create_dir_all(trash.parent().unwrap()).unwrap();
+        fs::write(trash, "block staging").unwrap();
+        command.current_dir(&feature_wt);
+    } else {
+        command.arg("--foreground");
+    }
+    let output = command.output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
         output.status.success(),
         "removal should succeed after the planned pre-remove hook mutates config: {stderr}"
     );
-    assert!(
-        !feature_wt.exists(),
-        "feature worktree should have been removed"
-    );
-    assert!(
-        stderr.contains("Running post-remove"),
-        "the frozen post-remove hook should still be registered: {stderr}"
-    );
+    if !worker {
+        assert!(
+            stderr.contains("Running post-remove"),
+            "the frozen post-remove hook should still be registered: {stderr}"
+        );
+    }
     wait_for_file_content(&marker);
     assert_eq!(fs::read_to_string(marker).unwrap(), "POST_REMOVE_RAN");
+    assert!(
+        !feature_wt.exists(),
+        "post-remove runs after actual removal"
+    );
 }
 
 /// Manual hook argument routing parses templates before pipeline preparation.

@@ -644,9 +644,35 @@ pub fn execute_branch_deletion(
     branch_name: &str,
     target: &str,
     force_delete: bool,
+    expected_tip: Option<&str>,
 ) -> anyhow::Result<BranchDeletionResult> {
-    let snapshot = repo.capture_refs()?;
+    let snapshot = repo
+        .capture_refs()
+        .inspect_err(publish_branch_cancellation)?;
+    if expected_tip.is_some_and(|tip| {
+        snapshot
+            .local_branch(branch_name)
+            .map(|branch| branch.commit_sha.as_str())
+            != Some(tip)
+    }) {
+        return Ok(BranchDeletionResult {
+            outcome: BranchDeletionOutcome::RetainedRaced,
+            integration_target: target.to_string(),
+        });
+    }
     delete_branch_if_safe(repo, &snapshot, branch_name, target, force_delete)
+}
+
+/// A captured Git child signal cancels the whole command, including pending
+/// background hooks. Publish it at branch ownership, before callers finish a
+/// partial removal; the shared dispatcher reads this existing operation latch.
+fn publish_branch_cancellation(error: &anyhow::Error) {
+    #[cfg(unix)]
+    if let Some(signal) = error.interrupt_signal() {
+        crate::signal_forwarder::cancel_foreground(signal);
+    }
+    #[cfg(not(unix))]
+    let _ = error;
 }
 
 /// Delete a branch if its content is integrated into the target, or if
@@ -667,45 +693,48 @@ pub fn delete_branch_if_safe(
     target: &str,
     force_delete: bool,
 ) -> anyhow::Result<BranchDeletionResult> {
-    // Force-delete: skip integration check entirely (matches compute_integration_reason
-    // behavior for the Worktree path). The user explicitly chose -D.
-    if force_delete {
-        // Git cannot protect an operation branch whose identity is unreadable.
-        let _ = fresh_branch_checkout(repo, branch_name)?;
-        repo.run_command(&["branch", "-D", "--", branch_name])?;
-        return Ok(BranchDeletionResult {
-            outcome: BranchDeletionOutcome::ForceDeleted,
-            integration_target: target.to_string(),
-        });
-    }
-
-    let (effective_target, reason) = repo.integration_reason(snapshot, branch_name, target)?;
-
-    let outcome = match reason {
-        Some(r) => {
-            // Atomic compare-and-swap against the snapshotted SHA. If the ref
-            // moved between `integration_reason` and the delete (e.g. a hook
-            // advanced the branch), the `git update-ref` mutation fails
-            // closed: the branch is retained and we surface a `RetainedRaced`
-            // outcome rather than dropping the unmerged commits silently.
-            //
-            // Read the SHA from the snapshot inventory (`local_branch`) rather
-            // than `resolve()`, so it reflects the same `refs/heads/` walk
-            // `integration_reason` consulted.
-            let Some(branch) = snapshot.local_branch(branch_name) else {
-                anyhow::bail!(
-                    "Cannot safely delete branch {branch_name}: absent from ref snapshot"
-                );
-            };
-            cas_delete_branch_outcome(repo, branch_name, &branch.commit_sha, r)?
+    (|| {
+        // Force-delete: skip integration check entirely (matches compute_integration_reason
+        // behavior for the Worktree path). The user explicitly chose -D.
+        if force_delete {
+            // Git cannot protect an operation branch whose identity is unreadable.
+            let _ = fresh_branch_checkout(repo, branch_name)?;
+            repo.run_command(&["branch", "-D", "--", branch_name])?;
+            return Ok(BranchDeletionResult {
+                outcome: BranchDeletionOutcome::ForceDeleted,
+                integration_target: target.to_string(),
+            });
         }
-        None => BranchDeletionOutcome::NotDeleted,
-    };
 
-    Ok(BranchDeletionResult {
-        outcome,
-        integration_target: effective_target,
-    })
+        let (effective_target, reason) = repo.integration_reason(snapshot, branch_name, target)?;
+
+        let outcome = match reason {
+            Some(r) => {
+                // Atomic compare-and-swap against the snapshotted SHA. If the ref
+                // moved between `integration_reason` and the delete (e.g. a hook
+                // advanced the branch), the `git update-ref` mutation fails
+                // closed: the branch is retained and we surface a `RetainedRaced`
+                // outcome rather than dropping the unmerged commits silently.
+                //
+                // Read the SHA from the snapshot inventory (`local_branch`) rather
+                // than `resolve()`, so it reflects the same `refs/heads/` walk
+                // `integration_reason` consulted.
+                let Some(branch) = snapshot.local_branch(branch_name) else {
+                    anyhow::bail!(
+                        "Cannot safely delete branch {branch_name}: absent from ref snapshot"
+                    );
+                };
+                cas_delete_branch_outcome(repo, branch_name, &branch.commit_sha, r)?
+            }
+            None => BranchDeletionOutcome::NotDeleted,
+        };
+
+        Ok(BranchDeletionResult {
+            outcome,
+            integration_target: effective_target,
+        })
+    })()
+    .inspect_err(publish_branch_cancellation)
 }
 
 /// Find a live checkout of `branch` using a new repository cache.
