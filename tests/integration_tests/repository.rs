@@ -177,6 +177,54 @@ fn test_operation_in_progress_reads_the_queued_sequencer() {
     assert_eq!(repository.operation_in_progress().unwrap(), None);
 }
 
+/// A broken registration must not hide a healthy rebase from ordinary
+/// inventory or switching; branch deletion still needs the complete topology.
+#[test]
+fn test_rebase_identity_survives_an_unreadable_sibling_registration() {
+    let mut test = TestRepo::with_initial_commit();
+    let feature = test.add_worktree("feature");
+    test.run_git_in(&feature, &["commit", "--allow-empty", "-m", "Feature"]);
+    test.run_git(&["merge", "--ff-only", "feature"]);
+    let paused = test
+        .git_command()
+        .current_dir(&feature)
+        .args(["rebase", "--exec", "false", "HEAD~1"])
+        .run()
+        .unwrap();
+    assert!(!paused.status.success(), "{paused:?}");
+
+    let sibling = test.add_worktree("broken");
+    let repo = Repository::at(test.root_path()).unwrap();
+    let registration = repo.worktree_at(&sibling).git_dir().unwrap();
+    fs::remove_file(registration.join("gitdir")).unwrap();
+
+    let worktree = repo
+        .list_worktrees()
+        .unwrap()
+        .iter()
+        .find(|wt| wt.path == feature)
+        .unwrap();
+    assert!(worktree.detached);
+    assert_eq!(worktree.branch.as_deref(), Some("feature"));
+    let switched = test
+        .wt_command()
+        .args(["switch", "feature", "--no-hooks"])
+        .output()
+        .unwrap();
+    assert!(switched.status.success(), "{switched:?}");
+    assert!(
+        worktrunk::git::delete_branch_if_safe(
+            &repo,
+            &repo.capture_refs().unwrap(),
+            "feature",
+            "main",
+            false,
+        )
+        .is_err()
+    );
+    assert!(repo.branch("feature").exists_locally().unwrap());
+}
+
 /// `wt list` clones one repository into parallel tasks, so hot cache entries
 /// must remain usable across both the clone and thread boundaries.
 #[test]
