@@ -71,7 +71,10 @@ fn test_claude_hook_markers_follow_project_dir(mut repo: TestRepo) {
 
     let stop = run_hook(&repo, &feature, &root, r#"{"hook_event_name":"Stop"}"#);
     assert!(stop.status.success());
-    assert!(stop.stderr.is_empty(), "marker hook wrote to stderr: {stop:?}");
+    assert!(
+        stop.stderr.is_empty(),
+        "marker hook wrote to stderr: {stop:?}"
+    );
     assert_eq!(marker(&repo, &root), "💬");
 
     let end = run_hook(
