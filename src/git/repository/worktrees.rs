@@ -9,6 +9,7 @@ use anyhow::Context as _;
 use color_print::cformat;
 use dunce::canonicalize;
 
+use super::disposal::REGISTRATION;
 use super::working_tree::{
     operation_in_progress_at, path_to_logging_context, registration_worktree_path,
 };
@@ -330,13 +331,61 @@ impl Repository {
     /// repository-scoped write lock closes the in-process window;
     /// [`Repository::list_worktrees`] takes the matching read side. A `git
     /// worktree list` in an *unrelated* process — outside wt's lock — remains
-    /// exposed; wt's serialization only covers its own removals.
+    /// exposed; wt's serialization only covers its own removals. Unregister
+    /// first moves the complete entry outside the registry; failed cleanup
+    /// cannot leave a partially deleted registration there.
     ///
     /// Git also `rmdir`s `.git/worktrees` once its last entry goes. This
     /// leaves the empty directory, which git reads as no linked worktrees.
     pub fn prune_worktree_entry(&self, path: &Path) -> anyhow::Result<()> {
-        let display = format_path_for_display(path);
+        let trash = self.wt_trash_dir();
+        std::fs::create_dir_all(&trash).with_context(|| {
+            format!(
+                "Failed to prepare trash @ {}",
+                format_path_for_display(&trash)
+            )
+        })?;
+        let garbage = tempfile::Builder::new()
+            .prefix("registration-")
+            .suffix(&format!("-{}", crate::utils::epoch_now()))
+            .tempdir_in(&trash)
+            .with_context(|| {
+                format!(
+                    "Failed to prepare metadata disposal @ {}",
+                    format_path_for_display(&trash)
+                )
+            })?;
+        // The uniquely created parent owns this absent child. A concurrent
+        // janitor sweep before the move only makes it fail, preserving metadata.
+        self.unregister_worktree_entry(path, &garbage.path().join(REGISTRATION))?;
+        // Removal has committed. Failed cleanup leaves only disposable metadata
+        // in trash, where the janitor can try again later.
+        if let Err(error) = garbage.close() {
+            tracing::debug!(%error, "Failed to clean unregistered worktree metadata");
+        }
+        Ok(())
+    }
+
+    /// Move the complete registration into caller-owned disposal. The atomic
+    /// rename is the removal commit; if it fails, every file remains available
+    /// for repair. The moved registration authorizes disposal of a staged
+    /// checkout, even if its later move into ordinary trash fails.
+    pub(crate) fn unregister_worktree_entry(
+        &self,
+        path: &Path,
+        destination: &Path,
+    ) -> anyhow::Result<()> {
         let _registry = self.worktree_registry_write();
+        self.unregister_worktree_entry_unlocked(path, destination)
+    }
+
+    /// Atomic unregister while staging already holds the registry write lock.
+    pub(in crate::git) fn unregister_worktree_entry_unlocked(
+        &self,
+        path: &Path,
+        destination: &Path,
+    ) -> anyhow::Result<()> {
+        let display = format_path_for_display(path);
         let (registration, recorded) = self.registration_at(path)?;
         if !definitely_absent(&registration.join("locked"))? {
             anyhow::bail!("Worktree @ {display} is locked");
@@ -344,9 +393,9 @@ impl Repository {
         if !definitely_absent(&recorded.join(".git"))? {
             anyhow::bail!("Worktree @ {display} is no longer stale; its .git exists");
         }
-        std::fs::remove_dir_all(&registration).with_context(|| {
+        std::fs::rename(&registration, destination).with_context(|| {
             format!(
-                "Failed to delete {}",
+                "Failed to unregister {}",
                 format_path_for_display(&registration)
             )
         })

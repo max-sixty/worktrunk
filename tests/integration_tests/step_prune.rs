@@ -251,16 +251,7 @@ fn test_prune_detached_worktree_rename_fallback(mut repo: TestRepo) {
     let wt_path = repo.add_worktree("detached-fallback");
     repo.detach_head_in_worktree("detached-fallback");
 
-    // Pre-create a file at the computed staged path so `std::fs::rename`
-    // fails and prune takes the synchronous non-current fallback.
-    let trash_dir = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/trash");
-    std::fs::create_dir_all(&trash_dir).unwrap();
-    let staged_path = trash_dir.join(format!(
-        "{}-{}",
-        wt_path.file_name().unwrap().to_string_lossy(),
-        crate::common::TEST_EPOCH
-    ));
-    std::fs::write(&staged_path, "blocking file to force fallback").unwrap();
+    let staged_path = crate::common::block_staging_rename(&repo, &wt_path);
 
     let output = repo
         .wt_command()
@@ -1865,20 +1856,11 @@ fn test_prune_fallback_config_race_canary(mut repo: TestRepo) {
         ]);
     }
 
-    // Force the fallback for one *non-current* worktree by pre-creating a
-    // file at its computed staged path so `std::fs::rename(worktree → trash)`
-    // fails. Pick one in the middle so integration checks for later refs are
-    // still in flight while the fallback runs.
+    // Block one non-current worktree's reserved container so it takes the
+    // synchronous fallback while integration checks for later refs continue.
     let blocked = names[3].clone();
     let blocked_wt_path = repo.worktree_path(&blocked).to_path_buf();
-    let trash_dir = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/trash");
-    std::fs::create_dir_all(&trash_dir).unwrap();
-    let staged_path = trash_dir.join(format!(
-        "{}-{}",
-        blocked_wt_path.file_name().unwrap().to_string_lossy(),
-        crate::common::TEST_EPOCH
-    ));
-    std::fs::write(&staged_path, "blocking file to force fallback").unwrap();
+    let staged_path = crate::common::block_staging_rename(&repo, &blocked_wt_path);
 
     // Parallel fan-out is the point — do NOT pin RAYON_NUM_THREADS=1.
     let mut cmd = repo.wt_command();
@@ -2161,7 +2143,8 @@ fn test_prune_reports_external_packed_ref_lock(
 }
 
 /// Failure to schedule trash cleanup follows an already completed removal;
-/// it must report the error while still launching the worktree's teardown.
+/// it reports the error while launching teardown, unless cancellation forbids
+/// starting any further commands.
 #[rstest]
 #[case::named(false, false)]
 #[case::detached(true, false)]
@@ -2230,9 +2213,18 @@ fn test_removal_runs_post_remove_after_cleanup_spawn_failure(
     // The trash entry may already be gone: `wt remove`'s sweep starts a drain
     // under the shared log, which the blocked branch log doesn't stop.
     assert!(!worktree.exists());
-    crate::common::wait_for("post-remove hook after cleanup scheduling fails", || {
-        marker.exists()
-    });
+    if interrupt {
+        assert!(
+            !common_dir
+                .join("wt/logs/cleanup-error/user/post-remove/runner.log")
+                .exists()
+        );
+        assert!(!marker.exists(), "cancellation admits no teardown hook");
+    } else {
+        crate::common::wait_for("post-remove hook after cleanup scheduling fails", || {
+            marker.exists()
+        });
+    }
 }
 
 /// A checkout created by a pre-remove hook must keep its branch, even after
@@ -3081,9 +3073,22 @@ fi
             "classification failure must preserve original mutation error: {stderr}"
         );
     }
-    crate::common::wait_for("all staged removals run post-remove", || {
-        std::fs::read_to_string(&hooks).is_ok_and(|text| text.lines().count() == 8)
-    });
+    if interrupted {
+        // All branch decisions were blocked before cancellation. None may
+        // subsequently start a hook, including via an announcer's Drop.
+        for name in &names {
+            assert!(
+                !common
+                    .join(format!("wt/logs/{name}/user/post-remove/runner.log"))
+                    .exists()
+            );
+        }
+        assert!(!hooks.exists(), "cancellation admits no post-remove event");
+    } else {
+        crate::common::wait_for("all staged removals run post-remove", || {
+            std::fs::read_to_string(&hooks).is_ok_and(|text| text.lines().count() == 8)
+        });
+    }
 }
 
 /// Current-directory trash cleanup runs before CAS; the empty replacement

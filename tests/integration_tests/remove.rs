@@ -4340,21 +4340,7 @@ fn test_remove_background_fallback_on_rename_failure(mut repo: TestRepo) {
     // Create a worktree
     let worktree_path = repo.add_worktree("feature-fallback");
 
-    // Calculate the expected staged path that the rename would use.
-    // The path is: <git-common-dir>/wt/trash/<name>-<TEST_EPOCH>
-    // Since WT_TEST_EPOCH is set by the test harness, the timestamp is deterministic.
-    let git_common_dir = crate::common::resolve_git_common_dir(repo.root_path());
-    let trash_dir = git_common_dir.join("wt/trash");
-    std::fs::create_dir_all(&trash_dir).unwrap();
-    let staged_path = trash_dir.join(format!(
-        "{}-{}",
-        worktree_path.file_name().unwrap().to_string_lossy(),
-        crate::common::TEST_EPOCH
-    ));
-
-    // Create a regular file at the staged path to block the rename.
-    // On POSIX systems, you cannot rename a directory to an existing file.
-    std::fs::write(&staged_path, "blocking file").unwrap();
+    let staged_path = crate::common::block_staging_rename(&repo, &worktree_path);
 
     // Verify worktree exists before removal
     assert!(
@@ -4394,15 +4380,6 @@ fn test_remove_background_fallback_on_rename_failure(mut repo: TestRepo) {
     let _ = std::fs::remove_file(&staged_path);
 }
 
-/// Block staging by making the trash root a file. Unlike a destination file,
-/// this prevents rename on both Unix and Windows, independent of the clock.
-fn block_staged_rename(repo: &TestRepo) -> std::path::PathBuf {
-    let trash_dir = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/trash");
-    std::fs::create_dir_all(trash_dir.parent().unwrap()).unwrap();
-    std::fs::write(&trash_dir, "blocking file").unwrap();
-    trash_dir
-}
-
 /// The private worker protocol carries the same prepared steps as the hook
 /// runner. No config lookup is involved when this frozen event is dispatched.
 fn worker_post_remove(repo: &TestRepo) -> serde_json::Value {
@@ -4439,7 +4416,7 @@ fn test_background_removal_worker_rechecks_selected_owner(
     let outer = repo.add_worktree("outer");
     let repository = worktrunk::git::Repository::at(repo.root_path()).unwrap();
     let registration = repository.worktree_at(&outer).git_dir().unwrap();
-    let blocked_stage = repository.wt_trash_dir();
+    let blocked_stage = repository.wt_dir().join("removing");
     std::fs::create_dir_all(blocked_stage.parent().unwrap()).unwrap();
     std::fs::write(&blocked_stage, "block staging").unwrap();
     assert!(
@@ -4699,7 +4676,7 @@ post-switch = "printf switched > {{ worktree_path }}/post-switch.txt"
     // `BranchDeletionMode::ForceDelete` arm of the fallback command builder.
     let worktree_path =
         repo.add_worktree_with_commit("feature-force", "f.txt", "content", "unmerged commit");
-    let staged_path = block_staged_rename(&repo);
+    let staged_path = crate::common::block_staging_rename(&repo, &worktree_path);
 
     let (cd_file, _directive_dir) = directive_file();
     let mut command = repo.wt_command();
@@ -4767,7 +4744,7 @@ fn test_remove_background_fallback_force_deletes_flag_like_branch(mut repo: Test
     repo.run_git(&["update-ref", "refs/heads/-x", "HEAD"]);
     repo.run_git_in(&worktree_path, &["symbolic-ref", "HEAD", "refs/heads/-x"]);
     repo.run_git(&["branch", "-D", "flag-like-holder"]);
-    let staged_path = block_staged_rename(&repo);
+    let staged_path = crate::common::block_staging_rename(&repo, &worktree_path);
 
     let output = repo
         .wt_command()
@@ -4804,7 +4781,7 @@ fn test_remove_background_fallback_detached_worktree(mut repo: TestRepo) {
     repo.commit("initial");
     let worktree_path = repo.add_worktree("feature-detached");
     repo.detach_head_in_worktree("feature-detached");
-    let staged_path = block_staged_rename(&repo);
+    let staged_path = crate::common::block_staging_rename(&repo, &worktree_path);
 
     let output = repo
         .wt_command()
@@ -5015,8 +4992,10 @@ fn test_remove_drains_trash_under_inherited_git_dir(mut repo: TestRepo) {
     assert!(!git_dir.exists());
 
     let trash_dir = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/trash");
-    crate::common::wait_for("trash drained", || {
-        fs::read_dir(&trash_dir).unwrap().next().is_none()
+    crate::common::wait_for("trash drained", || match fs::read_dir(&trash_dir) {
+        Ok(mut entries) => entries.next().transpose().unwrap().is_none(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Err(error) => panic!("Failed to read trash: {error}"),
     });
 }
 
@@ -6036,9 +6015,8 @@ fn test_remove_json_branch_outcome_distinguishes_requested_retention(mut repo: T
 /// The direct fallback reports the branch retained after a pre-remove hook
 /// advances it beyond the planning-time integration decision.
 ///
-/// The fast path is forced to fail portably by planting a *file* where the
-/// trash directory belongs: `stage_worktree_removal`'s `create_dir_all` fails
-/// (ignored) and the rename into a non-directory fails on every OS.
+/// The fast path is forced to fail portably by planting a file where the
+/// removal staging directory belongs, before any payload has moved.
 #[rstest]
 fn test_remove_fallback_reports_unmerged_branch(mut repo: TestRepo) {
     repo.commit("initial");
@@ -6048,7 +6026,7 @@ fn test_remove_fallback_reports_unmerged_branch(mut repo: TestRepo) {
     // cannot stage, forcing the direct fallback.
     let wt_dir = repo.root_path().join(".git").join("wt");
     std::fs::create_dir_all(&wt_dir).unwrap();
-    std::fs::write(wt_dir.join("trash"), b"not a directory").unwrap();
+    std::fs::write(wt_dir.join("removing"), b"not a directory").unwrap();
 
     // Same divergence as the fast-path test above: planner sees `feature`
     // integrated, the hook then commits on it, the re-check declines.
@@ -6071,11 +6049,11 @@ fn test_remove_fallback_reports_unmerged_branch(mut repo: TestRepo) {
         "the fallback must correct the deletion promise, not stay silent:\n{stderr}",
     );
     // Discriminates fallback from fast path (which prints the same warning):
-    // staging would have replaced the planted file with a real trash
-    // directory, so the file surviving proves the rename never staged.
+    // the staging-path blocker prevents the initial move, leaving direct
+    // removal as the only path that could have removed the worktree.
     assert!(
-        wt_dir.join("trash").is_file(),
-        "the planted trash file should have kept the fast path from staging",
+        wt_dir.join("removing").is_file(),
+        "the planted staging file should have kept the fast path from moving the checkout",
     );
     let json: serde_json::Value =
         serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
@@ -6964,7 +6942,7 @@ approved-commands = [{hook:?}]
 "#
     ));
     let removed = repo.add_worktree_at_path(branch, &removed);
-    let staged_path = block_staged_rename(&repo);
+    let staged_path = crate::common::block_staging_rename(&repo, &removed);
     let output = repo
         .wt_command()
         .args(["remove", "--yes", branch])

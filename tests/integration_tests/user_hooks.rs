@@ -1889,7 +1889,7 @@ marker = "printf POST_REMOVE_RAN > '{marker_path}'"
     let mut command = repo.wt_command();
     command.args(["remove", "--force-delete", "feature"]);
     if worker {
-        let trash = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/trash");
+        let trash = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/removing");
         fs::create_dir_all(trash.parent().unwrap()).unwrap();
         fs::write(trash, "block staging").unwrap();
         command.current_dir(&feature_wt);
