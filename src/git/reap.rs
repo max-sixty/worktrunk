@@ -188,7 +188,7 @@ pub fn processes_under(worktree_path: &Path) -> Vec<CwdProcess> {
     let self_pid = std::process::id();
 
     #[cfg(target_os = "linux")]
-    let processes = processes_from_proc();
+    let processes = processes_from_proc(Path::new("/proc"));
     #[cfg(not(target_os = "linux"))]
     let processes = processes_from_lsof();
 
@@ -202,10 +202,11 @@ pub fn processes_under(worktree_path: &Path) -> Vec<CwdProcess> {
 }
 
 #[cfg(target_os = "linux")]
-fn processes_from_proc() -> Vec<CwdProcess> {
-    std::fs::read_dir("/proc")
-        .into_iter()
-        .flatten()
+fn processes_from_proc(proc_root: &Path) -> Vec<CwdProcess> {
+    let Ok(entries) = std::fs::read_dir(proc_root) else {
+        return Vec::new();
+    };
+    entries
         .filter_map(Result::ok)
         .filter_map(|entry| {
             let pid = entry.file_name().to_str()?.parse::<u32>().ok()?;
@@ -285,6 +286,13 @@ pub fn reap_summary(count: usize, gone: usize) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn missing_procfs_yields_no_processes() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(processes_from_proc(&root.path().join("absent")).is_empty());
+    }
 
     #[test]
     fn parse_lsof_cwd_extracts_pid_command_and_path() {
