@@ -211,29 +211,42 @@ fn test_remove_reap_kills_process(mut repo: TestRepo) {
         .unwrap();
     let pid = child.id();
 
-    // Wait until lsof reports the child's cwd — fast when idle, but under
-    // suite load a single probe can burn its whole 5s in-process timeout;
-    // `wait_for` carries the suite's generous presence-poll deadline.
-    wait_for(
-        &format!("child {pid} in cwd discovery — is lsof installed and able to read process cwds?"),
-        || {
-            reap::processes_under(&canonical)
-                .iter()
-                .any(|p| p.pid == pid)
-        },
-    );
+    // Wait until the platform probe reports the child's cwd.
+    wait_for(&format!("child {pid} in cwd discovery"), || {
+        reap::processes_under(&canonical)
+            .iter()
+            .any(|p| p.pid == pid)
+    });
 
     // The guard reaps the child iff it holds no controlling terminal — which
     // it inherited from this process's session, so read the session directly:
     // `/dev/tty` opens iff the session has a controlling terminal.
     let will_reap = std::fs::File::open("/dev/tty").is_err();
 
+    // Linux discovery must not depend on lsof completing its system-wide
+    // scan. An empty lsof result reproduces the timeout's lost output.
+    #[cfg(target_os = "linux")]
+    let mock_path = {
+        use crate::common::mock_commands::{MockConfig, MockResponse};
+        let bin_dir = repo.root_path().join(".bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        MockConfig::new("lsof")
+            .command("_default", MockResponse::output(""))
+            .write(&bin_dir);
+        let mut paths: Vec<std::path::PathBuf> = std::env::var_os("PATH")
+            .map(|p| std::env::split_paths(&p).collect())
+            .unwrap_or_default();
+        paths.insert(0, bin_dir.clone());
+        (std::env::join_paths(paths).unwrap(), bin_dir)
+    };
+
     let run_remove = |repo: &TestRepo| {
-        let output = repo
-            .wt_command()
-            .args(["remove", "--reap", "feature-reapkill"])
-            .output()
-            .unwrap();
+        let mut cmd = repo.wt_command();
+        cmd.args(["remove", "--reap", "feature-reapkill"]);
+        #[cfg(target_os = "linux")]
+        cmd.env("PATH", &mock_path.0)
+            .env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", &mock_path.1);
+        let output = cmd.output().unwrap();
         String::from_utf8_lossy(&output.stderr).into_owned()
     };
 
@@ -245,6 +258,13 @@ fn test_remove_reap_kills_process(mut repo: TestRepo) {
         // thread already blocked in `wait()` reaps it the instant it exits.
         let reaper = std::thread::spawn(move || child.wait().unwrap());
         let stderr = run_remove(&repo);
+        if !stderr.contains("Reaping 1 process under") {
+            // On a regression, release the test child promptly before failing.
+            let _ = nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(pid as i32),
+                nix::sys::signal::Signal::SIGKILL,
+            );
+        }
         let status = reaper.join().unwrap();
 
         assert!(
