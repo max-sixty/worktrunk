@@ -21,6 +21,27 @@ use crate::path::{format_path_for_display, paths_match};
 use crate::shell_exec::Cmd;
 use crate::styling::{eprintln, format_with_gutter, hint_message, warning_message};
 
+/// List top-level entries remaining in a directory after a failed removal.
+///
+/// Returns None if the directory doesn't exist, can't be read, or is empty.
+/// Entries are sorted, with directories suffixed with `/`.
+fn list_remaining_entries(path: &Path) -> Option<Vec<String>> {
+    let mut entries: Vec<String> = std::fs::read_dir(path)
+        .ok()?
+        .filter_map(|e| {
+            let e = e.ok()?;
+            let name = e.file_name().to_string_lossy().into_owned();
+            if e.file_type().ok()?.is_dir() {
+                Some(format!("{name}/"))
+            } else {
+                Some(name)
+            }
+        })
+        .collect();
+    entries.sort();
+    (!entries.is_empty()).then_some(entries)
+}
+
 impl Repository {
     /// List all worktrees for this repository.
     ///
@@ -405,7 +426,18 @@ impl Repository {
             tracing::debug!("Using --force for worktree removal due to initialized submodules");
         }
 
-        self.run_command(&args)?;
+        // Capture the display identity before Git may remove its `.git` entry.
+        let branch = self
+            .worktree_at(path)
+            .branch()?
+            .unwrap_or_else(|| crate::git::path_dir_name(path).to_string());
+        self.run_command(&args)
+            .map_err(|error| GitError::WorktreeRemovalFailed {
+                branch,
+                path: path.to_path_buf(),
+                error,
+                remaining_entries: list_remaining_entries(path),
+            })?;
         Ok(())
     }
 

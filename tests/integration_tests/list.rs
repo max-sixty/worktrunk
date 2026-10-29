@@ -318,6 +318,36 @@ fn test_list_long_commit_message(mut repo: TestRepo) {
 }
 
 #[rstest]
+fn test_list_escapes_commit_controls(repo: TestRepo) {
+    let subject = "hello\x1b]52;c;YQ==\x07 café";
+    repo.commit(subject);
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=table"])
+        .env("CLICOLOR_FORCE", "1")
+        .env("COLUMNS", "200")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains(r"hello\u{1b}]52;c;YQ==\u{7} café"),
+        "{stdout:?}"
+    );
+    assert!(!stdout.contains("\x1b]52;"), "{stdout:?}");
+    assert!(stdout.contains("\x1b["), "test must exercise styled output");
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["items"][0]["head"]["subject"], subject);
+}
+
+#[rstest]
 fn test_list_unicode_commit_message(mut repo: TestRepo) {
     // Create commit with Unicode message
     repo.commit("Add support for 日本語 and émoji 🎉");

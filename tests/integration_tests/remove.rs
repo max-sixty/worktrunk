@@ -6376,6 +6376,62 @@ fn test_force_remove_interrupted_status_preserves_worktrees(
     assert!(!stderr.contains("Removing later-worktree"));
 }
 
+/// A failed branch mutation is reported once after removal, with teardown hooks
+/// still running. Branch-only failures must not claim a checkout was removed.
+#[rstest]
+#[case::foreground(true, true)]
+#[case::background(false, true)]
+#[case::branch_only(true, false)]
+fn test_remove_branch_deletion_failure_context(
+    mut repo: TestRepo,
+    #[case] foreground: bool,
+    #[case] with_worktree: bool,
+) {
+    repo.write_project_config("post-remove = 'printf complete > removed-marker'");
+    repo.commit("Add post-remove hook");
+    let worktree = if with_worktree {
+        Some(repo.add_worktree("feature"))
+    } else {
+        repo.create_branch("feature");
+        None
+    };
+    fs::write(
+        repo.root_path().join(".git/refs/heads/feature.lock"),
+        "another writer",
+    )
+    .unwrap();
+    let mut command = repo.wt_command();
+    command.args(["remove", "feature", "--yes"]);
+    if foreground {
+        command.arg("--foreground");
+    }
+    let output = command.output().unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let plain = stderr.ansi_strip();
+    assert_eq!(output.status.code(), Some(1), "{plain}");
+    assert_eq!(
+        plain.contains("Worktree removed @"),
+        with_worktree,
+        "{plain}"
+    );
+    assert_eq!(
+        plain.matches("failed to delete branch").count()
+            + plain.matches("Failed to delete branch").count(),
+        1,
+        "{plain}"
+    );
+    assert_eq!(plain.matches("cannot lock ref").count(), 1, "{plain}");
+    assert!(!repo.git_output(&["branch", "--list", "feature"]).is_empty());
+    if let Some(worktree) = worktree {
+        assert!(!worktree.exists());
+        crate::common::wait_for_file_content(&repo.root_path().join("removed-marker"));
+        assert_eq!(
+            fs::read_to_string(repo.root_path().join("removed-marker")).unwrap(),
+            "complete"
+        );
+    }
+}
+
 /// With fsmonitor configured, a file written while the daemon shuts down is
 /// refused by a rescan after the stop. The shim stands in for the daemon and
 /// keeps every other Git command from starting a real one.
@@ -6576,5 +6632,45 @@ fn test_remove_no_argument_in_moved_worktree_refuses(mut repo: TestRepo) {
         status.status.success(),
         "{}",
         String::from_utf8_lossy(&status.stderr)
+    );
+}
+
+/// A failed destructive Git command reports the checkout and entries that
+/// survive it. A registration lock reaches Git's actual removal failure.
+#[rstest]
+fn test_remove_worktree_git_failure_preserves_context(mut repo: TestRepo) {
+    use worktrunk::git::{GitError, Repository};
+
+    let path = repo.add_worktree("locked-worktree");
+    repo.run_git(&["worktree", "lock", path.to_str().unwrap()]);
+    fs::create_dir(path.join("remaining-directory")).unwrap();
+    fs::write(path.join("remaining-file"), "surviving data").unwrap();
+    let repository = Repository::at(repo.root_path()).unwrap();
+    let error = repository.remove_worktree(&path, true).unwrap_err();
+
+    let Some(GitError::WorktreeRemovalFailed {
+        branch,
+        path: failed_path,
+        remaining_entries: Some(entries),
+        ..
+    }) = error.downcast_ref::<GitError>()
+    else {
+        panic!("expected contextual removal failure: {error:?}");
+    };
+    assert_eq!(branch, "locked-worktree");
+    assert_eq!(failed_path, &path);
+    assert!(entries.iter().any(|entry| entry == "remaining-directory/"));
+    assert!(entries.iter().any(|entry| entry == "remaining-file"));
+    assert!(entries.windows(2).all(|entries| entries[0] <= entries[1]));
+    assert_eq!(
+        fs::read_to_string(path.join("remaining-file")).unwrap(),
+        "surviving data"
+    );
+    assert!(path.join(".git").exists());
+    assert!(
+        repository
+            .branch("locked-worktree")
+            .exists_locally()
+            .unwrap()
     );
 }

@@ -753,9 +753,13 @@ fn render_reveal(
         .collect()
 }
 
-fn format_loading_footer(footer_base: &str) -> String {
+fn format_loading_footer(footer_base: &str, progress: Option<(usize, usize)>) -> String {
     let dim = Style::new().dimmed();
-    format!("{INFO_SYMBOL} {dim}{footer_base} — loading details…{dim:#}")
+    let message = match progress {
+        Some((completed, total)) => format!("{completed}/{total} tasks complete — {footer_base}"),
+        None => format!("{footer_base} — loading details…"),
+    };
+    format!("{INFO_SYMBOL} {dim}{message}{dim:#}")
 }
 
 /// Build the progressive-table footer shown while the drain is stalled.
@@ -765,11 +769,12 @@ fn format_loading_footer(footer_base: &str) -> String {
 /// `pending_count` is the total outstanding-result count (≥ 1).
 fn format_stall_footer(
     footer_base: &str,
+    completed: usize,
+    total: usize,
     pending_count: usize,
     first_kind: TaskKind,
     first_name: &str,
 ) -> String {
-    let dim = Style::new().dimmed();
     let kind_name = first_kind.display_name();
     let waiting_clause = if pending_count == 1 {
         cformat!("waiting on <underline>{kind_name}</> for <underline>{first_name}</>")
@@ -778,7 +783,10 @@ fn format_stall_footer(
             "waiting on {pending_count} tasks, including <underline>{kind_name}</> for <underline>{first_name}</>"
         )
     };
-    cformat!("{INFO_SYMBOL} {dim}{footer_base} — no recent progress; {waiting_clause}{dim:#}")
+    format_loading_footer(
+        &format!("no recent progress; {waiting_clause} — {footer_base}"),
+        Some((completed, total)),
+    )
 }
 
 /// Caps on the message shown per failed task: at most `MAX_LINES` lines,
@@ -1562,7 +1570,7 @@ pub fn collect(
                 all_items.len()
             );
         }
-        table.update_footer(format_loading_footer(&footer_base));
+        table.update_footer(format_loading_footer(&footer_base, None));
         table.render_skeleton()?;
         worktrunk::trace::instant("Skeleton rendered");
         Some(table)
@@ -1901,6 +1909,10 @@ pub fn collect(
             .map(|item| layout.render_skeleton_row(item, placeholder).render())
             .collect();
         if let Some(table) = progressive_table.as_mut() {
+            table.update_footer(format_loading_footer(
+                &footer_base,
+                Some((0, expected_results.count())),
+            ));
             for (idx, row) in commit_rows.iter().enumerate() {
                 table.update_row(idx, row.clone());
             }
@@ -1997,7 +2009,10 @@ pub fn collect(
                             s.progress_overflow = true;
                         }
 
-                        let footer_msg = format_loading_footer(&footer_base);
+                        let footer_msg = format_loading_footer(
+                            &footer_base,
+                            Some((s.completed_results, total_results)),
+                        );
                         s.table.update_footer(footer_msg);
                         s.table.update_row(item_idx, rendered.clone());
 
@@ -2041,6 +2056,8 @@ pub fn collect(
                         let mut s = state_cell.borrow_mut();
                         let footer_msg = format_stall_footer(
                             &footer_base,
+                            s.completed_results,
+                            total_results,
                             pending_count,
                             first_kind,
                             first_name,
@@ -2446,10 +2463,10 @@ mod tests {
 
     #[test]
     fn test_format_stall_footer_single_pending() {
-        let rendered = format_stall_footer("3 worktrees", 1, TaskKind::CiStatus, "feat");
+        let rendered = format_stall_footer("3 worktrees", 11, 12, 1, TaskKind::CiStatus, "feat");
         assert_snapshot!(
             rendered.ansi_strip(),
-            @"○ 3 worktrees — no recent progress; waiting on CI status for feat"
+            @"○ 11/12 tasks complete — no recent progress; waiting on CI status for feat — 3 worktrees"
         );
     }
 
@@ -2457,13 +2474,15 @@ mod tests {
     fn test_format_stall_footer_many_pending() {
         let rendered = format_stall_footer(
             "3 worktrees — first 2 of 3 shown",
+            9,
+            12,
             3,
             TaskKind::CiStatus,
             "feat",
         );
         assert_snapshot!(
             rendered.ansi_strip(),
-            @"○ 3 worktrees — first 2 of 3 shown — no recent progress; waiting on 3 tasks, including CI status for feat"
+            @"○ 9/12 tasks complete — no recent progress; waiting on 3 tasks, including CI status for feat — 3 worktrees — first 2 of 3 shown"
         );
     }
 

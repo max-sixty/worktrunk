@@ -139,8 +139,8 @@ export def --env --wrapped wt [...args] {
         } finally {
             try {
                 # cd file holds a raw path — no shell parsing needed
-                if ($cd_file | path exists) and (open $cd_file --raw | str trim | is-not-empty) {
-                    let target_dir = open $cd_file --raw | str trim
+                if ($cd_file | path exists) and (open $cd_file --raw | is-not-empty) {
+                    let target_dir = open $cd_file --raw
                     cd $target_dir
                 }
             } finally {

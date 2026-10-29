@@ -529,6 +529,12 @@ pub enum GitError {
         directory_remains: bool,
         work: StaleWorktreeWork,
     },
+    /// Branch deletion failed, possibly after its checkout was removed.
+    BranchDeletionFailed {
+        branch: String,
+        removed_worktree: Option<PathBuf>,
+        error: anyhow::Error,
+    },
     RemoteOnlyBranch {
         branch: String,
         remote: String,
@@ -573,7 +579,7 @@ pub enum GitError {
         branch: String,
         path: PathBuf,
         error: anyhow::Error,
-        /// Top-level entries remaining in the directory (for "Directory not empty" diagnostics)
+        /// Top-level entries left after Git attempted to remove the directory.
         remaining_entries: Option<Vec<String>>,
     },
     CannotRemoveMainWorktree,
@@ -758,7 +764,8 @@ pub enum GitError {
 impl std::error::Error for GitError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::WorktreeRemovalFailed { error, .. } => Some(error.as_ref()),
+            Self::WorktreeRemovalFailed { error, .. }
+            | Self::BranchDeletionFailed { error, .. } => Some(error.as_ref()),
             _ => None,
         }
     }
@@ -884,6 +891,18 @@ impl GitError {
                     "Worktree for <bold>{branch}</> is stale with a {} in progress",
                     operation_noun(*operation)
                 ),
+            },
+
+            GitError::BranchDeletionFailed {
+                branch,
+                removed_worktree,
+                ..
+            } => match removed_worktree {
+                Some(path) => cformat!(
+                    "Worktree removed @ <bold>{}</>; failed to delete branch <bold>{branch}</>",
+                    format_path_for_display(path)
+                ),
+                None => cformat!("Failed to delete branch <bold>{branch}</>"),
             },
 
             GitError::RemoteOnlyBranch { branch, remote } => {
@@ -1388,6 +1407,15 @@ impl GitError {
                 )
             }
 
+            GitError::BranchDeletionFailed { error, .. } => {
+                let title = self.title();
+                write!(
+                    f,
+                    "{}",
+                    format_error_block(error_message(&title), &error.display_message())
+                )
+            }
+
             GitError::WorktreeRemovalFailed {
                 error,
                 remaining_entries,
@@ -1411,14 +1439,8 @@ impl GitError {
                         hint_message(cformat!("Remaining in directory: <underline>{listing}</>"))
                     )?;
                 }
-                // Fragile by necessity: matches git's English, which is
-                // localized and could be reworded. The text is `git worktree
-                // remove`'s own stderr — the failure never passes through a
-                // Rust `io::Error`, and git offers no porcelain or exit code
-                // that separates ENOTEMPTY from the rest. `remaining_entries`
-                // is not a substitute either: a permission-denied failure also
-                // leaves entries behind, and this hint is only right for
-                // ENOTEMPTY. A miss costs one hint.
+                // Git offers no structured discriminator for ENOTEMPTY. Matching
+                // its localized stderr affects this optional process hint only.
                 if error.contains("not empty") {
                     write!(
                         f,
@@ -2589,6 +2611,21 @@ mod tests {
             WorktrunkError::AlreadyDisplayed { exit_code: 1 }.to_string(),
             ""
         );
+    }
+
+    #[test]
+    fn branch_deletion_error_preserves_cancellation() {
+        let error: anyhow::Error = GitError::BranchDeletionFailed {
+            branch: "feature".into(),
+            removed_worktree: None,
+            error: WorktrunkError::Interrupted {
+                signal: 15,
+                hint: None,
+            }
+            .into(),
+        }
+        .into();
+        assert_eq!(error.interrupt_signal(), Some(15));
     }
 
     #[test]

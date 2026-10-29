@@ -244,7 +244,7 @@ fn test_prune_removes_multiple_detached(mut repo: TestRepo) {
 /// fallback when the rename-into-trash fast path is blocked.
 ///
 /// A detached worktree has no branch, so the fallback's branch deletion is a
-/// no-op — this covers that arm of `delete_branch_in_synchronous_fallback`.
+/// no-op — this covers that arm of `delete_removed_worktree_branch`.
 #[rstest]
 fn test_prune_detached_worktree_rename_fallback(mut repo: TestRepo) {
     repo.commit("initial");
@@ -2225,10 +2225,7 @@ fn test_removal_runs_post_remove_after_cleanup_spawn_failure(
             repo.git_output(&["rev-parse", "main"])
         );
     } else {
-        assert!(
-            stderr.contains("Failed to create log directory"),
-            "{stderr}"
-        );
+        assert!(stderr.contains("Failed to create log file"), "{stderr}");
     }
     // The trash entry may already be gone: `wt remove`'s sweep starts a drain
     // under the shared log, which the blocked branch log doesn't stop.
@@ -3214,7 +3211,9 @@ fn test_prune_removal_failure_aborts_remaining_queue(repo: TestRepo) {
         "a failed removal must fail the run:\n{stderr}"
     );
     assert!(
-        stderr.contains("removing branch abort-a"),
+        stderr
+            .ansi_strip()
+            .contains("Failed to delete branch abort-a"),
         "the error should carry the failing candidate's context:\n{stderr}"
     );
     assert!(

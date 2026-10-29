@@ -460,7 +460,8 @@ impl GitRemoteUrl {
 
 /// The project identifier Worktrunk v0.80.0 and earlier derived from a remote
 /// URL, frozen so `approvals.toml` and `[projects."…"]` keys written under it
-/// keep applying (read by [`ProjectId`](crate::config::ProjectId)).
+/// keep applying where they identify the same server
+/// (read by [`ProjectId`](crate::config::ProjectId)).
 ///
 /// The release after v0.80.0 moved remote parsing to `gix-url`, which changed
 /// the identifier for three kinds of remote. Saved keys use the old spelling:
@@ -470,13 +471,17 @@ impl GitRemoteUrl {
 /// - `git+ssh://` and `ssh+git://`: these didn't parse, so the identifier was
 ///   the raw URL minus `.git`, as for any other unparsed URL.
 ///
-/// Returns `None` for an `ssh://` URL with an IPv6 host, which the old parser
-/// truncated at its first `:` (`[2001/o/r`). That identifier was shared by
-/// every IPv6 server with the same leading group, the collision the `gix-url`
-/// parser fixed. The SCP form kept the rest of the address in the path, so
-/// its identifier stayed distinct and still counts.
+/// For `ssh://` URLs, returns `None` when parsing fails or the old identifier
+/// lost server identity: non-default ports were dropped, and IPv6 hosts were
+/// truncated at their first `:` (`[2001/o/r`). The SCP form kept the rest of
+/// the address in the path, so its identifier stayed distinct and still counts.
 pub(crate) fn legacy_project_identifier(url: &str) -> Option<String> {
     let trimmed = url.trim();
+    if trimmed.starts_with("ssh://")
+        && GitRemoteUrl::parse(trimmed).is_none_or(|remote| remote.ssh_port.is_some())
+    {
+        return None;
+    }
     let parse = || -> Option<(&str, String, String)> {
         let (host, path) = if let Some(rest) = trimmed
             .strip_prefix("https://")
@@ -889,15 +894,19 @@ mod tests {
 
     /// The v0.80.0 identifier, for remotes whose identifier changed and for
     /// ordinary ones where it didn't. Values are what the v0.80.0 binary's
-    /// `wt config show` printed, except the truncated `ssh://` IPv6 host
-    /// (`[2001/o/r`), which gets none.
+    /// `wt config show` printed, except ambiguous port-less and truncated
+    /// IPv6 identifiers, which get none.
     #[test]
     fn test_legacy_project_identifier() {
         let cases = [
+            ("ssh://git@host.example:2222/o/r.git", None),
+            ("ssh://git@Host.example:2222/o/r.git", None),
+            ("ssh://git@host.example:65536/o/r.git", None),
             (
-                "ssh://git@host.example:2222/o/r.git",
-                Some("host.example/o/r"),
+                "ssh://git@Host.example:22/o/r.git",
+                Some("Host.example/o/r"),
             ),
+            ("ssh://git@host.example/o/r.git", Some("host.example/o/r")),
             ("git@GitHub.com:o/r.git", Some("GitHub.com/o/r")),
             ("https://GitHub.com/O/R.git", Some("GitHub.com/O/R")),
             (

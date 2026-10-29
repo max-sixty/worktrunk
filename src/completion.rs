@@ -30,6 +30,7 @@
 //! skips prewarm's rev-parse batch (benches/AGENTS.md, "Analyzing a trace").
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
 
@@ -275,6 +276,7 @@ pub(crate) fn branch_value_completer() -> ArgValueCompleter {
         suppress_with_create: false,
         exclude_remote_only: false,
         worktree_only: false,
+        qualify_remote_prefix: false,
     })
 }
 
@@ -285,6 +287,7 @@ pub(crate) fn worktree_branch_completer() -> ArgValueCompleter {
         suppress_with_create: true,
         exclude_remote_only: false,
         worktree_only: false,
+        qualify_remote_prefix: true,
     })
 }
 
@@ -294,6 +297,7 @@ pub(crate) fn local_branches_completer() -> ArgValueCompleter {
         suppress_with_create: false,
         exclude_remote_only: true,
         worktree_only: false,
+        qualify_remote_prefix: false,
     })
 }
 
@@ -303,6 +307,7 @@ pub(crate) fn worktree_only_completer() -> ArgValueCompleter {
         suppress_with_create: false,
         exclude_remote_only: false,
         worktree_only: true,
+        qualify_remote_prefix: false,
     })
 }
 
@@ -405,6 +410,7 @@ struct BranchCompleter {
     suppress_with_create: bool,
     exclude_remote_only: bool,
     worktree_only: bool,
+    qualify_remote_prefix: bool,
 }
 
 impl ValueCompleter for BranchCompleter {
@@ -420,6 +426,58 @@ impl ValueCompleter for BranchCompleter {
 
         if self.suppress_with_create && suppress_switch_branch_completion() {
             return Vec::new();
+        }
+
+        // A typed remote prefix is an explicit request for remote-tracking
+        // names. Keep the qualified name so the shell can complete `origin/…`,
+        // including in repositories where the general list omits remotes.
+        if self.qualify_remote_prefix
+            && let Some(current) = current.to_str()
+            && current.contains('/')
+            && let Ok(repo) = Repository::current()
+            && repo.all_remote_urls().iter().any(|(name, _)| {
+                current
+                    .strip_prefix(name)
+                    .is_some_and(|suffix| suffix.starts_with('/'))
+            })
+        {
+            std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    let _ = repo.local_branches();
+                });
+                scope.spawn(|| {
+                    let _ = repo.remote_branches();
+                });
+            });
+            let remotes = repo.remote_branches().unwrap_or_default();
+            let locals = repo.local_branches().unwrap_or_default();
+            let local_name_set: HashSet<_> =
+                locals.iter().map(|branch| branch.name.as_str()).collect();
+            let local_names: Vec<_> = locals
+                .iter()
+                .filter(|branch| branch.name.starts_with(current))
+                .collect();
+            let mut candidates: Vec<_> = local_names
+                .iter()
+                .map(|branch| {
+                    let help = format!("/ {}", format_relative_time_short(branch.committer_ts));
+                    CompletionCandidate::new(branch.name.clone()).help(Some(help.into()))
+                })
+                .collect();
+            candidates.extend(
+                remotes
+                    .iter()
+                    .filter(|remote| {
+                        remote.short_name.starts_with(current)
+                            && !local_name_set.contains(remote.short_name.as_str())
+                            && !local_name_set.contains(remote.local_name.as_str())
+                    })
+                    .map(|remote| {
+                        let help = format!("⇣ {}", format_relative_time_short(remote.committer_ts));
+                        CompletionCandidate::new(remote.short_name.clone()).help(Some(help.into()))
+                    }),
+            );
+            return candidates;
         }
 
         // Whether a remote-only branch could reach the user from this argument

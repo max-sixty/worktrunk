@@ -344,10 +344,9 @@ pub struct RemoveOptions {
 /// Result of [`remove_worktree_with_cleanup`].
 ///
 /// `branch_result` is `None` when deletion was skipped (no branch supplied, or
-/// `deletion_mode.should_keep()`). Otherwise it carries the raw result so
-/// callers can decide how to surface branch-deletion failures — the
-/// foreground removal path reports them to the user, the TUI picker ignores
-/// them (best-effort), and external tools can do whatever fits.
+/// `deletion_mode.should_keep()`). A deletion failure carries
+/// [`GitError::BranchDeletionFailed`] with the removed worktree's path.
+/// Callers finish teardown and cleanup before propagating it.
 ///
 /// `staged_path` is `Some` only on the fast path. Callers are responsible for
 /// cleaning up the staged directory; `wt remove` does this with a detached
@@ -372,8 +371,8 @@ pub struct RemovalOutput {
 ///   `git worktree remove` also fails.
 /// - Branch-deletion errors are captured in
 ///   [`RemovalOutput::branch_result`] rather than returned — worktree removal
-///   is considered the primary operation, and callers can decide how to
-///   handle a residual branch-deletion failure.
+///   is already complete. Callers finish teardown and cleanup before
+///   propagating the contextual deletion failure.
 pub fn remove_worktree_with_cleanup(
     repo: &Repository,
     snapshot: &crate::git::RefSnapshot,
@@ -395,13 +394,23 @@ pub fn remove_worktree_with_cleanup(
         && !options.deletion_mode.should_keep()
     {
         let target = options.target_branch.as_deref().unwrap_or("HEAD");
-        Some(delete_branch_if_safe(
-            repo,
-            snapshot,
-            branch,
-            target,
-            options.deletion_mode.is_force(),
-        ))
+        Some(
+            delete_branch_if_safe(
+                repo,
+                snapshot,
+                branch,
+                target,
+                options.deletion_mode.is_force(),
+            )
+            .map_err(|error| {
+                GitError::BranchDeletionFailed {
+                    branch: branch.to_owned(),
+                    removed_worktree: Some(worktree_path.to_path_buf()),
+                    error,
+                }
+                .into()
+            }),
+        )
     } else {
         None
     };

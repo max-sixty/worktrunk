@@ -35,10 +35,11 @@
 //! The release after v0.80.0 changed the identifier of some remotes: a
 //! non-default SSH port joined the host, hosts were lowercased, and
 //! `git+ssh://` URLs began to parse. So that keys saved under the old
-//! identifier keep applying, a [`ProjectId`] carries it too where it differs
-//! (see [`legacy_project_identifier`]). Keys matching it count as least
-//! specific: [`matching_keys`] returns them before every key matching the
-//! current identifier, ordered among themselves by the usual rules. Settings
+//! identifier keep applying, a [`ProjectId`] carries it where it differs and
+//! still identifies the same server (see [`legacy_project_identifier`]).
+//! Keys matching it count as least specific: [`matching_keys`] returns them
+//! before every key matching the current identifier, ordered among themselves
+//! by the usual rules. Settings
 //! under a current key override settings under a legacy key, and approvals
 //! under either key apply, so approving a new command (recorded under the
 //! current identifier) keeps the earlier approvals in force. The per-project
@@ -279,14 +280,14 @@ mod tests {
     fn test_legacy_identifier_keys_rank_below_current_ones() {
         let projects = BTreeMap::from([
             ("*".to_string(), "all"),
-            ("git.example/*".to_string(), "legacy-host"),
-            ("git.example/owner/repo".to_string(), "legacy-exact"),
-            ("git.example:2222/*".to_string(), "host"),
-            ("git.example:2222/owner/repo".to_string(), "exact"),
+            ("Git.example/*".to_string(), "legacy-host"),
+            ("Git.example/owner/repo".to_string(), "legacy-exact"),
+            ("git.example/*".to_string(), "host"),
+            ("git.example/owner/repo".to_string(), "exact"),
         ]);
         let project = ProjectId::with_legacy(
-            "git.example:2222/owner/repo".to_string(),
-            Some("git.example/owner/repo".to_string()),
+            "git.example/owner/repo".to_string(),
+            Some("Git.example/owner/repo".to_string()),
         );
         // `*` matches both identifiers and ranks with the current ones.
         assert_eq!(

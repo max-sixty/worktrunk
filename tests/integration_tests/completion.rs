@@ -1870,7 +1870,10 @@ fn test_complete_switch_excludes_remote_branches_when_over_threshold(mut repo: T
     repo.run_git(&delete);
     repo.run_git(&["fetch", "origin"]);
 
-    // Total branches: 1 (main worktree) + 50 local + 60 remote = 111 > 100
+    // A local branch can literally contain the same remote-looking prefix.
+    repo.run_git(&["branch", "origin/local-only"]);
+
+    // The branch total exceeds the 100-candidate cutoff.
     let output = repo.completion_cmd(&["wt", "switch", ""]).output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1886,6 +1889,42 @@ fn test_complete_switch_excludes_remote_branches_when_over_threshold(mut repo: T
     assert!(
         !suggestions.iter().any(|s| s.contains("remote/branch-")),
         "Remote-only branches should be excluded when total > 100: {stdout}"
+    );
+
+    // `wt switch origin/remote/branch-0` resolves to this local branch.
+    repo.run_git(&["branch", "remote/branch-0"]);
+
+    // An explicit remote prefix still gives access to that remote's branches.
+    let output = repo
+        .completion_cmd_for_shell(&["wt", "switch", "origin/remote/"], "fish")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        value_suggestions(&stdout)
+            .iter()
+            .any(|s| s.split('\t').next() == Some("origin/remote/branch-1")),
+        "Remote-qualified branch should complete: {stdout}"
+    );
+    assert!(
+        !value_suggestions(&stdout)
+            .iter()
+            .any(|s| s.split('\t').next() == Some("origin/remote/branch-0")),
+        "A remote-qualified name that selects a local branch should not be offered: {stdout}"
+    );
+
+    let output = repo
+        .completion_cmd_for_shell(&["wt", "switch", "origin/"], "fish")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        value_suggestions(&stdout)
+            .iter()
+            .any(|s| s.split('\t').next() == Some("origin/local-only")),
+        "A local branch with a remote-looking name should still complete: {stdout}"
     );
 }
 

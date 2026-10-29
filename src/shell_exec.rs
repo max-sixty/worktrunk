@@ -11,10 +11,16 @@
 //! ## Spawning children
 //!
 //! Worktrunk's command spawns use [`spawn`] or [`spawn_shared_child`]. Their
-//! shared lock covers descriptor setup and process creation, never child waits:
-//! children still execute concurrently. On macOS, the standard library creates
-//! pipes and sockets before marking them close-on-exec. Serializing their setup
-//! with spawns prevents a child from retaining another command's output or wake.
+//! Unix process owner receives INT/TERM and runs process creation and foreground
+//! admission on the same thread. [`init_startup`] establishes that owner before
+//! application threads exist; workers inherit blocked signals, while the owner
+//! and its children retain the caller's original mask. Requests serialize
+//! creation, never child waits, so children still execute concurrently.
+//!
+//! On macOS, the standard library creates pipes and sockets before marking them
+//! close-on-exec. A separate lock serializes descriptor setup with raw spawns,
+//! preventing children from retaining unrelated output or wake endpoints. That
+//! lock is never held while a caller waits for the process owner.
 //!
 //! ## Process groups and signal handling (Unix, `Cmd::stream`)
 //!
@@ -89,6 +95,8 @@ use crate::trace::CommandTrace;
 
 #[cfg(unix)]
 pub mod pipe;
+#[cfg(unix)]
+mod process_owner;
 
 /// Prepare complete input before spawning, with no producer that can block.
 ///
@@ -132,15 +140,42 @@ pub(crate) fn with_process_creation_guard<T>(
 
 /// Spawn a child under the shared process-creation guard.
 pub fn spawn(command: &mut Command) -> std::io::Result<std::process::Child> {
-    with_process_creation_guard(|| command.spawn()).map_err(|error| spawn_error(command, error))
+    let spawned = with_process_owner(command, |command| {
+        with_process_creation_guard(|| command.spawn())
+    })?;
+    spawned.map_err(|error| spawn_error(command, error))
 }
 
 /// Spawn a shared child under the same process-creation lock as [`spawn`].
 pub fn spawn_shared_child(command: &mut Command) -> std::io::Result<SharedChild> {
+    with_process_owner(command, spawn_shared_child_here)?
+}
+
+/// Raw creation on the process owner, also used inside foreground admission.
+pub(crate) fn spawn_shared_child_here(command: &mut Command) -> std::io::Result<SharedChild> {
     // SharedChild::new calls try_wait and can reap a short-lived child here.
     // Keep SharedChild::spawn's unreaped ownership for process-tree cleanup.
     with_process_creation_guard(|| SharedChild::spawn(command))
         .map_err(|error| spawn_error(command, error))
+}
+
+/// Run process creation and any admission checks on the signal-receiving owner.
+pub(crate) fn with_process_owner<T: Send + 'static>(
+    command: &mut Command,
+    create: impl FnOnce(&mut Command) -> T + Send + 'static,
+) -> std::io::Result<T> {
+    #[cfg(unix)]
+    return process_owner::with_command(command, create);
+    #[cfg(not(unix))]
+    Ok(create(command))
+}
+
+/// Retire a signal scope after the signal owner's pending receipt completes.
+#[cfg(unix)]
+pub(crate) fn on_process_owner<T: Send + 'static>(
+    operation: impl FnOnce() -> T + Send + 'static,
+) -> std::io::Result<T> {
+    process_owner::run(operation)
 }
 
 /// Create wakeup endpoints under the same guard as process creation.
@@ -359,17 +394,19 @@ pub const INHERITED_GIT_PATH_VARS: &[&str] = &[
     "GIT_OBJECT_DIRECTORY",
 ];
 
-/// Record process-startup facts: the current working directory (so relative
-/// `GIT_*` path variables inherited from a parent process can later be
-/// resolved to absolute paths by [`Cmd`]'s env setup) and the calling thread
-/// (the foreground thread, exempt from the command semaphore —
-/// see `CMD_SEMAPHORE`).
+/// Initialize the Unix process owner and record startup facts: the current
+/// directory (so [`Cmd`] can resolve inherited relative `GIT_*` paths) and the
+/// calling thread (exempt from `CMD_SEMAPHORE`).
 ///
 /// Call once from `main()`, before any code changes the process's working
-/// directory and before spawning threads. Subsequent calls are no-ops.
-pub fn init_startup() {
+/// directory or spawns threads. Workers inherit blocked INT/TERM; the process
+/// owner and its children retain the original mask. Subsequent calls are no-ops.
+pub fn init_startup() -> std::io::Result<()> {
+    #[cfg(unix)]
+    process_owner::init()?;
     STARTUP_CWD.get_or_init(|| std::env::current_dir().ok());
     FOREGROUND_THREAD.get_or_init(|| std::thread::current().id());
+    Ok(())
 }
 
 fn startup_cwd() -> Option<&'static PathBuf> {
@@ -880,20 +917,32 @@ fn command_header(cmd: &str, context: Option<&str>) -> String {
 ///
 /// `output` is `None` for a command that never produced any (spawn or wait
 /// failure); its header and stdin still emit, so the input survives in the deep
-/// log even when nothing ran.
+/// log even when nothing ran. Sensitive commands emit only a redaction marker
+/// to each target, regardless of outcome.
 ///
 /// Below Debug both targets are disabled and this is a no-op.
-fn log_output(trace: &CommandTrace, stdin: Option<&[u8]>, output: Option<&std::process::Output>) {
-    // `log::max_level` (held at the verbosity/`RUST_LOG` ceiling by the
-    // `LogTracer` cap in `logging::init`) is the coarse "deep logging on at
-    // all?" gate that skips building the full *and* bounded output strings
-    // when nothing consumes them. It stays a `log::*` check on purpose: this
-    // body feeds both `SUBPROCESS_FULL_TARGET` and `SUBPROCESS_BOUNDED_TARGET`,
-    // so the gate must fire whenever *either* deep sink is live — exactly the
-    // verbosity cap. A per-target `tracing::enabled!(SUBPROCESS_FULL_TARGET …)`
-    // would wrongly skip the bounded preview in the rare case where `-vv`
-    // opened `trace.log` but `subprocess.log` failed to open.
-    if !log::log_enabled!(log::Level::Debug) {
+fn log_output(
+    trace: &CommandTrace,
+    stdin: Option<&[u8]>,
+    output: Option<&std::process::Output>,
+    sensitive: bool,
+) {
+    // Either sink can be active without the other (for example, if opening
+    // subprocess.log failed). Avoid formatting bytes unless one consumes them.
+    if !tracing::enabled!(target: SUBPROCESS_FULL_TARGET, tracing::Level::DEBUG)
+        && !tracing::enabled!(target: SUBPROCESS_BOUNDED_TARGET, tracing::Level::DEBUG)
+    {
+        return;
+    }
+    if sensitive {
+        tracing::debug!(
+            target: SUBPROCESS_FULL_TARGET,
+            "{}  [seq={} tid={}]\n  [redacted]",
+            command_header(trace.cmd(), trace.context()),
+            trace.seq(),
+            trace.tid(),
+        );
+        tracing::debug!(target: SUBPROCESS_BOUNDED_TARGET, "  [redacted]");
         return;
     }
     let stdin = stdin.unwrap_or_default();
@@ -1241,6 +1290,8 @@ pub struct Cmd {
     current_dir: Option<std::path::PathBuf>,
     context: Option<String>,
     stdin_data: Option<Vec<u8>>,
+    /// Redact captured stdin/stdout/stderr in both subprocess log targets.
+    sensitive_output: bool,
     timeout: Option<std::time::Duration>,
     /// Environment mutations in call order: `Some(value)` sets, `None`
     /// removes. One ordered list rather than a set list plus a remove list, so
@@ -1311,14 +1362,14 @@ fn record_captured(
     trace: &mut CommandTrace,
     stdin: Option<&[u8]>,
     result: &std::io::Result<std::process::Output>,
+    sensitive: bool,
 ) {
     match result {
         Ok(output) => trace.complete(output.status.success()),
         Err(e) => trace.fail(e),
     }
-    // stdin is logged either way; stdout/stderr only when the command produced
-    // output — a command that failed to spawn still leaves its input behind.
-    log_output(trace, stdin, result.as_ref().ok());
+    // Redact every stream together, including input when spawning failed.
+    log_output(trace, stdin, result.as_ref().ok(), sensitive);
 }
 
 /// A child from [`Cmd::spawn_captured`], traced from spawn until
@@ -1326,6 +1377,7 @@ fn record_captured(
 struct CapturedChild {
     child: std::process::Child,
     trace: CommandTrace,
+    sensitive_output: bool,
     _tracked: Option<BackgroundPid>,
 }
 
@@ -1334,10 +1386,11 @@ impl CapturedChild {
         let CapturedChild {
             child,
             mut trace,
+            sensitive_output,
             _tracked,
         } = self;
         let result = child.wait_with_output();
-        record_captured(&mut trace, None, &result);
+        record_captured(&mut trace, None, &result, sensitive_output);
         result
     }
 }
@@ -1566,6 +1619,7 @@ impl Cmd {
             current_dir: None,
             context: None,
             stdin_data: None,
+            sensitive_output: false,
             timeout: None,
             env_ops: Vec::new(),
             shell_wrap,
@@ -1744,6 +1798,16 @@ impl Cmd {
     /// can block on an unread input. This takes precedence over `.stdin(Stdio)`.
     pub fn stdin_bytes(mut self, data: impl Into<Vec<u8>>) -> Self {
         self.stdin_data = Some(data.into());
+        self
+    }
+
+    /// Redact captured stdin, stdout, and stderr from debug logs.
+    ///
+    /// Status and timing are still traced, and callers receive the original
+    /// output. In a pipeline, both commands' captured output is redacted.
+    /// Command arguments remain visible; streaming output is unaffected.
+    pub fn sensitive_output(mut self) -> Self {
+        self.sensitive_output = true;
         self
     }
 
@@ -1965,7 +2029,12 @@ impl Cmd {
             }
         })();
 
-        record_captured(&mut trace, self.stdin_data.as_deref(), &result);
+        record_captured(
+            &mut trace,
+            self.stdin_data.as_deref(),
+            &result,
+            self.sensitive_output,
+        );
 
         let exit_code = result.as_ref().ok().and_then(|output| output.status.code());
         external_log.record(exit_code);
@@ -2040,6 +2109,7 @@ impl Cmd {
                 Ok(CapturedChild {
                     child,
                     trace,
+                    sensitive_output: self.sensitive_output,
                     _tracked: tracked,
                 })
             }
@@ -2102,6 +2172,7 @@ impl Cmd {
 
         let first_cmd_str = self.command_string();
         let second_cmd_str = next.command_string();
+        let sensitive = self.sensitive_output || next.sensitive_output;
         self.log_run_start(&first_cmd_str);
         next.log_run_start(&second_cmd_str);
 
@@ -2206,7 +2277,7 @@ impl Cmd {
             // source's stdout (the OS pipe), not its own input, so it is logged
             // with `None` — the intermediate stream stays out of the deep log.
             let second_result = second_child.wait_with_output();
-            record_captured(&mut second_trace, None, &second_result);
+            record_captured(&mut second_trace, None, &second_result, sensitive);
 
             // Reap `first`. Its stderr is already being drained; combine
             // the captured stderr with the exit status into an Output.
@@ -2223,7 +2294,12 @@ impl Cmd {
             // The source's own stdin (the commit list) is logged under `  < `,
             // symmetric with `run`. Only the intermediate diff stream — the
             // source's stdout, routed to the sink via OS pipe — stays out.
-            record_captured(&mut first_trace, source_stdin.as_deref(), &first_result);
+            record_captured(
+                &mut first_trace,
+                source_stdin.as_deref(),
+                &first_result,
+                sensitive,
+            );
 
             (first_result, second_result)
         });
@@ -2925,9 +3001,9 @@ print(*counts)
     /// set-once): with it unset, `is_foreground_thread()` is false everywhere,
     /// which is the state every other test runs under.
     #[test]
-    fn test_foreground_thread_exempt_after_init() {
+    fn test_foreground_thread_exempt() {
         assert!(!is_foreground_thread());
-        init_startup();
+        FOREGROUND_THREAD.get_or_init(|| std::thread::current().id());
         assert!(is_foreground_thread());
         // Threads other than the initializing one stay capped.
         let from_spawned = std::thread::spawn(is_foreground_thread).join().unwrap();
@@ -3162,6 +3238,92 @@ print(*counts)
     // ========================================================================
     // Cmd and timeout tests
     // ========================================================================
+
+    /// Captured secrets reach callers, never either debug target. The plain
+    /// command is a positive control for the scoped subscriber's output capture.
+    #[test]
+    #[cfg(all(feature = "cli", unix))]
+    fn test_sensitive_captured_output() {
+        const SECRET: &str = "fake-captured-token-4b8ad2";
+        for mode in ["run", "timeout", "concurrent", "source", "sink"] {
+            let log = tempfile::NamedTempFile::new().unwrap();
+            let subscriber = tracing_subscriber::fmt()
+                .without_time()
+                .with_ansi(false)
+                .with_max_level(tracing::Level::DEBUG)
+                .with_writer(Arc::new(log.reopen().unwrap()))
+                .finish();
+            tracing::subscriber::with_default(subscriber, || {
+                let command = || {
+                    Cmd::new("sh")
+                        .args(["-c", "cat; printf '%s' \"$TOKEN\" >&2; exit 1"])
+                        .env("TOKEN", SECRET)
+                };
+                // Log ordinary I/O first, then clear it before testing redaction.
+                command().stdin_bytes(SECRET).run().unwrap();
+                assert!(
+                    std::fs::read_to_string(log.path())
+                        .unwrap()
+                        .contains(SECRET)
+                );
+                log.as_file().set_len(0).unwrap();
+
+                let output = match mode {
+                    "run" => command().stdin_bytes(SECRET).sensitive_output().run(),
+                    "timeout" => command()
+                        .stdin_bytes(SECRET)
+                        .sensitive_output()
+                        .timeout(Duration::from_secs(10))
+                        .run(),
+                    "concurrent" => Cmd::run_concurrently(&[command().sensitive_output()])
+                        .pop()
+                        .unwrap(),
+                    "source" => {
+                        let (source, sink) = command()
+                            .stdin_bytes(SECRET)
+                            .sensitive_output()
+                            .pipe_into(Cmd::new("cat"))
+                            .unwrap();
+                        assert_eq!(sink.stdout, SECRET.as_bytes());
+                        Ok(source)
+                    }
+                    "sink" => {
+                        let (source, sink) = Cmd::new("cat")
+                            .stdin_bytes(SECRET)
+                            .pipe_into(command().sensitive_output())
+                            .unwrap();
+                        assert!(source.status.success());
+                        Ok(sink)
+                    }
+                    _ => unreachable!(),
+                }
+                .unwrap();
+                assert_eq!(output.status.code(), Some(1), "{mode}");
+                assert_eq!(output.stderr, SECRET.as_bytes(), "{mode}");
+                if matches!(mode, "run" | "timeout" | "sink") {
+                    assert_eq!(output.stdout, SECRET.as_bytes(), "{mode}");
+                }
+                // Spawn failure still has input, which must also be redacted.
+                assert!(
+                    Cmd::new("/no/such/sensitive-program")
+                        .stdin_bytes(SECRET)
+                        .sensitive_output()
+                        .run()
+                        .is_err()
+                );
+            });
+            let captured = std::fs::read_to_string(log.path()).unwrap();
+            assert!(!captured.contains(SECRET), "{mode}: {captured}");
+            for target in [SUBPROCESS_FULL_TARGET, SUBPROCESS_BOUNDED_TARGET] {
+                assert!(
+                    captured.lines().any(|line| line.contains(target)),
+                    "{mode}: missing {target}: {captured}"
+                );
+            }
+            assert!(captured.contains("[redacted]"), "{mode}: {captured}");
+            assert!(captured.contains("dur_us="), "{mode}: {captured}");
+        }
+    }
 
     #[test]
     fn test_cmd_completes_fast_command() {

@@ -1550,7 +1550,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         )?;
     }
 
-    // Show potential false negatives (lines containing cmd but not detected)
+    // Show references to the command outside recognized initialization lines.
     // Skip files that have valid integration detected (matched_lines) - those are fine,
     // and the other lines containing cmd are just part of the integration script.
     // Also skip files already confirmed as integration by scan_shell_configs (e.g., Nushell/Fish
@@ -1584,7 +1584,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                 out,
                 "{}",
                 warning_message(cformat!(
-                    "Found <bold>{cmd}</> in <bold>{location}</> but not detected as integration:"
+                    "Found <bold>{cmd}</> outside a recognized initialization line @ <bold>{location}</>:"
                 ))
             )?;
             for detected in &detection.unmatched_candidates {
@@ -1634,52 +1634,12 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         }
     }
 
-    // Whenever there are unmatched candidates, offer the false-negative report link.
-    // A real detector miss in one config file is worth reporting even if another shell
-    // is correctly detected — the `confirmed_paths` filter already excludes wrapper files,
-    // and the narrow phrasing ("meant to load") steers non-integration lines (plain aliases)
-    // away from reporting themselves as bugs.
     if has_any_unmatched {
-        let unmatched_summary: Vec<_> = detection_results
-            .iter()
-            .filter(|r| {
-                !r.unmatched_candidates.is_empty()
-                    && r.matched_lines.is_empty()
-                    && !confirmed_paths.contains(r.path.as_path())
-            })
-            .flat_map(|r| {
-                r.unmatched_candidates
-                    .iter()
-                    .map(|d| d.content.trim().to_string())
-            })
-            .collect();
-        let body = format!(
-            "Shell integration not detected despite config containing `{cmd}`.\n\n\
-             **Unmatched lines:**\n```\n{}\n```\n\n\
-             **Expected behavior:** These lines should be detected as shell integration.",
-            unmatched_summary.join("\n")
-        );
-        let issue_url = format!(
-            "https://github.com/max-sixty/worktrunk/issues/new?title={}&body={}",
-            urlencoding::encode("Shell integration detection false negative"),
-            urlencoding::encode(&body)
-        );
-
-        // Quote a short version of the unmatched content in the hint
-        let quoted = if unmatched_summary.len() == 1 {
-            format!("`{}`", unmatched_summary[0])
-        } else {
-            format!(
-                "`{}` (and {} more)",
-                unmatched_summary[0],
-                unmatched_summary.len() - 1
-            )
-        };
         writeln!(
             out,
             "{}",
-            hint_message(format!(
-                "If {quoted} is meant to load Worktrunk shell integration, report a false negative: {issue_url}"
+            hint_message(cformat!(
+                "To see recognized initialization lines, run <underline>{cmd} config shell init --help</>"
             ))
         )?;
     }

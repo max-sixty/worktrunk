@@ -934,8 +934,8 @@ fn test_config_show_fish_without_completions(
 /// Test that config show displays "Outdated" when fish wrapper exists but has different code.
 ///
 /// The wrapper file contains `function wt` which matches the command name at a word boundary,
-/// but `is_shell_integration_line()` won't match it (it looks for eval/source patterns).
-/// This should NOT trigger a "Found wt ... but not detected as integration" warning because
+/// but `shell_integration()` won't match it (it recognizes initialization statements).
+/// This should NOT trigger an unrecognized-line warning because
 /// the wrapper file IS the integration — `scan_shell_configs` already identified it (as
 /// outdated). Only the "Outdated shell extension" warning should appear.
 #[rstest]
@@ -971,7 +971,7 @@ fn test_config_show_fish_outdated_wrapper(mut repo: TestRepo, temp_home: TempDir
 /// Same false-positive suppression as the fish variant: the wrapper file contains `def --wrapped wt`
 /// which matches the command name, but `scan_shell_configs` already recognized the file as
 /// integration (outdated). Only the "Outdated" warning should appear, not the generic
-/// "not detected as integration" warning.
+/// unrecognized-line warning.
 #[rstest]
 fn test_config_show_nushell_outdated_wrapper(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
@@ -2026,9 +2026,7 @@ fn test_config_show_no_user_config(mut repo: TestRepo, temp_home: TempDir) {
     });
 }
 
-///
-/// When a shell config contains `wt` at a word boundary but it's NOT detected as
-/// shell integration, show a warning with file:line format to help debug detection.
+/// Customized initialization is identified by location and left for manual management.
 #[rstest]
 fn test_config_show_unmatched_candidate_warning(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
@@ -2039,13 +2037,12 @@ fn test_config_show_unmatched_candidate_warning(mut repo: TestRepo, temp_home: T
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(global_config_dir.join("config.toml"), "").unwrap();
 
-    // Create .bashrc with a line containing `wt` but NOT a valid integration pattern
-    // This should trigger the "unmatched candidate" warning
+    // This runs Worktrunk's initialization but is not a standard setup statement.
     fs::write(
         temp_home.path().join(".bashrc"),
         r#"# Some bash config
 export PATH="$HOME/bin:$PATH"
-alias wt="git worktree"
+source <(wt config shell init bash)
 "#,
     )
     .unwrap();
@@ -2124,7 +2121,7 @@ fn test_config_show_unmatched_candidate_not_suppressed_by_wrapper(
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(global_config_dir.join("config.toml"), "").unwrap();
 
-    // Fish wrapper (outdated) — should NOT trigger "not detected" warning
+    // The outdated fish wrapper is already recognized as integration.
     let functions = temp_home.path().join(".config/fish/functions");
     fs::create_dir_all(&functions).unwrap();
     fs::write(
@@ -2133,7 +2130,7 @@ fn test_config_show_unmatched_candidate_not_suppressed_by_wrapper(
     )
     .unwrap();
 
-    // Bash alias — SHOULD trigger "not detected" warning
+    // An unrelated bash alias still appears as an unrecognized reference.
     fs::write(
         temp_home.path().join(".bashrc"),
         r#"# Some bash config

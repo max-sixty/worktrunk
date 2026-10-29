@@ -45,7 +45,7 @@ if ((Get-Command wt -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
         try {
             # cd file holds a raw path (no shell escaping needed)
             if ((Test-Path $cdFile) -and (Get-Item $cdFile).Length -gt 0) {
-                $target = (Get-Content -Path $cdFile -Raw).Trim()
+                $target = Get-Content -Path $cdFile -Raw
                 if ($target) {
                     Set-Location -LiteralPath $target
                     if ($exitCode -eq 0) {

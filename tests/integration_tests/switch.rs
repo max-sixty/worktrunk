@@ -1132,6 +1132,55 @@ fn test_switch_no_cd_execute_runs_in_worktree(mut repo: TestRepo) {
     );
 }
 
+/// An `--execute` program can remove the worktree it started in, as a session
+/// does when it ends by removing its own worktree. The shell wrapper would then
+/// `cd` into a directory that no longer exists, so wt withdraws the directive
+/// and the shell stays where it was.
+///
+/// Unix only: Windows refuses to delete a directory that a running process
+/// holds as its cwd, so there the program can't remove the worktree it runs in.
+#[cfg(unix)]
+#[rstest]
+fn test_switch_execute_that_removes_worktree_withdraws_cd(mut repo: TestRepo) {
+    let worktree = repo.add_worktree("feature");
+    let root = repo.root_path().to_string_lossy().to_string();
+    let worktree_arg = worktree.to_string_lossy().to_string();
+
+    let (cd_path, _guard) = directive_file();
+    let mut cmd = repo.wt_command();
+    configure_directive_file(&mut cmd, &cd_path);
+    cmd.current_dir(repo.root_path()).args([
+        "switch",
+        "feature",
+        "--execute",
+        "git",
+        "--",
+        "-C",
+        &root,
+        "worktree",
+        "remove",
+        "--force",
+        &worktree_arg,
+    ]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "switch --execute failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !worktree.exists(),
+        "the --execute program should remove the worktree"
+    );
+    assert_eq!(
+        fs::read_to_string(&cd_path).unwrap(),
+        "",
+        "wt left a cd directive to the removed worktree"
+    );
+}
+
 /// A switch from a subdirectory keeps the user's position, so the `--execute`
 /// program starts in `<worktree>/<subdir>` — not at the worktree root the
 /// background hooks run in. The header names the program's own directory
@@ -3536,6 +3585,38 @@ fn configure_mock_cli_env(cmd: &mut std::process::Command, mock_bin: &Path) {
         .into_owned();
 
     cmd.env(path_var_name, new_path);
+}
+
+#[rstest]
+fn test_switch_pr_escapes_context_controls(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    let response = serde_json::json!({
+        "title": "hello\n\u{1b}]52;c;YQ==\u{7} café",
+        "user": {"login": "alice\u{1b}[31m"},
+        "state": "open\r",
+        "draft": false,
+        "head": {"ref": "feature-auth", "repo": {"name": "test-repo", "owner": {"login": "owner"}}},
+        "base": {"ref": "main", "repo": {"name": "test-repo", "owner": {"login": "owner"}}},
+        "html_url": "https://github.com/owner/test-repo/pull/101"
+    });
+    let mock_bin = setup_mock_gh_for_pr(&repo, &response.to_string());
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "--create", "pr:101", "--no-hooks"])
+        .env("CLICOLOR_FORCE", "1");
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(!output.status.success()); // --create conflicts after displaying the PR.
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains(r"\u{1b}]52;c;YQ==\u{7} café"), "{stderr:?}");
+    assert!(stderr.contains(r"alice\u{1b}[31m"), "{stderr:?}");
+    assert!(stderr.contains(r"open\r"), "{stderr:?}");
+    assert!(!stderr.contains("\x1b]52;"), "{stderr:?}");
+    assert!(stderr.contains("\x1b["), "test must exercise styled output");
 }
 
 /// Test that --create flag conflicts with pr: syntax

@@ -1436,11 +1436,34 @@ fn test_alias_group_sigint_does_not_escalate(
 #[cfg(unix)]
 fn test_alias_last_step_keeps_status_after_caught_ctrl_c(repo: TestRepo) {
     repo.write_test_config(
-        "[aliases]\nsignal-test = \"trap 'exit 0' INT; echo $$ > pid; while :; do sleep 0.1; done\"\n",
+        "[aliases]\nsignal-test = \"trap 'echo handled > int; while [ ! -e release ]; do sleep 0.01; done; exit 0' INT; echo $$ > pid; while :; do sleep 0.1; done\"\n",
     );
-    let mut job = SignalJob::spawn(&repo, &["-vv", "step", "signal-test"], Stdio::null());
+    let stderr_path = repo.root_path().join("stderr");
+    let stderr = std::fs::File::create(&stderr_path).unwrap();
+    let mut job = SignalJob::spawn(&repo, &["-vv", "step", "signal-test"], stderr.into());
     job.interrupt_admitted_child(&repo, &repo.root_path().join("pid"));
-    assert!(job.wait().success());
+    crate::common::wait_for_file_content(&repo.root_path().join("int"));
+    // Keep the child alive until wt has received the group signal. Otherwise
+    // the child can exit before SIGINT reaches wt, turning it into an idle key.
+    let trace = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/logs/trace.jsonl");
+    let receipt = format!(
+        "Foreground signal received:{}",
+        nix::sys::signal::Signal::SIGINT as i32
+    );
+    crate::common::wait_for("wt to receive SIGINT", || {
+        std::fs::read_to_string(&trace).is_ok_and(|records| {
+            worktrunk::trace::parse_lines(&records).iter().any(|entry| {
+                matches!(&entry.kind, worktrunk::trace::TraceEntryKind::Instant { name } if name == &receipt)
+            })
+        })
+    });
+    job.release();
+    let status = job.wait();
+    assert!(
+        status.success(),
+        "the final child handled Ctrl-C successfully: {status:?}\n{}",
+        std::fs::read_to_string(stderr_path).unwrap()
+    );
 }
 
 /// Non-UTF-8 bytes and CRLF line endings in child output must not stall the
