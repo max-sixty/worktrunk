@@ -203,10 +203,9 @@ pub fn processes_under(worktree_path: &Path) -> Vec<CwdProcess> {
 
 #[cfg(target_os = "linux")]
 fn processes_from_proc() -> Vec<CwdProcess> {
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return Vec::new();
-    };
-    entries
+    std::fs::read_dir("/proc")
+        .into_iter()
+        .flatten()
         .filter_map(Result::ok)
         .filter_map(|entry| {
             let pid = entry.file_name().to_str()?.parse::<u32>().ok()?;
