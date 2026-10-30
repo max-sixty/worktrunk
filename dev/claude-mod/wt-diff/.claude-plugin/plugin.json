@@ -1,6 +1,0 @@
-{
-  "name": "wt-diff",
-  "version": "0.1.0",
-  "description": "A pane showing `wt step diff` for each worktree this session has worked in.",
-  "types": "./types/index.d.ts"
-}

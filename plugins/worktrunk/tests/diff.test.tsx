@@ -107,7 +107,7 @@ const TYPED = {
 } as const
 
 const PANE = {
-  plugin: 'wt-diff',
+  plugin: 'worktrunk',
   component: 'Pane',
   requestId: 'wt-diff',
   props: {
@@ -136,6 +136,7 @@ function host(on: On, runs: string[][], step: Partial<Ran> = {}) {
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: HERE }))
   on('tool.call', () => ({ result: {} }))
+  on('turn.complete', () => ({ text: '' }))
   on('process.run', (_, e) => {
     const argv = [...e.argv]
     runs.push(argv)
@@ -152,6 +153,29 @@ function host(on: On, runs: string[][], step: Partial<Ran> = {}) {
     return answer(LIST)
   })
 }
+
+test('until /wt-diff runs, a session spawns no process and draws nothing', async ($, on) => {
+  const runs: string[][] = []
+  host(on, runs)
+
+  await $.session.start({ cwd: HERE, surface: 'terminal', isInteractive: true })
+  await $.tool.call({
+    tool: 'Edit',
+    file_path: `${OTHER}/src/lib.rs`,
+    old_string: 'b',
+    new_string: 'c',
+  })
+  await $.tool.call({ tool: 'Bash', command: 'cargo test' })
+  await $.turn.complete({
+    answer: '',
+    durationMs: 1,
+    isAborted: false,
+    turnId: 't1',
+    reason: 'answer',
+  })
+
+  expect(runs).toEqual([])
+})
 
 test('the pane lists the worktrees the session worked in, and draws one diff', async ($, on) => {
   const runs: string[][] = []

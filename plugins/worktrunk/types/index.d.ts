@@ -1,3 +1,6 @@
+/** A directory the session worked in, as the hooks saw it: resolved to a worktree only once the pane opens. */
+export type Seen = { dir: string; lastAt: number }
+
 /** A worktree the session worked in, by its root. */
 export type Touched = {
   root: string
@@ -47,10 +50,13 @@ export type DiffView = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'wt-diff': {
+    worktrunk: {
+      seen: Shaped<Seen[]>
+      /** The session's own directory, as a hook of the main loop last read it. */
+      here: string | null
       touched: Shaped<Touched[]>
       rows: Shaped<Row[]>
-      /** The root of the worktree the session's directory is in. */
+      /** The root of the worktree `here` is in. */
       current: string | null
       selected: string | null
       diffs: Shaped<Record<string, DiffView>>

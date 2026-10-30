@@ -1,26 +1,27 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { DiffView, FileDiff, Row } from '../types'
+import type { DiffView, FileDiff, Row, Touched } from '../types'
 import { parsePatch, printable } from './patch'
 
 /**
- * A pane showing `wt step diff` for each worktree this session worked in.
+ * `/wt-diff`: a pane showing `wt step diff` for each worktree this session
+ * worked in. Claude Code only; it is the plugin's one hooks module.
  *
- * The session counts a worktree as worked in when its own directory has been
- * there, when Edit, Write or NotebookEdit wrote a file in it, or when a Bash
- * call changed a file in it or ran there, subagents' calls included.
- * `/wt-diff <branch>` adds a worktree by its branch. A hook reads
- * `$.session.cwd()` as its own loop's directory, so the session's directory,
- * which the pane marks `@`, is read only in hooks of the main loop: at the
- * session's start, after each of its turns and of its tool calls that were
- * not read-only, and on a press.
+ * Until the pane opens, the hooks only note directories: the session's own,
+ * each directory Edit, Write or NotebookEdit wrote a file in, and each one a
+ * Bash call ran in or changed a file in, subagents' calls included. Nothing
+ * runs git or `wt`, and nothing is drawn. A hook reads `$.session.cwd()` as its
+ * own loop's directory, so the session's directory, which the pane marks `@`,
+ * is read only in hooks of the main loop: at the session's start, after each
+ * of its turns and of its tool calls that were not read-only, and on a press.
  *
- * Worktrunk computes everything shown: `wt list --format=json` the rows, one
- * call per repository, and `wt step diff` the selected worktree's files. The
- * pane refreshes when it opens, when a worktree is selected, after tool calls
- * that were not read-only (once a burst of them goes quiet) and at the end of
- * each turn.
+ * While the pane is open, each refresh resolves the noted directories to
+ * worktrees with `git rev-parse`, cached per directory, and Worktrunk computes
+ * everything shown: `wt list --format=json` the rows, one call per repository,
+ * and `wt step diff` the selected worktree's files. It refreshes when the pane
+ * opens, when a worktree is selected, after tool calls that were not
+ * read-only (once a burst of them goes quiet) and at the end of each turn.
  */
 
 const PANE = 'wt-diff'
@@ -33,19 +34,23 @@ const QUOTE_PATH_OFF = {
   GIT_CONFIG_VALUE_0: 'false',
 }
 
-const touched = atom({ plugin: 'wt-diff', key: 'touched' } as const, [], {
+const seen = atom({ plugin: 'worktrunk', key: 'seen' } as const, [], {
+  shape: 'seen-1',
+})
+const here = atom({ plugin: 'worktrunk', key: 'here' } as const, null)
+const touched = atom({ plugin: 'worktrunk', key: 'touched' } as const, [], {
   shape: 'touched-1',
 })
-const rows = atom({ plugin: 'wt-diff', key: 'rows' } as const, [], {
+const rows = atom({ plugin: 'worktrunk', key: 'rows' } as const, [], {
   shape: 'rows-1',
 })
-const current = atom({ plugin: 'wt-diff', key: 'current' } as const, null)
-const selected = atom({ plugin: 'wt-diff', key: 'selected' } as const, null)
-const diffs = atom({ plugin: 'wt-diff', key: 'diffs' } as const, {}, {
+const current = atom({ plugin: 'worktrunk', key: 'current' } as const, null)
+const selected = atom({ plugin: 'worktrunk', key: 'selected' } as const, null)
+const diffs = atom({ plugin: 'worktrunk', key: 'diffs' } as const, {}, {
   shape: 'diffs-1',
 })
 // -1 while the pane shows its top, so the first `j` reaches the first file.
-const cursor = atom({ plugin: 'wt-diff', key: 'cursor' } as const, -1)
+const cursor = atom({ plugin: 'worktrunk', key: 'cursor' } as const, -1)
 
 type Located = { root: string; commonDir: string }
 
@@ -63,7 +68,7 @@ export const register: Register = on => {
       immediate: true,
     })
     const started = await next(e)
-    await follow($)
+    await note($, [await noteHere($)])
     return started
   })
 
@@ -85,8 +90,7 @@ export const register: Register = on => {
             : `wt-diff: no worktree for branch ${branch}`,
       }
     }
-    await follow($)
-    await track($, [root])
+    await note($, [await noteHere($), root])
     if (shown === null) {
       await select($, root)
     }
@@ -111,9 +115,16 @@ export const register: Register = on => {
       // Where the command ran: a subagent's own directory, in its calls.
       dirs.push(await $.session.cwd(), ...changedFiles(ran.result).map(parentOf))
     }
-    await track($, dirs)
     if (e.agentId === undefined) {
-      await follow($)
+      dirs.push(await noteHere($))
+    }
+    await note($, dirs)
+    // What the call changed shows once a burst of calls goes quiet.
+    if (await isPaneOpen($)) {
+      refreshTimer?.cancel()
+      refreshTimer = $.clock.after(400, () => {
+        void refresh($)
+      })
     }
     return ran
   }).catch(($, e, next) => next(e))
@@ -121,7 +132,7 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     const done = await next(e)
     if (e.agentId === undefined) {
-      await follow($)
+      await note($, [await noteHere($)])
       void refresh($)
     }
     return done
@@ -129,7 +140,7 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Button, Code, Text } = $.ui.resolve(e)
-    const [list, known, here, root, all, at] = await Promise.all([
+    const [list, known, own, root, all, at] = await Promise.all([
       read($, touched),
       read($, rows),
       read($, current),
@@ -141,7 +152,7 @@ export const register: Register = on => {
     // The session's own worktree first, then the most recently worked in.
     const ordered = [...list].sort(
       (a, b) =>
-        Number(b.root === here) - Number(a.root === here) || b.lastAt - a.lastAt,
+        Number(b.root === own) - Number(a.root === own) || b.lastAt - a.lastAt,
     )
     const rowOf = (one: string) => known.find(row => row.root === one)
     const view = root === null ? undefined : all[root]
@@ -165,7 +176,7 @@ export const register: Register = on => {
             >
               {one.root === root ? '▸ ' : '  '}
               {info?.branch ?? baseName(one.root)}
-              {one.root === here ? ' @' : ''}{' '}
+              {one.root === own ? ' @' : ''}{' '}
               <Text dimColor>{info === undefined ? '' : summary(info)}</Text>
             </Button>
           )
@@ -309,23 +320,42 @@ async function locate($: EngineInterface, dir: string): Promise<Located | null> 
   return null
 }
 
-async function track($: EngineInterface, dirs: readonly string[]) {
+// Notes directories the session worked in, most recent last; no process runs.
+async function note($: EngineInterface, dirs: readonly string[]) {
   const now = await $.clock.now()
-  for (const dir of dirs) {
-    const found = await locate($, dir)
-    if (found === null) {
-      continue
+  await update($, seen, list => [
+    ...list.filter(one => !dirs.includes(one.dir)),
+    ...[...new Set(dirs)].map(dir => ({ dir, lastAt: now })),
+  ])
+}
+
+// Notes the session's own directory. Call only from a hook of the main loop,
+// or a press.
+async function noteHere($: EngineInterface): Promise<string> {
+  const cwd = await $.session.cwd()
+  await update($, here, () => cwd)
+  return cwd
+}
+
+// The worktrees of the noted directories, each by its most recent sighting,
+// and the one the session's directory is in.
+async function resolveSeen($: EngineInterface) {
+  const [list, cwd] = await Promise.all([read($, seen), read($, here)])
+  const found = await Promise.all(list.map(one => locate($, one.dir)))
+  const byRoot = new Map<string, Touched>()
+  list.forEach((one, index) => {
+    const at = found[index]
+    if (at == null) {
+      return
     }
-    await update($, touched, list => [
-      ...list.filter(one => one.root !== found.root),
-      { ...found, lastAt: now },
-    ])
-  }
-  // What the call changed shows once a burst of calls goes quiet.
-  refreshTimer?.cancel()
-  refreshTimer = $.clock.after(400, () => {
-    void refresh($)
+    const known = byRoot.get(at.root)
+    if (known === undefined || known.lastAt < one.lastAt) {
+      byRoot.set(at.root, { ...at, lastAt: one.lastAt })
+    }
   })
+  await update($, touched, () => [...byRoot.values()])
+  const root = cwd === null ? null : ((await locate($, cwd))?.root ?? null)
+  await update($, current, () => root)
 }
 
 // One refresh at a time; a request during one runs after it.
@@ -337,7 +367,10 @@ function refresh($: EngineInterface): Promise<void> {
     }
     // The diff is what the pane shows first, so it doesn't wait on `wt list`.
     const root = await read($, selected)
-    await Promise.all([refreshRows($), root === null ? null : refreshDiff($, root)])
+    await Promise.all([
+      resolveSeen($).then(() => refreshRows($)),
+      root === null ? null : refreshDiff($, root),
+    ])
   })
   return refreshing
 }
@@ -407,18 +440,8 @@ async function refreshDiff($: EngineInterface, root: string) {
   await update($, diffs, all => ({ ...all, [root]: view }))
 }
 
-// Where the session's own directory is: worked in, and marked `@`.
-// Call only from a hook of the main loop, or a press.
-async function follow($: EngineInterface) {
-  const here = await locate($, await $.session.cwd())
-  if (here !== null) {
-    await track($, [here.root])
-  }
-  await update($, current, () => here?.root ?? null)
-}
-
 async function reload($: EngineInterface) {
-  await follow($)
+  await note($, [await noteHere($)])
   await refresh($)
 }
 
