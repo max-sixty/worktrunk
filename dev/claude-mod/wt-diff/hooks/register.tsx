@@ -44,7 +44,8 @@ const selected = atom({ plugin: 'wt-diff', key: 'selected' } as const, null)
 const diffs = atom({ plugin: 'wt-diff', key: 'diffs' } as const, {}, {
   shape: 'diffs-1',
 })
-const cursor = atom({ plugin: 'wt-diff', key: 'cursor' } as const, 0)
+// -1 while the pane shows its top, so the first `j` reaches the first file.
+const cursor = atom({ plugin: 'wt-diff', key: 'cursor' } as const, -1)
 
 type Located = { root: string; commonDir: string }
 
@@ -141,7 +142,8 @@ export const register: Register = on => {
     const view = root === null ? undefined : all[root]
     const row = root === null ? undefined : rowOf(root)
     const files = view?.files ?? []
-    const drawn = drawnFiles(files, at)
+    // At the top, the first file is the one shown first.
+    const drawn = drawnFiles(files, Math.max(at, 0))
 
     return (
       <Box flexDirection="column">
@@ -228,7 +230,7 @@ export const register: Register = on => {
                 <Button
                   key={`hunk:${file.path}`}
                   plain
-                  onPress={() => backToTop($, index)}
+                  onPress={() => backToTop($)}
                 >
                   <Text bold>
                     {glyph(file)} {file.path}
@@ -324,11 +326,9 @@ function refresh($: EngineInterface): Promise<void> {
     if (!(await isPaneOpen($))) {
       return
     }
-    await refreshRows($)
+    // The diff is what the pane shows first, so it doesn't wait on `wt list`.
     const root = await read($, selected)
-    if (root !== null) {
-      await refreshDiff($, root)
-    }
+    await Promise.all([refreshRows($), root === null ? null : refreshDiff($, root)])
   })
   return refreshing
 }
@@ -415,7 +415,7 @@ async function reload($: EngineInterface) {
 
 async function select($: EngineInterface, root: string) {
   await update($, selected, () => root)
-  await update($, cursor, () => 0)
+  await update($, cursor, () => -1)
 }
 
 // A pick in the pane also brings the new worktree's top into view, before
@@ -432,11 +432,14 @@ async function move($: EngineInterface, by: number) {
   if (files.length === 0) {
     return
   }
-  const at = await update($, cursor, n => Math.min(files.length - 1, Math.max(0, n + by)))
+  // `k` from the first file goes back to the top.
+  const at = await update($, cursor, n => Math.min(files.length - 1, Math.max(-1, n + by)))
   const file = files[at]
-  if (file !== undefined) {
-    await $.ui.scroll({ to: { key: `hunk:${file.path}` }, in: PANE, block: 'start' })
-  }
+  await $.ui.scroll(
+    file === undefined
+      ? { to: 'start', in: PANE }
+      : { to: { key: `hunk:${file.path}` }, in: PANE, block: 'start' },
+  )
 }
 
 async function jump($: EngineInterface, index: number, path: string) {
@@ -444,8 +447,8 @@ async function jump($: EngineInterface, index: number, path: string) {
   await $.ui.scroll({ to: { key: `hunk:${path}` }, in: PANE, block: 'start' })
 }
 
-async function backToTop($: EngineInterface, index: number) {
-  await update($, cursor, () => index)
+async function backToTop($: EngineInterface) {
+  await update($, cursor, () => -1)
   await $.ui.scroll({ to: 'start', in: PANE })
 }
 
