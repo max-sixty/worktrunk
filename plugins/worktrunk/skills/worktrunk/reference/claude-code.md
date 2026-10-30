@@ -143,7 +143,7 @@ Claude Code asks for confirmation before a session enters an existing worktree b
 
 `/wt-diff` opens a pane beside the conversation that lists the worktrees the session has worked in, with the selected one's [`wt step diff`](https://worktrunk.dev/step/#wt-step-diff) below: everything since the branch left the default branch, committed, uncommitted, and untracked. `/wt-diff <branch>` selects another worktree.
 
-A worktree joins the list when the session starts or moves into it, or edits a file or runs a command in it, subagents included. Until the pane first opens, the plugin only notes those directories and runs no `git` or `wt` commands.
+A worktree joins the list when the session starts or moves into it, or when the session or one of its subagents edits a file there or runs a command there that isn't read-only. Until the pane first opens, the pane only notes those directories, without running `git` or `wt`.
 
 | Key | Action |
 |---|---|

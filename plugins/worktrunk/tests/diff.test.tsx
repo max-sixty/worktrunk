@@ -135,6 +135,13 @@ function host(on: On, runs: string[][], step: Partial<Ran> = {}) {
   on('ui.panes', () => ({ value: isOpen ? [OPEN_PANE] : [] }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: HERE }))
+  // Every directory exists but those under a `gone` one, deleted since.
+  on('fs.stat', (_, e) => {
+    if (e.path.includes('/gone')) {
+      throw new Error(`ENOENT: ${e.path}`)
+    }
+    return { value: { kind: 'dir', size: 0, mtimeMs: 0, isLink: false } }
+  })
   on('tool.call', () => ({ result: {} }))
   on('turn.complete', () => ({ text: '' }))
   on('process.run', (_, e) => {
@@ -219,6 +226,32 @@ test('the pane lists the worktrees the session worked in, and draws one diff', a
     '--no-ext-diff',
     '--src-prefix=a/',
     '--dst-prefix=b/',
+  ])
+})
+
+test('a worktree is still listed after the directory edited in it is deleted', async ($, on) => {
+  const runs: string[][] = []
+  host(on, runs)
+
+  await $.session.start({ cwd: HERE, surface: 'terminal', isInteractive: true })
+  await $.tool.call({
+    tool: 'Write',
+    file_path: `${OTHER}/gone/a/b/c/d/e/new.rs`,
+    content: 'x',
+  })
+  await $.command.run({ command: 'wt-diff', args: '', ...TYPED })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ key: `wt:${OTHER}` })).toBeDefined()
+  await ui.unmount()
+  expect(runs).toContainEqual([
+    'git',
+    '-C',
+    OTHER,
+    'rev-parse',
+    '--path-format=absolute',
+    '--show-toplevel',
+    '--git-common-dir',
   ])
 })
 

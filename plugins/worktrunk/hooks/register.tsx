@@ -290,42 +290,42 @@ async function locate($: EngineInterface, dir: string): Promise<Located | null> 
   if (known !== undefined) {
     return known
   }
-  // A deleted file's directory may be gone; its nearest parent is not.
-  for (let at = dir, tries = 0; tries < 4; at = parentOf(at), tries += 1) {
-    const ran = await $.process
-      .run([
-        'git',
-        '-C',
-        at,
-        'rev-parse',
-        '--path-format=absolute',
-        '--show-toplevel',
-        '--git-common-dir',
-      ])
-      .catch(() => null)
-    if (ran === null) {
-      break
-    }
-    if (ran.exitCode === 0) {
-      const [root, commonDir] = ran.stdout.trim().split('\n')
-      const found = root && commonDir ? { root, commonDir } : null
-      located.set(dir, found)
-      return found
-    }
-    if (!/cannot change to/.test(ran.stderr)) {
-      break
-    }
+  // A directory deleted since it was noted is answered for by its nearest
+  // ancestor that still exists.
+  let at = dir
+  while (at !== '/' && (await $.fs.stat(at).catch(() => undefined))?.kind !== 'dir') {
+    at = parentOf(at)
   }
-  located.set(dir, null)
-  return null
+  const ran = await $.process
+    .run([
+      'git',
+      '-C',
+      at,
+      'rev-parse',
+      '--path-format=absolute',
+      '--show-toplevel',
+      '--git-common-dir',
+    ])
+    .catch(() => null)
+  const [root, commonDir] = ran?.exitCode === 0 ? ran.stdout.trim().split('\n') : []
+  const found = root && commonDir ? { root, commonDir } : null
+  located.set(dir, found)
+  return found
 }
 
 // Notes directories the session worked in, most recent last; no process runs.
+// Directories already the latest noted are left as they are, so a run of calls
+// in one place writes nothing.
 async function note($: EngineInterface, dirs: readonly string[]) {
+  const fresh = [...new Set(dirs)]
+  const latest = (await read($, seen)).slice(-fresh.length).map(one => one.dir)
+  if (fresh.every(dir => latest.includes(dir))) {
+    return
+  }
   const now = await $.clock.now()
   await update($, seen, list => [
-    ...list.filter(one => !dirs.includes(one.dir)),
-    ...[...new Set(dirs)].map(dir => ({ dir, lastAt: now })),
+    ...list.filter(one => !fresh.includes(one.dir)),
+    ...fresh.map(dir => ({ dir, lastAt: now })),
   ])
 }
 
