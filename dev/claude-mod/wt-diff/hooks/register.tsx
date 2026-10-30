@@ -70,10 +70,13 @@ export const register: Register = on => {
   on('command.run', { command: 'wt-diff' }, async ($, e) => {
     const branch = e.args.trim()
     const cwd = await $.session.cwd()
+    // Bare on an open pane, it gives the pane the keys and keeps what it shows.
+    const shown = branch === '' && (await isPaneOpen($)) ? await read($, selected) : null
     const root =
-      branch === ''
+      shown ??
+      (branch === ''
         ? ((await locate($, cwd))?.root ?? null)
-        : await worktreeOf($, cwd, branch)
+        : await worktreeOf($, cwd, branch))
     if (root === null) {
       return {
         text:
@@ -84,7 +87,9 @@ export const register: Register = on => {
     }
     await follow($)
     await track($, [root])
-    await select($, root)
+    if (shown === null) {
+      await select($, root)
+    }
     const opened = await $.ui.open({ id: PANE, title: 'wt step diff', focus: true })
     await refresh($)
     return opened.isPlaced ? {} : { text: 'wt-diff: the pane is open but not shown here.' }
@@ -200,6 +205,10 @@ export const register: Register = on => {
                 label="previous"
                 onPress={() => move($, -1)}
               />
+              {/* The keys above reach the pane only while it holds the keyboard. */}
+              <Text dimColor>
+                {e.props.isFocused ? '↑↓ scroll · esc: prompt' : 'ctrl+x tab: focus'}
+              </Text>
             </Box>
             {view === undefined && <Text dimColor>Loading…</Text>}
             {view?.isTruncated === true && (
