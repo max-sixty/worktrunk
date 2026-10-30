@@ -179,8 +179,25 @@ export const register: Register = on => {
             </Text>
             <Box flexDirection="row" gap={2}>
               <Button key="refresh" plain hotkey="r" label="refresh" onPress={() => reload($)} />
-              <Button key="next" plain hotkey="n" label="next file" onPress={() => move($, 1)} />
-              <Button key="prev" plain hotkey="p" label="previous" onPress={() => move($, -1)} />
+              {/* j and k as in Claude Code's diff dialog; the `action` also
+                  presses each from the prompt by the person's chord for the
+                  diff panel's file list (ctrl+↓ and ctrl+↑ by default). */}
+              <Button
+                key="next"
+                plain
+                hotkey="j"
+                action="app:diffFileListDown"
+                label="next file"
+                onPress={() => move($, 1)}
+              />
+              <Button
+                key="prev"
+                plain
+                hotkey="k"
+                action="app:diffFileListUp"
+                label="previous"
+                onPress={() => move($, -1)}
+              />
             </Box>
             {view === undefined && <Text dimColor>Loading…</Text>}
             {view?.isTruncated === true && (

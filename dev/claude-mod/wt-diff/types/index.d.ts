@@ -54,7 +54,7 @@ declare module 'claude-code' {
       current: string | null
       selected: string | null
       diffs: Shaped<Record<string, DiffView>>
-      /** The file `n` and `p` last moved to, by index into the selected diff. */
+      /** The file `j` and `k` last moved to, by index into the selected diff. */
       cursor: number
     }
   }
