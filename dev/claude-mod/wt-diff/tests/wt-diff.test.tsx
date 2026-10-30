@@ -33,6 +33,17 @@ const PATCH = [
   'similarity index 100%',
   'rename from x.md',
   'rename to y.md',
+  'diff --git a/my file.txt b/my file.txt',
+  'index 7777777..8888888 100644',
+  '--- a/my file.txt\t',
+  '+++ b/my file.txt\t',
+  '@@ -1,2 +1,2 @@',
+  ' a',
+  '-b',
+  '+c',
+  'diff --git a/run.sh b/run.sh',
+  'old mode 100644',
+  'new mode 100755',
   '',
 ].join('\n')
 
@@ -44,6 +55,17 @@ test('a patch splits into its files', async () => {
     ['old.txt', 'deleted', 0, 1],
     ['logo.png', 'binary', 0, 0],
     ['y.md', 'renamed', 0, 0],
+    ['my file.txt', 'modified', 1, 1],
+    ['run.sh', 'modified', 0, 0],
+  ])
+  expect(files.map(f => f.note)).toEqual([
+    null,
+    null,
+    null,
+    null,
+    'from x.md',
+    null,
+    'mode 100644 → 100755',
   ])
   // A CRLF file's carriage return is no control character a drawing takes.
   expect(files[1]?.hunks).toBe('@@ -0,0 +1 @@\n+hello�')
@@ -98,8 +120,11 @@ const PANE = {
   },
 } as const
 
-// Stands for the engine and the host: git and wt answer from fixtures.
-function host(on: On, runs: string[][], diffError?: string) {
+type Ran = { exitCode: number; stdout: string; stderr: string; isStdoutTruncated: boolean }
+
+// Stands for the engine and the host: git and wt answer from fixtures, and
+// `step` stands in for what `wt step diff` answers.
+function host(on: On, runs: string[][], step: Partial<Ran> = {}) {
   mock.clock(on)
   on('command.register', () => ({ value: { command: 'wt-diff' } }))
   let isOpen = false
@@ -121,18 +146,10 @@ function host(on: On, runs: string[][], diffError?: string) {
     if (argv[0] === 'git') {
       return answer(`${dir.startsWith(OTHER) ? OTHER : HERE}\n${HERE}/.git\n`)
     }
-    if (argv[3] === 'step' && diffError !== undefined) {
-      return {
-        value: {
-          exitCode: 1,
-          stdout: '',
-          stderr: diffError,
-          isStdoutTruncated: false,
-          isStderrTruncated: false,
-        },
-      }
+    if (argv[3] === 'step') {
+      return { value: { ...answer(PATCH).value, ...step } }
     }
-    return answer(argv[3] === 'list' ? LIST : PATCH)
+    return answer(LIST)
   })
 }
 
@@ -161,7 +178,7 @@ test('the pane lists the worktrees the session worked in, and draws one diff', a
     // The selected worktree's files, each drawn as a diff unless it has no hunks.
     expect((await ui.find({ key: 'file:src/lib.rs' }))?.text).toMatch(/M src\/lib\.rs \+1 -1/)
     const codes = await ui.findAll({ type: 'Code' })
-    expect(codes.length).toBe(3)
+    expect(codes.length).toBe(4)
     expect(await ui.find({ type: 'Text', text: 'Binary file.' })).toBeDefined()
     await ui.unmount()
   }
@@ -182,7 +199,11 @@ test('the pane lists the worktrees the session worked in, and draws one diff', a
 })
 
 test('a worktree whose diff fails shows why', async ($, on) => {
-  host(on, [], '\u001b[31m✗\u001b[39m No common ancestor with target branch')
+  host(on, [], {
+    exitCode: 1,
+    stdout: '',
+    stderr: '\u001b[31m✗\u001b[39m No common ancestor with target branch',
+  })
 
   await $.session.start({ cwd: HERE, surface: 'terminal', isInteractive: true })
   await $.command.run({ command: 'wt-diff', args: '', ...TYPED })
@@ -190,5 +211,39 @@ test('a worktree whose diff fails shows why', async ($, on) => {
   expect((await ui.find({ type: 'Text', text: /common ancestor/ }))?.text).toBe(
     '✗ No common ancestor with target branch',
   )
+  await ui.unmount()
+})
+
+test('a patch past what a run captures drops its last file and says so', async ($, on) => {
+  host(on, [], { isStdoutTruncated: true })
+
+  await $.session.start({ cwd: HERE, surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'wt-diff', args: '', ...TYPED })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /passed 4 MiB/ })).toBeDefined()
+  expect(await ui.find({ key: 'file:y.md' })).toBeDefined()
+  expect(await ui.find({ key: 'file:run.sh' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('the selected file draws its first hunks even past the budget', async ($, on) => {
+  const hunk = (at: number) =>
+    [`@@ -${at},1 +${at},1 @@`, `-${'a'.repeat(50_000)}`, '+b'].join('\n')
+  const big = [
+    'diff --git a/big.txt b/big.txt',
+    '--- a/big.txt',
+    '+++ b/big.txt',
+    hunk(1),
+    hunk(9),
+  ]
+  host(on, [], { stdout: `${big.join('\n')}\n` })
+
+  await $.session.start({ cwd: HERE, surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'wt-diff', args: '', ...TYPED })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const code = await ui.find({ type: 'Code' })
+  expect(code?.text).toMatch(/^@@ -1,1 \+1,1 @@/)
+  expect(code?.text).not.toMatch(/@@ -9,1/)
+  expect(await ui.find({ type: 'Text', text: /rest of this file/ })).toBeDefined()
   await ui.unmount()
 })

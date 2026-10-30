@@ -7,20 +7,31 @@ import { parsePatch, printable } from './patch'
 /**
  * A pane showing `wt step diff` for each worktree this session worked in.
  *
- * The session counts a worktree as worked in when it starts there, when its
- * shell's directory is in it after a Bash call, when a Bash call changes a file
- * in it, or when Edit, Write or NotebookEdit write a file in it, subagents'
- * edits included. `/wt-diff <branch>` adds a worktree by its branch.
+ * The session counts a worktree as worked in when its own directory has been
+ * there, when Edit, Write or NotebookEdit wrote a file in it, or when a Bash
+ * call changed a file in it or ran there, subagents' calls included.
+ * `/wt-diff <branch>` adds a worktree by its branch. A hook reads
+ * `$.session.cwd()` as its own loop's directory, so the session's directory,
+ * which the pane marks `@`, is read only in hooks of the main loop: at the
+ * session's start, after each of its turns and of its tool calls that were
+ * not read-only, and on a press.
  *
  * Worktrunk computes everything shown: `wt list --format=json` the rows, one
  * call per repository, and `wt step diff` the selected worktree's files. The
- * pane refreshes when it opens, when a worktree is selected, after each tool
- * call that may have written (debounced) and at the end of each turn.
+ * pane refreshes when it opens, when a worktree is selected, after tool calls
+ * that were not read-only (once a burst of them goes quiet) and at the end of
+ * each turn.
  */
 
 const PANE = 'wt-diff'
 // Characters of hunks drawn at once; a drawing draws its first 100,000.
 const BUDGET = 80_000
+// `git -c core.quotePath=false`, through git's environment spelling of `-c`.
+const QUOTE_PATH_OFF = {
+  GIT_CONFIG_COUNT: '1',
+  GIT_CONFIG_KEY_0: 'core.quotePath',
+  GIT_CONFIG_VALUE_0: 'false',
+}
 
 const touched = atom({ plugin: 'wt-diff', key: 'touched' } as const, [], {
   shape: 'touched-1',
@@ -51,7 +62,7 @@ export const register: Register = on => {
       immediate: true,
     })
     const started = await next(e)
-    await track($, [e.cwd])
+    await follow($)
     return started
   })
 
@@ -70,6 +81,7 @@ export const register: Register = on => {
             : `wt-diff: no worktree for branch ${branch}`,
       }
     }
+    await follow($)
     await track($, [root])
     await select($, root)
     const opened = await $.ui.open({ id: PANE, title: 'wt step diff', focus: true })
@@ -80,7 +92,8 @@ export const register: Register = on => {
   // It judges nothing: where it fails, the call goes on as it ran.
   on('tool.call', async ($, e, next) => {
     const ran = await next(e)
-    if (ran.deny !== undefined) {
+    // A call the tool ran read-only changed no file and no directory.
+    if (ran.deny !== undefined || ran.isReadOnly === true) {
       return ran
     }
     const dirs: string[] = []
@@ -89,24 +102,20 @@ export const register: Register = on => {
     } else if (e.tool === 'NotebookEdit') {
       dirs.push(parentOf(e.notebook_path))
     } else if (e.tool === 'Bash') {
-      // A subagent's shell has a directory of its own, which the session's
-      // is not; its writes still show in what the command changed.
-      if (e.agentId === undefined) {
-        dirs.push(await $.session.cwd())
-      }
-      dirs.push(...changedFiles(ran.result).map(parentOf))
-    } else if (e.tool === 'EnterWorktree' || e.tool === 'ExitWorktree') {
-      dirs.push(await $.session.cwd())
-    } else {
-      return ran
+      // Where the command ran: a subagent's own directory, in its calls.
+      dirs.push(await $.session.cwd(), ...changedFiles(ran.result).map(parentOf))
     }
     await track($, dirs)
+    if (e.agentId === undefined) {
+      await follow($)
+    }
     return ran
   }).catch(($, e, next) => next(e))
 
   on('turn.complete', async ($, e, next) => {
     const done = await next(e)
-    if (await isPaneOpen($)) {
+    if (e.agentId === undefined) {
+      await follow($)
       void refresh($)
     }
     return done
@@ -169,11 +178,16 @@ export const register: Register = on => {
               <Text color="diffRemoved">-{sum(files, 'deleted')}</Text>
             </Text>
             <Box flexDirection="row" gap={2}>
-              <Button key="refresh" plain hotkey="r" label="refresh" onPress={() => refresh($)} />
+              <Button key="refresh" plain hotkey="r" label="refresh" onPress={() => reload($)} />
               <Button key="next" plain hotkey="n" label="next file" onPress={() => move($, 1)} />
               <Button key="prev" plain hotkey="p" label="previous" onPress={() => move($, -1)} />
             </Box>
             {view === undefined && <Text dimColor>Loading…</Text>}
+            {view?.isTruncated === true && (
+              <Text color="warning">
+                The diff passed 4 MiB; the files after these are not shown.
+              </Text>
+            )}
             {view !== undefined && view.error !== null && (
               <Text color="error">{view.error}</Text>
             )}
@@ -201,18 +215,27 @@ export const register: Register = on => {
                 >
                   <Text bold>
                     {glyph(file)} {file.path}
+                  </Text>{' '}
+                  <Text dimColor>
+                    {index + 1}/{files.length}
+                    {file.note === null ? '' : ` · ${file.note}`} · ↑ top
                   </Text>
                 </Button>
-                {!drawn.has(index) ? (
-                  <Text dimColor>
-                    {file.added + file.deleted} lines not drawn; select the file to draw it.
-                  </Text>
-                ) : file.hunks === '' ? (
+                {file.hunks === '' ? (
                   <Text dimColor>
                     {file.status === 'binary' ? 'Binary file.' : 'No line changes.'}
                   </Text>
+                ) : drawn.get(index) === undefined ? (
+                  <Text dimColor>
+                    {file.added + file.deleted} lines not drawn; select the file to draw it.
+                  </Text>
                 ) : (
-                  <Code source={file.hunks} format="diff" path={file.path} />
+                  <Box flexDirection="column">
+                    <Code source={drawn.get(index) ?? ''} format="diff" path={file.path} />
+                    {drawn.get(index) !== file.hunks && (
+                      <Text dimColor>The rest of this file is past what one drawing holds.</Text>
+                    )}
+                  </Box>
                 )}
               </Box>
             ))}
@@ -270,8 +293,6 @@ async function track($: EngineInterface, dirs: readonly string[]) {
       { ...found, lastAt: now },
     ])
   }
-  const here = await locate($, await $.session.cwd())
-  await update($, current, () => here?.root ?? null)
   // What the call changed shows once a burst of calls goes quiet.
   refreshTimer?.cancel()
   refreshTimer = $.clock.after(400, () => {
@@ -307,15 +328,15 @@ async function refreshRows($: EngineInterface) {
   }
   const found: Row[] = []
   for (const roots of repos.values()) {
-    const [first] = roots
-    if (first === undefined) {
-      continue
-    }
-    const ran = await $.process
-      .run(['wt', '-C', first, 'list', '--format=json'], { timeoutMs: 60_000 })
-      .catch(() => null)
-    if (ran !== null && ran.exitCode === 0) {
-      found.push(...readRows(ran.stdout, roots))
+    // Any worktree of the repository lists them all; a removed one fails.
+    for (const one of roots) {
+      const ran = await $.process
+        .run(['wt', '-C', one, 'list', '--format=json'], { timeoutMs: 60_000 })
+        .catch(() => null)
+      if (ran !== null && ran.exitCode === 0) {
+        found.push(...readRows(ran.stdout, roots))
+        break
+      }
     }
   }
   await update($, rows, () => found)
@@ -336,18 +357,43 @@ async function refreshDiff($: EngineInterface, root: string) {
         '--src-prefix=a/',
         '--dst-prefix=b/',
       ],
-      { timeoutMs: 60_000 },
+      // Unquoted paths, so a name like `café.txt` reads as written.
+      { timeoutMs: 60_000, env: QUOTE_PATH_OFF },
     )
-    .catch((error: unknown) => ({ exitCode: -1, stdout: '', stderr: String(error) }))
+    .catch((error: unknown) => ({
+      exitCode: -1,
+      stdout: '',
+      stderr: String(error),
+      isStdoutTruncated: false,
+    }))
+  const isTruncated = ran.exitCode === 0 && ran.isStdoutTruncated === true
+  const files = ran.exitCode === 0 ? parsePatch(ran.stdout) : []
   const view: DiffView = {
     fetchedAt: await $.clock.now(),
-    files: ran.exitCode === 0 ? parsePatch(ran.stdout) : [],
+    // The last file of a cut patch may end mid-hunk.
+    files: isTruncated ? files.slice(0, -1) : files,
+    isTruncated,
     error:
       ran.exitCode === 0
         ? null
         : printable(stripAnsi(ran.stderr).trim()) || `wt step diff exited ${ran.exitCode}`,
   }
   await update($, diffs, all => ({ ...all, [root]: view }))
+}
+
+// Where the session's own directory is: worked in, and marked `@`.
+// Call only from a hook of the main loop, or a press.
+async function follow($: EngineInterface) {
+  const here = await locate($, await $.session.cwd())
+  if (here !== null) {
+    await track($, [here.root])
+  }
+  await update($, current, () => here?.root ?? null)
+}
+
+async function reload($: EngineInterface) {
+  await follow($)
+  await refresh($)
 }
 
 async function select($: EngineInterface, root: string) {
@@ -408,17 +454,31 @@ async function worktreeOf(
   }
 }
 
-/** The files whose hunks fit the budget: the one at `at` first, then in order. */
-function drawnFiles(files: readonly FileDiff[], at: number): Set<number> {
-  const drawn = new Set<number>()
-  let used = 0
-  for (const index of [at, ...files.keys()]) {
-    const size = files[index]?.hunks.length
-    if (size !== undefined && !drawn.has(index) && used + size <= BUDGET) {
-      drawn.add(index)
-      used += size
+/**
+ * The hunks each file draws within the budget, by index: the file at `at`
+ * first, cut to its whole hunks that fit, then every other file that fits whole.
+ */
+function drawnFiles(files: readonly FileDiff[], at: number): Map<number, string> {
+  const drawn = new Map<number, string>()
+  const selected = files[at]
+  if (selected !== undefined) {
+    let kept = ''
+    for (const hunk of selected.hunks.split(/\n(?=@@)/)) {
+      const next = kept === '' ? hunk : `${kept}\n${hunk}`
+      if (kept !== '' && next.length > BUDGET) {
+        break
+      }
+      kept = next
     }
+    drawn.set(at, kept)
   }
+  let used = drawn.get(at)?.length ?? 0
+  files.forEach((file, index) => {
+    if (!drawn.has(index) && used + file.hunks.length <= BUDGET) {
+      drawn.set(index, file.hunks)
+      used += file.hunks.length
+    }
+  })
   return drawn
 }
 

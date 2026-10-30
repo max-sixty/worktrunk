@@ -30,6 +30,8 @@ export type FileDiff = {
   status: 'added' | 'deleted' | 'renamed' | 'modified' | 'binary'
   added: number
   deleted: number
+  /** What the hunks don't show: `from <path>` for a rename, a mode change. */
+  note: string | null
   /** The file's hunks from its first `@@`, empty for a binary or mode-only change. */
   hunks: string
 }
@@ -38,6 +40,8 @@ export type FileDiff = {
 export type DiffView = {
   fetchedAt: number
   files: FileDiff[]
+  /** Whether the patch passed what `$.process.run` captures, its last file dropped. */
+  isTruncated: boolean
   error: string | null
 }
 

@@ -4,9 +4,10 @@ import type { FileDiff } from '../types'
  * Splits a `git diff` patch into its files, keeping each file's hunks as the
  * source a `Code` element draws under `format: 'diff'`.
  *
- * Reads the headers git writes with `--no-color --no-ext-diff` and the `a/`
- * and `b/` prefixes: `diff --git a/<old> b/<new>`, then `new file`, `deleted
- * file`, `rename to`, `Binary files` or `---`/`+++` lines, then hunks.
+ * Reads the headers git writes with `--no-color --no-ext-diff`, the `a/` and
+ * `b/` prefixes and `core.quotePath=false`: `diff --git a/<old> b/<new>`, then
+ * `new file`, `deleted file`, `rename to`, `Binary files` or `---`/`+++`
+ * lines, then hunks. Git ends a `---`/`+++` name holding a space with a tab.
  */
 export function parsePatch(patch: string): FileDiff[] {
   const files: FileDiff[] = []
@@ -20,7 +21,10 @@ export function parsePatch(patch: string): FileDiff[] {
     const header = hunkAt === -1 ? lines : lines.slice(0, hunkAt)
     const body = hunkAt === -1 ? [] : lines.slice(hunkAt)
     const named = (prefix: string) =>
-      header.find(line => line.startsWith(prefix))?.slice(prefix.length)
+      header
+        .find(line => line.startsWith(prefix))
+        ?.slice(prefix.length)
+        .replace(/\t$/, '')
     const has = (prefix: string) => header.some(line => line.startsWith(prefix))
 
     // `+++ b/<path>` names the file after the change; a deletion has
@@ -52,11 +56,19 @@ export function parsePatch(patch: string): FileDiff[] {
             ? 'renamed'
             : 'modified'
 
+    const from = named('rename from ')
+    const modes = [named('old mode '), named('new mode ')]
+    const notes = [
+      from === undefined ? null : `from ${from}`,
+      modes[0] === undefined ? null : `mode ${modes[0]} → ${modes[1]}`,
+    ].filter(note => note !== null)
+
     files.push({
       path: printable(path),
       status,
       added,
       deleted,
+      note: notes.length === 0 ? null : printable(notes.join(', ')),
       hunks: printable(body.join('\n').replace(/\n+$/, '')),
     })
   }
