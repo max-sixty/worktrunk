@@ -505,6 +505,82 @@ fn test_promote_swap_bidirectional(mut repo: TestRepo) {
     assert!(!feature_path.join("debug.log").exists());
 }
 
+/// Metadata stays in its physical worktree when tracked config makes Git list
+/// ignored local files individually; ordinary ignored files still transfer.
+#[rstest]
+fn test_promote_keeps_worktree_metadata_with_tracked_sibling(mut repo: TestRepo) {
+    for directory in [".conductor", "config"] {
+        fs::create_dir(repo.root_path().join(directory)).unwrap();
+        fs::write(repo.root_path().join(directory).join("tracked"), "tracked").unwrap();
+    }
+    fs::write(
+        repo.root_path().join(".gitignore"),
+        ".conductor/local\nconfig/local\n",
+    )
+    .unwrap();
+    repo.run_git(&["add", ".conductor/tracked", "config/tracked", ".gitignore"]);
+    repo.run_git(&["commit", "-m", "Track ignored-file directory siblings"]);
+    let feature = repo.add_worktree("feature");
+    for (path, label) in [(repo.root_path(), "main"), (feature.as_path(), "feature")] {
+        for directory in [".conductor", "config"] {
+            fs::write(
+                path.join(directory).join("local"),
+                format!("{label} {directory}"),
+            )
+            .unwrap();
+        }
+    }
+    let output = repo
+        .wt_command()
+        .args(["step", "promote", "feature"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for (path, original, incoming) in [
+        (repo.root_path(), "main", "feature"),
+        (feature.as_path(), "feature", "main"),
+    ] {
+        assert_eq!(
+            fs::read_to_string(path.join(".conductor/local")).unwrap(),
+            format!("{original} .conductor")
+        );
+        assert_eq!(
+            fs::read_to_string(path.join("config/local")).unwrap(),
+            format!("{incoming} config")
+        );
+    }
+
+    // The incoming main branch now tracks a file that must stay local in root.
+    repo.run_git_in(&feature, &["add", "-f", ".conductor/local"]);
+    repo.run_git_in(&feature, &["commit", "-m", "Track incoming metadata"]);
+    let output = repo
+        .wt_command()
+        .args(["step", "promote", "main"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("would be overwritten"));
+    for (path, label) in [(repo.root_path(), "main"), (feature.as_path(), "feature")] {
+        assert_eq!(
+            fs::read_to_string(path.join(".conductor/local")).unwrap(),
+            format!("{label} .conductor")
+        );
+    }
+    assert_eq!(branch_name(&repo, repo.root_path()), "feature");
+    assert_eq!(branch_name(&repo, &feature), "main");
+    for (path, label) in [(repo.root_path(), "feature"), (feature.as_path(), "main")] {
+        assert_eq!(
+            fs::read_to_string(path.join("config/local")).unwrap(),
+            format!("{label} config")
+        );
+    }
+    assert!(!repo.root_path().join(".git/wt/staging/promote").exists());
+}
+
 /// Only main worktree has gitignored files — they should move to the other worktree
 #[rstest]
 fn test_promote_swap_only_main_has_ignored(mut repo: TestRepo) {
@@ -967,6 +1043,132 @@ fn test_promote_swap_does_not_touch_tracked_files(mut repo: TestRepo) {
         fs::read_to_string(feature_path.join("build/main.o")).unwrap(),
         "main obj"
     );
+}
+
+/// A later staging failure restores the earlier files before returning.
+#[rstest]
+#[cfg(unix)]
+fn test_promote_staging_failure_preserves_worktrees(mut repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let readonly = repo.root_path().join("z");
+    fs::create_dir(&readonly).unwrap();
+    fs::write(readonly.join("tracked"), "tracked").unwrap();
+    repo.run_git(&["add", "z/tracked"]);
+    commit_gitignore(&repo, repo.root_path(), "local\nz/local\n");
+    let feature = repo.add_worktree("feature");
+    fs::write(repo.root_path().join("local"), "main data").unwrap();
+    fs::write(readonly.join("local"), "blocked data").unwrap();
+    fs::write(feature.join("local"), "feature data").unwrap();
+
+    // The first file can move; its successor cannot leave a read-only parent.
+    // The tracked sibling makes Git list z/local rather than the whole z/ dir.
+    let entries = repo
+        .git_command()
+        .args([
+            "ls-files",
+            "-z",
+            "--ignored",
+            "--exclude-standard",
+            "-o",
+            "--directory",
+        ])
+        .run()
+        .unwrap();
+    assert!(entries.status.success());
+    assert_eq!(entries.stdout, b"local\0z/local\0");
+    fs::set_permissions(&readonly, fs::Permissions::from_mode(0o555)).unwrap();
+    let output = repo
+        .wt_command()
+        .args(["step", "promote", "feature"])
+        .output();
+    fs::set_permissions(&readonly, fs::Permissions::from_mode(0o755)).unwrap();
+    let output = output.unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("staging z/local"));
+    assert_eq!(branch_name(&repo, repo.root_path()), "main");
+    assert_eq!(branch_name(&repo, &feature), "feature");
+    assert_eq!(
+        fs::read_to_string(repo.root_path().join("local")).unwrap(),
+        "main data"
+    );
+    assert_eq!(
+        fs::read_to_string(feature.join("local")).unwrap(),
+        "feature data"
+    );
+    assert_eq!(
+        fs::read_to_string(readonly.join("local")).unwrap(),
+        "blocked data"
+    );
+    assert!(!repo.root_path().join(".git/wt/staging/promote").exists());
+}
+
+/// A refused checkout restores both branches and staged originals. If a hook
+/// recreates an ignored file, rollback preserves that file and leaves originals
+/// staged for manual recovery instead of overwriting it.
+#[rstest]
+#[case::restored(false)]
+#[case::collision(true)]
+#[cfg(unix)]
+fn test_promote_rollback_preserves_files(mut repo: TestRepo, #[case] collision: bool) {
+    use std::os::unix::fs::PermissionsExt;
+
+    commit_gitignore(&repo, repo.root_path(), "local\n");
+    let feature = repo.add_worktree("feature");
+    let local = repo.root_path().join("local");
+    fs::write(&local, "main data").unwrap();
+    fs::write(feature.join("local"), "feature data").unwrap();
+    let marker = repo.root_path().join(".git/wt/checkout-refused");
+    let hook = repo.root_path().join(".git/hooks/post-checkout");
+    fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\nif [ ! -e {marker} ]; then\n  printf refused > {marker}\n  if {collision}; then\n    printf 'new occupant' > {local}\n  fi\n  exit 1\nfi\n",
+            marker = shell_escape::escape(marker.to_string_lossy()),
+            local = shell_escape::escape(local.to_string_lossy()),
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "promote", "feature"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("branch exchange failed at: detach target"),
+        "{stderr}"
+    );
+    assert_eq!(fs::read_to_string(marker).unwrap(), "refused");
+    assert_eq!(branch_name(&repo, repo.root_path()), "main");
+    assert_eq!(branch_name(&repo, &feature), "feature");
+    let staging = repo.root_path().join(".git/wt/staging/promote");
+    if collision {
+        assert!(stderr.contains("Recover staged files from:"), "{stderr}");
+        assert!(stderr.contains(".git/wt/staging/promote"), "{stderr}");
+        assert_eq!(fs::read_to_string(local).unwrap(), "new occupant");
+        assert_eq!(
+            fs::read_to_string(staging.join("a/local")).unwrap(),
+            "main data"
+        );
+        assert_eq!(
+            fs::read_to_string(staging.join("b/local")).unwrap(),
+            "feature data"
+        );
+        assert!(!feature.join("local").exists());
+    } else {
+        assert!(!stderr.contains("Recover staged files from:"), "{stderr}");
+        assert_eq!(fs::read_to_string(local).unwrap(), "main data");
+        assert_eq!(
+            fs::read_to_string(feature.join("local")).unwrap(),
+            "feature data"
+        );
+        assert!(!staging.exists());
+    }
 }
 
 /// Test that promote bails with guidance when stale staging directory exists
