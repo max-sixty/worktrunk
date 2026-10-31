@@ -44,6 +44,17 @@ const PATCH = [
   'diff --git a/run.sh b/run.sh',
   'old mode 100644',
   'new mode 100755',
+  // Names git still quotes under `core.quotePath=false`.
+  'diff --git "a/q\\"uote.png" "b/q\\"uote.png"',
+  'index f584f40..6bf43ff 100644',
+  'Binary files "a/q\\"uote.png" and "b/q\\"uote.png" differ',
+  'diff --git "a/tab\\tname.txt" "b/tab\\tname.txt"',
+  'index 587be6b..975fbec 100644',
+  '--- "a/tab\\tname.txt"',
+  '+++ "b/tab\\tname.txt"',
+  '@@ -1 +1 @@',
+  '-x',
+  '+y',
   '',
 ].join('\n')
 
@@ -57,6 +68,8 @@ test('a patch splits into its files', async () => {
     ['y.md', 'renamed', 0, 0],
     ['my file.txt', 'modified', 1, 1],
     ['run.sh', 'modified', 0, 0],
+    ['q"uote.png', 'binary', 0, 0],
+    ['tab\tname.txt', 'modified', 1, 1],
   ])
   expect(files.map(f => f.note)).toEqual([
     null,
@@ -66,6 +79,8 @@ test('a patch splits into its files', async () => {
     'from x.md',
     null,
     'mode 100644 → 100755',
+    null,
+    null,
   ])
   // A CRLF file's carriage return is no control character a drawing takes.
   expect(files[1]?.hunks).toBe('@@ -0,0 +1 @@\n+hello�')
@@ -209,11 +224,21 @@ test('the pane lists the worktrees the session worked in, and draws one diff', a
     // The selected worktree's files, each drawn as a diff unless it has no hunks.
     expect((await ui.find({ key: 'file:src/lib.rs' }))?.text).toMatch(/M src\/lib\.rs \+1 -1/)
     const codes = await ui.findAll({ type: 'Code' })
-    expect(codes.length).toBe(4)
+    expect(codes.length).toBe(5)
     expect(await ui.find({ type: 'Text', text: 'Binary file.' })).toBeDefined()
     await ui.unmount()
   }
 
+  // The rows came in the envelope the pane reads, whatever the person's config.
+  expect(runs).toContainEqual([
+    'wt',
+    '-C',
+    HERE,
+    '--config-set',
+    'list.json-schema=2',
+    'list',
+    '--format=json',
+  ])
   // The diff came from Worktrunk, rooted at the selected worktree.
   expect(runs).toContainEqual([
     'wt',
@@ -278,8 +303,8 @@ test('a patch past what a run captures drops its last file and says so', async (
   await $.command.run({ command: 'wt-diff', args: '', ...TYPED })
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: /passed 4 MiB/ })).toBeDefined()
-  expect(await ui.find({ key: 'file:y.md' })).toBeDefined()
-  expect(await ui.find({ key: 'file:run.sh' })).toBeUndefined()
+  expect(await ui.find({ key: 'file:run.sh' })).toBeDefined()
+  expect(await ui.find({ key: 'file:tab\tname.txt' })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -301,6 +326,28 @@ test('the selected file draws its first hunks even past the budget', async ($, o
   const code = await ui.find({ type: 'Code' })
   expect(code?.text).toMatch(/^@@ -1,1 \+1,1 @@/)
   expect(code?.text).not.toMatch(/@@ -9,1/)
+  expect(await ui.find({ type: 'Text', text: /rest of this file/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a hunk past the budget draws its start, under a recounted header', async ($, on) => {
+  const minified = [
+    'diff --git a/min.js b/min.js',
+    'new file mode 100644',
+    '--- /dev/null',
+    '+++ b/min.js',
+    '@@ -0,0 +1,2 @@',
+    `+${'x'.repeat(120_000)}`,
+    '+y',
+  ]
+  host(on, [], { stdout: `${minified.join('\n')}\n` })
+
+  await $.session.start({ cwd: HERE, surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'wt-diff', args: '', ...TYPED })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const code = await ui.find({ type: 'Code' })
+  expect(code?.text).toMatch(/^@@ -0,0 \+1,1 @@\n\+x+$/)
+  expect(code?.text.length).toBeLessThanOrEqual(80_000)
   expect(await ui.find({ type: 'Text', text: /rest of this file/ })).toBeDefined()
   await ui.unmount()
 })

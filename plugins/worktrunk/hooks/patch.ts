@@ -7,7 +7,8 @@ import type { FileDiff } from '../types'
  * Reads the headers git writes with `--no-color --no-ext-diff`, the `a/` and
  * `b/` prefixes and `core.quotePath=false`: `diff --git a/<old> b/<new>`, then
  * `new file`, `deleted file`, `rename to`, `Binary files` or `---`/`+++`
- * lines, then hunks. Git ends a `---`/`+++` name holding a space with a tab.
+ * lines, then hunks. Git ends a `---`/`+++` name holding a space with a tab,
+ * and still C-quotes one holding a tab, newline, quote or backslash.
  */
 export function parsePatch(patch: string): FileDiff[] {
   const files: FileDiff[] = []
@@ -20,21 +21,28 @@ export function parsePatch(patch: string): FileDiff[] {
     const hunkAt = lines.findIndex(line => line.startsWith('@@'))
     const header = hunkAt === -1 ? lines : lines.slice(0, hunkAt)
     const body = hunkAt === -1 ? [] : lines.slice(hunkAt)
-    const named = (prefix: string) =>
-      header
-        .find(line => line.startsWith(prefix))
-        ?.slice(prefix.length)
-        .replace(/\t$/, '')
+    const named = (prefix: string) => {
+      const rest = header.find(line => line.startsWith(prefix))?.slice(prefix.length)
+      return rest === undefined ? undefined : unquote(rest)
+    }
+    // A `---` or `+++` name without its side's prefix; `/dev/null` has none.
+    const side = (prefix: string, at: string) => {
+      const name = named(prefix)
+      return name?.startsWith(at) === true ? name.slice(at.length) : undefined
+    }
     const has = (prefix: string) => header.some(line => line.startsWith(prefix))
 
     // `+++ b/<path>` names the file after the change; a deletion has
     // `+++ /dev/null` and names it on `---`. A file with no hunks (binary,
     // mode-only, pure rename) names it only on `diff --git`.
+    const quoted = / ("(?:[^"\\]|\\.)*")$/.exec(first)?.[1]
     const path =
       named('rename to ') ??
-      named('+++ b/') ??
-      named('--- a/') ??
-      first.replace(/^diff --git a\/.* b\//, '')
+      side('+++ ', 'b/') ??
+      side('--- ', 'a/') ??
+      (quoted === undefined
+        ? first.replace(/^diff --git a\/.* b\//, '')
+        : unquote(quoted).replace(/^b\//, ''))
 
     let added = 0
     let deleted = 0
@@ -73,6 +81,31 @@ export function parsePatch(patch: string): FileDiff[] {
     })
   }
   return files
+}
+
+const ESCAPES: Record<string, string> = {
+  a: String.fromCharCode(7),
+  b: '\b',
+  f: '\f',
+  n: '\n',
+  r: '\r',
+  t: '\t',
+  v: '\v',
+}
+
+/**
+ * A name as git wrote it on a header line: C-quoted and escaped, or bare and
+ * ended with a tab when it holds a space.
+ */
+function unquote(name: string): string {
+  if (!name.startsWith('"')) {
+    return name.replace(/\t$/, '')
+  }
+  return name
+    .slice(1, name.lastIndexOf('"'))
+    .replace(/\\([0-7]{3}|.)/g, (_, code: string) =>
+      code.length === 3 ? String.fromCharCode(Number.parseInt(code, 8)) : (ESCAPES[code] ?? code),
+    )
 }
 
 /**

@@ -27,6 +27,9 @@ import { parsePatch, printable } from './patch'
 const PANE = 'wt-diff'
 // Characters of hunks drawn at once; a drawing draws its first 100,000.
 const BUDGET = 80_000
+// `wt list` JSON in the envelope this module reads, whatever schema the
+// person's config picks.
+const LIST_JSON = ['--config-set', 'list.json-schema=2', 'list', '--format=json']
 // `git -c core.quotePath=false`, through git's environment spelling of `-c`.
 const QUOTE_PATH_OFF = {
   GIT_CONFIG_COUNT: '1',
@@ -390,7 +393,7 @@ async function refreshRows($: EngineInterface) {
     // Any worktree of the repository lists them all; a removed one fails.
     for (const one of roots) {
       const ran = await $.process
-        .run(['wt', '-C', one, 'list', '--format=json'], { timeoutMs: 60_000 })
+        .run(['wt', '-C', one, ...LIST_JSON], { timeoutMs: 60_000 })
         .catch(() => null)
       if (ran !== null && ran.exitCode === 0) {
         found.push(...readRows(ran.stdout, roots))
@@ -491,7 +494,7 @@ async function worktreeOf(
   branch: string,
 ): Promise<string | null> {
   const ran = await $.process
-    .run(['wt', '-C', cwd, 'list', '--format=json'], { timeoutMs: 60_000 })
+    .run(['wt', '-C', cwd, ...LIST_JSON], { timeoutMs: 60_000 })
     .catch(() => null)
   if (ran === null || ran.exitCode !== 0) {
     return null
@@ -508,7 +511,8 @@ async function worktreeOf(
 
 /**
  * The hunks each file draws within the budget, by index: the file at `at`
- * first, cut to its whole hunks that fit, then every other file that fits whole.
+ * first, cut to its whole hunks that fit (or the start of its first, when even
+ * that does not), then every other file that fits whole.
  */
 function drawnFiles(files: readonly FileDiff[], at: number): Map<number, string> {
   const drawn = new Map<number, string>()
@@ -517,7 +521,8 @@ function drawnFiles(files: readonly FileDiff[], at: number): Map<number, string>
     let kept = ''
     for (const hunk of selected.hunks.split(/\n(?=@@)/)) {
       const next = kept === '' ? hunk : `${kept}\n${hunk}`
-      if (kept !== '' && next.length > BUDGET) {
+      if (next.length > BUDGET) {
+        kept = kept === '' ? hunkStart(hunk, BUDGET) : kept
         break
       }
       kept = next
@@ -532,6 +537,33 @@ function drawnFiles(files: readonly FileDiff[], at: number): Map<number, string>
     }
   })
   return drawn
+}
+
+/**
+ * The lines of `hunk` that fit in `room` characters, under a header recounted
+ * to them so the start still parses as a hunk; a first line longer than the
+ * room is cut short.
+ */
+function hunkStart(hunk: string, room: number): string {
+  const [header = '', ...lines] = hunk.split('\n')
+  const kept: string[] = []
+  let size = header.length
+  for (const line of lines) {
+    if (size + 1 + line.length > room) {
+      if (kept.length === 0) {
+        kept.push(line.slice(0, Math.max(1, room - size - 1)))
+      }
+      break
+    }
+    kept.push(line)
+    size += 1 + line.length
+  }
+  const before = kept.filter(line => /^[ -]/.test(line)).length
+  const after = kept.filter(line => /^[ +]/.test(line)).length
+  return [
+    header.replace(/^@@ -(\d+)(,\d+)? \+(\d+)(,\d+)? @@/, `@@ -$1,${before} +$3,${after} @@`),
+    ...kept,
+  ].join('\n')
 }
 
 function glyph(file: FileDiff): string {
