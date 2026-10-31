@@ -420,7 +420,9 @@ pub(crate) struct SwitchArgs {
     #[arg(last = true, requires = "execute")]
     pub(crate) execute_args: Vec<String>,
 
-    /// Remove stale paths at target
+    /// Back up blocking paths outside worktrees
+    ///
+    /// Paths inside or containing registered worktrees or Git storage are refused.
     #[arg(long, requires = "branch")]
     pub(crate) clobber: bool,
 
@@ -782,7 +784,7 @@ Requires `gh` (GitHub), `glab` (GitLab), or an equivalent CLI installed and auth
 
 - **Branch doesn't exist** — Use `--create`, or check `wt list --branches`
 - **Path occupied** — Another worktree is at the target path; switch to it or remove it
-- **Stale directory** — Use `--clobber` to remove a non-worktree directory at the target path
+- **Stale path** — Use `--clobber` to back it up; paths inside or containing registered worktrees or Git storage are protected
 
 To change which branch a worktree is on, use `git switch` inside that worktree.
 

@@ -9572,7 +9572,7 @@ fn test_switch_path_rejects_directory_overlapping_repo(repo: TestRepo) {
 
     // `--path ..` holds the repository and `--path src` sits inside it; with
     // `--clobber` either would be moved aside, so both are refused outright.
-    for (path, relation) in [("..", "contains"), ("src", "is inside")] {
+    for (path, relation) in [("..", "contains"), ("src", "is inside"), ("/", "contains")] {
         let output = repo
             .wt_command()
             .args([
@@ -9592,6 +9592,131 @@ fn test_switch_path_rejects_directory_overlapping_repo(repo: TestRepo) {
 
     assert!(repo.root_path().join("src").is_dir());
     assert!(repo.root_path().join(".git").exists());
+}
+
+/// A bare Git directory has no worktree occupant to prevent clobber. The
+/// explicit path and a sibling template resolving to it must both refuse.
+#[rstest]
+#[case::explicit(true)]
+#[case::template(false)]
+fn test_switch_path_never_moves_git_common_dir(#[case] explicit: bool) {
+    let repo = TestRepo::with_initial_commit();
+    repo.write_test_config(r#"worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}""#);
+    let git_dir = repo.home_path().join("git-data");
+    repo.run_git(&["clone", "--bare", ".", git_dir.to_str().unwrap()]);
+    let mut command = repo.wt_command();
+    command
+        .current_dir(&git_dir)
+        .args(["switch", "--create", "git-data", "--clobber"]);
+    if explicit {
+        command.arg("--path").arg(git_dir.join("."));
+    }
+    let output = command.output().unwrap();
+    assert!(!output.status.success(), "explicit={explicit}: {output:?}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        insta::assert_snapshot!("switch_path_git_common_dir", stderr);
+    });
+    assert!(git_dir.join("HEAD").is_file());
+}
+
+/// A linked checkout's Git linkage file must survive template clobbering.
+#[rstest]
+fn test_switch_clobber_preserves_git_linkage_file(mut repo: TestRepo) {
+    let linked = repo.add_worktree("source");
+    let git_entry = linked.join(".git");
+    let original = fs::read(&git_entry).unwrap();
+    repo.write_test_config(&format!(
+        "worktree-path = {}",
+        serde_json::to_string(git_entry.to_str().unwrap()).unwrap()
+    ));
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "feature", "--clobber", "--yes"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("is inside"),
+        "{output:?}"
+    );
+    assert_eq!(fs::read(&git_entry).unwrap(), original);
+    let head = repo
+        .git_command()
+        .current_dir(&linked)
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .run()
+        .unwrap();
+    assert!(head.status.success(), "{head:?}");
+    assert_eq!(String::from_utf8_lossy(&head.stdout).trim(), "source");
+}
+
+/// An entry inside a checkout stays protected even when its symlink referent
+/// is outside. Explicit and template destinations use the same policy.
+#[rstest]
+#[case::explicit(true)]
+#[case::template(false)]
+#[cfg(unix)]
+fn test_switch_clobber_preserves_symlink_inside_worktree(repo: TestRepo, #[case] explicit: bool) {
+    let target = repo.home_path().join("outside");
+    fs::create_dir(&target).unwrap();
+    let destination = repo.root_path().join("link");
+    std::os::unix::fs::symlink(&target, &destination).unwrap();
+    repo.write_test_config(&format!(
+        "worktree-path = {}",
+        serde_json::to_string(destination.to_str().unwrap()).unwrap()
+    ));
+    let mut command = repo.wt_command();
+    command.args(["switch", "--create", "feature", "--clobber", "--yes"]);
+    if explicit {
+        command.arg("--path").arg(&destination);
+    }
+    let output = command.output().unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("is inside"),
+        "{output:?}"
+    );
+    assert_eq!(fs::read_link(&destination).unwrap(), target);
+}
+
+/// Nested worktree creation remains valid, but an existing ignored directory
+/// within a checkout cannot be backed up by clobbering.
+#[rstest]
+fn test_switch_nested_template_requires_absent_destination(repo: TestRepo) {
+    repo.write_test_config(r#"worktree-path = ".worktrees/{{ branch | sanitize }}""#);
+    fs::write(repo.root_path().join(".git/info/exclude"), ".worktrees/\n").unwrap();
+    let stale = repo.root_path().join(".worktrees/feature");
+    fs::create_dir_all(&stale).unwrap();
+    fs::write(stale.join("keep.txt"), "stale contents").unwrap();
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "feature", "--clobber", "--yes"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("is inside"),
+        "{output:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(stale.join("keep.txt")).unwrap(),
+        "stale contents"
+    );
+    assert!(!stale.join(".git").exists());
+    assert_eq!(fs::read_dir(stale.parent().unwrap()).unwrap().count(), 1);
+
+    let fresh = repo.root_path().join(".worktrees/fresh");
+    assert!(!fresh.exists());
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "fresh", "--clobber", "--yes"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(fresh.join(".git").is_file());
 }
 
 /// Invalid branch names are rejected before worktree creation.

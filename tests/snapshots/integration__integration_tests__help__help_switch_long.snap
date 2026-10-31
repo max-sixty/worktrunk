@@ -96,7 +96,9 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
           Template example: [1m-x code -- '{{ worktree_path }}'[0m opens VS Code at the worktree, [1m-x tmux -- new -s '{{ branch | sanitize }}'[0m starts a tmux session named after the branch.[0m
 
       [1m[36m--clobber[0m
-          Remove stale paths at target
+          Back up blocking paths outside worktrees[0m
+          
+          Paths inside or containing registered worktrees or Git storage are refused.[0m
 
       [1m[36m--no-cd[0m
           Skip directory change after switching[0m
@@ -283,7 +285,7 @@ Requires [2mgh[0m (GitHub), [2mglab[0m (GitLab), or an equivalent CLI instal
 
 - [1mBranch doesn't exist[0m — Use [2m--create[0m, or check [2mwt list --branches[0m
 - [1mPath occupied[0m — Another worktree is at the target path; switch to it or remove it
-- [1mStale directory[0m — Use [2m--clobber[0m to remove a non-worktree directory at the target path
+- [1mStale path[0m — Use [2m--clobber[0m to back it up; paths inside or containing registered worktrees or Git storage are protected
 
 To change which branch a worktree is on, use [2mgit switch[0m inside that worktree.
 

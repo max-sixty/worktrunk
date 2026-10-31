@@ -891,7 +891,7 @@ Move all mismatched worktrees:
 $ wt step relocate
 ```
 
-Auto-commit and clobber blockers (never fails):
+Auto-commit and back up blockers:
 
 ```console
 $ wt step relocate --commit --clobber
@@ -911,9 +911,10 @@ this by using a temporary location.
 
 ### Clobbering
 
-With `--clobber`, non-worktree paths at target locations are moved to
+With `--clobber`, blocking paths at target locations are moved to
 `<path>.bak.<timestamp>` before relocating, never overwriting an existing
-backup.
+backup. Paths inside or containing registered worktrees or Git storage are
+refused.
 
 ### Main worktree behavior
 
@@ -955,9 +956,10 @@ Options:
           Commit uncommitted changes before relocating
 
       --clobber
-          Backup non-worktree paths at target locations
+          Back up blocking paths outside worktrees
 
-          Moves blocking paths to <path>.bak.<timestamp>.
+          Moves blocking paths to <path>.bak.<timestamp>. Paths inside or containing registered
+          worktrees or Git storage are refused.
 
   -h, --help
           Print help (see a summary with '-h')

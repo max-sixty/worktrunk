@@ -1570,8 +1570,8 @@ impl Repository {
     /// |----------------------------|----------------------------|-------------------------------|
     /// | Bare `.git`                | `core.bare = true`         | `git_common_dir` is the repo  |
     /// | Submodule `.git/modules/X` | `core.worktree` set by git | `rev-parse --show-toplevel`   |
-    /// | Separate git dir           | `<common>/gitdir` backlink | `parent(backlink)`            |
-    /// | Normal `.git`              | none of the above          | `parent(git_common_dir)`      |
+    /// | Separate git dir           | Backlink or primary checkout discovery | Confirmed checkout root |
+    /// | Normal `.git`              | Parent points back to common dir | `parent(git_common_dir)` |
     ///
     /// Submodules need `core.worktree` because their git data lives in the
     /// parent's `.git/modules/` — the `parent(.git)` rule would point at
@@ -1584,19 +1584,19 @@ impl Repository {
     /// discovery. So when the bulk map reports it, we delegate to
     /// `rev-parse --show-toplevel` and let git apply its scope rules; if
     /// the probe fails (non-local value, git ignored it) we fall through
-    /// to the normal-repo path. The common case — no `core.worktree`
-    /// anywhere — skips the subprocess, which is the point.
+    /// to discovery and the confirmed normal-repo parent.
     ///
     /// A repository whose git directory lives outside its work tree
     /// (`--separate-git-dir`) has neither signal, and `parent(git_common_dir)`
     /// names the store's parent rather than the work tree. The backlink git
-    /// writes there covers it where it exists; see
-    /// `separate_git_dir_work_tree` for when that is.
+    /// writes there covers it where it exists; otherwise discovery from the
+    /// primary checkout confirms its root. Linked-checkout discovery cannot
+    /// identify an unrepaired primary checkout, so it fails rather than guessing.
     ///
     /// # Errors
     ///
-    /// Returns an error if the bulk config read fails (e.g., git timeout). This
-    /// surfaces the failure early rather than caching a potentially wrong path.
+    /// Returns an error if discovery fails or no main worktree path can be
+    /// confirmed, rather than caching a potentially wrong path.
     pub fn repo_path(&self) -> anyhow::Result<&Path> {
         self.cache
             .repo_path
@@ -1624,11 +1624,25 @@ impl Repository {
                     return Ok(work_tree);
                 }
 
-                Ok(self
+                // An unrepaired separate Git store has no backlink. When
+                // discovery is in its primary checkout, Git directly confirms
+                // both the root and its ownership of this common directory.
+                let current = self.current_worktree();
+                if let Some(root) = current.prewarm_info()?.root
+                    && current.git_dir()? == self.git_common_dir()
+                {
+                    return Ok(root);
+                }
+
+                let parent = self
                     .git_common_dir
                     .parent()
                     .expect("Git directory has no parent")
-                    .to_path_buf())
+                    .to_path_buf();
+                if Self::git_dir_at(&parent).as_deref() == Some(self.git_common_dir()) {
+                    return Ok(parent);
+                }
+                anyhow::bail!("Cannot determine main worktree path; run git worktree repair from the main worktree")
             })
             .map(|p| p.as_path())
     }
@@ -1651,8 +1665,8 @@ impl Repository {
     /// [`registration_worktree_path`] reads it. Only
     /// `git worktree repair` writes it; `git init --separate-git-dir` and
     /// `git clone --separate-git-dir` leave the store with no backlink, so a
-    /// repository that has never been repaired records its work tree nowhere
-    /// and still falls through to `parent(git_common_dir)`. Running
+    /// repository that has never been repaired records its work tree nowhere.
+    /// Discovery from that checkout can still confirm its root. Running
     /// `git worktree repair` from the work tree is what materializes it.
     ///
     /// The backlink is one-way, so it is confirmed rather than trusted:
@@ -1660,9 +1674,8 @@ impl Repository {
     /// names, and only a work tree that points back at this common dir is
     /// accepted. A backlink left behind by a work tree that has since moved,
     /// been deleted, or been re-pointed at another repository resolves to
-    /// something else and falls through to `parent(git_common_dir)` — the
-    /// same answer as before, rather than a path that no longer holds this
-    /// repository. That round trip is also why a normal repository or a
+    /// something else and is declined rather than protecting an unrelated
+    /// directory. That round trip is also why a normal repository or a
     /// submodule can't misfire here on a stray `gitdir` file.
     fn separate_git_dir_work_tree(&self) -> Option<PathBuf> {
         let work_tree = registration_worktree_path(&self.git_common_dir).ok()?;

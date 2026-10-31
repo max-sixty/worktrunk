@@ -22,7 +22,7 @@ use worktrunk::git::{
     ErrorExt, ForgeKind, GitError, GitRemoteUrl, RefType, Repository, ResolvedWorktree, Selector,
     SwitchSuggestionCtx, WorktreeId, branch_tracks_ref, current_or_recover, resolve_input_path,
 };
-use worktrunk::path::{canonicalize_with_parents, format_path_for_display};
+use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::{ShellEscapeMode, shell_cwd};
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, suggest_command,
@@ -33,7 +33,7 @@ use worktrunk::utils::escape_controls;
 use super::resolve::{compute_worktree_path, offer_bare_repo_worktree_path_fix};
 use super::types::{CreationMethod, RefIdentity, SwitchBranchInfo, SwitchPlan, SwitchResult};
 use crate::cli::{SwitchArgs, SwitchFormat};
-use crate::commands::backup::back_up_clobbered_path_now;
+use crate::commands::backup::{back_up_clobbered_path_now, require_safe_clobber_target};
 use crate::commands::command_approval::approve_hooks;
 use crate::commands::command_executor::FailureStrategy;
 use crate::commands::command_executor::{CommandContext, build_hook_context};
@@ -837,6 +837,7 @@ fn validate_worktree_creation(
     if !path.exists() {
         return Ok(false);
     }
+    require_safe_clobber_target(repo, path)?;
     if clobber {
         return Ok(true);
     }
@@ -1040,10 +1041,7 @@ fn plan_switch(
     // Phase 3: Compute expected path. `--path` replaces the template outright.
     let from_path_flag = requested_path.is_some();
     let expected_path = match requested_path {
-        Some(path) => {
-            reject_path_overlapping_worktrees(repo, &path)?;
-            path
-        }
+        Some(path) => path,
         None => compute_worktree_path(repo, &branch, config)?,
     };
 
@@ -1066,56 +1064,6 @@ fn plan_switch(
         needs_clobber_backup,
         new_previous,
     })
-}
-
-/// Refuse a `--path` directory that holds a worktree or the repository, that
-/// sits inside one, or that is its git directory.
-///
-/// Such a directory always exists, so `validate_worktree_creation` would
-/// otherwise offer `--clobber`, which moves it aside: `--path ..` would move
-/// the repository itself, and `--path src` a tracked directory of the current
-/// worktree. The template never produces these; a typed path easily does. A
-/// directory that does not exist yet is left alone — nesting a new worktree
-/// inside another is git's call, not a clobber.
-fn reject_path_overlapping_worktrees(repo: &Repository, requested: &Path) -> anyhow::Result<()> {
-    if !requested.exists() {
-        return Ok(());
-    }
-    // The comparison form: `dunce` keeps `\\?\` on a deep Windows path and
-    // drops it from a short root, which `starts_with` reads as unrelated.
-    let requested = canonicalize_with_parents(requested);
-    let registered = repo
-        .list_worktrees()?
-        .iter()
-        .map(|wt| (wt.path.as_path(), true));
-    for (existing, is_worktree) in registered.chain([(repo.git_common_dir(), false)]) {
-        let existing = canonicalize_with_parents(existing);
-        if existing == requested {
-            // A worktree at exactly this path is `validate_worktree_creation`'s
-            // to report, naming its branch. The git directory has no such
-            // check; in a bare repository it is the repository itself.
-            if is_worktree {
-                continue;
-            }
-            let requested = format_path_for_display(&requested);
-            bail!(cformat!(
-                "<bold>--path {requested}</> is the repository's git directory; choose a directory outside the repository and its worktrees"
-            ));
-        }
-        let relation = if existing.starts_with(&requested) {
-            "contains"
-        } else if requested.starts_with(&existing) {
-            "is inside"
-        } else {
-            continue;
-        };
-        let requested = format_path_for_display(&requested);
-        let existing = format_path_for_display(&existing);
-        bail!(cformat!(
-            "<bold>--path {requested}</> {relation} <bold>{existing}</>; choose a directory outside the repository and its worktrees"
-        ));
-    }
-    Ok(())
 }
 
 /// Preserve the filesystem spelling Git and downstream commands can operate
@@ -1183,7 +1131,7 @@ fn execute_switch(
                 // name. A name already taken (a same-second clobber, or one
                 // that raced in after planning) is never overwritten — the move
                 // falls back to the next free `-N` name.
-                let backup_path = back_up_clobbered_path_now(&worktree_path)?;
+                let backup_path = back_up_clobbered_path_now(repo, &worktree_path)?;
 
                 let path_display = worktrunk::path::format_path_for_display(&worktree_path);
                 let backup_display = worktrunk::path::format_path_for_display(&backup_path);

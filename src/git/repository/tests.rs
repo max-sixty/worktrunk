@@ -423,11 +423,10 @@ fn repo_path_ignores_non_local_core_worktree() {
     // Regression test: `git config --list -z` merges system + global + local
     // scope, but git only honors `core.worktree` from local config. A user
     // with a stray global `core.worktree` in a normal repo should still see
-    // `parent(.git)` as the repo root — `rev-parse --show-toplevel` fails
-    // from inside `.git` in that case and we fall through.
-    let tmp = tempfile::tempdir().unwrap();
-    let git_dir = tmp.path().join(".git");
-    std::fs::create_dir(&git_dir).unwrap();
+    // the actual checkout root rather than the merged config value.
+    let test = TestRepo::with_initial_commit();
+    let root = dunce::canonicalize(test.root_path()).unwrap();
+    let git_dir = root.join(".git");
 
     let cache = RepoCache::default();
     let mut map: IndexMap<String, Vec<String>> = IndexMap::new();
@@ -441,15 +440,15 @@ fn repo_path_ignores_non_local_core_worktree() {
     cache.all_config.set(RwLock::new(map)).unwrap();
 
     let repo = super::Repository {
-        discovery_path: tmp.path().to_path_buf(),
+        discovery_path: root.clone(),
         git_common_dir: git_dir.clone(),
         cache: Arc::new(cache),
         locks: Arc::new(super::RepositoryLocks::default()),
         temporary_object_store: None,
     };
 
-    // Should fall through to parent(git_common_dir), ignoring the bulk value.
-    assert_eq!(repo.repo_path().unwrap(), tmp.path());
+    // The merged value must not replace Git's actual checkout root.
+    assert_eq!(repo.repo_path().unwrap(), root);
 }
 
 #[test]
@@ -2749,7 +2748,7 @@ fn list_worktrees_names_the_work_tree_of_a_separate_git_dir_repo() {
 fn repo_path_declines_a_stale_separate_git_dir_backlink() {
     // The backlink is one-way, so `repo_path` confirms it: a work tree that
     // has moved away leaves a `gitdir` file naming a path that no longer
-    // points back. Decline it and retain the conventional parent fallback.
+    // points back. Decline it rather than inventing a checkout at the store's parent.
     use super::Repository;
 
     let (_tmp, store, work_tree) = build_separate_git_dir_layout();
@@ -2765,7 +2764,7 @@ fn repo_path_declines_a_stale_separate_git_dir_backlink() {
     assert!(out.status.success(), "git init failed");
 
     let repo = Repository::at(&store).unwrap();
-    assert_eq!(repo.repo_path().unwrap(), store.parent().unwrap());
+    assert!(repo.repo_path().is_err());
 }
 
 #[test]

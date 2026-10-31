@@ -54,4 +54,4 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-✗ --path [TEMP]/repo is the repository's git directory; choose a directory outside the repository and its worktrees
+✗ Worktree path [TEMP]/repo contains [TEMP]/repo; choose a directory outside the repository and its worktrees
