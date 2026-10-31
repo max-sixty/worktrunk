@@ -29,7 +29,7 @@ use worktrunk::git::GitError;
 use worktrunk::git::IntegrationReason;
 use worktrunk::git::Repository;
 use worktrunk::git::{
-    BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemoveOptions,
+    BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemoveOptions, StagedRemoval,
     delete_branch_if_safe, execute_branch_deletion, remove_worktree_with_cleanup,
     stage_worktree_removal,
 };
@@ -52,10 +52,9 @@ use super::shell_integration::{
 // Foreground Trash Cleanup
 // ============================================================================
 
-/// Walk the staged trash directory, unlinking files with a TTY spinner.
+/// Unlink prepared checkout files with a TTY spinner.
 ///
-/// Used by the foreground removal path after `remove_worktree_with_cleanup`
-/// renames the worktree into `<git-common-dir>/wt/trash/`. The spinner shows
+/// Used by the foreground path after `remove_worktree_with_cleanup`. The spinner shows
 /// `⠼ Removing N files · X MiB` while the walk proceeds; the returned counts
 /// drive the post-op summary so the success message matches the spinner.
 ///
@@ -63,13 +62,18 @@ use super::shell_integration::{
 /// `Progress::start`) or when verbosity ≥ 1 (verbose mode prefers structured
 /// output over live updates). The walk itself is best-effort — see
 /// [`remove_dir_with_progress`].
-fn cleanup_staged_with_progress(staged: &Path) -> (usize, u64) {
+fn cleanup_staged_with_progress(staged: &StagedRemoval) -> (usize, u64) {
+    let (Some(path), Some(checkout)) = (staged.cleanup_path(), staged.checkout_path()) else {
+        return (0, 0);
+    };
     let progress = if verbosity() >= 1 {
         Progress::disabled()
     } else {
         Progress::start("Removing")
     };
-    remove_dir_with_progress(staged, &progress);
+    // Report checkout contents, not the Git registration kept alongside them.
+    remove_dir_with_progress(&checkout, &progress);
+    remove_dir_with_progress(path, &Progress::disabled());
     let totals = progress.totals();
     progress.finish();
     totals
@@ -222,11 +226,12 @@ fn execute_instant_removal_or_fallback(
         planner_expected_retention,
     } = *removal;
 
-    // Dirty-worktree gate, fsmonitor stop, then the rename into .git/wt/trash/
-    // (instant on same filesystem) — the same prelude the synchronous
+    // Dirty-worktree gate, fsmonitor stop, then staging in a disposal container
+    // (instant on the same filesystem) — the same prelude the synchronous
     // `remove_worktree_with_cleanup` runs. On the fast path the background
     // process is then just a trash drain.
-    if stage_worktree_removal(repo, worktree_path, branch_name, force_worktree)?.is_some() {
+    if let Some(staged) = stage_worktree_removal(repo, worktree_path, branch_name, force_worktree)?
+    {
         if changed_directory {
             // Keep the shell's PWD valid until its cd directive is consumed.
             let _ = std::fs::create_dir(worktree_path);
@@ -236,18 +241,19 @@ fn execute_instant_removal_or_fallback(
         // A running drain deletes this entry too, so a prune starts one
         // drain rather than one per worktree.
         let trash_dir = repo.wt_trash_dir();
-        let cleanup = if worktrunk::git::trash_drain_running(&trash_dir) {
-            Ok(())
-        } else {
-            std::env::current_exe()
-                .context("Failed to locate Worktrunk executable")
-                .and_then(|executable| {
-                    spawn_cleanup(
-                        &build_drain_trash_command(executable, repo),
-                        InternalOp::Remove,
-                    )
-                })
-        };
+        let cleanup =
+            if staged.cleanup_path().is_none() || worktrunk::git::trash_drain_running(&trash_dir) {
+                Ok(())
+            } else {
+                std::env::current_exe()
+                    .context("Failed to locate Worktrunk executable")
+                    .and_then(|executable| {
+                        spawn_cleanup(
+                            &build_drain_trash_command(executable, repo),
+                            InternalOp::Remove,
+                        )
+                    })
+            };
         // Delete branch synchronously now that prune has removed the worktree metadata.
         // Fresh refs, not the pre-hook planning decision: hooks or concurrent
         // processes may have advanced the branch (`execute_branch_deletion`).
@@ -1923,8 +1929,8 @@ fn handle_detached_removed_worktree_output(
             },
         )?;
         let (files, bytes) = output
-            .staged_path
-            .as_deref()
+            .staged_removal
+            .as_ref()
             .map(cleanup_staged_with_progress)
             .unwrap_or((0, 0));
         let stats_paren = format_stats_paren(files, bytes);
@@ -2005,8 +2011,8 @@ fn handle_named_removed_worktree_foreground(
         },
     )?;
     let stats = output
-        .staged_path
-        .as_deref()
+        .staged_removal
+        .as_ref()
         .map(cleanup_staged_with_progress)
         .unwrap_or((0, 0));
 
@@ -2191,10 +2197,12 @@ fn remove_removed_worktree_silently(
         force_worktree: ctx.force_worktree,
     };
     let output = remove_worktree_with_cleanup(repo, &snapshot, ctx.worktree_path, options)?;
-    if let Some(staged) = output.staged_path {
+    if let Some(staged) = output.staged_removal
+        && let Some(path) = staged.cleanup_path()
+    {
         // Best-effort, same as the fast-path cleanup in the foreground handler
         // but without the TTY spinner (`cleanup_staged_with_progress`).
-        let _ = std::fs::remove_dir_all(&staged);
+        remove_dir_with_progress(path, &Progress::disabled());
     }
 
     // Post-remove (and post-switch when the picker cd'd away) hooks — registered
@@ -2479,15 +2487,63 @@ mod tests {
         assert!(!branch_only.contains("Removed worktree"));
     }
 
+    #[test]
+    fn committed_removal_finishes_when_disposal_preparation_fails() {
+        let mut test = worktrunk::testing::TestRepo::with_initial_commit();
+        let worktree = test.add_worktree("feature");
+        let repo = Repository::at(test.root_path()).unwrap();
+        std::fs::create_dir_all(repo.wt_dir()).unwrap();
+        std::fs::write(repo.wt_trash_dir(), "occupied trash namespace").unwrap();
+        let operations = std::cell::RefCell::new(Vec::new());
+        let result = execute_instant_removal_or_fallback(
+            &repo,
+            &BackgroundRemoval {
+                worktree_path: &worktree,
+                branch_name: Some("feature"),
+                deletion_mode: BranchDeletionMode::SafeDelete,
+                target_branch: Some("main"),
+                force_worktree: false,
+                changed_directory: true,
+                planner_expected_retention: false,
+            },
+            BackgroundFallbackMode::Detached,
+            |_, operation| {
+                operations.borrow_mut().push(operation);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(matches!(result.branch_fate, Ok(BranchFate::Deleted)));
+        assert!(worktree.is_dir(), "the shell placeholder must be created");
+        assert_eq!(
+            std::fs::read_to_string(repo.wt_trash_dir()).unwrap(),
+            "occupied trash namespace"
+        );
+        let retained = repo.wt_dir().join("removing");
+        let container = std::fs::read_dir(retained)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert!(container.join("registration").is_dir());
+        assert!(container.join("checkout/.git").is_file());
+        assert_eq!(operations.borrow().len(), 1);
+        assert!(matches!(
+            operations.borrow()[0],
+            InternalOp::RemovePlaceholder
+        ));
+    }
+
     /// A failed branch query must not cancel a removal that Git can perform.
     #[test]
     fn detached_fallback_schedules_removal_after_branch_preparation_error() {
         let mut test = worktrunk::testing::TestRepo::with_initial_commit();
         let checkout = test.add_worktree("feature");
         let repo = Repository::at(test.root_path()).unwrap();
-        let trash = repo.wt_trash_dir();
-        std::fs::create_dir_all(trash.parent().unwrap()).unwrap();
-        std::fs::write(&trash, "block staging").unwrap();
+        let staging = repo.wt_dir().join("removing");
+        std::fs::create_dir_all(staging.parent().unwrap()).unwrap();
+        std::fs::write(&staging, "block staging").unwrap();
         let outcome = execute_instant_removal_or_fallback(
             &repo,
             &BackgroundRemoval {

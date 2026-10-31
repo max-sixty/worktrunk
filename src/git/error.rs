@@ -529,6 +529,12 @@ pub enum GitError {
         directory_remains: bool,
         work: StaleWorktreeWork,
     },
+    /// Removal moved the checkout aside but could not safely unregister it.
+    WorktreeRemovalPreserved {
+        path: PathBuf,
+        git_common_dir: PathBuf,
+        error: anyhow::Error,
+    },
     /// Branch deletion failed, possibly after its checkout was removed.
     BranchDeletionFailed {
         branch: String,
@@ -765,6 +771,7 @@ impl std::error::Error for GitError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::WorktreeRemovalFailed { error, .. }
+            | Self::WorktreeRemovalPreserved { error, .. }
             | Self::BranchDeletionFailed { error, .. } => Some(error.as_ref()),
             _ => None,
         }
@@ -893,6 +900,10 @@ impl GitError {
                 ),
             },
 
+            GitError::WorktreeRemovalPreserved { path, .. } => cformat!(
+                "Worktree removal stopped; files preserved @ <bold>{}</>",
+                format_path_for_display(path)
+            ),
             GitError::BranchDeletionFailed {
                 branch,
                 removed_worktree,
@@ -1266,6 +1277,24 @@ impl GitError {
                     None => cformat!("To clean up, run <underline>git worktree prune</>"),
                 };
                 write!(f, "{}\n{}", error_message(&title), hint_message(hint))
+            }
+
+            GitError::WorktreeRemovalPreserved {
+                path,
+                git_common_dir,
+                error,
+            } => {
+                let command = format!(
+                    "git -C {} worktree repair {}",
+                    escape(git_common_dir.to_string_lossy()),
+                    escape(path.to_string_lossy()),
+                );
+                write!(
+                    f,
+                    "{}\n{}",
+                    format_error_block(error_message(self.title()), &format!("{error:#}")),
+                    hint_message(cformat!("To reconnect, run <underline>{command}</>"))
+                )
             }
 
             GitError::StaleWorktreeHoldsWork {
@@ -2613,16 +2642,27 @@ mod tests {
         );
     }
 
-    #[test]
-    fn branch_deletion_error_preserves_cancellation() {
-        let error: anyhow::Error = GitError::BranchDeletionFailed {
-            branch: "feature".into(),
-            removed_worktree: None,
-            error: WorktrunkError::Interrupted {
-                signal: 15,
-                hint: None,
+    #[rstest::rstest]
+    #[case::branch(false)]
+    #[case::recovery(true)]
+    fn removal_error_preserves_cancellation(#[case] recovery: bool) {
+        let interrupted = WorktrunkError::Interrupted {
+            signal: 15,
+            hint: None,
+        }
+        .into();
+        let error: anyhow::Error = if recovery {
+            GitError::WorktreeRemovalPreserved {
+                path: "/tmp/checkout".into(),
+                git_common_dir: "/tmp/git-data".into(),
+                error: interrupted,
             }
-            .into(),
+        } else {
+            GitError::BranchDeletionFailed {
+                branch: "feature".into(),
+                removed_worktree: None,
+                error: interrupted,
+            }
         }
         .into();
         assert_eq!(error.interrupt_signal(), Some(15));
