@@ -28,7 +28,9 @@
 //!    unconditionally (matching `git worktree remove`; `--force` does not
 //!    override it). The dirty-worktree gate is skipped with
 //!    [`RemoveOptions::force_worktree`], which reports the current uncommitted
-//!    paths, or why they could not be read, before deletion instead. Why the
+//!    paths, or why they could not be read, before deletion instead, and
+//!    backs those changes up to `refs/wt-backup/<branch>` (ignored files
+//!    excepted); a failed backup refuses the removal. Why the
 //!    dirty gate precedes the stop below: [`stage_worktree_removal`], "Why this order".
 //! 2. **fsmonitor daemon stopped** (best effort). [`stop_fsmonitor_daemon`]
 //!    runs against the target worktree before its path disappears: it sends
@@ -471,7 +473,8 @@ pub fn remove_worktree_with_cleanup(
 ///
 /// # Errors
 ///
-/// The ownership, lock, and dirty-worktree gates error. A
+/// The ownership, lock, and dirty-worktree gates error, as does a failed
+/// `--force` backup of uncommitted changes. A
 /// failed rename is reported as `None`, not an error, and the daemon stop is
 /// best-effort throughout.
 pub fn stage_worktree_removal(
@@ -510,6 +513,14 @@ pub fn stage_worktree_removal(
                     warning_message("Discarding uncommitted changes (--force):")
                 );
                 eprintln!("{}", format_with_gutter(&dirty_files.join("\n"), None));
+                // `--force` waives the dirty gate, not recoverability. A
+                // failed backup refuses the removal rather than lose the
+                // changes it was meant to keep.
+                let name = branch.unwrap_or_else(|| path_dir_name(worktree_path));
+                let backup = worktree
+                    .create_removal_backup(&format!("{name} (remove --force)"))
+                    .context("Failed to back up uncommitted changes; worktree not removed")?;
+                backup.print_recovery_hints(repo)?;
             }
             Ok(_) => {}
             Err(error) => {

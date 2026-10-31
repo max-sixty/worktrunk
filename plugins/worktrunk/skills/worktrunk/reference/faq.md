@@ -133,7 +133,7 @@ Worktrunk stores repository state, caches, and logs under `.git/`:
 | Location | Purpose | Created by |
 |----------|---------|------------|
 | `git config worktrunk.*` | Cached default branch, switch history, branch markers, custom variables | Various commands |
-| `refs/wt-backup/<branch>` | [Squash backups](https://worktrunk.dev/step/#wt-step-squash--recovering-staged-changes); preserved by state clearing | `wt step squash`, `wt merge` |
+| `refs/wt-backup/<branch>` | [Squash backups](https://worktrunk.dev/step/#wt-step-squash--recovering-staged-changes) and backups of changes discarded by `wt remove --force`; preserved by state clearing | `wt step squash`, `wt merge`, `wt remove --force` |
 | `.git/wt/cache/{kind}/*.json` | Cached CI status, the largest PR/MR number seen (sizes the `wt list` CI column), and git command results (merge-tree, integration probes, diff stats, ancestry checks, ahead/behind counts, merge bases) | `wt list`, `wt merge`, `wt remove` |
 | `.git/wt/cache/summary/{branch}/{hash}.json` | Cached LLM branch summaries, content-addressed by diff hash | `wt list --full`, `wt switch` (when `[list] summary = true`) |
 | `.git/wt/cache/picker-preview/*.json` | Rendered preview panes for the interactive picker | `wt switch` |
@@ -184,7 +184,7 @@ Worktrunk can delete **worktrees** and **branches**. Both have safeguards.
 
 ### Worktree removal
 
-`wt remove` mirrors `git worktree remove`: it refuses to remove worktrees with uncommitted changes (staged, modified, or untracked files). The `--force` flag removes the worktree anyway, discarding all of those changes.
+`wt remove` mirrors `git worktree remove`: it refuses to remove worktrees with uncommitted changes (staged, modified, or untracked files). The `--force` flag removes the worktree anyway, after saving those changes (except ignored files and changes inside submodules) to `refs/wt-backup/<branch>` and printing a command to recover them.
 
 Removal also refuses, `--force` included, when the directory at a registered path no longer holds the worktree registered there — a clone made there after the worktree was deleted, say, or another worktree of the same repository moved onto the path. `--force` waives uncommitted changes, not the check for what the directory holds, and `git worktree remove` refuses the same cases.
 

@@ -1744,6 +1744,11 @@ fn test_remove_force_with_untracked_files(mut repo: TestRepo) {
         "File should be untracked"
     );
 
+    // Ignored files are not part of the backup
+    std::fs::write(worktree_path.join(".gitignore"), "build.out\n").unwrap();
+    std::fs::write(worktree_path.join("build.out"), "ignored content").unwrap();
+    let head = repo.git_output(&["-C", worktree_path.to_str().unwrap(), "rev-parse", "HEAD"]);
+
     // Remove with --force should succeed
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
@@ -1751,6 +1756,20 @@ fn test_remove_force_with_untracked_files(mut repo: TestRepo) {
         &["--force", "feature-untracked"],
         None
     ));
+
+    // The discarded changes survive the worktree and branch in the backup ref,
+    // whose parent is the removed branch tip
+    let backup = "refs/wt-backup/feature-untracked";
+    assert_eq!(
+        repo.git_output(&["show", &format!("{backup}:devbox.lock")]),
+        "untracked content"
+    );
+    assert_eq!(repo.git_output(&["rev-parse", &format!("{backup}^")]), head);
+    let tree = repo.git_output(&["ls-tree", "--name-only", backup]);
+    assert!(
+        !tree.contains("build.out"),
+        "ignored file backed up: {tree}"
+    );
 }
 
 /// --force allows removal of dirty worktrees (issue #658)

@@ -1371,6 +1371,8 @@ $ wt remove feature -D            # Delete unmerged branch
 $ wt remove feature --force -D    # Both
 ```
 
+Before `--force` discards uncommitted changes, Worktrunk saves them (except ignored files and changes inside submodules) to `refs/wt-backup/<branch>` and prints a command to recover them in a new worktree.
+
 Use `--no-delete-branch` to keep the branch regardless of merge status.
 
 ## Background removal
