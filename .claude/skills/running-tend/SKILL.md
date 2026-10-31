@@ -93,12 +93,12 @@ shape is one `<session-id>.jsonl` under a single slugified directory.
 
 ## Labels
 
-- `automated-fix` — fix PRs from triage and ci-fix workflows
+- `automated-fix` — fix PRs from triage
 - `nightly-cleanup` — nightly sweep issues and PRs
 
-## CI Fix: Prefer Rerun for Transient Infrastructure Failures
+## CI Failure Triage: Prefer Rerun for Transient Infrastructure Failures
 
-Before opening a `fix/ci-*` PR, classify the failure:
+Before opening a PR for a CI failure, classify it:
 
 - **Transient infrastructure** (link-check timeouts, apt-get flakes, GitHub
   outages, runner disk issues, codecov upload blips) — do **not** create a
@@ -121,18 +121,7 @@ failure, not a broken link:
 - Only `[TIMEOUT]` is reported (not `404`/`403`/`410`).
 - The URL is reachable from a local `curl`.
 
-When in doubt, post a comment on the failed run summarizing the diagnosis and
-wait — don't open a PR.
-
-## CI Fix: A Failed Scheduled Nightly Already Has Its Issue
-
-When a scheduled `nightly` run fails, its `create-issue-on-nightly-failure` job opens (or updates) an open `Nightly tests failed` issue labelled `ci`, and `tend-triage` diagnoses it there. That issue is the tracker for the failure. The `ci-fix:` title search in `/tend-ci-runner:ci-fix` cannot find it, so look it up by title before filing anything:
-
-```bash
-gh issue list --state open --label ci --search '"Nightly tests failed" in:title' --json number,title
-```
-
-Post a durable diagnosis on that issue, unless a comment there already covers it, instead of opening a `ci-fix:` tracking issue. A fix PR closes it with `Fixes #<n>`. A transient diagnosis still files its closed `tend-outage` tracker, since the repeat-occurrence escalation in `/tend-ci-runner:ci-fix` counts only those.
+When in doubt, post the diagnosis on the failure cause issue and wait — don't open a PR.
 
 ## Applying GitHub Suggestions
 
