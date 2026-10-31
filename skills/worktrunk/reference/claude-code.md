@@ -8,6 +8,7 @@ Worktrunk ships a plugin for each supported agent CLI. What a plugin provides de
 | Activity tracking (🤖/💬 in `wt list`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Worktree isolation | ✓ |  | ✓ |  |  |  |
 | `/wt-switch-create` skill | ✓ |  |  |  |  |  |
+| `/wt-diff` pane | ✓ |  |  |  |  |  |
 
 The configuration skill is documentation the agent reads to help set up LLM commits, hooks, and troubleshooting. Activity tracking shows which worktrees have running sessions. Worktree isolation needs worktree-lifecycle hooks, which only Claude Code and OpenCode 2 expose, so Codex, Pi, oh-my-pi, and Gemini users invoke `wt switch --create` and `wt remove` directly.
 
@@ -137,6 +138,24 @@ Under OpenCode 2, the plugin registers a `worktrunk` worktree strategy, so workt
 `/wt-switch-create [<branch>] [<repo>] [-- <task>]` starts a task in a fresh worktree without leaving the session: it creates the worktree, switches into it, and runs the task (all arguments optional). The worktree shows up in `wt list`; merge or remove it with `wt merge` / `wt remove`.
 
 Claude Code asks for confirmation before a session enters an existing worktree by path outside `.claude/worktrees/`, which in worktrunk's default layout is every worktree. The plugin's `PermissionRequest` hook answers yes for a worktree of the repository the session is working in that sits where `worktree-path` puts its branch, so a background session doesn't stop at that prompt. Entering any other worktree still asks.
+
+## `/wt-diff` pane (Claude Code only)
+
+`/wt-diff` opens a pane beside the conversation that lists the worktrees the session has worked in, with the selected one's [`wt step diff`](https://worktrunk.dev/step/#wt-step-diff) below: everything since the branch left the default branch, committed, uncommitted, and untracked. `/wt-diff <branch>` selects another worktree.
+
+A worktree joins the list when the session starts or moves into it, or when the session or one of its subagents edits a file there or runs a command there that isn't read-only. Until the pane first opens, the pane only notes those directories, without running `git` or `wt`.
+
+| Key | Action |
+|---|---|
+| `1`–`9` | Select a worktree |
+| `j` / `k` | Next or previous file |
+| `ctrl+↓` / `ctrl+↑` | Next or previous file, from the prompt |
+| `r` | Refresh |
+| ↑ ↓, PageUp, PageDown | Scroll |
+
+The other keys work while the pane has the keyboard, which it takes when it opens. Running `/wt-diff` again gives it back, as does `ctrl+x tab`, which moves focus from the prompt to the line above it when another plugin draws one, then to the pane. `esc` returns to the prompt.
+
+The pane needs a Claude Code release that loads plugin hooks modules; earlier releases load the rest of the plugin without it.
 
 ## Statusline (Claude Code only)
 
