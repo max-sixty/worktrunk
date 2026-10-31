@@ -10,7 +10,7 @@
 //! 2. Decide whether to remove the feature worktree. Six conditions block
 //!    removal: `--no-remove`, on-target, primary-worktree, locked, and
 //!    default-branch, and nested worktrees. Otherwise `ensure_clean` gates removal and
-//!    `handle_merge_remove_output` performs it (sharing the staging path with
+//!    `handle_remove_output` performs it (sharing the staging path with
 //!    `wt remove`).
 //! 3. Register the post-merge hook with the announcer. The caller owns
 //!    `flush()` because it's a command-level lifecycle operation, not part of
@@ -30,7 +30,7 @@ use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{eprintln, info_message};
 
 use super::types::{RemovalPlan, SharedBranchCheckout};
-use crate::commands::command_executor::CommandContext;
+use crate::commands::command_executor::{CommandContext, ForegroundStdin};
 use crate::commands::context::CommandEnv;
 use crate::commands::hook_plan::{ApprovedHookPlan, register_planned};
 use crate::commands::hooks::HookAnnouncer;
@@ -40,7 +40,7 @@ use crate::commands::repository_ext::{
 };
 use crate::commands::template_vars::TemplateVars;
 use crate::output::{
-    CommandFailure, CommandResult, handle_merge_remove_output, post_hook_display_path,
+    CommandFailure, CommandResult, RemovalExecution, handle_remove_output, post_hook_display_path,
     pre_hook_display_path,
 };
 
@@ -142,12 +142,11 @@ pub fn finish_after_merge(
         };
         eprintln!("{}", info_message(msg));
         false
-    } else if let Some(nested) = worktrunk::git::remove::nested_worktree(repo, &env.worktree_path)?
-    {
+    } else if let Some(nested) = repo.nested_worktree(&env.worktree_path)? {
         eprintln!(
             "{}",
             info_message(format!(
-                "Worktree preserved (contains worktree @ {})",
+                "Worktree preserved (contains worktree or Git storage @ {})",
                 format_path_for_display(&nested)
             ))
         );
@@ -210,8 +209,17 @@ pub fn finish_after_merge(
         // The fate is dropped: merge's own reporting (`removed` in the JSON
         // blob, the removal messages) doesn't itemize the branch, and the
         // handler has already narrated any retention.
-        handle_merge_remove_output(&remove_result, plan, announcer)
-            .map_err(|failure| failure.map_result(|_| true))?;
+        handle_remove_output(
+            &remove_result,
+            RemovalExecution::Background {
+                wait_for_noncurrent_fallback: false,
+            },
+            ForegroundStdin::Inherit,
+            plan,
+            false,
+            announcer,
+        )
+        .map_err(|failure| failure.map_result(|_| true))?;
         true
     };
 

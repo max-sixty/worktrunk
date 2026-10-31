@@ -709,6 +709,25 @@ fn snapshot_remove(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<
     });
 }
 
+/// Parent announcements differ when removal is deferred; execution must not.
+/// Check the actual command output from each independent hook pipeline.
+fn assert_removal_hooks_completed(repo: &TestRepo, removed: &std::path::Path, merged: bool) {
+    let logs = resolve_git_common_dir(repo.root_path()).join("wt/logs");
+    let mut outputs = vec![
+        ("feature/user/post-remove/cleanup.log", "removed"),
+        ("main/user/post-switch/notify.log", "switched"),
+    ];
+    if merged {
+        outputs.push(("feature/user/post-merge/sync.log", "merged"));
+    }
+    for (path, expected) in outputs {
+        let path = logs.join(path);
+        wait_for_file_content(&path);
+        assert_eq!(fs::read_to_string(path).unwrap().trim(), expected);
+    }
+    assert!(!removed.join(".git").exists(), "checkout removal completed");
+}
+
 #[rstest]
 fn test_user_pre_remove_hook_executes(mut repo: TestRepo) {
     // Create a worktree to remove
@@ -1117,11 +1136,16 @@ cleanup = "echo 'POST_REMOVE_DURING_MERGE' > ../merge_postremove_marker.txt"
     );
 }
 
-/// `wt merge` with removal fires post-remove, post-switch, and post-merge in
-/// sequence. They should share one `Running …` announce line so the user sees
-/// a single status line for the whole command, not three.
+/// `wt merge` with removal fires post-remove, post-switch, and post-merge.
+/// Staged removal shares their parent announcement; deferred removal
+/// announces post-remove in its worker log only after deletion succeeds.
 #[rstest]
-fn test_merge_combines_post_remove_post_switch_post_merge(mut repo: TestRepo) {
+#[cfg_attr(unix, case::staged(false))]
+#[case::deferred(true)]
+fn test_merge_combines_post_remove_post_switch_post_merge(
+    mut repo: TestRepo,
+    #[case] deferred: bool,
+) {
     let feature_wt =
         repo.add_worktree_with_commit("feature", "feature.txt", "feature", "Add feature");
 
@@ -1137,26 +1161,36 @@ sync = "echo merged"
 "#,
     );
 
-    snapshot_merge(
-        "merge_combines_post_remove_post_switch_post_merge",
-        &repo,
-        &["main", "--yes"],
-        Some(&feature_wt),
-    );
+    if deferred {
+        crate::common::block_staging_rename(&repo, &feature_wt);
+    }
+    let snapshot = if deferred {
+        "merge_combines_post_remove_post_switch_post_merge_deferred"
+    } else {
+        "merge_combines_post_remove_post_switch_post_merge"
+    };
+
+    snapshot_merge(snapshot, &repo, &["main", "--yes"], Some(&feature_wt));
+    assert_removal_hooks_completed(&repo, &feature_wt, true);
 }
 
 /// `wt merge` (no squash) with uncommitted changes auto-commits via
 /// `CommitOptions::commit`, which threads the merge announcer through. The
-/// post-commit phase should join post-remove + post-switch + post-merge on
-/// one combined announce line — the non-squash sibling of
+/// surviving hooks share the parent announcement, except that deferred
+/// post-remove belongs to its worker — the non-squash sibling of
 /// [`test_merge_squash_combines_post_remove_post_switch_post_merge`].
 ///
-/// The announce line is all this pins. The merge removes the worktree
-/// post-commit is anchored on, so that clause is a `Skipped post-commit` line
+/// The merge removes the worktree post-commit is anchored on, so that clause
+/// is a `Skipped post-commit` line
 /// instead — see
 /// [`test_merge_post_commit_runs_only_when_its_worktree_survives`].
 #[rstest]
-fn test_merge_auto_commit_combines_post_remove_post_switch_post_merge(mut repo: TestRepo) {
+#[cfg_attr(unix, case::staged(false))]
+#[case::deferred(true)]
+fn test_merge_auto_commit_combines_post_remove_post_switch_post_merge(
+    mut repo: TestRepo,
+    #[case] deferred: bool,
+) {
     let feature_wt =
         repo.add_worktree_with_commit("feature", "feature.txt", "feature", "Add feature");
     // Leave an uncommitted change so the merge auto-commits via
@@ -1178,24 +1212,39 @@ sync = "echo merged"
 "#,
     );
 
+    if deferred {
+        crate::common::block_staging_rename(&repo, &feature_wt);
+    }
+    let snapshot = if deferred {
+        "merge_auto_commit_combines_post_remove_post_switch_post_merge_deferred"
+    } else {
+        "merge_auto_commit_combines_post_remove_post_switch_post_merge"
+    };
+
     snapshot_merge(
-        "merge_auto_commit_combines_post_remove_post_switch_post_merge",
+        snapshot,
         &repo,
         &["main", "--yes", "--no-squash"],
         Some(&feature_wt),
     );
+    assert_removal_hooks_completed(&repo, &feature_wt, true);
 }
 
 /// `wt merge --squash` registers post-commit (from the squash phase),
 /// post-remove, post-switch (from worktree removal), and post-merge. The three
-/// that still have a worktree share one `Running …` announce line so the user
-/// sees a single status line for the whole command, not three.
+/// that still have a worktree share a parent announcement after staging;
+/// deferred post-remove instead belongs to the successful removal worker.
 ///
-/// That line is all this pins. The merge removes the worktree post-commit is
-/// anchored on, so that clause is a `Skipped post-commit` line instead — see
+/// The merge removes the worktree post-commit is anchored on, so that clause
+/// is a `Skipped post-commit` line instead — see
 /// [`test_merge_post_commit_runs_only_when_its_worktree_survives`].
 #[rstest]
-fn test_merge_squash_combines_post_remove_post_switch_post_merge(mut repo: TestRepo) {
+#[cfg_attr(unix, case::staged(false))]
+#[case::deferred(true)]
+fn test_merge_squash_combines_post_remove_post_switch_post_merge(
+    mut repo: TestRepo,
+    #[case] deferred: bool,
+) {
     // Squash needs >1 commit ahead of main to actually run.
     let feature_wt = repo.add_worktree_with_commit("feature", "feature1.txt", "one", "feat: one");
     repo.commit_in_worktree(&feature_wt, "feature2.txt", "two", "feat: two");
@@ -1215,12 +1264,22 @@ sync = "echo merged"
 "#,
     );
 
+    if deferred {
+        crate::common::block_staging_rename(&repo, &feature_wt);
+    }
+    let snapshot = if deferred {
+        "merge_squash_combines_post_remove_post_switch_post_merge_deferred"
+    } else {
+        "merge_squash_combines_post_remove_post_switch_post_merge"
+    };
+
     snapshot_merge(
-        "merge_squash_combines_post_remove_post_switch_post_merge",
+        snapshot,
         &repo,
         &["main", "--yes", "--squash"],
         Some(&feature_wt),
     );
+    assert_removal_hooks_completed(&repo, &feature_wt, true);
 }
 
 /// `post-commit` is anchored on the worktree the commit was made in, and a
@@ -1801,9 +1860,12 @@ fn test_foreground_pipeline_syntax_error_aborts_before_first_step(mut repo: Test
 }
 
 /// When removing the current worktree (cd back to main), both post-remove and
-/// post-switch hooks fire. They should appear on a single combined announcement line.
+/// post-switch hooks fire. Their announcements share a parent only when staged;
+/// deferred post-remove is announced after actual completion in its worker log.
 #[rstest]
-fn test_combined_post_remove_and_post_switch_hooks(mut repo: TestRepo) {
+#[cfg_attr(unix, case::staged(false))]
+#[case::deferred(true)]
+fn test_combined_post_remove_and_post_switch_hooks(mut repo: TestRepo, #[case] deferred: bool) {
     let feature_wt = repo.add_worktree("feature");
 
     // Configure both post-remove and post-switch user hooks
@@ -1818,23 +1880,35 @@ notify = "echo switched"
 
     // Remove from inside the feature worktree — triggers cd back to main,
     // which means changed_directory=true and both hook types fire.
+    if deferred {
+        crate::common::block_staging_rename(&repo, &feature_wt);
+    }
+    let snapshot = if deferred {
+        "combined_post_remove_and_post_switch_deferred"
+    } else {
+        "combined_post_remove_and_post_switch"
+    };
+
     snapshot_remove(
-        "combined_post_remove_and_post_switch",
+        snapshot,
         &repo,
         &["feature", "--force-delete"],
         Some(&feature_wt),
     );
+    assert_removal_hooks_completed(&repo, &feature_wt, false);
 }
 
 /// Verbose variant of [`test_combined_post_remove_and_post_switch_hooks`].
 ///
-/// Under `-v`, the announcer prints a `template variables:` table for each
-/// registered hook type, iterating over pipelines and skipping those whose
-/// hook type doesn't match — that filter branch needs at least two hook
-/// types in one batch to fire. Removing the current worktree's branch is
-/// the only path that registers both `post-remove` and `post-switch`.
+/// Staging prints both hook variable tables in the parent. Deferred removal
+/// leaves only the post-switch table there; both routes still execute both hooks.
 #[rstest]
-fn test_combined_post_remove_and_post_switch_hooks_verbose(mut repo: TestRepo) {
+#[cfg_attr(unix, case::staged(false))]
+#[case::deferred(true)]
+fn test_combined_post_remove_and_post_switch_hooks_verbose(
+    mut repo: TestRepo,
+    #[case] deferred: bool,
+) {
     let feature_wt = repo.add_worktree("feature");
     repo.write_test_config(
         r#"[post-remove]
@@ -1845,6 +1919,15 @@ notify = "echo switched"
 "#,
     );
 
+    if deferred {
+        crate::common::block_staging_rename(&repo, &feature_wt);
+    }
+    let snapshot = if deferred {
+        "combined_post_remove_and_post_switch_verbose_deferred"
+    } else {
+        "combined_post_remove_and_post_switch_verbose"
+    };
+
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd_with_global_flags(
@@ -1854,15 +1937,21 @@ notify = "echo switched"
             Some(&feature_wt),
             &["-v"],
         );
-        assert_cmd_snapshot!("combined_post_remove_and_post_switch_verbose", cmd);
+        assert_cmd_snapshot!(snapshot, cmd);
     });
+    assert_removal_hooks_completed(&repo, &feature_wt, false);
 }
 
 /// The approval gate freezes both removal hooks before either runs. If
 /// `pre-remove` makes the user config unreadable, `post-remove` must still run
 /// from that frozen plan rather than silently disappearing on a second load.
 #[rstest]
-fn test_post_remove_uses_config_snapshot_after_pre_remove_mutates_file(mut repo: TestRepo) {
+#[case::foreground(false)]
+#[case::worker(true)]
+fn test_post_remove_uses_config_snapshot_after_pre_remove_mutates_file(
+    mut repo: TestRepo,
+    #[case] worker: bool,
+) {
     let feature_wt = repo.add_worktree("feature");
     let config_path = repo.test_config_path().to_slash_lossy();
     let marker = repo
@@ -1881,27 +1970,35 @@ marker = "printf POST_REMOVE_RAN > '{marker_path}'"
 "#
     ));
 
-    let output = repo
-        .wt_command()
-        .args(["remove", "--foreground", "--force-delete", "feature"])
-        .output()
-        .unwrap();
+    let mut command = repo.wt_command();
+    command.args(["remove", "--force-delete", "feature"]);
+    if worker {
+        let trash = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/removing");
+        fs::create_dir_all(trash.parent().unwrap()).unwrap();
+        fs::write(trash, "block staging").unwrap();
+        command.current_dir(&feature_wt);
+    } else {
+        command.arg("--foreground");
+    }
+    let output = command.output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
         output.status.success(),
         "removal should succeed after the planned pre-remove hook mutates config: {stderr}"
     );
-    assert!(
-        !feature_wt.exists(),
-        "feature worktree should have been removed"
-    );
-    assert!(
-        stderr.contains("Running post-remove"),
-        "the frozen post-remove hook should still be registered: {stderr}"
-    );
+    if !worker {
+        assert!(
+            stderr.contains("Running post-remove"),
+            "the frozen post-remove hook should still be registered: {stderr}"
+        );
+    }
     wait_for_file_content(&marker);
     assert_eq!(fs::read_to_string(marker).unwrap(), "POST_REMOVE_RAN");
+    assert!(
+        !feature_wt.exists(),
+        "post-remove runs after actual removal"
+    );
 }
 
 /// Manual hook argument routing parses templates before pipeline preparation.

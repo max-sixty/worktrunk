@@ -51,7 +51,7 @@ use super::super::hook_plan::{ApprovedHookPlan, HookPlan, HookPlanBuilder};
 use super::super::hooks::HookAnnouncer;
 use super::super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::super::worktree::{BranchFate, RemovalPlan};
-use crate::output::{BackgroundFallbackMode, RemovalExecution, handle_remove_output};
+use crate::output::{RemovalExecution, handle_remove_output};
 
 /// Stop queued removals and retain cancellation independently of which error
 /// supplies the command's diagnostic. Captures do not publish this themselves.
@@ -346,13 +346,14 @@ fn try_remove(
 
     let plan = plan.context("candidate arrived without a removal plan")?;
     let mut announcer = HookAnnouncer::new(ctx.repo, true);
-    // `SynchronousForNonCurrent`: a rename-failure fallback completes inline,
-    // so the candidate counts as removed only once the worktree and branch
-    // are actually gone — before the final summary prints.
+    // Noncurrent fallback worktrees and their branches must be gone before
+    // the summary. Current checkouts still need a detached worker on Windows.
     let execution = if ctx.foreground {
         RemovalExecution::Foreground
     } else {
-        RemovalExecution::Background(BackgroundFallbackMode::SynchronousForNonCurrent)
+        RemovalExecution::Background {
+            wait_for_noncurrent_fallback: true,
+        }
     };
     let stdin = if needs_write {
         ForegroundStdin::Inherit

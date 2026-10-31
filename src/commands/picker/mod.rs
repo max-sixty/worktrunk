@@ -417,9 +417,13 @@ impl AltXRemover {
                 if !deletion_mode.should_keep() {
                     let default_branch = repo.default_branch();
                     let target = default_branch.as_deref().unwrap_or("HEAD");
-                    if let Err(e) =
-                        execute_branch_deletion(repo, branch_name, target, deletion_mode.is_force())
-                    {
+                    if let Err(e) = execute_branch_deletion(
+                        repo,
+                        branch_name,
+                        target,
+                        deletion_mode.is_force(),
+                        None,
+                    ) {
                         // Safe-delete retention (`NotDeleted`,
                         // `RetainedCheckedOut`, or `RetainedRaced`) is `Ok`, not
                         // an error; this is a genuine deletion-command failure.

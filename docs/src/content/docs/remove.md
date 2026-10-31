@@ -78,7 +78,7 @@ Use `--no-delete-branch` to keep the branch regardless of merge status.
 
 ## Background removal
 
-Removal runs in the background by default — the command returns immediately, and output goes to `.git/wt/logs/{branch}/internal/remove.log`. Use `--foreground` to wait for it.
+By default, Worktrunk moves the checkout into trash and deletes its contents in the background. If the move fails, a background worker removes the checkout after repeating the safety checks; its output goes to `.git/wt/logs/{branch}/internal/remove.log`. Use `--foreground` to wait for removal and cleanup.
 
 ## Reaping processes
 
@@ -111,7 +111,7 @@ Unix only; on Windows `--reap` is rejected.
 | Value | Meaning |
 |-------|---------|
 | `deleted` | The branch is gone |
-| `deferred` | Left to the background removal, whose result this run doesn't see. `--foreground` never reports it |
+| `deferred` | Left to background removal, whose result this run doesn't see. `--foreground` never reports it |
 | `not_attempted` | No deletion was tried: a detached worktree, a sibling checkout, or `--no-delete-branch` |
 | `retained_unmerged` | Declined: the branch was not integrated into the target |
 | `retained_checked_out` | Declined: another worktree has the branch checked out |

@@ -22,7 +22,7 @@ pub enum InternalOp {
     Remove,
     /// Delayed cleanup of the removed current worktree's empty PWD placeholder.
     RemovePlaceholder,
-    /// Background cleanup of stale entries in `.git/wt/trash/`
+    /// Background cleanup of staged worktrees and unregistered metadata
     TrashSweep,
 }
 
@@ -346,8 +346,8 @@ pub fn run_internal_sweep(repo: &Repository) {
 
 /// Fire-and-forget restart of trash deletion.
 ///
-/// Worktree removal renames the worktree into
-/// `.git/wt/trash/<name>-<timestamp>/` and starts a detached
+/// Worktree removal stages the checkout and unregisters it before preparing
+/// its container in `.git/wt/trash/` for a detached
 /// [`worktrunk::git::drain_trash`] to delete it. If that process is
 /// interrupted (SIGKILL, reboot, disk full), its entries stay behind. `wt
 /// remove` calls this function after its primary user-visible output — so the
@@ -358,6 +358,19 @@ pub fn run_internal_sweep(repo: &Repository) {
 /// ignored. The sweep is purely additive — the primary `wt remove` operation
 /// proceeds regardless of outcome.
 pub fn sweep_trash(repo: &Repository) {
+    // A committed removal can remain in transaction storage when its move to
+    // trash failed. Retry preparation without exposing uncommitted checkouts
+    // to the drain; state inspection and clearing use this same inventory.
+    match repo.disposal_entries() {
+        Ok(entries) => {
+            for entry in entries {
+                if let Err(error) = repo.prepare_disposal(&entry.path) {
+                    tracing::debug!(%error, "Failed to prepare committed disposal");
+                }
+            }
+        }
+        Err(error) => tracing::debug!(%error, "Failed to inspect worktree disposal"),
+    }
     let trash_dir = repo.wt_trash_dir();
     if worktrunk::git::staged_trash_entries(&trash_dir).is_empty()
         || worktrunk::git::trash_drain_running(&trash_dir)
@@ -409,27 +422,6 @@ pub fn build_remove_placeholder_command(path: &Path) -> Vec<OsString> {
         "wt".into(),
         path.as_os_str().into(),
     ]
-}
-
-/// Fallback when staging fails. Only flags and sequencing enter the script;
-/// the checkout remains a separate process argument.
-pub fn build_remove_command(
-    path: &Path,
-    force_worktree: bool,
-    changed_directory: bool,
-    tail: Option<&[OsString]>,
-) -> Vec<OsString> {
-    let delay = if changed_directory { "sleep 1 && " } else { "" };
-    let force = if force_worktree { " --force" } else { "" };
-    let mut script = format!(r#"{delay}git worktree remove{force} -- "$1""#);
-    if tail.is_some() {
-        script.push_str(r#" && shift && "$@""#);
-    }
-    let mut args = vec![script.into(), "wt".into(), path.as_os_str().into()];
-    if let Some(tail) = tail {
-        args.extend_from_slice(tail);
-    }
-    args
 }
 
 #[cfg(test)]

@@ -46,9 +46,8 @@ pub(crate) use global::{
 };
 // Re-export output handlers
 pub(crate) use handlers::{
-    BackgroundFallbackMode, DirectivePassthrough, RemovalExecution, execute_shell_command,
-    execute_user_command, handle_merge_remove_output, handle_remove_output, handle_switch_output,
-    retained_unmerged_branch_messages,
+    DirectivePassthrough, RemovalExecution, execute_shell_command, execute_user_command,
+    handle_remove_output, handle_switch_output, retained_unmerged_branch_messages,
 };
 // Re-export shell integration functions
 pub(crate) use shell_integration::{

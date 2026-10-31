@@ -20,8 +20,7 @@ use worktrunk::styling::{eprintln, info_message};
 
 use crate::cli::{RemoveArgs, SwitchFormat};
 use crate::output::{
-    BackgroundFallbackMode, CommandFailure, CommandResult, RemovalExecution, handle_remove_output,
-    print_json,
+    CommandFailure, CommandResult, RemovalExecution, handle_remove_output, print_json,
 };
 
 use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
@@ -36,7 +35,9 @@ fn removal_execution(foreground: bool) -> RemovalExecution {
     if foreground {
         RemovalExecution::Foreground
     } else {
-        RemovalExecution::Background(BackgroundFallbackMode::Detached)
+        RemovalExecution::Background {
+            wait_for_noncurrent_fallback: false,
+        }
     }
 }
 
@@ -365,13 +366,11 @@ fn maybe_reap_result(result: &RemovalPlan, reap_enabled: bool) {
 ///    running interactively and any hooks are configured.
 /// 3. **Dispatch to `handle_remove_output`** per target. For each, the output
 ///    handler runs `pre-remove` hooks in the worktree, then either:
-///    - **Foreground** (`--foreground`): stop fsmonitor → rename into
-///      `.git/wt/trash/<name>-<timestamp>/` → prune metadata → delete branch
-///      → synchronous `remove_dir_all` on the staged directory.
-///    - **Background** (default): stop fsmonitor → rename + prune +
-///      synchronous branch delete → spawn a detached drain of the trash
-///      directory (`wt _drain-trash`). Cross-filesystem or locked worktrees fall back to
-///      `git worktree remove` in the detached process.
+///    - **Foreground** (`--foreground`): stage and unregister the checkout,
+///      delete the branch, then clean prepared trash synchronously.
+///    - **Background** (default): the same staging and branch deletion,
+///      with detached trash cleanup. Failed staging falls back to
+///      `git worktree remove`; failed trash preparation defers cleanup.
 /// 4. **Post-remove hooks** run in the background after dispatch.
 /// 5. **Internal sweep** (fire-and-forget, after primary output): entries
 ///    left in `.git/wt/trash/` start another detached drain, and orphaned `git fsmonitor--daemon` processes (worktree gone)

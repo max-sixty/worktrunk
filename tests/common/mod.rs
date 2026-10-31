@@ -1547,6 +1547,30 @@ pub fn shell_exit_code(status: &std::process::ExitStatus) -> Option<i32> {
     status.code()
 }
 
+/// Block the initial staging move by occupying its deterministic container
+/// name. Reservation uses create_dir, so the file refuses staging on Unix and
+/// Windows before either checkout or registration moves.
+pub fn block_staging_rename(
+    repo: &TestRepo,
+    worktree_path: &std::path::Path,
+) -> std::path::PathBuf {
+    let retained_dir = resolve_git_common_dir(repo.root_path()).join("wt/removing");
+    std::fs::create_dir_all(&retained_dir).unwrap();
+    let git_dir = repo
+        .git_command()
+        .args(["rev-parse", "--absolute-git-dir"])
+        .current_dir(worktree_path)
+        .run()
+        .unwrap();
+    assert!(git_dir.status.success(), "{git_dir:?}");
+    let path = std::str::from_utf8(git_dir.stdout.strip_suffix(b"\n").unwrap()).unwrap();
+    let mut staged_name = Path::new(path).file_name().unwrap().to_os_string();
+    staged_name.push(format!("-{}", TEST_EPOCH));
+    let staged_path = retained_dir.join(staged_name);
+    std::fs::write(&staged_path, "blocking file").unwrap();
+    staged_path
+}
+
 // =============================================================================
 // Tests
 // =============================================================================

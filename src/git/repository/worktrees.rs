@@ -1,6 +1,6 @@
 //! Worktree management operations for Repository.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
@@ -9,6 +9,7 @@ use anyhow::Context as _;
 use color_print::cformat;
 use dunce::canonicalize;
 
+use super::disposal::REGISTRATION;
 use super::working_tree::{
     operation_in_progress_at, path_to_logging_context, registration_worktree_path,
 };
@@ -17,7 +18,9 @@ use super::{
     is_valid_branch_name, normalize_selector, resolve_input_path,
 };
 use crate::git::{CommandError, PlumbingDiff, WorktreeId, finalize_worktrees, is_bare_repo_dir};
-use crate::path::{format_path_for_display, paths_match};
+use crate::path::{
+    canonicalize_with_parents, format_path_for_display, paths_match, strip_verbatim_disk_prefix,
+};
 use crate::shell_exec::Cmd;
 use crate::styling::{eprintln, format_with_gutter, hint_message, warning_message};
 
@@ -60,45 +63,100 @@ impl Repository {
         self.cache
             .worktrees
             .get_or_try_init(|| {
-                let stdout = {
-                    let _registry = self.worktree_registry_read();
-                    self.run_command_bytes(&["worktree", "list", "--porcelain", "-z"])?
-                };
-                let raw_worktrees = WorktreeInfo::parse_porcelain_list_z(&stdout)?;
-                let mut worktrees: Vec<_> =
-                    raw_worktrees.into_iter().filter(|wt| !wt.bare).collect();
-
-                // Main-worktree path correction.
-                //
-                // Git's `get_main_worktree()` computes the main worktree path by stripping
-                // a trailing `/.git` from the common dir. Two layouts have no such suffix,
-                // so git leaves the path unchanged and reports the git data directory as
-                // the "main worktree": submodules, whose common dir is `.git/modules/sub`,
-                // and `--separate-git-dir` repositories, whose common dir is wherever the
-                // user put the store. Git consults neither `core.worktree` nor its own
-                // `gitdir` backlink in this code path.
-                //
-                // We detect this by checking whether the first worktree's path equals
-                // git_common_dir (which never holds for normal repos, where git_common_dir
-                // is `.git` inside the worktree). When matched, we correct it using
-                // repo_path(), which resolves both layouts from the signals git does
-                // record.
-                //
-                // We fix this here rather than at each call site because list_worktrees()
-                // is the single point where worktree paths enter the system — all consumers
-                // (worktree_for_branch, resolve_worktree, etc.) depend on paths being
-                // working directories. If git fixes this upstream, the condition stops
-                // triggering.
-                if let Some(first) = worktrees.first_mut()
-                    && canonicalize(&first.path).ok().as_deref() == Some(self.git_common_dir())
-                {
-                    first.path = self.repo_path()?.to_path_buf();
-                }
-
-                finalize_worktrees(self, &mut worktrees);
-                Ok(worktrees)
+                let _registry = self.worktree_registry_read();
+                self.load_worktrees_unlocked()
             })
             .map(Vec::as_slice)
+    }
+
+    /// Find a registered checkout or Git storage inside the removal tree.
+    /// Reads backlinks freshly under the registry read lock. Directory
+    /// symlinks resolve to their actual locations; missing checkouts are skipped.
+    /// Unrecorded or manually moved checkouts are outside this registry check.
+    pub fn nested_worktree(&self, path: &Path) -> anyhow::Result<Option<PathBuf>> {
+        let _registry = self.worktree_registry_read();
+        self.nested_worktree_unlocked(path)
+    }
+
+    /// Containment while the caller holds the registry read or write lock.
+    pub(in crate::git) fn nested_worktree_unlocked(
+        &self,
+        path: &Path,
+    ) -> anyhow::Result<Option<PathBuf>> {
+        let root = strip_verbatim_disk_prefix(
+            canonicalize(path).context("Failed to resolve worktree for removal")?,
+        );
+        let common_dir = strip_verbatim_disk_prefix(self.git_common_dir().to_path_buf());
+        if common_dir.starts_with(&root) {
+            return Ok(Some(common_dir));
+        }
+        let mut paths = Vec::new();
+        if !self.is_bare()? {
+            paths.push(self.repo_path()?.to_path_buf());
+        }
+        for (path, git_dir) in self.worktree_registrations()? {
+            let git_dir = strip_verbatim_disk_prefix(git_dir);
+            if git_dir.starts_with(&root) {
+                return Ok(Some(git_dir));
+            }
+            paths.push(path);
+        }
+        for path in paths {
+            let path = match canonicalize(&path) {
+                Ok(path) => path,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "Failed to resolve worktree @ {}",
+                            format_path_for_display(&path)
+                        )
+                    });
+                }
+            };
+            let path = strip_verbatim_disk_prefix(path);
+            if path != root && path.starts_with(&root) {
+                return Ok(Some(path));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Load inventory while the caller holds the registry read or write lock.
+    /// Deletion uses this with its strict registration scan in one snapshot.
+    pub(in crate::git) fn load_worktrees_unlocked(&self) -> anyhow::Result<Vec<WorktreeInfo>> {
+        let stdout = self.run_command_bytes(&["worktree", "list", "--porcelain", "-z"])?;
+        let raw_worktrees = WorktreeInfo::parse_porcelain_list_z(&stdout)?;
+        let mut worktrees: Vec<_> = raw_worktrees.into_iter().filter(|wt| !wt.bare).collect();
+
+        // Main-worktree path correction.
+        //
+        // Git's `get_main_worktree()` computes the main worktree path by stripping
+        // a trailing `/.git` from the common dir. Two layouts have no such suffix,
+        // so git leaves the path unchanged and reports the git data directory as
+        // the "main worktree": submodules, whose common dir is `.git/modules/sub`,
+        // and `--separate-git-dir` repositories, whose common dir is wherever the
+        // user put the store. Git consults neither `core.worktree` nor its own
+        // `gitdir` backlink in this code path.
+        //
+        // We detect this by checking whether the first worktree's path equals
+        // git_common_dir (which never holds for normal repos, where git_common_dir
+        // is `.git` inside the worktree). When matched, we correct it using
+        // repo_path(), which resolves both layouts from the signals git does
+        // record.
+        //
+        // We fix this here rather than at each call site because list_worktrees()
+        // is the single point where worktree paths enter the system — all consumers
+        // (worktree_for_branch, resolve_worktree, etc.) depend on paths being
+        // working directories. If git fixes this upstream, the condition stops
+        // triggering.
+        if let Some(first) = worktrees.first_mut()
+            && canonicalize(&first.path).ok().as_deref() == Some(self.git_common_dir())
+        {
+            first.path = self.repo_path()?.to_path_buf();
+        }
+        finalize_worktrees(self, &mut worktrees)?;
+        Ok(worktrees)
     }
 
     /// Find the worktree path for a given branch, if one exists.
@@ -273,13 +331,61 @@ impl Repository {
     /// repository-scoped write lock closes the in-process window;
     /// [`Repository::list_worktrees`] takes the matching read side. A `git
     /// worktree list` in an *unrelated* process — outside wt's lock — remains
-    /// exposed; wt's serialization only covers its own removals.
+    /// exposed; wt's serialization only covers its own removals. Unregister
+    /// first moves the complete entry outside the registry; failed cleanup
+    /// cannot leave a partially deleted registration there.
     ///
     /// Git also `rmdir`s `.git/worktrees` once its last entry goes. This
     /// leaves the empty directory, which git reads as no linked worktrees.
     pub fn prune_worktree_entry(&self, path: &Path) -> anyhow::Result<()> {
-        let display = format_path_for_display(path);
+        let trash = self.wt_trash_dir();
+        std::fs::create_dir_all(&trash).with_context(|| {
+            format!(
+                "Failed to prepare trash @ {}",
+                format_path_for_display(&trash)
+            )
+        })?;
+        let garbage = tempfile::Builder::new()
+            .prefix("registration-")
+            .suffix(&format!("-{}", crate::utils::epoch_now()))
+            .tempdir_in(&trash)
+            .with_context(|| {
+                format!(
+                    "Failed to prepare metadata disposal @ {}",
+                    format_path_for_display(&trash)
+                )
+            })?;
+        // The uniquely created parent owns this absent child. A concurrent
+        // janitor sweep before the move only makes it fail, preserving metadata.
+        self.unregister_worktree_entry(path, &garbage.path().join(REGISTRATION))?;
+        // Removal has committed. Failed cleanup leaves only disposable metadata
+        // in trash, where the janitor can try again later.
+        if let Err(error) = garbage.close() {
+            tracing::debug!(%error, "Failed to clean unregistered worktree metadata");
+        }
+        Ok(())
+    }
+
+    /// Move the complete registration into caller-owned disposal. The atomic
+    /// rename is the removal commit; if it fails, every file remains available
+    /// for repair. The moved registration authorizes disposal of a staged
+    /// checkout, even if its later move into ordinary trash fails.
+    pub(crate) fn unregister_worktree_entry(
+        &self,
+        path: &Path,
+        destination: &Path,
+    ) -> anyhow::Result<()> {
         let _registry = self.worktree_registry_write();
+        self.unregister_worktree_entry_unlocked(path, destination)
+    }
+
+    /// Atomic unregister while staging already holds the registry write lock.
+    pub(in crate::git) fn unregister_worktree_entry_unlocked(
+        &self,
+        path: &Path,
+        destination: &Path,
+    ) -> anyhow::Result<()> {
+        let display = format_path_for_display(path);
         let (registration, recorded) = self.registration_at(path)?;
         if !definitely_absent(&registration.join("locked"))? {
             anyhow::bail!("Worktree @ {display} is locked");
@@ -287,9 +393,9 @@ impl Repository {
         if !definitely_absent(&recorded.join(".git"))? {
             anyhow::bail!("Worktree @ {display} is no longer stale; its .git exists");
         }
-        std::fs::remove_dir_all(&registration).with_context(|| {
+        std::fs::rename(&registration, destination).with_context(|| {
             format!(
-                "Failed to delete {}",
+                "Failed to unregister {}",
                 format_path_for_display(&registration)
             )
         })
@@ -310,6 +416,7 @@ impl Repository {
     /// remains stay on disk either way, and a registration with no index has
     /// nothing staged.
     pub fn stale_worktree_work(&self, path: &Path) -> anyhow::Result<Option<StaleWorktreeWork>> {
+        let _registry = self.worktree_registry_read();
         let (registration, _) = self.registration_at(path)?;
         if let Some(operation) = operation_in_progress_at(&registration) {
             return Ok(Some(StaleWorktreeWork::Operation(operation)));
@@ -348,22 +455,95 @@ impl Repository {
         Ok((!unchanged).then_some(StaleWorktreeWork::StagedChanges))
     }
 
-    /// The registration `<common>/worktrees/<id>` whose `gitdir` names the
-    /// worktree at `path`, with the worktree path it records.
-    ///
-    /// Unreadable siblings (an entry another process is deleting) are not
-    /// this one, so they are passed over rather than failing the lookup.
+    /// Map canonical checkout identities to canonical Git storage.
+    /// Only vanished entries may be skipped; surviving incomplete
+    /// entries cannot establish safe branch-deletion topology.
+    pub(crate) fn worktree_registrations(&self) -> anyhow::Result<BTreeMap<PathBuf, PathBuf>> {
+        let registrations = self.git_common_dir().join("worktrees");
+        let entries = match std::fs::read_dir(&registrations) {
+            Ok(entries) => entries,
+            Err(error) if vanished_registration(&registrations, &error) => {
+                return Ok(BTreeMap::new());
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "Failed to read worktree registry @ {}",
+                        format_path_for_display(&registrations)
+                    )
+                });
+            }
+        };
+        let mut found = BTreeMap::new();
+        for entry in entries {
+            let entry = entry.with_context(|| {
+                format!(
+                    "Failed to read worktree registry @ {}",
+                    format_path_for_display(&registrations)
+                )
+            })?;
+            let registration = entry.path();
+            match entry.file_type() {
+                Ok(kind) if kind.is_file() => continue,
+                Ok(_) => {}
+                Err(error) if vanished_registration(&registration, &error) => continue,
+                Err(error) => {
+                    return Err(error).context("Failed to inspect worktree registration");
+                }
+            }
+            let recorded = match registration_worktree_path(&registration) {
+                Ok(recorded) => recorded,
+                Err(error) if vanished_registration(&registration, &error) => continue,
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "Failed to read worktree registration @ {}",
+                            format_path_for_display(&registration)
+                        )
+                    });
+                }
+            };
+            let git_dir = match dunce::canonicalize(&registration) {
+                Ok(git_dir) => git_dir,
+                Err(error) if vanished_registration(&registration, &error) => continue,
+                Err(error) => {
+                    return Err(error).context("Failed to resolve worktree registration");
+                }
+            };
+            if found.insert(recorded.clone(), git_dir).is_some() {
+                anyhow::bail!(
+                    "Multiple worktrees registered @ {}",
+                    format_path_for_display(&recorded)
+                );
+            }
+        }
+        Ok(found)
+    }
+
+    /// Find the selected registration by its backlink, ignoring unreadable
+    /// siblings. Only branch deletion requires a complete registry topology.
     pub(crate) fn registration_at(&self, path: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
         let registrations = self.git_common_dir().join("worktrees");
-        std::fs::read_dir(&registrations)
-            .with_context(|| format!("Failed to read {}", format_path_for_display(&registrations)))?
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .find_map(|registration| {
-                let recorded = registration_worktree_path(&registration).ok()?;
-                paths_match(&recorded, path).then_some((registration, recorded))
-            })
-            .with_context(|| format!("No worktree registered @ {}", format_path_for_display(path)))
+        let entries = std::fs::read_dir(&registrations).with_context(|| {
+            format!("Failed to read {}", format_path_for_display(&registrations))
+        })?;
+        let selected = canonicalize_with_parents(path);
+        let mut found = None;
+        for entry in entries {
+            let registration = entry?.path();
+            let Ok(recorded) = registration_worktree_path(&registration) else {
+                continue;
+            };
+            if recorded == selected {
+                anyhow::ensure!(
+                    found.is_none(),
+                    "Multiple worktrees registered @ {}",
+                    format_path_for_display(path)
+                );
+                found = Some((registration, recorded));
+            }
+        }
+        found.with_context(|| format!("No worktree registered @ {}", format_path_for_display(path)))
     }
 
     /// Remove a worktree at the specified path.
@@ -395,13 +575,31 @@ impl Repository {
     /// backstop git would otherwise have provided. (For an explicit
     /// user-requested `force`, the user opted into destructive removal, so no
     /// re-check.)
-    pub fn remove_worktree(&self, path: &std::path::Path, force: bool) -> anyhow::Result<()> {
+    ///
+    /// `expected_registration` pins a removal selected in another process;
+    /// replacing the checkout while a detached worker waits must not retarget it.
+    pub fn remove_worktree(
+        &self,
+        path: &std::path::Path,
+        force: bool,
+        expected_registration: Option<&Path>,
+    ) -> anyhow::Result<()> {
+        let worktree = self.worktree_at(path);
+        let registration =
+            crate::git::remove::require_removal_allowed(&worktree, None, expected_registration)?;
         let use_force = if force {
             true
         } else {
             self.worktree_at(path).has_initialized_submodules()?
         };
-        let mut args = vec![OsStr::new("worktree"), OsStr::new("remove")];
+        // Staging already stopped fsmonitor; Git's own dirty gate must not
+        // restart it during this direct-removal fallback.
+        let mut args = vec![
+            OsStr::new("-c"),
+            OsStr::new("core.fsmonitor=false"),
+            OsStr::new("worktree"),
+            OsStr::new("remove"),
+        ];
         if use_force {
             args.push(OsStr::new("--force"));
         }
@@ -412,13 +610,14 @@ impl Repository {
         // after the check, a concurrent writer could dirty the worktree before
         // `--force` bypassed Git's own dirty gate.
         let _registry = self.worktree_registry_write();
+        crate::git::remove::require_removal_allowed(&worktree, None, Some(&registration))?;
         if use_force && !force {
             // Synthesized force (submodule worktree, not user-requested).
             // `--force` will suppress git's dirty check, so re-validate
             // cleanliness ourselves right before the destructive command —
             // a file modified since the caller's check must still fail
             // closed rather than be silently destroyed.
-            self.worktree_at(path).ensure_clean(
+            self.worktree_at(path).ensure_clean_without_fsmonitor(
                 "remove worktree with submodules",
                 None,
                 /* force_hint */ true,
@@ -431,6 +630,7 @@ impl Repository {
             .worktree_at(path)
             .branch()?
             .unwrap_or_else(|| crate::git::path_dir_name(path).to_string());
+        crate::git::remove::require_final_removal_allowed(&worktree, Some(&branch), &registration)?;
         self.run_command(&args)
             .map_err(|error| GitError::WorktreeRemovalFailed {
                 branch,
@@ -951,4 +1151,10 @@ fn warn_duplicate_checkout(branch: &str, paths: &[PathBuf]) {
             );
         }
     }
+}
+
+fn vanished_registration(registration: &Path, error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::NotFound
+        && matches!(std::fs::symlink_metadata(registration),
+            Err(missing) if missing.kind() == std::io::ErrorKind::NotFound)
 }

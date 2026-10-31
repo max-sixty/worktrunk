@@ -191,27 +191,19 @@ impl SharedBranchCheckout {
 ///
 /// Consumers that report deletions (the prune summary, `--format=json`) read
 /// this rather than the plan, so a deletion the CAS refused or an unmerged
-/// branch SafeDelete declined is never reported as deleted. `Deferred` is the
-/// one case with nothing to observe; [`deleted`](Self::deleted) reports the
-/// plan's intent there.
+/// branch SafeDelete declined is never reported as deleted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BranchFate {
     /// No deletion was attempted: the plan had no branch (detached worktree)
     /// or retained it (`deletion_mode` Keep — a shared checkout, an unborn
     /// branch with no ref to delete, or `--no-delete-branch`).
     NotAttempted,
+    /// A detached removal worker owns the deletion; this run cannot observe it.
+    Deferred,
     /// The deletion ran and the branch is gone.
     Deleted,
     /// The deletion ran and the branch survives, for the carried reason.
     Retained(RetainedReason),
-    /// The deletion was handed to a detached background process (the legacy
-    /// `git worktree remove` fallback) whose outcome this process never sees.
-    ///
-    /// Only planned deletions defer — a `Keep` plan or a branchless worktree
-    /// has no deletion command to hand off, and every fallback arm maps those
-    /// to [`NotAttempted`](Self::NotAttempted) — so `Deferred` implies the
-    /// plan's intent was deletion.
-    Deferred,
 }
 
 /// Why a deletion attempt left the branch in place.
@@ -264,23 +256,21 @@ impl BranchFate {
         }
     }
 
-    /// Whether the branch was deleted, best knowledge: the observed outcome
-    /// where one exists, the plan's intent for `Deferred` (which is always
-    /// deletion — see the variant doc).
+    /// Whether the branch was deleted.
     pub fn deleted(&self) -> bool {
-        matches!(self, Self::Deleted | Self::Deferred)
+        matches!(self, Self::Deleted)
     }
 
     /// The `branch_outcome` value in `--format=json`.
     ///
     /// Names the observed outcome rather than summarising it as a boolean, so
     /// a caller can tell a race it should retry from a retention it asked for,
-    /// and can tell a detached deletion nobody watched from a confirmed one.
+    /// and can distinguish requested retention from a failed deletion.
     pub fn json_outcome(&self) -> &'static str {
         match self {
             Self::NotAttempted => "not_attempted",
-            Self::Deleted => "deleted",
             Self::Deferred => "deferred",
+            Self::Deleted => "deleted",
             Self::Retained(RetainedReason::Unmerged) => "retained_unmerged",
             Self::Retained(RetainedReason::CheckedOut) => "retained_checked_out",
             Self::Retained(RetainedReason::Raced) => "retained_raced",
@@ -511,7 +501,7 @@ mod tests {
     fn branch_fate_deleted_mapping() {
         let cases = [
             (BranchFate::Deleted, true),
-            (BranchFate::Deferred, true),
+            (BranchFate::Deferred, false),
             (BranchFate::Retained(RetainedReason::Raced), false),
             (BranchFate::NotAttempted, false),
         ];
@@ -528,8 +518,8 @@ mod tests {
     fn branch_fate_json_outcome_is_distinct_per_fate() {
         let cases = [
             (BranchFate::NotAttempted, "not_attempted"),
-            (BranchFate::Deleted, "deleted"),
             (BranchFate::Deferred, "deferred"),
+            (BranchFate::Deleted, "deleted"),
             (
                 BranchFate::Retained(RetainedReason::Unmerged),
                 "retained_unmerged",
