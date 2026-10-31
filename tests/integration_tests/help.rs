@@ -79,6 +79,21 @@ fn test_merge_help_describes_exact_shape_no_rebase() {
     );
 }
 
+#[test]
+fn test_remove_help_shows_delete_branch_override() {
+    let output = wt_command()
+        .args(["remove", "--help"])
+        .output()
+        .expect("failed to run wt remove --help");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = stdout.ansi_strip();
+    assert!(
+        stdout.contains("--delete-branch"),
+        "missing config override in remove help:\n{stdout}"
+    );
+}
+
 // Root command (wt)
 #[rstest]
 #[case("help_root_short", "-h")]

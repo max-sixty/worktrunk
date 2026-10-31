@@ -2160,6 +2160,71 @@ delete-branch = false
 }
 
 #[rstest]
+fn test_remove_cli_delete_branch_force_overrides_config(mut repo: TestRepo) {
+    repo.write_test_config(
+        r#"[remove]
+delete-branch = false
+"#,
+    );
+    let worktree_path = repo.add_worktree("feature-cli-force-override");
+    std::fs::write(worktree_path.join("feature.txt"), "unmerged change").unwrap();
+    repo.git_command()
+        .args(["add", "feature.txt"])
+        .current_dir(&worktree_path)
+        .run()
+        .unwrap();
+    repo.git_command()
+        .args(["commit", "-m", "Add unmerged change"])
+        .current_dir(&worktree_path)
+        .run()
+        .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "--foreground",
+            "--delete-branch",
+            "-D",
+            "feature-cli-force-override",
+        ])
+        .output()
+        .expect("wt remove should run");
+    assert!(
+        output.status.success(),
+        "wt remove failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let branches = repo
+        .git_command()
+        .args(["branch", "--list", "feature-cli-force-override"])
+        .run()
+        .unwrap()
+        .stdout;
+    assert!(branches.is_empty(), "force-deleted branch should be gone");
+}
+
+#[rstest]
+fn test_remove_force_delete_with_config_false_suggests_override(repo: TestRepo) {
+    repo.write_test_config(
+        r#"[remove]
+delete-branch = false
+"#,
+    );
+    let output = repo
+        .wt_command()
+        .args(["remove", "-D", "nonexistent"])
+        .output()
+        .expect("wt remove should run");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("use --delete-branch to override it"),
+        "{stderr}"
+    );
+}
+
+#[rstest]
 fn test_remove_no_delete_branch_unmerged(mut repo: TestRepo) {
     // Create a worktree with an unmerged commit
     let worktree_path = repo.add_worktree("feature-unmerged-keep");
