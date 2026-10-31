@@ -11,11 +11,10 @@
 //! # Discovery
 //!
 //! Processes are discovered by working directory: any process whose `cwd` is
-//! at or under the worktree path. `lsof -d cwd` reports every visible
-//! process's cwd in one call; [`parse_lsof_cwd`] parses it and the caller
-//! filters by path prefix. This is deliberately scoped to processes the
-//! invoking user can see (no root), matching the `lsof` reliance already
-//! established by [`super::fsmonitor`].
+//! at or under the worktree path. Linux reads `/proc/<pid>/cwd` directly so a
+//! system-wide `lsof` scan cannot time out and hide all candidates. Other Unix
+//! systems use `lsof -d cwd`; [`parse_lsof_cwd`] parses its output. Both paths
+//! skip processes whose cwd cannot be read and filter by the worktree prefix.
 //!
 //! # Data-safety contract
 //!
@@ -56,11 +55,11 @@ use crate::shell_exec::Cmd;
 use super::fsmonitor::{NixSignaller, REAP_KILL_DEADLINE, escalate_terminate};
 
 /// One process discovered under a worktree: its PID, short command name, and
-/// the working directory `lsof` reported.
+/// the working directory reported by the platform's process probe.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CwdProcess {
     pub pid: u32,
-    /// Short command name from `lsof` (truncated to ~9 chars by `lsof`).
+    /// Short command name from `/proc` or `lsof`.
     pub command: String,
     pub cwd: PathBuf,
 }
@@ -180,14 +179,49 @@ fn without_controlling_terminal(pids: &[u32]) -> HashSet<u32> {
 /// current `wt` process. This is the raw discovery step, *before* the
 /// controlling-terminal guard — [`collect_reapable`] layers that on top.
 ///
-/// Best-effort: an `lsof` spawn failure yields an empty list. `lsof -d cwd` is
-/// run system-wide rather than with `+D <path>` so it never walks the
-/// worktree's file tree; the prefix filter is applied here instead. Results
-/// are sorted by PID for stable output.
+/// Best-effort: unreadable or disappeared processes are skipped. On non-Linux
+/// Unix, an `lsof` spawn failure yields an empty list. Results are sorted by
+/// PID for stable output.
 pub fn processes_under(worktree_path: &Path) -> Vec<CwdProcess> {
     let canonical =
         dunce::canonicalize(worktree_path).unwrap_or_else(|_| worktree_path.to_path_buf());
+    let self_pid = std::process::id();
 
+    #[cfg(target_os = "linux")]
+    let processes = processes_from_proc(Path::new("/proc"));
+    #[cfg(not(target_os = "linux"))]
+    let processes = processes_from_lsof();
+
+    let mut candidates: Vec<CwdProcess> = processes
+        .into_iter()
+        .filter(|p| p.pid != self_pid)
+        .filter(|p| p.cwd.starts_with(&canonical))
+        .collect();
+    candidates.sort_by_key(|p| p.pid);
+    candidates
+}
+
+#[cfg(target_os = "linux")]
+fn processes_from_proc(proc_root: &Path) -> Vec<CwdProcess> {
+    let Ok(entries) = std::fs::read_dir(proc_root) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let pid = entry.file_name().to_str()?.parse::<u32>().ok()?;
+            let cwd = std::fs::read_link(entry.path().join("cwd")).ok()?;
+            let command = std::fs::read_to_string(entry.path().join("comm"))
+                .unwrap_or_default()
+                .trim_end_matches('\n')
+                .to_owned();
+            Some(CwdProcess { pid, command, cwd })
+        })
+        .collect()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn processes_from_lsof() -> Vec<CwdProcess> {
     // `lsof -d cwd` lists every visible process's cwd. It exits non-zero when
     // some processes are inaccessible (other users), but still prints the
     // accessible ones — so parse whatever stdout we got rather than gating on
@@ -200,14 +234,7 @@ pub fn processes_under(worktree_path: &Path) -> Vec<CwdProcess> {
         return Vec::new();
     };
 
-    let self_pid = std::process::id();
-    let mut candidates: Vec<CwdProcess> = parse_lsof_cwd(&String::from_utf8_lossy(&output.stdout))
-        .into_iter()
-        .filter(|p| p.pid != self_pid)
-        .filter(|p| p.cwd.starts_with(&canonical))
-        .collect();
-    candidates.sort_by_key(|p| p.pid);
-    candidates
+    parse_lsof_cwd(&String::from_utf8_lossy(&output.stdout))
 }
 
 /// Discover the processes eligible for reaping under `worktree_path`.
@@ -259,6 +286,13 @@ pub fn reap_summary(count: usize, gone: usize) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn missing_procfs_yields_no_processes() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(processes_from_proc(&root.path().join("absent")).is_empty());
+    }
 
     #[test]
     fn parse_lsof_cwd_extracts_pid_command_and_path() {
