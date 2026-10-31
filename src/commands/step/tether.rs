@@ -101,12 +101,12 @@ pub(crate) fn step_tether(command: &[String], working_dir: Option<&Path>) -> Res
 
     // Block until the child exits — killed by the reaper, or on its own.
     #[cfg(unix)]
-    let waited = signals.wait(&child).map(|outcome| outcome.status);
+    let wait_result = signals.wait(&child).map(|outcome| outcome.status);
     #[cfg(windows)]
-    let waited = child.wait();
-    match waited {
+    let wait_result = child.wait();
+    match &wait_result {
         Ok(status) => trace.complete(status.success()),
-        Err(e) => trace.fail(&e),
+        Err(e) => trace.fail(e),
     }
 
     // Final sweep: on a self-exit, descendants may still be running (Unix:
@@ -116,6 +116,10 @@ pub(crate) fn step_tether(command: &[String], working_dir: Option<&Path>) -> Res
 
     // A reaper still sleeping between polls (the command self-exited) dies
     // with this process when it returns.
+    let status = wait_result.context("Failed to wait for tethered command")?;
+    if !status.success() {
+        return Err(worktrunk::git::WorktrunkError::from_child_status(&status, None).into());
+    }
     Ok(())
 }
 
