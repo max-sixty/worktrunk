@@ -2555,7 +2555,12 @@ mod tests {
         )
         .unwrap();
         assert!(!checkout.exists());
-        assert!(worktrunk::git::staged_trash_entries(&repo.wt_trash_dir()).is_empty());
+        // A concurrently forked test can inherit the drain lock until exec.
+        // Match the bounded retry in git::remove's drain test.
+        worktrunk::testing::wait_for("the staged worktree to be drained", || {
+            worktrunk::git::drain_trash(&repo.wt_trash_dir()).unwrap();
+            worktrunk::git::staged_trash_entries(&repo.wt_trash_dir()).is_empty()
+        });
         assert!(!registration.exists());
         assert!(
             repo.run_command(&["rev-parse", "--verify", "feature"])
