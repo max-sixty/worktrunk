@@ -392,10 +392,15 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
 
     // Validate conflicting flags
     if !delete_branch && args.force_delete {
+        let message = if args.no_delete_branch {
+            "Cannot use --force-delete with --no-delete-branch"
+        } else {
+            "Cannot use --force-delete with [remove] delete-branch = false; use --delete-branch to override it"
+        };
         return Err(worktrunk::git::GitError::Other {
-                    message: "Cannot use --force-delete with delete-branch=false (set via --no-delete-branch or [remove] delete-branch = false)".into(),
-                }
-                .into());
+            message: message.into(),
+        }
+        .into());
     }
 
     // `--reap` relies on per-process cwd discovery (`lsof`/`ps`), which

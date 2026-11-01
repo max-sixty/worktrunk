@@ -501,11 +501,7 @@ pub(crate) struct RemoveArgs {
     pub(crate) no_delete_branch: bool,
 
     /// Delete branch after removal (overrides config `[remove] delete-branch = false`)
-    #[arg(
-        long = "delete-branch",
-        overrides_with = "no_delete_branch",
-        hide = true
-    )]
+    #[arg(long = "delete-branch", overrides_with = "no_delete_branch")]
     pub(crate) delete_branch: bool,
 
     /// Delete unmerged branches
@@ -1329,6 +1325,12 @@ Keep the branch:
 
 ```console
 $ wt remove --no-delete-branch feature-branch
+```
+
+If `[remove] delete-branch = false` is configured, use `--delete-branch` to delete a branch for one removal:
+
+```console
+$ wt remove --delete-branch feature-branch
 ```
 
 Force-delete an unmerged branch:
