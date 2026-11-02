@@ -290,7 +290,7 @@ jobs:
 
     # cargo-udeps requires nightly. Keep at or above `rust-version` in
     # `Cargo.toml`; see the note on `minimal-versions`' identical pin.
-    - run: rustup override set nightly-2026-08-01
+    - run: rustup override set nightly-2026-10-20
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
@@ -330,7 +330,7 @@ jobs:
     # whose MSRV exceeds the toolchain, so a stale pin fails the job outright
     # rather than reporting on dependency floors. Bumped by the weekly MSRV
     # pass, with headroom so that isn't every week.
-    - run: rustup override set nightly-2026-08-01
+    - run: rustup override set nightly-2026-10-20
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
