@@ -95,7 +95,9 @@ pub(crate) fn is_top_level_builtin(name: &str) -> bool {
 
         crate::cli::Cli::command()
             .get_subcommands()
-            .map(|command| command.get_name())
+            .flat_map(|command| {
+                std::iter::once(command.get_name()).chain(command.get_all_aliases())
+            })
             .filter(|name| *name != "help")
             .map(str::to_owned)
             .collect()
@@ -1655,6 +1657,7 @@ cmd = [
 
         for (args, builtin) in [
             (vec!["wt", "list"], true),
+            (vec!["wt", "ls"], true),
             (vec!["wt", "select"], true),
             (vec!["wt", "commit"], false),
             (vec!["wt", "deploy"], false),

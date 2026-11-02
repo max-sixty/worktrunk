@@ -90,13 +90,14 @@ export def --env --wrapped wt [...args] {
     # while preserving the original arguments for external execution.
     let arg_text = ($args | each {|arg| $arg | into string })
 
-    # `list` is the only command that benefits from streaming stdout (progressive
-    # table rendering). It never emits directives, so we skip directive processing
-    # and let the binary be the last expression — stdout flows through pipes.
+    # `list` (alias `ls`) is the only command that benefits from streaming stdout
+    # (progressive table rendering). It never emits directives, so we skip
+    # directive processing and let the binary be the last expression — stdout
+    # flows through pipes.
     # Note: global flags before `list` (e.g. `wt -C /path list`) miss this check
     # and fall through to the buffered path. Output is still correct, just not
     # progressively rendered.
-    if (not ($arg_text | is-empty)) and ($arg_text | first) == "list" {
+    if (not ($arg_text | is-empty)) and ($arg_text | first) in ["list", "ls"] {
         # Direct passthrough: binary is the last expression of this branch,
         # which is the last expression of the function. Stdout streams to the
         # terminal and flows through nushell pipelines.

@@ -47,7 +47,7 @@ Usage: wt [OPTIONS] [COMMAND]
 
 Commands:
   switch  Switch to a worktree; create if needed
-  list    List worktrees and their status
+  list    List worktrees and their status [alias: ls]
   remove  Remove worktree; delete branch if merged
   merge   Merge a branch into the target branch
   step    Run individual operations

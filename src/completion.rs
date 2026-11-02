@@ -690,12 +690,13 @@ fn inject_alias_subcommands(cmd: Command) -> Command {
     }
 
     let mut cmd = cmd;
-    // Top-level injection: skip aliases that match a top-level built-in. The
+    // Top-level injection: skip aliases that match a top-level built-in's name
+    // or clap alias (`ls`); a duplicate name makes clap reject the tree. The
     // help text on the stub uses the representative source's first command
     // template (user wins over project), matching how the announcement
     // banner orders the two when both are configured.
     for (name, entry) in &aliases {
-        if cmd.get_subcommands().any(|s| s.get_name() == name.as_str()) {
+        if cmd.find_subcommand(name).is_some() {
             continue;
         }
         // Mirror the wrapped built-in leaf when the alias forwards {{ args }}
@@ -712,10 +713,7 @@ fn inject_alias_subcommands(cmd: Command) -> Command {
     // Step-level injection: keep historical `wt step <alias>` completions.
     cmd.mut_subcommand("step", |mut step| {
         for (name, entry) in aliases {
-            if step
-                .get_subcommands()
-                .any(|s| s.get_name() == name.as_str())
-            {
+            if step.find_subcommand(&name).is_some() {
                 continue;
             }
             step = step.subcommand(build_alias_completion_command(

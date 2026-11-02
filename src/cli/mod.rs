@@ -1294,7 +1294,7 @@ Missing a field that would be generally useful? Open an issue at https://github.
     // subcommands ("cannot be used with --branches") instead of "unknown subcommand".
     // Could fix with external_subcommand + post-parse validation, but not worth the
     // code. The `statusline` subcommand may move elsewhere anyway.
-    #[command(args_conflicts_with_subcommands = true)]
+    #[command(args_conflicts_with_subcommands = true, visible_alias = "ls")]
     List(ListArgs),
 
     /// Remove worktree; delete branch if merged
