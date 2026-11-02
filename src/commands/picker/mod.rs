@@ -583,9 +583,10 @@ impl AltXRemover {
     /// git removal and, only if the worktree unexpectedly survives
     /// ([`removal_target_still_present`] — a clean-check race, a locked dir, a
     /// failing `pre-remove` hook), reverts the morph back to the worktree row via
-    /// [`revert_morph`] and surfaces why. (The branch can't flip integrated in the
-    /// millisecond between the prediction and the delete, so the only realistic
-    /// failure is the worktree removal itself.)
+    /// [`revert_morph`] and surfaces why. When the target is gone, it flashes
+    /// confirmation that the worktree was removed and the branch kept. (The branch
+    /// can't flip integrated in the millisecond between the prediction and the
+    /// delete, so the only realistic failure is the worktree removal itself.)
     ///
     /// Returns [`RemovalEffect::Morphed`] on the in-place morph, or
     /// [`RemovalEffect::Dropped`] when it falls back to
@@ -673,6 +674,13 @@ impl AltXRemover {
             // the worktree dir survives — undo the morph and say so.
             if removal_target_still_present(&repo, &result) {
                 revert_morph(revert, &header_flash, &stashed_warnings, &render_tx);
+            } else {
+                flash_header(
+                    &header_flash,
+                    &render_tx,
+                    info_message(cformat!("Removed <bold>{branch}</> worktree; kept branch"))
+                        .to_string(),
+                );
             }
         });
 
@@ -4083,6 +4091,8 @@ pub mod tests {
             .expect("feature worktree is listed");
         let items = Arc::new(Mutex::new(Vec::new()));
         let remover = test_remover(Arc::clone(&items), repo.clone());
+        let (render_tx, _render_rx) = tokio::sync::mpsc::channel(8);
+        remover.render_tx.set(render_tx).unwrap();
         let (row, token, rendered, morphed) =
             setup_morphable_row(&remover, "feature", &reported_path);
         items.lock().unwrap().push(Arc::clone(&row));
@@ -4107,13 +4117,21 @@ pub mod tests {
             original_line,
             "the morphed row's display line is rewritten to the `/ branch` line"
         );
-
         // The worktree removal itself runs in the background.
         let deadline = Instant::now() + Duration::from_secs(5);
-        while reported_path.exists() && Instant::now() < deadline {
+        while remover.header_flash.current().is_none() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert!(!reported_path.exists(), "the worktree is removed");
+        let flash = remover.header_flash.current();
+        assert!(
+            flash.as_deref().is_some_and(|message| {
+                message.contains("Removed")
+                    && message.contains("feature")
+                    && message.contains("kept branch")
+            }),
+            "successful removal confirms the worktree was removed and the branch kept: {flash:?}"
+        );
         // The unmerged branch is retained after its worktree is removed.
         await_branch_presence(&repo, "feature", true);
         // The removal succeeded, so the morph stands (no revert).
