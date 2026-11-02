@@ -583,10 +583,9 @@ impl AltXRemover {
     /// git removal and, only if the worktree unexpectedly survives
     /// ([`removal_target_still_present`] — a clean-check race, a locked dir, a
     /// failing `pre-remove` hook), reverts the morph back to the worktree row via
-    /// [`revert_morph`] and surfaces why. When the target is gone, it flashes
-    /// confirmation that the worktree was removed and the branch kept. (The branch
-    /// can't flip integrated in the millisecond between the prediction and the
-    /// delete, so the only realistic failure is the worktree removal itself.)
+    /// [`revert_morph`] and surfaces why. When the target is gone, it checks the
+    /// actual branch ref before choosing the confirmation and final row state:
+    /// an approved `pre-remove` hook may integrate the branch after planning.
     ///
     /// Returns [`RemovalEffect::Morphed`] on the in-place morph, or
     /// [`RemovalEffect::Dropped`] when it falls back to
@@ -652,6 +651,7 @@ impl AltXRemover {
 
         let repo = planning_repo.clone();
         let approvals = Arc::clone(&self.approvals);
+        let items = Arc::clone(&self.items);
         let render_tx = Arc::clone(&self.render_tx);
         let stashed_warnings = Arc::clone(&self.stashed_warnings);
         let shortcut_table = Arc::clone(&self.shortcut_table);
@@ -675,12 +675,29 @@ impl AltXRemover {
             if removal_target_still_present(&repo, &result) {
                 revert_morph(revert, &header_flash, &stashed_warnings, &render_tx);
             } else {
-                flash_header(
-                    &header_flash,
-                    &render_tx,
-                    info_message(cformat!("Removed <bold>{branch}</> worktree; kept branch"))
-                        .to_string(),
-                );
+                let branch_kept = repo.branch(&branch).exists_locally().unwrap_or(false);
+                if branch_kept {
+                    flash_header(
+                        &header_flash,
+                        &render_tx,
+                        info_message(cformat!("Removed <bold>{branch}</> worktree; kept branch"))
+                            .to_string(),
+                    );
+                } else {
+                    items
+                        .lock()
+                        .unwrap()
+                        .retain(|item| item.output().as_ref() != branch.as_str());
+                    if let Some(tx) = render_tx.get() {
+                        let _ = tx.try_send(Event::Action(resync_pool_action(Arc::clone(&items))));
+                    }
+                    flash_header(
+                        &header_flash,
+                        &render_tx,
+                        info_message(cformat!("Removed <bold>{branch}</> worktree and branch"))
+                            .to_string(),
+                    );
+                }
             }
         });
 
@@ -4138,6 +4155,100 @@ pub mod tests {
         assert!(
             morphed.load(Ordering::Relaxed),
             "a successful removal leaves the row morphed"
+        );
+    }
+
+    /// An approved pre-remove hook can integrate the branch after the picker
+    /// predicts it will be kept. The background completion must observe that
+    /// the branch was actually deleted, remove the morphed row, and report both
+    /// removals rather than leaving a phantom branch row.
+    #[test]
+    fn test_apply_drops_morphed_row_when_pre_remove_hook_integrates_branch() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let wt_dir = tempfile::tempdir().unwrap();
+        let wt_path = wt_dir.path().join("feature");
+        repo.run_command(&[
+            "worktree",
+            "add",
+            "-b",
+            "feature",
+            wt_path.to_str().unwrap(),
+        ])
+        .unwrap();
+
+        fs::write(wt_path.join("new.txt"), "unmerged work").unwrap();
+        worktrunk::shell_exec::Cmd::new("git")
+            .args(["add", "."])
+            .current_dir(&wt_path)
+            .run()
+            .unwrap();
+        worktrunk::shell_exec::Cmd::new("git")
+            .args(["commit", "-m", "unmerged work"])
+            .current_dir(&wt_path)
+            .run()
+            .unwrap();
+
+        let command = "git update-ref refs/heads/main refs/heads/feature";
+        fs::create_dir_all(test.path().join(".config")).unwrap();
+        fs::write(
+            test.path().join(".config/wt.toml"),
+            format!("pre-remove = {command:?}\n"),
+        )
+        .unwrap();
+
+        let pid = repo.project_identifier().unwrap();
+        let approvals_dir = tempfile::tempdir().unwrap();
+        let approvals_path = approvals_dir.path().join("approvals.toml");
+        let mut approvals = Approvals::default();
+        approvals
+            .approve_commands(pid.to_string(), vec![command.to_string()], &approvals_path)
+            .unwrap();
+
+        let reported_path = repo
+            .list_worktrees()
+            .unwrap()
+            .iter()
+            .find(|wt| wt.branch.as_deref() == Some("feature"))
+            .map(|wt| wt.path.clone())
+            .expect("feature worktree is listed");
+        let items = Arc::new(Mutex::new(Vec::new()));
+        let mut remover = test_remover(Arc::clone(&items), repo.clone());
+        remover.approvals = Arc::new(approvals);
+        let (render_tx, _render_rx) = tokio::sync::mpsc::channel(8);
+        remover.render_tx.set(render_tx).unwrap();
+        let (row, token, _, morphed) =
+            setup_morphable_row(&remover, "feature", &reported_path);
+        items.lock().unwrap().push(Arc::clone(&row));
+
+        remover.apply(token);
+
+        assert!(
+            morphed.load(std::sync::atomic::Ordering::Relaxed),
+            "the row morphs optimistically before the background removal"
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while remover.header_flash.current().is_none() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        assert!(!reported_path.exists(), "the worktree is removed");
+        assert!(
+            !repo.branch("feature").exists_locally().unwrap(),
+            "the pre-remove hook integrates the branch so removal deletes it"
+        );
+        assert!(
+            items.lock().unwrap().is_empty(),
+            "the row whose branch was deleted is removed from the picker items"
+        );
+        let flash = remover.header_flash.current();
+        assert!(
+            flash.as_deref().is_some_and(|message| {
+                message.contains("Removed")
+                    && message.contains("feature")
+                    && message.contains("worktree and branch")
+            }),
+            "the success message confirms both the worktree and branch were removed: {flash:?}"
         );
     }
 
