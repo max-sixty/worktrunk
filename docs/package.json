@@ -12,11 +12,11 @@
     "test:site": "node --test tests/built-site.test.mjs tests/browser-site.test.mjs"
   },
   "dependencies": {
-    "@astrojs/markdown-remark": "^7.3.4",
+    "@astrojs/markdown-remark": "^7.3.5",
     "@astrojs/sitemap": "^3.7.4",
-    "@astrojs/starlight": "^0.42.6",
+    "@astrojs/starlight": "^0.42.7",
     "@expressive-code/core": "^0.44.3",
-    "astro": "^7.4.2",
+    "astro": "^7.4.4",
     "hast-util-from-html": "^2.0.3"
   },
   "devDependencies": {
