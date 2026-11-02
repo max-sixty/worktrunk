@@ -351,3 +351,20 @@ test('a hunk past the budget draws its start, under a recounted header', async (
   expect(await ui.find({ type: 'Text', text: /rest of this file/ })).toBeDefined()
   await ui.unmount()
 })
+
+
+test('hunkless paths may contain the diff-side delimiter', async () => {
+  const patch = [
+    'diff --git a/src b/nested file.bin b/src b/nested file.bin',
+    'old mode 100644',
+    'new mode 100755',
+    'diff --git a/assets b/image.bin b/assets b/image.bin',
+    'index da5a0a8..cb42b8f 100644',
+    'Binary files a/assets b/image.bin and b/assets b/image.bin differ',
+    '',
+  ].join('\n')
+  expect(parsePatch(patch).map(file => [file.path, file.status])).toEqual([
+    ['src b/nested file.bin', 'modified'],
+    ['assets b/image.bin', 'binary'],
+  ])
+})

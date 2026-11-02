@@ -36,12 +36,14 @@ export function parsePatch(patch: string): FileDiff[] {
     // `+++ /dev/null` and names it on `---`. A file with no hunks (binary,
     // mode-only, pure rename) names it only on `diff --git`.
     const quoted = / ("(?:[^"\\]|\\.)*")$/.exec(first)?.[1]
+    // Mode-only and binary changes repeat the same name; ` b/` can occur inside it.
+    const samePath = /^diff --git a\/(.*) b\/\1$/.exec(first)?.[1]
     const path =
       named('rename to ') ??
       side('+++ ', 'b/') ??
       side('--- ', 'a/') ??
       (quoted === undefined
-        ? first.replace(/^diff --git a\/.* b\//, '')
+        ? (samePath ?? first.replace(/^diff --git a\/.* b\//, ''))
         : unquote(quoted).replace(/^b\//, ''))
 
     let added = 0
