@@ -158,6 +158,9 @@ jobs:
     - name: 📂 Checkout code
       uses: actions/checkout@v7
 
+    - name: Windows signature checker regressions
+      run: python3 -m unittest discover -s .github/tests -p 'test_*.py'
+
     - uses: ./.github/actions/test-setup
 
     - name: Install wt
