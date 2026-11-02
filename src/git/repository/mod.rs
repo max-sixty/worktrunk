@@ -288,6 +288,10 @@ pub(super) struct RepoCache {
     /// front over the persistent `merge-base/` [`sha_cache`] back; see
     /// [`Repository::merge_base_by_sha`].
     pub(super) merge_base: DashMap<(String, String), Option<String>>,
+    /// Ahead/behind counts keyed by the ordered (base, head) SHA pair. The
+    /// entry lock coalesces concurrent misses from list's parallel tasks.
+    /// The persistent `ahead-behind/` cache serves later processes.
+    pub(super) ahead_behind: DashMap<(String, String), (usize, usize)>,
     /// Commit→tree cache: commit_sha -> tree_sha. Keys are commit SHAs by
     /// contract; a commit's tree is immutable, so the mapping is never stale
     /// within a process. Dedups the `wt list` integration probe, where every

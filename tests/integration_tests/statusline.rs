@@ -67,6 +67,61 @@ fn run_statusline(repo: &TestRepo, args: &[&str], stdin_json: Option<&str>) -> S
     run_statusline_from_dir(repo, args, stdin_json, repo.root_path())
 }
 
+#[rstest]
+fn test_statusline_deduplicates_ahead_behind_for_main_upstream(repo: TestRepo) {
+    use worktrunk::trace::{TraceEntryKind, parse_lines};
+
+    // Local main trails its upstream, so the mainline and upstream tasks ask
+    // for the same SHA pair on a cold cache.
+    std::fs::write(repo.root_path().join("next.txt"), "next\n").unwrap();
+    repo.run_git(&["add", "next.txt"]);
+    repo.run_git(&["commit", "-m", "Next"]);
+    let upstream_sha = repo.git_output(&["rev-parse", "HEAD"]);
+    repo.run_git(&["update-ref", "refs/remotes/origin/main", &upstream_sha]);
+    repo.run_git(&["reset", "--hard", "HEAD~1"]);
+    repo.run_git(&["config", "branch.main.remote", "origin"]);
+    repo.run_git(&["config", "branch.main.merge", "refs/heads/main"]);
+    let main_sha = repo.git_output(&["rev-parse", "HEAD"]);
+
+    let input = serde_json::json!({
+        "hook_event_name": "Status",
+        "workspace": {"current_dir": repo.root_path()},
+        "model": {"display_name": "Opus"},
+        "context_window": {"used_percentage": 42.0}
+    })
+    .to_string();
+    let mut cmd = repo.wt_command();
+    cmd.args(["-vv", "list", "statusline", "--format=claude-code"]);
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    let mut child = cmd.spawn().unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "statusline failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let trace = std::fs::read_to_string(repo.root_path().join(".git/wt/logs/trace.jsonl"))
+        .expect("-vv should write trace.jsonl");
+    let range = format!("{main_sha}..{upstream_sha}");
+    let count = parse_lines(&trace)
+        .into_iter()
+        .filter(|entry| {
+            matches!(&entry.kind, TraceEntryKind::Command { command, .. }
+                if command.contains("rev-list --count") && command.contains(&range))
+        })
+        .count();
+    assert_eq!(count, 1, "expected one count of {range}; trace:\n{trace}");
+}
+
 // --- Test Setup Helpers ---
 
 fn add_uncommitted_changes(repo: &TestRepo) {
