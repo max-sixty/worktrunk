@@ -690,6 +690,10 @@ impl AltXRemover {
                         .retain(|item| item.output().as_ref() != branch.as_str());
                     if let Some(tx) = render_tx.get() {
                         let _ = tx.try_send(Event::Action(resync_pool_action(Arc::clone(&items))));
+                        let _ = tx.try_send(Event::Action(run_preview_when_settled(
+                            Arc::new(AtomicUsize::new(0)),
+                            Arc::new(AtomicUsize::new(0)),
+                        )));
                     }
                     flash_header(
                         &header_flash,
