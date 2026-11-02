@@ -6,7 +6,7 @@ import type { FileDiff } from '../types'
  *
  * Reads the headers git writes with `--no-color --no-ext-diff`, the `a/` and
  * `b/` prefixes and `core.quotePath=false`: `diff --git a/<old> b/<new>`, then
- * `new file`, `deleted file`, `rename to`, `Binary files` or `---`/`+++`
+ * `new file`, `deleted file`, `rename to`, `copy to`, `Binary files` or `---`/`+++`
  * lines, then hunks. Git ends a `---`/`+++` name holding a space with a tab,
  * and still C-quotes one holding a tab, newline, quote or backslash.
  */
@@ -32,14 +32,15 @@ export function parsePatch(patch: string): FileDiff[] {
     }
     const has = (prefix: string) => header.some(line => line.startsWith(prefix))
 
-    // `+++ b/<path>` names the file after the change; a deletion has
-    // `+++ /dev/null` and names it on `---`. A file with no hunks (binary,
-    // mode-only, pure rename) names it only on `diff --git`.
+    // Rename and copy headers name the destination explicitly. Otherwise,
+    // `+++ b/<path>` names the file after the change; a deletion names it on
+    // `---`. Mode-only and binary changes may name it only on `diff --git`.
     const quoted = / ("(?:[^"\\]|\\.)*")$/.exec(first)?.[1]
     // Mode-only and binary changes repeat the same name; ` b/` can occur inside it.
     const samePath = /^diff --git a\/(.*) b\/\1$/.exec(first)?.[1]
     const path =
       named('rename to ') ??
+      named('copy to ') ??
       side('+++ ', 'b/') ??
       side('--- ', 'a/') ??
       (quoted === undefined

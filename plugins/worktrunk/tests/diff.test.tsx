@@ -368,3 +368,26 @@ test('hunkless paths may contain the diff-side delimiter', async () => {
     ['assets b/image.bin', 'binary'],
   ])
 })
+
+
+test('copy headers name the destination before ambiguous diff-side delimiters', async () => {
+  const patch = [
+    'diff --git a/x b/x b/x b/x',
+    'similarity index 100%',
+    'copy from x b/x b/x',
+    'copy to x',
+    'diff --git a/source.txt b/dst b/copied file.txt',
+    'similarity index 100%',
+    'copy from source.txt',
+    'copy to dst b/copied file.txt',
+    'diff --git a/source.bin "b/quote\\"name.bin"',
+    'similarity index 100%',
+    'copy from source.bin',
+    'copy to "quote\\"name.bin"',
+  ].join('\n')
+  expect(parsePatch(patch).map(file => file.path)).toEqual([
+    'x',
+    'dst b/copied file.txt',
+    'quote"name.bin',
+  ])
+})
