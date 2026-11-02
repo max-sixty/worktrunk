@@ -192,7 +192,6 @@ pub fn ensure_config_parses(content: &str) -> Result<(), ConfigError> {
 pub use approvals::{Approvals, approvals_path, require_approvals_path};
 pub use commands::{Command, CommandConfig, HookStep, append_aliases};
 pub use deprecation::CheckAndMigrateResult;
-pub use deprecation::ConfigFileKind;
 pub use deprecation::DeprecationInfo;
 pub use deprecation::check_and_migrate;
 pub use deprecation::compute_migrated_content;
@@ -204,6 +203,7 @@ pub use deprecation::migrate_content;
 pub use deprecation::normalize_template_vars;
 pub use deprecation::suppress_warnings;
 pub use deprecation::warnings_suppressed;
+pub use deprecation::{ConfigFileKind, ConfigMigrationLocks, ConfigMigrationTarget};
 pub use deprecation::{
     DEPRECATED_SECTION_KEYS, DeprecatedSection, UnknownKeyKind, classify_unknown_key,
     key_belongs_in, nested_key_belongs_in, scope_to_repo_note, warn_unknown_fields,

@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::{
-    ConfigFileKind, DeprecationInfo, DeprecationKind, compute_migrated_content, config_path,
-    copy_approved_commands_to_approvals_file, ensure_config_parses, format_deprecation_warnings,
-    format_migration_diff_block,
+    ConfigFileKind, ConfigMigrationLocks, ConfigMigrationTarget, DeprecationInfo, DeprecationKind,
+    compute_migrated_content, config_path, copy_approved_commands_to_approvals_file,
+    ensure_config_parses, format_deprecation_warnings, format_migration_diff_block,
 };
 use worktrunk::git::{Repository, resolve_input_path};
 use worktrunk::path::{format_path_for_display, paths_match};
@@ -95,6 +95,16 @@ pub fn handle_config_update(yes: bool, output: Option<PathBuf>) -> anyhow::Resul
         }
     }
 
+    let targets: Vec<_> = candidates
+        .iter()
+        .map(|candidate| ConfigMigrationTarget {
+            path: &candidate.config_path,
+            kind: candidate.info.kind,
+            moves_approvals: drops_approved_commands(candidate),
+        })
+        .collect();
+    let locks = ConfigMigrationLocks::acquire(&targets)?;
+
     // A preview authorizes migrating the content it was computed from. An edit
     // that completes while the prompt is open would be replaced by that earlier
     // snapshot, so re-read each config and fail rather than publish a stale
@@ -119,7 +129,7 @@ pub fn handle_config_update(yes: bool, output: Option<PathBuf>) -> anyhow::Resul
     }
 
     for candidate in &candidates {
-        move_approvals_out_of(candidate)?;
+        move_approvals_out_of_locked(candidate, Some(&locks))?;
 
         write_atomically(&candidate.config_path, &candidate.migrated)
             .with_context(|| format!("Failed to update {}", candidate.info.label()))?;
@@ -193,9 +203,18 @@ fn write_migrated_output(output: &Path, candidates: &[UpdateCandidate]) -> anyho
 /// the config it came from reach this — the in-place update, and `--output`
 /// naming that same path.
 fn move_approvals_out_of(candidate: &UpdateCandidate) -> anyhow::Result<()> {
+    move_approvals_out_of_locked(candidate, None)
+}
+
+fn move_approvals_out_of_locked(
+    candidate: &UpdateCandidate,
+    locks: Option<&ConfigMigrationLocks>,
+) -> anyhow::Result<()> {
     if drops_approved_commands(candidate)
-        && let Some(approvals_path) =
-            copy_approved_commands_to_approvals_file(&candidate.config_path)?
+        && let Some(approvals_path) = match locks {
+            Some(locks) => locks.copy_approved_commands(&candidate.config_path)?,
+            None => copy_approved_commands_to_approvals_file(&candidate.config_path)?,
+        }
     {
         let filename = approvals_path
             .file_name()

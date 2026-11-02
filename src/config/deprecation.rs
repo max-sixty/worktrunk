@@ -1327,6 +1327,68 @@ pub fn migrate_content(content: &str) -> String {
     migrate_content_from_doc(content, doc)
 }
 
+/// One config migration and the existing mutation resources it can change.
+pub struct ConfigMigrationTarget<'a> {
+    pub path: &'a Path,
+    pub kind: ConfigFileKind,
+    pub moves_approvals: bool,
+}
+
+/// Hold the complete ordered lock set through preview revalidation and writes.
+///
+/// Project config writers do not use config locks. Only user config mutation
+/// locks and approvals destinations participate; all preview checks still run
+/// before any migration is published.
+pub struct ConfigMigrationLocks {
+    lock_paths: Vec<PathBuf>,
+    _guards: Vec<std::fs::File>,
+}
+
+impl ConfigMigrationLocks {
+    pub fn acquire(targets: &[ConfigMigrationTarget<'_>]) -> anyhow::Result<Self> {
+        use super::user::mutation::{acquire_lock_path, config_lock_path};
+        // Refuse every destructive role overlap before creating locks or
+        // publishing any candidate, including a later candidate in the list.
+        for target in targets {
+            if target.moves_approvals {
+                ensure_separate_approvals_source(target.path)?;
+            }
+        }
+        let mut lock_paths = Vec::new();
+        for target in targets {
+            if target.kind == ConfigFileKind::User {
+                lock_paths.push(config_lock_path(target.path));
+            }
+            if target.moves_approvals {
+                lock_paths.push(config_lock_path(
+                    &target.path.with_file_name("approvals.toml"),
+                ));
+            }
+        }
+        lock_paths.sort();
+        lock_paths.dedup();
+        let guards = lock_paths
+            .iter()
+            .map(|path| acquire_lock_path(path))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            lock_paths,
+            _guards: guards,
+        })
+    }
+
+    /// Copy legacy approvals without reacquiring an already held lock.
+    pub fn copy_approved_commands(&self, config_path: &Path) -> anyhow::Result<Option<PathBuf>> {
+        let approvals_path = config_path.with_file_name("approvals.toml");
+        let lock_path = super::user::mutation::config_lock_path(&approvals_path);
+        anyhow::ensure!(
+            self.lock_paths.binary_search(&lock_path).is_ok(),
+            "Approvals migration requires its destination lock"
+        );
+        copy_approved_commands_with_lock(config_path, &approvals_path)
+    }
+}
+
 /// Copy approved-commands from config.toml to approvals.toml.
 ///
 /// Called by `wt config update` before overwriting the config with migrated
@@ -1339,10 +1401,30 @@ pub fn migrate_content(content: &str) -> String {
 pub fn copy_approved_commands_to_approvals_file(
     config_path: &Path,
 ) -> anyhow::Result<Option<PathBuf>> {
+    ensure_separate_approvals_source(config_path)?;
     let approvals_path = config_path.with_file_name("approvals.toml");
     let _lock = super::user::mutation::acquire_config_lock(&approvals_path)?;
+    copy_approved_commands_with_lock(config_path, &approvals_path)
+}
+
+fn ensure_separate_approvals_source(config_path: &Path) -> anyhow::Result<()> {
+    let approvals_path = config_path.with_file_name("approvals.toml");
+    anyhow::ensure!(
+        !crate::path::paths_match(config_path, &approvals_path),
+        cformat!(
+            "Config @ <bold>{}</> is also the approvals destination; to preserve approved commands, move the config to a separate file before running <bold>wt config update</>",
+            crate::path::format_path_for_display(config_path)
+        )
+    );
+    Ok(())
+}
+
+fn copy_approved_commands_with_lock(
+    config_path: &Path,
+    approvals_path: &Path,
+) -> anyhow::Result<Option<PathBuf>> {
     if approvals_path.exists() {
-        validate_existing_approvals_file(&approvals_path)?;
+        validate_existing_approvals_file(approvals_path)?;
         return Ok(None); // Already authoritative, don't overwrite
     }
 
@@ -1357,13 +1439,13 @@ pub fn copy_approved_commands_to_approvals_file(
         return Ok(None); // Nothing to copy
     }
 
-    approvals.save_to(&approvals_path).with_context(|| {
+    approvals.save_to(approvals_path).with_context(|| {
         format!(
             "Failed to write migrated approvals to {}",
             approvals_path.display()
         )
     })?;
-    Ok(Some(approvals_path))
+    Ok(Some(approvals_path.to_path_buf()))
 }
 
 fn validate_existing_approvals_file(approvals_path: &Path) -> anyhow::Result<()> {

@@ -22,8 +22,15 @@ use super::sections::CommitGenerationConfig;
 pub(crate) fn acquire_config_lock(
     config_path: &std::path::Path,
 ) -> Result<std::fs::File, ConfigError> {
-    let lock_path = config_path.with_extension("toml.lock");
+    acquire_lock_path(&config_lock_path(config_path))
+}
 
+/// Derive the shared lock identity used by config and approvals mutations.
+pub(crate) fn config_lock_path(config_path: &std::path::Path) -> std::path::PathBuf {
+    config_path.with_extension("toml.lock")
+}
+
+pub(crate) fn acquire_lock_path(lock_path: &std::path::Path) -> Result<std::fs::File, ConfigError> {
     // Create parent directory if needed
     if let Some(parent) = lock_path.parent() {
         std::fs::create_dir_all(parent)
@@ -35,7 +42,7 @@ pub(crate) fn acquire_config_lock(
         .write(true)
         .create(true)
         .truncate(false)
-        .open(&lock_path)
+        .open(lock_path)
         .map_err(|e| ConfigError::Message(format!("Failed to open lock file: {e}")))?;
 
     file.lock_exclusive()

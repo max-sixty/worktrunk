@@ -18,6 +18,7 @@ pub mod config_init;
 pub mod config_show;
 pub mod config_show_theme;
 pub mod config_state;
+pub mod config_update_locking;
 pub mod config_update_pty;
 pub mod configure_shell;
 pub mod custom;
