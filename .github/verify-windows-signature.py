@@ -24,8 +24,9 @@ def certificate_table_size(pe: bytes) -> int:
     # Data directories follow the optional header, whose size differs between
     # PE32 (magic 0x10b) and PE32+ (0x20b).
     data_directories = optional_header + (96 if magic == 0x10B else 112)
-    _, size = struct.unpack_from("<II", pe, data_directories + 4 * 8)
-    return size
+    offset, size = struct.unpack_from("<II", pe, data_directories + 4 * 8)
+    # A directory entry alone does not mean its certificate bytes are present.
+    return size if offset != 0 and offset + size <= len(pe) else 0
 
 
 archive = sys.argv[1]
