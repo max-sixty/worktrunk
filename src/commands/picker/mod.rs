@@ -4221,8 +4221,7 @@ pub mod tests {
         remover.approvals = Arc::new(approvals);
         let (render_tx, _render_rx) = tokio::sync::mpsc::channel(8);
         remover.render_tx.set(render_tx).unwrap();
-        let (row, token, _, morphed) =
-            setup_morphable_row(&remover, "feature", &reported_path);
+        let (row, token, _, morphed) = setup_morphable_row(&remover, "feature", &reported_path);
         items.lock().unwrap().push(Arc::clone(&row));
 
         remover.apply(token);
