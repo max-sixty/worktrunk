@@ -119,10 +119,7 @@ fn test_statusline_deduplicates_ahead_behind_for_main_upstream(repo: TestRepo) {
                 if command.contains("rev-list --count") && command.contains(&range))
         })
         .count();
-    assert!(
-        count <= 1,
-        "expected at most one count of {range}; trace:\n{trace}"
-    );
+    assert_eq!(count, 1, "expected one count of {range}; trace:\n{trace}");
 }
 
 // --- Test Setup Helpers ---
