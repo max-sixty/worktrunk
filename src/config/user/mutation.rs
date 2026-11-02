@@ -22,7 +22,10 @@ use super::sections::CommitGenerationConfig;
 pub(crate) fn acquire_config_lock(
     config_path: &std::path::Path,
 ) -> Result<std::fs::File, ConfigError> {
-    let lock_path = config_path.with_extension("toml.lock");
+    // Match write_atomically: existing config symlinks are written through.
+    // All aliases of that target must serialize on the same lock file.
+    let target = dunce::canonicalize(config_path).unwrap_or_else(|_| config_path.to_path_buf());
+    let lock_path = target.with_extension("toml.lock");
 
     // Create parent directory if needed
     if let Some(parent) = lock_path.parent() {

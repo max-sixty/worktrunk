@@ -3445,3 +3445,45 @@ fn test_env_layer_reports_malformed_lower_table() {
     assert_eq!(table, original);
     assert!(warnings.is_empty());
 }
+
+#[cfg(unix)]
+#[test]
+fn test_config_symlink_alias_uses_the_target_lock() {
+    use std::os::unix::fs::{MetadataExt, symlink};
+
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("real-config.toml");
+    let alias = dir.path().join("config.toml");
+    std::fs::write(&target, "# existing config\n").unwrap();
+    symlink(&target, &alias).unwrap();
+
+    // Separate handles must name the same inode: distinct lock files do not
+    // exclude each other while their writers update the same real config.
+    let target_guard = super::mutation::acquire_config_lock(&target).unwrap();
+    let target_metadata = target_guard.metadata().unwrap();
+    let expected = (target_metadata.dev(), target_metadata.ino());
+    drop(target_guard);
+    let alias_guard = super::mutation::acquire_config_lock(&alias).unwrap();
+    let alias_metadata = alias_guard.metadata().unwrap();
+    assert_eq!((alias_metadata.dev(), alias_metadata.ino()), expected);
+    drop(alias_guard);
+    assert!(
+        std::fs::symlink_metadata(&alias)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+
+    let mut config = UserConfig::default();
+    config.set_skip_shell_integration_prompt(&target).unwrap();
+    config.set_skip_commit_generation_prompt(&alias).unwrap();
+    let written = UserConfig::load_from_str(&std::fs::read_to_string(&target).unwrap()).unwrap();
+    assert!(written.skip_shell_integration_prompt);
+    assert!(written.skip_commit_generation_prompt);
+    assert!(
+        std::fs::symlink_metadata(&alias)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+}
