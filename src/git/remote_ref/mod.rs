@@ -220,6 +220,15 @@ pub(super) fn extract_host_from_html_url(html_url: &str) -> anyhow::Result<Strin
         .with_context(|| format!("Failed to parse host from PR URL: {html_url}"))
 }
 
+/// The clone URL for `owner/repo` on `host`, over SSH or HTTPS.
+pub(super) fn host_remote_url(host: &str, owner: &str, repo: &str, ssh: bool) -> String {
+    if ssh {
+        format!("git@{host}:{owner}/{repo}.git")
+    } else {
+        format!("https://{host}/{owner}/{repo}.git")
+    }
+}
+
 /// `<tool> config get <args>`, trimmed; `None` if the CLI can't answer.
 pub(super) fn cli_config_value(tool: &str, args: &[&str]) -> Option<String> {
     Cmd::new(tool)
@@ -531,6 +540,18 @@ fn azure_repo_segments(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_remote_url_formats_each_protocol() {
+        assert_eq!(
+            host_remote_url("github.com", "contributor", "repo", true),
+            "git@github.com:contributor/repo.git"
+        );
+        assert_eq!(
+            host_remote_url("gitlab.example.com", "org", "project", false),
+            "https://gitlab.example.com/org/project.git"
+        );
+    }
 
     #[test]
     fn api_url_host_uses_the_network_host_after_userinfo() {
