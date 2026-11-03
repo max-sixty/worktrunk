@@ -690,6 +690,11 @@ pub fn delete_branch_if_safe(
 /// would reappear on a later branch reusing the name. Best effort: the branch
 /// is already gone, so a failed unset is logged rather than surfaced.
 fn clear_deleted_branch_marker(repo: &Repository, branch_name: &str) {
+    // `<name>.vars.marker` is also branch `<name>`'s var `marker`; only
+    // marker JSON belongs to the deleted branch (as in `clear_all_markers`).
+    if repo.branch_marker(branch_name).is_none() {
+        return;
+    }
     if let Err(e) = repo.unset_config(&format!("worktrunk.state.{branch_name}.marker")) {
         tracing::debug!(error = %e, "Failed to clear marker for deleted branch {branch_name}: {e}");
     }
@@ -1202,6 +1207,29 @@ mod tests {
         assert_eq!(fresh.branch_marker("integrated"), None);
         assert_eq!(fresh.branch_marker("forced"), None);
         assert_eq!(fresh.branch_marker("unmerged").as_deref(), Some("🤖"));
+    }
+
+    /// Deleting `<name>.vars` leaves branch `<name>`'s var named `marker`,
+    /// which shares the key `worktrunk.state.<name>.vars.marker`.
+    #[test]
+    fn deletion_keeps_var_sharing_marker_key() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        test.run_git(&["branch", "feature.vars"]);
+        repo.set_config("worktrunk.state.feature.vars.marker", "plain value")
+            .unwrap();
+
+        let snapshot = repo.capture_refs().unwrap();
+        delete_branch_if_safe(&repo, &snapshot, "feature.vars", "main", true).unwrap();
+
+        let fresh = Repository::at(test.root_path()).unwrap();
+        assert_eq!(
+            fresh
+                .config_last("worktrunk.state.feature.vars.marker")
+                .unwrap()
+                .as_deref(),
+            Some("plain value")
+        );
     }
 
     /// A packed-ref lock failure must preserve the branch and the original
