@@ -4796,6 +4796,7 @@ dependencies = [
  "tracing-subscriber",
  "tree-sitter-bash",
  "tree-sitter-highlight",
+ "unicode-segmentation",
  "unicode-width 0.2.3",
  "urlencoding",
  "vergen-gitcl",
