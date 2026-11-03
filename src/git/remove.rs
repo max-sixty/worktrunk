@@ -1232,6 +1232,34 @@ mod tests {
         );
     }
 
+    /// A marker that can't be unset doesn't fail a deletion that already
+    /// happened; Git itself only warns when the locked config blocks its own
+    /// branch-section cleanup.
+    #[test]
+    fn deletion_survives_marker_unset_failure() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        test.run_git(&["branch", "doomed"]);
+        repo.set_config(
+            "worktrunk.state.doomed.marker",
+            r#"{"marker":"🤖","set_at":0}"#,
+        )
+        .unwrap();
+        let lock = test.root_path().join(".git/config.lock");
+        std::fs::write(&lock, "").unwrap();
+
+        let snapshot = repo.capture_refs().unwrap();
+        let result = delete_branch_if_safe(&repo, &snapshot, "doomed", "main", true).unwrap();
+        std::fs::remove_file(&lock).unwrap();
+
+        assert!(matches!(
+            result.outcome,
+            BranchDeletionOutcome::ForceDeleted
+        ));
+        let fresh = Repository::at(test.root_path()).unwrap();
+        assert_eq!(fresh.branch_marker("doomed").as_deref(), Some("🤖"));
+    }
+
     /// A packed-ref lock failure must preserve the branch and the original
     /// Git error; an unchanged ref is not evidence of branch movement.
     #[test]
