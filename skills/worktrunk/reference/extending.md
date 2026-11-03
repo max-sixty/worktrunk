@@ -156,9 +156,9 @@ if git diff --quiet HEAD && test -z "$(git ls-files --others --exclude-standard)
   wt switch --create {{ to }} --execute sh -- -c \
     'if [ "$#" -gt 0 ]; then exec "$@"; fi' worktrunk-move {{ args }}
 else
-  git stash push --include-untracked --quiet
+  git stash push --include-untracked --quiet || exit
   wt switch --create {{ to }} --execute sh -- -c \
-    'git stash pop --index; if [ "$#" -gt 0 ]; then exec "$@"; fi' worktrunk-move {{ args }}
+    'git stash pop --index || exit; if [ "$#" -gt 0 ]; then exec "$@"; fi' worktrunk-move {{ args }}
 fi
 '''
 ```
