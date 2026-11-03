@@ -4,14 +4,15 @@
 
 use ansi_str::AnsiStr;
 use anstyle::Style;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 /// Truncate a styled string to a visible width budget, preserving escapes.
 ///
 /// The budget counts what the terminal draws: escape sequences (ANSI/OSC) are
-/// zero-width, and characters are measured by their unicode width, so a cut
-/// never lands inside an escape and never overshoots on wide characters. Text
-/// that already fits is returned untouched.
+/// zero-width, and grapheme clusters are measured by their unicode width, so a
+/// cut never lands inside an escape or a cluster and never overshoots on wide
+/// characters. Text that already fits is returned untouched.
 ///
 /// A cut ends the kept prefix with "…", after trimming the trailing whitespace
 /// the cut exposed so no space hangs before the marker. Trimming is
@@ -48,13 +49,15 @@ fn truncate_visible_with_ellipsis(rendered: &str, max_width: usize, ellipsis: &s
 
     let mut cut_at = 0;
     let mut width = 0;
-    for (i, ch) in plain_str.char_indices() {
-        let w = UnicodeWidthChar::width(ch).unwrap_or(0);
+    // Measure whole grapheme clusters: an emoji presentation sequence such as
+    // `♻\u{fe0f}` draws two cells, though its chars measure 1 + 0.
+    for (i, g) in plain_str.grapheme_indices(true) {
+        let w = UnicodeWidthStr::width(g);
         if width + w > budget {
             break;
         }
         width += w;
-        cut_at = i + ch.len_utf8();
+        cut_at = i + g.len();
     }
 
     let mut out = rendered.ansi_cut(..cut_at).into_owned();
@@ -256,6 +259,14 @@ mod tests {
 
         // A wide character straddling the cut is dropped, not split
         assert_eq!(truncate_visible("café ☕ and more", 7), "café…");
+
+        // A VS16 emoji presentation sequence draws two cells, not one, and is
+        // kept or dropped whole
+        assert_eq!(
+            truncate_visible("♻\u{fe0f} refactor: something long", 12),
+            "♻\u{fe0f} refactor…"
+        );
+        assert_eq!(truncate_visible("♻\u{fe0f}♻\u{fe0f}", 3), "♻\u{fe0f}…");
 
         // Zero width → empty
         assert!(truncate_visible("hello world", 0).is_empty());
