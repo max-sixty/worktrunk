@@ -210,6 +210,8 @@ Use `-D` to force-delete branches with unmerged changes. Use `--no-delete-branch
 
 A branch checked out in a second worktree is retained regardless, `-D` included. Deleting it would leave that worktree unable to resolve `HEAD`; only `git worktree add --force` produces that state.
 
+Deleting a branch also clears its [marker](/config/#wt-config-state-marker), so a later branch with the same name starts without one.
+
 ### Other cleanup
 
 - `wt merge` / `wt step push` — the target branch's checked-out worktree is updated to the merged commits, so a file those commits delete disappears from it, and an ignored file at a path they track is overwritten — the same result a `git merge` run in that worktree would produce. Uncommitted changes at paths the merge doesn't touch stay in place, staged or not; one at a path it does touch refuses the merge upfront, naming the file

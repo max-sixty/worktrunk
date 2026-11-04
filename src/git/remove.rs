@@ -645,6 +645,7 @@ pub fn delete_branch_if_safe(
     // behavior for the Worktree path). The user explicitly chose -D.
     if force_delete {
         repo.run_command(&["branch", "-D", "--", branch_name])?;
+        clear_deleted_branch_marker(repo, branch_name);
         return Ok(BranchDeletionResult {
             outcome: BranchDeletionOutcome::ForceDeleted,
             integration_target: target.to_string(),
@@ -673,11 +674,30 @@ pub fn delete_branch_if_safe(
         }
         None => BranchDeletionOutcome::NotDeleted,
     };
+    if matches!(outcome, BranchDeletionOutcome::Integrated(_)) {
+        clear_deleted_branch_marker(repo, branch_name);
+    }
 
     Ok(BranchDeletionResult {
         outcome,
         integration_target: effective_target,
     })
+}
+
+/// Drop the activity marker of a branch `wt` just deleted.
+///
+/// Markers are keyed by branch name in shared git config, so one left behind
+/// would reappear on a later branch reusing the name. Best effort: the branch
+/// is already gone, so a failed unset is logged rather than surfaced.
+fn clear_deleted_branch_marker(repo: &Repository, branch_name: &str) {
+    // `<name>.vars.marker` is also branch `<name>`'s var `marker`; only
+    // marker JSON belongs to the deleted branch (as in `clear_all_markers`).
+    if repo.branch_marker(branch_name).is_none() {
+        return;
+    }
+    if let Err(e) = repo.unset_config(&format!("worktrunk.state.{branch_name}.marker")) {
+        tracing::debug!(error = %e, "Failed to clear marker for deleted branch {branch_name}: {e}");
+    }
 }
 
 /// Find a live checkout of `branch` using a new repository cache.
@@ -1156,6 +1176,88 @@ mod tests {
             .status()
             .unwrap();
         assert!(!exit.success(), "branch should have been deleted");
+    }
+
+    /// Deleting a branch drops its marker, so a later branch reusing the name
+    /// doesn't inherit it; a retained branch keeps its marker.
+    #[test]
+    fn deletion_clears_branch_marker() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        for branch in ["integrated", "forced", "unmerged"] {
+            test.run_git(&["branch", branch]);
+            repo.set_config(
+                &format!("worktrunk.state.{branch}.marker"),
+                r#"{"marker":"🤖","set_at":0}"#,
+            )
+            .unwrap();
+        }
+        test.run_git(&["checkout", "unmerged"]);
+        std::fs::write(test.root_path().join("work.txt"), "work\n").unwrap();
+        test.run_git(&["add", "work.txt"]);
+        test.run_git(&["commit", "-m", "unmerged work"]);
+        test.run_git(&["checkout", "main"]);
+
+        let snapshot = repo.capture_refs().unwrap();
+        for (branch, force) in [("integrated", false), ("forced", true), ("unmerged", false)] {
+            delete_branch_if_safe(&repo, &snapshot, branch, "main", force).unwrap();
+        }
+
+        let fresh = Repository::at(test.root_path()).unwrap();
+        assert_eq!(fresh.branch_marker("integrated"), None);
+        assert_eq!(fresh.branch_marker("forced"), None);
+        assert_eq!(fresh.branch_marker("unmerged").as_deref(), Some("🤖"));
+    }
+
+    /// Deleting `<name>.vars` leaves branch `<name>`'s var named `marker`,
+    /// which shares the key `worktrunk.state.<name>.vars.marker`.
+    #[test]
+    fn deletion_keeps_var_sharing_marker_key() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        test.run_git(&["branch", "feature.vars"]);
+        repo.set_config("worktrunk.state.feature.vars.marker", "plain value")
+            .unwrap();
+
+        let snapshot = repo.capture_refs().unwrap();
+        delete_branch_if_safe(&repo, &snapshot, "feature.vars", "main", true).unwrap();
+
+        let fresh = Repository::at(test.root_path()).unwrap();
+        assert_eq!(
+            fresh
+                .config_last("worktrunk.state.feature.vars.marker")
+                .unwrap()
+                .as_deref(),
+            Some("plain value")
+        );
+    }
+
+    /// A marker that can't be unset doesn't fail a deletion that already
+    /// happened; Git itself only warns when the locked config blocks its own
+    /// branch-section cleanup.
+    #[test]
+    fn deletion_survives_marker_unset_failure() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        test.run_git(&["branch", "doomed"]);
+        repo.set_config(
+            "worktrunk.state.doomed.marker",
+            r#"{"marker":"🤖","set_at":0}"#,
+        )
+        .unwrap();
+        let lock = test.root_path().join(".git/config.lock");
+        std::fs::write(&lock, "").unwrap();
+
+        let snapshot = repo.capture_refs().unwrap();
+        let result = delete_branch_if_safe(&repo, &snapshot, "doomed", "main", true).unwrap();
+        std::fs::remove_file(&lock).unwrap();
+
+        assert!(matches!(
+            result.outcome,
+            BranchDeletionOutcome::ForceDeleted
+        ));
+        let fresh = Repository::at(test.root_path()).unwrap();
+        assert_eq!(fresh.branch_marker("doomed").as_deref(), Some("🤖"));
     }
 
     /// A packed-ref lock failure must preserve the branch and the original
