@@ -11,15 +11,47 @@
 // `ExtensionAPI`. oh-my-pi is a different agent with a different loader and
 // API — see `dev/omp-hook.ts` and `wt config plugins omp install`.
 
+import { lstatSync } from "node:fs";
+import { delimiter, join } from "node:path";
+
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+// The worktrunk binary, chosen as `plugins/worktrunk/hooks/wt.sh` chooses it.
+// On Windows, `wt` is usually Windows Terminal's app-execution alias, which
+// accepts any arguments, exits 0, and reports the unknown program in a popup
+// window. So prefer `git-wt.exe` there, and never run a `wt` from WindowsApps.
+// `lstat` rather than `exists`: the alias is a reparse point, and it has to be
+// seen for the lookup to stop where Windows' own PATH search would.
+// `undefined` means no worktrunk binary was found.
+function worktrunkBin(): string | undefined {
+  if (process.env.WORKTRUNK_BIN) return process.env.WORKTRUNK_BIN;
+  if (process.platform !== "win32") return "wt";
+  const dirs = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
+  const find = (name: string) =>
+    dirs
+      .map((dir) => join(dir, name))
+      .find((path) => {
+        try {
+          lstatSync(path);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+  if (find("git-wt.exe")) return "git-wt.exe";
+  const wt = find("wt.exe");
+  return wt && !/[\\/]WindowsApps[\\/]/i.test(wt) ? "wt" : undefined;
+}
 
 export default function worktrunkActivity(pi: ExtensionAPI): void {
   const run = async (
     cwd: string,
     args: ["set", string] | ["clear"],
   ): Promise<void> => {
+    const bin = worktrunkBin();
+    if (!bin) return;
     try {
-      await pi.exec("wt", ["config", "state", "marker", ...args], { cwd });
+      await pi.exec(bin, ["config", "state", "marker", ...args], { cwd });
     } catch {
       // Activity tracking must never interrupt the host Pi session.
     }
