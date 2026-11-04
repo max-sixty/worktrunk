@@ -1,4 +1,5 @@
 /target
+/dev/dsh/node_modules/
 docs/public/assets/
 docs/demos/out/
 
