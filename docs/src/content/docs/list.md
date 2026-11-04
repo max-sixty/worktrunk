@@ -293,7 +293,7 @@ Item fields:
 | `remote` | string | Remote name, present only on remote-only branch rows |
 | `head` | object/null | HEAD commit (see [head object](#head-object)); null for unborn branches |
 | `worktree` | object | Worktree facts (see [worktree object](#worktree-object)); absent on branch-only rows |
-| `default_branch` | object | Relation to the default branch (see [default_branch object](#default-branch-object)); absent on the default branch itself |
+| `default_branch` | object | Relation to the default branch (see [default_branch object](#default_branch-object)); absent on the default branch itself |
 | `upstream` | object | Tracking branch (see [upstream object](#upstream-object)); absent when none is configured |
 | `pr` | object | Open PR/MR (see [pr object](#pr-object)); collected with `--full` |
 | `checks` | object | CI pipeline (see [checks object](#checks-object)); collected with `--full` |

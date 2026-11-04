@@ -73,7 +73,7 @@ $ wt list --format=json
 | CI | PR/MR number colored by pipeline status; `--full` only |
 | Path | Worktree directory |
 | URL | Dev server URL from project config; dimmed if port is not listening |
-| *(custom)* | User-defined [custom columns](#custom-columns) from `[list.custom-columns]` user config [experimental] |
+| *(custom)* | User-defined [custom columns](#custom-columns-experimental) from `[list.custom-columns]` user config [experimental] |
 | Commit | Short hash, abbreviated per `core.abbrev` |
 | Age | Time since last commit |
 | Message | Last commit message (truncated) |
@@ -277,7 +277,7 @@ Item fields:
 | `remote` | string | Remote name, present only on remote-only branch rows |
 | `head` | object/null | HEAD commit (see [head object](#head-object)); null for unborn branches |
 | `worktree` | object | Worktree facts (see [worktree object](#worktree-object)); absent on branch-only rows |
-| `default_branch` | object | Relation to the default branch (see [default_branch object](#default-branch-object)); absent on the default branch itself |
+| `default_branch` | object | Relation to the default branch (see [default_branch object](#default_branch-object)); absent on the default branch itself |
 | `upstream` | object | Tracking branch (see [upstream object](#upstream-object)); absent when none is configured |
 | `pr` | object | Open PR/MR (see [pr object](#pr-object)); collected with `--full` |
 | `checks` | object | CI pipeline (see [checks object](#checks-object)); collected with `--full` |
@@ -388,7 +388,7 @@ Presentation only — every value here renders facts that appear elsewhere in th
 | `state` | string | The table's collapsed default-branch state (see [state values](#state-values)); absent when none applies |
 | `symbols` | string | Raw status symbols without colors (e.g., `"!?↓"`) |
 | `statusline` | string | Pre-formatted status with colors and links |
-| `columns` | object | Rendered [custom column](#custom-columns) values keyed by header; empty cells omitted |
+| `columns` | object | Rendered [custom column](#custom-columns-experimental) values keyed by header; empty cells omitted |
 
 ### repo object
 
