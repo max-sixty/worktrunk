@@ -885,14 +885,15 @@ fn render_aliases_help_section(
 /// Callers (`augment_help`, `wt config alias show`) latch
 /// `suppress_warnings()` before reaching here so the standard `UserConfig::load()`
 /// stays quiet: no deprecation warnings, no `.new` file writes, no
-/// approved-commands copy. Project config is parsed directly from TOML rather
-/// than via `ProjectConfig::load` because the `aliases` table has no deprecated
-/// forms — skipping the migration avoids the unrelated warnings entirely.
+/// approved-commands copy. Project config is migrated and parsed directly
+/// rather than via `ProjectConfig::load`, avoiding its diagnostic side
+/// effects; the migration rewrites retired template variables, so both
+/// sources show the template that runs.
 ///
 /// Tolerates missing or unloadable config: this is a discovery surface, not
 /// an execution surface, so we'd rather show the built-in commands than
 /// error out when a repo isn't detected or a config file is malformed.
-/// `step_alias` surfaces those errors at execution time.
+/// Running the alias surfaces those errors.
 pub(crate) fn load_aliases_for_listing() -> Vec<(String, CommandConfig, HookSource)> {
     let repo = Repository::current().ok();
     let project_id = repo.as_ref().and_then(|r| r.project_identifier().ok());
@@ -923,7 +924,7 @@ pub(crate) fn load_aliases_for_listing() -> Vec<(String, CommandConfig, HookSour
     entries
 }
 
-/// Parse `.config/wt.toml` directly, extracting just `aliases`, without
+/// Migrate and parse `.config/wt.toml`, extracting just `aliases`, without
 /// triggering `ProjectConfig::load`'s deprecation warning and hint-writing
 /// side effects. See `load_aliases_for_listing` for why.
 fn load_project_aliases_silent(repo: &Repository) -> Option<BTreeMap<String, CommandConfig>> {
@@ -932,7 +933,8 @@ fn load_project_aliases_silent(repo: &Repository) -> Option<BTreeMap<String, Com
         return None;
     }
     let contents = std::fs::read_to_string(&path).ok()?;
-    let config: ProjectConfig = toml::from_str(&contents).ok()?;
+    let migrated = worktrunk::config::migrate_content(&contents);
+    let config: ProjectConfig = toml::from_str(&migrated).ok()?;
     Some(config.aliases)
 }
 
