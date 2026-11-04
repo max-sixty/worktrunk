@@ -122,13 +122,12 @@ fn test_no_double_blank_lines_in_snapshot_output() {
 
 /// Markers that only ever come from the generating machine: macOS per-user
 /// temp dirs, the LLVM profile fallback dir (always under the host temp
-/// dir), and tempfile's random `.tmpXXXXXX` directories — `.tmp<pid>-XXXXXX`
-/// when created through `worktrunk::testing`'s temp helpers.
+/// dir), and tempfile's random `.tmpXXXXXX` directories.
 static HOST_MARKERS: LazyLock<[Regex; 3]> = LazyLock::new(|| {
     [
         Regex::new(r"/var/folders/").unwrap(),
         Regex::new(r"wt-test-profraw").unwrap(),
-        Regex::new(r"\.tmp(?:\d+-)?[A-Za-z0-9]{6}").unwrap(),
+        Regex::new(r"\.tmp[A-Za-z0-9]{6}").unwrap(),
     ]
 });
 
@@ -252,8 +251,6 @@ mod tests {
             "- /private/var/folders/wf/s6ycxvvs/T/.tmpSeGxzx/repo",
             // tempfile-crate dir under /tmp (Linux)
             "path: /tmp/.tmpAbC123/repo",
-            // worktrunk::testing's pid-prefixed name, short pid (macOS, Windows)
-            "path: /tmp/.tmp4321-AbC123/repo",
             // real home dirs, Unix and YAML-escaped Windows
             "HOME: /Users/maximilian/workspace",
             "HOME: /home/runner/work",

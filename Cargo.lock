@@ -4741,6 +4741,7 @@ dependencies = [
  "dirs 7.0.0",
  "dunce",
  "etcetera",
+ "fastrand",
  "fs2",
  "gix-url",
  "home",
