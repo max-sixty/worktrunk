@@ -254,6 +254,38 @@ test('the pane lists the worktrees the session worked in, and draws one diff', a
   ])
 })
 
+test('a subagent edit tracks its worktree and shows its diff', async ($, on) => {
+  const runs: string[][] = []
+  host(on, runs)
+
+  await $.session.start({ cwd: HERE, surface: 'terminal', isInteractive: true })
+  await $.tool.call({
+    tool: 'Edit',
+    agentId: 'agent-1',
+    file_path: `${OTHER}/src/lib.rs`,
+    old_string: 'b',
+    new_string: 'c',
+  })
+  await $.command.run({ command: 'wt-diff', args: 'feature', ...TYPED })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ key: `wt:${OTHER}` })).toBeDefined()
+  expect((await ui.find({ key: 'file:src/lib.rs' }))?.text).toMatch(/M src\/lib\.rs \+1 -1/)
+  await ui.unmount()
+  expect(runs).toContainEqual([
+    'wt',
+    '-C',
+    OTHER,
+    'step',
+    'diff',
+    '--',
+    '--no-color',
+    '--no-ext-diff',
+    '--src-prefix=a/',
+    '--dst-prefix=b/',
+  ])
+})
+
 test('a worktree is still listed after the directory edited in it is deleted', async ($, on) => {
   const runs: string[][] = []
   host(on, runs)
