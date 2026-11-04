@@ -660,7 +660,7 @@ mod tests {
             ("exit 7", "exit code 7", 7),
             ("kill -9 $$", "killed by signal 9", 137),
         ] {
-            let cwd = tempfile::tempdir().unwrap();
+            let cwd = worktrunk::testing::tempdir().unwrap();
             let directives = DirectivePassthrough::default();
             let mut outcomes = run_concurrent_commands(&[ConcurrentCommand {
                 label: "check",
@@ -679,7 +679,7 @@ mod tests {
 
     #[test]
     fn test_concurrent_spawn_failure_retains_member_outcomes_and_io_source() {
-        let cwd = tempfile::tempdir().unwrap();
+        let cwd = worktrunk::testing::tempdir().unwrap();
         let missing = cwd.path().join("missing");
         let directives = DirectivePassthrough::default();
         let specs =

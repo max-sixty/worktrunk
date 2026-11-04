@@ -988,7 +988,7 @@ fn setup_copy_ignored_symlinked_dest_dir(repo: &mut TestRepo) -> (PathBuf, tempf
     fs::write(repo.root_path().join(".gitignore"), "target/\n").unwrap();
     fs::write(repo.root_path().join(".worktreeinclude"), "target/\n").unwrap();
 
-    let outside = tempfile::tempdir().unwrap();
+    let outside = worktrunk::testing::tempdir().unwrap();
     let outside_target = outside.path().join("target");
     fs::create_dir_all(&outside_target).unwrap();
     fs::write(outside_target.join("sentinel"), "keep me").unwrap();

@@ -528,7 +528,7 @@ mod tests {
     fn test_scan_file_skips_non_utf8_line_before_integration() {
         use std::io::Write;
 
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let path = dir.path().join(".bashrc");
         let mut file = fs::File::create(&path).unwrap();
         // 0xE9 is `é` in Latin-1 — an invalid UTF-8 byte on its own.

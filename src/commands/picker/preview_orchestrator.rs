@@ -961,7 +961,7 @@ mod tests {
     #[test]
     fn detached_worktrees_at_same_commit_have_distinct_preview_ids() {
         let t = TestRepo::with_initial_commit();
-        let linked = tempfile::tempdir().unwrap();
+        let linked = worktrunk::testing::tempdir().unwrap();
         let clean_path = linked.path().join("clean");
         let dirty_path = linked.path().join("dirty");
         let clean_arg = clean_path.to_str().unwrap();

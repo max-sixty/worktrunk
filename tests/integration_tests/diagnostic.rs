@@ -65,7 +65,7 @@ fn test_auth_probe_output_is_redacted(
         .command("_default", MockResponse::output("[]"))
         .write(repo.mock_bin_path().unwrap());
 
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let output = repo
         .wt_command()
         .args(["config", "show", "--full", "-vv"])
@@ -1222,7 +1222,7 @@ fn test_vv_outside_repo_no_crash() {
     use crate::common::wt_command;
 
     // Create a temp directory that is NOT a git repo
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
 
     // Use `list` (not `--version`) so `init_logging` actually runs — clap
     // short-circuits `--version` before logging is set up, which would

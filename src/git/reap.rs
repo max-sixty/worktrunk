@@ -290,7 +290,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn missing_procfs_yields_no_processes() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::testing::tempdir().unwrap();
         assert!(processes_from_proc(&root.path().join("absent")).is_empty());
     }
 

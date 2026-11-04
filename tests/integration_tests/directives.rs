@@ -21,7 +21,7 @@ fn test_switch_retired_directive_file_does_not_block_execute(
     #[from(repo_with_remote)] mut repo: TestRepo,
 ) {
     let feature_wt = repo.add_worktree("feature");
-    let directive_dir = tempfile::TempDir::new().unwrap();
+    let directive_dir = worktrunk::testing::tempdir().unwrap();
     let directive_path = directive_dir.path().join("directive");
     let execute_marker = feature_wt.join("retired-execute-ran");
     fs::write(&directive_path, "").unwrap();
@@ -58,7 +58,7 @@ fn test_current_wrapper_wins_retired_variables_and_warns(
 ) {
     let _feature_wt = repo.add_worktree("feature");
     let (cd_path, _guard) = directive_file();
-    let retired_dir = tempfile::TempDir::new().unwrap();
+    let retired_dir = worktrunk::testing::tempdir().unwrap();
     let retired_path = retired_dir.path().join("directive");
     let retired_exec_path = retired_dir.path().join("execute");
     fs::write(&retired_path, "").unwrap();
@@ -661,7 +661,7 @@ fn test_switch_preserves_symlink_path(#[from(repo_with_remote)] mut repo: TestRe
 
     // Create a symlink to the repo's parent directory
     let real_parent = repo.root_path().parent().unwrap();
-    let symlink_dir = tempfile::tempdir().unwrap();
+    let symlink_dir = worktrunk::testing::tempdir().unwrap();
     let symlink_path = symlink_dir.path().join("link");
     unix_fs::symlink(real_parent, &symlink_path).unwrap();
 
@@ -727,7 +727,7 @@ fn test_switch_create_preserves_symlink_path(#[from(repo_with_remote)] repo: Tes
 
     // Create a symlink to the repo's parent directory
     let real_parent = repo.root_path().parent().unwrap();
-    let symlink_dir = tempfile::tempdir().unwrap();
+    let symlink_dir = worktrunk::testing::tempdir().unwrap();
     let symlink_path = symlink_dir.path().join("link");
     unix_fs::symlink(real_parent, &symlink_path).unwrap();
 
@@ -789,7 +789,7 @@ fn test_switch_preserves_symlink_path_from_subdirectory(
 
     // Create a symlink to the repo's parent directory
     let real_parent = repo.root_path().parent().unwrap();
-    let symlink_dir = tempfile::tempdir().unwrap();
+    let symlink_dir = worktrunk::testing::tempdir().unwrap();
     let symlink_path = symlink_dir.path().join("link");
     unix_fs::symlink(real_parent, &symlink_path).unwrap();
 

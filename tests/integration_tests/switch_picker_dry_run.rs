@@ -65,7 +65,7 @@ fn test_picker_dry_run_emits_configured_rows_and_cache_json(
 
     repo.write_test_config("[list]\nbranches = true\n");
     install_summary_probe(&mut repo);
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
     let mut cmd = repo.wt_command();
     // No `--branches`: the config setting must drive branch collection.
@@ -352,7 +352,7 @@ fn test_picker_dry_run_prs_routes_to_gitlab(#[from(main_only_repo)] mut repo: Te
 
     // Keep observability outside the repository: writing the call log into the
     // worktree would perturb the status being collected by the picker.
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let output = repo
         .wt_command()
         .args(["switch", "--prs"])
@@ -515,7 +515,7 @@ fn test_picker_dry_run_drains_stashed_warnings(mut repo: TestRepo) {
 fn test_picker_dry_run_with_summary(mut repo: TestRepo) {
     repo.add_worktree("feature-a");
     install_summary_probe(&mut repo);
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
     let output = repo
         .wt_command()

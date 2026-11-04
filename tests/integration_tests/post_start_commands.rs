@@ -8,7 +8,6 @@ use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
 use std::thread;
-use tempfile::TempDir;
 
 /// Helper to create snapshot with normalized paths and SHAs
 ///
@@ -16,7 +15,7 @@ use tempfile::TempDir;
 /// Uses an isolated HOME to prevent tests from being affected by developer's shell config.
 fn snapshot_switch(test_name: &str, repo: &TestRepo, args: &[&str]) {
     // Create isolated HOME to ensure test determinism
-    let temp_home = TempDir::new().unwrap();
+    let temp_home = worktrunk::testing::tempdir().unwrap();
 
     let settings = setup_snapshot_settings(repo);
     settings.bind(|| {
@@ -67,7 +66,7 @@ approved-commands = ["echo ran > marker.txt"]
 "#,
     );
 
-    let temp_home = TempDir::new().unwrap();
+    let temp_home = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     cmd.args(["switch", "--create", "feature"])
         .current_dir(repo.root_path());
@@ -120,7 +119,7 @@ approved-commands = [
 
     // Table-form commands run concurrently with prefixed output;
     // WORKTRUNK_TEST_SERIAL_CONCURRENT pins the line order for the snapshot.
-    let temp_home = TempDir::new().unwrap();
+    let temp_home = worktrunk::testing::tempdir().unwrap();
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "feature"], None);
@@ -257,7 +256,7 @@ approved-commands = [
     );
 
     // Create isolated HOME to ensure test determinism
-    let temp_home = tempfile::TempDir::new().unwrap();
+    let temp_home = worktrunk::testing::tempdir().unwrap();
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -563,7 +562,7 @@ approved-commands = ["cat > captured.txt"]
 
     // Create worktree, piping a sentinel to wt's stdin. The pre-start hook
     // inherits that stdin, so `cat` captures the sentinel verbatim.
-    let temp_home = TempDir::new().unwrap();
+    let temp_home = worktrunk::testing::tempdir().unwrap();
     let mut cmd = wt_command();
     cmd.args(["switch", "--create", "feature-stdin"])
         .current_dir(repo.root_path())
@@ -659,7 +658,7 @@ approved-commands = ["{command}"]
     ));
 
     // Create worktree
-    let temp_home = TempDir::new().unwrap();
+    let temp_home = worktrunk::testing::tempdir().unwrap();
     let mut cmd = wt_command();
     cmd.args(["switch", "--create", "feature-script"])
         .current_dir(repo.root_path())
@@ -727,7 +726,7 @@ approved-commands = ["{command}"]
     ));
 
     // Create worktree
-    let temp_home = TempDir::new().unwrap();
+    let temp_home = worktrunk::testing::tempdir().unwrap();
     let mut cmd = wt_command();
     cmd.args(["switch", "--create", "bg-stdin"])
         .current_dir(repo.root_path())
@@ -1590,7 +1589,7 @@ approved-commands = [
 "#,
     );
 
-    let temp_home = TempDir::new().unwrap();
+    let temp_home = worktrunk::testing::tempdir().unwrap();
     let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "feature"], None);
     cmd.env("WORKTRUNK_TEST_SERIAL_CONCURRENT", "1");
     set_temp_home_env(&mut cmd, temp_home.path());
@@ -1629,7 +1628,7 @@ approved-commands = [
 "#,
     );
 
-    let temp_home = TempDir::new().unwrap();
+    let temp_home = worktrunk::testing::tempdir().unwrap();
     let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "feature"], None);
     cmd.env("WORKTRUNK_TEST_SERIAL_CONCURRENT", "1");
     set_temp_home_env(&mut cmd, temp_home.path());

@@ -665,7 +665,7 @@ fn test_gitlab_project_id_resolved_once_per_command(mut repo: TestRepo) {
 
     // Outside the repo under test, so the log can't dirty the working tree the
     // command is inspecting.
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     cmd.args(["list", "--full"]);
     repo.configure_mock_commands(&mut cmd);
@@ -729,7 +729,7 @@ fn test_pr_lookup_skips_branches_on_no_remote(mut repo: TestRepo) {
     repo.run_git(&["config", "branch.narrow-pushed.pushremote", "narrow"]);
     repo.setup_mock_gh_with_ci_data("[]");
 
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     cmd.args(["list", "--full"]);
     repo.configure_mock_commands(&mut cmd);
@@ -1340,7 +1340,7 @@ fn test_list_full_azure_pr_lookup_names_the_repository(mut repo: TestRepo) {
 
     // Outside the repo under test, so the log can't dirty the working tree the
     // command is inspecting.
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     cmd.args(["list", "--full"]);
     repo.configure_mock_commands(&mut cmd);

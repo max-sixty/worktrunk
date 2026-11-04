@@ -504,7 +504,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn test_dir() -> (TempDir, PathBuf) {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = crate::testing::tempdir().unwrap();
         let approvals_path = temp_dir.path().join("approvals.toml");
         (temp_dir, approvals_path)
     }
@@ -862,7 +862,7 @@ approved-commands = ["npm test"]
     /// untouched and must not report that any approvals were saved.
     #[test]
     fn test_save_to_blocked_parent_preserves_file() {
-        let dir = TempDir::new().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let parent = dir.path().join("blocked");
         std::fs::write(&parent, "keep this file").unwrap();
         let path = parent.join("approvals.toml");
@@ -883,7 +883,7 @@ approved-commands = ["npm test"]
     fn test_save_failure_preserves_existing_file() {
         use std::os::unix::fs::PermissionsExt;
 
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = crate::testing::tempdir().unwrap();
         let approvals_dir = temp_dir.path().join("readonly");
         std::fs::create_dir(&approvals_dir).unwrap();
         let path = approvals_dir.join("approvals.toml");
@@ -1028,7 +1028,7 @@ approved-commands = ["npm test"]
     /// `load_from_config_file` extracts approved-commands from a config.toml file.
     #[test]
     fn test_load_from_config_file() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = crate::testing::tempdir().unwrap();
         let config_path = temp_dir.path().join("config.toml");
 
         std::fs::write(
@@ -1054,7 +1054,7 @@ approved-commands = ["cargo build"]
     /// existing commands alongside the new one.
     #[test]
     fn test_mutation_picks_up_config_toml_fallback() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = crate::testing::tempdir().unwrap();
         let approvals_path = temp_dir.path().join("approvals.toml");
         let config_path = temp_dir.path().join("config.toml");
 
@@ -1090,7 +1090,7 @@ approved-commands = ["npm install"]
 
     #[test]
     fn test_load_from_path_nonexistent() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = crate::testing::tempdir().unwrap();
         let path = temp_dir.path().join("nonexistent.toml");
         let approvals = load_from_path(&path).unwrap();
         assert!(approvals.projects.is_empty());
@@ -1098,7 +1098,7 @@ approved-commands = ["npm install"]
 
     #[test]
     fn test_load_from_file_invalid_toml() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = crate::testing::tempdir().unwrap();
         let path = temp_dir.path().join("approvals.toml");
         std::fs::write(&path, "this is { not valid toml").unwrap();
         let err = Approvals::load_from_file(&path).unwrap_err();
@@ -1111,7 +1111,7 @@ approved-commands = ["npm install"]
 
     #[test]
     fn test_load_from_file_rejects_unknown_top_level_key() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = crate::testing::tempdir().unwrap();
         let path = temp_dir.path().join("approvals.toml");
         std::fs::write(
             &path,
@@ -1131,7 +1131,7 @@ approved-commands = ["npm test"]
 
     #[test]
     fn test_load_from_file_rejects_unknown_project_key() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = crate::testing::tempdir().unwrap();
         let path = temp_dir.path().join("approvals.toml");
         std::fs::write(
             &path,
@@ -1151,7 +1151,7 @@ approved-command = ["npm test"]
 
     #[test]
     fn test_load_from_config_file_invalid_toml() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = crate::testing::tempdir().unwrap();
         let config_path = temp_dir.path().join("config.toml");
         std::fs::write(&config_path, "not { valid toml here").unwrap();
         let err = Approvals::load_from_config_file(&config_path).unwrap_err();

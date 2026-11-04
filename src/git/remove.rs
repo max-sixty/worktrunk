@@ -894,7 +894,7 @@ mod tests {
     /// drain that finds another holding the lock leaves the entries to it.
     #[test]
     fn drain_trash_deletes_staged_entries_once_the_lock_is_free() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::testing::tempdir().unwrap();
         let trash = temp.path().join("trash");
         let staged = trash.join("repo.feature-branch-1700000000");
         let foreign = trash.join("not-staged");
@@ -929,7 +929,7 @@ mod tests {
     fn drain_trash_stops_at_an_undeletable_entry() {
         use std::os::unix::fs::PermissionsExt;
 
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::testing::tempdir().unwrap();
         let trash = temp.path().join("trash");
         fs::create_dir(&trash).unwrap();
         fs::write(trash.join("stuck-1700000000"), "x").unwrap();
@@ -1495,7 +1495,7 @@ mod tests {
     fn test_fsmonitor_socket_resolves_to_linked_worktree_git_dir() {
         use crate::git::Repository;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::testing::tempdir().unwrap();
         let git = |dir: &Path| crate::testing::configure_git_env(Cmd::new("git")).current_dir(dir);
 
         let main = tmp.path().join("repo");
@@ -1545,7 +1545,7 @@ mod tests {
     fn test_fsmonitor_stop_unresolvable_git_dir_is_noop() {
         use crate::git::Repository;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::testing::tempdir().unwrap();
         let main = tmp.path().join("repo");
         std::fs::create_dir(&main).unwrap();
         crate::testing::configure_git_env(Cmd::new("git"))
@@ -1574,7 +1574,7 @@ mod tests {
     fn test_fsmonitor_force_kill_unheld_socket_is_noop() {
         use crate::git::Repository;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::testing::tempdir().unwrap();
         let main = tmp.path().join("repo");
         std::fs::create_dir(&main).unwrap();
         crate::testing::configure_git_env(Cmd::new("git"))

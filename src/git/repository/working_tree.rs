@@ -1861,7 +1861,7 @@ mod tests {
         // graceful degradation (bare-repo aliases, deleted-CWD recovery), but
         // that fallback must never be cached — otherwise `prewarm_info`'s
         // short-circuit would misreport `is_inside: true` on the next call.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::testing::tempdir().unwrap();
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
         let wt = repo.worktree_at(tmp.path());

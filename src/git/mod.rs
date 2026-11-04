@@ -1236,7 +1236,7 @@ mod tests {
 
     #[test]
     fn branch_ref_preserves_git_item_identity() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::testing::tempdir().unwrap();
         let first_path = root.path().join("first");
         let second_path = root.path().join("second");
         std::fs::create_dir_all(&first_path).unwrap();

@@ -165,7 +165,7 @@ mod tests {
 
     #[test]
     fn test_back_up_clobbered_path_moves_to_fresh_suffix() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = worktrunk::testing::tempdir().unwrap();
         let stale = temp.path().join("feature");
         std::fs::create_dir(&stale).unwrap();
         std::fs::write(stale.join("file"), "content").unwrap();
@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn test_back_up_clobbered_path_falls_back_when_suffix_taken() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = worktrunk::testing::tempdir().unwrap();
         let stale = temp.path().join("feature");
         std::fs::create_dir(&stale).unwrap();
 
@@ -208,7 +208,7 @@ mod tests {
         // A missing source fails the rename with a non-AlreadyExists error,
         // which surfaces (with the "Failed to move" context) rather than being
         // retried.
-        let temp = tempfile::tempdir().unwrap();
+        let temp = worktrunk::testing::tempdir().unwrap();
         let missing = temp.path().join("does-not-exist");
         let err = back_up_clobbered_path(&missing, "20250101-000000").unwrap_err();
         assert!(
@@ -221,7 +221,7 @@ mod tests {
     fn test_back_up_clobbered_path_keeps_incrementing_past_many_collisions() {
         // There is no attempt cap: the move keeps counting up until a free
         // name is found, however many backups already exist.
-        let temp = tempfile::tempdir().unwrap();
+        let temp = worktrunk::testing::tempdir().unwrap();
         let stale = temp.path().join("feature");
         std::fs::create_dir(&stale).unwrap();
 
@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn test_back_up_clobbered_path_now_uses_timestamped_suffix() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = worktrunk::testing::tempdir().unwrap();
         let stale = temp.path().join("feature");
         std::fs::create_dir(&stale).unwrap();
 

@@ -225,7 +225,7 @@ mod tests {
 
     #[test]
     fn test_write_creates_file_lazily() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let mut logger = CommandLog::new(dir.path(), "wt test");
 
         assert!(!dir.path().join("commands.jsonl").exists());
@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn test_write_tolerates_unavailable_log_directory() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let blocked = dir.path().join("not-a-directory");
         fs::write(&blocked, "preserved contents").unwrap();
         let mut logger = CommandLog::new(&blocked, "wt test");
@@ -255,7 +255,7 @@ mod tests {
 
     #[test]
     fn test_write_appends_multiple_entries() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let mut logger = CommandLog::new(dir.path(), "wt test");
 
         logger.write("a", "cmd-a", Some(0), Some(Duration::from_millis(1)));
@@ -273,7 +273,7 @@ mod tests {
 
     #[test]
     fn test_rotation_at_size_limit() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let log_path = dir.path().join("commands.jsonl");
 
         // Write a file just over MAX_LOG_SIZE

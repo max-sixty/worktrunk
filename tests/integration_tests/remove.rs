@@ -4715,7 +4715,7 @@ fn test_remove_leaves_entries_to_the_running_drain(mut repo: TestRepo) {
 /// fails and deletes nothing, however the directory's entries are named.
 #[rstest]
 fn test_drain_trash_derives_the_trash_from_the_repository(repo: TestRepo) {
-    let outside = tempfile::tempdir().unwrap();
+    let outside = worktrunk::testing::tempdir().unwrap();
     let lookalike = outside.path().join("backup-2024");
     fs::create_dir(&lookalike).unwrap();
     let output = repo
@@ -4820,7 +4820,7 @@ fn test_remove_resolves_all_fsmonitor_daemons_in_one_lsof(mut repo: TestRepo) {
     // Outside the repo: a call log written under `bin_dir` (which lives at
     // `<repo>/.bin`) would leave an untracked file in the working tree the
     // command under test is inspecting.
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
     repo.add_worktree("feature-fsmon");
     let output = repo
@@ -4896,7 +4896,7 @@ fn test_remove_sweep_skips_lsof_when_no_daemon_pids(mut repo: TestRepo) {
     paths.insert(0, bin_dir.clone());
     let new_path = std::env::join_paths(&paths).unwrap();
 
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
     repo.add_worktree("feature-fsmon");
     let output = repo

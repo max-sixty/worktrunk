@@ -349,7 +349,7 @@ mod tests {
 
     #[test]
     fn pipeline_spawn_failure_retains_working_directory_and_io_cause() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let missing = dir.path().join("missing-worktree");
         let log = fs::File::create(dir.path().join("command.log")).unwrap();
         let error = spawn_shell_command("true", &missing, log).err().unwrap();

@@ -30,7 +30,7 @@ use worktrunk::shell_exec::{Cmd, cancel_background_commands, uninterruptible};
 /// test harness, every other thread counts as background.
 #[test]
 fn cancel_stops_speculative_commands_and_spares_uninterruptible_ones() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = worktrunk::testing::tempdir().unwrap();
     let started = dir.path().join("started");
     let marker = started.display().to_string();
 

@@ -622,7 +622,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 #[test]
 fn test_set_project_worktree_path() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::testing::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
     std::fs::write(&config_path, "# empty config\n").unwrap();
 
@@ -1967,7 +1967,7 @@ test = "npm test"
 /// file contains invalid TOML.
 #[test]
 fn test_mutation_invalid_toml() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::testing::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
 
     // Create initial valid config so file exists
@@ -2172,7 +2172,7 @@ project-only = "only-project"
 fn test_mutation_permission_error() {
     use std::os::unix::fs::PermissionsExt;
 
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::testing::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
 
     // Create a valid config file
@@ -2844,7 +2844,7 @@ fn test_edit_takes_the_migrations_when_one_lands_on_its_path() {
     // A deprecated `[commit-generation]` migrates to `[commit.generation]` only
     // while that table is absent, so the command can't be written there as the
     // file stands: the edit takes the load-time migrations with it, and says so.
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::testing::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
     std::fs::write(
         &config_path,
@@ -2909,7 +2909,7 @@ fn test_edit_takes_the_migrations_when_one_lands_on_its_path() {
 fn test_mutation_fails_on_a_file_that_is_not_a_valid_config_and_leaves_it() {
     // Valid TOML that doesn't deserialize as a config (a hand edit like
     // `commit = "oops"`) fails the reload, before anything is written.
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::testing::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
     let content = "commit = \"oops\"\n";
     std::fs::write(&config_path, content).unwrap();
@@ -2934,7 +2934,7 @@ fn test_set_project_worktree_path_noop_when_unchanged() {
     // mutator: when the path already matches, nothing is written. We verify
     // this by checking that the file content is byte-identical across a
     // redundant call.
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::testing::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
     std::fs::write(&config_path, "# keep\n").unwrap();
 
@@ -2968,7 +2968,7 @@ fn test_set_commit_generation_command_noop_when_unchanged() {
     // mutator: when the command already matches, nothing is written. We verify
     // this by checking that the file content is byte-identical across a
     // redundant call.
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::testing::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
     std::fs::write(&config_path, "# keep\n").unwrap();
 
@@ -3002,7 +3002,7 @@ fn test_set_skip_shell_integration_prompt_noop_on_second_call() {
     // mutator. The mutator runs on the file's config — after the first
     // write, the flag is true on disk, so a second call sees it already true
     // and writes nothing.
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::testing::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
     std::fs::write(&config_path, "# empty\n").unwrap();
 
@@ -3028,7 +3028,7 @@ fn test_mutation_keeps_in_memory_config_the_file_lacks() {
     // and `--config-set`. A mutation applies its change to it without
     // replacing it with the file's config, so the rest of the command still
     // reads those values.
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::testing::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
     std::fs::write(&config_path, "[list]\nfull = true\n").unwrap();
 
@@ -3079,7 +3079,7 @@ fn test_acquire_config_lock_fails_when_parent_is_file() {
     // Covers the create_dir_all error branch in acquire_config_lock:
     // if the config path's parent is actually a regular file, we can't
     // create the lock directory and the mutation fails fast.
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::testing::tempdir().unwrap();
     let blocker = dir.path().join("blocker");
     std::fs::write(&blocker, "i am a file").unwrap();
 
@@ -3104,7 +3104,7 @@ fn test_with_locked_mutation_propagates_write_error() {
     // fails, and with_locked_mutation returns that error to the caller.
     use std::os::unix::fs::PermissionsExt;
 
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::testing::tempdir().unwrap();
     let config_dir = dir.path().join("config");
     std::fs::create_dir(&config_dir).unwrap();
     let config_path = config_dir.join("config.toml");
@@ -3150,7 +3150,7 @@ fn test_with_locked_mutation_propagates_write_error() {
 /// documents face, whether or not writing them takes the migrations along.
 #[test]
 fn test_with_locked_mutation_refuses_an_edit_that_does_not_load_back() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::testing::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
     std::fs::write(&config_path, "# valid\n").unwrap();
 

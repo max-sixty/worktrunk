@@ -568,7 +568,7 @@ mod tests {
 
     #[test]
     fn test_remove_if_exists_reports_removal() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let file = dir.path().join("file");
         fs::write(&file, b"contents").unwrap();
 
@@ -588,7 +588,7 @@ mod tests {
         // Simulates a source file that existed during the caller's directory
         // walk but is gone by copy time (e.g. a concurrent build rewriting
         // `target/`). Should be skipped, not treated as a fatal error.
-        let dest_dir = tempfile::tempdir().unwrap();
+        let dest_dir = crate::testing::tempdir().unwrap();
         let src = dest_dir.path().join("does-not-exist");
         let dest = dest_dir.path().join("dest");
 
@@ -603,7 +603,7 @@ mod tests {
         // Under `force` the skip must not cost the destination its contents:
         // the source is stat'd before the destination is removed, so a source
         // that is already gone leaves the existing destination in place.
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let src = dir.path().join("does-not-exist");
         let dest = dir.path().join("dest");
         fs::write(&dest, b"pre-existing content").unwrap();
@@ -618,7 +618,7 @@ mod tests {
     fn test_copy_leaf_skips_existing_destination() {
         // The destination check moved ahead of the source stat; without
         // `force` an existing destination still wins and keeps its contents.
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let src = dir.path().join("src");
         let dest = dir.path().join("dest");
         fs::write(&src, b"source content").unwrap();
@@ -675,7 +675,7 @@ mod tests {
         // `PermissionDenied`; a file another process puts there before the
         // byte copy must survive, and the `AlreadyExists` it causes is what
         // `copy_leaf` skips on.
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::testing::tempdir().unwrap();
         let src = temp.path().join("src");
         let dest = temp.path().join("dest");
         fs::write(&src, "source").unwrap();
@@ -693,7 +693,7 @@ mod tests {
 
     #[test]
     fn test_copy_to_new_file_copies_contents_and_mode() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::testing::tempdir().unwrap();
         let src = temp.path().join("script.sh");
         let dest = temp.path().join("copy.sh");
         fs::write(&src, "#!/bin/sh\n").unwrap();
@@ -728,7 +728,7 @@ mod tests {
         {
             let src_dir = temp.path().join("dir");
             fs::create_dir(&src_dir).unwrap();
-            let out = tempfile::tempdir().unwrap();
+            let out = crate::testing::tempdir().unwrap();
             let dest = out.path().join("partial");
             assert!(copy_to_new_file(&src_dir, &dest).is_err());
             assert_eq!(fs::read_dir(out.path()).unwrap().count(), 0);
@@ -740,8 +740,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_failed_copy_cleanup_leaves_racing_destination() {
-        let temp = tempfile::tempdir().unwrap();
-        let out = tempfile::tempdir().unwrap();
+        let temp = crate::testing::tempdir().unwrap();
+        let out = crate::testing::tempdir().unwrap();
         let dest = out.path().join("dest");
         fs::write(&dest, "racer").unwrap();
 
@@ -752,7 +752,7 @@ mod tests {
 
     #[test]
     fn test_discard_temp_reports_cleanup_failure() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
 
         let temp = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
         let err = discard_temp(temp, io::Error::from(ErrorKind::AlreadyExists));
@@ -778,7 +778,7 @@ mod tests {
     fn test_copy_leaf_force_replaces_existing_destination() {
         // The counterpart: with `force` the destination is removed and the
         // source copied over it, reporting the source's byte count.
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let src = dir.path().join("src");
         let dest = dir.path().join("dest");
         fs::write(&src, b"source content").unwrap();
@@ -800,7 +800,7 @@ mod tests {
         // The skipped count is what tells a caller that deletes the source
         // whether the destination received everything. An idempotent re-run
         // skips a leaf that is already there, and says so.
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let src = dir.path().join("src");
         let dest = dir.path().join("dest");
         fs::create_dir_all(&src).unwrap();
@@ -822,7 +822,7 @@ mod tests {
         // A socket is dropped at classification, not counted: the count exists
         // so a caller that deletes the source can refuse, and a socket carries
         // no content that refusal would protect.
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let src = dir.path().join("src");
         let dest = dir.path().join("dest");
         fs::create_dir_all(&src).unwrap();
@@ -844,7 +844,7 @@ mod tests {
     fn test_copy_dir_recursive_reports_no_skips_for_a_complete_copy() {
         // The control: a clean copy reports zero, which is what lets a move
         // treat any non-zero count as a reason to keep the source.
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let src = dir.path().join("src");
         let dest = dir.path().join("dest");
         fs::create_dir_all(src.join("nested")).unwrap();
@@ -865,7 +865,7 @@ mod tests {
         // another for its short root — so the copy was refused as "outside" a
         // worktree it was inside (#3898). Off Windows the depth is unremarkable
         // and this just exercises a deep tree.
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let src_root = dir.path().join("src");
         let dest_root = dir.path().join("dest");
 
@@ -901,7 +901,7 @@ mod tests {
         // A read-only source copies to a read-only destination; setting its
         // time must not need write access to it.
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let src = dir.path().join("src");
         let dest = dir.path().join("dest");
         fs::write(&src, b"content").unwrap();
@@ -926,7 +926,7 @@ mod tests {
         // A subdirectory that vanishes mid-walk is skipped, but the root the
         // caller named is not — its absence is a real error, and nothing is
         // created at the destination.
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let src = dir.path().join("does-not-exist");
         let dest = dir.path().join("dest");
 

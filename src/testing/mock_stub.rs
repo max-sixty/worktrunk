@@ -295,7 +295,7 @@ mod tests {
         let view = ["pr", "view", "42", "--json", "comments"];
         let list = ["pr", "list", "--head", "flaky"];
 
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let path = dir.path().join("gh.calls");
         std::thread::scope(|scope| {
             for writer in 0..WRITERS {

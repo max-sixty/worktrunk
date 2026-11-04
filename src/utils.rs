@@ -283,7 +283,7 @@ mod tests {
     fn prepare_log_file_does_not_chmod_symlinked_directory() {
         use std::os::unix::fs::{PermissionsExt, symlink};
 
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let outside = dir.path().join("outside");
         std::fs::create_dir(&outside).unwrap();
         std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn test_write_atomically_creates_then_replaces() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let path = dir.path().join("config.toml");
 
         write_atomically(&path, "first\n").unwrap();
@@ -324,7 +324,7 @@ mod tests {
 
     #[test]
     fn test_write_new_atomically_creates_but_never_replaces() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let path = dir.path().join("config.toml");
 
         write_new_atomically(&path, "first\n").unwrap();
@@ -345,7 +345,7 @@ mod tests {
     fn test_write_atomically_creates_owner_only() {
         use std::os::unix::fs::PermissionsExt;
 
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let path = dir.path().join("new.toml");
         write_atomically(&path, "x\n").unwrap();
 
