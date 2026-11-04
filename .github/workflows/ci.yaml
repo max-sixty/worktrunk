@@ -114,23 +114,6 @@ jobs:
     - name: 🧪 Full test suite
       run: wt hook pre-merge --yes insta
 
-    - name: Setup Node.js for DSH integration
-      if: runner.os == 'Linux'
-      uses: actions/setup-node@v7
-      with:
-        node-version: 24
-        cache: npm
-        cache-dependency-path: dev/dsh/package-lock.json
-
-    - name: Test native DSH activity
-      if: runner.os == 'Linux'
-      shell: bash
-      run: |
-        npm --prefix dev/dsh ci --ignore-scripts --no-audit --no-fund
-        dsh_wt_bin="$(cargo build --locked --all-features --bin wt --message-format=json | jq -r 'select(.reason == "compiler-artifact" and .target.name == "wt" and .executable != null) | .executable')"
-        test -n "$dsh_wt_bin"
-        WORKTRUNK_BIN="$dsh_wt_bin" npm --prefix dev/dsh test
-
     # Anything tests leave behind in the working tree is a leak we want to see
     # before it lands. `target/` is gitignored, so a normal run is clean —
     # untracked files here mean a test wrote outside its sandbox (the

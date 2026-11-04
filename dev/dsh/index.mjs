@@ -5,8 +5,7 @@
  * One managed operation is active; its captured targets are retained until
  * cancellation settles. A migration retains its old anchor until its update
  * succeeds. Disposal replaces pending updates with cleanup. Plugin unload
- * joins the active managed range, then clears captured targets, serializing
- * writes within each repository to avoid contending for its config lock.
+ * joins the active managed range, then clears captured targets serially.
  * Marker commands use the Git common directory, so a removed session cwd is
  * not required for cleanup. Aggregation is confined to this DSH process;
  * independent hosts retain Worktrunk's existing last-writer-wins semantics.
@@ -194,17 +193,9 @@ export function apply(ctx) {
     active?.controller.abort();
     await draining;
     const cancellation = new AbortController().signal;
-    const repositories = new Map();
     for (const target of targets) {
-      if (!repositories.has(target.gitDir)) repositories.set(target.gitDir, []);
-      repositories.get(target.gitDir).push(target);
+      try { await refresh(target, cancellation); } catch (error) { skipped(error); }
     }
-    const results = await Promise.allSettled([...repositories.values()].map(async group => {
-      for (const target of group) {
-        try { await refresh(target, cancellation); } catch (error) { skipped(error); }
-      }
-    }));
-    for (const result of results) if (result.status === 'rejected') skipped(result.reason);
   });
 
   // A Loader remount must also observe roots that already exist.

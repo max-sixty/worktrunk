@@ -1,18 +1,18 @@
 ---
 title: "Agent Integration"
-description: "Worktrunk agent plugins: configuration skills, wt list activity tracking, and worktree isolation for Claude Code and OpenCode."
+description: "Worktrunk plugins for Claude Code, Codex, OpenCode, Pi, oh-my-pi, and Gemini CLI: a configuration skill, wt list activity tracking, and worktree isolation for Claude Code and OpenCode."
 sidebar:
   order: 21
 ---
 Worktrunk ships a plugin for each supported agent CLI. What a plugin provides depends on the hooks that CLI exposes:
 
-| Capability | Claude Code | Codex | OpenCode | Pi | oh-my-pi | Gemini CLI | DSH |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| Configuration skill | ✓ | ✓ |  |  |  | ✓ |  |
-| Activity tracking (🤖/💬 in `wt list`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Worktree isolation | ✓ |  | ✓ |  |  |  |  |
-| `/wt-switch-create` skill | ✓ |  |  |  |  |  |  |
-| `/wt-diff` pane | ✓ |  |  |  |  |  |  |
+| Capability | Claude Code | Codex | OpenCode | Pi | oh-my-pi | Gemini CLI |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| Configuration skill | ✓ | ✓ |  |  |  | ✓ |
+| Activity tracking (🤖/💬 in `wt list`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Worktree isolation | ✓ |  | ✓ |  |  |  |
+| `/wt-switch-create` skill | ✓ |  |  |  |  |  |
+| `/wt-diff` pane | ✓ |  |  |  |  |  |
 
 The configuration skill is documentation the agent reads to help set up LLM commits, hooks, and troubleshooting. Activity tracking shows which worktrees have running sessions. Worktree isolation needs worktree-lifecycle hooks, which only Claude Code and OpenCode 2 expose, so Codex, Pi, oh-my-pi, and Gemini users invoke `wt switch --create` and `wt remove` directly.
 
@@ -80,31 +80,6 @@ gemini extensions install https://github.com/max-sixty/worktrunk
 
 Gemini loads the extension natively from the repository, so there is no `wt` wrapper. `gemini extensions uninstall worktrunk` removes it.
 
-### DeepSeek Harness (DSH)
-
-Mount the native activity plugin from a local Worktrunk checkout using a DSH overlay:
-
-```yaml
-# /absolute/path/activity.patch.yml
-- insert:
-    - id: worktrunk-activity
-      name: file:///absolute/path/to/worktrunk/dev/dsh/index.mjs
-```
-
-Pass the overlay through your profile's `--patch` option. SDK clients supply it through `patches`:
-
-```js
-import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client';
-
-const harness = new DeepSeekHarness({
-  profile: 'sdk-minimal',
-  cwd: '/absolute/path/to/worktree',
-  patches: ['/absolute/path/activity.patch.yml'],
-});
-```
-
-`sdk-minimal` is a JSON-RPC runtime driven by the SDK client. The plugin follows each root agent's current session directory, marks working or waiting, and clears its contribution on disposal. It does not route DSH worktree creation or removal. Markers are branch-scoped; independent processes or other integrations can overwrite them. Tested with DSH 0.2.2-rc.1 on Linux using a local subprocess provider.
-
 ## Configuration skill
 
 With the `/worktrunk` skill, the agent can help with:
@@ -159,6 +134,31 @@ For other agent CLIs, configure these commands to run on session events:
 | Session starts, or the agent resumes work | `wt config state marker set "🤖"` |
 | Agent finishes a turn and waits for input | `wt config state marker set "💬"` |
 | Session ends | `wt config state marker clear` |
+
+### Experimental DeepSeek Harness (DSH)
+
+An experimental native activity module is available in `dev/dsh/index.mjs`. It requires a source checkout containing that file; installing the Worktrunk binary alone does not install it. It is separate from the supported integrations above. Mount it using a DSH overlay:
+
+```yaml
+# /absolute/path/activity.patch.yml
+- insert:
+    - id: worktrunk-activity
+      name: file:///absolute/path/to/worktrunk/dev/dsh/index.mjs
+```
+
+Pass the overlay through your profile's `--patch` option. SDK clients supply it through `patches`:
+
+```js
+import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client';
+
+const harness = new DeepSeekHarness({
+  profile: 'sdk-minimal',
+  cwd: '/absolute/path/to/worktree',
+  patches: ['/absolute/path/activity.patch.yml'],
+});
+```
+
+`sdk-minimal` is a JSON-RPC runtime driven by the SDK client. The plugin follows each root agent's current session directory, marks working or waiting, and clears its contribution on disposal. It does not route DSH worktree creation or removal. Markers are branch-scoped; independent processes or other integrations can overwrite them. Tested with DSH 0.2.2-rc.1 on Linux using a local subprocess provider.
 
 ## Worktree isolation (Claude Code and OpenCode)
 

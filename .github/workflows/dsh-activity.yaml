@@ -1,0 +1,54 @@
+name: dsh-activity
+
+on:
+  pull_request:
+    paths:
+      - 'dev/dsh/**'
+      - 'src/commands/config/state.rs'
+      - 'src/cli/config.rs'
+      - 'src/main.rs'
+      - 'src/git/repository/config.rs'
+      - '.github/workflows/dsh-activity.yaml'
+      - '.github/dependabot.yaml'
+  push:
+    branches: [main]
+    paths:
+      - 'dev/dsh/**'
+      - 'src/commands/config/state.rs'
+      - 'src/cli/config.rs'
+      - 'src/main.rs'
+      - 'src/git/repository/config.rs'
+      - '.github/workflows/dsh-activity.yaml'
+      - '.github/dependabot.yaml'
+  workflow_dispatch:
+
+concurrency:
+  group: dsh-activity-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  dsh-activity:
+    name: DSH activity (advisory)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: dev/dsh/package-lock.json
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: dsh-activity
+
+      - name: Test experimental DSH activity
+        shell: bash
+        run: |
+          npm --prefix dev/dsh ci --ignore-scripts --no-audit --no-fund
+          dsh_wt_bin="$(cargo build --locked --bin wt --message-format=json | jq -r 'select(.reason == "compiler-artifact" and .target.name == "wt" and .executable != null) | .executable')"
+          test -n "$dsh_wt_bin"
+          WORKTRUNK_BIN="$dsh_wt_bin" npm --prefix dev/dsh test

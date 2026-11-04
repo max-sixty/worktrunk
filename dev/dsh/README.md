@@ -1,10 +1,10 @@
-# DeepSeek Harness activity
+# Experimental DeepSeek Harness activity
 
-`index.mjs` is a native Cordis plugin for local DSH profiles. It uses the existing `wt config state marker` interface; it adds no Worktrunk command, configuration key, or service. Mount it through a DSH invocation overlay as shown in the [agent integration guide](../../docs/src/content/docs/claude-code.md#deepseek-harness-dsh).
+`index.mjs` is an experimental native Cordis plugin for local DSH profiles. It requires a source checkout containing this module; installing the Worktrunk binary does not install it. It uses the existing `wt config state marker` interface and adds no Worktrunk command, configuration key, or service. Mount it through a DSH invocation overlay as shown in the [agent integration guide](../../docs/src/content/docs/claude-code.md#experimental-deepseek-harness-dsh).
 
 Only root agents contribute markers. Creation and resume mark working; real `agent/status` transitions mark working or waiting. Session working-directory changes move the contribution. Roots sharing a branch within one DSH process aggregate their state, with working taking precedence. Root disposal and plugin unload remove contributions; remounting observes existing roots.
 
-Pending observations replace older observations for the same root. The worker therefore holds at most one active operation and one pending observation per root. A failed migration clear retains the old repository/branch anchor and withholds a new marker until a later observation can clear it. Cleanup uses the Git common directory, so the old session cwd need not exist. Disposing the plugin cancels and joins its active managed process range before clearing captured targets, serially within each repository.
+Pending observations replace older observations for the same root. The worker therefore holds at most one active operation and one pending observation per root. A failed migration clear retains the old repository/branch anchor and withholds a new marker until a later observation can clear it. Cleanup uses the Git common directory, so the old session cwd need not exist. Disposing the plugin cancels and joins its active managed process range before clearing captured targets serially.
 
 The one-second process deadline requests cancellation; completion still depends on the subprocess provider confirming its managed range is empty. Shutdown work scales with the number of distinct branches. Missing or failing commands do not reject the agent's lifecycle.
 
@@ -21,5 +21,7 @@ WORKTRUNK_BIN=/absolute/path/to/wt npm test
 ```
 
 The tests launch the installed DSH `sdk-minimal` profile through its public SDK, using disposable homes and Git worktrees. Only the model adapter is synthetic; Loader, agent lifecycle, persistence, subprocess management, Git, and successful Worktrunk commands are real. Failure cases substitute only the optional external marker command. No provider credentials or calls are used.
+
+The independent `dsh-activity` workflow runs on changes to this module and its marker interface, outside the required Rust test matrix. Its pinned prerelease SDK is test-only; `.github/dependabot.yaml` includes weekly updates for this package. Failures remain visible in that workflow.
 
 Validated with DSH 0.2.2-rc.1 and Worktrunk 0.81.0 on Linux. Windows, macOS, remote subprocess providers, and abrupt host termination remain unverified. The Windows executable selection follows the existing Pi integration, including the Windows Terminal alias guard.
