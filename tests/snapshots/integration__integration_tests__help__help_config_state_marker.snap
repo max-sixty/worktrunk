@@ -97,7 +97,7 @@ Stored in git config as [2mworktrunk.state.<branch>.marker[0m. Set directly wi
 
 [107m [0m [2m[0m[2m[34mgit[0m[2m config worktrunk.state.feature.marker [0m[2m[32m'{"marker":"🚧","set_at":0}'[0m
 
-When [2mwt[0m deletes a branch, it clears that branch's marker. A marker left behind when the branch is deleted another way is not shown in [2mwt list[0m for a later branch of the same name.
+When [2mwt[0m deletes a branch, it clears that branch's marker.
 
 Without a subcommand, runs [2mget[0m for the current branch. For [2m--branch[0m, use [2mget --branch=NAME[0m.
 

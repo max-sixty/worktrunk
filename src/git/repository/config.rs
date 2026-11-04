@@ -1,6 +1,5 @@
 //! Git config, hints, marker, and default branch operations for Repository.
 
-use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -170,14 +169,14 @@ impl Repository {
     /// The config key is only the branch name, so a branch deleted outside wt
     /// (`git branch -D`, `git worktree remove`) leaves it behind and a later
     /// branch of the same name would inherit it. The marker is skipped when
-    /// no local branch has this name, and when the branch's reflog says the
-    /// ref was created after `set_at` — that name was deleted and created
-    /// again, and the stored marker belongs to the previous branch.
+    /// git says this branch was created after `set_at` — that name was deleted
+    /// and created again, and the stored marker belongs to the previous branch.
     ///
     /// A `set_at` of 0 is the documented hand-written form and has no time to
     /// compare. A missing or expired creation entry is not evidence the branch
-    /// is new. Both still show. The key is left in git config; this only
-    /// decides what list renders.
+    /// is new, and an unborn `--orphan` branch has no ref yet so git has no
+    /// creation entry for it. Those still show. The key is left in git config;
+    /// this only decides what list renders.
     pub fn user_marker(&self, branch: Option<&str>) -> Option<String> {
         let branch = branch?;
         let (text, set_at) = self.stored_marker(branch)?;
@@ -207,46 +206,45 @@ impl Repository {
 
     /// Whether a marker recorded at `set_at` belongs to the branch that exists now.
     ///
-    /// A failed branch scan is not evidence the name is gone, so the marker
+    /// No creation time is not evidence the name was reused, so the marker
     /// stays visible. Hiding it would drop a status the user set because git
-    /// could not be asked.
+    /// could not say the name was reused — including an unborn `--orphan`
+    /// branch, which has a worktree row and no ref.
     fn marker_applies_to_current_branch(&self, branch: &str, set_at: u64) -> bool {
-        if self.local_branch(branch).is_ok_and(|found| found.is_none()) {
-            return false;
-        }
         match self.branch_created_at(branch) {
             Some(created_at) if set_at > 0 => created_at <= set_at,
             _ => true,
         }
     }
 
-    /// Unix time of the current branch's creation, from its reflog.
+    /// Unix time at which git created this branch, from its reflog.
     ///
-    /// The creation entry is the first line of `logs/refs/heads/<branch>`
-    /// (previous OID all zeros). `git log --walk-reflogs` cannot walk
-    /// oldest-first — `--reverse` is rejected — so the file is read directly,
-    /// one line, rather than dumping the whole reflog. `None` when the line
-    /// is missing or is no longer a creation entry (reflogs disabled, or git
-    /// expired the original line).
+    /// `git log -g` reads every ref backend. Entries are newest first, and
+    /// `--reverse` cannot be combined with `--walk-reflogs`, so the creation
+    /// entry is the last line whose message is `branch: Created from …`.
+    /// `None` when that line is missing: reflogs are off (the bare-repo
+    /// default), git expired the original line, or the ref does not exist yet.
     fn branch_created_at(&self, branch: &str) -> Option<u64> {
         if !super::is_valid_branch_name(branch) {
             return None;
         }
-        let path = self
-            .git_common_dir()
-            .join("logs")
-            .join("refs")
-            .join("heads")
-            .join(branch);
-        let file = std::fs::File::open(path).ok()?;
-        let mut buf = Vec::new();
-        std::io::BufReader::new(file)
-            .read_until(b'\n', &mut buf)
+        let reference = format!("refs/heads/{branch}");
+        // `--no-color` and `--no-show-signature` keep config from appending
+        // ANSI or a signature block. The trailing `--` keeps a worktree path
+        // from being read as the revision.
+        let output = self
+            .run_command(&[
+                "log",
+                "-g",
+                "--date=unix",
+                "--no-color",
+                "--no-show-signature",
+                "--format=%gd %gs",
+                &reference,
+                "--",
+            ])
             .ok()?;
-        if buf.is_empty() {
-            return None;
-        }
-        creation_timestamp_from_reflog_line(&String::from_utf8_lossy(&buf))
+        creation_unix_time_from_reflog_walk(&output)
     }
 
     /// Get all vars entries for a branch, sorted by key name.
@@ -1151,35 +1149,35 @@ impl Repository {
     }
 }
 
-/// Unix time from a branch-creation reflog line, if `line` is one.
+/// Unix time of the oldest `branch: Created from …` line in `git log -g` output.
 ///
-/// Creation is the entry whose previous OID is all zeros, which is how a new
-/// `logs/refs/heads/<branch>` file starts:
-/// `0000… <new> Name <email> <unix> <±HHMM>\tbranch: Created from …`
-/// The committer name may contain spaces, so the timestamp and timezone are
-/// the last two fields. Any other first line means the creation record has
-/// been expired or rewritten, which is not evidence this branch is new.
-fn creation_timestamp_from_reflog_line(line: &str) -> Option<u64> {
-    let meta = line.split_once('\t')?.0.trim();
-    let mut fields = meta.rsplit(' ');
-    let tz = fields.next()?;
-    let timestamp = fields.next()?;
-    let old_oid = meta.split(' ').next()?;
-    if !is_zero_oid(old_oid) || !is_reflog_tz(tz) {
+/// The walk is newest first: `<selector>@{<unix>} <message>`. A later commit
+/// or checkout is not creation. The oldest create is the entry that opened
+/// the reflog; once git expires that line, none remains. An unparseable
+/// create overwrites any newer one already seen — a time we cannot read is
+/// not a time we can compare.
+fn creation_unix_time_from_reflog_walk(output: &str) -> Option<u64> {
+    let mut created = None;
+    for line in output.lines() {
+        let Some((selector, message)) = line.trim().split_once(' ') else {
+            continue;
+        };
+        if message.starts_with("branch: Created from ") {
+            created = unix_time_from_reflog_selector(selector);
+        }
+    }
+    created
+}
+
+/// `<name>@{<unix>}` as printed by `git log -g --date=unix --format=%gd`.
+///
+/// Git forbids `@{` in a ref name, so the last `@{` opens the timestamp.
+fn unix_time_from_reflog_selector(selector: &str) -> Option<u64> {
+    let stamp = selector.rsplit_once("@{")?.1.strip_suffix('}')?;
+    if stamp.is_empty() || !stamp.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
-    timestamp.parse().ok()
-}
-
-fn is_zero_oid(oid: &str) -> bool {
-    matches!(oid.len(), 40 | 64) && oid.bytes().all(|byte| byte == b'0')
-}
-
-fn is_reflog_tz(tz: &str) -> bool {
-    let mut bytes = tz.bytes();
-    matches!(bytes.next(), Some(b'+') | Some(b'-'))
-        && bytes.len() == 4
-        && bytes.all(|byte| byte.is_ascii_digit())
+    stamp.parse().ok()
 }
 
 /// Split a `worktrunk.state.<branch>.vars.<key>` config key into `(branch, key)`.
@@ -1415,11 +1413,12 @@ mod tests {
         assert!(!snapshot.contains_key("sort"));
     }
 
-    /// A marker is shown for the branch it was set on, and hidden once that
-    /// branch is gone or a new branch of the same name has been created.
-    /// The config key stays either way — list skips it, it does not prune.
+    /// A marker is shown for the branch it was set on, and hidden once a new
+    /// branch of the same name has been created after `set_at`. The config
+    /// key stays either way — list skips it, it does not prune. Deleting the
+    /// name leaves no creation entry, which is not evidence it was reused.
     #[test]
-    fn user_marker_skips_a_branch_that_is_gone_or_recreated() {
+    fn user_marker_skips_a_marker_when_the_branch_is_recreated() {
         let test = TestRepo::with_initial_commit();
         test.run_git(&["branch", "feature"]);
         test.run_git(&["branch", "kept"]);
@@ -1436,8 +1435,8 @@ mod tests {
 
         test.run_git(&["branch", "-D", "feature"]);
         let gone = Repository::at(test.root_path()).unwrap();
-        assert_eq!(gone.user_marker(Some("feature")), None);
         assert_eq!(gone.branch_marker("feature").as_deref(), Some("🤖"));
+        assert_eq!(gone.user_marker(Some("feature")).as_deref(), Some("🤖"));
         assert_eq!(gone.user_marker(Some("kept")).as_deref(), Some("🤖"));
 
         // A later committer date is the new branch's creation time.
@@ -1456,19 +1455,19 @@ mod tests {
         assert_eq!(fresh.user_marker(Some("kept")).as_deref(), Some("🤖"));
     }
 
-    /// When the marker has no usable timestamp, or the branch's creation line
-    /// is gone, the marker still shows. Neither is proof the name was reused.
+    /// When the marker has no usable timestamp, or git has no creation entry,
+    /// the marker still shows. Neither is proof the name was reused.
     #[test]
     fn user_marker_keeps_marker_when_branch_age_is_unknown() {
         let test = TestRepo::with_initial_commit();
         test.run_git(&["branch", "undated"]);
         test.run_git(&["branch", "expired"]);
-        test.run_git(&["branch", "empty-log"]);
+        test.run_git(&["-c", "core.logAllRefUpdates=false", "branch", "nolog"]);
         let repo = Repository::at(test.root_path()).unwrap();
-        // The creation line is there before we replace it, so a miss later is
-        // the reader seeing the new contents, not a wrong path.
+        // The creation entry is there before expire, so a miss later is git
+        // reporting the emptied reflog, not a query that never ran.
         assert!(repo.branch_created_at("expired").is_some());
-        assert!(repo.branch_created_at("empty-log").is_some());
+        assert_eq!(repo.branch_created_at("nolog"), None);
         repo.set_config(
             "worktrunk.state.undated.marker",
             r#"{"marker":"🤖","set_at":0}"#,
@@ -1480,62 +1479,159 @@ mod tests {
         )
         .unwrap();
         repo.set_config(
-            "worktrunk.state.empty-log.marker",
+            "worktrunk.state.nolog.marker",
             &format!(r#"{{"marker":"🤖","set_at":{TEST_EPOCH}}}"#),
         )
         .unwrap();
 
-        let sha = "0123456789abcdef0123456789abcdef01234567";
-        let expired = repo.git_common_dir().join("logs/refs/heads/expired");
-        std::fs::write(
-            &expired,
-            format!("{sha} {sha} t <t@t> 2000000000 +0000\tcommit: later\n"),
-        )
-        .unwrap();
-        let empty = repo.git_common_dir().join("logs/refs/heads/empty-log");
-        std::fs::write(&empty, "").unwrap();
+        test.run_git(&["reflog", "expire", "--expire=all", "refs/heads/expired"]);
         assert_eq!(repo.branch_created_at("expired"), None);
-        assert_eq!(repo.branch_created_at("empty-log"), None);
 
         assert_eq!(repo.user_marker(Some("undated")).as_deref(), Some("🤖"));
         assert_eq!(repo.user_marker(Some("expired")).as_deref(), Some("🤖"));
-        assert_eq!(repo.user_marker(Some("empty-log")).as_deref(), Some("🤖"));
+        assert_eq!(repo.user_marker(Some("nolog")).as_deref(), Some("🤖"));
         assert_eq!(repo.branch_created_at("../outside"), None);
     }
 
+    /// An unborn `--orphan` worktree has no ref, so it has no creation entry.
+    /// The marker was set on that branch and must still show.
     #[test]
-    fn creation_timestamp_reads_only_a_zero_old_oid_line() {
-        let sha = "0123456789abcdef0123456789abcdef01234567";
-        let zeros = "0".repeat(40);
-        let created = format!(
-            "{zeros} {sha} Ada Lovelace <ada@example.com> 1735862400 -0700\tbranch: Created from HEAD\n"
-        );
-        assert_eq!(
-            creation_timestamp_from_reflog_line(&created),
-            Some(1735862400)
+    fn user_marker_keeps_marker_on_an_unborn_orphan_branch() {
+        let test = TestRepo::with_initial_commit();
+        let orphan_path = test.root_path().parent().unwrap().join("orphan");
+        let created = test
+            .git_command()
+            .args([
+                "worktree",
+                "add",
+                "--orphan",
+                "-b",
+                "unborn",
+                orphan_path.to_str().unwrap(),
+            ])
+            .run()
+            .unwrap();
+        assert!(
+            created.status.success(),
+            "git worktree add --orphan: {created:?}"
         );
 
-        let sha256 = "0".repeat(64);
-        let created_sha256 = format!("{sha256} {sha} t <t@t> 10 +0000\tbranch: Created from HEAD");
-        assert_eq!(
-            creation_timestamp_from_reflog_line(&created_sha256),
-            Some(10)
-        );
+        let repo = Repository::at(test.root_path()).unwrap();
+        repo.set_config(
+            "worktrunk.state.unborn.marker",
+            &format!(r#"{{"marker":"🤖","set_at":{TEST_EPOCH}}}"#),
+        )
+        .unwrap();
+        assert_eq!(repo.branch_created_at("unborn"), None);
+        assert_eq!(repo.user_marker(Some("unborn")).as_deref(), Some("🤖"));
+    }
 
-        let later = format!("{sha} {sha} t <t@t> 1735862400 +0000\tcommit: later\n");
-        assert_eq!(creation_timestamp_from_reflog_line(&later), None);
-        assert_eq!(creation_timestamp_from_reflog_line("no tab here"), None);
+    /// A bare repo records a branch reflog only when git is asked to. The
+    /// marker follows that answer: hidden when the reflog says the name was
+    /// created after `set_at`, still shown when git has no creation entry.
+    #[test]
+    fn user_marker_follows_the_reflog_git_recorded_in_a_bare_repo() {
+        let test = TestRepo::bare();
+        let tree = git_stdout(
+            &test,
+            &["hash-object", "-w", "-t", "tree", "--stdin"],
+            Some(&[]),
+        );
+        let commit = git_stdout(&test, &["commit-tree", &tree, "-m", "init"], None);
+        test.run_git(&["update-ref", "refs/heads/main", &commit]);
+
+        test.run_git(&["branch", "silent", &commit]);
+        let repo = Repository::at(test.root_path()).unwrap();
+        let marker = format!(r#"{{"marker":"🤖","set_at":{TEST_EPOCH}}}"#);
+        repo.set_config("worktrunk.state.silent.marker", &marker)
+            .unwrap();
+        repo.set_config("worktrunk.state.logged.marker", &marker)
+            .unwrap();
+        assert_eq!(repo.branch_created_at("silent"), None);
+        assert_eq!(repo.user_marker(Some("silent")).as_deref(), Some("🤖"));
+
+        test.run_git(&["branch", "-D", "silent"]);
+        let recreated = test
+            .git_command()
+            .env("GIT_COMMITTER_DATE", "2025-01-03T00:00:00Z")
+            .args(["branch", "silent", &commit])
+            .run()
+            .unwrap();
+        assert!(recreated.status.success(), "{recreated:?}");
+        let fresh = Repository::at(test.root_path()).unwrap();
+        assert_eq!(fresh.user_marker(Some("silent")).as_deref(), Some("🤖"));
+
+        test.run_git(&["config", "core.logAllRefUpdates", "true"]);
+        let logged = test
+            .git_command()
+            .env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z")
+            .args(["branch", "logged", &commit])
+            .run()
+            .unwrap();
+        assert!(logged.status.success(), "{logged:?}");
+        let recording = Repository::at(test.root_path()).unwrap();
+        assert!(recording.branch_created_at("logged").is_some());
+        assert_eq!(recording.user_marker(Some("logged")).as_deref(), Some("🤖"));
+
+        test.run_git(&["branch", "-D", "logged"]);
+        let again = test
+            .git_command()
+            .env("GIT_COMMITTER_DATE", "2025-01-03T00:00:00Z")
+            .args(["branch", "logged", &commit])
+            .run()
+            .unwrap();
+        assert!(again.status.success(), "{again:?}");
+        let recreated = Repository::at(test.root_path()).unwrap();
+        assert_eq!(recreated.user_marker(Some("logged")), None);
+        assert_eq!(recreated.branch_marker("logged").as_deref(), Some("🤖"));
+    }
+
+    #[test]
+    fn creation_unix_time_uses_the_oldest_created_from_entry() {
+        // Newest first, as `git log -g` prints. The commit is newer than
+        // `set_at` would be; creation is the last `branch: Created from`.
+        let walk = "\
+feature@{1735948800} commit: later work
+feature@{1735862400} branch: Created from HEAD
+feature/foo@{1735776000} branch: Created from refs/heads/main
+";
+        assert_eq!(creation_unix_time_from_reflog_walk(walk), Some(1735776000));
+
+        // A `@{…}` inside the message is not the selector. `commit (initial)`
+        // creates an orphan ref and is not a branch-name reuse.
+        let not_creation = "\
+feature@{1735862400} commit: note @{99} stays in the message
+orphaned@{1735862400} commit (initial): orphan first
+";
+        assert_eq!(creation_unix_time_from_reflog_walk(not_creation), None);
+        assert_eq!(creation_unix_time_from_reflog_walk(""), None);
         assert_eq!(
-            creation_timestamp_from_reflog_line(&format!(
-                "{zeros} {sha} t <t@t> 10 Z\tbranch: Created from HEAD"
-            )),
+            creation_unix_time_from_reflog_walk("not a reflog line"),
             None
         );
         assert_eq!(
-            creation_timestamp_from_reflog_line(&format!(
-                "{zeros} {sha} t <t@t> nope +0000\tbranch: Created from HEAD"
-            )),
+            creation_unix_time_from_reflog_walk("feature@{nope} branch: Created from HEAD\n"),
             None
         );
+        // The oldest create is unparseable, so a newer one is not used.
+        let unparsed_oldest = "\
+feature@{1735862400} branch: Created from HEAD
+feature@{nope} branch: Created from main
+";
+        assert_eq!(creation_unix_time_from_reflog_walk(unparsed_oldest), None);
+    }
+
+    fn git_stdout(test: &TestRepo, args: &[&str], stdin: Option<&[u8]>) -> String {
+        let mut cmd = test.git_command().args(args.iter().copied());
+        if let Some(bytes) = stdin {
+            cmd = cmd.stdin_bytes(bytes);
+        }
+        let output = cmd.run().unwrap();
+        assert!(
+            output.status.success(),
+            "git {}: {output:?}",
+            args.join(" ")
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
     }
 }
