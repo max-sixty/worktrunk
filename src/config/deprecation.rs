@@ -1669,7 +1669,11 @@ fn format_migration_diff(
     migrated: &str,
     label: &str,
 ) -> anyhow::Result<Option<String>> {
-    let dir = crate::testing::tempdir().context("failed to create tempdir for migration diff")?;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "production code; the disallowed-methods rule targets the test suite (#4692)"
+    )]
+    let dir = tempfile::tempdir().context("failed to create tempdir for migration diff")?;
     let subdir = dir.path().join(label);
     std::fs::create_dir(&subdir).context("failed to create subdir in fresh tempdir")?;
     std::fs::write(subdir.join("current"), original)
