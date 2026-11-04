@@ -1669,7 +1669,7 @@ fn format_migration_diff(
     migrated: &str,
     label: &str,
 ) -> anyhow::Result<Option<String>> {
-    let dir = tempfile::tempdir().context("failed to create tempdir for migration diff")?;
+    let dir = crate::testing::tempdir().context("failed to create tempdir for migration diff")?;
     let subdir = dir.path().join(label);
     std::fs::create_dir(&subdir).context("failed to create subdir in fresh tempdir")?;
     std::fs::write(subdir.join("current"), original)
@@ -4399,7 +4399,7 @@ approved-commands = ["npm install"]
 
     #[test]
     fn test_copy_approved_commands_creates_approvals_file() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
+        let temp_dir = crate::testing::tempdir().unwrap();
         let config_path = temp_dir.path().join("config.toml");
         let content = r#"
 [projects."github.com/user/repo"]
@@ -4437,7 +4437,7 @@ approved-commands = ["cargo build"]
 
     #[test]
     fn test_copy_approved_commands_skips_when_approvals_exists() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
+        let temp_dir = crate::testing::tempdir().unwrap();
         let config_path = temp_dir.path().join("config.toml");
         let approvals_path = temp_dir.path().join("approvals.toml");
         let content = r#"
@@ -4458,7 +4458,7 @@ approved-commands = ["npm install"]
 
     #[test]
     fn test_copy_approved_commands_errors_when_existing_approvals_invalid() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
+        let temp_dir = crate::testing::tempdir().unwrap();
         let config_path = temp_dir.path().join("config.toml");
         let approvals_path = temp_dir.path().join("approvals.toml");
         let content = r#"
@@ -4481,7 +4481,7 @@ approved-commands = ["npm install"]
 
     #[test]
     fn test_copy_approved_commands_skips_when_empty() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
+        let temp_dir = crate::testing::tempdir().unwrap();
         let config_path = temp_dir.path().join("config.toml");
         let content = r#"
 [projects."github.com/user/repo"]
@@ -4506,7 +4506,7 @@ worktree-path = ".worktrees/{{ branch | sanitize }}"
     fn test_copy_approved_commands_surfaces_write_failure() {
         use std::os::unix::fs::PermissionsExt;
 
-        let temp_dir = tempfile::TempDir::new().unwrap();
+        let temp_dir = crate::testing::tempdir().unwrap();
         let config_path = temp_dir.path().join("config.toml");
         let content = r#"
 [projects."github.com/user/repo"]
@@ -4549,7 +4549,7 @@ approved-commands = ["npm install"]
     /// "nothing to copy" — same data-loss class as the write-failure case.
     #[test]
     fn test_copy_approved_commands_surfaces_read_failure() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
+        let temp_dir = crate::testing::tempdir().unwrap();
         let config_path = temp_dir.path().join("config.toml");
         std::fs::write(&config_path, "this is = = not valid toml\n").unwrap();
 

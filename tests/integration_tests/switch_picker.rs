@@ -1317,7 +1317,7 @@ fn test_switch_picker_open_url_keeps_launcher_output_out_of_terminal(
             )
             .write(&mock_bin);
     }
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut env_vars = forge_mock_env_vars(&repo, &mock_bin);
     env_vars.push((
         "WORKTRUNK_TEST_MOCK_CALL_LOG_DIR".into(),
@@ -1703,7 +1703,7 @@ fn test_switch_picker_preview_auto_refreshes_when_compute_lands(repo: TestRepo) 
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
     let release = MockReleaseGate::new(mock_bin.join("comments.release"));
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut env_vars = forge_mock_env_vars(&repo, &mock_bin);
     env_vars.push((
         "WORKTRUNK_TEST_MOCK_CALL_LOG_DIR".to_string(),
@@ -2043,7 +2043,7 @@ fn test_switch_picker_pre_switch_hook_requires_approval(mut repo: TestRepo) {
 
     // Project `pre-switch` hook (in `.config/wt.toml`, so it routes through the
     // approval gate) that touches a marker outside the worktree if it runs.
-    let marker_dir = tempfile::tempdir().unwrap();
+    let marker_dir = worktrunk::testing::tempdir().unwrap();
     let marker = marker_dir.path().join("pre-switch-ran");
     repo.write_project_config(&format!(
         "pre-switch = {:?}\n",

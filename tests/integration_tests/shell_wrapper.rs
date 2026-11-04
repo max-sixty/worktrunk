@@ -514,7 +514,7 @@ fn exec_bash_truly_interactive(
     use std::time::{Duration, Instant};
 
     // Write setup script to a temp file
-    let tmp_dir = tempfile::tempdir().unwrap();
+    let tmp_dir = worktrunk::testing::tempdir().unwrap();
     let script_path = tmp_dir.path().join("setup.sh");
     fs::write(&script_path, setup_script).unwrap();
 
@@ -899,7 +899,7 @@ mod unix_tests {
         // also make the test less faithful to the platform it stands in for:
         // Windows takes the `$nu.os-info.family` branch, where cleanup uses the
         // nushell builtin and does run.
-        let bin_dir = tempfile::tempdir().unwrap();
+        let bin_dir = worktrunk::testing::tempdir().unwrap();
         for tool in ["nu", "git", "rm", "printf"] {
             let resolved = which::which(tool)
                 .unwrap_or_else(|e| panic!("{tool} must be installed to run tests: {e}"));
@@ -1043,7 +1043,7 @@ mod unix_tests {
     fn test_nu_wrapper_cleanup_survives_rm_alias(repo: TestRepo) {
         // A dedicated TMPDIR so the wrapper's `mktemp` files are the only
         // occupants, and a leak is directly observable.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         let tmp_path = tmp.path().to_string_lossy().to_string();
 
         let mut script = String::new();
@@ -1237,7 +1237,7 @@ mod unix_tests {
     fn test_nu_wrapper_execute_failure_runs_cleanup(repo: TestRepo) {
         // A dedicated TMPDIR so the wrapper's `mktemp` files are the only
         // occupants and a leak is directly observable.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         let tmp_path = tmp.path().to_string_lossy().to_string();
 
         let mut script = String::new();
@@ -1277,7 +1277,7 @@ mod unix_tests {
     #[rstest]
     fn test_nu_wrapper_cd_failure_runs_cleanup(repo: TestRepo) {
         use std::os::unix::fs::PermissionsExt;
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         let executable = repo.root_path().join("invalid-directive");
         fs::write(
             &executable,
@@ -1334,7 +1334,7 @@ mod unix_tests {
     fn test_nu_wrapper_signal_status_runs_cleanup(mut repo: TestRepo) {
         repo.add_worktree("nu-signal");
         let target = canonicalize(repo.worktree_path("nu-signal")).unwrap();
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         let tmp_path = tmp.path().to_string_lossy().to_string();
         let mut script = String::new();
         append_wrapper_setup(&mut script, "nu", &repo);
@@ -3276,7 +3276,7 @@ fi
     /// PATH override. `/etc/zshenv` is always sourced and cannot be bypassed,
     /// but it doesn't typically touch PATH on the environments we care about.
     fn completion_test_path(wt_bin: &std::path::Path) -> (tempfile::TempDir, String) {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         std::os::unix::fs::symlink(wt_bin, dir.path().join("wt")).unwrap();
         // Only include the symlink dir + essential system dirs. This prevents
         // any user-installed `wt-*` binaries (e.g. ~/.cargo/bin/wt-sync) or
@@ -3550,7 +3550,7 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
         let wt_bin_dir = wt_bin.parent().unwrap();
 
         // Create a temp file for the redirect target
-        let tmp_dir = tempfile::tempdir().unwrap();
+        let tmp_dir = worktrunk::testing::tempdir().unwrap();
         let redirect_file = tmp_dir.path().join("subprocess.log");
         let redirect_path = redirect_file.display().to_string();
 
@@ -3678,7 +3678,7 @@ echo "SCRIPT_COMPLETED"
         let wt_bin_dir = wt_bin.parent().unwrap();
 
         // Create temp dir for marker file and pager script
-        let tmp_dir = tempfile::tempdir().unwrap();
+        let tmp_dir = worktrunk::testing::tempdir().unwrap();
         let marker_file = tmp_dir.path().join("pager_invoked.marker");
         let pager_script = tmp_dir.path().join("test_pager.sh");
 
@@ -3846,7 +3846,7 @@ mod windows_tests {
         use crate::common::pty::{build_pty_command, exec_cmd_in_pty};
 
         // Use cmd.exe for simplest possible test
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         let cmd = build_pty_command(
             "cmd.exe",
             &["/C", "echo CONPTY_WORKS"],
@@ -3876,7 +3876,7 @@ mod windows_tests {
         use crate::common::wt_bin;
 
         let wt_bin = wt_bin();
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
 
         let cmd = build_pty_command(
             wt_bin.to_str().unwrap(),
@@ -3924,7 +3924,7 @@ mod windows_tests {
         cmd.arg("-Command");
         cmd.arg("Write-Host 'POWERSHELL_WORKS'; exit 42");
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         cmd.cwd(tmp.path());
 
         crate::common::pass_coverage_env_to_pty_cmd(&mut cmd);

@@ -58,7 +58,7 @@ pub struct FixtureRepo {
 impl FixtureRepo {
     /// Create a fixture with its primary worktree at `<temp>/repo`.
     fn create(build: impl FnOnce(&Path)) -> Self {
-        let root = tempfile::tempdir().unwrap();
+        let root = worktrunk::testing::tempdir().unwrap();
         let repo = root.path().join("repo");
         build(&repo);
         Self { root, repo }
@@ -1014,7 +1014,7 @@ fn history_spread_shas(repo_path: &Path, count: usize) -> Vec<String> {
 /// minutes per branch. Each commit adds one new file, so the branch's tree
 /// genuinely diverges and the integration probes can't short-circuit.
 fn add_branch_with_commits(repo_path: &Path, branch: &str, fork: &str, commits: usize) {
-    let scratch = tempfile::tempdir().unwrap();
+    let scratch = worktrunk::testing::tempdir().unwrap();
     let index = scratch.path().join("index");
     let mut tip = fork.to_string();
     for j in 0..commits {
@@ -1476,7 +1476,7 @@ mod tests {
 
     #[test]
     fn fixture_lock_excludes_an_independent_handle() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = worktrunk::testing::tempdir().unwrap();
         let path = temp.path().join("fixture.lock");
         let first = acquire_exclusive_lock(&path);
         let second = OpenOptions::new().write(true).open(&path).unwrap();
@@ -1492,7 +1492,7 @@ mod tests {
 
     #[test]
     fn imported_source_rejects_a_missing_pinned_commit_object() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = worktrunk::testing::tempdir().unwrap();
         init_bench_repo(temp.path());
         std::fs::write(
             temp.path().join(".git/refs/heads/main"),

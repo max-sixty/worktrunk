@@ -79,7 +79,7 @@ if ($cmd -and $cmd.CommandType -eq 'Function') {{
 fn test_powershell_wrapper_passes_short_flags_through() {
     // Create a .ps1 mock that prints each argument on its own line.
     // Using .ps1 (not a shell script) so this works on Windows too.
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let mock_bin = temp_dir.path().join("mock-wt.ps1");
     std::fs::write(&mock_bin, "foreach ($a in $args) { Write-Output $a }\n").unwrap();
 
@@ -136,7 +136,7 @@ wt remove -D test --force
 /// `return $null` emitted nothing, hiding the bug.
 #[test]
 fn test_powershell_wrapper_no_stray_exit_code_on_stdout() {
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let mock_bin = temp_dir.path().join("mock-wt.ps1");
     // Emit a single distinctive line, then exit 0 like a real native binary.
     std::fs::write(&mock_bin, "Write-Output 'MOCK_OUTPUT_LINE'\nexit 0\n").unwrap();

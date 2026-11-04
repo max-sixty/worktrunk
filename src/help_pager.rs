@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn pager_that_cannot_execute_triggers_fallback() {
         assert!(!super::pipe_through_pager("worktrunk-test-missing-pager", "help text").unwrap());
-        let script = tempfile::NamedTempFile::new().unwrap();
+        let script = worktrunk::testing::named_tempfile().unwrap();
         std::fs::write(script.path(), "#!/bin/sh\n").unwrap();
         // NamedTempFile is not executable: the shell returns reserved status 126.
         let command = shell_escape::unix::escape(script.path().to_string_lossy());
