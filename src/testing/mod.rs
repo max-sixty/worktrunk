@@ -866,7 +866,7 @@ pub fn test_tempdir() -> TempDir {
 /// burst of short-lived processes generated were duplicates. A duplicate of a
 /// live entry is retried, but one held by an entry another process just
 /// deleted fails with `PermissionDenied` (os error 5), which `tempfile` hands
-/// back instead of retrying (#4692). [`temp_builder`] reseeds the generator
+/// back instead of retrying (#4692). The builder behind it reseeds the generator
 /// first, so names differ across processes without changing their length.
 pub fn tempdir() -> std::io::Result<TempDir> {
     temp_builder().tempdir()
