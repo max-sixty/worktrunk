@@ -274,7 +274,7 @@ petname-macros = "=3.2.0"
 tempfile = "3.27"
 # The generator tempfile names come from; the test helpers seed it per
 # process (`testing::temp_builder`, #4692).
-fastrand = "2"
+fastrand = "2.1.1"
 
 # Timed waits on child processes (`Cmd::timeout`, `Cmd::delayed_stream`, the
 # picker's pager). Replaced `wait-timeout`, whose SIGCHLD handler aborts the
