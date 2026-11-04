@@ -1575,6 +1575,7 @@ impl Repository {
     /// | Bare `.git`                | `core.bare = true`         | `git_common_dir` is the repo  |
     /// | Submodule `.git/modules/X` | `core.worktree` set by git | `rev-parse --show-toplevel`   |
     /// | Separate git dir           | `<common>/gitdir` backlink | `parent(backlink)`            |
+    /// | Discovered main checkout   | `.git` resolves to common | discovered worktree root     |
     /// | Normal `.git`              | none of the above          | `parent(git_common_dir)`      |
     ///
     /// Submodules need `core.worktree` because their git data lives in the
@@ -1593,9 +1594,10 @@ impl Repository {
     ///
     /// A repository whose git directory lives outside its work tree
     /// (`--separate-git-dir`) has neither signal, and `parent(git_common_dir)`
-    /// names the store's parent rather than the work tree. The backlink git
-    /// writes there covers it where it exists; see
-    /// `separate_git_dir_work_tree` for when that is.
+    /// names the store's parent rather than the work tree. Use its backlink
+    /// when available, or the discovered worktree root if its own `.git`
+    /// resolves to the common directory. A linked worktree's `.git` resolves
+    /// to a registration directory, so it cannot supply the main path.
     ///
     /// # Errors
     ///
@@ -1628,6 +1630,14 @@ impl Repository {
                     return Ok(work_tree);
                 }
 
+                // A main checkout may have an external Git directory but no
+                // backlink or core.worktree. Its own .git must resolve to the
+                // common directory, not a linked worktree's registration.
+                let work_tree = self.current_worktree().root()?;
+                if Self::git_dir_at(&work_tree).as_deref() == Some(self.git_common_dir()) {
+                    return Ok(work_tree);
+                }
+
                 Ok(self
                     .git_common_dir
                     .parent()
@@ -1656,7 +1666,8 @@ impl Repository {
     /// `git worktree repair` writes it; `git init --separate-git-dir` and
     /// `git clone --separate-git-dir` leave the store with no backlink, so a
     /// repository that has never been repaired records its work tree nowhere
-    /// and still falls through to `parent(git_common_dir)`. Running
+    /// and needs discovery from the main checkout. From a linked worktree,
+    /// the main path remains unknown without that record. Running
     /// `git worktree repair` from the work tree is what materializes it.
     ///
     /// The backlink is one-way, so it is confirmed rather than trusted:

@@ -2704,6 +2704,42 @@ fn build_separate_git_dir_layout_with(
 }
 
 #[test]
+fn repo_path_discovers_the_main_checkout_without_a_backlink() {
+    let (_tmp, store, main) = build_separate_git_dir_layout();
+    std::fs::remove_file(store.join("gitdir")).unwrap();
+    let subdir = main.join("nested/subdir");
+    std::fs::create_dir_all(&subdir).unwrap();
+
+    let repo = Repository::at(subdir).unwrap();
+    assert!(repo.config_last("core.worktree").unwrap().is_none());
+    assert_eq!(repo.repo_path().unwrap(), main);
+    assert_eq!(repo.list_worktrees().unwrap()[0].path, main);
+    assert!(!store.join("gitdir").exists());
+}
+
+#[test]
+fn repo_path_does_not_promote_a_linked_checkout_to_main() {
+    let (tmp, store, main) = build_separate_git_dir_layout();
+    std::fs::remove_file(store.join("gitdir")).unwrap();
+    let linked = tmp.path().join("topic");
+    let output = crate::testing::configure_git_env(crate::shell_exec::Cmd::new("git"))
+        .current_dir(&main)
+        .args(["worktree", "add", "-b", "topic", linked.to_str().unwrap()])
+        .run()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let repo = Repository::at(&linked).unwrap();
+    let linked = super::canonicalize(&linked).unwrap();
+    assert_eq!(repo.current_worktree().root().unwrap(), linked);
+    assert_ne!(
+        repo.current_worktree().git_dir().unwrap(),
+        repo.git_common_dir()
+    );
+    assert_ne!(repo.repo_path().unwrap(), linked);
+}
+
+#[test]
 fn repo_path_follows_the_separate_git_dir_backlink() {
     // Regression test for #4235. With the git dir outside the work tree, the
     // `parent(git_common_dir)` fallback names the store's *parent* — so

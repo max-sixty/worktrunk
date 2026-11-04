@@ -13,6 +13,79 @@ use rstest::rstest;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// A main checkout can point at an external Git directory without a reverse
+/// `gitdir` link or `core.worktree` (for example, a repo-tool checkout).
+#[cfg(unix)]
+#[rstest]
+#[case::gitfile(false)]
+#[case::symlink(true)]
+fn test_remove_from_main_with_external_git_dir(#[case] symlink: bool) {
+    let mut repo = TestRepo::with_initial_commit();
+    let store = repo.home_path().join("store/project.git");
+    fs::create_dir_all(store.parent().unwrap()).unwrap();
+    fs::rename(repo.root_path().join(".git"), &store).unwrap();
+    let dot_git = repo.root_path().join(".git");
+    if symlink {
+        std::os::unix::fs::symlink("../store/project.git", &dot_git).unwrap();
+    } else {
+        fs::write(&dot_git, "gitdir: ../store/project.git\n").unwrap();
+    }
+    assert!(!store.join("gitdir").exists());
+    assert!(
+        !repo
+            .git_command()
+            .args(["config", "--local", "--get", "core.worktree"])
+            .run()
+            .unwrap()
+            .status
+            .success()
+    );
+    let linked = repo.add_worktree("topic");
+    let subdir = repo.root_path().join("nested/subdir");
+    fs::create_dir_all(&subdir).unwrap();
+    fs::write(repo.root_path().join("keep.txt"), "primary data").unwrap();
+
+    let output = repo
+        .wt_command()
+        .current_dir(&subdir)
+        .args([
+            "remove",
+            "topic",
+            "--foreground",
+            "--no-delete-branch",
+            "--no-hooks",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!linked.exists());
+    assert_eq!(
+        fs::read_to_string(repo.root_path().join("keep.txt")).unwrap(),
+        "primary data"
+    );
+    repo.run_git(&["show-ref", "--verify", "refs/heads/topic"]);
+    assert!(
+        !store.join("gitdir").exists(),
+        "discovery must not repair Git metadata"
+    );
+
+    let output = repo
+        .wt_command()
+        .current_dir(&subdir)
+        .args(["step", "eval", "{{ repo_path }}"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        repo.root_path().to_str().unwrap()
+    );
+}
+
 #[rstest]
 fn test_remove_from_worktree(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-wt");
