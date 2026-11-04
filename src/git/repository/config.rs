@@ -206,15 +206,16 @@ impl Repository {
 
     /// Whether a marker recorded at `set_at` belongs to the branch that exists now.
     ///
-    /// No creation time is not evidence the name was reused, so the marker
-    /// stays visible. Hiding it would drop a status the user set because git
-    /// could not say the name was reused — including an unborn `--orphan`
-    /// branch, which has a worktree row and no ref.
+    /// A `set_at` of 0 has no time to compare, so this returns without reading
+    /// the reflog. No creation time is not evidence the name was reused, so
+    /// the marker stays visible. Hiding it would drop a status the user set
+    /// because git could not say the name was reused — including an unborn
+    /// `--orphan` branch, which has a worktree row and no ref.
     fn marker_applies_to_current_branch(&self, branch: &str, set_at: u64) -> bool {
-        match self.branch_created_at(branch) {
-            Some(created_at) if set_at > 0 => created_at <= set_at,
-            _ => true,
-        }
+        set_at == 0
+            || self
+                .branch_created_at(branch)
+                .is_none_or(|created_at| created_at <= set_at)
     }
 
     /// Unix time at which git created this branch, from its reflog.
