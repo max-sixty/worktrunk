@@ -1,0 +1,8 @@
+# tempfile's own random names collide across concurrently started test
+# processes (#4692); the suite's helpers seed the name generator per process.
+# Production code keeps these constructors and opts out at the call site.
+disallowed-methods = [
+  { path = "tempfile::tempdir", reason = "use worktrunk::testing::tempdir (#4692)" },
+  { path = "tempfile::TempDir::new", reason = "use worktrunk::testing::tempdir (#4692)" },
+  { path = "tempfile::NamedTempFile::new", reason = "use worktrunk::testing::named_tempfile (#4692)" },
+]

@@ -1170,7 +1170,7 @@ mod tests {
 
     #[test]
     fn construction_and_reclassification_update_list_item_identity() {
-        let root = tempfile::tempdir().unwrap();
+        let root = worktrunk::testing::tempdir().unwrap();
         let worktree_ref = WorktreeRef::new(root.path(), Some("feature"), "abc123");
         let worktree_id = worktree_ref.clone().into_branch_ref().id().clone();
         let mut item = ListItem::new_worktree(worktree_ref, WorktreeData::default());

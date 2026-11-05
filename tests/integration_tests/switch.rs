@@ -188,6 +188,48 @@ fn test_switch_create_traces_worktree_add(repo: TestRepo) {
     );
 }
 
+/// A marker left by a deleted branch of the same name doesn't carry over to
+/// the branch `--create` makes; switching to an existing branch keeps its
+/// marker. Regression for #4683.
+#[rstest]
+fn test_switch_create_clears_stale_marker(repo: TestRepo) {
+    let marker = r#"{"marker":"🤖","set_at":0}"#;
+    repo.run_git(&["config", "worktrunk.state.reused.marker", marker]);
+    repo.run_git(&["branch", "kept"]);
+    repo.run_git(&["config", "worktrunk.state.kept.marker", marker]);
+
+    for args in [&["--create", "reused"][..], &["kept"]] {
+        let output = repo
+            .wt_command()
+            .arg("switch")
+            .args(args)
+            .arg("--no-cd")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "switch {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let read = |branch: &str| {
+        repo.git_command()
+            .args([
+                "config",
+                "--get",
+                &format!("worktrunk.state.{branch}.marker"),
+            ])
+            .run()
+            .unwrap()
+    };
+    assert!(
+        !read("reused").status.success(),
+        "stale marker should be cleared"
+    );
+    assert_eq!(String::from_utf8_lossy(&read("kept").stdout).trim(), marker);
+}
+
 #[rstest]
 fn test_switch_create_existing_branch_error(mut repo: TestRepo) {
     // Create a branch first
@@ -2527,7 +2569,7 @@ fn test_switch_execute_stdin_inheritance(repo: TestRepo) {
 
 #[rstest]
 fn test_switch_outside_git_repo(temp_home: TempDir) {
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
 
     // Run wt switch --create outside a git repo - should show "Failed to switch worktree" context
     let settings = setup_home_snapshot_settings(&temp_home);
@@ -3038,7 +3080,7 @@ worktree-path = "{{ repo_path }}/../from-project-{{ branch | sanitize }}"
     // The rule is the same one layer down, where no invocation is involved:
     // with the entry moved to the system file, the user file's global key
     // answers for this repo. Written last because it rewrites the user config.
-    let system_dir = tempfile::tempdir().unwrap();
+    let system_dir = worktrunk::testing::tempdir().unwrap();
     let system_config = system_dir.path().join("config.toml");
     fs::write(
         &system_config,
@@ -3913,7 +3955,7 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         .command("config get git_protocol", MockResponse::output("ssh\n"))
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -6429,7 +6471,7 @@ fn test_switch_pr_self_hosted_tea_authed_dispatches_to_gitea(
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -6512,7 +6554,7 @@ fn test_switch_pr_self_hosted_defaults_to_github(
     }
     #[cfg(unix)]
     std::os::unix::fs::symlink(which::which("git").unwrap(), mock_bin.join("git")).unwrap();
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -6530,6 +6572,85 @@ fn test_switch_pr_self_hosted_defaults_to_github(
         assert_eq!(calls.trim(), "logins list --output json");
     } else {
         assert!(!call_log.path().join("tea.calls").exists());
+    }
+}
+
+/// A GitHub Enterprise remote with no `forge.hostname`: `gh api` sends a
+/// request without `--hostname` to gh's default host, so the PR lookup must
+/// name the remote's host when gh holds a login for it, and leave gh's default
+/// alone when it doesn't (an SSH alias such as `github-personal`, #1790).
+#[rstest]
+#[case::authed_host(true)]
+#[case::unauthed_host(false)]
+fn test_switch_pr_enterprise_remote_passes_hostname(
+    #[from(repo_with_remote)] mut repo: TestRepo,
+    #[case] gh_authed: bool,
+) {
+    repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    let ghe_url = "https://github.example.com/owner/test-repo.git";
+    repo.run_git(&["remote", "set-url", "origin", ghe_url]);
+    repo.run_git(&["config", &format!("url.{bare_url}.insteadOf"), ghe_url]);
+
+    let gh_response = r#"{
+        "title": "Enterprise PR",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.example.com/owner/test-repo/pull/101"
+    }"#;
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    fs::write(mock_bin.join("pr_response.json"), gh_response).unwrap();
+    let mut gh = MockConfig::new("gh").command("api", MockResponse::file("pr_response.json"));
+    if gh_authed {
+        gh = gh.command("auth token --hostname", MockResponse::output("gho_mock"));
+    }
+    gh.command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    let call_log = worktrunk::testing::tempdir().unwrap();
+
+    let mut cmd = repo.wt_command();
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd
+        .args(["switch", "pr:101"])
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let calls = fs::read_to_string(call_log.path().join("gh.calls")).unwrap();
+    let api_call = calls.lines().find(|line| line.starts_with("api ")).unwrap();
+    if gh_authed {
+        assert_eq!(
+            api_call,
+            "api repos/owner/test-repo/pulls/101 --hostname github.example.com"
+        );
+    } else {
+        assert_eq!(api_call, "api repos/owner/test-repo/pulls/101");
     }
 }
 
@@ -6558,7 +6679,7 @@ fn test_switch_pr_tea_login_matches_distinct_ssh_host(repo: TestRepo) {
     MockConfig::new("gh")
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     configure_mock_cli_env(&mut cmd, &mock_bin);
     let output = cmd
@@ -6615,7 +6736,7 @@ fn test_switch_pr_tea_login_native_interruption(
     MockConfig::new("gh")
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     configure_mock_cli_env(&mut cmd, &mock_bin);
     let output = cmd
@@ -7211,8 +7332,10 @@ fn test_switch_pr_azure_visualstudio_host(#[from(repo_with_remote)] mut repo: Te
     });
 }
 
-#[rstest]
-fn test_switch_pr_azure_fork(#[from(repo_with_remote)] repo: TestRepo) {
+/// Pushes an Azure DevOps fork PR head to `refs/pull/42/head` and mocks `az`
+/// to describe it. `fork_urls` is the fork's `(remoteUrl, sshUrl)`; `None`
+/// leaves both `null`.
+fn setup_azure_fork_pr(repo: &TestRepo, fork_urls: Option<(&str, &str)>) -> std::path::PathBuf {
     repo.run_git(&["checkout", "-b", "azure-pr-source"]);
     fs::write(
         repo.root_path().join("azure-pr-file.txt"),
@@ -7234,12 +7357,9 @@ fn test_switch_pr_azure_fork(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
     repo.run_git(&["checkout", "main"]);
 
-    set_azure_remote_url(
-        &repo,
-        "https://dev.azure.com/myorg/myproject/_git/test-repo",
-    );
+    set_azure_remote_url(repo, "https://dev.azure.com/myorg/myproject/_git/test-repo");
 
-    let az_response = r#"{
+    let az_response = serde_json::json!({
         "title": "Add feature fix for edge case",
         "createdBy": {"uniqueName": "contributor@example.com"},
         "status": "active",
@@ -7252,19 +7372,64 @@ fn test_switch_pr_azure_fork(#[from(repo_with_remote)] repo: TestRepo) {
         },
         "forkSource": {
             "repository": {
-                "remoteUrl": "https://dev.azure.com/myorg/myproject/_git/test-repo-fork",
-                "sshUrl": "git@ssh.dev.azure.com:v3/myorg/myproject/test-repo-fork"
+                "remoteUrl": fork_urls.map(|(remote_url, _)| remote_url),
+                "sshUrl": fork_urls.map(|(_, ssh_url)| ssh_url)
             }
         }
-    }"#;
+    })
+    .to_string();
+    setup_mock_az(repo, &az_response)
+}
 
-    let mock_bin = setup_mock_az(&repo, az_response);
+const AZURE_FORK_URLS: (&str, &str) = (
+    "https://dev.azure.com/myorg/myproject/_git/test-repo-fork",
+    "git@ssh.dev.azure.com:v3/myorg/myproject/test-repo-fork",
+);
+
+#[rstest]
+fn test_switch_pr_azure_fork(#[from(repo_with_remote)] repo: TestRepo) {
+    let mock_bin = setup_azure_fork_pr(&repo, Some(AZURE_FORK_URLS));
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_azure_fork", cmd);
+    });
+}
+
+/// A local `feature-fix` that doesn't track the PR makes the checkout use the
+/// fork repository name as a prefix.
+#[rstest]
+fn test_switch_pr_azure_fork_conflict(#[from(repo_with_remote)] repo: TestRepo) {
+    let mock_bin = setup_azure_fork_pr(&repo, Some(AZURE_FORK_URLS));
+    repo.run_git(&["branch", "feature-fix", "main"]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_azure_fork_conflict", cmd);
+    });
+    assert_eq!(
+        repo.git_output(&["config", "branch.test-repo-fork/feature-fix.merge"])
+            .trim(),
+        "refs/pull/42/head"
+    );
+}
+
+/// Without a fork URL there is no repository name to prefix with, so a
+/// conflicting local branch still errors.
+#[rstest]
+fn test_switch_pr_azure_fork_missing_url(#[from(repo_with_remote)] repo: TestRepo) {
+    let mock_bin = setup_azure_fork_pr(&repo, None);
+    repo.run_git(&["branch", "feature-fix", "main"]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_azure_fork_missing_url", cmd);
     });
 }
 
@@ -7600,10 +7765,27 @@ fn setup_mock_glab_for_mr(repo: &TestRepo, glab_response: &str) -> std::path::Pa
     MockConfig::new("glab")
         .version("glab version 1.40.0 (mock)")
         .command("api", MockResponse::file("mr_response.json"))
+        .command(
+            "api projects/456",
+            MockResponse::output(r#"{"ssh_url_to_repo":"git@gitlab.com:group/subgroup/test-repo.git","http_url_to_repo":"https://gitlab.com/group/subgroup/test-repo.git"}"#),
+        )
+        .command(
+            "api projects/123",
+            MockResponse::output(r#"{"ssh_url_to_repo":"git@gitlab.com:owner/test-repo.git","http_url_to_repo":"https://gitlab.com/owner/test-repo.git"}"#),
+        )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
 
     mock_bin
+}
+
+fn prepare_gitlab_conflicting_fork_ref(repo: &TestRepo) {
+    repo.run_git(&["push", "origin", "main:refs/merge-requests/42/head"]);
+    let bare_url = repo.git_output(&["config", "remote.origin.url"]);
+    let bare_url = bare_url.trim();
+    let gitlab_url = "https://gitlab.com/owner/test-repo.git";
+    repo.run_git(&["remote", "set-url", "origin", gitlab_url]);
+    repo.run_git(&["config", &format!("url.{bare_url}.insteadOf"), gitlab_url]);
 }
 
 /// Test that --create flag conflicts with mr: syntax
@@ -8072,7 +8254,7 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
 
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
@@ -8360,7 +8542,7 @@ fn test_switch_mr_fork_existing_branch_tracks_mr(#[from(repo_with_remote)] repo:
         "https://gitlab.com/owner/test-repo.git",
     ]);
 
-    // Fork MR response (project URLs not needed since branch already exists)
+    // The branch already tracks this MR, so project URLs are not fetched.
     let glab_response = r#"{
         "title": "Add feature fix for edge case",
         "author": {"username": "contributor"},
@@ -8402,15 +8584,9 @@ fn test_switch_mr_fork_existing_branch_tracks_different(#[from(repo_with_remote)
     // Go back to main
     repo.run_git(&["checkout", "main"]);
 
-    // Set origin URL to GitLab-style
-    repo.run_git(&[
-        "remote",
-        "set-url",
-        "origin",
-        "https://gitlab.com/owner/test-repo.git",
-    ]);
+    prepare_gitlab_conflicting_fork_ref(&repo);
 
-    // Fork MR response for MR 42, but branch tracks MR 99 (error case)
+    // Fork MR response for MR 42, but branch tracks MR 99.
     let glab_response = r#"{
         "title": "Add feature fix for edge case",
         "author": {"username": "contributor"},
@@ -8430,6 +8606,11 @@ fn test_switch_mr_fork_existing_branch_tracks_different(#[from(repo_with_remote)
         configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_fork_existing_branch_tracks_different", cmd);
     });
+    assert_eq!(
+        repo.git_output(&["config", "branch.group/subgroup/feature-fix.merge"])
+            .trim(),
+        "refs/merge-requests/42/head"
+    );
 }
 
 /// Test fork MR checkout when branch exists but has no tracking config
@@ -8439,15 +8620,9 @@ fn test_switch_mr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: Test
     repo.run_git(&["branch", "feature-fix", "main"]);
     // No config set - branch exists but doesn't track anything
 
-    // Set origin URL to GitLab-style
-    repo.run_git(&[
-        "remote",
-        "set-url",
-        "origin",
-        "https://gitlab.com/owner/test-repo.git",
-    ]);
+    prepare_gitlab_conflicting_fork_ref(&repo);
 
-    // Fork MR response (project URLs not needed since branch already exists)
+    // The conflicting branch requires source project URLs for its prefix.
     let glab_response = r#"{
         "title": "Add feature fix for edge case",
         "author": {"username": "contributor"},
@@ -8467,6 +8642,11 @@ fn test_switch_mr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: Test
         configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_fork_existing_no_tracking", cmd);
     });
+    assert_eq!(
+        repo.git_output(&["config", "branch.group/subgroup/feature-fix.merge"])
+            .trim(),
+        "refs/merge-requests/42/head"
+    );
 }
 
 /// Test mr: with unknown glab error (falls through to general error handler)

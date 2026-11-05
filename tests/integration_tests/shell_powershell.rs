@@ -79,7 +79,7 @@ if ($cmd -and $cmd.CommandType -eq 'Function') {{
 fn test_powershell_wrapper_passes_short_flags_through() {
     // Create a .ps1 mock that prints each argument on its own line.
     // Using .ps1 (not a shell script) so this works on Windows too.
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let mock_bin = temp_dir.path().join("mock-wt.ps1");
     std::fs::write(&mock_bin, "foreach ($a in $args) { Write-Output $a }\n").unwrap();
 
@@ -136,7 +136,7 @@ wt remove -D test --force
 /// `return $null` emitted nothing, hiding the bug.
 #[test]
 fn test_powershell_wrapper_no_stray_exit_code_on_stdout() {
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let mock_bin = temp_dir.path().join("mock-wt.ps1");
     // Emit a single distinctive line, then exit 0 like a real native binary.
     std::fs::write(&mock_bin, "Write-Output 'MOCK_OUTPUT_LINE'\nexit 0\n").unwrap();
@@ -179,6 +179,61 @@ wt list
         "wrapper leaked extra stdout (likely a stray exit-code line from `return`).\n\
          stdout: {stdout}\nstderr: {stderr}",
     );
+}
+
+/// A temp directory containing brackets must not turn directive-file operations
+/// into wildcard lookups, which silently skips the directory change and cleanup.
+#[test]
+fn test_powershell_wrapper_handles_literal_temp_paths() {
+    let temp_dir = worktrunk::testing::test_tempdir();
+    let temp_path = temp_dir.path().join("temp[1]");
+    let target_path = temp_dir.path().join("target");
+    std::fs::create_dir(&temp_path).unwrap();
+    std::fs::create_dir(&target_path).unwrap();
+    let target_path = dunce::canonicalize(target_path).unwrap();
+
+    let mock_bin = temp_dir.path().join("mock-wt.ps1");
+    std::fs::write(
+        &mock_bin,
+        r#"
+if ($env:COMPLETE) { exit 0 }
+[IO.File]::WriteAllText($env:WORKTRUNK_DIRECTIVE_CD_FILE, $env:WORKTRUNK_TEST_TARGET)
+exit 0
+"#,
+    )
+    .unwrap();
+
+    let wrapper = ShellInit::with_prefix(Shell::PowerShell, "wt".to_string())
+        .generate()
+        .unwrap();
+    let mock_bin_escaped = mock_bin.display().to_string().replace('\'', "''");
+    let script = format!(
+        r#"
+$ErrorActionPreference = 'Stop'
+$env:WORKTRUNK_BIN = '{mock_bin_escaped}'
+{wrapper}
+wt switch feature
+Write-Output (Get-Location).Path
+exit $LASTEXITCODE
+"#
+    );
+
+    let output = Command::new("pwsh")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .env("TMP", &temp_path)
+        .env("TEMP", &temp_path)
+        .env("TMPDIR", &temp_path)
+        .env("WORKTRUNK_TEST_TARGET", &target_path)
+        .output()
+        .expect("Failed to run pwsh");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "pwsh command failed.\nstdout: {stdout}\nstderr: {stderr}",
+    );
+    assert_eq!(stdout.trim(), target_path.to_str().unwrap());
+    assert_eq!(std::fs::read_dir(&temp_path).unwrap().count(), 0);
 }
 
 /// The installed `pwsh` decides where install writes on Unix: with

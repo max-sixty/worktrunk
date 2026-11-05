@@ -342,7 +342,7 @@ mod tests {
 
     #[test]
     fn test_codex_instructions_file_is_minimal_and_preserves_existing_content() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         let path = tmp.path().join(".codex/worktrunk-commit-instructions.txt");
 
         assert!(ensure_codex_instructions_file(&path).unwrap());
@@ -435,7 +435,7 @@ mod tests {
     fn test_command_exists_in_finds_binary_on_explicit_path() {
         // Provide our own search path so the positive case doesn't depend
         // on which standard tools the inherited PATH happens to ship.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         #[cfg(windows)]
         let bin_name = "wt-fake-bin.exe";
         #[cfg(not(windows))]
@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     fn test_command_exists_in_returns_false_when_paths_empty() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         assert!(!command_exists_in(
             "__nonexistent__",
             Some(tmp.path().as_os_str()),

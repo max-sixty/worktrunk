@@ -296,7 +296,7 @@ fn test_for_each_aborts_on_signal_exit(repo: TestRepo) {
     // after the first signal. for-each exec's argv directly with no implicit
     // shell, so shell features (`&&`, `$$`, `$(...)`) need an explicit
     // `sh -c` invocation.
-    let marker_dir = tempfile::tempdir().expect("create marker tmpdir");
+    let marker_dir = worktrunk::testing::tempdir().expect("create marker tmpdir");
     let marker_path = marker_dir.path().to_string_lossy().to_string();
 
     let shell_cmd = format!("touch {marker_path}/$(basename \"$(pwd)\") && kill -TERM $$");
@@ -342,7 +342,7 @@ fn test_for_each_aborts_on_signal_exit(repo: TestRepo) {
 #[rstest]
 #[cfg(unix)]
 fn test_for_each_stops_on_caught_ctrl_c(repo: TestRepo) {
-    let marker_dir = tempfile::tempdir().unwrap();
+    let marker_dir = worktrunk::testing::tempdir().unwrap();
     let pid_file = marker_dir.path().join("pid");
     let script = format!(
         "trap 'exit 0' INT; touch {dir}/\"$(basename \"$PWD\")\"; echo $$ > {pid}; while :; do sleep 0.1; done",
@@ -436,7 +436,7 @@ fn test_for_each_json_preserves_caught_exit_on_controller_term(
         }
     }
 
-    let markers = tempfile::tempdir().unwrap();
+    let markers = worktrunk::testing::tempdir().unwrap();
     let ready = markers.path().join("ready");
     std::fs::create_dir(&ready).unwrap();
     let worker = r#"import json, os, pathlib, signal, sys
@@ -535,7 +535,7 @@ while True:
 fn test_for_each_does_not_inherit_git_discovery_vars(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
 
-    let marker_dir = tempfile::tempdir().expect("create marker tmpdir");
+    let marker_dir = worktrunk::testing::tempdir().expect("create marker tmpdir");
     let marker_path = marker_dir.path().to_string_lossy().to_string();
     let shell_cmd = format!(
         r#"printf '[%s][%s]' "$GIT_DIR" "$GIT_WORK_TREE" > {marker_path}/$(basename "$(pwd)")"#

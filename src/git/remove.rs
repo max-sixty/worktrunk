@@ -28,7 +28,9 @@
 //!    unconditionally (matching `git worktree remove`; `--force` does not
 //!    override it). The dirty-worktree gate is skipped with
 //!    [`RemoveOptions::force_worktree`], which reports the current uncommitted
-//!    paths, or why they could not be read, before deletion instead. Why the
+//!    paths, or why they could not be read, before deletion instead, and
+//!    backs those changes up to `refs/wt-backup/<branch>` (ignored files
+//!    excepted); a failed backup refuses the removal. Why the
 //!    dirty gate precedes the stop below: [`stage_worktree_removal`], "Why this order".
 //! 2. **fsmonitor daemon stopped** (best effort). [`stop_fsmonitor_daemon`]
 //!    runs against the target worktree before its path disappears: it sends
@@ -471,7 +473,8 @@ pub fn remove_worktree_with_cleanup(
 ///
 /// # Errors
 ///
-/// The ownership, lock, and dirty-worktree gates error. A
+/// The ownership, lock, and dirty-worktree gates error, as does a failed
+/// `--force` backup of uncommitted changes. A
 /// failed rename is reported as `None`, not an error, and the daemon stop is
 /// best-effort throughout.
 pub fn stage_worktree_removal(
@@ -505,11 +508,20 @@ pub fn stage_worktree_removal(
         // status command still cancels before any directory is removed.
         match worktree.dirty_files() {
             Ok(dirty_files) if !dirty_files.is_empty() => {
+                // `--force` waives the dirty gate, not recoverability. A
+                // failed backup refuses the removal rather than lose the
+                // changes it was meant to keep, so the discard is announced
+                // only once the backup exists.
+                let name = branch.unwrap_or_else(|| path_dir_name(worktree_path));
+                let backup = worktree
+                    .create_removal_backup(&format!("{name} (remove --force)"))
+                    .context("Failed to back up uncommitted changes; worktree not removed")?;
                 eprintln!(
                     "{}",
                     warning_message("Discarding uncommitted changes (--force):")
                 );
                 eprintln!("{}", format_with_gutter(&dirty_files.join("\n"), None));
+                backup.print_recovery_hints(repo)?;
             }
             Ok(_) => {}
             Err(error) => {
@@ -645,7 +657,7 @@ pub fn delete_branch_if_safe(
     // behavior for the Worktree path). The user explicitly chose -D.
     if force_delete {
         repo.run_command(&["branch", "-D", "--", branch_name])?;
-        clear_deleted_branch_marker(repo, branch_name);
+        repo.clear_branch_marker(branch_name);
         return Ok(BranchDeletionResult {
             outcome: BranchDeletionOutcome::ForceDeleted,
             integration_target: target.to_string(),
@@ -675,29 +687,13 @@ pub fn delete_branch_if_safe(
         None => BranchDeletionOutcome::NotDeleted,
     };
     if matches!(outcome, BranchDeletionOutcome::Integrated(_)) {
-        clear_deleted_branch_marker(repo, branch_name);
+        repo.clear_branch_marker(branch_name);
     }
 
     Ok(BranchDeletionResult {
         outcome,
         integration_target: effective_target,
     })
-}
-
-/// Drop the activity marker of a branch `wt` just deleted.
-///
-/// Markers are keyed by branch name in shared git config, so one left behind
-/// would reappear on a later branch reusing the name. Best effort: the branch
-/// is already gone, so a failed unset is logged rather than surfaced.
-fn clear_deleted_branch_marker(repo: &Repository, branch_name: &str) {
-    // `<name>.vars.marker` is also branch `<name>`'s var `marker`; only
-    // marker JSON belongs to the deleted branch (as in `clear_all_markers`).
-    if repo.branch_marker(branch_name).is_none() {
-        return;
-    }
-    if let Err(e) = repo.unset_config(&format!("worktrunk.state.{branch_name}.marker")) {
-        tracing::debug!(error = %e, "Failed to clear marker for deleted branch {branch_name}: {e}");
-    }
 }
 
 /// Find a live checkout of `branch` using a new repository cache.
@@ -894,7 +890,7 @@ mod tests {
     /// drain that finds another holding the lock leaves the entries to it.
     #[test]
     fn drain_trash_deletes_staged_entries_once_the_lock_is_free() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::testing::tempdir().unwrap();
         let trash = temp.path().join("trash");
         let staged = trash.join("repo.feature-branch-1700000000");
         let foreign = trash.join("not-staged");
@@ -929,7 +925,7 @@ mod tests {
     fn drain_trash_stops_at_an_undeletable_entry() {
         use std::os::unix::fs::PermissionsExt;
 
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::testing::tempdir().unwrap();
         let trash = temp.path().join("trash");
         fs::create_dir(&trash).unwrap();
         fs::write(trash.join("stuck-1700000000"), "x").unwrap();
@@ -1495,7 +1491,7 @@ mod tests {
     fn test_fsmonitor_socket_resolves_to_linked_worktree_git_dir() {
         use crate::git::Repository;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::testing::tempdir().unwrap();
         let git = |dir: &Path| crate::testing::configure_git_env(Cmd::new("git")).current_dir(dir);
 
         let main = tmp.path().join("repo");
@@ -1545,7 +1541,7 @@ mod tests {
     fn test_fsmonitor_stop_unresolvable_git_dir_is_noop() {
         use crate::git::Repository;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::testing::tempdir().unwrap();
         let main = tmp.path().join("repo");
         std::fs::create_dir(&main).unwrap();
         crate::testing::configure_git_env(Cmd::new("git"))
@@ -1574,7 +1570,7 @@ mod tests {
     fn test_fsmonitor_force_kill_unheld_socket_is_noop() {
         use crate::git::Repository;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::testing::tempdir().unwrap();
         let main = tmp.path().join("repo");
         std::fs::create_dir(&main).unwrap();
         crate::testing::configure_git_env(Cmd::new("git"))

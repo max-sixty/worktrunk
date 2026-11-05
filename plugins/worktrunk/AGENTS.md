@@ -1,13 +1,14 @@
 # Worktrunk plugin
 
-The repository root is the marketplace for Claude Code and Codex and the Gemini extension root. Claude and Codex both install plugins/worktrunk; Gemini reads the root manifest. Keep each manifest at the path its loader requires.
+The repository root is the marketplace for Claude Code and Codex and the Gemini extension root. Claude and Codex both install plugins/worktrunk; Codex also installs plugins/worktrunk-markers; Gemini reads the root manifest. Keep each manifest at the path its loader requires.
 
 ## Plugin layout
 
 - Repo-local maintainer skills live in .claude/skills/; .agents/skills points there. This symlink does not work on Windows checkouts with core.symlinks=false.
-- Claude discovers plugins/worktrunk/hooks/hooks.json by convention. The Codex manifest defines hooks inline so Codex does not load Claude events from that same file. Gemini has its own root hooks/hooks.json.
+- Claude discovers plugins/worktrunk/hooks/hooks.json by convention. The worktrunk Codex manifest declares an empty inline `hooks` object so Codex does not load Claude events from that same file; an absent key makes Codex read it and warn at startup. Gemini has its own root hooks/hooks.json.
+- Codex hooks live in plugins/worktrunk-markers, a hooks-only plugin. Codex binds hook approval to a fingerprint of every file in the plugin directory, so hooks beside the skills would need review after each skill or docs change. Keep that directory to its manifest and shims: any change there, including a manifest `version` bump, makes every Codex user approve the hooks again. Its hooks/wt.sh and hooks/wt.cmd are real copies of the plugins/worktrunk shims, since Codex's installer drops symlinks; test_codex_markers_shims_match keeps them identical.
 - Claude hooks run `wt config plugins claude hook`, which dispatches on the payload event. Keep commands literal for Anthropic's plugin directory validator, and `$CLAUDE_PLUGIN_ROOT` unbraced for fish.
-- All three integrations call plugins/worktrunk/hooks/wt.sh. On Windows, Codex commandWindows calls hooks/wt.cmd to find Git Bash before running wt.sh. The command must parse in cmd.exe, Windows PowerShell, and pwsh; test it in all three shells with a plugin path containing spaces. Marker failures must not raise hook errors.
+- Claude and Gemini call plugins/worktrunk/hooks/wt.sh; Codex calls its copy. On Windows, Codex commandWindows calls hooks/wt.cmd to find Git Bash before running wt.sh. The command must parse in cmd.exe, Windows PowerShell, and pwsh; test it in all three shells with a plugin path containing spaces. Marker failures must not raise hook errors.
 - The Codex manifest uses the native PLUGIN_ROOT variable, braced as `${PLUGIN_ROOT}` in Windows commands for Codex's textual substitution. SessionEnd has a three-second timeout, Codex's event ceiling.
 - The shared skills mirror exposes wt-switch-create to Codex and Gemini, even though only Claude can switch the current session directory. Keep one authored skill tree.
 - hooks/register.tsx is the plugin's one Claude Code hooks module (the early-access function hooks API), named under `modules` in hooks/hooks.json; it serves `/wt-diff`. types/index.d.ts is its state contract and tests/ its suite. Claude Code releases without modules drop the key and still load `hooks`, and Codex and Gemini never read it. Work on it with `claude --plugin-dir plugins/worktrunk`, which overrides an installed copy, and check it with `claude plugin validate plugins/worktrunk` and `claude plugin test plugins/worktrunk`.

@@ -139,7 +139,12 @@ type Ran = { exitCode: number; stdout: string; stderr: string; isStdoutTruncated
 
 // Stands for the engine and the host: git and wt answer from fixtures, and
 // `step` stands in for what `wt step diff` answers.
-function host(on: On, runs: string[][], step: Partial<Ran> = {}) {
+function host(
+  on: On,
+  runs: string[][],
+  step: Partial<Ran> = {},
+  gitReady: () => boolean = () => true,
+) {
   mock.clock(on)
   on('command.register', () => ({ value: { command: 'wt-diff' } }))
   let isOpen = false
@@ -167,6 +172,17 @@ function host(on: On, runs: string[][], step: Partial<Ran> = {}) {
       value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
     })
     if (argv[0] === 'git') {
+      if (!gitReady()) {
+        return {
+          value: {
+            exitCode: 128,
+            stdout: '',
+            stderr: 'not a git repository',
+            isStdoutTruncated: false,
+            isStderrTruncated: false,
+          },
+        }
+      }
       return answer(`${dir.startsWith(OTHER) ? OTHER : HERE}\n${HERE}/.git\n`)
     }
     if (argv[3] === 'step') {
@@ -382,4 +398,22 @@ test('a hunk past the budget draws its start, under a recounted header', async (
   expect(code?.text.length).toBeLessThanOrEqual(80_000)
   expect(await ui.find({ type: 'Text', text: /rest of this file/ })).toBeDefined()
   await ui.unmount()
+})
+
+test('a failed lookup is retried when the directory becomes a repository', async ($, on) => {
+  const runs: string[][] = []
+  let ready = false
+  host(on, runs, {}, () => ready)
+  await $.session.start({ cwd: HERE, surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'wt-diff', args: '', ...TYPED })
+  expect(runs.filter(argv => argv[0] === 'git').length).toBe(1)
+
+  // The session has now initialized a repository in that same directory.
+  ready = true
+  await $.command.run({ command: 'wt-diff', args: '', ...TYPED })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ key: `wt:${HERE}` })).toBeDefined()
+  await ui.unmount()
+  // The successful result is cached for the refresh that opens the pane.
+  expect(runs.filter(argv => argv[0] === 'git').length).toBe(2)
 })

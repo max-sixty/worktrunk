@@ -1854,7 +1854,7 @@ mod tests {
             ("replaced", Some(previewed), Some(b"user\r\n".as_slice())),
             ("deleted", Some(previewed), None),
         ] {
-            let dir = tempfile::TempDir::new().unwrap();
+            let dir = worktrunk::testing::tempdir().unwrap();
             let completion = dir.path().join("wt.fish");
             if let Some(content) = current {
                 fs::write(&completion, content).unwrap();
@@ -1868,7 +1868,7 @@ mod tests {
 
     #[test]
     fn test_apply_shell_completions_verifies_before_creating_parent() {
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let completion = dir.path().join("removed/wt.fish");
         let preview = CompletionResult {
             shell: Shell::Fish,
@@ -1891,7 +1891,7 @@ mod tests {
 
     #[test]
     fn test_apply_shell_completions_skips_shell_missing_from_apply_scan() {
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let completion = dir.path().join("wt.fish");
         let preview = CompletionResult {
             shell: Shell::Fish,
@@ -1973,7 +1973,7 @@ mod tests {
 
     #[test]
     fn test_scan_managed_files_skips_wrong_extension_and_directories() {
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let root = dir.path();
         // Wrong extension: skipped.
         fs::write(root.join("notes.txt"), "anything").unwrap();
@@ -1988,7 +1988,7 @@ mod tests {
 
     #[test]
     fn test_remove_config_file_requires_matching_preimage() {
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let wrapper = dir.path().join("wt.fish");
         let previewed = b"# worktrunk shell integration for fish\n";
         fs::write(&wrapper, "# user replacement\n").unwrap();
@@ -2006,7 +2006,7 @@ mod tests {
 
     #[test]
     fn test_preimage_verification_rejects_directories() {
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
 
         let integration_error = remove_config_file(dir.path(), b"").unwrap_err();
         let completion_error = verify_completion_preimage(dir.path(), None).unwrap_err();
@@ -2023,7 +2023,7 @@ mod tests {
 
     #[test]
     fn test_configure_shell_rejects_invalid_utf8_before_modifying_file() {
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let rc = dir.path().join(".zshrc");
         let content = b"# non-UTF-8: \xff\n";
         fs::write(&rc, content).unwrap();
@@ -2038,7 +2038,7 @@ mod tests {
 
     #[test]
     fn test_configure_shell_already_exists_before_invalid_utf8() {
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let rc = dir.path().join(".zshrc");
         let content = b"eval \"$(wt config shell init zsh)\"\n# non-UTF-8: \xff\n";
         fs::write(&rc, content).unwrap();
@@ -2054,7 +2054,7 @@ mod tests {
     fn test_configure_shell_reports_dangling_symlink() {
         use std::os::unix::fs::symlink;
 
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let rc = dir.path().join(".zshrc");
         let target = dir.path().join("missing-target");
         symlink(&target, &rc).unwrap();
@@ -2076,7 +2076,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_configure_shell_reports_non_symlink_create_error() {
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let rc = dir.path().join("x".repeat(300));
 
         let error = configure_shell_file(Shell::Zsh, &rc, false, true, "wt")
@@ -2112,7 +2112,7 @@ mod tests {
     fn test_new_rc_error_reports_live_symlink_as_concurrent_creator() {
         use std::os::unix::fs::symlink;
 
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let target = dir.path().join("target");
         let path = dir.path().join(".zshrc");
         fs::write(&target, "# concurrent config\n").unwrap();
@@ -2130,7 +2130,7 @@ mod tests {
 
     #[test]
     fn test_configure_shell_appends_without_replacing_existing_file() {
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let rc = dir.path().join(".zshrc");
         let hard_link = dir.path().join("zshrc-hard-link");
         fs::write(&rc, "export EDITOR=hx\n").unwrap();
@@ -2150,7 +2150,7 @@ mod tests {
 
     #[test]
     fn test_configure_shell_opens_rc_with_exclusive_lock() {
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let rc = dir.path().join(".zshrc");
         fs::write(&rc, "export EDITOR=hx\n").unwrap();
 
@@ -2171,7 +2171,7 @@ mod tests {
 
     #[test]
     fn test_open_locked_rc_file_reports_open_errors() {
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let missing = dir.path().join("missing-zshrc");
 
         let error = open_locked_rc_file(&missing).unwrap_err();
@@ -2184,7 +2184,7 @@ mod tests {
 
     #[test]
     fn test_append_shell_integration_reports_write_errors() {
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let rc = dir.path().join(".zshrc");
         let original = "export EDITOR=hx\n";
         fs::write(&rc, original).unwrap();
@@ -2209,7 +2209,7 @@ mod tests {
 
     #[test]
     fn test_configure_shell_rereads_open_file_before_appending() {
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let rc = dir.path().join(".zshrc");
         fs::write(&rc, "export EDITOR=hx\n").unwrap();
 
@@ -2245,7 +2245,7 @@ mod tests {
 
     #[test]
     fn test_uninstall_previewed_lines_preserves_mixed_line_endings() {
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let rc = dir.path().join("profile.ps1");
         let integration = "Invoke-Expression (& wt config shell init powershell)";
         fs::write(
@@ -2309,7 +2309,7 @@ mod tests {
     #[test]
     fn test_uninstall_from_file_preserves_mode_and_leaves_no_temp_file() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let rc = dir.path().join(".bashrc");
         write_rc(&rc);
         // 0644 is the usual rc mode and differs from the 0600 a fresh temp file
@@ -2333,7 +2333,7 @@ mod tests {
         // A dotfile manager's layout: the real file lives in a repo and `~/.bashrc`
         // is a link to it. The rewrite must follow the link, not replace it —
         // otherwise the user's rc silently stops tracking their dotfiles.
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let repo = dir.path().join("dotfiles");
         let home = dir.path().join("home");
         fs::create_dir(&repo).unwrap();
@@ -2361,7 +2361,7 @@ mod tests {
     #[test]
     fn test_uninstall_from_file_leaves_rc_intact_when_write_fails() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let rc = dir.path().join(".bashrc");
         write_rc(&rc);
         let original = fs::read_to_string(&rc).unwrap();
@@ -2387,7 +2387,7 @@ mod tests {
     fn test_preimage_writes_leave_files_intact_on_io_error() {
         use std::os::unix::fs::PermissionsExt;
 
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let wrapper = dir.path().join("wt.fish");
         let completion = dir.path().join("completions.fish");
         let wrapper_content = b"# worktrunk shell integration for fish\n";
@@ -2433,7 +2433,7 @@ mod tests {
     #[test]
     fn test_scan_managed_files_skips_unreadable_file() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let root = dir.path();
         let unreadable = root.join("locked.fish");
         fs::write(&unreadable, "function wt\nend\n").unwrap();

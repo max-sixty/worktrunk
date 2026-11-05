@@ -1695,7 +1695,7 @@ fn test_relocate_current_with_retired_wrapper_warns(repo: TestRepo) {
         wrong_path.to_str().unwrap(),
     ]);
 
-    let directive_dir = tempfile::TempDir::new().unwrap();
+    let directive_dir = worktrunk::testing::tempdir().unwrap();
     let retired_path = directive_dir.path().join("directive");
     fs::write(&retired_path, "").unwrap();
 

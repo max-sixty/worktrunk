@@ -64,3 +64,5 @@ exit_code: 0
 [2m↳[22m [2mBranch unmerged; to delete, run [4mwt remove -D feature-modified[24m[22m
 [33m▲[39m [33mDiscarding uncommitted changes (--force):[39m
 [107m [0m  M tracked.txt
+[2m↳[22m [2mBackup created @ [4mrefs/wt-backup/feature-modified[24m (985509f)[22m
+[2m↳[22m [2mTo recover in a new worktree, run [4mwt switch --create --base 985509fc372ed70ebf9fa129f6baccda6bb3db6e --no-hooks recovery/985509f[24m[22m

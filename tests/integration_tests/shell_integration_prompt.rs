@@ -321,7 +321,7 @@ fn test_switch_stops_after_cancelled_powershell_query(
         .command("_default", MockResponse::output("[]\n"))
         .write(mock_bin);
 
-    let call_log = tempfile::TempDir::new().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     cmd.env("WORKTRUNK_TEST_PARENT_SHELL", "pwsh")
         .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
@@ -361,7 +361,7 @@ fn test_switch_hint_skips_shell_config_scan(mut repo: TestRepo) {
             .write(mock_bin);
     }
 
-    let call_log = tempfile::TempDir::new().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     cmd.env("WORKTRUNK_TEST_PARENT_SHELL", "zsh")
         .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
@@ -385,7 +385,7 @@ fn test_switch_continues_after_failed_shell_scan(repo: TestRepo) {
     use crate::common::set_temp_home_env;
     use std::os::unix::process::CommandExt;
 
-    let temp_home = tempfile::TempDir::new().unwrap();
+    let temp_home = worktrunk::testing::tempdir().unwrap();
     fs::create_dir(temp_home.path().join(".bashrc")).unwrap();
 
     let marker = repo.root_path().join("executed");
@@ -417,7 +417,6 @@ mod pty_tests {
     use crate::common::{add_pty_filters, setup_snapshot_settings, wt_bin};
     use insta::assert_snapshot;
     use std::path::Path;
-    use tempfile::TempDir;
 
     /// Create insta settings for shell integration prompt PTY tests.
     ///
@@ -449,7 +448,7 @@ mod pty_tests {
     #[rstest]
     fn test_already_installed_skips_prompt(repo: TestRepo) {
         // Create isolated HOME with shell config that already has integration
-        let temp_home = TempDir::new().unwrap();
+        let temp_home = worktrunk::testing::tempdir().unwrap();
         let bashrc = temp_home.path().join(".bashrc");
         let config_line = "if command -v wt >/dev/null 2>&1; then eval \"$(command wt config shell init bash)\"; fi";
         fs::write(&bashrc, format!("{config_line}\n")).unwrap();
@@ -494,7 +493,7 @@ mod pty_tests {
     #[rstest]
     fn test_user_declines_prompt(repo: TestRepo) {
         // Create isolated HOME with empty shell config
-        let temp_home = TempDir::new().unwrap();
+        let temp_home = worktrunk::testing::tempdir().unwrap();
         let bashrc = temp_home.path().join(".bashrc");
         fs::write(&bashrc, "# empty bashrc\n").unwrap();
 
@@ -561,7 +560,7 @@ mod pty_tests {
     ) {
         use std::os::unix::fs::PermissionsExt;
 
-        let temp_home = TempDir::new().unwrap();
+        let temp_home = worktrunk::testing::tempdir().unwrap();
         fs::write(temp_home.path().join(".bashrc"), "# empty bashrc\n").unwrap();
         let bin_dir = temp_home.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
@@ -601,7 +600,7 @@ mod pty_tests {
     #[rstest]
     fn test_user_accepts_prompt(repo: TestRepo) {
         // Create isolated HOME with empty shell config
-        let temp_home = TempDir::new().unwrap();
+        let temp_home = worktrunk::testing::tempdir().unwrap();
         let bashrc = temp_home.path().join(".bashrc");
         fs::write(&bashrc, "# empty bashrc\n").unwrap();
 
@@ -655,7 +654,7 @@ mod pty_tests {
 
     #[rstest]
     fn test_prompt_reports_shell_that_fails_after_confirmation(repo: TestRepo) {
-        let temp_home = TempDir::new().unwrap();
+        let temp_home = worktrunk::testing::tempdir().unwrap();
         let bashrc = temp_home.path().join(".bashrc");
         let zshrc = temp_home.path().join(".zshrc");
         fs::write(&bashrc, "# bash config\n").unwrap();
@@ -689,7 +688,7 @@ mod pty_tests {
 
     #[rstest]
     fn test_prompt_installs_other_shells_when_bashrc_is_invalid(repo: TestRepo) {
-        let temp_home = TempDir::new().unwrap();
+        let temp_home = worktrunk::testing::tempdir().unwrap();
         let bashrc = temp_home.path().join(".bashrc");
         let zshrc = temp_home.path().join(".zshrc");
         let invalid_bashrc = b"\xff\xfe#\0 \0t\0e\0s\0t\0\n\0";
@@ -725,7 +724,7 @@ mod pty_tests {
         repo: TestRepo,
         #[case] created_after_preview: bool,
     ) {
-        let temp_home = TempDir::new().unwrap();
+        let temp_home = worktrunk::testing::tempdir().unwrap();
         fs::write(temp_home.path().join(".bashrc"), "# empty bashrc\n").unwrap();
         fs::create_dir_all(temp_home.path().join(".config/fish/functions")).unwrap();
 
@@ -764,7 +763,7 @@ mod pty_tests {
     #[rstest]
     fn test_user_requests_preview_then_declines(repo: TestRepo) {
         // Create isolated HOME with empty shell config
-        let temp_home = TempDir::new().unwrap();
+        let temp_home = worktrunk::testing::tempdir().unwrap();
         let bashrc = temp_home.path().join(".bashrc");
         fs::write(&bashrc, "# empty bashrc\n").unwrap();
 
@@ -826,7 +825,7 @@ mod pty_tests {
     /// removal — otherwise `wt switch` deletes a file the prompt never mentioned.
     #[rstest]
     fn test_first_run_offer_previews_legacy_removal(repo: TestRepo) {
-        let temp_home = TempDir::new().unwrap();
+        let temp_home = worktrunk::testing::tempdir().unwrap();
 
         // bash: unconfigured (empty rc) → current shell not installed → offer fires.
         let bashrc = temp_home.path().join(".bashrc");
@@ -889,7 +888,7 @@ mod pty_tests {
     #[rstest]
     fn test_no_prompt_after_first_prompt(repo: TestRepo) {
         // Create isolated HOME with empty shell config
-        let temp_home = TempDir::new().unwrap();
+        let temp_home = worktrunk::testing::tempdir().unwrap();
         let bashrc = temp_home.path().join(".bashrc");
         fs::write(&bashrc, "# empty bashrc\n").unwrap();
 
@@ -936,7 +935,6 @@ mod commit_generation_prompt_tests {
     use crate::common::wt_bin;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
-    use tempfile::TempDir;
 
     fn setup_fake_tool(temp_home: &Path, tool: &str) -> PathBuf {
         // Create a fake LLM executable that does nothing
@@ -974,7 +972,7 @@ mod commit_generation_prompt_tests {
     /// Test: No LLM tool available, prompt is skipped and skip flag is set
     #[rstest]
     fn test_no_llm_tool_sets_skip_flag(repo: TestRepo) {
-        let temp_home = TempDir::new().unwrap();
+        let temp_home = worktrunk::testing::tempdir().unwrap();
 
         // Stage a change so commit has something to do
         let test_file = repo.root_path().join("test.txt");
@@ -1010,7 +1008,7 @@ mod commit_generation_prompt_tests {
     /// Test: LLM tool available, user declines prompt
     #[rstest]
     fn test_user_declines_llm_prompt(repo: TestRepo) {
-        let temp_home = TempDir::new().unwrap();
+        let temp_home = worktrunk::testing::tempdir().unwrap();
         let bin_dir = setup_fake_tool(temp_home.path(), "claude");
 
         // Stage a change
@@ -1051,7 +1049,7 @@ mod commit_generation_prompt_tests {
     /// Test: LLM tool available, user accepts prompt
     #[rstest]
     fn test_user_accepts_llm_prompt(repo: TestRepo) {
-        let temp_home = TempDir::new().unwrap();
+        let temp_home = worktrunk::testing::tempdir().unwrap();
         let bin_dir = setup_fake_tool(temp_home.path(), "claude");
 
         // Stage a change
@@ -1091,7 +1089,7 @@ mod commit_generation_prompt_tests {
 
     #[rstest]
     fn test_user_accepts_codex_prompt(repo: TestRepo) {
-        let temp_home = TempDir::new().unwrap();
+        let temp_home = worktrunk::testing::tempdir().unwrap();
         let output = run_codex_prompt(&repo, temp_home.path(), &["y\n"]);
 
         assert!(output.contains("Added to user config"), "{output}");
@@ -1115,7 +1113,7 @@ mod commit_generation_prompt_tests {
 
     #[rstest]
     fn test_codex_preview_then_decline_does_not_create_instructions(repo: TestRepo) {
-        let temp_home = TempDir::new().unwrap();
+        let temp_home = worktrunk::testing::tempdir().unwrap();
         let output = run_codex_prompt(&repo, temp_home.path(), &["?\n", "n\n"]);
 
         assert!(
@@ -1134,7 +1132,7 @@ mod commit_generation_prompt_tests {
 
     #[rstest]
     fn test_codex_prompt_reuses_existing_instructions(repo: TestRepo) {
-        let temp_home = TempDir::new().unwrap();
+        let temp_home = worktrunk::testing::tempdir().unwrap();
         let instructions = temp_home
             .path()
             .join(".codex/worktrunk-commit-instructions.txt");
@@ -1158,7 +1156,7 @@ mod commit_generation_prompt_tests {
 
     #[rstest]
     fn test_codex_prompt_file_creation_failure_does_not_save_command(repo: TestRepo) {
-        let temp_home = TempDir::new().unwrap();
+        let temp_home = worktrunk::testing::tempdir().unwrap();
         fs::write(temp_home.path().join(".codex"), "not a directory").unwrap();
 
         let output = run_codex_prompt(&repo, temp_home.path(), &["y\n"]);
@@ -1175,7 +1173,7 @@ mod commit_generation_prompt_tests {
     /// Test: User requests preview (?)
     #[rstest]
     fn test_user_requests_preview(repo: TestRepo) {
-        let temp_home = TempDir::new().unwrap();
+        let temp_home = worktrunk::testing::tempdir().unwrap();
         let bin_dir = setup_fake_tool(temp_home.path(), "claude");
 
         // Stage a change
@@ -1213,7 +1211,7 @@ mod commit_generation_prompt_tests {
     /// hint, which names the resolved path via `config_path_for_display`.
     #[rstest]
     fn test_user_accepts_but_save_fails_shows_manual_hint(repo: TestRepo) {
-        let temp_home = TempDir::new().unwrap();
+        let temp_home = worktrunk::testing::tempdir().unwrap();
         let bin_dir = setup_fake_tool(temp_home.path(), "claude");
 
         // Stage a change

@@ -14,6 +14,17 @@
         "installation": "AVAILABLE"
       },
       "category": "Productivity"
+    },
+    {
+      "name": "worktrunk-markers",
+      "source": {
+        "source": "local",
+        "path": "./plugins/worktrunk-markers"
+      },
+      "policy": {
+        "installation": "AVAILABLE"
+      },
+      "category": "Productivity"
     }
   ]
 }

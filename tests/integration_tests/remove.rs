@@ -1744,6 +1744,11 @@ fn test_remove_force_with_untracked_files(mut repo: TestRepo) {
         "File should be untracked"
     );
 
+    // Ignored files are not part of the backup
+    std::fs::write(worktree_path.join(".gitignore"), "build.out\n").unwrap();
+    std::fs::write(worktree_path.join("build.out"), "ignored content").unwrap();
+    let head = repo.git_output(&["-C", worktree_path.to_str().unwrap(), "rev-parse", "HEAD"]);
+
     // Remove with --force should succeed
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
@@ -1751,6 +1756,57 @@ fn test_remove_force_with_untracked_files(mut repo: TestRepo) {
         &["--force", "feature-untracked"],
         None
     ));
+
+    // The discarded changes survive the worktree and branch in the backup ref,
+    // whose parent is the removed branch tip
+    let backup = "refs/wt-backup/feature-untracked";
+    assert_eq!(
+        repo.git_output(&["show", &format!("{backup}:devbox.lock")]),
+        "untracked content"
+    );
+    assert_eq!(repo.git_output(&["rev-parse", &format!("{backup}^")]), head);
+    let tree = repo.git_output(&["ls-tree", "--name-only", backup]);
+    assert!(
+        !tree.contains("build.out"),
+        "ignored file backed up: {tree}"
+    );
+}
+
+/// A `--force` backup that git can't take refuses the removal, before the
+/// discard is announced. An untracked nested repo with no commits can't be
+/// added to the snapshot.
+#[rstest]
+fn test_remove_force_refuses_when_backup_fails(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-unbackable");
+    let nested = worktree_path.join("nested");
+    std::fs::create_dir_all(&nested).unwrap();
+    repo.git_command()
+        .args(["init", "--quiet"])
+        .current_dir(&nested)
+        .run()
+        .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--force", "--foreground", "feature-unbackable"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("Failed to back up uncommitted changes; worktree not removed"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("Discarding uncommitted changes"),
+        "{stderr}"
+    );
+    assert!(
+        worktree_path.exists(),
+        "worktree removed despite failed backup"
+    );
 }
 
 /// --force allows removal of dirty worktrees (issue #658)
@@ -4715,7 +4771,7 @@ fn test_remove_leaves_entries_to_the_running_drain(mut repo: TestRepo) {
 /// fails and deletes nothing, however the directory's entries are named.
 #[rstest]
 fn test_drain_trash_derives_the_trash_from_the_repository(repo: TestRepo) {
-    let outside = tempfile::tempdir().unwrap();
+    let outside = worktrunk::testing::tempdir().unwrap();
     let lookalike = outside.path().join("backup-2024");
     fs::create_dir(&lookalike).unwrap();
     let output = repo
@@ -4820,7 +4876,7 @@ fn test_remove_resolves_all_fsmonitor_daemons_in_one_lsof(mut repo: TestRepo) {
     // Outside the repo: a call log written under `bin_dir` (which lives at
     // `<repo>/.bin`) would leave an untracked file in the working tree the
     // command under test is inspecting.
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
     repo.add_worktree("feature-fsmon");
     let output = repo
@@ -4896,7 +4952,7 @@ fn test_remove_sweep_skips_lsof_when_no_daemon_pids(mut repo: TestRepo) {
     paths.insert(0, bin_dir.clone());
     let new_path = std::env::join_paths(&paths).unwrap();
 
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
     repo.add_worktree("feature-fsmon");
     let output = repo

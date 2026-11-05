@@ -398,8 +398,16 @@ fn resolve_fork_ref(
             ));
         }
 
-        // Branch exists but doesn't track this ref - try prefixed name (GitHub/Gitea)
-        if let Some(prefixed) = info.prefixed_local_branch_name() {
+        // GitLab defers project URL lookup until a new branch is needed.
+        let mut prefixed_info = info.clone();
+        if forge == ForgeKind::GitLab {
+            let urls =
+                worktrunk::git::remote_ref::gitlab::fetch_gitlab_project_urls(info, repo_root)?;
+            prefixed_info.fork_push_url = urls.fork_push_url;
+        }
+
+        // A conflicting branch uses a fetch-only prefixed name on every forge.
+        if let Some(prefixed) = prefixed_info.prefixed_local_branch_name() {
             if let Some(prefixed_tracks) = branch_tracks_ref(
                 repo_root,
                 &prefixed,
@@ -432,8 +440,7 @@ fn resolve_fork_ref(
                 .into());
             }
 
-            // GitHub and Gitea support prefixed branch names. This path has no
-            // fork push URL, so the branch remains fetch-only.
+            // This path has no fork push URL, so the branch remains fetch-only.
             let remote = remote_ref::find_remote(repo, info)?;
             return Ok((
                 Selector::rewritten_to(prefixed),
@@ -447,7 +454,7 @@ fn resolve_fork_ref(
             ));
         }
 
-        // GitLab and Azure DevOps don't support prefixed branch names.
+        // The fork URL was missing or did not identify a usable prefix.
         return Err(GitError::BranchTracksDifferentRef {
             branch: local_branch,
             ref_type,
@@ -1298,6 +1305,12 @@ fn execute_switch(
                             *create_branch,
                         )
                         .into());
+                    }
+                    if *create_branch {
+                        // A new branch starts without the marker of an earlier
+                        // branch that had the same name and was deleted
+                        // outside `wt`.
+                        repo.clear_branch_marker(&branch);
                     }
 
                     (
@@ -2394,7 +2407,7 @@ mod tests {
     #[test]
     #[cfg(windows)]
     fn deep_worktree_keeps_operational_path_separate_from_identity() {
-        let temp = tempfile::tempdir().expect("temp dir");
+        let temp = worktrunk::testing::tempdir().expect("temp dir");
         let mut deep = temp.path().join("deep");
         while deep.as_os_str().len() < 320 {
             deep.push("nested-worktree-directory");

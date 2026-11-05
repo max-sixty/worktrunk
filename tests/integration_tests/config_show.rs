@@ -122,7 +122,7 @@ fn test_config_show_with_system_config(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
 
     // Create system config in a temp directory
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -161,7 +161,7 @@ command = "company-llm-tool"
 #[rstest]
 fn test_system_config_values_used_as_defaults(repo: TestRepo) {
     // System config with a distinctive worktree-path template
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -194,7 +194,7 @@ fn test_system_config_values_used_as_defaults(repo: TestRepo) {
 #[rstest]
 fn test_user_config_overrides_system_config(repo: TestRepo) {
     // System config with one template
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -203,7 +203,7 @@ fn test_user_config_overrides_system_config(repo: TestRepo) {
     .unwrap();
 
     // User config overrides with a different template
-    let user_config_dir = tempfile::tempdir().unwrap();
+    let user_config_dir = worktrunk::testing::tempdir().unwrap();
     let user_config_path = user_config_dir.path().join("config.toml");
     fs::write(
         &user_config_path,
@@ -244,7 +244,7 @@ fn test_user_config_overrides_system_config(repo: TestRepo) {
 #[rstest]
 fn test_system_and_user_hooks_deep_merged(repo: TestRepo) {
     // System config defines a named pre-merge hook
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -255,7 +255,7 @@ company-lint = "company-lint-tool"
     .unwrap();
 
     // User config defines a differently-named pre-merge hook
-    let user_config_dir = tempfile::tempdir().unwrap();
+    let user_config_dir = worktrunk::testing::tempdir().unwrap();
     let user_config_path = user_config_dir.path().join("config.toml");
     fs::write(
         &user_config_path,
@@ -296,7 +296,7 @@ my-lint = "my-lint-tool"
 #[rstest]
 fn test_user_hook_replaces_same_named_system_hook(repo: TestRepo) {
     // System config defines a named hook
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -307,7 +307,7 @@ lint = "company-lint-tool"
     .unwrap();
 
     // User config defines the same-named hook with different command
-    let user_config_dir = tempfile::tempdir().unwrap();
+    let user_config_dir = worktrunk::testing::tempdir().unwrap();
     let user_config_path = user_config_dir.path().join("config.toml");
     fs::write(
         &user_config_path,
@@ -347,7 +347,7 @@ lint = "my-lint-tool"
 #[rstest]
 fn test_system_config_hooks_preserved_when_user_doesnt_override(repo: TestRepo) {
     // System config defines pre-merge and pre-commit hooks
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -361,7 +361,7 @@ company-format = "company-format-tool"
     .unwrap();
 
     // User config only defines pre-merge (should leave system's pre-commit intact)
-    let user_config_dir = tempfile::tempdir().unwrap();
+    let user_config_dir = worktrunk::testing::tempdir().unwrap();
     let user_config_path = user_config_dir.path().join("config.toml");
     fs::write(
         &user_config_path,
@@ -478,7 +478,7 @@ fn test_config_show_empty_system_config(mut repo: TestRepo, temp_home: TempDir) 
     repo.setup_mock_ci_tools_unauthenticated();
 
     // Create empty system config
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(&system_config_path, "").unwrap();
 
@@ -506,7 +506,7 @@ fn test_config_show_empty_system_config(mut repo: TestRepo, temp_home: TempDir) 
 fn test_config_show_reports_unreadable_source_and_continues(repo: TestRepo, #[case] source: &str) {
     let mut cmd = repo.wt_command();
     let system_dir = if source == "system" {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", dir.path());
         Some(dir)
     } else {
@@ -590,7 +590,7 @@ fn test_config_show_invalid_system_config(mut repo: TestRepo, temp_home: TempDir
     repo.setup_mock_ci_tools_unauthenticated();
 
     // Create system config with invalid TOML
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(&system_config_path, "invalid = [toml\n").unwrap();
 
@@ -615,7 +615,7 @@ fn test_config_show_invalid_system_config(mut repo: TestRepo, temp_home: TempDir
 #[rstest]
 fn test_system_config_unknown_keys_warning_during_load(repo: TestRepo) {
     // Create system config with an unknown key
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -646,7 +646,7 @@ fn test_system_config_unknown_keys_warning_during_load(repo: TestRepo) {
 /// migrated to its canonical name and stays active.
 #[rstest]
 fn test_system_config_deprecations_pass_through_gate(repo: TestRepo) {
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -684,7 +684,7 @@ pager = "delta --paging=never"
 
 #[rstest]
 fn test_config_show_outside_git_repo(mut repo: TestRepo, temp_home: TempDir) {
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
 
     // Setup mock gh/glab for deterministic BINARIES output
     repo.setup_mock_ci_tools_unauthenticated();
@@ -1686,7 +1686,7 @@ fn test_config_show_full_tea_login_discovery(
         "origin",
         "https://gitea.example.com/example/repo.git",
     ]);
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let output = repo
         .wt_command()
         .args(["config", "show", "--full"])
@@ -1788,7 +1788,7 @@ kill -INT $$
         "origin",
         "https://gitea.example.com/example/repo.git",
     ]);
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let output = repo
         .wt_command()
         .args(["config", "show", "--full"])
@@ -3348,7 +3348,7 @@ fn test_pi_install_honors_agent_dir_override(temp_home: TempDir) {
 
     // Pi expands a leading `~` in the override, so a quoted `~/…` lands under
     // home rather than in a literal `~` directory beneath the cwd.
-    let cwd = tempfile::tempdir().unwrap();
+    let cwd = worktrunk::testing::tempdir().unwrap();
     let mut cmd = wt_command();
     set_temp_home_env(&mut cmd, temp_home.path());
     cmd.current_dir(cwd.path());
@@ -4905,7 +4905,7 @@ fn test_config_show_full_stops_after_cancelled_powershell_query(
     fs::write(&pwsh, format!("#!/bin/sh\nkill -{signal} $$\n")).unwrap();
     fs::set_permissions(&pwsh, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let call_log = TempDir::new().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
         .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
@@ -4945,7 +4945,7 @@ fn test_config_show_full_continues_after_failed_powershell_query(
     fs::write(&pwsh, "#!/bin/sh\nexit 130\n").unwrap();
     fs::set_permissions(&pwsh, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let call_log = TempDir::new().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
         .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
@@ -4979,7 +4979,7 @@ fn test_config_show_full_continues_after_failed_shell_scan(mut repo: TestRepo, t
     ]);
     fs::create_dir(temp_home.path().join(".bashrc")).unwrap();
 
-    let call_log = TempDir::new().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
         .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
@@ -5017,7 +5017,7 @@ fn plugin_calls_when_accepted(
     use std::io::Write as _;
     use std::process::Stdio;
 
-    let call_log = TempDir::new().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     cmd.args(["config", "plugins", tool, action])
         .current_dir(repo.root_path())
@@ -5053,7 +5053,7 @@ fn test_plugins_codex_prompt_previews_commands(mut repo: TestRepo, temp_home: Te
 
     // Outside the repo: a call log in the working tree would leave an
     // untracked file behind the command under test.
-    let call_log = TempDir::new().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
     for (action, expected) in [
         (
@@ -5061,11 +5061,13 @@ fn test_plugins_codex_prompt_previews_commands(mut repo: TestRepo, temp_home: Te
             [
                 "codex plugin marketplace add max-sixty/worktrunk",
                 "codex plugin add worktrunk@worktrunk",
+                "codex plugin add worktrunk-markers@worktrunk",
             ],
         ),
         (
             "uninstall",
             [
+                "codex plugin remove worktrunk-markers@worktrunk",
                 "codex plugin remove worktrunk@worktrunk",
                 "codex plugin marketplace remove worktrunk",
             ],
@@ -5134,9 +5136,9 @@ fn test_plugins_claude_prompt_previews_commands(mut repo: TestRepo) {
 
     // Outside the repo: a call log in the working tree would leave an
     // untracked file behind the command under test.
-    let call_log = TempDir::new().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
-    let temp_home = TempDir::new().unwrap();
+    let temp_home = worktrunk::testing::tempdir().unwrap();
 
     for (action, expected) in [
         (
@@ -5480,22 +5482,41 @@ fn test_codex_plugin_metadata_is_valid_json() {
             .contains("claude-code"),
         "plugin.json interface.websiteURL must point at the canonical site"
     );
-    // The Codex plugin ships activity-marker hooks *inline* in its manifest
-    // (`hooks` object, not a path). This is the functional definition of its
-    // Codex-native events, and it also overrides Codex's convention discovery
-    // (an absent `hooks` key makes Codex auto-discover a `hooks/hooks.json` at
-    // the plugin root). The Claude hooks file sits at that same conventional
-    // `hooks/hooks.json` (Claude's loader discovers it there — #3417), but the
-    // inline Codex override means Codex never loads it, so the #3362 collision
-    // (Codex surfacing the *Claude* file's events) stays closed. `Stop`
-    // returns 🤖 to 💬 at turn end, and `SessionEnd` clears the marker when
-    // the main thread ends. See AGENTS.md → "Plugin Layout".
-    let codex_hooks = plugin
+    // The skills plugin carries an empty inline `hooks` object. Codex
+    // auto-discovers `hooks/hooks.json` at the plugin root when the key is
+    // absent, and that path holds the Claude hooks file (Claude's loader
+    // discovers it there — #3417), so Codex would surface Claude's events
+    // (#3362) and warn at startup. The activity-marker hooks live in the
+    // hooks-only `worktrunk-markers` plugin instead: Codex fingerprints the
+    // whole plugin directory for hook approval, so hooks beside the skills
+    // needed another review after every skill or docs change (#4654).
+    assert_eq!(
+        plugin["hooks"],
+        serde_json::json!({"hooks": {}}),
+        "the worktrunk Codex manifest must carry an empty inline `hooks` object"
+    );
+    assert!(
+        !project_root
+            .join("plugins/worktrunk/.codex-plugin/hooks")
+            .exists(),
+        "the Codex wrapper dir must hold only plugin.json"
+    );
+
+    let markers: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(
+            project_root.join("plugins/worktrunk-markers/.codex-plugin/plugin.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(markers["name"], "worktrunk-markers");
+    // Exactly the Codex-native events — no Claude-only `Notification`,
+    // `WorktreeCreate`, or `WorktreeRemove`. `Stop` returns 🤖 to 💬 at turn
+    // end, and `SessionEnd` clears the marker when the main thread ends.
+    let codex_hooks = markers
         .get("hooks")
         .and_then(|h| h.get("hooks"))
-        .expect("Codex manifest must carry an inline `hooks` object");
-    // Exactly the Codex-native events — no Claude-only `Notification`,
-    // `WorktreeCreate`, or `WorktreeRemove`.
+        .expect("the markers manifest must carry an inline `hooks` object");
     let mut events = codex_hooks
         .as_object()
         .unwrap()
@@ -5530,14 +5551,16 @@ fn test_codex_plugin_metadata_is_valid_json() {
         !hooks_json.contains("CLAUDE_PLUGIN_ROOT"),
         "Codex hooks must not reference the Claude-branded $CLAUDE_PLUGIN_ROOT alias"
     );
-    // Hooks are inline, so the wrapper dir still holds only plugin.json — no
-    // separate hooks file, and the inline override keeps Codex off the shared
-    // Claude `hooks/hooks.json`.
-    assert!(
-        !project_root
-            .join("plugins/worktrunk/.codex-plugin/hooks")
-            .exists(),
-        "the Codex wrapper dir must hold only plugin.json"
+
+    assert_eq!(marketplace["plugins"][1]["name"], "worktrunk-markers");
+    assert_eq!(marketplace["plugins"][1]["source"]["source"], "local");
+    assert_eq!(
+        marketplace["plugins"][1]["source"]["path"],
+        "./plugins/worktrunk-markers"
+    );
+    assert_eq!(
+        marketplace["plugins"][1]["policy"]["installation"],
+        "AVAILABLE"
     );
     assert_eq!(marketplace["plugins"][0]["name"], "worktrunk");
     // Source is a non-empty subdir object; a bare "./" is rejected by codex.
@@ -5553,6 +5576,59 @@ fn test_codex_plugin_metadata_is_valid_json() {
     // Codex validates `interface` is an object and requires `displayName`;
     // omitting it is what made the plugin undiscoverable in /plugins.
     assert_eq!(marketplace["interface"]["displayName"], "Worktrunk");
+}
+
+/// The hooks-only Codex plugin holds its manifest and real copies of the
+/// shared shims, nothing else. Codex fingerprints every file in a plugin
+/// directory for hook approval, so any other file there — or a manifest
+/// `version` a release would bump — makes every user approve the hooks again.
+/// Codex's installer drops symlinks, so the shims are copies, kept identical to
+/// the `plugins/worktrunk/hooks/` originals here.
+#[test]
+fn test_codex_markers_shims_match() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let markers = root.join("plugins/worktrunk-markers");
+
+    let mut files = Vec::new();
+    let mut dirs = vec![markers.clone()];
+    while let Some(dir) = dirs.pop() {
+        for entry in fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            assert!(
+                !path.is_symlink(),
+                "{} is a symlink; Codex's installer drops symlinks",
+                path.display()
+            );
+            if path.is_dir() {
+                dirs.push(path);
+            } else {
+                let rel = path.strip_prefix(&markers).unwrap();
+                files.push(path_slash::PathExt::to_slash_lossy(rel).into_owned());
+            }
+        }
+    }
+    files.sort_unstable();
+    assert_eq!(
+        files,
+        [".codex-plugin/plugin.json", "hooks/wt.cmd", "hooks/wt.sh"]
+    );
+
+    for name in ["wt.sh", "wt.cmd"] {
+        assert!(
+            fs::read(markers.join("hooks").join(name)).unwrap()
+                == fs::read(root.join("plugins/worktrunk/hooks").join(name)).unwrap(),
+            "plugins/worktrunk-markers/hooks/{name} drifted from plugins/worktrunk/hooks/{name}; copy it over"
+        );
+    }
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(markers.join(".codex-plugin/plugin.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        manifest.get("version").is_none(),
+        "the markers manifest must not carry a `version`; changing it re-prompts hook approval"
+    );
 }
 
 /// Claude Code + Codex share `plugins/worktrunk/`; Gemini's manifest is a
@@ -5833,6 +5909,7 @@ fn test_plugin_layout_is_consolidated() {
     const STEM: &str =
         "Worktrunk is a CLI for Git worktree management, designed for parallel AI agent workflows.";
     let codex = json("plugins/worktrunk/.codex-plugin/plugin.json");
+    let codex_markers = json("plugins/worktrunk-markers/.codex-plugin/plugin.json");
     for (label, val) in [
         (
             "plugins/worktrunk/.claude-plugin/plugin.json",
@@ -5845,6 +5922,10 @@ fn test_plugin_layout_is_consolidated() {
         (
             "plugins/worktrunk/.codex-plugin/plugin.json",
             &codex["description"],
+        ),
+        (
+            "plugins/worktrunk-markers/.codex-plugin/plugin.json",
+            &codex_markers["description"],
         ),
         ("gemini-extension.json", &gemini["description"]),
     ] {
@@ -5863,7 +5944,8 @@ fn test_plugin_layout_is_consolidated() {
 fn test_codex_hooks_carry_windows_commands() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let codex: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(root.join("plugins/worktrunk/.codex-plugin/plugin.json")).unwrap(),
+        &fs::read_to_string(root.join("plugins/worktrunk-markers/.codex-plugin/plugin.json"))
+            .unwrap(),
     )
     .unwrap();
 
@@ -5904,7 +5986,9 @@ fn test_codex_hooks_carry_windows_commands() {
         );
         assert!(
             windows.starts_with(r#"cmd /d /c call "${PLUGIN_ROOT}\hooks\wt.cmd" "#)
-                && root.join("plugins/worktrunk/hooks/wt.cmd").is_file(),
+                && root
+                    .join("plugins/worktrunk-markers/hooks/wt.cmd")
+                    .is_file(),
             "commandWindows must invoke the shipped shim through cmd /d /c call:\n{windows}"
         );
         assert!(
@@ -5984,7 +6068,8 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
 
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let codex: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(root.join("plugins/worktrunk/.codex-plugin/plugin.json")).unwrap(),
+        &fs::read_to_string(root.join("plugins/worktrunk-markers/.codex-plugin/plugin.json"))
+            .unwrap(),
     )
     .unwrap();
 
@@ -5993,7 +6078,7 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
     fs::create_dir_all(plugin_root.join("hooks")).unwrap();
     for name in ["wt.cmd", "wt.sh"] {
         fs::copy(
-            root.join("plugins/worktrunk/hooks").join(name),
+            root.join("plugins/worktrunk-markers/hooks").join(name),
             plugin_root.join("hooks").join(name),
         )
         .unwrap();
@@ -6183,7 +6268,7 @@ fn test_shim_ignores_a_git_in_the_current_directory(repo: TestRepo) {
     MockConfig::new("git")
         .command("--exec-path", MockResponse::output("not-an-install"))
         .write(&project);
-    let call_log = TempDir::new().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
     let mut cmd = std::process::Command::new("cmd.exe");
     repo.configure_wt_cmd(&mut cmd);
@@ -7221,7 +7306,7 @@ mod plugin_prompt_pty {
 
 #[rstest]
 fn test_config_show_json(repo: TestRepo, temp_home: TempDir) {
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -7273,7 +7358,7 @@ fn test_config_show_json_allows_invalid_runtime_override(
     #[case] env_value: &str,
     #[case] inline: Option<&str>,
 ) {
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(&system_config_path, "[list]\nbranches = true\n").unwrap();
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
@@ -7358,7 +7443,7 @@ fn test_config_show_rejects_semantically_invalid_system_config(
     repo: TestRepo,
     #[case] args: &[&str],
 ) {
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(&system_config_path, "worktree-path = \"\"\n").unwrap();
     fs::write(repo.test_config_path(), "worktree-path = \"../valid\"\n").unwrap();
@@ -7478,7 +7563,7 @@ fn test_config_show_json_rejects_invalid_system_config(repo: TestRepo, temp_home
 
 #[rstest]
 fn test_config_show_json_rejects_unreadable_system_config(repo: TestRepo, temp_home: TempDir) {
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
@@ -7649,7 +7734,7 @@ fn test_config_show_json_with_project_config(repo: TestRepo, temp_home: TempDir)
 
 #[rstest]
 fn test_config_show_json_outside_repo(repo: TestRepo, temp_home: TempDir) {
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
 
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
@@ -7697,7 +7782,7 @@ fn test_project_config_path_env_var_override(repo: TestRepo, temp_home: TempDir)
     fs::write(&in_repo_config, "pre-start = \"in-repo-hook\"\n").unwrap();
 
     // Write the override project config at an arbitrary path.
-    let override_dir = tempfile::tempdir().unwrap();
+    let override_dir = worktrunk::testing::tempdir().unwrap();
     let override_path = override_dir.path().join("override.toml");
     fs::write(&override_path, "pre-start = \"override-hook\"\n").unwrap();
 

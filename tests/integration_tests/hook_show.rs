@@ -275,7 +275,7 @@ project-hook = "echo per-project"
 
 #[rstest]
 fn test_error_with_context_formatting(temp_home: TempDir) {
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
 
     // Run wt remove outside a git repo - should show "Failed to remove worktree" context
     let settings = setup_home_snapshot_settings(&temp_home);
@@ -369,7 +369,7 @@ fn test_hook_show_empty_command_lists(repo: TestRepo, temp_home: TempDir) {
 
 #[rstest]
 fn test_hook_show_outside_git_repo(temp_home: TempDir) {
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
 
     // Create user config
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");

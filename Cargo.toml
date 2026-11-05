@@ -272,6 +272,9 @@ petname = { version = "=3.2.0", default-features = false, features = ["default-w
 petname-macros = "=3.2.0"
 
 tempfile = "3.27"
+# The generator tempfile names come from; the test helpers seed it per
+# process (`testing::temp_builder`, #4692).
+fastrand = "2.5"
 
 # Timed waits on child processes (`Cmd::timeout`, `Cmd::delayed_stream`, the
 # picker's pager). Replaced `wait-timeout`, whose SIGCHLD handler aborts the
@@ -357,7 +360,7 @@ regex = "1.12.3"
 vt100 = "0.16.2"
 wt-perf = { path = "tests/helpers/wt-perf" }
 similar = "3.1.1"
-jsonschema = { version = "0.58", default-features = false }
+jsonschema = { version = "0.60", default-features = false }
 
 [[bench]]
 name = "alias"

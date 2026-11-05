@@ -768,7 +768,7 @@ $ wt switch --prs                                   # Browse open PRs/MRs in the
 
 Both work anywhere a branch is accepted, including `--base`. The `--create` flag cannot be used with a PR/MR reference since the branch already exists.
 
-If the PR or MR is on a fork, the local branch uses its branch name directly, so `git push` works normally. A pre-existing local branch with that name tracking something else requires renaming first.
+If the PR or MR is on a fork, the local branch uses its branch name directly, so `git push` works normally. If a local branch with that name already exists for a different ref, Worktrunk uses a prefixed branch instead. The prefixed branch can fetch the PR or MR but cannot push to the fork.
 
 The `--prs` flag adds the repository's open PRs (GitHub) or MRs (GitLab) that aren't already in the interactive picker. Selecting one switches to it as `pr:<number>` / `mr:<number>` would.
 
@@ -1321,6 +1321,8 @@ $ wt remove feature-branch
 $ wt remove old-feature another-branch
 ```
 
+To choose interactively, open the [`wt switch` picker](/switch/#interactive-picker) and press `Alt-x` on a row.
+
 Keep the branch:
 
 ```console
@@ -1372,6 +1374,8 @@ $ wt remove feature --force       # Remove dirty worktree
 $ wt remove feature -D            # Delete unmerged branch
 $ wt remove feature --force -D    # Both
 ```
+
+Before `--force` discards uncommitted changes, Worktrunk saves them (except ignored files and changes inside submodules) to `refs/wt-backup/<branch>` and prints a command to recover them in a new worktree.
 
 Use `--no-delete-branch` to keep the branch regardless of merge status.
 

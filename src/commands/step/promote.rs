@@ -470,7 +470,7 @@ mod tests {
 
     #[test]
     fn test_move_entry_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         let src = tmp.path().join("source.txt");
         let dest = tmp.path().join("subdir/dest.txt");
 
@@ -483,7 +483,7 @@ mod tests {
 
     #[test]
     fn test_move_entry_directory() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         let src = tmp.path().join("srcdir");
         let dest = tmp.path().join("nested/destdir");
 
@@ -546,7 +546,7 @@ mod tests {
 
     #[test]
     fn test_copy_and_remove_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         let src = tmp.path().join("source.txt");
         let dest = tmp.path().join("dest.txt");
 
@@ -559,7 +559,7 @@ mod tests {
 
     #[test]
     fn test_copy_and_remove_directory() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         let src = tmp.path().join("srcdir");
         let dest = tmp.path().join("destdir");
 
@@ -583,7 +583,7 @@ mod tests {
         // destroyed rather than moved. A source that is already gone is the
         // deterministic case: `copy_leaf` reports the skip, and the delete —
         // which would take a file recreated since — must not be reached.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         let src = tmp.path().join("gone.txt");
         let dest = tmp.path().join("dest.txt");
 
@@ -604,7 +604,7 @@ mod tests {
         // `distribute_staged` runs after the branch exchange, and a promote
         // that dies there leaves the staged files behind a `check_leftover_
         // staging` refusal whose remedy deletes them.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         let src = tmp.path().join("srcdir");
         let dest = tmp.path().join("destdir");
         fs::create_dir_all(&src).unwrap();

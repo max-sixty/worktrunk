@@ -312,7 +312,10 @@ async function locate($: EngineInterface, dir: string): Promise<Located | null> 
     .catch(() => null)
   const [root, commonDir] = ran?.exitCode === 0 ? ran.stdout.trim().split('\n') : []
   const found = root && commonDir ? { root, commonDir } : null
-  located.set(dir, found)
+  // A miss can become a worktree after git init, or follow a transient Git failure.
+  if (found !== null) {
+    located.set(dir, found)
+  }
   return found
 }
 

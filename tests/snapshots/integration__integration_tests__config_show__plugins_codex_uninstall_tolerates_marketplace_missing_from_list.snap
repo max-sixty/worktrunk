@@ -62,6 +62,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mUninstalling plugin...[39m
+[36m◎[39m [36mUninstalling plugins...[39m
 [36m◎[39m [36mRemoving Codex plugin marketplace...[39m
-[32m✓[39m [32mCodex plugin & marketplace removed[39m
+[32m✓[39m [32mCodex plugins & marketplace removed[39m

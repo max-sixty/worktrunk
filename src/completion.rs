@@ -1117,7 +1117,7 @@ mod tests {
     #[test]
     fn test_discover_finds_wt_executables() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
 
         for name in ["wt-alpha", "wt-beta"] {
             let path = dir.path().join(name);
@@ -1133,7 +1133,7 @@ mod tests {
     #[test]
     fn test_discover_skips_non_executable() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
 
         let exec = dir.path().join("wt-exec");
         std::fs::write(&exec, "#!/bin/sh\n").unwrap();
@@ -1151,8 +1151,8 @@ mod tests {
     #[test]
     fn test_discover_deduplicates_across_dirs() {
         use std::os::unix::fs::PermissionsExt;
-        let dir1 = tempfile::tempdir().unwrap();
-        let dir2 = tempfile::tempdir().unwrap();
+        let dir1 = worktrunk::testing::tempdir().unwrap();
+        let dir2 = worktrunk::testing::tempdir().unwrap();
 
         for dir in [dir1.path(), dir2.path()] {
             let path = dir.join("wt-dup");
@@ -1169,7 +1169,7 @@ mod tests {
     #[test]
     fn test_discover_skips_bare_prefix_and_non_matching() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
 
         // "wt-" with no suffix should be skipped
         let empty = dir.path().join("wt-");
@@ -1231,7 +1231,7 @@ mod tests {
     #[test]
     fn test_discover_results_are_sorted() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
 
         // Create in reverse alphabetical order
         for name in ["wt-zebra", "wt-apple", "wt-mango"] {
@@ -1334,7 +1334,7 @@ mod tests {
     #[test]
     fn test_forward_to_custom_binary() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let script = dir.path().join("wt-fake");
         std::fs::write(&script, "#!/bin/sh\nprintf '%s\\n%s' '--all' '--verbose'\n").unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1354,7 +1354,7 @@ mod tests {
     #[test]
     fn test_forward_to_failing_binary() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let script = dir.path().join("wt-fail");
         std::fs::write(&script, "#!/bin/sh\nexit 1\n").unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();

@@ -346,7 +346,7 @@ fn test_promote_bare_repo_no_worktrees() {
 /// Test error when run in a bare repository with worktrees
 #[test]
 fn test_promote_bare_repo_with_worktrees() {
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let bare_repo = temp_dir.path().join("bare.git");
     let worktree_path = temp_dir.path().join("worktree");
     let temp_clone = temp_dir.path().join("temp");

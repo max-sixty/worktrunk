@@ -3155,7 +3155,7 @@ print(*counts)
 
     #[test]
     fn test_git_bash_from_exec_path() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let root = dir.path().join("Git");
         let bin_bash = root.join("bin/bash.exe");
         let usr_bash = root.join("usr/bin/bash.exe");
@@ -3246,7 +3246,7 @@ print(*counts)
     fn test_sensitive_captured_output() {
         const SECRET: &str = "fake-captured-token-4b8ad2";
         for mode in ["run", "timeout", "concurrent", "source", "sink"] {
-            let log = tempfile::NamedTempFile::new().unwrap();
+            let log = crate::testing::named_tempfile().unwrap();
             let subscriber = tracing_subscriber::fmt()
                 .without_time()
                 .with_ansi(false)
@@ -3567,7 +3567,7 @@ print(*counts)
     fn test_spawn_errors_identify_program_and_cwd_without_guessing_cause() {
         use crate::git::ErrorExt;
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let script = dir.path().join("broken-interpreter");
         std::fs::write(&script, "#!/no/such/interpreter-7f3a9b2c\n").unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -3641,7 +3641,7 @@ print(*counts)
     #[test]
     #[cfg(all(feature = "cli", unix))]
     fn test_spawn_trace_retains_io_cause_once_in_every_execution_mode() {
-        let log = tempfile::NamedTempFile::new().unwrap();
+        let log = crate::testing::named_tempfile().unwrap();
         let subscriber = tracing_subscriber::fmt()
             .without_time()
             .with_ansi(false)
@@ -3715,7 +3715,7 @@ print(*counts)
 
     #[test]
     fn test_cmd_run_directory_program_path_is_errored() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let err = Cmd::new(dir.path().to_string_lossy()).run().unwrap_err();
         assert_eq!(err.kind(), ErrorKind::PermissionDenied);
     }
@@ -3725,7 +3725,7 @@ print(*counts)
     fn test_cmd_run_non_executable_program_path_is_errored() {
         use std::os::unix::fs::PermissionsExt;
 
-        let file = tempfile::NamedTempFile::new().unwrap();
+        let file = crate::testing::named_tempfile().unwrap();
         std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o644)).unwrap();
 
         let err = Cmd::new(file.path().to_string_lossy()).run().unwrap_err();
@@ -3887,7 +3887,7 @@ print(*counts)
         // The first child waits for a file that only the last child creates, so
         // it succeeds only if both run at once. A spawn failure in between
         // stays in its own slot rather than shifting the results after it.
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let flag = dir.path().join("flag");
         let wait_for_flag = format!(
             "for _ in $(seq 500); do [ -e '{}' ] && exit 0; sleep 0.01; done; exit 1",

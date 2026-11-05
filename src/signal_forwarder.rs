@@ -618,7 +618,7 @@ mod tests {
         .unwrap();
         let operation = CommandOperation::start().unwrap();
         let foreground = ForegroundSignals::install(TerminalInterrupt::ChildInput).unwrap();
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::testing::tempdir().unwrap();
         let marker = temp.path().join("ready");
         let mut command = std::process::Command::new("sh");
         command
@@ -741,7 +741,7 @@ mod tests {
             thread::yield_now();
         }
 
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::testing::tempdir().unwrap();
         let marker = temp.path().join("late-child");
         let child_marker = marker.clone();
         let (starting, started) = mpsc::channel();
@@ -852,7 +852,7 @@ mod tests {
             return;
         }
 
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::testing::tempdir().unwrap();
         let marker = temp.path().join("late-command-ran");
         let operation = CommandOperation::start().unwrap();
         let error = Cmd::new("python3")
