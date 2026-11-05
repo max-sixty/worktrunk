@@ -3,7 +3,7 @@
 //! Each [`TaskKind`] dispatches here to one private computation over a shared
 //! [`TaskContext`].
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
 use std::sync::Arc;
@@ -740,11 +740,16 @@ fn compute_url_status(ctx: &TaskContext) -> anyhow::Result<TaskResult> {
         Some(false)
     } else {
         parse_port_from_url(url).map(|port| {
-            // Quick TCP connect check with 50ms timeout
-            let addr = SocketAddr::from(([127, 0, 0, 1], port));
-            worktrunk::shell_exec::stream_socket(socket2::Domain::IPV4)
-                .and_then(|socket| socket.connect_timeout(&addr.into(), Duration::from_millis(50)))
-                .is_ok()
+            // A dev server may bind only IPv4 (`127.0.0.1`) or only IPv6
+            // (`::1` — the default for Vite's `localhost` on macOS). Probe
+            // both loopback families; this is a local default assumption and
+            // never touches the network.
+            [
+                SocketAddr::from(([127, 0, 0, 1], port)),
+                SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port),
+            ]
+            .into_iter()
+            .any(probe_addr)
         })
     };
 
@@ -804,6 +809,18 @@ pub(crate) fn parse_port_from_url(url: &str) -> Option<u16> {
     let host_port = url.split(&['/', '?', '#'][..]).next()?;
     let (_host, port_str) = host_port.rsplit_once(':')?;
     port_str.parse().ok()
+}
+
+/// Quick TCP connect check with a 50ms timeout.
+fn probe_addr(addr: SocketAddr) -> bool {
+    let domain = if addr.is_ipv4() {
+        socket2::Domain::IPV4
+    } else {
+        socket2::Domain::IPV6
+    };
+    worktrunk::shell_exec::stream_socket(domain)
+        .and_then(|socket| socket.connect_timeout(&addr.into(), Duration::from_millis(50)))
+        .is_ok()
 }
 
 /// Parse git status output to extract working tree status and conflict state.
@@ -923,6 +940,45 @@ mod tests {
                 active: None,
             }
         ));
+    }
+
+    #[test]
+    fn url_status_detects_a_listening_ipv4_loopback_port() {
+        let test = TestRepo::new();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let mut ctx = task_context(&test);
+        ctx.item_url = Some(format!("http://localhost:{port}"));
+
+        let result = TaskKind::UrlStatus.compute(ctx).unwrap();
+        // The env gate forces an inactive result; otherwise the bound listener
+        // answers.
+        let gated = std::env::var("WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK").is_ok();
+        assert!(
+            matches!(result, TaskResult::UrlStatus { active, .. } if active == Some(!gated)),
+            "a listening IPv4 loopback port should be active"
+        );
+    }
+
+    #[test]
+    fn url_status_detects_a_listening_ipv6_loopback_port() {
+        // `map_or(true, ..)` is a no-op pass where IPv6 loopback is
+        // unavailable, so this does not fail on hosts without `::1`; where it
+        // exists it proves an IPv6-only server is detected.
+        assert!(
+            std::net::TcpListener::bind("[::1]:0").map_or(true, |listener| {
+                let test = TestRepo::new();
+                let port = listener.local_addr().unwrap().port();
+
+                let mut ctx = task_context(&test);
+                ctx.item_url = Some(format!("http://localhost:{port}"));
+
+                let gated = std::env::var("WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK").is_ok();
+                let result = TaskKind::UrlStatus.compute(ctx).unwrap();
+                matches!(result, TaskResult::UrlStatus { active, .. } if active == Some(!gated))
+            })
+        );
     }
 
     #[test]
