@@ -93,7 +93,7 @@ fn test_tether_kills_process_group_when_worktree_removed(mut repo: TestRepo) {
         // Clean up before asserting so a failure can't leak the sleeps.
         let _ = kill(Pid::from_raw(-pgid), nix::sys::signal::Signal::SIGKILL);
         let _ = child.kill();
-        let _ = child.wait();
+        let status = child.wait().expect("wait for tether supervisor");
         let _ = std::fs::remove_dir_all(repo.home_path().join("trash"));
 
         assert!(
@@ -103,6 +103,10 @@ fn test_tether_kills_process_group_when_worktree_removed(mut repo: TestRepo) {
         assert!(
             supervisor_exited,
             "[{mechanism}] the tether supervisor must exit after teardown"
+        );
+        assert!(
+            status.success(),
+            "[{mechanism}] teardown on worktree removal is not a failure: {status:?}"
         );
     }
 }
@@ -138,7 +142,7 @@ fn test_tether_kills_process_group_when_command_exits(repo: TestRepo) {
 /// that command before it exits.
 #[rstest]
 fn test_tether_kills_process_group_when_interrupted(repo: TestRepo) {
-    use std::os::unix::process::CommandExt;
+    use std::os::unix::process::{CommandExt, ExitStatusExt};
 
     let pidfile = repo.home_path().join("tether-interrupted.pgid");
     let snippet = format!(
@@ -151,7 +155,7 @@ fn test_tether_kills_process_group_when_interrupted(repo: TestRepo) {
         .current_dir(repo.path())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .process_group(0);
     let mut supervisor = command.spawn().expect("spawn wt step tether");
     wait_for_file_content(&pidfile);
@@ -177,10 +181,16 @@ fn test_tether_kills_process_group_when_interrupted(repo: TestRepo) {
     // Clean up before asserting so a failure cannot leak the sleep.
     let _ = kill(Pid::from_raw(-pgid), nix::sys::signal::Signal::SIGKILL);
     let _ = supervisor.kill();
-    let _ = supervisor.wait();
+    let output = supervisor
+        .wait_with_output()
+        .expect("wait for tether supervisor");
 
     assert!(supervisor_exited, "the supervisor should exit after Ctrl-C");
     assert!(group_gone, "Ctrl-C must kill the supervised process group");
+    // Cancellation exits as interrupted, without reporting the child's
+    // termination as a failure.
+    assert_eq!(output.status.signal(), Some(2), "{output:?}");
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
 }
 
 /// The global `-C <dir>` flag runs the tethered command in that directory —
@@ -225,4 +235,16 @@ fn test_tether_runs_command_in_working_dir(repo: TestRepo) {
         std::fs::canonicalize(&subdir).unwrap(),
         "the tethered command must run in the -C directory"
     );
+}
+
+#[rstest]
+fn test_tether_propagates_command_exit_status(repo: TestRepo) {
+    let status = repo
+        .wt_command()
+        .args(["step", "tether", "--", "sh", "-c", "exit 7"])
+        .current_dir(repo.path())
+        .status()
+        .expect("run wt step tether");
+
+    assert_eq!(status.code(), Some(7));
 }

@@ -28,6 +28,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -89,24 +90,38 @@ pub(crate) fn step_tether(command: &[String], working_dir: Option<&Path>) -> Res
     let id = child.id();
 
     // Reaper: polls for worktree removal or command interruption, then kills
-    // the tree so the supervised child exits and `wait` returns.
+    // the tree so the supervised child exits and `wait` returns. It records
+    // the teardown first, so the status of a command it killed is not
+    // mistaken for the command failing.
+    let torn_down = Arc::new(AtomicBool::new(false));
     if worktree.is_some() || cfg!(unix) {
+        let torn_down = Arc::clone(&torn_down);
         std::thread::spawn(move || {
             while !worktree.as_deref().is_some_and(worktree_gone) && !interrupted() {
                 std::thread::sleep(POLL_INTERVAL);
             }
+            torn_down.store(true, Ordering::SeqCst);
             kill_process_tree(id);
         });
     }
 
     // Block until the child exits — killed by the reaper, or on its own.
+    // Not `ForegroundSignals::wait`: it reads a child's SIGTERM death as the
+    // command being cancelled, and here that SIGTERM is the reaper's own
+    // teardown. Cancellation comes only from signals this process received.
     #[cfg(unix)]
-    let waited = signals.wait(&child).map(|outcome| outcome.status);
+    let wait_result = {
+        let forwarder = signals.forward_to_children(vec![Arc::clone(&child)], || {});
+        let waited = worktrunk::shell_exec::wait_shared_child(&child, None);
+        let admission = forwarder.admission_interrupt_signal();
+        let stopped = forwarder.stop();
+        waited.and_then(|status| Ok((status, stopped?.or(admission))))
+    };
     #[cfg(windows)]
-    let waited = child.wait();
-    match waited {
-        Ok(status) => trace.complete(status.success()),
-        Err(e) => trace.fail(&e),
+    let wait_result = child.wait().map(|status| (status, None));
+    match &wait_result {
+        Ok((status, _)) => trace.complete(status.success()),
+        Err(e) => trace.fail(e),
     }
 
     // Final sweep: on a self-exit, descendants may still be running (Unix:
@@ -116,6 +131,15 @@ pub(crate) fn step_tether(command: &[String], working_dir: Option<&Path>) -> Res
 
     // A reaper still sleeping between polls (the command self-exited) dies
     // with this process when it returns.
+    let (status, cancellation) = wait_result.context("Failed to wait for tethered command")?;
+    if let Some(signal) = cancellation {
+        return Err(worktrunk::git::WorktrunkError::Interrupted { signal, hint: None }.into());
+    }
+    // Teardown on worktree removal is tether's normal job; only a command
+    // that exits on its own reports its status.
+    if !status.success() && !torn_down.load(Ordering::SeqCst) {
+        return Err(worktrunk::git::WorktrunkError::from_child_status(&status, None).into());
+    }
     Ok(())
 }
 
