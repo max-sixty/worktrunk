@@ -28,6 +28,8 @@ $ wt remove feature-branch
 $ wt remove old-feature another-branch
 ```
 
+To choose interactively, open the [`wt switch` picker](/switch/#interactive-picker) and press `Alt-x` on a row.
+
 Keep the branch:
 
 ```console
