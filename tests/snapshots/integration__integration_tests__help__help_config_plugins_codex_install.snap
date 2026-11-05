@@ -45,7 +45,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-wt config plugins codex install - Install the Worktrunk plugin
+wt config plugins codex install - Install the Worktrunk plugins
 
 Usage: [1m[36mwt config plugins codex install[0m [36m[OPTIONS][0m
 
@@ -69,10 +69,13 @@ Usage: [1m[36mwt config plugins codex install[0m [36m[OPTIONS][0m
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
-Adds the Worktrunk plugin from the marketplace and installs it. Equivalent to:
+Adds the Worktrunk marketplace and installs its two plugins: [2mworktrunk[0m for the skills and [2mworktrunk-markers[0m for the activity-marker hooks. Equivalent to:
 
 [107m [0m [2m[0m[2m[34mcodex[0m[2m plugin marketplace add max-sixty/worktrunk[0m
 [107m [0m [2m[0m[2m[34mcodex[0m[2m plugin add worktrunk@worktrunk[0m
+[107m [0m [2m[0m[2m[34mcodex[0m[2m plugin add worktrunk-markers@worktrunk[0m
+
+The hooks ship separately because Codex asks for hook approval again whenever anything in a plugin changes. Skill updates leave the markers plugin unchanged, so its hooks keep their approval.
 
 Requires [2mcodex[0m CLI.
 
