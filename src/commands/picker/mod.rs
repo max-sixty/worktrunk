@@ -124,7 +124,9 @@ use worktrunk::HookType;
 use worktrunk::config::{Approvals, CommitGenerationConfig};
 use worktrunk::git::{ErrorExt, Repository, current_or_recover};
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{eprintln, error_message, hint_message, info_message, warning_message};
+use worktrunk::styling::{
+    eprintln, error_message, hint_message, info_message, progress_message, warning_message,
+};
 
 use crate::output::print_json;
 
@@ -2175,6 +2177,7 @@ pub fn handle_picker(
     // in flight, and process exit terminates the thread (its `gh`/`glab`
     // subprocess is read-only).
     drop(prs_handle);
+    join_removals();
 
     // Skim has released the terminal — emit any warnings that collect's bg
     // thread stashed during the run. Late warnings (e.g. drain timeouts)
@@ -2192,11 +2195,8 @@ pub fn handle_picker(
     // fails like any other, and stashes that failure as a warning. Cancelling
     // first would drain a spurious "couldn't fetch PRs" onto the user.
     //
-    // Not everything running here is discardable — an `alt-x` removal is
-    // dispatched to its own thread and can still be mid-`git worktree remove`
-    // if the user pressed Enter straight after. Removal threads are spawned
-    // through `spawn_removal`, which marks them `uninterruptible` and lets
-    // them run to completion; this reaches only speculative work.
+    // `join_removals` has already finished every `alt-x` removal, so this
+    // reaches only speculative work.
     worktrunk::shell_exec::cancel_background_commands();
 
     // `run_skim` returns Err only on a genuine TUI init / event-loop failure;
@@ -2461,9 +2461,27 @@ fn spawn_removal<F>(name: String, work: F)
 where
     F: FnOnce() + Send + 'static,
 {
-    let _ = std::thread::Builder::new()
+    if let Ok(handle) = std::thread::Builder::new()
         .name(name)
-        .spawn(move || worktrunk::shell_exec::uninterruptible(work));
+        .spawn(move || worktrunk::shell_exec::uninterruptible(work))
+    {
+        REMOVALS.lock().unwrap().push(handle);
+    }
+}
+
+/// Requested removals not yet joined. Returning from `main` would end them
+/// midway, with the row already gone and nothing to say the worktree survived.
+static REMOVALS: Mutex<Vec<std::thread::JoinHandle<()>>> = Mutex::new(Vec::new());
+
+/// Wait for every requested removal, once skim has released the terminal.
+fn join_removals() {
+    let removals = std::mem::take(&mut *REMOVALS.lock().unwrap());
+    if removals.iter().any(|removal| !removal.is_finished()) {
+        eprintln!("{}", progress_message("Finishing worktree removal..."));
+    }
+    for removal in removals {
+        let _ = removal.join();
+    }
 }
 
 /// Run a row shortcut's OS action on a named background thread, logging any

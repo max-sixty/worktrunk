@@ -2389,6 +2389,86 @@ fn test_switch_picker_alt_x_no_match_stays_responsive(mut repo: TestRepo) {
     assert_valid_abort_exit_code(exit_code);
 }
 
+/// Leaving the picker must not abandon a removal alt-x requested: the row has
+/// already gone, so nothing else would say the worktree survived. The
+/// `pre-remove` hook holds the removal open past the Escape, so the result
+/// doesn't depend on how long a removal takes.
+#[rstest]
+#[cfg(unix)]
+fn test_switch_picker_exit_finishes_alt_x_removal(mut repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+    let wt_path = repo.add_worktree("slow-rm");
+    let started = repo.home_path().join("hook-started");
+    let release = repo.home_path().join("hook-release");
+    repo.write_test_config(&format!(
+        "[pre-remove]\nwait = \"touch '{}'; until [ -e '{}' ]; do sleep 0.02; done\"\n",
+        started.display(),
+        release.display()
+    ));
+
+    let env_vars = repo.test_env_vars();
+    let PickerSession {
+        mut child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+    );
+
+    send_input_awaiting_content(&writer, &rx, &mut parser, "slow-rm", Some("slow-rm"));
+    wait_for_cursor_on_row(&rx, &mut parser, "+ slow-rm");
+    {
+        let mut w = writer.lock().unwrap();
+        w.write_all(b"\x1bx").unwrap();
+        w.flush().unwrap();
+    }
+    worktrunk::testing::wait_for("the pre-remove hook to start", || started.exists());
+
+    {
+        let mut w = writer.lock().unwrap();
+        w.write_all(b"\x1b").unwrap();
+        w.flush().unwrap();
+    }
+    let start = Instant::now();
+    loop {
+        while let Ok(chunk) = rx.try_recv() {
+            parser.process(&chunk);
+        }
+        if parser
+            .screen()
+            .contents()
+            .contains("Finishing worktree removal")
+        {
+            break;
+        }
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "the picker exited with the requested removal unfinished"
+        );
+        assert!(
+            start.elapsed() < CHILD_EXIT_TIMEOUT,
+            "the picker neither exited nor announced its wait:\n{}",
+            screen_text(&parser)
+        );
+        std::thread::sleep(POLL_INTERVAL);
+    }
+    assert!(wt_path.exists(), "the hook is still holding the removal");
+
+    std::fs::write(&release, "").unwrap();
+    let exit_code = wait_for_exit(&mut child, &rx, &mut parser, "Escape");
+    assert_valid_abort_exit_code(exit_code);
+    worktrunk::testing::assert_worktree_removed(&wt_path);
+    assert!(
+        repo.git_output(&["branch", "--list", "slow-rm"]).is_empty(),
+        "integrated slow-rm branch should be deleted with its worktree"
+    );
+}
+
 /// alt-x on a *worktree* row whose branch is unmerged morphs the row to
 /// `/ branch` **in place**: the worktree is removed, the local branch stays, and
 /// the row keeps its slot with the cursor on it — gutter `+` → `/`, no reload, no
