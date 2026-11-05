@@ -54,13 +54,16 @@ info:
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: false
-exit_code: 1
+success: true
+exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
 [36m◎[39m [36mFetching MR !42...[39m
 [107m [0m [1mAdd feature fix for edge case[22m (!42)
 [107m [0m by @contributor · opened · feature-fix · [90mhttps://gitlab.com/owner/test-repo/-/merge_requests/42[39m
-[31m✗[39m [31mBranch [1mfeature-fix[22m exists but doesn't track MR !42[39m
-[2m↳[22m [2mTo free the name, run [4mgit branch -m -- feature-fix feature-fix-old[24m[22m
+[33m▲[39m [33mUsing prefixed branch name [1mgroup/subgroup/feature-fix[22m due to name conflict[39m
+[2m↳[22m [2mPush to fork is not supported with prefixed branches; feedback welcome at https://github.com/max-sixty/worktrunk/issues/714[22m
+[32m✓[39m [32mCreated branch [1mgroup/subgroup/feature-fix[22m (tracking [1mMR !42[22m) and worktree @ [1m_REPO_.group-subgroup-feature-fix[22m[39m
+[33m▲[39m [33mCannot change directory — shell integration not installed[39m
+[2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m
