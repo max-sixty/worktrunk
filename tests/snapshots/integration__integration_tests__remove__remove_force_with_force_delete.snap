@@ -64,3 +64,5 @@ exit_code: 0
 [36m◎[39m [36mRemoving [1mfeature-dirty-unmerged[22m worktree (--force) & branch in background (--force-delete)[39m
 [33m▲[39m [33mDiscarding uncommitted changes (--force):[39m
 [107m [0m ?? untracked.txt
+[2m↳[22m [2mBackup created @ [4mrefs/wt-backup/feature-dirty-unmerged[24m (e0aa6d9)[22m
+[2m↳[22m [2mTo recover in a new worktree, run [4mwt switch --create --base e0aa6d9bf54c44e9ae1ca39a70ce921d69df30b0 --no-hooks recovery/e0aa6d9[24m[22m
