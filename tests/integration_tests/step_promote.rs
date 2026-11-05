@@ -969,6 +969,33 @@ fn test_promote_swap_does_not_touch_tracked_files(mut repo: TestRepo) {
     );
 }
 
+/// `git switch` fails with its `post-checkout` hook, after the ignored files have
+/// been staged. They're then the only copy, so the error has to name them.
+#[rstest]
+#[cfg(unix)]
+fn test_promote_exchange_failure_names_staged_files(mut repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _settings_guard = setup_snapshot_settings(&repo).bind_to_scope();
+    commit_gitignore(&repo, repo.root_path(), "local\n");
+    repo.add_worktree("feature");
+    fs::write(repo.root_path().join("local"), "main data").unwrap();
+    let hook = repo.root_path().join(".git/hooks/post-checkout");
+    fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["promote", "feature"],
+        None
+    ));
+
+    let staged = repo.root_path().join(".git/wt/staging/promote/a/local");
+    assert_eq!(fs::read_to_string(staged).unwrap(), "main data");
+}
+
 /// Test that promote bails with guidance when stale staging directory exists
 #[rstest]
 fn test_promote_stale_staging_blocks_with_guidance(mut repo: TestRepo) {

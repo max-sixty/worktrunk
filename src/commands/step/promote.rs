@@ -224,7 +224,8 @@ fn check_leftover_staging(staging_path: &Path) -> anyhow::Result<()> {
     let display = format_path_for_display(staging_path);
     Err(anyhow::anyhow!(
         "Files may need manual recovery from: {display}\n\
-         Remove it to retry: rm -rf {display}"
+         a/ holds the main worktree's ignored files; b/ holds the other worktree's\n\
+         Once recovered, to retry, run: rm -rf {display}"
     )
     .context("Found leftover staging directory from an interrupted promote"))
 }
@@ -411,15 +412,23 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         None
     };
 
-    // Exchange branches (detach both, then switch to swapped branches).
-    // Failure is near-impossible (both worktrees verified clean, branches exist).
-    // If it somehow fails, stale staging detection recovers on next run.
+    // Exchange branches (detach both, then switch to swapped branches). Both
+    // worktrees are clean and both branches exist, but a failing `post-checkout`
+    // hook still fails `git switch`. That leaves the ignored files staged, so the
+    // error names where they are.
     exchange_branches(
         &main_working_tree,
         &main_branch,
         &target_working_tree,
         &target_branch,
-    )?;
+    )
+    .map_err(|error| match &staged {
+        Some((staging_dir, _)) => error.context(format!(
+            "Failed to exchange branches. Staged files may be recoverable from: {}",
+            format_path_for_display(staging_dir)
+        )),
+        None => error,
+    })?;
 
     // Distribute staged files to their new worktrees (after branch exchange)
     let swapped = if let Some((ref staging_dir, _)) = staged {
