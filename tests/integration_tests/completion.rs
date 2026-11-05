@@ -460,11 +460,12 @@ fn test_complete_switch_bash_filters_by_prefix(repo: TestRepo) {
 ///
 /// This captures the tension between #1468 (fish/zsh need all candidates for
 /// substring/fuzzy matching) and #1621 (bash needs prefix filtering because
-/// its programmable completion doesn't filter COMPREPLY).
+/// its programmable completion doesn't filter COMPREPLY). PowerShell is like
+/// bash: it offers a native completer's results without filtering them.
 ///
 /// The same set of branches with the same typed prefix must produce different
 /// results depending on the shell:
-/// - bash: only prefix matches (binary filters)
+/// - bash, powershell: only prefix matches (binary filters)
 /// - fish: all candidates (fish does substring matching)
 /// - zsh: all candidates (zsh does fuzzy matching)
 #[rstest]
@@ -493,24 +494,26 @@ fn test_completion_cross_shell_filtering_contract(repo: TestRepo) {
         );
     }
 
-    let output = repo
-        .completion_cmd_for_shell(&["wt", "switch", "feat"], "bash")
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let values = value_suggestions(&stdout);
-    assert!(
-        values.iter().any(|v| v.contains("feature/user-auth")),
-        "bash should return prefix matches\n{stdout}"
-    );
-    assert!(
-        !values.iter().any(|v| v.contains("bugfix/auth-timeout")),
-        "bash should NOT return non-prefix matches\n{stdout}"
-    );
-    assert!(
-        !values.iter().any(|v| v.contains("release/2024-q1")),
-        "bash should NOT return non-prefix matches\n{stdout}"
-    );
+    for shell in ["bash", "powershell"] {
+        let output = repo
+            .completion_cmd_for_shell(&["wt", "switch", "feat"], shell)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let values = value_suggestions(&stdout);
+        assert!(
+            values.iter().any(|v| v.contains("feature/user-auth")),
+            "{shell} should return prefix matches\n{stdout}"
+        );
+        assert!(
+            !values.iter().any(|v| v.contains("bugfix/auth-timeout")),
+            "{shell} should NOT return non-prefix matches\n{stdout}"
+        );
+        assert!(
+            !values.iter().any(|v| v.contains("release/2024-q1")),
+            "{shell} should NOT return non-prefix matches\n{stdout}"
+        );
+    }
 
     // Substring "auth" — appears mid-branch, not as a prefix
     for shell in ["fish", "zsh"] {
@@ -526,16 +529,18 @@ fn test_completion_cross_shell_filtering_contract(repo: TestRepo) {
         );
     }
 
-    let output = repo
-        .completion_cmd_for_shell(&["wt", "switch", "auth"], "bash")
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let values = value_suggestions(&stdout);
-    assert!(
-        !values.iter().any(|v| v.contains("feature/user-auth")),
-        "bash should not return 'feature/user-auth' — 'auth' is not a prefix\n{stdout}"
-    );
+    for shell in ["bash", "powershell"] {
+        let output = repo
+            .completion_cmd_for_shell(&["wt", "switch", "auth"], shell)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let values = value_suggestions(&stdout);
+        assert!(
+            !values.iter().any(|v| v.contains("feature/user-auth")),
+            "{shell} should not return 'feature/user-auth' — 'auth' is not a prefix\n{stdout}"
+        );
+    }
 }
 
 /// Bash with empty prefix should still return all branches.
