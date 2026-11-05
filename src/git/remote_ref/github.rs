@@ -107,8 +107,17 @@ pub(super) fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result
 
     let api_path = format!("repos/{}/{}/pulls/{}", owner, repo_name, pr_number);
 
-    // Only pass --hostname when explicitly configured (for GHE / self-hosted).
-    let hostname = repo.forge_hostname();
+    // `gh api` doesn't infer the host from the repository: without
+    // `--hostname` it asks gh's default host, which is github.com once several
+    // hosts are logged in. A configured `forge.hostname` wins; otherwise a
+    // GitHub Enterprise remote's host is the API host when gh holds a login
+    // for it. An SSH alias (`git@github-personal:…`) has no login, so it keeps
+    // gh's default (#1790).
+    let hostname = repo.forge_hostname().or_else(|| {
+        repo.forge_remote_parsed_url(|u| u.is_github())
+            .map(|u| u.host().to_string())
+            .filter(|host| !host.eq_ignore_ascii_case("github.com") && is_authed_for(host))
+    });
 
     let mut args = vec!["api", api_path.as_str()];
     if let Some(h) = &hostname {
