@@ -1299,6 +1299,12 @@ fn execute_switch(
                         )
                         .into());
                     }
+                    if *create_branch {
+                        // A new branch starts without the marker of an earlier
+                        // branch that had the same name and was deleted
+                        // outside `wt`.
+                        repo.clear_branch_marker(&branch);
+                    }
 
                     (
                         *create_branch,

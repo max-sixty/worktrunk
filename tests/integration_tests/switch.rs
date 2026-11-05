@@ -188,6 +188,48 @@ fn test_switch_create_traces_worktree_add(repo: TestRepo) {
     );
 }
 
+/// A marker left by a deleted branch of the same name doesn't carry over to
+/// the branch `--create` makes; switching to an existing branch keeps its
+/// marker. Regression for #4683.
+#[rstest]
+fn test_switch_create_clears_stale_marker(repo: TestRepo) {
+    let marker = r#"{"marker":"🤖","set_at":0}"#;
+    repo.run_git(&["config", "worktrunk.state.reused.marker", marker]);
+    repo.run_git(&["branch", "kept"]);
+    repo.run_git(&["config", "worktrunk.state.kept.marker", marker]);
+
+    for args in [&["--create", "reused"][..], &["kept"]] {
+        let output = repo
+            .wt_command()
+            .arg("switch")
+            .args(args)
+            .arg("--no-cd")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "switch {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let read = |branch: &str| {
+        repo.git_command()
+            .args([
+                "config",
+                "--get",
+                &format!("worktrunk.state.{branch}.marker"),
+            ])
+            .run()
+            .unwrap()
+    };
+    assert!(
+        !read("reused").status.success(),
+        "stale marker should be cleared"
+    );
+    assert_eq!(String::from_utf8_lossy(&read("kept").stdout).trim(), marker);
+}
+
 #[rstest]
 fn test_switch_create_existing_branch_error(mut repo: TestRepo) {
     // Create a branch first
