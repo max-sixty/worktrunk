@@ -40,9 +40,12 @@ Manual equivalent:
 ```bash
 codex plugin marketplace add max-sixty/worktrunk
 codex plugin add worktrunk@worktrunk
+codex plugin add worktrunk-markers@worktrunk
 ```
 
-`wt config plugins codex uninstall` removes the plugin and its marketplace entry.
+`worktrunk` carries the skills; `worktrunk-markers` carries only the activity-marker hooks, so skill updates don't make Codex ask to approve the hooks again. An install that predates the split has only `worktrunk`, whose markers stop once it updates; add the markers with `codex plugin add worktrunk-markers@worktrunk`.
+
+`wt config plugins codex uninstall` removes both plugins and their marketplace entry.
 
 ### OpenCode
 

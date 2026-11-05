@@ -294,24 +294,28 @@ $ wt config plugins omp uninstall
 // Ordering: action + inverse adjacent (install, uninstall).
 #[derive(Subcommand)]
 pub enum ConfigPluginsCodexCommand {
-    /// Install the Worktrunk plugin
+    /// Install the Worktrunk plugins
     #[command(
-        after_long_help = r#"Adds the Worktrunk plugin from the marketplace and installs it. Equivalent to:
+        after_long_help = r#"Adds the Worktrunk marketplace and installs its two plugins: `worktrunk` for the skills and `worktrunk-markers` for the activity-marker hooks. Equivalent to:
 
 ```console
 $ codex plugin marketplace add max-sixty/worktrunk
 $ codex plugin add worktrunk@worktrunk
+$ codex plugin add worktrunk-markers@worktrunk
 ```
+
+The hooks ship separately because Codex asks for hook approval again whenever anything in a plugin changes. Skill updates leave the markers plugin unchanged, so its hooks keep their approval.
 
 Requires `codex` CLI."#
     )]
     Install,
 
-    /// Remove the Worktrunk plugin
+    /// Remove the Worktrunk plugins
     #[command(
-        after_long_help = r#"Uninstalls the Worktrunk plugin from Codex and removes its marketplace. Equivalent to:
+        after_long_help = r#"Uninstalls the Worktrunk plugins from Codex and removes their marketplace. Equivalent to:
 
 ```console
+$ codex plugin remove worktrunk-markers@worktrunk
 $ codex plugin remove worktrunk@worktrunk
 $ codex plugin marketplace remove worktrunk
 ```
@@ -415,7 +419,7 @@ $ wt config plugins claude install-statusline
 
     /// Codex plugin
     #[command(
-        after_long_help = r#"Bundles a configuration skill — documentation Codex can read to help set up LLM commits, project hooks, and worktree paths — plus activity-marker hooks that show 🤖/💬 in `wt list` while a Codex session runs and clear the marker when it ends.
+        after_long_help = r#"Installs a configuration skill — documentation Codex can read to help set up LLM commits, project hooks, and worktree paths — and, as a separate plugin, activity-marker hooks that show 🤖/💬 in `wt list` while a Codex session runs and clear the marker when it ends.
 
 ## Examples
 

@@ -49,8 +49,8 @@ wt config plugins codex - Codex plugin
 Usage: [1m[36mwt config plugins codex[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
 [1m[32mCommands:[0m
-  [1m[36minstall[0m    Install the Worktrunk plugin
-  [1m[36muninstall[0m  Remove the Worktrunk plugin
+  [1m[36minstall[0m    Install the Worktrunk plugins
+  [1m[36muninstall[0m  Remove the Worktrunk plugins
 
 [1m[32mOptions:[0m
   [1m[36m-h[0m, [1m[36m--help[0m
@@ -72,7 +72,7 @@ Usage: [1m[36mwt config plugins codex[0m [36m[OPTIONS][0m [36m<COMMAND>[0
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
-Bundles a configuration skill — documentation Codex can read to help set up LLM commits, project hooks, and worktree paths — plus activity-marker hooks that show 🤖/💬 in [2mwt list[0m while a Codex session runs and clear the marker when it ends.
+Installs a configuration skill — documentation Codex can read to help set up LLM commits, project hooks, and worktree paths — and, as a separate plugin, activity-marker hooks that show 🤖/💬 in [2mwt list[0m while a Codex session runs and clear the marker when it ends.
 
 [1m[32mExamples[0m
 

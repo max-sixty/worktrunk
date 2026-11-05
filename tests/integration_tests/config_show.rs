@@ -5061,11 +5061,13 @@ fn test_plugins_codex_prompt_previews_commands(mut repo: TestRepo, temp_home: Te
             [
                 "codex plugin marketplace add max-sixty/worktrunk",
                 "codex plugin add worktrunk@worktrunk",
+                "codex plugin add worktrunk-markers@worktrunk",
             ],
         ),
         (
             "uninstall",
             [
+                "codex plugin remove worktrunk-markers@worktrunk",
                 "codex plugin remove worktrunk@worktrunk",
                 "codex plugin marketplace remove worktrunk",
             ],
@@ -5480,22 +5482,41 @@ fn test_codex_plugin_metadata_is_valid_json() {
             .contains("claude-code"),
         "plugin.json interface.websiteURL must point at the canonical site"
     );
-    // The Codex plugin ships activity-marker hooks *inline* in its manifest
-    // (`hooks` object, not a path). This is the functional definition of its
-    // Codex-native events, and it also overrides Codex's convention discovery
-    // (an absent `hooks` key makes Codex auto-discover a `hooks/hooks.json` at
-    // the plugin root). The Claude hooks file sits at that same conventional
-    // `hooks/hooks.json` (Claude's loader discovers it there — #3417), but the
-    // inline Codex override means Codex never loads it, so the #3362 collision
-    // (Codex surfacing the *Claude* file's events) stays closed. `Stop`
-    // returns 🤖 to 💬 at turn end, and `SessionEnd` clears the marker when
-    // the main thread ends. See AGENTS.md → "Plugin Layout".
-    let codex_hooks = plugin
+    // The skills plugin carries an empty inline `hooks` object. Codex
+    // auto-discovers `hooks/hooks.json` at the plugin root when the key is
+    // absent, and that path holds the Claude hooks file (Claude's loader
+    // discovers it there — #3417), so Codex would surface Claude's events
+    // (#3362) and warn at startup. The activity-marker hooks live in the
+    // hooks-only `worktrunk-markers` plugin instead: Codex fingerprints the
+    // whole plugin directory for hook approval, so hooks beside the skills
+    // needed another review after every skill or docs change (#4654).
+    assert_eq!(
+        plugin["hooks"],
+        serde_json::json!({"hooks": {}}),
+        "the worktrunk Codex manifest must carry an empty inline `hooks` object"
+    );
+    assert!(
+        !project_root
+            .join("plugins/worktrunk/.codex-plugin/hooks")
+            .exists(),
+        "the Codex wrapper dir must hold only plugin.json"
+    );
+
+    let markers: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(
+            project_root.join("plugins/worktrunk-markers/.codex-plugin/plugin.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(markers["name"], "worktrunk-markers");
+    // Exactly the Codex-native events — no Claude-only `Notification`,
+    // `WorktreeCreate`, or `WorktreeRemove`. `Stop` returns 🤖 to 💬 at turn
+    // end, and `SessionEnd` clears the marker when the main thread ends.
+    let codex_hooks = markers
         .get("hooks")
         .and_then(|h| h.get("hooks"))
-        .expect("Codex manifest must carry an inline `hooks` object");
-    // Exactly the Codex-native events — no Claude-only `Notification`,
-    // `WorktreeCreate`, or `WorktreeRemove`.
+        .expect("the markers manifest must carry an inline `hooks` object");
     let mut events = codex_hooks
         .as_object()
         .unwrap()
@@ -5530,14 +5551,16 @@ fn test_codex_plugin_metadata_is_valid_json() {
         !hooks_json.contains("CLAUDE_PLUGIN_ROOT"),
         "Codex hooks must not reference the Claude-branded $CLAUDE_PLUGIN_ROOT alias"
     );
-    // Hooks are inline, so the wrapper dir still holds only plugin.json — no
-    // separate hooks file, and the inline override keeps Codex off the shared
-    // Claude `hooks/hooks.json`.
-    assert!(
-        !project_root
-            .join("plugins/worktrunk/.codex-plugin/hooks")
-            .exists(),
-        "the Codex wrapper dir must hold only plugin.json"
+
+    assert_eq!(marketplace["plugins"][1]["name"], "worktrunk-markers");
+    assert_eq!(marketplace["plugins"][1]["source"]["source"], "local");
+    assert_eq!(
+        marketplace["plugins"][1]["source"]["path"],
+        "./plugins/worktrunk-markers"
+    );
+    assert_eq!(
+        marketplace["plugins"][1]["policy"]["installation"],
+        "AVAILABLE"
     );
     assert_eq!(marketplace["plugins"][0]["name"], "worktrunk");
     // Source is a non-empty subdir object; a bare "./" is rejected by codex.
@@ -5553,6 +5576,59 @@ fn test_codex_plugin_metadata_is_valid_json() {
     // Codex validates `interface` is an object and requires `displayName`;
     // omitting it is what made the plugin undiscoverable in /plugins.
     assert_eq!(marketplace["interface"]["displayName"], "Worktrunk");
+}
+
+/// The hooks-only Codex plugin holds its manifest and real copies of the
+/// shared shims, nothing else. Codex fingerprints every file in a plugin
+/// directory for hook approval, so any other file there — or a manifest
+/// `version` a release would bump — makes every user approve the hooks again.
+/// Codex's installer drops symlinks, so the shims are copies, kept identical to
+/// the `plugins/worktrunk/hooks/` originals here.
+#[test]
+fn test_codex_markers_shims_match() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let markers = root.join("plugins/worktrunk-markers");
+
+    let mut files = Vec::new();
+    let mut dirs = vec![markers.clone()];
+    while let Some(dir) = dirs.pop() {
+        for entry in fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            assert!(
+                !path.is_symlink(),
+                "{} is a symlink; Codex's installer drops symlinks",
+                path.display()
+            );
+            if path.is_dir() {
+                dirs.push(path);
+            } else {
+                let rel = path.strip_prefix(&markers).unwrap();
+                files.push(path_slash::PathExt::to_slash_lossy(rel).into_owned());
+            }
+        }
+    }
+    files.sort_unstable();
+    assert_eq!(
+        files,
+        [".codex-plugin/plugin.json", "hooks/wt.cmd", "hooks/wt.sh"]
+    );
+
+    for name in ["wt.sh", "wt.cmd"] {
+        assert!(
+            fs::read(markers.join("hooks").join(name)).unwrap()
+                == fs::read(root.join("plugins/worktrunk/hooks").join(name)).unwrap(),
+            "plugins/worktrunk-markers/hooks/{name} drifted from plugins/worktrunk/hooks/{name}; copy it over"
+        );
+    }
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(markers.join(".codex-plugin/plugin.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        manifest.get("version").is_none(),
+        "the markers manifest must not carry a `version`; changing it re-prompts hook approval"
+    );
 }
 
 /// Claude Code + Codex share `plugins/worktrunk/`; Gemini's manifest is a
@@ -5833,6 +5909,7 @@ fn test_plugin_layout_is_consolidated() {
     const STEM: &str =
         "Worktrunk is a CLI for Git worktree management, designed for parallel AI agent workflows.";
     let codex = json("plugins/worktrunk/.codex-plugin/plugin.json");
+    let codex_markers = json("plugins/worktrunk-markers/.codex-plugin/plugin.json");
     for (label, val) in [
         (
             "plugins/worktrunk/.claude-plugin/plugin.json",
@@ -5845,6 +5922,10 @@ fn test_plugin_layout_is_consolidated() {
         (
             "plugins/worktrunk/.codex-plugin/plugin.json",
             &codex["description"],
+        ),
+        (
+            "plugins/worktrunk-markers/.codex-plugin/plugin.json",
+            &codex_markers["description"],
         ),
         ("gemini-extension.json", &gemini["description"]),
     ] {
@@ -5863,7 +5944,8 @@ fn test_plugin_layout_is_consolidated() {
 fn test_codex_hooks_carry_windows_commands() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let codex: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(root.join("plugins/worktrunk/.codex-plugin/plugin.json")).unwrap(),
+        &fs::read_to_string(root.join("plugins/worktrunk-markers/.codex-plugin/plugin.json"))
+            .unwrap(),
     )
     .unwrap();
 
@@ -5904,7 +5986,9 @@ fn test_codex_hooks_carry_windows_commands() {
         );
         assert!(
             windows.starts_with(r#"cmd /d /c call "${PLUGIN_ROOT}\hooks\wt.cmd" "#)
-                && root.join("plugins/worktrunk/hooks/wt.cmd").is_file(),
+                && root
+                    .join("plugins/worktrunk-markers/hooks/wt.cmd")
+                    .is_file(),
             "commandWindows must invoke the shipped shim through cmd /d /c call:\n{windows}"
         );
         assert!(
@@ -5984,7 +6068,8 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
 
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let codex: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(root.join("plugins/worktrunk/.codex-plugin/plugin.json")).unwrap(),
+        &fs::read_to_string(root.join("plugins/worktrunk-markers/.codex-plugin/plugin.json"))
+            .unwrap(),
     )
     .unwrap();
 
@@ -5993,7 +6078,7 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
     fs::create_dir_all(plugin_root.join("hooks")).unwrap();
     for name in ["wt.cmd", "wt.sh"] {
         fs::copy(
-            root.join("plugins/worktrunk/hooks").join(name),
+            root.join("plugins/worktrunk-markers/hooks").join(name),
             plugin_root.join("hooks").join(name),
         )
         .unwrap();
