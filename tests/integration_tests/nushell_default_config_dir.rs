@@ -35,7 +35,7 @@ fn run_nu_default_config_dir(configure_env: impl FnOnce(&mut Command)) -> String
 /// (including macOS).
 #[test]
 fn nu_default_config_dir_uses_xdg_when_set() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = worktrunk::testing::tempdir().unwrap();
     let xdg = temp.path().join("custom-xdg");
     let actual = run_nu_default_config_dir(|cmd| {
         cmd.env("XDG_CONFIG_HOME", &xdg);

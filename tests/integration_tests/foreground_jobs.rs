@@ -940,7 +940,7 @@ fn captured_child_signal_does_not_cancel_foreground_stream() {
     use std::time::{Duration, Instant};
     use worktrunk::shell_exec::Cmd;
 
-    let dir = tempfile::tempdir().unwrap();
+    let dir = worktrunk::testing::tempdir().unwrap();
     let ready = dir.path().join("ready");
     let release = dir.path().join("release");
     let body = format!(
@@ -998,7 +998,7 @@ fn captured_deadline_and_delayed_interrupt_bound_descendant_output() {
 
     // Capture deadline, fully buffered interruption, and a quiet pre-threshold exit.
     for delay in [None, Some(-1), Some(30_000)] {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let release = dir.path().join("release");
         let finished = dir.path().join("finished");
         let body = format!(

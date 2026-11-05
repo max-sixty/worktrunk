@@ -632,7 +632,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn canonicalize_socket_resolves_symlinked_git_dir_and_falls_back_when_gone() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::testing::tempdir().unwrap();
         let real = tmp.path().join("real-gitdir");
         std::fs::create_dir(&real).unwrap();
         let link = tmp.path().join("link-gitdir");
@@ -904,7 +904,7 @@ mod tests {
         // makes sh a group leader (the `sleep` inherits its group) so the
         // orphaned grandchild can be reaped after sh is killed — see the group
         // SIGKILL below.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::testing::tempdir().unwrap();
         let ready = tmp.path().join("ready");
         let mut child = Command::new("sh")
             .arg("-c")

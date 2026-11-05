@@ -114,7 +114,7 @@ fn crate_io_archive_builds_and_versions_without_git() {
     assert!(crate_file.exists(), "expected archive at {crate_file:?}");
 
     // 2. Extract into a temp dir that has no ancestor `.git`.
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = worktrunk::testing::tempdir().expect("create tempdir");
     let untar = Command::new("tar")
         .arg("xzf")
         .arg(&crate_file)

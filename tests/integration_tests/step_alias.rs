@@ -1970,6 +1970,31 @@ command = "echo message"
     }
 }
 
+/// Project and user aliases display the templates that run: a retired
+/// template variable shows as its replacement in both sources, matching the
+/// migration execution applies.
+#[rstest]
+fn test_config_alias_show_migrates_retired_template_vars(repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+open = "code {{ repo_root }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    repo.write_test_config(
+        r#"
+[aliases]
+here = "echo {{ worktree }}"
+"#,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "config", &["alias", "show"], None));
+}
+
 /// `wt config alias show` with no name and no aliases configured prints a note
 /// rather than empty output.
 #[rstest]

@@ -928,7 +928,10 @@ mod tests {
 
     #[test]
     fn test_hook_spawn_failure_retains_io_error_and_has_no_child_exit_code() {
-        let missing = tempfile::tempdir().unwrap().path().join("missing-cwd");
+        let missing = worktrunk::testing::tempdir()
+            .unwrap()
+            .path()
+            .join("missing-cwd");
         let shell = worktrunk::shell_exec::ShellConfig::get().unwrap();
         let error = worktrunk::shell_exec::Cmd::new(shell.executable.to_string_lossy())
             .current_dir(&missing)

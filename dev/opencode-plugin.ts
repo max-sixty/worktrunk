@@ -23,14 +23,41 @@
 // versions, and a lone file in the config directory has no package to resolve.
 
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, lstatSync } from "node:fs";
+import { basename, delimiter, join } from "node:path";
 import { promisify } from "node:util";
 
 const execute = promisify(execFile);
 
 const WORKING = "🤖";
 const WAITING = "💬";
+
+// The worktrunk binary, chosen as `plugins/worktrunk/hooks/wt.sh` chooses it.
+// On Windows, `wt` is usually Windows Terminal's app-execution alias, which
+// accepts any arguments, exits 0, and reports the unknown program in a popup
+// window. So prefer `git-wt.exe` there, and never run a `wt` from WindowsApps.
+// `lstat` rather than `exists`: the alias is a reparse point, and it has to be
+// seen for the lookup to stop where Windows' own PATH search would.
+// `undefined` means no worktrunk binary was found.
+function worktrunkBin(): string | undefined {
+  if (process.env.WORKTRUNK_BIN) return process.env.WORKTRUNK_BIN;
+  if (process.platform !== "win32") return "wt";
+  const dirs = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
+  const find = (name: string) =>
+    dirs
+      .map((dir) => join(dir, name))
+      .find((path) => {
+        try {
+          lstatSync(path);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+  if (find("git-wt.exe")) return "git-wt.exe";
+  const wt = find("wt.exe");
+  return wt && !/[\\/]WindowsApps[\\/]/i.test(wt) ? "wt" : undefined;
+}
 
 /**
  * Run `wt config state marker …` in this plugin instance's worktree.
@@ -39,8 +66,10 @@ const WAITING = "💬";
  * not to whatever directory the host process happens to sit in.
  */
 async function marker(directory: string, args: string[]): Promise<void> {
+  const bin = worktrunkBin();
+  if (!bin) return;
   try {
-    await execute("wt", ["config", "state", "marker", ...args], { cwd: directory });
+    await execute(bin, ["config", "state", "marker", ...args], { cwd: directory });
   } catch {
     // `wt` may be off PATH, or the directory may no longer be a worktree. An
     // activity marker is not worth raising an error into the session over.
@@ -85,8 +114,14 @@ type SetupContext = {
  * dirty worktree, a branch that already exists) says more than the exit code.
  */
 async function wt(args: string[], { signal }: Signal): Promise<string> {
+  const bin = worktrunkBin();
+  if (!bin) {
+    throw new Error(
+      "worktrunk not found on PATH: install it as git-wt.exe, or set WORKTRUNK_BIN; a `wt` from WindowsApps is Windows Terminal",
+    );
+  }
   try {
-    const { stdout } = await execute("wt", args, { signal, maxBuffer: 16 * 1024 * 1024 });
+    const { stdout } = await execute(bin, args, { signal, maxBuffer: 16 * 1024 * 1024 });
     return stdout;
   } catch (error) {
     const stderr = (error as { stderr?: string }).stderr?.trim();

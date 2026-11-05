@@ -32,7 +32,7 @@ fn prepend_path(cmd: &mut Command, dir: &Path) {
 
 /// Create a mock `wt-<name>` binary in a temp dir, and return the dir.
 fn mock_bin_dir(name: &str, response: MockResponse) -> TempDir {
-    let dir = TempDir::new().unwrap();
+    let dir = worktrunk::testing::tempdir().unwrap();
     MockConfig::new(name)
         .command("_default", response)
         .write(dir.path());
@@ -47,7 +47,7 @@ fn mock_bin_dir(name: &str, response: MockResponse) -> TempDir {
 /// exit 1 with no output), and that fatal line is the one the alias error
 /// quotes back.
 fn set_git_only_path(cmd: &mut Command) -> TempDir {
-    let dir = TempDir::new().unwrap();
+    let dir = worktrunk::testing::tempdir().unwrap();
     MockConfig::new("git")
         .version("git version 2.43.0")
         .command(
@@ -89,7 +89,7 @@ fn custom_subcommand_accepts_non_utf8_forwarded_arg() {
     use std::os::unix::ffi::OsStringExt;
     use std::os::unix::fs::PermissionsExt;
 
-    let dir = TempDir::new().unwrap();
+    let dir = worktrunk::testing::tempdir().unwrap();
     let script = dir.path().join("wt-wt-test-extcmd-raw");
     std::fs::write(&script, "#!/bin/sh\nprintf 'custom ran\\n'\n").unwrap();
     let mut perms = std::fs::metadata(&script).unwrap().permissions();
@@ -118,7 +118,7 @@ fn custom_subcommand_scrubs_shell_exec_directives_and_preserves_cd() {
         DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_EXEC_FILE_ENV_VAR, RETIRED_DIRECTIVE_FILE_ENV_VAR,
     };
 
-    let dir = TempDir::new().unwrap();
+    let dir = worktrunk::testing::tempdir().unwrap();
     let retired_file = dir.path().join("retired");
     let cd_file = dir.path().join("cd");
     let exec_file = dir.path().join("exec");
@@ -216,7 +216,7 @@ fn custom_subcommand_alias_outside_repo_names_the_alias() {
     // dispatch ends inside try_alias with the alias-needs-repository error —
     // a configured alias isn't "unrecognized", and the clap-style fallback
     // would suggest the typed name itself.
-    let config_dir = tempfile::tempdir().unwrap();
+    let config_dir = worktrunk::testing::tempdir().unwrap();
     let config_path = config_dir.path().join("config.toml");
     std::fs::write(&config_path, "[aliases]\nco = \"echo hi\"\n").unwrap();
 
@@ -236,11 +236,11 @@ fn custom_subcommand_alias_outside_repo_omits_gutter_when_git_says_nothing() {
     // The gutter quotes git's explanation, so a fatal exit that carries no
     // output leaves the alias error and its hint alone — not a blank gutter
     // line where the explanation would have gone.
-    let config_dir = tempfile::tempdir().unwrap();
+    let config_dir = worktrunk::testing::tempdir().unwrap();
     let config_path = config_dir.path().join("config.toml");
     std::fs::write(&config_path, "[aliases]\nco = \"echo hi\"\n").unwrap();
 
-    let git_dir = TempDir::new().unwrap();
+    let git_dir = worktrunk::testing::tempdir().unwrap();
     MockConfig::new("git")
         .version("git version 2.43.0")
         .command("rev-parse", MockResponse::exit(128))
@@ -274,13 +274,13 @@ fn custom_subcommand_alias_propagates_non_fatal_git_failure() {
     // any other way surfaces as itself, the way it does for every other
     // command, rather than being reported as a repository verdict git never
     // gave.
-    let config_dir = tempfile::tempdir().unwrap();
+    let config_dir = worktrunk::testing::tempdir().unwrap();
     let config_path = config_dir.path().join("config.toml");
     std::fs::write(&config_path, "[aliases]\nco = \"echo hi\"\n").unwrap();
 
     // No `rev-parse` response, so it falls through to mock_stub's default:
     // exit 1 with no output, unlike `set_git_only_path`'s fatal 128.
-    let git_dir = TempDir::new().unwrap();
+    let git_dir = worktrunk::testing::tempdir().unwrap();
     MockConfig::new("git")
         .version("git version 2.43.0")
         .write(git_dir.path());
@@ -312,7 +312,7 @@ fn custom_subcommand_alias_outside_repo_wins_over_path_binary() {
     // ends in try_alias with the needs-repository error instead of falling
     // through to a colliding `wt-<name>` PATH binary — the same "user config
     // wins over wt-<name> PATH binaries" precedence as in-repo dispatch.
-    let config_dir = tempfile::tempdir().unwrap();
+    let config_dir = worktrunk::testing::tempdir().unwrap();
     let config_path = config_dir.path().join("config.toml");
     std::fs::write(
         &config_path,
@@ -436,7 +436,7 @@ fn custom_subcommand_respects_global_dash_c_flag() {
     // doesn't exist from the parent's cwd), the child will still run because
     // we pass an absolute path. So we verify by confirming the child ran and
     // exited cleanly even though the parent's cwd is unrelated.
-    let target_dir = TempDir::new().unwrap();
+    let target_dir = worktrunk::testing::tempdir().unwrap();
     let dir = mock_bin_dir("wt-wt-test-extcmd-cwd", MockResponse::output("ok\n"));
 
     let mut cmd = wt_command();

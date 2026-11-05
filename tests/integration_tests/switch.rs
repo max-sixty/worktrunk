@@ -2527,7 +2527,7 @@ fn test_switch_execute_stdin_inheritance(repo: TestRepo) {
 
 #[rstest]
 fn test_switch_outside_git_repo(temp_home: TempDir) {
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
 
     // Run wt switch --create outside a git repo - should show "Failed to switch worktree" context
     let settings = setup_home_snapshot_settings(&temp_home);
@@ -3038,7 +3038,7 @@ worktree-path = "{{ repo_path }}/../from-project-{{ branch | sanitize }}"
     // The rule is the same one layer down, where no invocation is involved:
     // with the entry moved to the system file, the user file's global key
     // answers for this repo. Written last because it rewrites the user config.
-    let system_dir = tempfile::tempdir().unwrap();
+    let system_dir = worktrunk::testing::tempdir().unwrap();
     let system_config = system_dir.path().join("config.toml");
     fs::write(
         &system_config,
@@ -3913,7 +3913,7 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         .command("config get git_protocol", MockResponse::output("ssh\n"))
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -6429,7 +6429,7 @@ fn test_switch_pr_self_hosted_tea_authed_dispatches_to_gitea(
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -6512,7 +6512,7 @@ fn test_switch_pr_self_hosted_defaults_to_github(
     }
     #[cfg(unix)]
     std::os::unix::fs::symlink(which::which("git").unwrap(), mock_bin.join("git")).unwrap();
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -6558,7 +6558,7 @@ fn test_switch_pr_tea_login_matches_distinct_ssh_host(repo: TestRepo) {
     MockConfig::new("gh")
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     configure_mock_cli_env(&mut cmd, &mock_bin);
     let output = cmd
@@ -6615,7 +6615,7 @@ fn test_switch_pr_tea_login_native_interruption(
     MockConfig::new("gh")
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     configure_mock_cli_env(&mut cmd, &mock_bin);
     let output = cmd
@@ -8072,7 +8072,7 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
 
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);

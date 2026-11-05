@@ -2394,7 +2394,7 @@ mod tests {
     #[test]
     #[cfg(windows)]
     fn deep_worktree_keeps_operational_path_separate_from_identity() {
-        let temp = tempfile::tempdir().expect("temp dir");
+        let temp = worktrunk::testing::tempdir().expect("temp dir");
         let mut deep = temp.path().join("deep");
         while deep.as_os_str().len() < 320 {
             deep.push("nested-worktree-directory");

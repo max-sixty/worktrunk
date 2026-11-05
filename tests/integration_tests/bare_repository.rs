@@ -529,7 +529,7 @@ fn test_bare_repo_repo_path_with_inherited_relative_git_dir() {
 fn test_repo_path_via_real_git_alias_bare_dot_git_layout() {
     use crate::common::{configure_git_env, wt_bin};
 
-    let temp_dir = tempfile::TempDir::new().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let temp_path = canonicalize(temp_dir.path()).unwrap();
 
     // Layout: repo/.git (bare) + repo/main (linked worktree).
@@ -1553,7 +1553,7 @@ fn test_bare_repo_project_config_found_with_dash_c_flag() {
     test.commit_in(&main_worktree, "Add project config");
 
     // Run from a completely unrelated directory using -C to point at the bare repo
-    let unrelated_dir = tempfile::tempdir().unwrap();
+    let unrelated_dir = worktrunk::testing::tempdir().unwrap();
     let (cd_path, _guard) = directive_file();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
@@ -1720,7 +1720,7 @@ struct NestedBareRepoTest {
 
 impl NestedBareRepoTest {
     fn new() -> Self {
-        let temp_dir = tempfile::TempDir::new().unwrap();
+        let temp_dir = worktrunk::testing::tempdir().unwrap();
         // Create project directory with the bare repo inside as .git
         let project_path = temp_dir.path().join("project");
         let repo = TestRepo::bare_at(&project_path.join(".git"));
@@ -1977,7 +1977,7 @@ fn test_bare_repo_bootstrap_first_worktree() {
 /// (used by BareRepoTest) to cover the exact reported scenario.
 #[test]
 fn test_clone_bare_repo_list_no_status_errors() {
-    let temp_dir = tempfile::TempDir::new().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let test_config_path = temp_dir.path().join("test-config.toml");
     fs::write(&test_config_path, "").unwrap();
 

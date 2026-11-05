@@ -235,13 +235,15 @@ fn standard_main_only_fixture_template() -> PathBuf {
 
 /// Build into a private scratch directory under `parent`, then rename it to
 /// `dir` — the atomic claim that makes concurrent cold-cache builders race
-/// benignly. `TempDir::new_in` names the scratch uniquely per call, so
-/// builders can't collide on it whether they're separate nextest processes
-/// or threads of one `cargo test` process; the first rename into place wins
+/// benignly. The scratch name comes from a generator seeded per process (see
+/// [`tempdir`]), so builders can't collide on it whether they're separate
+/// nextest processes or threads of one `cargo test` process; the first rename into place wins
 /// and losers discard their build.
 fn claim_template(parent: &Path, dir: &Path, build: impl FnOnce(&Path)) {
     std::fs::create_dir_all(parent).unwrap();
-    let scratch = TempDir::new_in(parent).expect("create template build dir");
+    let scratch = temp_builder()
+        .tempdir_in(parent)
+        .expect("create template build dir");
     build(scratch.path());
 
     // Disarm auto-cleanup: from here the scratch either becomes `dir` or is
@@ -850,7 +852,52 @@ pub fn test_temp_root() -> &'static Path {
 ///
 /// The fixtures' replacement for `TempDir::new()` / `tempfile::tempdir()`.
 pub fn test_tempdir() -> TempDir {
-    TempDir::new_in(test_temp_root()).expect("create test temp dir")
+    temp_builder()
+        .tempdir_in(test_temp_root())
+        .expect("create test temp dir")
+}
+
+/// The suite's replacement for `tempfile::tempdir()` / `TempDir::new()`.
+///
+/// `tempfile` draws names from `fastrand`'s thread-local generator, which
+/// seeds from the time and the thread id alone (smol-rs/fastrand#130). Nextest
+/// runs every test in its own process, so processes that seed in the same
+/// clock tick generate the same names; on Windows CI ~0.3% of the names a
+/// burst of short-lived processes generated were duplicates. A duplicate of a
+/// live entry is retried, but one held by an entry another process just
+/// deleted fails with `PermissionDenied` (os error 5), which `tempfile` hands
+/// back instead of retrying (#4692). The builder behind it reseeds the generator
+/// first, so names differ across processes without changing their length.
+pub fn tempdir() -> std::io::Result<TempDir> {
+    temp_builder().tempdir()
+}
+
+/// [`tempdir`]'s counterpart for `NamedTempFile::new()`.
+pub fn named_tempfile() -> std::io::Result<tempfile::NamedTempFile> {
+    temp_builder().tempfile()
+}
+
+/// A `tempfile::Builder` whose names come from a generator seeded per process.
+///
+/// `RandomState::new()` draws its keys from OS randomness once per thread, so
+/// the seed differs between processes even when the clock doesn't. Seeding
+/// once per thread keeps names distinct within the thread, and `tempfile`
+/// forks the same thread-local generator. The name length stays tempfile's
+/// own: Unix-socket tests have only a few bytes to spare under `sun_path`.
+fn temp_builder() -> tempfile::Builder<'static, 'static> {
+    use std::hash::BuildHasher;
+    thread_local! {
+        static SEEDED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    SEEDED.with(|seeded| {
+        if !seeded.replace(true) {
+            fastrand::seed(
+                std::collections::hash_map::RandomState::new()
+                    .hash_one(std::thread::current().id()),
+            );
+        }
+    });
+    tempfile::Builder::new()
 }
 
 /// A single fixed empty directory used as the default `current_dir` for
@@ -1136,19 +1183,11 @@ pub fn directive_file() -> (PathBuf, TempDir) {
 
 /// A private directory for a test's directive files.
 ///
-/// Why not `NamedTempFile::new()` (which is what these helpers used to call):
-/// `tempfile` retries a name collision only when it surfaces as
-/// `AlreadyExists`, and on Windows `create_new` against a name already held by
-/// a *directory* — or by a file in delete-pending state — returns
-/// `PermissionDenied` instead, which it hands straight back. A full
-/// suite run leaves the shared temp directory full of `.tmpXXXXXX` entries
-/// (every `TestRepo` creates one), and under that load the call failed ~1% of
-/// the time on Windows CI: `failed to create cd temp file: … Os { code: 5 …
-/// "Access is denied." }`. `TempDir::new` isn't exposed to it — a directory
-/// collision surfaces as `AlreadyExists`, which `tempfile` retries — and the
-/// files inside carry fixed names, which nothing else can collide with.
+/// The files inside carry fixed names, which nothing outside the directory
+/// can collide with; the directory itself comes from [`tempdir`], whose
+/// per-process seed is what keeps it clear of other test processes.
 fn directive_temp_dir() -> TempDir {
-    TempDir::new().expect("failed to create directive temp dir")
+    tempdir().expect("failed to create directive temp dir")
 }
 
 /// Create `path` as an empty file and return it.
@@ -3706,7 +3745,7 @@ mod tests {
     /// produce — keeps the winner's template and removes its own scratch.
     #[test]
     fn test_claim_template_winner_and_loser() {
-        let parent = TempDir::new().unwrap();
+        let parent = tempdir().unwrap();
         let dir = parent.path().join("template-v1");
 
         claim_template(parent.path(), &dir, |scratch| {

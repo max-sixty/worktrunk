@@ -252,7 +252,7 @@ mod tests {
 
     #[test]
     fn test_remove_dir_with_progress_empty_dir() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::testing::tempdir().unwrap();
         let dir = temp.path().join("empty");
         std::fs::create_dir(&dir).unwrap();
 
@@ -265,7 +265,7 @@ mod tests {
 
     #[test]
     fn test_remove_dir_with_progress_counts_files_and_bytes() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::testing::tempdir().unwrap();
         let root = temp.path().join("tree");
         std::fs::create_dir_all(root.join("a/b")).unwrap();
         std::fs::write(root.join("a/file1.txt"), b"hello").unwrap(); // 5 bytes
@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn test_remove_dir_with_progress_missing_root_is_ok() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::testing::tempdir().unwrap();
         let missing = temp.path().join("does-not-exist");
 
         let progress = Progress::disabled();
@@ -292,7 +292,7 @@ mod tests {
 
     #[test]
     fn test_remove_dir_with_progress_refuses_paths_without_a_name() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::testing::tempdir().unwrap();
         let kept = temp.path().join("kept");
         std::fs::create_dir_all(kept.join("child")).unwrap();
         std::fs::write(kept.join("file.txt"), b"x").unwrap();
@@ -307,7 +307,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_remove_dir_with_progress_handles_symlinks() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::testing::tempdir().unwrap();
         let root = temp.path().join("tree");
         std::fs::create_dir(&root).unwrap();
         std::fs::write(root.join("real.txt"), b"abc").unwrap();
@@ -328,7 +328,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_remove_dir_with_progress_keeps_directory_symlink_targets() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::testing::tempdir().unwrap();
         let outside = temp.path().join("outside");
         std::fs::create_dir(&outside).unwrap();
         std::fs::write(outside.join("keep.txt"), b"abc").unwrap();
@@ -348,7 +348,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_remove_dir_with_progress_unlinks_symlink_root() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::testing::tempdir().unwrap();
         let target = temp.path().join("target");
         std::fs::create_dir(&target).unwrap();
         std::fs::write(target.join("keep.txt"), b"abc").unwrap();
@@ -370,7 +370,7 @@ mod tests {
     fn test_remove_dir_with_progress_removes_read_only_directories() {
         use std::os::unix::fs::PermissionsExt;
 
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::testing::tempdir().unwrap();
         let root = temp.path().join("tree");
         let read_only = root.join("read-only");
         std::fs::create_dir_all(read_only.join("nested")).unwrap();
@@ -395,7 +395,7 @@ mod tests {
     fn test_remove_dir_with_progress_removes_unreadable_directories() {
         use std::os::unix::fs::PermissionsExt;
 
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::testing::tempdir().unwrap();
         let root = temp.path().join("tree");
         let unreadable = root.join("unreadable");
         std::fs::create_dir_all(&unreadable).unwrap();

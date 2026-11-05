@@ -110,7 +110,7 @@ fn test_init_rejects_unsafe_cmd(#[case] shell: &str, repo: TestRepo) {
 fn test_mock_dispatch_ignores_degenerate_argv0() {
     use std::os::unix::process::CommandExt;
 
-    let config_dir = tempfile::tempdir().unwrap();
+    let config_dir = worktrunk::testing::tempdir().unwrap();
     let output = Command::new(wt_bin())
         .arg0("")
         .arg("--version")
@@ -135,7 +135,7 @@ fn test_mock_dispatch_survives_non_utf8_argv0() {
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::process::CommandExt;
 
-    let config_dir = tempfile::tempdir().unwrap();
+    let config_dir = worktrunk::testing::tempdir().unwrap();
     let output = Command::new(wt_bin())
         .arg0(OsStr::from_bytes(b"\xff\xfe"))
         .arg("--version")
@@ -157,7 +157,7 @@ fn test_mock_dispatch_survives_non_utf8_argv0() {
 /// may not have installed at all.
 #[rstest]
 fn test_init_keeps_dotted_argv0_command_name(repo: TestRepo) {
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let dotted_bin = temp_dir.path().join("wt.old");
     std::os::unix::fs::symlink(wt_bin(), &dotted_bin).unwrap();
 
@@ -221,7 +221,7 @@ fn test_init_rejects_non_utf8_argv0_command_name() {
 
 #[rstest]
 fn test_init_rejects_unsafe_argv0_command_name(repo: TestRepo) {
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let bad_bin = temp_dir.path().join("wt;touch");
     std::os::unix::fs::symlink(wt_bin(), &bad_bin).unwrap();
 

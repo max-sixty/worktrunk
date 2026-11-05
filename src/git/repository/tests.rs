@@ -425,7 +425,7 @@ fn repo_path_ignores_non_local_core_worktree() {
     // with a stray global `core.worktree` in a normal repo should still see
     // `parent(.git)` as the repo root — `rev-parse --show-toplevel` fails
     // from inside `.git` in that case and we fall through.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::testing::tempdir().unwrap();
     let git_dir = tmp.path().join(".git");
     std::fs::create_dir(&git_dir).unwrap();
 
@@ -1156,7 +1156,7 @@ fn build_worktree_config_bare_layout() -> (tempfile::TempDir, std::path::PathBuf
     use super::canonicalize;
     use crate::shell_exec::Cmd;
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::testing::tempdir().unwrap();
     let project_root = canonicalize(tmp.path()).unwrap().join("myproject");
     std::fs::create_dir_all(&project_root).unwrap();
     let git_dir = project_root.join(".git");
@@ -1305,7 +1305,7 @@ fn prewarm_partial_warm_runs_only_the_cold_threads() {
     use super::canonicalize;
     use crate::shell_exec::Cmd;
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::testing::tempdir().unwrap();
     let init_repo = |name: &str| {
         let root = canonicalize(tmp.path()).unwrap().join(name);
         std::fs::create_dir_all(&root).unwrap();
@@ -1439,7 +1439,7 @@ fn prewarm_still_caches_preload_when_worktree_config_disabled() {
     use super::canonicalize;
     use crate::shell_exec::Cmd;
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::testing::tempdir().unwrap();
     let root = canonicalize(tmp.path()).unwrap().join("normal");
     std::fs::create_dir_all(&root).unwrap();
 
@@ -1469,7 +1469,7 @@ fn prewarm_after_early_repository_still_preloads_config() {
     use super::canonicalize;
     use crate::shell_exec::Cmd;
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::testing::tempdir().unwrap();
     let root = canonicalize(tmp.path()).unwrap().join("early");
     std::fs::create_dir_all(&root).unwrap();
 
@@ -2091,7 +2091,7 @@ fn test_worktree_for_branch_dedups_duplicate_warning() {
     use crate::shell_exec::Cmd;
     use std::path::Path;
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::testing::tempdir().unwrap();
     let root = canonicalize(tmp.path()).unwrap().join("repo");
     std::fs::create_dir_all(&root).unwrap();
     let git = |args: &[&str], dir: &Path| {
@@ -2655,7 +2655,7 @@ fn build_separate_git_dir_layout_with(
     use super::canonicalize;
     use crate::shell_exec::Cmd;
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::testing::tempdir().unwrap();
     let root = canonicalize(tmp.path()).unwrap();
     let store = root.join("store").join("repo.gitdir");
     let work_tree = root.join("work");

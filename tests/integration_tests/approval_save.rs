@@ -1,6 +1,5 @@
 use insta::assert_snapshot;
 use std::fs;
-use tempfile::TempDir;
 use worktrunk::config::Approvals;
 use worktrunk::config::UserConfig;
 
@@ -8,7 +7,7 @@ use worktrunk::config::UserConfig;
 /// This test uses `approve_commands()` to ensure it never writes to the user's config
 #[test]
 fn test_approval_saves_to_disk() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let approvals_path = temp_dir.path().join("worktrunk").join("approvals.toml");
 
     // Create approvals and save to temp directory ONLY
@@ -45,7 +44,7 @@ fn test_approval_saves_to_disk() {
 
 #[test]
 fn test_duplicate_approvals_not_saved_twice() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let approvals_path = temp_dir.path().join("approvals.toml");
 
     let mut approvals = Approvals::default();
@@ -78,7 +77,7 @@ fn test_duplicate_approvals_not_saved_twice() {
 
 #[test]
 fn test_multiple_project_approvals() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let approvals_path = temp_dir.path().join("approvals.toml");
 
     let mut approvals = Approvals::default();
@@ -130,7 +129,7 @@ fn test_multiple_project_approvals() {
 
 #[test]
 fn test_isolated_config_safety() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let approvals_path = temp_dir.path().join("isolated.toml");
 
     // Read user's actual approvals before test (if it exists)
@@ -182,7 +181,7 @@ fn test_isolated_config_safety() {
 
 #[test]
 fn test_approval_saves_to_new_approvals_file() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let approvals_dir = temp_dir.path().join("nested").join("config");
     let approvals_path = approvals_dir.join("approvals.toml");
 
@@ -221,7 +220,7 @@ fn test_approval_saves_to_new_approvals_file() {
 /// `[switch.picker]` has no field for.
 #[test]
 fn test_saving_command_beside_deprecated_commit_generation_keeps_its_template() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let config_path = temp_dir.path().join("config.toml");
     fs::write(
         &config_path,
@@ -258,7 +257,7 @@ fn test_saving_command_beside_deprecated_commit_generation_keeps_its_template() 
 /// beside the original.
 #[test]
 fn test_saving_config_mutation_changes_only_its_value() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let config_path = temp_dir.path().join("config.toml");
 
     let initial_content = r#"# User preferences for worktrunk
@@ -341,7 +340,7 @@ notify = "echo switched"
 /// the first approval, losing it.
 #[test]
 fn test_concurrent_approve_preserves_all_approvals() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let approvals_path = temp_dir.path().join("approvals.toml");
 
     // Process A: Start with empty approvals, approve "npm install"
@@ -398,7 +397,7 @@ fn test_concurrent_approve_preserves_all_approvals() {
 /// the revoked command from its stale in-memory state.
 #[test]
 fn test_concurrent_revoke_preserves_all_changes() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let approvals_path = temp_dir.path().join("approvals.toml");
 
     // Setup: approvals file has two commands approved
@@ -445,7 +444,7 @@ fn test_concurrent_revoke_preserves_all_changes() {
 
 #[test]
 fn test_concurrent_approve_different_projects() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let approvals_path = temp_dir.path().join("approvals.toml");
 
     // Process A: empty approvals
@@ -503,7 +502,7 @@ fn test_truly_concurrent_approve_with_threads() {
     use std::sync::{Arc, Barrier};
     use std::thread;
 
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let approvals_path = temp_dir.path().join("approvals.toml");
 
     // Create 10 threads that will all try to approve at the same time
@@ -569,7 +568,7 @@ fn test_permission_error_prevents_save() {
     use std::fs::Permissions;
     use std::os::unix::fs::PermissionsExt;
 
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let approvals_path = temp_dir.path().join("readonly").join("approvals.toml");
 
     // Create the directory and initial approvals file
@@ -630,7 +629,7 @@ fn test_permission_error_prevents_save() {
 
 #[test]
 fn test_skip_shell_integration_prompt_saves_to_disk() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let config_path = temp_dir.path().join("worktrunk").join("config.toml");
 
     let mut config = UserConfig::default();
@@ -652,7 +651,7 @@ fn test_skip_shell_integration_prompt_saves_to_disk() {
 
 #[test]
 fn test_skip_shell_integration_prompt_idempotent() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let config_path = temp_dir.path().join("config.toml");
 
     let mut config = UserConfig::default();
@@ -678,7 +677,7 @@ fn test_skip_shell_integration_prompt_idempotent() {
 
 #[test]
 fn test_skip_commit_generation_prompt_saves_to_disk() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let config_path = temp_dir.path().join("worktrunk").join("config.toml");
 
     let mut config = UserConfig::default();
@@ -700,7 +699,7 @@ fn test_skip_commit_generation_prompt_saves_to_disk() {
 
 #[test]
 fn test_skip_commit_generation_prompt_idempotent() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let config_path = temp_dir.path().join("config.toml");
 
     let mut config = UserConfig::default();
@@ -726,7 +725,7 @@ fn test_skip_commit_generation_prompt_idempotent() {
 
 #[test]
 fn test_set_commit_generation_command_saves_to_disk() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let config_path = temp_dir.path().join("worktrunk").join("config.toml");
 
     let mut config = UserConfig::default();
@@ -751,7 +750,7 @@ fn test_set_commit_generation_command_saves_to_disk() {
 
 #[test]
 fn test_set_commit_generation_command_with_special_chars() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
     let config_path = temp_dir.path().join("config.toml");
 
     let mut config = UserConfig::default();
@@ -780,7 +779,7 @@ fn test_set_commit_generation_command_with_special_chars() {
 fn test_saving_through_symlink_preserves_symlink() {
     use std::os::unix::fs::symlink;
 
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
 
     // Create a "dotfiles" directory with the actual config
     let dotfiles_dir = temp_dir.path().join("dotfiles");

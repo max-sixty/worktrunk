@@ -1555,7 +1555,7 @@ mod tests {
 
     #[test]
     fn ref_write_times_follow_the_ref_backend() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let write = |relative: &str, epoch: u64| {
             let path = dir.path().join(relative);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1580,7 +1580,7 @@ mod tests {
         assert_eq!(reftable.epoch("loose").unwrap(), 400);
 
         // With neither a loose ref nor shared storage, nothing dates the branch.
-        let empty = tempfile::tempdir().unwrap();
+        let empty = worktrunk::testing::tempdir().unwrap();
         let none = RefWriteTimes::read(empty.path(), false, ["gone"]).unwrap();
         assert_eq!(
             none.epoch("gone").unwrap_err().to_string(),

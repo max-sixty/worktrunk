@@ -2676,7 +2676,7 @@ mod tests {
 
     #[test]
     fn test_resolve_subdir_in_target_subdir_exists() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let source = dir.path().join("source");
         let target = dir.path().join("target");
         std::fs::create_dir_all(source.join("apps/gateway")).unwrap();
@@ -2694,7 +2694,7 @@ mod tests {
         // so `strip_prefix` fails and the shell lands at the target root with no
         // error rather than at the mirrored subdirectory (#3898). Off Windows
         // the depth is unremarkable and this just exercises a deep tree.
-        let dir = tempfile::tempdir().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let source = dir.path().join("source");
         let target = dir.path().join("target");
 
@@ -2711,7 +2711,7 @@ mod tests {
 
     #[test]
     fn test_resolve_subdir_in_target_subdir_missing() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let source = dir.path().join("source");
         let target = dir.path().join("target");
         std::fs::create_dir_all(source.join("apps/gateway")).unwrap();
@@ -2724,7 +2724,7 @@ mod tests {
 
     #[test]
     fn test_resolve_subdir_in_target_at_root() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         let source = dir.path().join("source");
         let target = dir.path().join("target");
         std::fs::create_dir_all(&source).unwrap();

@@ -263,7 +263,7 @@ mod tests {
     #[cfg(unix)]
     fn test_pipe_through_pager_descendant_pipes_time_out() {
         for redirect in ["", ">/dev/null"] {
-            let fixture = tempfile::tempdir().unwrap();
+            let fixture = worktrunk::testing::tempdir().unwrap();
             let release = fixture.path().join("release");
             let done = fixture.path().join("done");
             let quote =

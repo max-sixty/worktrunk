@@ -217,7 +217,7 @@ fn test_complete_base_flag_all_formats(repo: TestRepo) {
 
 #[rstest]
 fn test_complete_outside_git_repo() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = worktrunk::testing::tempdir().unwrap();
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
 
@@ -2326,7 +2326,7 @@ fn test_complete_custom_subcommand_listed(repo: TestRepo) {
     repo.commit("initial");
 
     // Create a mock wt-testext binary on PATH
-    let ext_dir = tempfile::tempdir().unwrap();
+    let ext_dir = worktrunk::testing::tempdir().unwrap();
     MockConfig::new("wt-testext")
         .command("_default", MockResponse::output("external ran\n"))
         .write(ext_dir.path());
@@ -2420,7 +2420,7 @@ fn test_complete_custom_subcommand_forwards(repo: TestRepo) {
     // Create a real shell script that outputs completions (not a mock_commands
     // mock, which needs WORKTRUNK_TEST_MOCK_CONFIG_DIR and plays back its config
     // instead of answering the COMPLETE env var).
-    let ext_dir = tempfile::tempdir().unwrap();
+    let ext_dir = worktrunk::testing::tempdir().unwrap();
     let retired_file = ext_dir.path().join("retired");
     std::fs::write(&retired_file, "").unwrap();
     let script = ext_dir.path().join("wt-testext");
@@ -2671,7 +2671,7 @@ fn test_completion_registration_rejects_invalid_complete_name(#[case] name: &str
 #[cfg(unix)]
 #[rstest]
 fn test_completion_registration_falls_back_when_binary_name_is_invalid() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = worktrunk::testing::tempdir().unwrap();
     let link = dir.path().join("wt+odd");
     std::os::unix::fs::symlink(crate::common::wt_bin(), &link).unwrap();
 

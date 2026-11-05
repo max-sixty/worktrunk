@@ -122,7 +122,7 @@ fn test_config_show_with_system_config(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
 
     // Create system config in a temp directory
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -161,7 +161,7 @@ command = "company-llm-tool"
 #[rstest]
 fn test_system_config_values_used_as_defaults(repo: TestRepo) {
     // System config with a distinctive worktree-path template
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -194,7 +194,7 @@ fn test_system_config_values_used_as_defaults(repo: TestRepo) {
 #[rstest]
 fn test_user_config_overrides_system_config(repo: TestRepo) {
     // System config with one template
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -203,7 +203,7 @@ fn test_user_config_overrides_system_config(repo: TestRepo) {
     .unwrap();
 
     // User config overrides with a different template
-    let user_config_dir = tempfile::tempdir().unwrap();
+    let user_config_dir = worktrunk::testing::tempdir().unwrap();
     let user_config_path = user_config_dir.path().join("config.toml");
     fs::write(
         &user_config_path,
@@ -244,7 +244,7 @@ fn test_user_config_overrides_system_config(repo: TestRepo) {
 #[rstest]
 fn test_system_and_user_hooks_deep_merged(repo: TestRepo) {
     // System config defines a named pre-merge hook
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -255,7 +255,7 @@ company-lint = "company-lint-tool"
     .unwrap();
 
     // User config defines a differently-named pre-merge hook
-    let user_config_dir = tempfile::tempdir().unwrap();
+    let user_config_dir = worktrunk::testing::tempdir().unwrap();
     let user_config_path = user_config_dir.path().join("config.toml");
     fs::write(
         &user_config_path,
@@ -296,7 +296,7 @@ my-lint = "my-lint-tool"
 #[rstest]
 fn test_user_hook_replaces_same_named_system_hook(repo: TestRepo) {
     // System config defines a named hook
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -307,7 +307,7 @@ lint = "company-lint-tool"
     .unwrap();
 
     // User config defines the same-named hook with different command
-    let user_config_dir = tempfile::tempdir().unwrap();
+    let user_config_dir = worktrunk::testing::tempdir().unwrap();
     let user_config_path = user_config_dir.path().join("config.toml");
     fs::write(
         &user_config_path,
@@ -347,7 +347,7 @@ lint = "my-lint-tool"
 #[rstest]
 fn test_system_config_hooks_preserved_when_user_doesnt_override(repo: TestRepo) {
     // System config defines pre-merge and pre-commit hooks
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -361,7 +361,7 @@ company-format = "company-format-tool"
     .unwrap();
 
     // User config only defines pre-merge (should leave system's pre-commit intact)
-    let user_config_dir = tempfile::tempdir().unwrap();
+    let user_config_dir = worktrunk::testing::tempdir().unwrap();
     let user_config_path = user_config_dir.path().join("config.toml");
     fs::write(
         &user_config_path,
@@ -478,7 +478,7 @@ fn test_config_show_empty_system_config(mut repo: TestRepo, temp_home: TempDir) 
     repo.setup_mock_ci_tools_unauthenticated();
 
     // Create empty system config
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(&system_config_path, "").unwrap();
 
@@ -506,7 +506,7 @@ fn test_config_show_empty_system_config(mut repo: TestRepo, temp_home: TempDir) 
 fn test_config_show_reports_unreadable_source_and_continues(repo: TestRepo, #[case] source: &str) {
     let mut cmd = repo.wt_command();
     let system_dir = if source == "system" {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", dir.path());
         Some(dir)
     } else {
@@ -590,7 +590,7 @@ fn test_config_show_invalid_system_config(mut repo: TestRepo, temp_home: TempDir
     repo.setup_mock_ci_tools_unauthenticated();
 
     // Create system config with invalid TOML
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(&system_config_path, "invalid = [toml\n").unwrap();
 
@@ -615,7 +615,7 @@ fn test_config_show_invalid_system_config(mut repo: TestRepo, temp_home: TempDir
 #[rstest]
 fn test_system_config_unknown_keys_warning_during_load(repo: TestRepo) {
     // Create system config with an unknown key
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -646,7 +646,7 @@ fn test_system_config_unknown_keys_warning_during_load(repo: TestRepo) {
 /// migrated to its canonical name and stays active.
 #[rstest]
 fn test_system_config_deprecations_pass_through_gate(repo: TestRepo) {
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -684,7 +684,7 @@ pager = "delta --paging=never"
 
 #[rstest]
 fn test_config_show_outside_git_repo(mut repo: TestRepo, temp_home: TempDir) {
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
 
     // Setup mock gh/glab for deterministic BINARIES output
     repo.setup_mock_ci_tools_unauthenticated();
@@ -1686,7 +1686,7 @@ fn test_config_show_full_tea_login_discovery(
         "origin",
         "https://gitea.example.com/example/repo.git",
     ]);
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let output = repo
         .wt_command()
         .args(["config", "show", "--full"])
@@ -1788,7 +1788,7 @@ kill -INT $$
         "origin",
         "https://gitea.example.com/example/repo.git",
     ]);
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let output = repo
         .wt_command()
         .args(["config", "show", "--full"])
@@ -3348,7 +3348,7 @@ fn test_pi_install_honors_agent_dir_override(temp_home: TempDir) {
 
     // Pi expands a leading `~` in the override, so a quoted `~/…` lands under
     // home rather than in a literal `~` directory beneath the cwd.
-    let cwd = tempfile::tempdir().unwrap();
+    let cwd = worktrunk::testing::tempdir().unwrap();
     let mut cmd = wt_command();
     set_temp_home_env(&mut cmd, temp_home.path());
     cmd.current_dir(cwd.path());
@@ -4905,7 +4905,7 @@ fn test_config_show_full_stops_after_cancelled_powershell_query(
     fs::write(&pwsh, format!("#!/bin/sh\nkill -{signal} $$\n")).unwrap();
     fs::set_permissions(&pwsh, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let call_log = TempDir::new().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
         .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
@@ -4945,7 +4945,7 @@ fn test_config_show_full_continues_after_failed_powershell_query(
     fs::write(&pwsh, "#!/bin/sh\nexit 130\n").unwrap();
     fs::set_permissions(&pwsh, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let call_log = TempDir::new().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
         .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
@@ -4979,7 +4979,7 @@ fn test_config_show_full_continues_after_failed_shell_scan(mut repo: TestRepo, t
     ]);
     fs::create_dir(temp_home.path().join(".bashrc")).unwrap();
 
-    let call_log = TempDir::new().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
         .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
@@ -5017,7 +5017,7 @@ fn plugin_calls_when_accepted(
     use std::io::Write as _;
     use std::process::Stdio;
 
-    let call_log = TempDir::new().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     cmd.args(["config", "plugins", tool, action])
         .current_dir(repo.root_path())
@@ -5053,7 +5053,7 @@ fn test_plugins_codex_prompt_previews_commands(mut repo: TestRepo, temp_home: Te
 
     // Outside the repo: a call log in the working tree would leave an
     // untracked file behind the command under test.
-    let call_log = TempDir::new().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
     for (action, expected) in [
         (
@@ -5134,9 +5134,9 @@ fn test_plugins_claude_prompt_previews_commands(mut repo: TestRepo) {
 
     // Outside the repo: a call log in the working tree would leave an
     // untracked file behind the command under test.
-    let call_log = TempDir::new().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
-    let temp_home = TempDir::new().unwrap();
+    let temp_home = worktrunk::testing::tempdir().unwrap();
 
     for (action, expected) in [
         (
@@ -6183,7 +6183,7 @@ fn test_shim_ignores_a_git_in_the_current_directory(repo: TestRepo) {
     MockConfig::new("git")
         .command("--exec-path", MockResponse::output("not-an-install"))
         .write(&project);
-    let call_log = TempDir::new().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
     let mut cmd = std::process::Command::new("cmd.exe");
     repo.configure_wt_cmd(&mut cmd);
@@ -7221,7 +7221,7 @@ mod plugin_prompt_pty {
 
 #[rstest]
 fn test_config_show_json(repo: TestRepo, temp_home: TempDir) {
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -7273,7 +7273,7 @@ fn test_config_show_json_allows_invalid_runtime_override(
     #[case] env_value: &str,
     #[case] inline: Option<&str>,
 ) {
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(&system_config_path, "[list]\nbranches = true\n").unwrap();
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
@@ -7358,7 +7358,7 @@ fn test_config_show_rejects_semantically_invalid_system_config(
     repo: TestRepo,
     #[case] args: &[&str],
 ) {
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(&system_config_path, "worktree-path = \"\"\n").unwrap();
     fs::write(repo.test_config_path(), "worktree-path = \"../valid\"\n").unwrap();
@@ -7478,7 +7478,7 @@ fn test_config_show_json_rejects_invalid_system_config(repo: TestRepo, temp_home
 
 #[rstest]
 fn test_config_show_json_rejects_unreadable_system_config(repo: TestRepo, temp_home: TempDir) {
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
@@ -7649,7 +7649,7 @@ fn test_config_show_json_with_project_config(repo: TestRepo, temp_home: TempDir)
 
 #[rstest]
 fn test_config_show_json_outside_repo(repo: TestRepo, temp_home: TempDir) {
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
 
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
@@ -7697,7 +7697,7 @@ fn test_project_config_path_env_var_override(repo: TestRepo, temp_home: TempDir)
     fs::write(&in_repo_config, "pre-start = \"in-repo-hook\"\n").unwrap();
 
     // Write the override project config at an arbitrary path.
-    let override_dir = tempfile::tempdir().unwrap();
+    let override_dir = worktrunk::testing::tempdir().unwrap();
     let override_path = override_dir.path().join("override.toml");
     fs::write(&override_path, "pre-start = \"override-hook\"\n").unwrap();
 
