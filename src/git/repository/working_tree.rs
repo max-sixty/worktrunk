@@ -12,6 +12,8 @@ use path_slash::PathExt;
 
 use crate::path::canonicalize_with_parents;
 use crate::shell_exec::Cmd;
+use crate::styling::{eprintln, hint_message, suggest_command};
+use color_print::cformat;
 use dunce::canonicalize;
 
 use super::{GitError, LineDiff, Repository};
@@ -53,12 +55,39 @@ fn sweep_stale_temp_indexes(dir: &Path) {
     }
 }
 
-/// A squash safety backup: an immutable snapshot of the index and the ref
-/// whose reflog retains it. The backup commit's parent is the pre-squash HEAD.
+/// A safety backup: an immutable snapshot of uncommitted changes and the ref
+/// whose reflog retains it. The backup commit's parent is the HEAD the changes
+/// sat on — the pre-squash tip for a squash, the removed tip for a removal.
 #[derive(Debug)]
 pub struct SafetyBackup {
     pub sha: String,
     pub ref_name: String,
+}
+
+impl SafetyBackup {
+    /// Print where the backup went and the command that recovers it.
+    pub fn print_recovery_hints(&self, repo: &Repository) -> anyhow::Result<()> {
+        let short_sha = repo.short_sha(&self.sha)?;
+        eprintln!(
+            "{}",
+            hint_message(cformat!(
+                "Backup created @ <underline>{}</> ({short_sha})",
+                self.ref_name
+            ))
+        );
+        let command = suggest_command(
+            "switch",
+            &[&format!("recovery/{short_sha}")],
+            &["--create", "--base", &self.sha, "--no-hooks"],
+        );
+        eprintln!(
+            "{}",
+            hint_message(cformat!(
+                "To recover in a new worktree, run <underline>{command}</>"
+            ))
+        );
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -1279,27 +1308,56 @@ impl<'a> WorkingTree<'a> {
     /// ```
     pub fn create_safety_backup(&self, message: &str) -> anyhow::Result<SafetyBackup> {
         let tree = self.run_command(&["write-tree"])?;
+        self.record_backup(tree.trim(), Some("HEAD"), message)
+    }
+
+    /// Back up every uncommitted change, as `wt remove --force` is about to
+    /// discard the worktree, to `refs/wt-backup/<branch>`.
+    ///
+    /// Like [`Self::create_safety_backup`], but the snapshot is what `git add
+    /// -A` would stage — staged, unstaged and untracked files — written through
+    /// a [`TempIndex`] so the real index is untouched. Ignored files are not
+    /// captured. The parent is `HEAD`, or none on an unborn branch, so the
+    /// backup also retains the branch tip after the branch is deleted.
+    pub fn create_removal_backup(&self, message: &str) -> anyhow::Result<SafetyBackup> {
+        let index = self.temp_index()?;
+        index.stage(crate::config::StageMode::All)?;
+        let tree = index.write_tree()?;
+        let parent = self.head_sha()?;
+        self.record_backup(&tree, parent.as_deref(), message)
+    }
+
+    /// Commit `tree` with `parent` and record it in the reflog of
+    /// `refs/wt-backup/<branch>`.
+    fn record_backup(
+        &self,
+        tree: &str,
+        parent: Option<&str>,
+        message: &str,
+    ) -> anyhow::Result<SafetyBackup> {
+        let mut args = vec!["commit-tree", "--no-gpg-sign", tree];
+        if let Some(parent) = parent {
+            args.extend(["-p", parent]);
+        }
+        args.extend(["-m", message]);
         let backup_sha = self
-            .run_command(&[
-                "commit-tree",
-                "--no-gpg-sign",
-                tree.trim(),
-                "-p",
-                "HEAD",
-                "-m",
-                message,
-            ])
+            .run_command(&args)
             .context("Failed to create backup commit")?
             .trim()
             .to_string();
 
-        // Get current branch name to use in the ref name
-        let stdout = self.run_command(&["rev-parse", "--symbolic-full-name", "HEAD"])?;
-        let branch = stdout
-            .trim()
-            .strip_prefix("refs/heads/")
-            .unwrap_or("HEAD")
-            .to_string();
+        // Read fresh rather than through the cached `branch()`: HEAD can have
+        // moved since it was cached. `rev-parse` fails on an unborn branch,
+        // which `symbolic-ref` still names. Detached HEAD backs up to
+        // `refs/wt-backup/HEAD`.
+        let branch = match self.run_command(&["rev-parse", "--symbolic-full-name", "HEAD"]) {
+            Ok(stdout) => stdout.trim().strip_prefix("refs/heads/").map(str::to_owned),
+            Err(_) => self
+                .run_command(&["symbolic-ref", "--short", "HEAD"])
+                .ok()
+                .map(|s| s.trim().to_owned()),
+        }
+        .unwrap_or_else(|| "HEAD".to_string());
 
         // Slashes are valid in ref names, so use the branch as-is —
         // flattening `/` to `-` would collide e.g. `a/b` with `a-b`.
@@ -1901,6 +1959,26 @@ mod tests {
             vec!["refs/wt-backup/a-b", "refs/wt-backup/a/b"],
             "expected distinct backup refs for `a/b` and `a-b`, got: {refs}"
         );
+    }
+
+    #[test]
+    fn create_removal_backup_on_unborn_branch_has_no_parent() {
+        // An unborn branch has no HEAD commit to parent the backup, but still
+        // names the ref the backup goes to.
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&["switch", "--orphan", "fresh"]);
+        std::fs::write(test.root_path().join("new.txt"), "unborn work").unwrap();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let wt = repo.worktree_at(test.root_path());
+
+        let backup = wt.create_removal_backup("fresh (remove --force)").unwrap();
+
+        assert_eq!(backup.ref_name, "refs/wt-backup/fresh");
+        assert_eq!(
+            test.git_output(&["show", "refs/wt-backup/fresh:new.txt"]),
+            "unborn work"
+        );
+        assert_eq!(test.git_output(&["rev-list", "--count", &backup.sha]), "1");
     }
 
     #[test]

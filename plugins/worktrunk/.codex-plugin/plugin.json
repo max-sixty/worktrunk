@@ -10,54 +10,7 @@
   "license": "MIT OR Apache-2.0",
   "keywords": ["git", "worktree", "codex", "agent"],
   "hooks": {
-    "hooks": {
-      "UserPromptSubmit": [
-        {
-          "hooks": [
-            {
-              "type": "command",
-              "command": "bash \"$PLUGIN_ROOT/hooks/wt.sh\" config state marker set 🤖 || true",
-              "commandWindows": "cmd /d /c call \"${PLUGIN_ROOT}\\hooks\\wt.cmd\" config state marker set 🤖"
-            }
-          ]
-        }
-      ],
-      "PermissionRequest": [
-        {
-          "matcher": "",
-          "hooks": [
-            {
-              "type": "command",
-              "command": "bash \"$PLUGIN_ROOT/hooks/wt.sh\" config state marker set 💬 || true",
-              "commandWindows": "cmd /d /c call \"${PLUGIN_ROOT}\\hooks\\wt.cmd\" config state marker set 💬"
-            }
-          ]
-        }
-      ],
-      "Stop": [
-        {
-          "hooks": [
-            {
-              "type": "command",
-              "command": "bash \"$PLUGIN_ROOT/hooks/wt.sh\" config state marker set 💬 || true",
-              "commandWindows": "cmd /d /c call \"${PLUGIN_ROOT}\\hooks\\wt.cmd\" config state marker set 💬"
-            }
-          ]
-        }
-      ],
-      "SessionEnd": [
-        {
-          "hooks": [
-            {
-              "type": "command",
-              "command": "bash \"$PLUGIN_ROOT/hooks/wt.sh\" config state marker clear || true",
-              "commandWindows": "cmd /d /c call \"${PLUGIN_ROOT}\\hooks\\wt.cmd\" config state marker clear",
-              "timeout": 3
-            }
-          ]
-        }
-      ]
-    }
+    "hooks": {}
   },
   "interface": {
     "displayName": "Worktrunk",

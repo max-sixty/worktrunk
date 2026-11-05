@@ -9,8 +9,15 @@ use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 
 const MARKETPLACE_SOURCE: &str = "max-sixty/worktrunk";
 const MARKETPLACE_NAME: &str = "worktrunk";
-/// `PLUGIN@MARKETPLACE` selector `codex plugin add` / `remove` take.
+/// `PLUGIN@MARKETPLACE` selectors `codex plugin add` / `remove` take.
+///
+/// The activity-marker hooks ship as their own plugin. Codex 0.164+ binds hook
+/// approval to a fingerprint of the whole plugin directory, so hooks bundled
+/// with the skills needed another review after every skill or docs change.
+/// The hooks-only plugin's fingerprint moves only when its hook commands or
+/// shims do.
 const PLUGIN_SELECTOR: &str = "worktrunk@worktrunk";
+const MARKERS_PLUGIN_SELECTOR: &str = "worktrunk-markers@worktrunk";
 
 /// Handle `wt config plugins codex install`.
 pub fn handle_codex_install(yes: bool) -> Result<()> {
@@ -18,10 +25,10 @@ pub fn handle_codex_install(yes: bool) -> Result<()> {
 
     if !yes {
         match prompt_yes_no_preview(
-            &cformat!("Install Worktrunk plugin for <bold>Codex</>?"),
+            &cformat!("Install Worktrunk plugins for <bold>Codex</>?"),
             || {
                 let commands = format!(
-                    "codex plugin marketplace add {MARKETPLACE_SOURCE}\ncodex plugin add {PLUGIN_SELECTOR}"
+                    "codex plugin marketplace add {MARKETPLACE_SOURCE}\ncodex plugin add {PLUGIN_SELECTOR}\ncodex plugin add {MARKERS_PLUGIN_SELECTOR}"
                 );
                 eprintln!("{}", worktrunk::styling::format_bash_with_gutter(&commands));
             },
@@ -37,14 +44,15 @@ pub fn handle_codex_install(yes: bool) -> Result<()> {
         &["plugin", "marketplace", "add", MARKETPLACE_SOURCE],
     )?;
 
-    eprintln!("{}", progress_message("Installing plugin..."));
+    eprintln!("{}", progress_message("Installing plugins..."));
     super::run_plugin_cli("codex", &["plugin", "add", PLUGIN_SELECTOR])?;
+    super::run_plugin_cli("codex", &["plugin", "add", MARKERS_PLUGIN_SELECTOR])?;
 
-    eprintln!("{}", success_message("Codex plugin installed"));
-    // The Codex plugin ships activity-marker hooks inline in its manifest
-    // (`hooks` key in .codex-plugin/plugin.json), using `Stop` to return
-    // 🤖 → 💬 and `SessionEnd` to clear the marker. See AGENTS.md → "Plugin
-    // Layout".
+    eprintln!("{}", success_message("Codex plugins installed"));
+    // The markers plugin ships activity-marker hooks inline in its manifest
+    // (`hooks` key in plugins/worktrunk-markers/.codex-plugin/plugin.json),
+    // using `Stop` to return 🤖 → 💬 and `SessionEnd` to clear the marker.
+    // See plugins/worktrunk/AGENTS.md → "Plugin layout".
     eprintln!(
         "{}",
         hint_message(cformat!(
@@ -61,10 +69,10 @@ pub fn handle_codex_uninstall(yes: bool) -> Result<()> {
 
     if !yes {
         match prompt_yes_no_preview(
-            &cformat!("Uninstall Worktrunk plugin from <bold>Codex</>?"),
+            &cformat!("Uninstall Worktrunk plugins from <bold>Codex</>?"),
             || {
                 let commands = format!(
-                    "codex plugin remove {PLUGIN_SELECTOR}\ncodex plugin marketplace remove {MARKETPLACE_NAME}"
+                    "codex plugin remove {MARKERS_PLUGIN_SELECTOR}\ncodex plugin remove {PLUGIN_SELECTOR}\ncodex plugin marketplace remove {MARKETPLACE_NAME}"
                 );
                 eprintln!("{}", worktrunk::styling::format_bash_with_gutter(&commands));
             },
@@ -74,9 +82,11 @@ pub fn handle_codex_uninstall(yes: bool) -> Result<()> {
         }
     }
 
-    // `codex plugin remove` exits 0 when the plugin is already gone, so this
-    // step needs none of the tolerance the marketplace removal below does.
-    eprintln!("{}", progress_message("Uninstalling plugin..."));
+    // `codex plugin remove` exits 0 when the plugin is already gone, so these
+    // steps need none of the tolerance the marketplace removal below does.
+    // That also covers installs from before the markers plugin existed.
+    eprintln!("{}", progress_message("Uninstalling plugins..."));
+    super::run_plugin_cli("codex", &["plugin", "remove", MARKERS_PLUGIN_SELECTOR])?;
     super::run_plugin_cli("codex", &["plugin", "remove", PLUGIN_SELECTOR])?;
 
     eprintln!(
@@ -89,7 +99,7 @@ pub fn handle_codex_uninstall(yes: bool) -> Result<()> {
         is_marketplace_configured,
     )?;
 
-    eprintln!("{}", success_message("Codex plugin & marketplace removed"));
+    eprintln!("{}", success_message("Codex plugins & marketplace removed"));
 
     Ok(())
 }
@@ -113,7 +123,7 @@ fn require_codex_cli() -> Result<()> {
 /// last entry under it, so a config whose key had been renamed looked exactly
 /// like one a successful removal had just emptied, and the only reading that
 /// let a second `uninstall` succeed was the one that reported every genuine
-/// failure as `Codex plugin & marketplace removed`. Codex's own list
+/// failure as `Codex plugins & marketplace removed`. Codex's own list
 /// separates the two.
 ///
 /// It also drops wt's copy of Codex's `CODEX_HOME` resolution. The child

@@ -173,6 +173,23 @@ impl Repository {
         parsed.marker
     }
 
+    /// Drop the marker of a branch `wt` just deleted or created.
+    ///
+    /// Markers are keyed by branch name in shared git config, so one left
+    /// behind by a deleted branch would reappear on a later branch reusing the
+    /// name. Best effort: the branch change already happened, so a failed
+    /// unset is logged rather than surfaced.
+    pub fn clear_branch_marker(&self, branch: &str) {
+        // `<name>.vars.marker` is also branch `<name>`'s var `marker`; only
+        // marker JSON belongs to `branch` (as in `clear_all_markers`).
+        if self.branch_marker(branch).is_none() {
+            return;
+        }
+        if let Err(e) = self.unset_config(&format!("worktrunk.state.{branch}.marker")) {
+            tracing::debug!(error = %e, "Failed to clear marker for branch {branch}: {e}");
+        }
+    }
+
     /// Read user-defined branch-keyed marker.
     pub fn user_marker(&self, branch: Option<&str>) -> Option<String> {
         branch.and_then(|branch| self.branch_marker(branch))

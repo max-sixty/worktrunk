@@ -45,7 +45,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-wt config plugins codex uninstall - Remove the Worktrunk plugin
+wt config plugins codex uninstall - Remove the Worktrunk plugins
 
 Usage: [1m[36mwt config plugins codex uninstall[0m [36m[OPTIONS][0m
 
@@ -69,8 +69,9 @@ Usage: [1m[36mwt config plugins codex uninstall[0m [36m[OPTIONS][0m
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
-Uninstalls the Worktrunk plugin from Codex and removes its marketplace. Equivalent to:
+Uninstalls the Worktrunk plugins from Codex and removes their marketplace. Equivalent to:
 
+[107m [0m [2m[0m[2m[34mcodex[0m[2m plugin remove worktrunk-markers@worktrunk[0m
 [107m [0m [2m[0m[2m[34mcodex[0m[2m plugin remove worktrunk@worktrunk[0m
 [107m [0m [2m[0m[2m[34mcodex[0m[2m plugin marketplace remove worktrunk[0m
 

@@ -62,6 +62,6 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mUninstalling plugin...[39m
-[31m✗[39m [31mcodex plugin remove worktrunk@worktrunk failed (exit code 1)[39m
+[36m◎[39m [36mUninstalling plugins...[39m
+[31m✗[39m [31mcodex plugin remove worktrunk-markers@worktrunk failed (exit code 1)[39m
 [107m [0m error: plugin remove failed
