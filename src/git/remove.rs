@@ -499,18 +499,27 @@ pub fn stage_worktree_removal(
         // status command still cancels before any directory is removed.
         match worktree.dirty_files() {
             Ok(dirty_files) if !dirty_files.is_empty() => {
+                // `--force` waives the dirty gate, not recoverability. A
+                // failed backup refuses the removal rather than lose the
+                // changes it was meant to keep, so the discard is announced
+                // only once the backup exists.
+                let name = branch.unwrap_or_else(|| path_dir_name(worktree_path));
+                // The removal error renders git's stderr in place of anyhow
+                // context, so the refusal names itself in the message.
+                let backup =
+                    match worktree.create_removal_backup(&format!("{name} (remove --force)")) {
+                        Ok(backup) => backup,
+                        Err(error) if error.interrupt_signal().is_some() => return Err(error),
+                        Err(error) => anyhow::bail!(
+                            "Failed to back up uncommitted changes; worktree not removed\n{}",
+                            error.display_message()
+                        ),
+                    };
                 eprintln!(
                     "{}",
                     warning_message("Discarding uncommitted changes (--force):")
                 );
                 eprintln!("{}", format_with_gutter(&dirty_files.join("\n"), None));
-                // `--force` waives the dirty gate, not recoverability. A
-                // failed backup refuses the removal rather than lose the
-                // changes it was meant to keep.
-                let name = branch.unwrap_or_else(|| path_dir_name(worktree_path));
-                let backup = worktree
-                    .create_removal_backup(&format!("{name} (remove --force)"))
-                    .context("Failed to back up uncommitted changes; worktree not removed")?;
                 backup.print_recovery_hints(repo)?;
             }
             Ok(_) => {}

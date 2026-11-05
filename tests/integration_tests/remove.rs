@@ -1728,6 +1728,43 @@ fn test_remove_force_with_untracked_files(mut repo: TestRepo) {
     );
 }
 
+/// A `--force` backup that git can't take refuses the removal, before the
+/// discard is announced. An untracked nested repo with no commits can't be
+/// added to the snapshot.
+#[rstest]
+fn test_remove_force_refuses_when_backup_fails(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-unbackable");
+    let nested = worktree_path.join("nested");
+    std::fs::create_dir_all(&nested).unwrap();
+    repo.git_command()
+        .args(["init", "--quiet"])
+        .current_dir(&nested)
+        .run()
+        .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--force", "--foreground", "feature-unbackable"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("Failed to back up uncommitted changes; worktree not removed"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("Discarding uncommitted changes"),
+        "{stderr}"
+    );
+    assert!(
+        worktree_path.exists(),
+        "worktree removed despite failed backup"
+    );
+}
+
 /// --force allows removal of dirty worktrees (issue #658)
 /// This test: modified tracked file, branch ahead of main (unmerged)
 #[rstest]
