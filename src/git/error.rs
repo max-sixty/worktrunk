@@ -2158,21 +2158,18 @@ impl Diagnostic for HookErrorWithHint {
         // No empty-body fallback needed.
         // Can't derive command from hook type (e.g., PreRemove is used
         // by both `wt remove` and `wt merge`), so the hint stays generic.
-        let mut out = format!(
-            "{}\n{}",
-            self.inner.render(),
-            hint_message(cformat!(
-                "To skip {} hooks, re-run with <underline>--no-hooks</>",
-                self.hook_type
-            ))
+        let skip = cformat!(
+            "To skip {} hooks, re-run with <underline>--no-hooks</>",
+            self.hook_type
         );
-        if let Some(command) = &self.retry_command {
-            out = format!(
-                "{out}\n{}",
-                hint_message(cformat!("To retry setup, run <underline>{command}</>"))
-            );
-        }
-        out
+        // One hint line; the retry command goes last so it's easy to copy.
+        let hint = match &self.retry_command {
+            Some(command) => {
+                cformat!("{skip}; to retry setup, run <underline>{command}</>")
+            }
+            None => skip,
+        };
+        format!("{}\n{}", self.inner.render(), hint_message(hint))
     }
 }
 
@@ -2585,8 +2582,7 @@ mod tests {
         );
         assert_snapshot!(render_anyhow(&err), @"
         [31m✗[39m [31m[1mpre-start project:deps[22m failed (exit code 1)[39m
-        [2m↳[22m [2mTo skip pre-start hooks, re-run with [4m--no-hooks[24m[22m
-        [2m↳[22m [2mTo retry setup, run [4mwt -C /tmp/repo.feature hook pre-start[24m[22m
+        [2m↳[22m [2mTo skip pre-start hooks, re-run with [4m--no-hooks[24m; to retry setup, run [4mwt -C /tmp/repo.feature hook pre-start[24m[22m
         ");
 
         // Passes through errors without a --no-hooks hint unchanged
