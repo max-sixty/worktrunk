@@ -1242,7 +1242,7 @@ Stored in git config as `worktrunk.state.<branch>.marker`. Set directly with:
 $ git config worktrunk.state.feature.marker '{"marker":"🚧","set_at":0}'
 ```
 
-When `wt` deletes a branch, it clears that branch's marker.
+When `wt` deletes a branch or `wt switch --create` creates one, it clears that branch's marker. A branch deleted and recreated with plain `git` keeps its marker until `wt config state marker clear`.
 
 Without a subcommand, runs `get` for the current branch. For `--branch`, use `get --branch=NAME`."#
     )]

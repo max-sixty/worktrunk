@@ -645,7 +645,7 @@ pub fn delete_branch_if_safe(
     // behavior for the Worktree path). The user explicitly chose -D.
     if force_delete {
         repo.run_command(&["branch", "-D", "--", branch_name])?;
-        clear_deleted_branch_marker(repo, branch_name);
+        repo.clear_branch_marker(branch_name);
         return Ok(BranchDeletionResult {
             outcome: BranchDeletionOutcome::ForceDeleted,
             integration_target: target.to_string(),
@@ -675,29 +675,13 @@ pub fn delete_branch_if_safe(
         None => BranchDeletionOutcome::NotDeleted,
     };
     if matches!(outcome, BranchDeletionOutcome::Integrated(_)) {
-        clear_deleted_branch_marker(repo, branch_name);
+        repo.clear_branch_marker(branch_name);
     }
 
     Ok(BranchDeletionResult {
         outcome,
         integration_target: effective_target,
     })
-}
-
-/// Drop the activity marker of a branch `wt` just deleted.
-///
-/// Markers are keyed by branch name in shared git config, so one left behind
-/// would reappear on a later branch reusing the name. Best effort: the branch
-/// is already gone, so a failed unset is logged rather than surfaced.
-fn clear_deleted_branch_marker(repo: &Repository, branch_name: &str) {
-    // `<name>.vars.marker` is also branch `<name>`'s var `marker`; only
-    // marker JSON belongs to the deleted branch (as in `clear_all_markers`).
-    if repo.branch_marker(branch_name).is_none() {
-        return;
-    }
-    if let Err(e) = repo.unset_config(&format!("worktrunk.state.{branch_name}.marker")) {
-        tracing::debug!(error = %e, "Failed to clear marker for deleted branch {branch_name}: {e}");
-    }
 }
 
 /// Find a live checkout of `branch` using a new repository cache.
