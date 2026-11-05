@@ -211,29 +211,42 @@ fn test_remove_reap_kills_process(mut repo: TestRepo) {
         .unwrap();
     let pid = child.id();
 
-    // Wait until lsof reports the child's cwd — fast when idle, but under
-    // suite load a single probe can burn its whole 5s in-process timeout;
-    // `wait_for` carries the suite's generous presence-poll deadline.
-    wait_for(
-        &format!("child {pid} in cwd discovery — is lsof installed and able to read process cwds?"),
-        || {
-            reap::processes_under(&canonical)
-                .iter()
-                .any(|p| p.pid == pid)
-        },
-    );
+    // Wait until the platform probe reports the child's cwd.
+    wait_for(&format!("child {pid} in cwd discovery"), || {
+        reap::processes_under(&canonical)
+            .iter()
+            .any(|p| p.pid == pid)
+    });
 
     // The guard reaps the child iff it holds no controlling terminal — which
     // it inherited from this process's session, so read the session directly:
     // `/dev/tty` opens iff the session has a controlling terminal.
     let will_reap = std::fs::File::open("/dev/tty").is_err();
 
+    // Linux discovery must not depend on lsof completing its system-wide
+    // scan. An empty lsof result reproduces the timeout's lost output.
+    #[cfg(target_os = "linux")]
+    let mock_path = {
+        use crate::common::mock_commands::{MockConfig, MockResponse};
+        let bin_dir = repo.root_path().join(".bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        MockConfig::new("lsof")
+            .command("_default", MockResponse::output(""))
+            .write(&bin_dir);
+        let mut paths: Vec<std::path::PathBuf> = std::env::var_os("PATH")
+            .map(|p| std::env::split_paths(&p).collect())
+            .unwrap_or_default();
+        paths.insert(0, bin_dir.clone());
+        (std::env::join_paths(paths).unwrap(), bin_dir)
+    };
+
     let run_remove = |repo: &TestRepo| {
-        let output = repo
-            .wt_command()
-            .args(["remove", "--reap", "feature-reapkill"])
-            .output()
-            .unwrap();
+        let mut cmd = repo.wt_command();
+        cmd.args(["remove", "--reap", "feature-reapkill"]);
+        #[cfg(target_os = "linux")]
+        cmd.env("PATH", &mock_path.0)
+            .env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", &mock_path.1);
+        let output = cmd.output().unwrap();
         String::from_utf8_lossy(&output.stderr).into_owned()
     };
 
@@ -245,6 +258,13 @@ fn test_remove_reap_kills_process(mut repo: TestRepo) {
         // thread already blocked in `wait()` reaps it the instant it exits.
         let reaper = std::thread::spawn(move || child.wait().unwrap());
         let stderr = run_remove(&repo);
+        if !stderr.contains("Reaping 1 process under") {
+            // On a regression, release the test child promptly before failing.
+            let _ = nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(pid as i32),
+                nix::sys::signal::Signal::SIGKILL,
+            );
+        }
         let status = reaper.join().unwrap();
 
         assert!(
@@ -1298,8 +1318,8 @@ fn test_remove_continues_after_execution_failures(
     });
 }
 
-/// Cancellation stops the batch before its next worktree. The hook signals
-/// its own shell, exercising child signal identity without signaling cargo.
+/// Cancellation retains completed removals in JSON and stops the batch before
+/// its next worktree. The hook signals its own shell, never the test process.
 #[cfg(unix)]
 #[rstest]
 #[case::sigint("INT", 130)]
@@ -1309,14 +1329,23 @@ fn test_remove_interrupt_stops_batch(
     #[case] signal: &str,
     #[case] exit_code: i32,
 ) {
-    let hook = format!("kill -{signal} $$");
+    let hook = format!("if [ '{{{{ branch }}}}' = interrupted ]; then kill -{signal} $$; fi");
     repo.write_project_config(&format!("pre-remove = {hook:?}"));
     repo.commit("Add interrupting pre-remove hook");
+    let completed = repo.add_worktree("completed");
     let interrupted = repo.add_worktree("interrupted");
     let later = repo.add_worktree("later");
     let output = repo
         .wt_command()
-        .args(["remove", "interrupted", "later", "--foreground", "--yes"])
+        .args([
+            "remove",
+            "completed",
+            "interrupted",
+            "later",
+            "--foreground",
+            "--yes",
+            "--format=json",
+        ])
         .output()
         .unwrap();
     assert_eq!(
@@ -1327,8 +1356,17 @@ fn test_remove_interrupt_stops_batch(
     );
     assert!(
         interrupted.exists() && later.exists(),
-        "interrupt must stop all removals"
+        "interrupt must stop the current and later removals"
     );
+    assert!(
+        !completed.exists(),
+        "the earlier removal must have completed"
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let items = json.as_array().unwrap();
+    assert_eq!(items.len(), 1, "{json}");
+    assert_eq!(items[0]["branch"], "completed");
+    assert_eq!(items[0]["path"], completed.to_string_lossy().as_ref());
 }
 
 /// Ctrl-C stops the batch even when the hook catches it and exits with an
@@ -1457,10 +1495,16 @@ exec {real_git} "$@"
         Some(exit_code),
         "stderr:\n{stderr}"
     );
-    assert!(
-        output.stdout.is_empty(),
-        "a canceled batch must not publish success JSON"
-    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    if boundary == "status" {
+        assert_eq!(json, serde_json::json!([]), "{json}");
+    } else {
+        assert!(!interrupted.exists(), "branch deletion follows removal");
+        let items = json.as_array().unwrap();
+        assert_eq!(items.len(), 1, "{json}");
+        assert_eq!(items[0]["branch"], "interrupted");
+        assert_eq!(items[0]["branch_outcome"], "retained_failed");
+    }
 }
 
 #[rstest]
@@ -2168,6 +2212,71 @@ delete-branch = false
         !String::from_utf8_lossy(&branches).contains("feature-cli-override"),
         "branch should be deleted when --delete-branch overrides config; got: {}",
         String::from_utf8_lossy(&branches),
+    );
+}
+
+#[rstest]
+fn test_remove_cli_delete_branch_force_overrides_config(mut repo: TestRepo) {
+    repo.write_test_config(
+        r#"[remove]
+delete-branch = false
+"#,
+    );
+    let worktree_path = repo.add_worktree("feature-cli-force-override");
+    std::fs::write(worktree_path.join("feature.txt"), "unmerged change").unwrap();
+    repo.git_command()
+        .args(["add", "feature.txt"])
+        .current_dir(&worktree_path)
+        .run()
+        .unwrap();
+    repo.git_command()
+        .args(["commit", "-m", "Add unmerged change"])
+        .current_dir(&worktree_path)
+        .run()
+        .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "--foreground",
+            "--delete-branch",
+            "-D",
+            "feature-cli-force-override",
+        ])
+        .output()
+        .expect("wt remove should run");
+    assert!(
+        output.status.success(),
+        "wt remove failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let branches = repo
+        .git_command()
+        .args(["branch", "--list", "feature-cli-force-override"])
+        .run()
+        .unwrap()
+        .stdout;
+    assert!(branches.is_empty(), "force-deleted branch should be gone");
+}
+
+#[rstest]
+fn test_remove_force_delete_with_config_false_suggests_override(repo: TestRepo) {
+    repo.write_test_config(
+        r#"[remove]
+delete-branch = false
+"#,
+    );
+    let output = repo
+        .wt_command()
+        .args(["remove", "-D", "nonexistent"])
+        .output()
+        .expect("wt remove should run");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("use --delete-branch to override it"),
+        "{stderr}"
     );
 }
 
@@ -3158,28 +3267,34 @@ approved-commands = ["echo 'hook ran' > {}"]
 /// background case is the load-bearing one: it's the default for `wt remove`,
 /// and it stages the worktree by renaming it out from under the user, so a
 /// missing gate there destroys the hook's output rather than refusing.
+/// A refusal must neither report removal nor run post-remove teardown.
 #[rstest]
-#[case::foreground(&["--foreground"])]
-#[case::background(&[])]
+#[case::foreground(&["--foreground"], false)]
+#[case::background(&[], false)]
+#[case::detached_background(&[], true)]
 fn test_pre_remove_hook_dirtying_worktree_blocks_remove(
     mut repo: TestRepo,
     #[case] execution_args: &[&str],
+    #[case] detached: bool,
 ) {
-    let hook = "echo dirty > hook-created.txt";
-    repo.write_project_config(&format!(r#"pre-remove = "{hook}""#));
-    repo.commit("Add config");
-    repo.write_test_approvals(&format!(
-        r#"[projects."../origin"]
-approved-commands = ["{hook}"]
-"#
+    let post_remove_marker = repo.root_path().join("post-remove-ran.txt");
+    repo.write_project_config(&format!(
+        r#"pre-remove = 'echo dirty > hook-created.txt'
+post-remove = 'echo removed > "{}"'
+"#,
+        post_remove_marker.to_slash_lossy(),
     ));
+    repo.commit("Add config");
 
     let worktree_path = repo.add_worktree("feature-hook-dirties");
+    if detached {
+        repo.detach_head_in_worktree("feature-hook-dirties");
+    }
     let output = repo
         .wt_command()
-        .arg("remove")
+        .args(["remove", "--yes", "--format=json"])
         .args(execution_args)
-        .arg("feature-hook-dirties")
+        .arg(&worktree_path)
         .output()
         .unwrap();
 
@@ -3195,6 +3310,15 @@ approved-commands = ["{hook}"]
     assert!(
         worktree_path.join("hook-created.txt").exists(),
         "hook-created file should remain recoverable in the worktree"
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json, serde_json::json!([]), "no removal completed");
+    // Post-remove is approved and would run in the surviving primary worktree.
+    // Allow a wrongly scheduled background hook time to create its marker.
+    std::thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
+    assert!(
+        !post_remove_marker.exists(),
+        "post-remove must not run when removal was refused"
     );
 }
 
@@ -4647,7 +4771,7 @@ fn test_remove_leaves_entries_to_the_running_drain(mut repo: TestRepo) {
 /// fails and deletes nothing, however the directory's entries are named.
 #[rstest]
 fn test_drain_trash_derives_the_trash_from_the_repository(repo: TestRepo) {
-    let outside = tempfile::tempdir().unwrap();
+    let outside = worktrunk::testing::tempdir().unwrap();
     let lookalike = outside.path().join("backup-2024");
     fs::create_dir(&lookalike).unwrap();
     let output = repo
@@ -4752,7 +4876,7 @@ fn test_remove_resolves_all_fsmonitor_daemons_in_one_lsof(mut repo: TestRepo) {
     // Outside the repo: a call log written under `bin_dir` (which lives at
     // `<repo>/.bin`) would leave an untracked file in the working tree the
     // command under test is inspecting.
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
     repo.add_worktree("feature-fsmon");
     let output = repo
@@ -4828,7 +4952,7 @@ fn test_remove_sweep_skips_lsof_when_no_daemon_pids(mut repo: TestRepo) {
     paths.insert(0, bin_dir.clone());
     let new_path = std::env::join_paths(&paths).unwrap();
 
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
     repo.add_worktree("feature-fsmon");
     let output = repo
@@ -5391,6 +5515,39 @@ fn test_remove_json(mut repo: TestRepo) {
     });
 }
 
+/// A branch lock fails deletion after the worktree was already removed.
+/// The partial result must report both facts on foreground and staged removal.
+#[rstest]
+#[case::foreground(true)]
+#[case::background(false)]
+fn test_remove_json_branch_failure_has_partial_result(
+    mut repo: TestRepo,
+    #[case] foreground: bool,
+) {
+    let worktree = repo.add_worktree("feature");
+    fs::write(
+        repo.root_path().join(".git/refs/heads/feature.lock"),
+        "locked",
+    )
+    .unwrap();
+    let mut command = repo.wt_command();
+    command.args(["remove", "feature", "--format=json", "--yes", "--no-hooks"]);
+    if foreground {
+        command.arg("--foreground");
+    }
+    let output = command.output().unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json[0]["branch"], "feature");
+    assert_eq!(json[0]["branch_outcome"], "retained_failed");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("lock"),
+        "{json}"
+    );
+    assert!(!worktree.exists());
+    repo.run_git(&["rev-parse", "--verify", "refs/heads/feature"]);
+}
+
 #[rstest]
 fn test_remove_json_branch_only(repo: TestRepo) {
     repo.commit("initial");
@@ -5414,6 +5571,31 @@ fn test_remove_json_branch_only(repo: TestRepo) {
     assert!(output.status.success());
 
     assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+}
+
+/// Force-delete bypasses integration checks, but must still report a retained
+/// branch when Git refuses its ref transaction.
+#[rstest]
+fn test_remove_json_force_branch_failure(repo: TestRepo) {
+    repo.create_branch("locked-branch");
+    fs::write(
+        repo.root_path().join(".git/refs/heads/locked-branch.lock"),
+        "locked",
+    )
+    .unwrap();
+    let output = repo
+        .wt_command()
+        .args(["remove", "locked-branch", "-D", "--format=json", "--yes"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result.as_array().unwrap().len(), 1, "{result}");
+    assert_eq!(result[0]["branch"], "locked-branch");
+    assert_eq!(result[0]["kind"], "branch_only");
+    assert_eq!(result[0]["branch_outcome"], "retained_failed");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("lock"));
+    repo.run_git(&["rev-parse", "--verify", "refs/heads/locked-branch"]);
 }
 
 /// `--format=json` carries the detached worktree too. The human output names it
@@ -6335,6 +6517,62 @@ fn test_force_remove_interrupted_status_preserves_worktrees(
     assert!(!stderr.contains("Removing later-worktree"));
 }
 
+/// A failed branch mutation is reported once after removal, with teardown hooks
+/// still running. Branch-only failures must not claim a checkout was removed.
+#[rstest]
+#[case::foreground(true, true)]
+#[case::background(false, true)]
+#[case::branch_only(true, false)]
+fn test_remove_branch_deletion_failure_context(
+    mut repo: TestRepo,
+    #[case] foreground: bool,
+    #[case] with_worktree: bool,
+) {
+    repo.write_project_config("post-remove = 'printf complete > removed-marker'");
+    repo.commit("Add post-remove hook");
+    let worktree = if with_worktree {
+        Some(repo.add_worktree("feature"))
+    } else {
+        repo.create_branch("feature");
+        None
+    };
+    fs::write(
+        repo.root_path().join(".git/refs/heads/feature.lock"),
+        "another writer",
+    )
+    .unwrap();
+    let mut command = repo.wt_command();
+    command.args(["remove", "feature", "--yes"]);
+    if foreground {
+        command.arg("--foreground");
+    }
+    let output = command.output().unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let plain = stderr.ansi_strip();
+    assert_eq!(output.status.code(), Some(1), "{plain}");
+    assert_eq!(
+        plain.contains("Worktree removed @"),
+        with_worktree,
+        "{plain}"
+    );
+    assert_eq!(
+        plain.matches("failed to delete branch").count()
+            + plain.matches("Failed to delete branch").count(),
+        1,
+        "{plain}"
+    );
+    assert_eq!(plain.matches("cannot lock ref").count(), 1, "{plain}");
+    assert!(!repo.git_output(&["branch", "--list", "feature"]).is_empty());
+    if let Some(worktree) = worktree {
+        assert!(!worktree.exists());
+        crate::common::wait_for_file_content(&repo.root_path().join("removed-marker"));
+        assert_eq!(
+            fs::read_to_string(repo.root_path().join("removed-marker")).unwrap(),
+            "complete"
+        );
+    }
+}
+
 /// With fsmonitor configured, a file written while the daemon shuts down is
 /// refused by a rescan after the stop. The shim stands in for the daemon and
 /// keeps every other Git command from starting a real one.
@@ -6535,5 +6773,45 @@ fn test_remove_no_argument_in_moved_worktree_refuses(mut repo: TestRepo) {
         status.status.success(),
         "{}",
         String::from_utf8_lossy(&status.stderr)
+    );
+}
+
+/// A failed destructive Git command reports the checkout and entries that
+/// survive it. A registration lock reaches Git's actual removal failure.
+#[rstest]
+fn test_remove_worktree_git_failure_preserves_context(mut repo: TestRepo) {
+    use worktrunk::git::{GitError, Repository};
+
+    let path = repo.add_worktree("locked-worktree");
+    repo.run_git(&["worktree", "lock", path.to_str().unwrap()]);
+    fs::create_dir(path.join("remaining-directory")).unwrap();
+    fs::write(path.join("remaining-file"), "surviving data").unwrap();
+    let repository = Repository::at(repo.root_path()).unwrap();
+    let error = repository.remove_worktree(&path, true).unwrap_err();
+
+    let Some(GitError::WorktreeRemovalFailed {
+        branch,
+        path: failed_path,
+        remaining_entries: Some(entries),
+        ..
+    }) = error.downcast_ref::<GitError>()
+    else {
+        panic!("expected contextual removal failure: {error:?}");
+    };
+    assert_eq!(branch, "locked-worktree");
+    assert_eq!(failed_path, &path);
+    assert!(entries.iter().any(|entry| entry == "remaining-directory/"));
+    assert!(entries.iter().any(|entry| entry == "remaining-file"));
+    assert!(entries.windows(2).all(|entries| entries[0] <= entries[1]));
+    assert_eq!(
+        fs::read_to_string(path.join("remaining-file")).unwrap(),
+        "surviving data"
+    );
+    assert!(path.join(".git").exists());
+    assert!(
+        repository
+            .branch("locked-worktree")
+            .exists_locally()
+            .unwrap()
     );
 }

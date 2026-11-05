@@ -88,10 +88,12 @@ pub struct CommitGenerationConfig {
 impl CommitGenerationConfig {
     /// Returns true if an LLM command is configured
     pub fn is_configured(&self) -> bool {
-        self.command
-            .as_ref()
-            .map(|s| !s.trim().is_empty())
-            .unwrap_or(false)
+        self.command().is_some()
+    }
+
+    /// The configured LLM command, excluding empty or whitespace-only values.
+    pub fn command(&self) -> Option<&str> {
+        self.command.as_deref().filter(|s| !s.trim().is_empty())
     }
 }
 
@@ -158,7 +160,7 @@ pub struct ListConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remotes: Option<bool>,
 
-    /// Enable LLM-generated branch summaries (picker tab 5 + list Summary column).
+    /// Enable LLM-generated branch summaries (picker tab 6 + list Summary column).
     /// Requires `[commit.generation] command` to be configured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<bool>,

@@ -40,8 +40,8 @@ if ((Get-Command {{ cmd }} -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN
         # Process the directive and clean it up even if cd throws.
         try {
             # cd file holds a raw path (no shell escaping needed)
-            if ((Test-Path $cdFile) -and (Get-Item $cdFile).Length -gt 0) {
-                $target = (Get-Content -Path $cdFile -Raw).Trim()
+            if ((Test-Path -LiteralPath $cdFile) -and (Get-Item -LiteralPath $cdFile).Length -gt 0) {
+                $target = Get-Content -LiteralPath $cdFile -Raw
                 if ($target) {
                     Set-Location -LiteralPath $target
                     if ($exitCode -eq 0) {
@@ -52,7 +52,7 @@ if ((Get-Command {{ cmd }} -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN
 
         }
         finally {
-            Remove-Item $cdFile -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $cdFile -ErrorAction SilentlyContinue
         }
 
         # Propagate the exit code so scripts/CI can read $LASTEXITCODE.

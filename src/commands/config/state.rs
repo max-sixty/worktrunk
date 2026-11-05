@@ -15,7 +15,7 @@
 //! **Authoritative** (hand-authored or override state; lost permanently if
 //! cleared). `state clear` prompts before removing these unless `--yes`:
 //!
-//! - Default branch override (git config `worktrunk.default_branch.*`)
+//! - Default branch override (git config `worktrunk.default-branch`)
 //! - Branch markers (git config `worktrunk.state.<branch>.marker`)
 //! - Vars (git config `worktrunk.state.<branch>.vars.*`)
 //! - Logs (`.git/wt/logs/`)
@@ -817,7 +817,12 @@ pub fn handle_state_get(
 
             let branch_ref = match (local_sha, remote_sha) {
                 (Some(sha), _) => BranchRef::local_branch(&branch_name, sha),
-                (None, Some(sha)) => BranchRef::remote_branch(&branch_name, sha),
+                (None, Some(sha)) => {
+                    let (remote, branch) = repo
+                        .split_remote_branch_name(&branch_name)
+                        .context("remote branch has no remote prefix")?;
+                    BranchRef::remote_branch(remote, branch, sha)
+                }
                 (None, None) => {
                     return Err(worktrunk::git::GitError::BranchNotFound {
                         // Offering `--create` for a name git rejects sends the
@@ -1783,8 +1788,27 @@ pub fn handle_vars_clear(
 /// It returns `Err` for real config errors. Both the listing step and each
 /// `unset_config` call propagate errors so user-initiated clears never report
 /// false success.
+///
+/// The marker pattern also matches a var named `marker`
+/// (`worktrunk.state.<branch>.vars.marker`). Such a key is skipped unless its
+/// value is marker JSON, in which case it is the marker of a branch whose name
+/// ends in `.vars`.
 fn clear_all_markers(repo: &Repository) -> anyhow::Result<usize> {
-    clear_matching_config(repo, r"^worktrunk\.state\..+\.marker$")
+    let entries = repo.config_regexp_entries(r"^worktrunk\.state\..+\.marker$")?;
+    let mut cleared = 0;
+    for (config_key, value) in entries {
+        if config_key.ends_with(".vars.marker") && !is_marker_json(&value) {
+            continue;
+        }
+        repo.unset_config(&config_key)?;
+        cleared += 1;
+    }
+    Ok(cleared)
+}
+
+fn is_marker_json(value: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(value)
+        .is_ok_and(|parsed| parsed.get("marker").is_some_and(|v| v.is_string()))
 }
 
 fn clear_matching_config(repo: &Repository, pattern: &str) -> anyhow::Result<usize> {

@@ -97,9 +97,7 @@ Three verbosity levels. Each is a superset of the previous one.
 | `-v` | + Info: hook output, alias template variable resolution | — | Debugging hooks/aliases |
 | `-vv` | Same as `-v` | + `trace.log`, `trace.jsonl`, `subprocess.log`, `diagnostic.md` | Filing a bug |
 
-At `-vv`, debug-level records (command lines, in-process spans, bounded subprocess preview) route to `trace.log` instead of stderr — so the terminal stays readable while the deep trace lands on disk. A one-line pointer on stderr shows where the files went.
-
-The `-vv` files have distinct audiences: `trace.log` is the human trace (bounded, gistable), `trace.jsonl` the same records for machines, `subprocess.log` the raw uncapped subprocess output, and `diagnostic.md` a bug-report bundle. Each is described in [`wt config state logs`](/config/#wt-config-state-logs).
+With `-vv`, stderr shows the log directory. See [`wt config state logs`](/config/#wt-config-state-logs) for the file formats.
 
 `RUST_LOG` overrides the flag baseline when set (`RUST_LOG=debug wt -v` lifts `-v` to debug-on-stderr).
 
@@ -175,7 +173,7 @@ The OpenCode path follows `$OPENCODE_CONFIG_DIR` > `$XDG_CONFIG_HOME/opencode` >
 
 ### 6. Temporary files (automatic)
 
-Worktrunk creates temporary Git index copies named `$TMPDIR/worktrunk-temp-index-*`. `wt list`, `wt list statusline`, `wt step diff`, `wt step commit --dry-run`, and `wt switch` use them to inspect staged or working-tree state without changing the real index. `wt list` also creates a `$TMPDIR/worktrunk-list-objects-*` directory so its merge probes do not add unreachable objects to the repository. When the system temp directory is unavailable, both fall back to Git's metadata: `worktrunk-list-objects-*` under the Git common directory and `worktrunk-temp-index-*` under the worktree's Git directory. A normal exit removes these files and directories; an interrupted process can leave one behind for manual cleanup.
+Worktrunk creates temporary Git index copies named `$TMPDIR/worktrunk-temp-index-*`. `wt list`, `wt list statusline`, `wt step diff`, `wt step commit --dry-run`, and `wt switch` use them to inspect staged or working-tree state without changing the real index. `wt list` also creates a `$TMPDIR/worktrunk-list-objects-*` directory so its merge probes do not add unreachable objects to the repository. When the system temp directory is unavailable, both fall back to Git's metadata: `worktrunk-list-objects-*` under the Git common directory and `worktrunk-temp-index-*` under the worktree's Git directory. A normal exit removes these files and directories. Later commands that create a temporary index reclaim index copies and their lock files older than one hour; object directories left by an interrupted process may still need manual cleanup.
 
 ### What Worktrunk does NOT create
 
@@ -212,6 +210,8 @@ Use `-D` to force-delete branches with unmerged changes. Use `--no-delete-branch
 
 A branch checked out in a second worktree is retained regardless, `-D` included. Deleting it would leave that worktree unable to resolve `HEAD`; only `git worktree add --force` produces that state.
 
+Deleting a branch also clears its [marker](/config/#wt-config-state-marker), so a later branch with the same name starts without one.
+
 ### Other cleanup
 
 - `wt merge` / `wt step push` — the target branch's checked-out worktree is updated to the merged commits, so a file those commits delete disappears from it, and an ignored file at a path they track is overwritten — the same result a `git merge` run in that worktree would produce. Uncommitted changes at paths the merge doesn't touch stay in place, staged or not; one at a path it does touch refuses the merge upfront, naming the file
@@ -219,7 +219,7 @@ A branch checked out in a second worktree is retained regardless, `-D` included.
 - `wt remove` — also stops the removed worktree's `git fsmonitor--daemon` (under `core.fsmonitor=true`), and resumes deleting `.git/wt/trash/` entries an interrupted removal left behind, along with fsmonitor daemons whose worktree no longer exists
 - `wt config state clear` — clears config keys, caches, markers, hints, variables, logs, and stale trash
 - `wt config shell install` — replaces an existing fish or Nushell wrapper file whole, and removes one an older version installed at a previous location (fish `conf.d/wt.fish`, Nushell `<config-dir>/vendor/autoload/wt.nu`), printing each removal; [Files created](/shell-integration/#files-created) names the file each shell gets
-- `wt config shell uninstall` — removes the lines that run `wt config shell init` from bash/zsh/PowerShell rc files, and deletes wrapper and completion files carrying worktrunk's content markers (fish `functions/`, `conf.d/`, and `completions/`; nushell `vendor/autoload`). Every removed line is printed
+- `wt config shell uninstall` — removes recognized initialization lines from bash/zsh/PowerShell rc files, and deletes wrapper and completion files carrying worktrunk's content markers (fish `functions/`, `conf.d/`, and `completions/`; nushell `vendor/autoload`). Customized initialization lines must be removed manually. Every removed line is printed
 - `wt config plugins opencode uninstall` / `wt config plugins pi uninstall` / `wt config plugins omp uninstall` — deletes that agent's `worktrunk.ts` plugin file. Only worktrunk's own file is touched; the rest of the agent's plugin directory is left alone
 
 See [What files does Worktrunk create?](#what-files-does-worktrunk-create) for details.

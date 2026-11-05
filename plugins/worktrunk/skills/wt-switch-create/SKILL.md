@@ -46,15 +46,16 @@ read-only task gets one all the same.
 <!-- Maintainers: rationale.md (same directory) covers the harness rules and
 design choices behind this — read it before re-adding guards or routes. -->
 
-1. **Pick the branch name** if none was given: short, from the task and
+1. **Pick a new branch name** if none was given: short, from the task and
    consistent with existing worktree names, or, mid-session, from the work
    being moved; with nothing to derive from, ask.
 
 2. **With no repo argument, create and enter in one call:**
    `EnterWorktree({name: "<branch>"})`. Worktrunk's `WorktreeCreate` hook runs
-   `wt switch --create`, so the result is an ordinary `wt` worktree in the
-   default layout, and the user sees no confirmation prompt. On success,
-   do the task (or, with no task text, confirm it's ready and wait).
+   `wt switch --create` for a new branch or `wt switch` for an existing one,
+   creating its checkout if needed. The result is an ordinary `wt` worktree,
+   and the user sees no confirmation prompt. On success, do the task (or,
+   with no task text, confirm it's ready and wait).
 
    Mid-session, carry uncommitted work across: `git stash push -u` before the
    `EnterWorktree` call, then `git stash pop` after — the call re-roots the
@@ -62,8 +63,8 @@ design choices behind this — read it before re-adding guards or routes. -->
 
 3. **Otherwise create it with `wt` and enter by path.** Two cases reach here: a
    repo argument, which step 2 can't target, and a failed step 2, whose error
-   says which — `✗ Branch <branch> already exists`, or `Already in a worktree
-   session`. Create with a `Bash` call (omit `-C <repo>` for this repo):
+   says `Already in a worktree session`. Create with a `Bash` call (omit
+   `-C <repo>` for this repo):
 
    ```
    wt -C <repo> switch --create <branch> --no-cd --format=json

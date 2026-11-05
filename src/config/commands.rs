@@ -98,6 +98,28 @@ impl CommandConfig {
         &self.steps
     }
 
+    /// Keep matching commands, preserving serial order and concurrent groups.
+    /// A concurrent group with one retained command becomes a single step.
+    pub fn filtered(&self, mut retain: impl FnMut(&Command) -> bool) -> Self {
+        let steps = self
+            .steps
+            .iter()
+            .filter_map(|step| match step {
+                HookStep::Single(cmd) => retain(cmd).then(|| HookStep::Single(cmd.clone())),
+                HookStep::Concurrent(commands) => {
+                    let mut kept: Vec<_> =
+                        commands.iter().filter(|cmd| retain(cmd)).cloned().collect();
+                    match kept.len() {
+                        0 => None,
+                        1 => kept.pop().map(HookStep::Single),
+                        _ => Some(HookStep::Concurrent(kept)),
+                    }
+                }
+            })
+            .collect();
+        Self { steps }
+    }
+
     /// Merge two configs by appending steps (base steps first, then overlay).
     ///
     /// Used for per-project hook overrides where both global and project hooks run.

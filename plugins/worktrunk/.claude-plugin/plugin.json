@@ -1,6 +1,6 @@
 {
   "name": "worktrunk",
-  "description": "Worktrunk is a CLI for Git worktree management, designed for parallel AI agent workflows. This plugin provides configuration guidance (LLM commit messages, project hooks, worktree paths) and automatic activity tracking (🤖/💬 indicators in `wt list` showing active Claude sessions).",
+  "description": "Worktrunk is a CLI for Git worktree management, designed for parallel AI agent workflows. This plugin provides configuration guidance (LLM commit messages, project hooks, worktree paths), automatic activity tracking (🤖/💬 indicators in `wt list` showing active Claude sessions), and a `/wt-diff` pane showing each worktree's changes.",
   "author": {
     "name": "Worktrunk",
     "url": "https://github.com/max-sixty/worktrunk"
@@ -14,5 +14,6 @@
     "claude-code",
     "agent"
   ],
-  "icon": "./.claude-plugin/icon.png"
+  "icon": "./.claude-plugin/icon.png",
+  "types": "./types/index.d.ts"
 }

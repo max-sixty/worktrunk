@@ -133,6 +133,56 @@ fn test_tether_kills_process_group_when_command_exits(repo: TestRepo) {
     );
 }
 
+/// A terminal Ctrl-C reaches the supervisor's foreground group, while the
+/// supervised command is in a separate group. The supervisor must still reap
+/// that command before it exits.
+#[rstest]
+fn test_tether_kills_process_group_when_interrupted(repo: TestRepo) {
+    use std::os::unix::process::CommandExt;
+
+    let pidfile = repo.home_path().join("tether-interrupted.pgid");
+    let snippet = format!(
+        "printf %s \"$$\" > \"{}\"; exec sleep 600",
+        pidfile.display()
+    );
+    let mut command = repo.wt_command();
+    command
+        .args(["step", "tether", "--", "sh", "-c", &snippet])
+        .current_dir(repo.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0);
+    let mut supervisor = command.spawn().expect("spawn wt step tether");
+    wait_for_file_content(&pidfile);
+    let pgid: i32 = std::fs::read_to_string(&pidfile)
+        .unwrap()
+        .trim()
+        .parse()
+        .expect("supervised command PID");
+    assert_ne!(supervisor.id() as i32, pgid);
+    assert!(
+        group_alive(pgid),
+        "supervised group should be alive before Ctrl-C"
+    );
+
+    kill(
+        Pid::from_raw(-(supervisor.id() as i32)),
+        nix::sys::signal::Signal::SIGINT,
+    )
+    .expect("signal the supervisor's foreground group");
+    let supervisor_exited = wait_until(|| supervisor.try_wait().unwrap().is_some());
+    let group_gone = wait_until(|| !group_alive(pgid));
+
+    // Clean up before asserting so a failure cannot leak the sleep.
+    let _ = kill(Pid::from_raw(-pgid), nix::sys::signal::Signal::SIGKILL);
+    let _ = supervisor.kill();
+    let _ = supervisor.wait();
+
+    assert!(supervisor_exited, "the supervisor should exit after Ctrl-C");
+    assert!(group_gone, "Ctrl-C must kill the supervised process group");
+}
+
 /// The global `-C <dir>` flag runs the tethered command in that directory —
 /// the canonical way to start a server from a subdirectory (Astro in `docs/`,
 /// a dev server in `frontend/`) given the command runs directly with no shell

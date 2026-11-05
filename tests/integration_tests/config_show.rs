@@ -122,7 +122,7 @@ fn test_config_show_with_system_config(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
 
     // Create system config in a temp directory
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -161,7 +161,7 @@ command = "company-llm-tool"
 #[rstest]
 fn test_system_config_values_used_as_defaults(repo: TestRepo) {
     // System config with a distinctive worktree-path template
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -194,7 +194,7 @@ fn test_system_config_values_used_as_defaults(repo: TestRepo) {
 #[rstest]
 fn test_user_config_overrides_system_config(repo: TestRepo) {
     // System config with one template
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -203,7 +203,7 @@ fn test_user_config_overrides_system_config(repo: TestRepo) {
     .unwrap();
 
     // User config overrides with a different template
-    let user_config_dir = tempfile::tempdir().unwrap();
+    let user_config_dir = worktrunk::testing::tempdir().unwrap();
     let user_config_path = user_config_dir.path().join("config.toml");
     fs::write(
         &user_config_path,
@@ -244,7 +244,7 @@ fn test_user_config_overrides_system_config(repo: TestRepo) {
 #[rstest]
 fn test_system_and_user_hooks_deep_merged(repo: TestRepo) {
     // System config defines a named pre-merge hook
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -255,7 +255,7 @@ company-lint = "company-lint-tool"
     .unwrap();
 
     // User config defines a differently-named pre-merge hook
-    let user_config_dir = tempfile::tempdir().unwrap();
+    let user_config_dir = worktrunk::testing::tempdir().unwrap();
     let user_config_path = user_config_dir.path().join("config.toml");
     fs::write(
         &user_config_path,
@@ -296,7 +296,7 @@ my-lint = "my-lint-tool"
 #[rstest]
 fn test_user_hook_replaces_same_named_system_hook(repo: TestRepo) {
     // System config defines a named hook
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -307,7 +307,7 @@ lint = "company-lint-tool"
     .unwrap();
 
     // User config defines the same-named hook with different command
-    let user_config_dir = tempfile::tempdir().unwrap();
+    let user_config_dir = worktrunk::testing::tempdir().unwrap();
     let user_config_path = user_config_dir.path().join("config.toml");
     fs::write(
         &user_config_path,
@@ -347,7 +347,7 @@ lint = "my-lint-tool"
 #[rstest]
 fn test_system_config_hooks_preserved_when_user_doesnt_override(repo: TestRepo) {
     // System config defines pre-merge and pre-commit hooks
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -361,7 +361,7 @@ company-format = "company-format-tool"
     .unwrap();
 
     // User config only defines pre-merge (should leave system's pre-commit intact)
-    let user_config_dir = tempfile::tempdir().unwrap();
+    let user_config_dir = worktrunk::testing::tempdir().unwrap();
     let user_config_path = user_config_dir.path().join("config.toml");
     fs::write(
         &user_config_path,
@@ -478,7 +478,7 @@ fn test_config_show_empty_system_config(mut repo: TestRepo, temp_home: TempDir) 
     repo.setup_mock_ci_tools_unauthenticated();
 
     // Create empty system config
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(&system_config_path, "").unwrap();
 
@@ -506,7 +506,7 @@ fn test_config_show_empty_system_config(mut repo: TestRepo, temp_home: TempDir) 
 fn test_config_show_reports_unreadable_source_and_continues(repo: TestRepo, #[case] source: &str) {
     let mut cmd = repo.wt_command();
     let system_dir = if source == "system" {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = worktrunk::testing::tempdir().unwrap();
         cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", dir.path());
         Some(dir)
     } else {
@@ -590,7 +590,7 @@ fn test_config_show_invalid_system_config(mut repo: TestRepo, temp_home: TempDir
     repo.setup_mock_ci_tools_unauthenticated();
 
     // Create system config with invalid TOML
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(&system_config_path, "invalid = [toml\n").unwrap();
 
@@ -615,7 +615,7 @@ fn test_config_show_invalid_system_config(mut repo: TestRepo, temp_home: TempDir
 #[rstest]
 fn test_system_config_unknown_keys_warning_during_load(repo: TestRepo) {
     // Create system config with an unknown key
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -646,7 +646,7 @@ fn test_system_config_unknown_keys_warning_during_load(repo: TestRepo) {
 /// migrated to its canonical name and stays active.
 #[rstest]
 fn test_system_config_deprecations_pass_through_gate(repo: TestRepo) {
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -684,7 +684,7 @@ pager = "delta --paging=never"
 
 #[rstest]
 fn test_config_show_outside_git_repo(mut repo: TestRepo, temp_home: TempDir) {
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
 
     // Setup mock gh/glab for deterministic BINARIES output
     repo.setup_mock_ci_tools_unauthenticated();
@@ -934,8 +934,8 @@ fn test_config_show_fish_without_completions(
 /// Test that config show displays "Outdated" when fish wrapper exists but has different code.
 ///
 /// The wrapper file contains `function wt` which matches the command name at a word boundary,
-/// but `is_shell_integration_line()` won't match it (it looks for eval/source patterns).
-/// This should NOT trigger a "Found wt ... but not detected as integration" warning because
+/// but `shell_integration()` won't match it (it recognizes initialization statements).
+/// This should NOT trigger an unrecognized-line warning because
 /// the wrapper file IS the integration — `scan_shell_configs` already identified it (as
 /// outdated). Only the "Outdated shell extension" warning should appear.
 #[rstest]
@@ -971,7 +971,7 @@ fn test_config_show_fish_outdated_wrapper(mut repo: TestRepo, temp_home: TempDir
 /// Same false-positive suppression as the fish variant: the wrapper file contains `def --wrapped wt`
 /// which matches the command name, but `scan_shell_configs` already recognized the file as
 /// integration (outdated). Only the "Outdated" warning should appear, not the generic
-/// "not detected as integration" warning.
+/// unrecognized-line warning.
 #[rstest]
 fn test_config_show_nushell_outdated_wrapper(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
@@ -1686,7 +1686,7 @@ fn test_config_show_full_tea_login_discovery(
         "origin",
         "https://gitea.example.com/example/repo.git",
     ]);
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let output = repo
         .wt_command()
         .args(["config", "show", "--full"])
@@ -1788,7 +1788,7 @@ kill -INT $$
         "origin",
         "https://gitea.example.com/example/repo.git",
     ]);
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let output = repo
         .wt_command()
         .args(["config", "show", "--full"])
@@ -2026,9 +2026,7 @@ fn test_config_show_no_user_config(mut repo: TestRepo, temp_home: TempDir) {
     });
 }
 
-///
-/// When a shell config contains `wt` at a word boundary but it's NOT detected as
-/// shell integration, show a warning with file:line format to help debug detection.
+/// Customized initialization is identified by location and left for manual management.
 #[rstest]
 fn test_config_show_unmatched_candidate_warning(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
@@ -2039,13 +2037,12 @@ fn test_config_show_unmatched_candidate_warning(mut repo: TestRepo, temp_home: T
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(global_config_dir.join("config.toml"), "").unwrap();
 
-    // Create .bashrc with a line containing `wt` but NOT a valid integration pattern
-    // This should trigger the "unmatched candidate" warning
+    // This runs Worktrunk's initialization but is not a standard setup statement.
     fs::write(
         temp_home.path().join(".bashrc"),
         r#"# Some bash config
 export PATH="$HOME/bin:$PATH"
-alias wt="git worktree"
+source <(wt config shell init bash)
 "#,
     )
     .unwrap();
@@ -2124,7 +2121,7 @@ fn test_config_show_unmatched_candidate_not_suppressed_by_wrapper(
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(global_config_dir.join("config.toml"), "").unwrap();
 
-    // Fish wrapper (outdated) — should NOT trigger "not detected" warning
+    // The outdated fish wrapper is already recognized as integration.
     let functions = temp_home.path().join(".config/fish/functions");
     fs::create_dir_all(&functions).unwrap();
     fs::write(
@@ -2133,7 +2130,7 @@ fn test_config_show_unmatched_candidate_not_suppressed_by_wrapper(
     )
     .unwrap();
 
-    // Bash alias — SHOULD trigger "not detected" warning
+    // An unrelated bash alias still appears as an unrecognized reference.
     fs::write(
         temp_home.path().join(".bashrc"),
         r#"# Some bash config
@@ -3351,7 +3348,7 @@ fn test_pi_install_honors_agent_dir_override(temp_home: TempDir) {
 
     // Pi expands a leading `~` in the override, so a quoted `~/…` lands under
     // home rather than in a literal `~` directory beneath the cwd.
-    let cwd = tempfile::tempdir().unwrap();
+    let cwd = worktrunk::testing::tempdir().unwrap();
     let mut cmd = wt_command();
     set_temp_home_env(&mut cmd, temp_home.path());
     cmd.current_dir(cwd.path());
@@ -4908,7 +4905,7 @@ fn test_config_show_full_stops_after_cancelled_powershell_query(
     fs::write(&pwsh, format!("#!/bin/sh\nkill -{signal} $$\n")).unwrap();
     fs::set_permissions(&pwsh, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let call_log = TempDir::new().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
         .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
@@ -4948,7 +4945,7 @@ fn test_config_show_full_continues_after_failed_powershell_query(
     fs::write(&pwsh, "#!/bin/sh\nexit 130\n").unwrap();
     fs::set_permissions(&pwsh, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let call_log = TempDir::new().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
         .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
@@ -4982,7 +4979,7 @@ fn test_config_show_full_continues_after_failed_shell_scan(mut repo: TestRepo, t
     ]);
     fs::create_dir(temp_home.path().join(".bashrc")).unwrap();
 
-    let call_log = TempDir::new().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"))
         .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
@@ -5020,7 +5017,7 @@ fn plugin_calls_when_accepted(
     use std::io::Write as _;
     use std::process::Stdio;
 
-    let call_log = TempDir::new().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     cmd.args(["config", "plugins", tool, action])
         .current_dir(repo.root_path())
@@ -5056,7 +5053,7 @@ fn test_plugins_codex_prompt_previews_commands(mut repo: TestRepo, temp_home: Te
 
     // Outside the repo: a call log in the working tree would leave an
     // untracked file behind the command under test.
-    let call_log = TempDir::new().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
     for (action, expected) in [
         (
@@ -5137,9 +5134,9 @@ fn test_plugins_claude_prompt_previews_commands(mut repo: TestRepo) {
 
     // Outside the repo: a call log in the working tree would leave an
     // untracked file behind the command under test.
-    let call_log = TempDir::new().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
-    let temp_home = TempDir::new().unwrap();
+    let temp_home = worktrunk::testing::tempdir().unwrap();
 
     for (action, expected) in [
         (
@@ -5770,110 +5767,66 @@ fn test_plugin_layout_is_consolidated() {
     }
     assert!(skill_dirs > 0, "skills/ holds no skill directories");
 
-    // The WorktreeRemove hook must not force-delete unmerged branches (#2939).
-    // Claude Code auto-fires WorktreeRemove on session exit for any worktree
-    // with a clean working tree, so a hook command containing `-D` /
-    // `--force-delete` silently discards committed-but-unpushed work — the only
-    // recovery path is `git fsck`. The safe default retains unmerged branches
-    // and prints a `wt remove -D <branch>` hint for the user to act on.
-    let hooks = read("plugins/worktrunk/hooks/hooks.json");
     let hooks_json = json("plugins/worktrunk/hooks/hooks.json");
-
-    // Claude hands each hook command to the user's LOGIN shell before `bash`
-    // launches, so the outer command line must parse under fish/zsh/bash. fish
-    // rejects bash brace syntax ("Variables cannot be bracketed"), so the plugin
-    // root must be referenced as `$CLAUDE_PLUGIN_ROOT`, never `${CLAUDE_PLUGIN_ROOT}`.
-    let all_commands: Vec<&str> = hooks_json["hooks"]
+    let commands: Vec<(&str, &str)> = hooks_json["hooks"]
         .as_object()
         .expect("hooks.json must have a `hooks` object")
-        .values()
-        .flat_map(|event| event.as_array().expect("each hook event must be an array"))
-        .flat_map(|group| {
-            group["hooks"]
+        .iter()
+        .flat_map(|(event, groups)| {
+            groups
                 .as_array()
-                .expect("each hook group must have a `hooks` array")
-        })
-        .map(|hook| {
-            hook["command"]
-                .as_str()
-                .expect("each hook must define a command")
+                .expect("each hook event must be an array")
+                .iter()
+                .flat_map(|group| {
+                    group["hooks"]
+                        .as_array()
+                        .expect("each hook group must have a `hooks` array")
+                })
+                .map(move |hook| {
+                    (
+                        event.as_str(),
+                        hook["command"]
+                            .as_str()
+                            .expect("each hook must define a command"),
+                    )
+                })
         })
         .collect();
-    for cmd in &all_commands {
-        assert!(
-            cmd.contains("$CLAUDE_PLUGIN_ROOT") && !cmd.contains("${CLAUDE_PLUGIN_ROOT}"),
-            "hook command must use unbraced $CLAUDE_PLUGIN_ROOT (braces break fish \
-             login-shell parsing: \"fish: Variables cannot be bracketed\"). command:\n{cmd}"
-        );
-    }
 
-    let marker_commands = all_commands
-        .iter()
-        .filter(|command| command.contains("config state marker"))
-        .collect::<Vec<_>>();
+    // Every hook runs the same literal command: `wt config plugins claude
+    // hook` reads Claude Code's payload and dispatches on the event, so the
+    // behavior lives in `wt` and is tested in `claude_hook.rs`. Anthropic's
+    // plugin directory refuses a hook command whose path the shell computes or
+    // that carries an inline program. The root stays unbraced: Claude hands
+    // each command to the user's login shell before `bash` launches, and fish
+    // rejects `${CLAUDE_PLUGIN_ROOT}` ("Variables cannot be bracketed"). The
+    // marker events end in `|| true`: a `wt` too old to have `hook` exits 2,
+    // which Claude Code reads as blocking the prompt, tool call, permission,
+    // or stop. The worktree events must fail when `wt` does.
+    const HOOK: &str = r#"bash "$CLAUDE_PLUGIN_ROOT/hooks/wt.sh" config plugins claude hook"#;
+    let mut events: Vec<&str> = commands.iter().map(|(event, _)| *event).collect();
+    events.sort_unstable();
     assert_eq!(
-        marker_commands.len(),
-        6,
-        "expected all 6 Claude marker hooks (UserPromptSubmit, Notification, \
-         PreToolUse, PermissionRequest, Stop, SessionEnd); a newly added one \
-         must be pinned too. hooks.json:\n{hooks}"
+        events,
+        [
+            "Notification",
+            "PermissionRequest",
+            "PreToolUse",
+            "SessionEnd",
+            "Stop",
+            "UserPromptSubmit",
+            "WorktreeCreate",
+            "WorktreeRemove",
+        ]
     );
-    for command in marker_commands {
-        assert!(
-            command.contains(r#"-C "$CLAUDE_PROJECT_DIR""#),
-            "marker hook must pin the directory it resolves against, or a shell \
-             `cd` during a turn retargets it to another repository (#3921). \
-             command:\n{command}"
-        );
+    for (event, command) in &commands {
+        let expected = if event.starts_with("Worktree") {
+            HOOK.to_string()
+        } else {
+            format!("{HOOK} || true")
+        };
+        assert_eq!(*command, expected, "{event} hook command drifted");
     }
-    let worktree_remove_cmd = hooks_json["hooks"]["WorktreeRemove"][0]["hooks"][0]["command"]
-        .as_str()
-        .expect("WorktreeRemove hook must define a command");
-    assert!(
-        !worktree_remove_cmd.contains(" -D") && !worktree_remove_cmd.contains("--force-delete"),
-        "WorktreeRemove hook must not pass -D / --force-delete (silently destroys \
-         committed-but-unpushed work on session-exit auto-remove; see #2939). \
-         hooks.json:\n{hooks}"
-    );
-
-    // The WorktreeRemove hook must resolve against the worktree path Claude
-    // Code hands it, not the session's project dir. The `claude agents` view
-    // spans every repo with a background session and is often launched from a
-    // parent directory that merely contains them, so `CLAUDE_PROJECT_DIR` names
-    // the wrong repo or none at all, `wt remove <path>` dies with `fatal: not a
-    // git repository`, and the session row is left undeletable (#3754, after
-    // the #3489 anchor proved insufficient). `-C "$p"` is layout-independent: a
-    // linked worktree carries a `.git` file pointing at its owning repository.
-    assert!(
-        worktree_remove_cmd.contains("-C \"$p\"")
-            && !worktree_remove_cmd.contains("CLAUDE_PROJECT_DIR"),
-        "WorktreeRemove hook must resolve via -C \"$p\" (the worktree path Claude Code \
-         handed it), never CLAUDE_PROJECT_DIR — the agents view is multi-repo, so no \
-         single project dir is correct for every session (#3754). \
-         command:\n{worktree_remove_cmd}"
-    );
-
-    // The WorktreeCreate hook pipes `wt … --format=json | jq -er .path`. Without
-    // `set -o pipefail` the pipeline's exit status is jq's, and `jq -er .path`
-    // on the empty stdout of a failed `wt` exits 0 on jq 1.6 — so a `wt` failure
-    // (e.g. an existing-branch collision after the branch/worktree were already
-    // created) is swallowed and Claude Code reports the misleading "hook
-    // succeeded but returned no worktree path" instead of wt's real error
-    // (#3545). pipefail makes the pipeline surface wt's nonzero exit regardless
-    // of jq version. The wrapper must be `bash -c` (dash rejects `set -o
-    // pipefail` fatally; some login shells are fish, which has no shell options)
-    // — see skills/wt-switch-create/rationale.md, "The hooks.json pipefail wrapper".
-    let worktree_create_cmd = hooks_json["hooks"]["WorktreeCreate"][0]["hooks"][0]["command"]
-        .as_str()
-        .expect("WorktreeCreate hook must define a command");
-    assert!(
-        worktree_create_cmd.contains("set -o pipefail"),
-        "WorktreeCreate hook pipes `wt … | jq -er .path`; without `set -o pipefail` a \
-         failed wt with empty stdout is swallowed (jq 1.6 exits 0 on empty input) and \
-         Claude Code reports \"hook succeeded but returned no worktree path\" instead \
-         of wt's real error (#3545). command:\n{worktree_create_cmd}"
-    );
-
     // The product description must not drift across tools. Byte-identical is
     // schema-impossible (Codex omits the activity clause, Gemini says
     // "extension"), but every manifest shares the canonical opening sentence.
@@ -6230,7 +6183,7 @@ fn test_shim_ignores_a_git_in_the_current_directory(repo: TestRepo) {
     MockConfig::new("git")
         .command("--exec-path", MockResponse::output("not-an-install"))
         .write(&project);
-    let call_log = TempDir::new().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
     let mut cmd = std::process::Command::new("cmd.exe");
     repo.configure_wt_cmd(&mut cmd);
@@ -6371,7 +6324,7 @@ fn test_claude_hook_commands_parse_in_all_shells() {
 /// directions are pinned below — a skeleton is a no-op, a clean worktree is
 /// still removed, a dirty one still fails — so neither a blanket `exit 0` nor a
 /// swallowed `wt remove` failure can satisfy this test. It runs the real command
-/// out of `hooks.json`, which parses its stdin with `jq`.
+/// out of `hooks.json`.
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 #[rstest]
 fn test_worktree_remove_hook_skips_path_holding_no_worktree(mut repo: TestRepo) {
@@ -6396,9 +6349,8 @@ fn test_worktree_remove_hook_skips_path_holding_no_worktree(mut repo: TestRepo) 
 
     // Fire the hook exactly as Claude Code does: the recorded path on stdin, the
     // plugin root in the environment. No `CLAUDE_PROJECT_DIR` — the hook
-    // resolves the repository from the worktree path via `-C "$p"` and must
-    // never consult a project dir (#3754), so setting one here would be dead
-    // setup.
+    // resolves the repository from the worktree path and must never consult a
+    // project dir (#3754), so setting one here would be dead setup.
     let run_hook = |worktree_path: &Path| -> Output {
         let mut cmd = std::process::Command::new("bash");
         repo.configure_wt_cmd(&mut cmd);
@@ -6412,7 +6364,10 @@ fn test_worktree_remove_hook_skips_path_holding_no_worktree(mut repo: TestRepo) 
             .stderr(Stdio::piped())
             .spawn()
             .expect("failed to spawn bash");
-        let payload = serde_json::json!({ "worktree_path": worktree_path.to_str().unwrap() });
+        let payload = serde_json::json!({
+            "hook_event_name": "WorktreeRemove",
+            "worktree_path": worktree_path.to_str().unwrap(),
+        });
         child
             .stdin
             .take()
@@ -7266,7 +7221,7 @@ mod plugin_prompt_pty {
 
 #[rstest]
 fn test_config_show_json(repo: TestRepo, temp_home: TempDir) {
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
@@ -7318,7 +7273,7 @@ fn test_config_show_json_allows_invalid_runtime_override(
     #[case] env_value: &str,
     #[case] inline: Option<&str>,
 ) {
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(&system_config_path, "[list]\nbranches = true\n").unwrap();
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
@@ -7378,6 +7333,9 @@ fn test_config_show_rejects_semantically_invalid_user_config(
     assert_eq!(output.status.code(), Some(1));
     if args.contains(&"--format=json") {
         serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("User config @"), "{stderr}");
+        assert!(stderr.contains("worktree-path cannot be empty"), "{stderr}");
     } else {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let user_section = stdout
@@ -7400,7 +7358,7 @@ fn test_config_show_rejects_semantically_invalid_system_config(
     repo: TestRepo,
     #[case] args: &[&str],
 ) {
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(&system_config_path, "worktree-path = \"\"\n").unwrap();
     fs::write(repo.test_config_path(), "worktree-path = \"../valid\"\n").unwrap();
@@ -7415,6 +7373,9 @@ fn test_config_show_rejects_semantically_invalid_system_config(
     assert_eq!(output.status.code(), Some(1));
     if args.contains(&"--format=json") {
         serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("System config @"), "{stderr}");
+        assert!(stderr.contains("worktree-path cannot be empty"), "{stderr}");
         return;
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -7470,13 +7431,12 @@ fn test_config_show_json_rejects_invalid_custom_column(repo: TestRepo, temp_home
     let output = cmd.output().unwrap();
     assert_eq!(output.status.code(), Some(1));
     serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
-    assert!(output.stderr.is_empty());
+    insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr).ansi_strip(), @"✗ Invalid [list.custom-columns.ticket] width: must be at least 1");
 }
 
 #[rstest]
 fn test_config_show_json_rejects_invalid_system_config(repo: TestRepo, temp_home: TempDir) {
-    let system_config_dir = tempfile::tempdir().unwrap();
-    let system_config_path = system_config_dir.path().join("config.toml");
+    let system_config_path = repo.root_path().join("system-config.toml");
     fs::write(&system_config_path, "invalid = [toml\n").unwrap();
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
@@ -7498,11 +7458,27 @@ fn test_config_show_json_rejects_invalid_system_config(repo: TestRepo, temp_home
         json["user"]["config"].is_object(),
         "a broken system source must not erase valid user config"
     );
+    let mut settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    crate::common::add_path_placeholder_filter(
+        &mut settings,
+        r"_REPO_/system-config\.toml",
+        "[SYSTEM_CONFIG]",
+    );
+    settings.bind(|| {
+        insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr).ansi_strip(), @"
+        ▲ System config @ [SYSTEM_CONFIG] failed to parse, skipping
+          TOML parse error at line 1, column 16
+            |
+          1 | invalid = [toml
+            |                ^
+          unclosed array, expected `]`
+        ");
+    });
 }
 
 #[rstest]
 fn test_config_show_json_rejects_unreadable_system_config(repo: TestRepo, temp_home: TempDir) {
-    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
@@ -7516,6 +7492,9 @@ fn test_config_show_json_rejects_unreadable_system_config(repo: TestRepo, temp_h
     assert_eq!(output.status.code(), Some(1));
     let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
     assert_eq!(json["system"]["exists"], true);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("System config @"), "{stderr}");
+    assert!(stderr.contains("Cannot read config"), "{stderr}");
 }
 
 #[rstest]
@@ -7530,6 +7509,16 @@ fn test_config_show_json_rejects_invalid_approvals_file(repo: TestRepo) {
 
     assert_eq!(output.status.code(), Some(1));
     serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    setup_snapshot_settings(&repo).bind(|| {
+        insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr).ansi_strip(), @"
+        ✗ Approvals @ [TEST_APPROVALS] failed to parse
+          TOML parse error at line 1, column 5
+            |
+          1 | not valid TOML [[[
+            |     ^
+          key with no value, expected `=`
+        ");
+    });
 }
 
 #[rstest]
@@ -7546,6 +7535,16 @@ fn test_config_show_json_rejects_invalid_user_config(repo: TestRepo) {
     let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
     assert_eq!(json["user"]["exists"], true);
     assert!(json["user"]["config"].is_null());
+    setup_snapshot_settings(&repo).bind(|| {
+        insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr).ansi_strip(), @"
+        ▲ User config @ [TEST_CONFIG] failed to parse, skipping
+          TOML parse error at line 1, column 16
+            |
+          1 | invalid = [toml
+            |                ^
+          unclosed array, expected `]`
+        ");
+    });
 }
 
 #[rstest]
@@ -7562,6 +7561,9 @@ fn test_config_show_json_rejects_unreadable_user_config(repo: TestRepo) {
     let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
     assert_eq!(json["user"]["exists"], true);
     assert!(json["user"]["config"].is_null());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("User config @"), "{stderr}");
+    assert!(stderr.contains("Cannot read config"), "{stderr}");
 }
 
 #[rstest]
@@ -7578,6 +7580,16 @@ fn test_config_show_json_rejects_invalid_project_config(repo: TestRepo) {
     let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
     assert_eq!(json["project"]["exists"], true);
     assert!(json["project"]["config"].is_null());
+    setup_snapshot_settings(&repo).bind(|| {
+        insta::assert_snapshot!(String::from_utf8_lossy(&output.stderr).ansi_strip(), @"
+        ✗ Project config @ _REPO_/.config/wt.toml failed to parse
+          TOML parse error at line 1, column 16
+            |
+          1 | invalid = [toml
+            |                ^
+          unclosed array, expected `]`
+        ");
+    });
 }
 
 #[rstest]
@@ -7595,6 +7607,9 @@ fn test_config_show_json_rejects_unreadable_project_config(repo: TestRepo) {
     let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
     assert_eq!(json["project"]["exists"], true);
     assert!(json["project"]["config"].is_null());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Project config @"), "{stderr}");
+    assert!(stderr.contains("Cannot read config"), "{stderr}");
 }
 
 #[rstest]
@@ -7634,7 +7649,7 @@ fn test_config_show_json_with_project_config(repo: TestRepo, temp_home: TempDir)
 
 #[rstest]
 fn test_config_show_json_outside_repo(repo: TestRepo, temp_home: TempDir) {
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
 
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
@@ -7682,7 +7697,7 @@ fn test_project_config_path_env_var_override(repo: TestRepo, temp_home: TempDir)
     fs::write(&in_repo_config, "pre-start = \"in-repo-hook\"\n").unwrap();
 
     // Write the override project config at an arbitrary path.
-    let override_dir = tempfile::tempdir().unwrap();
+    let override_dir = worktrunk::testing::tempdir().unwrap();
     let override_path = override_dir.path().join("override.toml");
     fs::write(&override_path, "pre-start = \"override-hook\"\n").unwrap();
 
@@ -7950,5 +7965,61 @@ fn test_config_show_reports_failed_migration_diff(repo: TestRepo) {
     assert!(
         stdout.contains("Could not render the proposed diff"),
         "expected the failure to be reported, got:\n{stdout}"
+    );
+}
+
+/// A non-UTF-8 environment entry must not panic config loading.
+#[cfg(unix)]
+#[rstest]
+fn test_config_show_non_utf8_environment(repo: TestRepo) {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let output = repo
+        .wt_command()
+        .env("UNRELATED", OsString::from_vec(vec![0xff]))
+        .env(OsString::from_vec(b"UNRELATED_\xff".to_vec()), "value")
+        .args(["config", "show"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+}
+
+/// An unreadable config must stop a mutation before it uses default settings.
+#[rstest]
+#[case("WORKTRUNK_CONFIG_PATH", false)]
+#[case("WORKTRUNK_SYSTEM_CONFIG_PATH", false)]
+#[case("WORKTRUNK_CONFIG_PATH", true)]
+#[case("WORKTRUNK_SYSTEM_CONFIG_PATH", true)]
+fn test_unreadable_config_stops_switch(
+    repo: TestRepo,
+    #[case] variable: &str,
+    #[case] invalid_utf8: bool,
+) {
+    let scratch = crate::common::test_tempdir();
+    let config = scratch.path().join("unreadable.toml");
+    if invalid_utf8 {
+        fs::write(&config, [0xff]).unwrap();
+    } else {
+        fs::create_dir(&config).unwrap();
+    }
+    let output = repo
+        .wt_command()
+        .env(variable, &config)
+        .args(["switch", "--create", "unreadable-config", "--yes"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Failed to read"), "{stderr}");
+    assert!(stderr.contains("unreadable.toml"), "{stderr}");
+    let branch = repo
+        .git_command()
+        .args(["show-ref", "--verify", "refs/heads/unreadable-config"])
+        .run()
+        .unwrap();
+    assert!(
+        !branch.status.success(),
+        "branch was created despite unreadable config"
     );
 }

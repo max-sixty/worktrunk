@@ -39,7 +39,10 @@ use crate::commands::repository_ext::{
     live_sibling_checkout,
 };
 use crate::commands::template_vars::TemplateVars;
-use crate::output::{handle_merge_remove_output, post_hook_display_path, pre_hook_display_path};
+use crate::output::{
+    CommandFailure, CommandResult, handle_merge_remove_output, post_hook_display_path,
+    pre_hook_display_path,
+};
 
 /// Inputs to [`finish_after_merge`]. Owned by the caller; this struct just
 /// bundles them so the function signature stays readable.
@@ -64,13 +67,16 @@ pub struct FinishAfterMergeArgs<'a> {
 /// `announcer` is mutated in place; `flush()` stays with the caller because it
 /// covers the whole command's background hooks (post-commit, post-remove,
 /// post-switch, post-merge), not just this step.
+/// Records the removal decision before fallible post-merge hook setup, so a
+/// later error cannot discard a completed removal. `None` means cleanup did
+/// not reach a confirmed outcome.
 pub fn finish_after_merge(
     repo: &Repository,
     config: &UserConfig,
     env: &CommandEnv,
     announcer: &mut HookAnnouncer<'_>,
     args: FinishAfterMergeArgs<'_>,
-) -> anyhow::Result<bool> {
+) -> CommandResult<bool> {
     let FinishAfterMergeArgs {
         current_branch,
         source_is_current,
@@ -204,44 +210,50 @@ pub fn finish_after_merge(
         // The fate is dropped: merge's own reporting (`removed` in the JSON
         // blob, the removal messages) doesn't itemize the branch, and the
         // handler has already narrated any retention.
-        handle_merge_remove_output(&remove_result, plan, announcer)?;
+        handle_merge_remove_output(&remove_result, plan, announcer)
+            .map_err(|failure| failure.map_result(|_| true))?;
         true
     };
 
-    if verify {
-        // Post-merge hooks run in the destination worktree (target). `ctx.repo`
-        // is rooted there only for template *rendering* (the feature worktree
-        // may be gone); the command set is the frozen `plan`, anchored at
-        // `destination_path` at the gate — no re-read of the destination's
-        // (now post-merge) `.config/wt.toml`.
-        let dest_repo = Repository::at(&destination_path)?;
-        let ctx = CommandContext::new(
-            &dest_repo,
-            config,
-            Some(current_branch),
-            &destination_path,
-            yes,
-        );
-        let display_path = if removed && source_is_current {
-            post_hook_display_path(&destination_path)
-        } else {
-            pre_hook_display_path(&destination_path)
-        };
+    let finish = (|| -> anyhow::Result<()> {
+        if verify {
+            // Post-merge hooks run in the destination worktree (target). `ctx.repo`
+            // is rooted there only for template *rendering* (the feature worktree
+            // may be gone); the command set is the frozen `plan`, anchored at
+            // `destination_path` at the gate — no re-read of the destination's
+            // (now post-merge) `.config/wt.toml`.
+            let dest_repo = Repository::at(&destination_path)?;
+            let ctx = CommandContext::new(
+                &dest_repo,
+                config,
+                Some(current_branch),
+                &destination_path,
+                yes,
+            );
+            let display_path = if removed && source_is_current {
+                post_hook_display_path(&destination_path)
+            } else {
+                pre_hook_display_path(&destination_path)
+            };
 
-        let mut vars = feature_vars.with_target(target_branch);
-        if let Some(p) = target_worktree_path {
-            vars = vars.with_target_worktree_path(p);
+            let mut vars = feature_vars.with_target(target_branch);
+            if let Some(p) = target_worktree_path {
+                vars = vars.with_target_worktree_path(p);
+            }
+            register_planned(
+                announcer,
+                plan,
+                &destination_path,
+                &ctx,
+                HookType::PostMerge,
+                &vars.as_extra_vars(),
+                display_path,
+            )?;
         }
-        register_planned(
-            announcer,
-            plan,
-            &destination_path,
-            &ctx,
-            HookType::PostMerge,
-            &vars.as_extra_vars(),
-            display_path,
-        )?;
-    }
 
-    Ok(removed)
+        Ok(())
+    })();
+    finish
+        .map(|()| removed)
+        .map_err(|error| CommandFailure::with_result(error, removed))
 }

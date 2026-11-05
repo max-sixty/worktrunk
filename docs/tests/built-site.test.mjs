@@ -28,6 +28,7 @@ const publicRoutes = [
   '/step/',
   '/switch/',
   '/tips-patterns/',
+  '/try-it/',
 ];
 
 async function htmlFiles(directory = dist) {
@@ -116,10 +117,10 @@ test('build preserves the public route contract', async () => {
   for (const file of expected) assert.ok(files.has(file), `missing ${file}`);
 
   const sitemap = await readFile(path.join(dist, 'sitemap-0.xml'), 'utf8');
-  for (const route of publicRoutes) {
+  for (const route of publicRoutes.filter((route) => route !== '/try-it/')) {
     assert.match(sitemap, new RegExp(`<loc>https://worktrunk\\.dev${route}</loc>`));
   }
-  assert.doesNotMatch(sitemap, /worktrunk\.dev\/(?:404|worktrunk)\//);
+  assert.doesNotMatch(sitemap, /worktrunk\.dev\/(?:404|worktrunk|try-it)\//);
 
   const robots = await readFile(path.join(dist, 'robots.txt'), 'utf8');
   for (const match of robots.matchAll(/^Sitemap:\s+(\S+)$/gm)) {
@@ -562,7 +563,8 @@ test('hash navigation selects the requested section in every rendered TOC', () =
 });
 
 test('every structural content heading appears in the page outline', async () => {
-  for (const route of publicRoutes.filter((candidate) => candidate !== '/')) {
+  // The homepage and the Try it page drop the outline to give content the width.
+  for (const route of publicRoutes.filter((candidate) => !['/', '/try-it/'].includes(candidate))) {
     const page = await readFile(routeFile(route), 'utf8');
     const headings = [...page.matchAll(/<h[12]\b[^>]*\bid="([^"]+)"/g)]
       .map((match) => match[1])

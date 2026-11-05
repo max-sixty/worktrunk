@@ -963,6 +963,17 @@ mod snapshot_resolve_tests {
     use super::*;
     use crate::testing::TestRepo;
 
+    #[test]
+    fn failed_ancestor_query_is_not_cached_as_false() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let head = test.git_output(&["rev-parse", "HEAD"]);
+        let missing = "1111111111111111111111111111111111111111";
+        assert!(super::super::sha_cache::is_ancestor(&repo, missing, &head).is_none());
+        assert!(repo.is_ancestor_by_sha(missing, &head).is_err());
+        assert!(super::super::sha_cache::is_ancestor(&repo, missing, &head).is_none());
+    }
+
     /// Exercises the `git rev-parse` fallback when the snapshot doesn't
     /// carry the ref (e.g. `HEAD`, tags, raw SHAs). The protective
     /// `--verify --end-of-options` is on this call site too — keep this

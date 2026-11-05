@@ -103,7 +103,7 @@ impl Repository {
         Ok(())
     }
 
-    /// Unset a config key and keep the bulk config map coherent.
+    /// Unset every value for a config key and keep the bulk config map coherent.
     ///
     /// Returns `true` if the key was cleared, `false` if it didn't exist.
     /// Propagates actual git config errors (corrupt config, permission denied).
@@ -111,12 +111,14 @@ impl Repository {
     /// Removes the canonical form (matching what git emits) to stay in
     /// sync with `set_config_value` and `config_last`.
     pub(super) fn unset_config_value(&self, key: &str) -> anyhow::Result<bool> {
-        let args = ["config", "--unset", key];
+        // --unset also returns 5 for repeated values without removing them.
+        // --unset-all makes 5 unambiguously mean that the key was absent.
+        let args = ["config", "--unset-all", key];
         let output = self.run_command_output(&args)?;
         let existed = if output.status.success() {
             true
         } else if output.status.code() == Some(5) {
-            // --unset exit code 5 = key didn't exist
+            // --unset-all exit code 5 = key didn't exist
             false
         } else {
             return Err(CommandError::from_failed_output("git", &args, &output).into());
@@ -1141,7 +1143,33 @@ mod tests {
 
         let err = repo.unset_config("inva lid.key").unwrap_err();
         let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
-        assert_eq!(cmd_err.command_string(), "git config --unset inva lid.key");
+        assert_eq!(
+            cmd_err.command_string(),
+            "git config --unset-all inva lid.key"
+        );
+    }
+
+    #[test]
+    fn test_unset_config_clears_all_values_and_cache() {
+        let test = TestRepo::with_initial_commit();
+        let key = "worktrunk.state.main.vars.example";
+        for value in ["first", "second"] {
+            let output = test
+                .git_command()
+                .args(["config", "--add", key, value])
+                .run()
+                .unwrap();
+            assert!(output.status.success());
+        }
+        let repo = Repository::at(test.root_path()).unwrap();
+        // Populate the bulk cache before clearing, so both cached and fresh
+        // reads must agree with what was removed from disk.
+        assert_eq!(repo.config_value(key).unwrap().as_deref(), Some("second"));
+        assert!(repo.unset_config(key).unwrap());
+        assert_eq!(repo.config_value(key).unwrap(), None);
+        let fresh = Repository::at(test.root_path()).unwrap();
+        assert_eq!(fresh.config_value(key).unwrap(), None);
+        assert!(!repo.unset_config(key).unwrap());
     }
 
     #[test]

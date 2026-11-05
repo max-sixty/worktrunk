@@ -164,9 +164,9 @@
               src = pkgs.lib.cleanSource ./.;
               # Tests shell out to a few host tools — `git` for the harness,
               # `python3` for argv-quoting and post-start fixtures, `ps`
-              # (procps) for the pgid invariant test, `lsof` for the
-              # `--reap` process-discovery test, `ssh-keygen` (openssh) for
-              # the `--no-ff` commit-signing test. Without these on PATH
+              # (procps) for process checks, `lsof` for fsmonitor socket
+              # discovery, and `ssh-keygen` (openssh) for the `--no-ff`
+              # commit-signing test. Without these on PATH
               # the sandbox surfaces them as `No such file or directory`.
               nativeBuildInputs = commonArgs.nativeBuildInputs ++ [
                 pkgs.git

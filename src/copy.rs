@@ -225,9 +225,10 @@ pub fn copy_leaf(
             return Ok(None);
         }
         Err(e) => {
-            return Err(
-                anyhow::Error::from(e).context(format!("reading metadata for {}", src.display()))
-            );
+            return Err(anyhow::Error::from(e).context(format!(
+                "reading metadata for {}",
+                format_path_for_display(src)
+            )));
         }
     };
 
@@ -250,9 +251,8 @@ pub fn copy_leaf(
                 return Ok(None);
             }
             Err(e) => {
-                return Err(
-                    anyhow::Error::from(e).context(format!("reading symlink {}", src.display()))
-                );
+                return Err(anyhow::Error::from(e)
+                    .context(format!("reading symlink {}", format_path_for_display(src))));
             }
         };
         create_symlink(&target, src, dest)?;
@@ -295,7 +295,11 @@ pub fn copy_leaf(
                 return Ok(None);
             }
             Err(e) => {
-                return Err(anyhow::Error::from(e).context(format!("copying {}", src.display())));
+                return Err(anyhow::Error::from(e).context(format!(
+                    "copying {} to {}",
+                    format_path_for_display(src),
+                    format_path_for_display(dest)
+                )));
             }
         }
     };
@@ -418,13 +422,16 @@ pub fn copy_dir_recursive(
                 continue;
             }
             Err(e) => {
-                return Err(anyhow::Error::from(e)
-                    .context(format!("reading directory {}", src_dir.display())));
+                return Err(anyhow::Error::from(e).context(format!(
+                    "reading directory {}",
+                    format_path_for_display(&src_dir)
+                )));
             }
         };
 
-        fs::create_dir_all(&dest_dir)
-            .with_context(|| format!("creating directory {}", dest_dir.display()))?;
+        fs::create_dir_all(&dest_dir).with_context(|| {
+            format!("creating directory {}", format_path_for_display(&dest_dir))
+        })?;
         #[cfg(unix)]
         dirs_for_perms.push((src_dir.clone(), dest_dir.clone()));
 
@@ -438,8 +445,10 @@ pub fn copy_dir_recursive(
                     continue;
                 }
                 Err(e) => {
-                    return Err(anyhow::Error::from(e)
-                        .context(format!("reading metadata for {}", entry.path().display())));
+                    return Err(anyhow::Error::from(e).context(format!(
+                        "reading metadata for {}",
+                        format_path_for_display(&entry.path())
+                    )));
                 }
             };
             let src_path = entry.path();
@@ -491,12 +500,18 @@ pub fn copy_dir_recursive(
                 continue;
             }
             Err(e) => {
-                return Err(anyhow::Error::from(e)
-                    .context(format!("reading permissions for {}", src_dir.display())));
+                return Err(anyhow::Error::from(e).context(format!(
+                    "reading permissions for {}",
+                    format_path_for_display(src_dir)
+                )));
             }
         };
-        fs::set_permissions(dest_dir, src_perms)
-            .with_context(|| format!("setting permissions on {}", dest_dir.display()))?;
+        fs::set_permissions(dest_dir, src_perms).with_context(|| {
+            format!(
+                "setting permissions on {}",
+                format_path_for_display(dest_dir)
+            )
+        })?;
     }
 
     Ok(skipped)
@@ -518,17 +533,19 @@ fn create_symlink(target: &Path, src_path: &Path, dest_path: &Path) -> anyhow::R
     {
         let _ = src_path; // Used on Windows to determine symlink type
         std::os::unix::fs::symlink(target, dest_path)
-            .with_context(|| format!("creating symlink {}", dest_path.display()))?;
+            .with_context(|| format!("creating symlink {}", format_path_for_display(dest_path)))?;
     }
     #[cfg(windows)]
     {
         let is_dir = src_path.metadata().map(|m| m.is_dir()).unwrap_or(false);
         if is_dir {
-            std::os::windows::fs::symlink_dir(target, dest_path)
-                .with_context(|| format!("creating symlink {}", dest_path.display()))?;
+            std::os::windows::fs::symlink_dir(target, dest_path).with_context(|| {
+                format!("creating symlink {}", format_path_for_display(dest_path))
+            })?;
         } else {
-            std::os::windows::fs::symlink_file(target, dest_path)
-                .with_context(|| format!("creating symlink {}", dest_path.display()))?;
+            std::os::windows::fs::symlink_file(target, dest_path).with_context(|| {
+                format!("creating symlink {}", format_path_for_display(dest_path))
+            })?;
         }
     }
     #[cfg(not(any(unix, windows)))]
@@ -551,7 +568,7 @@ mod tests {
 
     #[test]
     fn test_remove_if_exists_reports_removal() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let file = dir.path().join("file");
         fs::write(&file, b"contents").unwrap();
 
@@ -571,7 +588,7 @@ mod tests {
         // Simulates a source file that existed during the caller's directory
         // walk but is gone by copy time (e.g. a concurrent build rewriting
         // `target/`). Should be skipped, not treated as a fatal error.
-        let dest_dir = tempfile::tempdir().unwrap();
+        let dest_dir = crate::testing::tempdir().unwrap();
         let src = dest_dir.path().join("does-not-exist");
         let dest = dest_dir.path().join("dest");
 
@@ -586,7 +603,7 @@ mod tests {
         // Under `force` the skip must not cost the destination its contents:
         // the source is stat'd before the destination is removed, so a source
         // that is already gone leaves the existing destination in place.
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let src = dir.path().join("does-not-exist");
         let dest = dir.path().join("dest");
         fs::write(&dest, b"pre-existing content").unwrap();
@@ -601,7 +618,7 @@ mod tests {
     fn test_copy_leaf_skips_existing_destination() {
         // The destination check moved ahead of the source stat; without
         // `force` an existing destination still wins and keeps its contents.
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let src = dir.path().join("src");
         let dest = dir.path().join("dest");
         fs::write(&src, b"source content").unwrap();
@@ -658,7 +675,7 @@ mod tests {
         // `PermissionDenied`; a file another process puts there before the
         // byte copy must survive, and the `AlreadyExists` it causes is what
         // `copy_leaf` skips on.
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::testing::tempdir().unwrap();
         let src = temp.path().join("src");
         let dest = temp.path().join("dest");
         fs::write(&src, "source").unwrap();
@@ -676,7 +693,7 @@ mod tests {
 
     #[test]
     fn test_copy_to_new_file_copies_contents_and_mode() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::testing::tempdir().unwrap();
         let src = temp.path().join("script.sh");
         let dest = temp.path().join("copy.sh");
         fs::write(&src, "#!/bin/sh\n").unwrap();
@@ -711,7 +728,7 @@ mod tests {
         {
             let src_dir = temp.path().join("dir");
             fs::create_dir(&src_dir).unwrap();
-            let out = tempfile::tempdir().unwrap();
+            let out = crate::testing::tempdir().unwrap();
             let dest = out.path().join("partial");
             assert!(copy_to_new_file(&src_dir, &dest).is_err());
             assert_eq!(fs::read_dir(out.path()).unwrap().count(), 0);
@@ -723,8 +740,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_failed_copy_cleanup_leaves_racing_destination() {
-        let temp = tempfile::tempdir().unwrap();
-        let out = tempfile::tempdir().unwrap();
+        let temp = crate::testing::tempdir().unwrap();
+        let out = crate::testing::tempdir().unwrap();
         let dest = out.path().join("dest");
         fs::write(&dest, "racer").unwrap();
 
@@ -735,7 +752,7 @@ mod tests {
 
     #[test]
     fn test_discard_temp_reports_cleanup_failure() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
 
         let temp = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
         let err = discard_temp(temp, io::Error::from(ErrorKind::AlreadyExists));
@@ -761,7 +778,7 @@ mod tests {
     fn test_copy_leaf_force_replaces_existing_destination() {
         // The counterpart: with `force` the destination is removed and the
         // source copied over it, reporting the source's byte count.
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let src = dir.path().join("src");
         let dest = dir.path().join("dest");
         fs::write(&src, b"source content").unwrap();
@@ -783,7 +800,7 @@ mod tests {
         // The skipped count is what tells a caller that deletes the source
         // whether the destination received everything. An idempotent re-run
         // skips a leaf that is already there, and says so.
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let src = dir.path().join("src");
         let dest = dir.path().join("dest");
         fs::create_dir_all(&src).unwrap();
@@ -805,7 +822,7 @@ mod tests {
         // A socket is dropped at classification, not counted: the count exists
         // so a caller that deletes the source can refuse, and a socket carries
         // no content that refusal would protect.
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let src = dir.path().join("src");
         let dest = dir.path().join("dest");
         fs::create_dir_all(&src).unwrap();
@@ -827,7 +844,7 @@ mod tests {
     fn test_copy_dir_recursive_reports_no_skips_for_a_complete_copy() {
         // The control: a clean copy reports zero, which is what lets a move
         // treat any non-zero count as a reason to keep the source.
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let src = dir.path().join("src");
         let dest = dir.path().join("dest");
         fs::create_dir_all(src.join("nested")).unwrap();
@@ -848,7 +865,7 @@ mod tests {
         // another for its short root — so the copy was refused as "outside" a
         // worktree it was inside (#3898). Off Windows the depth is unremarkable
         // and this just exercises a deep tree.
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let src_root = dir.path().join("src");
         let dest_root = dir.path().join("dest");
 
@@ -884,7 +901,7 @@ mod tests {
         // A read-only source copies to a read-only destination; setting its
         // time must not need write access to it.
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let src = dir.path().join("src");
         let dest = dir.path().join("dest");
         fs::write(&src, b"content").unwrap();
@@ -909,7 +926,7 @@ mod tests {
         // A subdirectory that vanishes mid-walk is skipped, but the root the
         // caller named is not — its absence is a real error, and nothing is
         // created at the destination.
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::testing::tempdir().unwrap();
         let src = dir.path().join("does-not-exist");
         let dest = dir.path().join("dest");
 
@@ -920,5 +937,62 @@ mod tests {
             "error should name the failing operation and path, got: {err:#}"
         );
         assert!(!dest.exists());
+    }
+
+    /// Failed filesystem operations retain their cause and quote paths that
+    /// contain spaces, including failures before any data can be copied.
+    #[cfg(unix)]
+    #[test]
+    fn test_copy_errors_quote_paths_and_retain_io_causes() {
+        let dir = crate::testing::test_tempdir();
+        let blocker = dir.path().join("file as parent");
+        fs::write(&blocker, b"existing data").unwrap();
+        let invalid_source = blocker.join("child");
+        let dest = dir.path().join("destination");
+        let metadata_error = copy_leaf(&invalid_source, &dest, None, false).unwrap_err();
+        assert!(metadata_error.downcast_ref::<std::io::Error>().is_some());
+        assert_eq!(
+            metadata_error.to_string(),
+            format!("reading metadata for '{}'", invalid_source.display())
+        );
+        assert!(!dest.exists());
+
+        let src = dir.path().join("source");
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("data"), b"data").unwrap();
+        let invalid_dest = blocker.join("destination");
+        let directory_error =
+            copy_dir_recursive(&src, &invalid_dest, None, false, &Progress::disabled())
+                .unwrap_err();
+        assert!(directory_error.downcast_ref::<std::io::Error>().is_some());
+        assert_eq!(
+            directory_error.to_string(),
+            format!("creating directory '{}'", invalid_dest.display())
+        );
+
+        let source_file = src.join("source file");
+        fs::write(&source_file, b"source data").unwrap();
+        let copy_error = copy_leaf(&source_file, &invalid_dest, None, false).unwrap_err();
+        assert!(copy_error.downcast_ref::<std::io::Error>().is_some());
+        assert_eq!(
+            copy_error.to_string(),
+            format!(
+                "copying '{}' to '{}'",
+                source_file.display(),
+                invalid_dest.display()
+            )
+        );
+        assert_eq!(fs::read(&source_file).unwrap(), b"source data");
+
+        let source_link = src.join("source link");
+        std::os::unix::fs::symlink(&source_file, &source_link).unwrap();
+        let link_error = copy_leaf(&source_link, &invalid_dest, None, false).unwrap_err();
+        assert!(link_error.downcast_ref::<std::io::Error>().is_some());
+        assert_eq!(
+            link_error.to_string(),
+            format!("creating symlink '{}'", invalid_dest.display())
+        );
+        assert_eq!(fs::read_link(&source_link).unwrap(), source_file);
+        assert_eq!(fs::read(&blocker).unwrap(), b"existing data");
     }
 }

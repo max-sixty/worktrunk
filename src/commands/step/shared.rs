@@ -29,11 +29,7 @@ pub(super) fn print_dry_run(
     commit_config: &worktrunk::config::CommitGenerationConfig,
     message: &str,
 ) -> anyhow::Result<()> {
-    let command_block = match commit_config
-        .command
-        .as_deref()
-        .filter(|s| !s.trim().is_empty())
-    {
+    let command_block = match commit_config.command() {
         Some(cmd) => format_bash_with_gutter(&crate::llm::render_llm_invocation(cmd)?),
         None => format_with_gutter("(LLM not configured — using built-in fallback)", None),
     };

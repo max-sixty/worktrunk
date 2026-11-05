@@ -116,27 +116,15 @@ fn create_detach_log(
     hook_log: &HookLog,
 ) -> anyhow::Result<(PathBuf, fs::File)> {
     let log_dir = repo.wt_logs_dir();
-    let log_path = hook_log.path(&log_dir, branch);
-
-    // Create the full ancestor chain (e.g., {log_dir}/{branch}/{source}/{hook-type}/).
-    // log_path always has a parent here because HookLog::path() always appends at
-    // least one segment beyond log_dir.
-    let parent = log_path
-        .parent()
-        .expect("HookLog::path always includes a parent");
-    fs::create_dir_all(parent).with_context(|| {
-        format!(
-            "Failed to create log directory {}",
-            format_path_for_display(parent)
-        )
-    })?;
-
-    let log_file = fs::File::create(&log_path).with_context(|| {
-        format!(
-            "Failed to create log file {}",
-            format_path_for_display(&log_path)
-        )
-    })?;
+    let relative_path = hook_log.path(Path::new(""), branch);
+    let log_path = log_dir.join(&relative_path);
+    let log_file =
+        worktrunk::utils::open_log_file(&log_dir, &relative_path, false).with_context(|| {
+            format!(
+                "Failed to create log file {}",
+                format_path_for_display(&log_path)
+            )
+        })?;
 
     Ok((log_path, log_file))
 }

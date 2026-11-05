@@ -164,7 +164,10 @@ fn parse_worktrunk_env_vars() -> Vec<EnvVar> {
         "WORKTRUNK_APPROVALS_PATH",
     ];
 
-    let mut env_vars: Vec<_> = std::env::vars()
+    // `std::env::vars()` panics on any non-UTF-8 entry, including unrelated
+    // ones; skip those entries instead.
+    let mut env_vars: Vec<_> = std::env::vars_os()
+        .filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)))
         .filter(|(k, _)| k.starts_with("WORKTRUNK_"))
         .filter(|(k, _)| !INFRA_VARS.contains(&k.as_str()))
         .filter(|(k, _)| !k.starts_with("WORKTRUNK_TEST_"))
@@ -698,89 +701,66 @@ impl UserConfig {
         let mut warnings = Vec::new();
         let mut merged_table = toml::Table::new();
 
-        // 1. System config (lowest priority)
-        if let Some(system_path) = path::system_config_path()
-            && let Ok(content) = std::fs::read_to_string(&system_path)
-        {
+        // File layers merge in priority order: user settings override system settings.
+        for (config_path, kind) in [
+            (path::system_config_path(), ConfigFileKind::System),
+            (config_path(), ConfigFileKind::User),
+        ] {
+            let Some(config_path) = config_path else {
+                continue;
+            };
+            let content = match std::fs::read_to_string(&config_path) {
+                Ok(content) => content,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    if kind == ConfigFileKind::User
+                        && path::is_config_path_explicit()
+                        && WARNED_MISSING_CONFIG_PATHS
+                            .lock()
+                            .unwrap()
+                            .insert(config_path.clone())
+                    {
+                        crate::styling::eprintln!(
+                            "{}",
+                            crate::styling::warning_message(color_print::cformat!(
+                                "Config file not found: <bold>{}</>",
+                                crate::path::format_path_for_display(&config_path)
+                            ))
+                        );
+                    }
+                    continue;
+                }
+                Err(err) => {
+                    warnings.push(LoadError::Validation(format!(
+                        "Failed to read {} @ {}: {err}",
+                        kind.label().to_lowercase(),
+                        crate::path::format_path_for_display(&config_path)
+                    )));
+                    continue;
+                }
+            };
             match super::deprecation::check_and_migrate(
-                &system_path,
+                &config_path,
                 &content,
                 true,
-                ConfigFileKind::System,
+                kind,
                 None,
                 true,
             ) {
                 Ok(result) => {
                     super::deprecation::warn_unknown_fields::<UserConfig>(
                         &content,
-                        &system_path,
-                        ConfigFileKind::System,
+                        &config_path,
+                        kind,
                     );
-
-                    match load_config_file(
-                        &system_path,
-                        &result.migrated_content,
-                        ConfigFileKind::System,
-                    ) {
+                    match load_config_file(&config_path, &result.migrated_content, kind) {
                         Ok(table) => merge_layer(&mut merged_table, table),
-                        Err(e) => warnings.push(e),
+                        Err(err) => warnings.push(err),
                     }
                 }
                 Err(err) => {
                     warnings.push(LoadError::Validation(err.to_string()));
                 }
             }
-        }
-
-        // 2. User config (overrides system)
-        let config_path = config_path();
-        if let Some(config_path) = config_path.as_ref()
-            && config_path.exists()
-        {
-            if let Ok(content) = std::fs::read_to_string(config_path) {
-                match super::deprecation::check_and_migrate(
-                    config_path,
-                    &content,
-                    true,
-                    ConfigFileKind::User,
-                    None,
-                    true,
-                ) {
-                    Ok(result) => {
-                        super::deprecation::warn_unknown_fields::<UserConfig>(
-                            &content,
-                            config_path,
-                            ConfigFileKind::User,
-                        );
-
-                        match load_config_file(
-                            config_path,
-                            &result.migrated_content,
-                            ConfigFileKind::User,
-                        ) {
-                            Ok(table) => merge_layer(&mut merged_table, table),
-                            Err(e) => warnings.push(e),
-                        }
-                    }
-                    Err(err) => {
-                        warnings.push(LoadError::Validation(err.to_string()));
-                    }
-                }
-            }
-        } else if let Some(config_path) = config_path.as_ref()
-            && path::is_config_path_explicit()
-            && WARNED_MISSING_CONFIG_PATHS
-                .lock()
-                .unwrap()
-                .insert(config_path.clone())
-        {
-            crate::styling::eprintln!(
-                "{}",
-                crate::styling::warning_message(color_print::cformat!(
-                    "Config file not found: <bold>{}</>",
-                    crate::path::format_path_for_display(config_path)
-                ))
-            );
         }
 
         // 3. Env-var overrides (override config files)

@@ -27,6 +27,7 @@
 //! outlive it — Windows neither reparents to a single init nor offers a pgid.
 
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -65,23 +66,33 @@ pub(crate) fn step_tether(command: &[String], working_dir: Option<&Path>) -> Res
     // shell's directory.
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
     set_new_process_group(&mut cmd);
+    // The supervised command is in a different process group, so terminal
+    // Ctrl-C reaches this supervisor alone. Hold a foreground signal lease
+    // while it runs; the reaper observes cancellation and sweeps its group.
+    #[cfg(unix)]
+    let signals = worktrunk::signal_forwarder::ForegroundSignals::install(
+        worktrunk::shell_exec::TerminalInterrupt::Cancels,
+    )?;
     let mut trace = CommandTrace::new(None, &command.join(" "));
-    let mut child = match worktrunk::shell_exec::spawn(&mut cmd) {
+    #[cfg(unix)]
+    let spawned = signals.spawn(&mut cmd);
+    #[cfg(windows)]
+    let spawned = worktrunk::shell_exec::spawn_shared_child(&mut cmd).map_err(anyhow::Error::from);
+    let child = match spawned {
         Ok(child) => child,
         Err(e) => {
-            trace.fail(&e);
+            trace.fail(e.as_ref());
             return Err(e).with_context(|| format!("spawn tethered command: {}", command[0]));
         }
     };
+    let child = Arc::new(child);
     let id = child.id();
 
-    // Reaper: polls until the worktree is gone, then kills the tree so the
-    // supervised child exits and `wait` returns. Only spawned when there is a
-    // worktree to watch; otherwise teardown relies solely on the command's
-    // own exit.
-    if let Some(dir) = worktree {
+    // Reaper: polls for worktree removal or command interruption, then kills
+    // the tree so the supervised child exits and `wait` returns.
+    if worktree.is_some() || cfg!(unix) {
         std::thread::spawn(move || {
-            while !worktree_gone(&dir) {
+            while !worktree.as_deref().is_some_and(worktree_gone) && !interrupted() {
                 std::thread::sleep(POLL_INTERVAL);
             }
             kill_process_tree(id);
@@ -89,7 +100,11 @@ pub(crate) fn step_tether(command: &[String], working_dir: Option<&Path>) -> Res
     }
 
     // Block until the child exits — killed by the reaper, or on its own.
-    match child.wait() {
+    #[cfg(unix)]
+    let waited = signals.wait(&child).map(|outcome| outcome.status);
+    #[cfg(windows)]
+    let waited = child.wait();
+    match waited {
         Ok(status) => trace.complete(status.success()),
         Err(e) => trace.fail(&e),
     }
@@ -102,6 +117,16 @@ pub(crate) fn step_tether(command: &[String], working_dir: Option<&Path>) -> Res
     // A reaper still sleeping between polls (the command self-exited) dies
     // with this process when it returns.
     Ok(())
+}
+
+#[cfg(unix)]
+fn interrupted() -> bool {
+    worktrunk::signal_forwarder::operation_interrupt_signal().is_some()
+}
+
+#[cfg(windows)]
+fn interrupted() -> bool {
+    false
 }
 
 /// The worktree path no longer resolves. Only `NotFound` counts as gone; a

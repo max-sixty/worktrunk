@@ -191,12 +191,18 @@ pub(super) fn cli_api_error_details(output: &Output) -> String {
 /// gutter carries the CLI's verdict on it. A backend with something of its own
 /// to say — the cases in the module docs — passes it as `message` rather than
 /// bailing, so its words are added to the CLI's rather than substituted for
-/// them.
-pub(super) fn cli_api_error(ref_type: RefType, message: String, output: &Output) -> anyhow::Error {
+/// them. Recovery commands belong in `hint`, rendered separately from diagnosis.
+pub(super) fn cli_api_error(
+    ref_type: RefType,
+    message: String,
+    output: &Output,
+    hint: Option<String>,
+) -> anyhow::Error {
     GitError::CliApiError {
         ref_type,
         message,
         stderr: cli_api_error_details(output),
+        hint,
     }
     .into()
 }
@@ -212,6 +218,15 @@ pub(super) fn extract_host_from_html_url(html_url: &str) -> anyhow::Result<Strin
         .and_then(authority_host)
         .map(String::from)
         .with_context(|| format!("Failed to parse host from PR URL: {html_url}"))
+}
+
+/// The clone URL for `owner/repo` on `host`, over SSH or HTTPS.
+pub(super) fn host_remote_url(host: &str, owner: &str, repo: &str, ssh: bool) -> String {
+    if ssh {
+        format!("git@{host}:{owner}/{repo}.git")
+    } else {
+        format!("https://{host}/{owner}/{repo}.git")
+    }
 }
 
 /// `<tool> config get <args>`, trimmed; `None` if the CLI can't answer.
@@ -525,6 +540,18 @@ fn azure_repo_segments(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_remote_url_formats_each_protocol() {
+        assert_eq!(
+            host_remote_url("github.com", "contributor", "repo", true),
+            "git@github.com:contributor/repo.git"
+        );
+        assert_eq!(
+            host_remote_url("gitlab.example.com", "org", "project", false),
+            "https://gitlab.example.com/org/project.git"
+        );
+    }
 
     #[test]
     fn api_url_host_uses_the_network_host_after_userinfo() {

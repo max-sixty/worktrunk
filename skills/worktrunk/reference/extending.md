@@ -1,14 +1,6 @@
 # Extending Worktrunk
 
-Worktrunk has three extension mechanisms.
-
-**[Hooks](#hooks)** are shell commands that run automatically at lifecycle events (switching, starting, committing, merging, removing). Defined in TOML.
-
-**[Aliases](#aliases)** are reusable shell commands invoked as `wt <name>`. Defined in TOML.
-
-**[Custom subcommands](#custom-subcommands)** are standalone executables invoked as `wt <name>`. Drop `wt-foo` on `PATH` and it becomes `wt foo`.
-
-| | Hooks | Aliases | Custom subcommands |
+| | [Hooks](#hooks) | [Aliases](#aliases) | [Custom subcommands](#custom-subcommands) |
 |---|---|---|---|
 | **Trigger** | Automatic (lifecycle events) | Manual (`wt <name>`) | Manual (`wt <name>`) |
 | **Defined in** | TOML config | TOML config | Any executable on `PATH` |
@@ -164,9 +156,9 @@ if git diff --quiet HEAD && test -z "$(git ls-files --others --exclude-standard)
   wt switch --create {{ to }} --execute sh -- -c \
     'if [ "$#" -gt 0 ]; then exec "$@"; fi' worktrunk-move {{ args }}
 else
-  git stash push --include-untracked --quiet
+  git stash push --include-untracked --quiet || exit
   wt switch --create {{ to }} --execute sh -- -c \
-    'git stash pop --index; if [ "$#" -gt 0 ]; then exec "$@"; fi' worktrunk-move {{ args }}
+    'git stash pop --index || exit; if [ "$#" -gt 0 ]; then exec "$@"; fi' worktrunk-move {{ args }}
 fi
 '''
 ```

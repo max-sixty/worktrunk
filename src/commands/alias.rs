@@ -41,6 +41,7 @@
 use crate::commands::command_executor::ForegroundStdin;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsString;
 use std::sync::LazyLock;
 
 use anyhow::{Context, bail};
@@ -446,7 +447,7 @@ pub(crate) fn load_aliases(
 fn referenced_vars_for_entry(name: &str, entry: &AliasEntry) -> anyhow::Result<BTreeSet<String>> {
     let mut out = BTreeSet::new();
     for (_, cfg) in entry.iter() {
-        out.extend(referenced_vars_for_config(cfg, name)?);
+        out.extend(referenced_vars_for_config(cfg, |_| name.to_owned())?);
     }
     Ok(out)
 }
@@ -471,7 +472,7 @@ fn referenced_vars_for_entry(name: &str, entry: &AliasEntry) -> anyhow::Result<B
 /// a broken `wt.toml` should fail loudly here just as it does for `wt list`,
 /// rather than silently turning into an "unrecognized subcommand" once we
 /// fall through to PATH lookup.
-pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::Result<Option<()>> {
+pub fn try_alias(name: String, rest: &[OsString], global_yes: bool) -> anyhow::Result<Option<()>> {
     let _span = Span::new(format!("try_alias:{}", name));
     let repo = match Repository::current() {
         Ok(repo) => repo,
@@ -486,6 +487,16 @@ pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::R
     let Some(entry) = aliases.get(&name) else {
         return Ok(None);
     };
+    // Argument encoding cannot change which command owns this name. Validate
+    // only after resolving the alias, leaving non-alias argv untouched.
+    let rest = rest
+        .iter()
+        .map(|arg| {
+            arg.to_str()
+                .map(str::to_owned)
+                .with_context(|| cformat!("Alias <bold>{name}</> requires UTF-8 arguments"))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
     let referenced = {
         let _span = Span::new("referenced_vars");
         referenced_vars_for_entry(&name, entry)?
@@ -500,9 +511,6 @@ pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::R
         let _span = Span::new("parse_alias_args");
         AliasOptions::parse(alias_args, &referenced)?
     };
-    let entry = aliases
-        .get(&opts.name)
-        .expect("entry verified above and `opts.name` matches the dispatched name");
     run_alias(
         opts,
         warnings,
@@ -557,9 +565,6 @@ pub fn step_alias(args: Vec<String>, global_yes: bool) -> anyhow::Result<()> {
         return Ok(());
     }
     let (opts, warnings) = AliasOptions::parse(args, &referenced)?;
-    let entry = aliases
-        .get(&opts.name)
-        .expect("entry verified above and `opts.name` matches the dispatched name");
     run_alias(
         opts,
         warnings,
@@ -877,17 +882,18 @@ fn render_aliases_help_section(
 /// separately preserves the individual command text; merging them would
 /// reduce to an uninformative step count when both are unnamed singles.
 ///
-/// Callers (`augment_help`, `wt config alias show` with no name) latch
+/// Callers (`augment_help`, `wt config alias show`) latch
 /// `suppress_warnings()` before reaching here so the standard `UserConfig::load()`
 /// stays quiet: no deprecation warnings, no `.new` file writes, no
-/// approved-commands copy. Project config is parsed directly from TOML rather
-/// than via `ProjectConfig::load` because the `aliases` table has no deprecated
-/// forms — skipping the migration avoids the unrelated warnings entirely.
+/// approved-commands copy. Project config is migrated and parsed directly
+/// rather than via `ProjectConfig::load`, avoiding its diagnostic side
+/// effects; the migration rewrites retired template variables, so both
+/// sources show the template that runs.
 ///
 /// Tolerates missing or unloadable config: this is a discovery surface, not
 /// an execution surface, so we'd rather show the built-in commands than
 /// error out when a repo isn't detected or a config file is malformed.
-/// `step_alias` surfaces those errors at execution time.
+/// Running the alias surfaces those errors.
 pub(crate) fn load_aliases_for_listing() -> Vec<(String, CommandConfig, HookSource)> {
     let repo = Repository::current().ok();
     let project_id = repo.as_ref().and_then(|r| r.project_identifier().ok());
@@ -918,7 +924,7 @@ pub(crate) fn load_aliases_for_listing() -> Vec<(String, CommandConfig, HookSour
     entries
 }
 
-/// Parse `.config/wt.toml` directly, extracting just `aliases`, without
+/// Migrate and parse `.config/wt.toml`, extracting just `aliases`, without
 /// triggering `ProjectConfig::load`'s deprecation warning and hint-writing
 /// side effects. See `load_aliases_for_listing` for why.
 fn load_project_aliases_silent(repo: &Repository) -> Option<BTreeMap<String, CommandConfig>> {
@@ -927,7 +933,8 @@ fn load_project_aliases_silent(repo: &Repository) -> Option<BTreeMap<String, Com
         return None;
     }
     let contents = std::fs::read_to_string(&path).ok()?;
-    let config: ProjectConfig = toml::from_str(&contents).ok()?;
+    let migrated = worktrunk::config::migrate_content(&contents);
+    let config: ProjectConfig = toml::from_str(&migrated).ok()?;
     Some(config.aliases)
 }
 
@@ -1599,7 +1606,8 @@ cmd = [
 ]
 "#,
         );
-        let refs = worktrunk::config::referenced_vars_for_config(&cfg, "deploy").unwrap();
+        let refs =
+            worktrunk::config::referenced_vars_for_config(&cfg, |_| "deploy".to_owned()).unwrap();
         let names: Vec<&str> = refs.iter().map(String::as_str).collect();
         assert_eq!(names, vec!["args", "env", "target"]);
     }

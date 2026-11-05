@@ -14,6 +14,8 @@ A subprocess can't change its parent shell's directory, so `wt` installs a shell
 
 See [`wt config shell install`](/config/#wt-config-shell-install) for automatic installation and [`wt config shell init`](/config/#wt-config-shell-init) for manual setup in each supported shell.
 
+Keep each initialization statement on its own line for automatic detection and removal. Customized initialization lines must be managed manually.
+
 ## Files created
 
 [`wt config shell install`](/config/#wt-config-shell-install) appends a line to the bash, zsh, and PowerShell files, and writes the fish and Nushell files whole:
@@ -75,17 +77,7 @@ wt switch feature  # Now uses the dev build with shell integration
 
 ### "Alias bypasses shell integration"
 
-**Meaning**: An alias like `alias gwt="/usr/bin/wt"` or `alias gwt="wt.exe"` points directly to the binary instead of the shell function.
-
-When shell integration is installed, it creates a shell function named `wt` (or `git-wt`). If the alias points to the binary path, it bypasses this function and shell integration won't work.
-
-**Examples that bypass** (won't auto-cd):
-
-```bash
-alias gwt="/usr/bin/wt"
-alias gwt="wt.exe"
-alias wt="/path/to/wt"
-```
+**Meaning**: The alias invokes the binary directly, bypassing the shell function that changes directories.
 
 **Fix**: Change the alias to point to the function name instead of the binary:
 

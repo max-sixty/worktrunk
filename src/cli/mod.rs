@@ -96,12 +96,9 @@ Usage: {usage}
 
 {all-args}{after-help}";
 
-/// Cached value_name for Shell enum (e.g., "bash|fish|zsh|powershell")
-///
-/// TODO: There should be a simpler way to show ValueEnum variants in clap's "missing required
-/// argument" error. Clap auto-generates `[possible values: ...]` in help and completions from
-/// ValueEnum, but doesn't use it for value_name. We use mut_subcommand to set it dynamically,
-/// but this feels overly complex. Revisit if clap adds better support.
+/// Shell variants for usage and missing-argument errors, shared by the shell
+/// argument declarations. Clap's ValueEnum shows possible values in help but
+/// does not include them in the usage placeholder by default.
 fn shell_value_name() -> &'static str {
     static CACHE: OnceLock<String> = OnceLock::new();
     CACHE
@@ -118,21 +115,7 @@ fn shell_value_name() -> &'static str {
 
 /// Build a clap Command for Cli with the shared help template applied recursively.
 pub(crate) fn build_command() -> Command {
-    let cmd = apply_help_template_recursive(Cli::command(), DEFAULT_COMMAND_NAME);
-
-    // Set value_name for Shell args to show options in usage/errors
-    let shell_name = shell_value_name();
-    cmd.mut_subcommand("config", |c| {
-        c.mut_subcommand("shell", |c| {
-            c.mut_subcommand("init", |c| c.mut_arg("shell", |a| a.value_name(shell_name)))
-                .mut_subcommand("install", |c| {
-                    c.mut_arg("shell", |a| a.value_name(shell_name))
-                })
-                .mut_subcommand("uninstall", |c| {
-                    c.mut_arg("shell", |a| a.value_name(shell_name))
-                })
-        })
-    })
+    apply_help_template_recursive(Cli::command(), DEFAULT_COMMAND_NAME)
 }
 
 /// Parent commands whose subcommands can be suggested for unrecognized top-level commands.
@@ -462,12 +445,11 @@ pub(crate) struct SwitchArgs {
     /// Output format
     ///
     /// JSON prints one structured result to stdout once the switch, including
-    /// any --execute command, completes.
-    /// Once arguments are accepted, failures print an object with an `error`
-    /// string. Argument errors use stderr only. Diagnostics and
-    /// --execute output go to stderr. A worktree created before a later failure
-    /// remains in place.
-    /// Canceling the interactive picker produces no result.
+    /// any --execute command, completes. A worktree created before a later
+    /// failure remains in place and is included in the result. Read stdout
+    /// even when the exit status is nonzero. Errors, diagnostics, and
+    /// --execute output go to stderr. Failure before a result exists and
+    /// canceling the interactive picker produce no result.
     /// Background hooks run independently of the result.
     /// Designed for tool integration (e.g., Claude Code WorktreeCreate hooks).
     #[arg(long, default_value = "text", help_heading = "Automation")]
@@ -519,11 +501,7 @@ pub(crate) struct RemoveArgs {
     pub(crate) no_delete_branch: bool,
 
     /// Delete branch after removal (overrides config `[remove] delete-branch = false`)
-    #[arg(
-        long = "delete-branch",
-        overrides_with = "no_delete_branch",
-        hide = true
-    )]
+    #[arg(long = "delete-branch", overrides_with = "no_delete_branch")]
     pub(crate) delete_branch: bool,
 
     /// Delete unmerged branches
@@ -665,6 +643,8 @@ $ wt switch https://github.com/owner/repo/pull/123   # ...or paste the PR's URL
 ## Creating a branch
 
 The `--create` flag creates a new branch from `--base` — the default branch unless specified. Without `--create`, the branch must already exist. Switching to a remote branch (e.g., `wt switch feature` when only `origin/feature` exists) creates a local tracking branch.
+
+To complete branches from a specific remote, type its prefix before pressing Tab (e.g., `wt switch origin/`).
 
 A new branch tracks the remote branch it starts from only when the two share a name: `--create release --base origin/release` tracks `origin/release`, while `--create feature --base origin/release` gets no upstream. Publish such a branch with `git push --set-upstream origin <branch>`, or set git's `push.autoSetupRemote = true` once.
 
@@ -937,7 +917,7 @@ Reuses the [`commit.generation`](/config/#commit) command — the same LLM that 
 
 ### Custom columns [experimental]
 
-Each `[list.custom-columns]` entry in user config adds a column: the key is the header, the template renders each row's cell. Templates read two per-branch namespaces — `{{ vars.* }}`, stored with [`wt config state vars set`](/config/#wt-config-state-vars), and `{{ git.branch.* }}`, the branch's own git config under `branch.<name>.*` (a `jira` key you set yourself, or the git-native `description`) — useful for tracking what each of many (often agent-driven) branches is for:
+Each `[list.custom-columns]` entry in user config adds a column. Its key sets the header; its template renders each row's cell. Templates read `{{ vars.* }}`, set with [`wt config state vars set`](/config/#wt-config-state-vars), and `{{ git.branch.* }}`, from `branch.<name>.*` in Git config:
 
 ```toml
 # ~/.config/worktrunk/config.toml
@@ -1347,6 +1327,12 @@ Keep the branch:
 $ wt remove --no-delete-branch feature-branch
 ```
 
+If `[remove] delete-branch = false` is configured, use `--delete-branch` to delete a branch for one removal:
+
+```console
+$ wt remove --delete-branch feature-branch
+```
+
 Force-delete an unmerged branch:
 
 ```console
@@ -1537,11 +1523,7 @@ Use `--no-commit` to skip committing uncommitted changes and squashing; rebase s
 
 ## Local CI
 
-For personal projects, pre-merge hooks open up the possibility of a workflow with much faster iteration — an order of magnitude more small changes instead of fewer large ones.
-
-Historically, ensuring tests ran before merging was difficult to enforce locally. Remote CI was valuable for the process as much as the checks: it guaranteed validation happened. `wt merge` brings that guarantee local.
-
-The full workflow: start an agent (one of many) on a task, work elsewhere, return when it's ready. Review the diff, run `wt merge`, move on. Pre-merge hooks validate before merging — if they pass, the branch goes to the default branch and the worktree cleans up.
+Pre-merge hooks run checks locally before merging. A failed check stops the merge:
 
 ```toml
 # .config/wt.toml
@@ -1750,7 +1732,7 @@ Most hooks don't need `[[hook]]` blocks. Reach for them when there's a dependenc
 
 To run a specific hook when user and project both define the same name, use `user:name` or `project:name` syntax.
 
-A `pre-*` hook blocks the command, so both sources run as one pipeline: user commands first, and a failure there skips the project's. A `post-*` hook runs in the background, where each source is its own detached pipeline — they start together, neither waits for the other, and a failure in one leaves the other running. Order within a source is still yours to set with `[[hook]]` blocks; across `post-*` sources there is none. Two `post-*` hooks that write the same file, or run `git` in the same worktree, will race, so put commands that depend on each other in one source.
+For `pre-*` hooks, a user-hook failure skips project hooks. For `post-*` hooks, a failure in one source does not stop the other. Concurrent hooks can race when writing the same file or running Git in the same worktree. Commands that depend on each other should use ordered `[[hook]]` blocks within one source.
 
 ## Template variables
 
@@ -1990,9 +1972,9 @@ $ wt hook post-start
 
 ## Passing values
 
-`--KEY=VALUE` binds `KEY` whenever `{{ KEY }}` appears in any command of the hook — the same smart-routing rule `wt <alias>` uses. Built-in variables can be overridden: `--branch=foo` sets `{{ branch }}` inside hook templates (the worktree's actual branch doesn't move). Hyphens in keys become underscores: `--my-var=x` sets `{{ my_var }}`.
+`--KEY=VALUE` binds `KEY` whenever `{{ KEY }}` appears in any selected hook command — the same smart-routing rule `wt <alias>` uses. Built-in variables can be overridden: `--branch=foo` sets `{{ branch }}` inside hook templates (the worktree's actual branch doesn't move). Hyphens in keys become underscores: `--my-var=x` sets `{{ my_var }}`.
 
-Any `--KEY=VALUE` whose key isn't referenced by a hook template forwards into `{{ args }}` as a literal `--KEY=VALUE` token. Tokens after `--` also forward into `{{ args }}` verbatim. `{{ args }}` renders as a space-joined, shell-escaped string; index with `{{ args[0] }}`, loop with `{% for a in args %}…{% endfor %}`, count with `{{ args | length }}`.
+Any `--KEY=VALUE` whose key isn't referenced by a selected hook template forwards into `{{ args }}` as a literal `--KEY=VALUE` token. Tokens after `--` also forward into `{{ args }}` verbatim. `{{ args }}` renders as a space-joined, shell-escaped string; index with `{{ args[0] }}`, loop with `{% for a in args %}…{% endfor %}`, count with `{{ args | length }}`.
 
 # Recipes
 

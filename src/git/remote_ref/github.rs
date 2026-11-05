@@ -3,11 +3,12 @@
 use std::path::Path;
 
 use anyhow::{Context, bail};
+use color_print::cformat;
 use serde::Deserialize;
 
 use super::{
     CliApiRequest, PlatformData, RemoteRefInfo, cli_api_error, cli_config_value,
-    extract_host_from_html_url, run_cli_api,
+    extract_host_from_html_url, host_remote_url, run_cli_api,
 };
 use crate::git::{ForgeKind, Repository};
 use crate::shell_exec::Cmd;
@@ -132,17 +133,13 @@ pub(super) fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result
         if serde_json::from_slice::<GhApiErrorResponse>(&output.stdout)
             .is_ok_and(|error| error.status == "404")
         {
-            let hint = if source == "gh default" {
-                "Check that `gh repo set-default` points to the correct repository."
-            } else {
-                "If the PR is on a different repository, \
-                 run `gh repo set-default` to set the default \
-                 or configure a different primary remote."
-            };
+            let hint =
+                cformat!("To query a different repository, run <underline>gh repo set-default</>");
             return Err(cli_api_error(
                 ForgeKind::GitHub.ref_type(),
-                format!("PR #{pr_number} not found on {owner}/{repo_name} ({source}). {hint}"),
+                format!("PR #{pr_number} not found on {owner}/{repo_name} ({source})"),
                 &output,
+                Some(hint),
             ));
         }
 
@@ -150,6 +147,7 @@ pub(super) fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result
             ForgeKind::GitHub.ref_type(),
             format!("gh api failed for PR #{}", pr_number),
             &output,
+            None,
         ));
     }
 
@@ -226,6 +224,7 @@ pub fn is_authed_for(host: &str) -> bool {
     Cmd::new("gh")
         .args(["auth", "token", "--hostname", host])
         .env("GH_PROMPT_DISABLED", "1")
+        .sensitive_output()
         .run()
         .map(|o| o.status.success())
         .unwrap_or(false)
@@ -233,32 +232,5 @@ pub fn is_authed_for(host: &str) -> bool {
 
 /// Construct the remote URL for a fork repository.
 pub fn fork_remote_url(host: &str, owner: &str, repo: &str) -> String {
-    if use_ssh_protocol(host) {
-        format!("git@{}:{}/{}.git", host, owner, repo)
-    } else {
-        format!("https://{}/{}/{}.git", host, owner, repo)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_fork_remote_url_formats() {
-        // Protocol depends on `gh config get git_protocol`, so just check format
-        let url = fork_remote_url("github.com", "contributor", "repo");
-        let valid_urls = [
-            "git@github.com:contributor/repo.git",
-            "https://github.com/contributor/repo.git",
-        ];
-        assert!(valid_urls.contains(&url.as_str()), "unexpected URL: {url}");
-
-        let url = fork_remote_url("github.example.com", "org", "project");
-        let valid_urls = [
-            "git@github.example.com:org/project.git",
-            "https://github.example.com/org/project.git",
-        ];
-        assert!(valid_urls.contains(&url.as_str()), "unexpected URL: {url}");
-    }
+    host_remote_url(host, owner, repo, use_ssh_protocol(host))
 }

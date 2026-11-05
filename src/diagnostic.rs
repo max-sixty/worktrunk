@@ -296,10 +296,11 @@ impl DiagnosticReport {
     /// Returns the path if successful, None if write failed.
     pub fn write_diagnostic_file(&self, repo: &Repository) -> Option<PathBuf> {
         let log_dir = repo.wt_logs_dir();
-        std::fs::create_dir_all(&log_dir).ok()?;
-
         let path = log_dir.join("diagnostic.md");
-        std::fs::write(&path, &self.content).ok()?;
+        let mut file =
+            worktrunk::utils::open_log_file(&log_dir, std::path::Path::new("diagnostic.md"), false)
+                .ok()?;
+        std::io::Write::write_all(&mut file, self.content.as_bytes()).ok()?;
 
         Some(path)
     }
@@ -524,7 +525,6 @@ fn format_config_section(path: &std::path::Path, kind: ConfigFileKind) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     #[test]
     fn test_format_config_section_file_not_found() {
@@ -540,7 +540,7 @@ mod tests {
 
     #[test]
     fn test_format_config_section_empty_file() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         let path = tmp.path().join("empty.toml");
         std::fs::write(&path, "").unwrap();
 
@@ -550,7 +550,7 @@ mod tests {
 
     #[test]
     fn test_format_config_section_with_content() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         let path = tmp.path().join("config.toml");
         std::fs::write(&path, "key = \"value\"\n").unwrap();
 
@@ -560,7 +560,7 @@ mod tests {
 
     #[test]
     fn test_format_config_section_adds_trailing_newline() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         let path = tmp.path().join("config.toml");
         std::fs::write(&path, "no-newline").unwrap();
 
@@ -570,7 +570,7 @@ mod tests {
 
     #[test]
     fn test_format_config_section_truncates_long_content() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         let path = tmp.path().join("big.toml");
         let content = "x".repeat(5000);
         std::fs::write(&path, &content).unwrap();
@@ -585,7 +585,7 @@ mod tests {
         // A multi-byte char straddling the 4000-byte cut must not panic the
         // slice. "🦀" is 4 bytes; padding 3998 ASCII bytes puts a crab boundary
         // at 3998/4002/4006/... so byte 4000 lands mid-character.
-        let tmp = TempDir::new().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         let path = tmp.path().join("emoji.toml");
         let content = format!("{}{}", "x".repeat(3998), "🦀".repeat(100));
         std::fs::write(&path, &content).unwrap();

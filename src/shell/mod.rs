@@ -13,8 +13,8 @@ use askama::Template;
 
 // Re-export public types and functions
 pub use detection::{
-    BypassAlias, DetectedLine, FileDetectionResult, is_shell_integration_line,
-    is_shell_integration_line_for_uninstall_any_cmd, scan_for_detection_details,
+    BypassAlias, DetectedLine, FileDetectionResult,
+    is_shell_integration_line_for_uninstall_any_cmd, scan_for_detection_details, shell_integration,
 };
 pub use paths::{
     fish_completion_path, fish_config_dir, home_dir_required, line_based_config_paths,
@@ -535,13 +535,11 @@ mod tests {
     }
 
     /// Verify that `config_line()` generates lines that
-    /// `is_shell_integration_line()` can detect.
+    /// `shell_integration()` can detect.
     ///
     /// This prevents install and detection from drifting out of sync.
-    /// Note: .exe variants are not included because `binary_name()` strips
-    /// the .exe suffix on Windows (MSYS2/Git Bash handles the resolution).
     #[rstest]
-    fn test_config_line_detected_by_is_shell_integration_line(
+    fn test_config_line_detected_by_shell_integration(
         #[values(
             Shell::Bash,
             Shell::Zsh,
@@ -550,13 +548,16 @@ mod tests {
             Shell::PowerShell
         )]
         shell: Shell,
-        #[values("wt", "git-wt")] prefix: &str,
+        #[values("wt", "git-wt", "my.tool_1", "git-wt.exe")] prefix: &str,
     ) {
         let line = shell.config_line(prefix);
-        assert!(
-            is_shell_integration_line(&line, prefix),
-            "{shell} config_line({prefix:?}) not detected:\n  {line}"
+        assert_eq!(
+            shell_integration(&line, prefix.trim_end_matches(".exe")),
+            Some(shell)
         );
+        assert_eq!(shell_integration(&line, prefix), Some(shell));
+        assert!(is_shell_integration_line_for_uninstall_any_cmd(&line));
+        assert_eq!(shell_integration(&line, "other"), None);
     }
 
     // PowerShell config_line evaluation test is in tests/integration_tests/shell_powershell.rs

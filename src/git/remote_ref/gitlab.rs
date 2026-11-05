@@ -25,9 +25,11 @@ use anyhow::{Context, bail};
 use serde::Deserialize;
 
 use super::{
-    CliApiRequest, PlatformData, RemoteRefInfo, cli_api_error, cli_config_value, run_cli_api,
+    CliApiRequest, PlatformData, RemoteRefInfo, cli_api_error, cli_config_value, host_remote_url,
+    run_cli_api,
 };
 use crate::git::{ForgeKind, Repository};
+use crate::shell_exec::Cmd;
 
 /// Raw JSON response from `glab api projects/:id/merge_requests/<number>`.
 #[derive(Debug, Deserialize)]
@@ -77,6 +79,7 @@ pub(super) fn fetch_mr_info(mr_number: u32, repo: &Repository) -> anyhow::Result
             ForgeKind::GitLab.ref_type(),
             format!("glab api failed for MR !{}", mr_number),
             &output,
+            None,
         ));
     }
 
@@ -230,6 +233,7 @@ fn fetch_project_urls(
             ForgeKind::GitLab.ref_type(),
             format!("glab api failed for {} project {}", role, project_id),
             &output,
+            None,
         ));
     }
 
@@ -250,7 +254,13 @@ fn fetch_project_urls(
 /// nothing for a host without a token. Returns `false` if `glab` is not
 /// installed.
 pub fn is_authed_for(host: &str) -> bool {
-    cli_config_value("glab", &["token", "--host", host]).is_some_and(|token| !token.is_empty())
+    Cmd::new("glab")
+        .args(["config", "get", "token", "--host", host])
+        .sensitive_output()
+        .run()
+        .is_ok_and(|output| {
+            output.status.success() && !String::from_utf8_lossy(&output.stdout).trim().is_empty()
+        })
 }
 
 /// Get the git protocol configured in `glab` (GitLab CLI).
@@ -262,35 +272,13 @@ fn git_protocol(host: &str) -> String {
 
 /// Construct the remote URL for a GitLab project, respecting protocol preference.
 pub fn fork_remote_url(host: &str, owner: &str, repo: &str) -> String {
-    if git_protocol(host) == "ssh" {
-        format!("git@{host}:{owner}/{repo}.git")
-    } else {
-        format!("https://{host}/{owner}/{repo}.git")
-    }
+    host_remote_url(host, owner, repo, git_protocol(host) == "ssh")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::git::remote_ref::RemoteRefInfo;
-
-    #[test]
-    fn test_fork_remote_url_formats() {
-        // Protocol depends on `glab config get git_protocol`, so just check format
-        let url = fork_remote_url("gitlab.com", "contributor", "repo");
-        let valid_urls = [
-            "git@gitlab.com:contributor/repo.git",
-            "https://gitlab.com/contributor/repo.git",
-        ];
-        assert!(valid_urls.contains(&url.as_str()), "unexpected URL: {url}");
-
-        let url = fork_remote_url("gitlab.example.com", "org", "project");
-        let valid_urls = [
-            "git@gitlab.example.com:org/project.git",
-            "https://gitlab.example.com/org/project.git",
-        ];
-        assert!(valid_urls.contains(&url.as_str()), "unexpected URL: {url}");
-    }
 
     #[test]
     fn test_fetch_gitlab_project_urls_rejects_github_ref() {

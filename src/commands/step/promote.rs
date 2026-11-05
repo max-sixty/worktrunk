@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 use color_print::cformat;
-use path_slash::PathExt as _;
 use worktrunk::copy::{copy_dir_recursive, copy_leaf};
 use worktrunk::git::{Repository, duplicated_branches};
 use worktrunk::path::format_path_for_display;
@@ -19,8 +18,12 @@ use super::shared::list_and_filter_ignored_entries;
 fn move_entry(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
     // Ensure parent directory exists
     if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .context(format!("creating parent directory for {}", dest.display()))?;
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "creating parent directory for {}",
+                format_path_for_display(dest)
+            )
+        })?;
     }
 
     match fs::rename(src, dest) {
@@ -28,8 +31,8 @@ fn move_entry(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
         Err(e) if e.kind() == ErrorKind::CrossesDevices => copy_and_remove(src, dest, is_dir),
         Err(e) => Err(anyhow::Error::from(e).context(format!(
             "moving {} to {}",
-            src.display(),
-            dest.display()
+            format_path_for_display(src),
+            format_path_for_display(dest)
         ))),
     }
 }
@@ -48,15 +51,18 @@ fn copy_and_remove(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> 
     };
     if skipped > 0 {
         bail!(
-            "{} was not fully copied, so the source is left in place; run with -vv to list what was skipped",
+            "{} was not fully copied; refusing to remove the source; run with -vv to list what was skipped",
             format_path_for_display(src)
         );
     }
 
     if is_dir {
-        fs::remove_dir_all(src).context(format!("removing source directory {}", src.display()))?;
+        fs::remove_dir_all(src).with_context(|| {
+            format!("removing source directory {}", format_path_for_display(src))
+        })?;
     } else {
-        fs::remove_file(src).context(format!("removing source file {}", src.display()))?;
+        fs::remove_file(src)
+            .with_context(|| format!("removing source file {}", format_path_for_display(src)))?;
     }
     Ok(())
 }
@@ -91,7 +97,7 @@ fn stage_ignored(
         let staging_entry = staging_a.join(relative);
         if fs::symlink_metadata(src_entry).is_ok() {
             move_entry(src_entry, &staging_entry, *is_dir)
-                .context(format!("staging {}", relative.display()))?;
+                .with_context(|| format!("staging {}", format_path_for_display(relative)))?;
             count += 1;
         }
     }
@@ -104,7 +110,7 @@ fn stage_ignored(
         let staging_entry = staging_b.join(relative);
         if fs::symlink_metadata(src_entry).is_ok() {
             move_entry(src_entry, &staging_entry, *is_dir)
-                .context(format!("staging {}", relative.display()))?;
+                .with_context(|| format!("staging {}", format_path_for_display(relative)))?;
             count += 1;
         }
     }
@@ -142,7 +148,7 @@ fn distribute_staged(
         let dest_entry = path_a.join(relative);
         if fs::symlink_metadata(&staging_entry).is_ok() {
             move_entry(&staging_entry, &dest_entry, *is_dir)
-                .context(format!("distributing {}", relative.display()))?;
+                .with_context(|| format!("distributing {}", format_path_for_display(relative)))?;
             count += 1;
         }
     }
@@ -156,7 +162,7 @@ fn distribute_staged(
         let dest_entry = path_b.join(relative);
         if fs::symlink_metadata(&staging_entry).is_ok() {
             move_entry(&staging_entry, &dest_entry, *is_dir)
-                .context(format!("distributing {}", relative.display()))?;
+                .with_context(|| format!("distributing {}", format_path_for_display(relative)))?;
             count += 1;
         }
     }
@@ -215,10 +221,10 @@ fn check_leftover_staging(staging_path: &Path) -> anyhow::Result<()> {
     if !staging_path.exists() {
         return Ok(());
     }
-    let display = staging_path.to_slash_lossy();
+    let display = format_path_for_display(staging_path);
     Err(anyhow::anyhow!(
         "Files may need manual recovery from: {display}\n\
-         Remove it to retry: rm -rf \"{display}\""
+         Remove it to retry: rm -rf {display}"
     )
     .context("Found leftover staging directory from an interrupted promote"))
 }
@@ -398,7 +404,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         )
         .context(format!(
             "Failed to stage ignored files. Already-staged files may be recoverable from: {}",
-            staging_path.to_slash_lossy()
+            format_path_for_display(&staging_path)
         ))?;
         if count > 0 { Some((dir, count)) } else { None }
     } else {
@@ -426,7 +432,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         )
         .context(format!(
             "Failed to distribute staged files. Staged files may be recoverable from: {}",
-            staging_dir.display()
+            format_path_for_display(staging_dir)
         ))?
     } else {
         0
@@ -464,7 +470,7 @@ mod tests {
 
     #[test]
     fn test_move_entry_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         let src = tmp.path().join("source.txt");
         let dest = tmp.path().join("subdir/dest.txt");
 
@@ -477,7 +483,7 @@ mod tests {
 
     #[test]
     fn test_move_entry_directory() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         let src = tmp.path().join("srcdir");
         let dest = tmp.path().join("nested/destdir");
 
@@ -496,8 +502,51 @@ mod tests {
     }
 
     #[test]
+    fn test_move_entry_failure_keeps_source_and_destination() {
+        use path_slash::PathExt;
+
+        let tmp = worktrunk::testing::test_tempdir();
+        let src = tmp.path().join("source file");
+        let blocker = tmp.path().join("existing file");
+        fs::write(&src, b"source data").unwrap();
+        fs::write(&blocker, b"existing data").unwrap();
+        let blocked_parent = blocker.join("destination");
+
+        let error = move_entry(&src, &blocked_parent, false).unwrap_err();
+        assert!(error.downcast_ref::<std::io::Error>().is_some());
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "creating parent directory for '{}'",
+                blocked_parent.to_slash_lossy()
+            )
+        );
+        assert_eq!(fs::read(&src).unwrap(), b"source data");
+        assert_eq!(fs::read(&blocker).unwrap(), b"existing data");
+
+        let occupied = tmp.path().join("existing directory");
+        fs::create_dir(&occupied).unwrap();
+        fs::write(occupied.join("protected"), b"existing data").unwrap();
+        let error = move_entry(&src, &occupied, false).unwrap_err();
+        assert!(error.downcast_ref::<std::io::Error>().is_some());
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "moving '{}' to '{}'",
+                src.to_slash_lossy(),
+                occupied.to_slash_lossy()
+            )
+        );
+        assert_eq!(fs::read(&src).unwrap(), b"source data");
+        assert_eq!(
+            fs::read(occupied.join("protected")).unwrap(),
+            b"existing data"
+        );
+    }
+
+    #[test]
     fn test_copy_and_remove_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         let src = tmp.path().join("source.txt");
         let dest = tmp.path().join("dest.txt");
 
@@ -510,7 +559,7 @@ mod tests {
 
     #[test]
     fn test_copy_and_remove_directory() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         let src = tmp.path().join("srcdir");
         let dest = tmp.path().join("destdir");
 
@@ -534,7 +583,7 @@ mod tests {
         // destroyed rather than moved. A source that is already gone is the
         // deterministic case: `copy_leaf` reports the skip, and the delete —
         // which would take a file recreated since — must not be reached.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         let src = tmp.path().join("gone.txt");
         let dest = tmp.path().join("dest.txt");
 
@@ -555,7 +604,7 @@ mod tests {
         // `distribute_staged` runs after the branch exchange, and a promote
         // that dies there leaves the staged files behind a `check_leftover_
         // staging` refusal whose remedy deletes them.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = worktrunk::testing::tempdir().unwrap();
         let src = tmp.path().join("srcdir");
         let dest = tmp.path().join("destdir");
         fs::create_dir_all(&src).unwrap();

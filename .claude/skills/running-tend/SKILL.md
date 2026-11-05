@@ -8,15 +8,13 @@ metadata:
 # Worktrunk Tend CI
 
 Project-specific guidance for tend workflows running on worktrunk (a Rust
-CLI for managing git worktrees). The generic skills
-(`/tend-ci-runner:run-tend`, `/tend-ci-runner:review`,
-`/tend-ci-runner:triage`, etc.) provide the workflow framework; this skill
-adds worktrunk conventions.
+CLI for managing git worktrees). The bundled `run-tend`, `review`, and `triage`
+skills provide the workflow framework; this skill adds worktrunk conventions.
 
 ## Filing issues in other repos
 
 Standing exception granted: file directly in agent-equipped targets (per
-**Filing issues** in the bundled `/tend-ci-runner:act-in-other-repos` skill)
+**Filing issues** in the bundled `act-in-other-repos` skill)
 without asking permission here first. The default rule (open an issue here asking
 permission first) still applies when the target shows no agent signals.
 
@@ -79,7 +77,7 @@ CI runs on Linux, Windows, and macOS.
 A test that leans on inherited state — the process CWD, an ambient env var —
 sets up its own instead, via `TestRepo::with_initial_commit()` plus a tempdir,
 the way most worktrunk tests already do. Guarding it with an early return
-(**Don't "fix" tests by adding skip guards** in `/tend-ci-runner:fix-a-bug`)
+(**Don't "fix" tests by adding skip guards** in the bundled `fix-a-bug` skill)
 drops the coverage rather than restoring it. This governs every workflow that
 fixes a test here, not just issue triage.
 
@@ -95,12 +93,12 @@ shape is one `<session-id>.jsonl` under a single slugified directory.
 
 ## Labels
 
-- `automated-fix` — fix PRs from triage and ci-fix workflows
+- `automated-fix` — fix PRs from triage
 - `nightly-cleanup` — nightly sweep issues and PRs
 
-## CI Fix: Prefer Rerun for Transient Infrastructure Failures
+## CI Failure Triage: Prefer Rerun for Transient Infrastructure Failures
 
-Before opening a `fix/ci-*` PR, classify the failure:
+Before opening a PR for a CI failure, classify it:
 
 - **Transient infrastructure** (link-check timeouts, apt-get flakes, GitHub
   outages, runner disk issues, codecov upload blips) — do **not** create a
@@ -123,8 +121,7 @@ failure, not a broken link:
 - Only `[TIMEOUT]` is reported (not `404`/`403`/`410`).
 - The URL is reachable from a local `curl`.
 
-When in doubt, post a comment on the failed run summarizing the diagnosis and
-wait — don't open a PR.
+When in doubt, post the diagnosis on the failure cause issue and wait — don't open a PR.
 
 ## Applying GitHub Suggestions
 

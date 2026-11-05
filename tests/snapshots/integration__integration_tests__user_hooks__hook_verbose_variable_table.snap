@@ -60,9 +60,9 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m [1muser:noop[22m source
+[2m○[22m [1mpre-switch user:noop[22m source
 [107m [0m [2m[0m[2m[34mtrue[0m
-[2m○[22m [1muser:noop[22m result
+[2m○[22m [1mpre-switch user:noop[22m result
 [107m [0m [2m[0m[2m[34mtrue[0m
 [2m○[22m [1mpre-switch[22m template variables:
 [107m [0m branch                = feature

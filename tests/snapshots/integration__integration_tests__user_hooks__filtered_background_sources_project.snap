@@ -1,0 +1,15 @@
+---
+source: tests/integration_tests/user_hooks.rs
+expression: "format!(\"announcement:\\n{}\\nuser/fmt.log:\\n{user_log}\\nproject/fmt.log:\\n{project_log}\\n{failing_source}/runner.log:\\n{failure}\",\nString::from_utf8_lossy(&output.stderr),)"
+---
+announcement:
+[36m◎[39m [36mRunning post-start: [1mfmt[22m (user); [1mfmt[22m (project)[39m
+
+user/fmt.log:
+USER_LOG
+
+project/fmt.log:
+PROJECT_LOG
+
+project/runner.log:
+[31m✗[39m [31m[1mpost-start project:fmt[22m failed (exit code 7)[39m

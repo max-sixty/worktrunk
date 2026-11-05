@@ -218,7 +218,6 @@ pub fn count_json_files(dir: &Path) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
     struct V {
@@ -227,7 +226,7 @@ mod tests {
 
     #[test]
     fn test_read_write_roundtrip() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::testing::tempdir().unwrap();
         let path = tmp.path().join("sub/entry.json");
 
         // Missing file is a miss.
@@ -240,7 +239,7 @@ mod tests {
 
     #[test]
     fn test_read_corrupt_json_returns_none() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::testing::tempdir().unwrap();
         let path = tmp.path().join("bad.json");
         fs::write(&path, "not json {{").unwrap();
         assert!(read_json::<V>(&path).is_none());
@@ -248,14 +247,14 @@ mod tests {
 
     #[test]
     fn test_clear_one_missing_returns_false() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::testing::tempdir().unwrap();
         let path = tmp.path().join("nope.json");
         assert!(!clear_one(&path).unwrap());
     }
 
     #[test]
     fn test_clear_one_propagates_non_not_found() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::testing::tempdir().unwrap();
         // Put a directory where a file is expected so remove_file returns
         // EISDIR (or similar), not NotFound.
         let path = tmp.path().join("dir.json");
@@ -266,7 +265,7 @@ mod tests {
 
     #[test]
     fn test_clear_json_files_counts_and_skips() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::testing::tempdir().unwrap();
         let dir = tmp.path().join("c");
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("a.json"), "{}").unwrap();
@@ -284,13 +283,13 @@ mod tests {
 
     #[test]
     fn test_clear_json_files_missing_dir_is_zero() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::testing::tempdir().unwrap();
         assert_eq!(clear_json_files(&tmp.path().join("nope")).unwrap(), 0);
     }
 
     #[test]
     fn test_clear_json_files_propagates_read_dir_error() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::testing::tempdir().unwrap();
         // Put a file where a directory is expected — read_dir returns
         // NotADirectory (not NotFound).
         let path = tmp.path().join("not-a-dir");
@@ -301,7 +300,7 @@ mod tests {
 
     #[test]
     fn test_count_json_files() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::testing::tempdir().unwrap();
         let dir = tmp.path().join("c");
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("a.json"), "{}").unwrap();
@@ -313,7 +312,7 @@ mod tests {
 
     #[test]
     fn test_sweep_lru_trims_oldest_entries() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::testing::tempdir().unwrap();
         let dir = tmp.path().join("c");
         fs::create_dir_all(&dir).unwrap();
 
@@ -335,7 +334,7 @@ mod tests {
 
     #[test]
     fn test_sweep_lru_no_op_under_bound() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::testing::tempdir().unwrap();
         let dir = tmp.path().join("c");
         fs::create_dir_all(&dir).unwrap();
 

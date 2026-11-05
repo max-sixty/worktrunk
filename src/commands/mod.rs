@@ -53,6 +53,7 @@ pub(crate) use custom::handle_custom_command;
 pub(crate) use eval::step_eval;
 pub(crate) use for_each::step_for_each;
 pub(crate) use hook_commands::{HookCliArgs, handle_hook_show, run_hook};
+pub(crate) use hook_filter::ParsedFilter;
 pub(crate) use init::{handle_completions, handle_init};
 pub(crate) use list::handle_list;
 pub(crate) use merge::{MergeFlagOverrides, MergeOptions, handle_merge};

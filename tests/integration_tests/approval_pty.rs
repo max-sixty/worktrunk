@@ -8,7 +8,9 @@
 //! to simulate interactive terminals. The non-PTY tests in `approval_ui.rs` verify the
 //! error case (non-TTY environments).
 
-use crate::common::pty::{build_pty_command, exec_cmd_in_pty, exec_cmd_in_pty_prompted};
+use crate::common::pty::{
+    build_pty_command, exec_cmd_in_pty, exec_cmd_in_pty_prompted, exec_cmd_in_pty_prompted_with,
+};
 use crate::common::{TestRepo, add_pty_binary_path_filters, add_pty_filters, repo, wt_bin};
 use insta::assert_snapshot;
 use rstest::rstest;
@@ -671,6 +673,62 @@ command = "tee {prompt_capture_str} > /dev/null && echo 'feat: accept guidance'"
         captured2.contains("<project-guidance>") && captured2.contains("Use conventional commits"),
         "Approved append should still reach the LLM on re-run. Captured:\n{captured2}"
     );
+}
+
+/// A dry-run waits for approval before creating its temporary index, so an
+/// unattended prompt cannot leave that index eligible for age-based cleanup.
+#[rstest]
+fn test_commit_dry_run_creates_index_after_approval(repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[commit.generation]
+template-append = "Use conventional commits"
+"#,
+    );
+    repo.commit("Add project commit append");
+    std::fs::write(repo.root_path().join("new-file.txt"), "new content").unwrap();
+    let index_before = repo.git_output(&["write-tree"]);
+    let head_before = repo.git_output(&["rev-parse", "HEAD"]);
+
+    let temp_dir = worktrunk::testing::test_tempdir();
+    let prompt_capture = repo.home_path().join("captured-prompt.txt");
+    repo.write_test_config(&format!(
+        r#"
+[commit.generation]
+command = "tee {} > /dev/null && echo 'feat: preview guidance'"
+"#,
+        prompt_capture.display()
+    ));
+    let mut env_vars = test_env_vars_with_shell(&repo);
+    env_vars.push(("TMPDIR".into(), temp_dir.path().display().to_string()));
+    env_vars.push(("GIT_PAGER".into(), "cat".into()));
+    let cmd = build_pty_command(
+        wt_bin().to_str().unwrap(),
+        &["step", "commit", "--dry-run"],
+        repo.root_path(),
+        &env_vars,
+        None,
+    );
+    let mut files_at_approval = Vec::new();
+    let (output, exit_code) = exec_cmd_in_pty_prompted_with(cmd, &["y\n"], "[y/N", |_| {
+        files_at_approval = std::fs::read_dir(temp_dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+    });
+
+    assert_eq!(exit_code, 0, "Dry-run should succeed. Output:\n{output}");
+    assert!(
+        files_at_approval.is_empty(),
+        "Approval should precede temporary-index creation: {files_at_approval:?}"
+    );
+    let captured = std::fs::read_to_string(&prompt_capture).unwrap();
+    assert!(
+        captured.contains("Use conventional commits") && captured.contains("+new content"),
+        "Approved guidance and staged changes should reach the LLM:\n{captured}"
+    );
+    assert_eq!(repo.git_output(&["write-tree"]), index_before);
+    assert_eq!(repo.git_output(&["rev-parse", "HEAD"]), head_before);
 }
 
 /// Declining the append prompt continues without it — the LLM receives the

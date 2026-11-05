@@ -81,7 +81,7 @@ fn setup_validation_does_not_acquire_imported_fixture() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let path = tempfile::tempdir().expect("Failed to create temp dir");
+    let path = worktrunk::testing::tempdir().expect("Failed to create temp dir");
     let output = run_wt_perf(&[
         "setup",
         "imported",
@@ -98,7 +98,7 @@ fn setup_validation_does_not_acquire_imported_fixture() {
 
 #[test]
 fn setup_builds_a_semantic_recipe_at_an_explicit_path() {
-    let root = tempfile::tempdir().expect("Failed to create temp dir");
+    let root = worktrunk::testing::tempdir().expect("Failed to create temp dir");
     let repo = root.path().join("generated-fixture");
     let output = run_wt_perf(&["setup", "generated", "--path", repo.to_str().unwrap()]);
     assert!(
@@ -120,7 +120,7 @@ fn setup_builds_a_semantic_recipe_at_an_explicit_path() {
 
 #[test]
 fn setup_layers_prune_state_onto_a_canonical_base() {
-    let root = tempfile::tempdir().expect("Failed to create temp dir");
+    let root = worktrunk::testing::tempdir().expect("Failed to create temp dir");
     let repo = root.path().join("prune-fixture");
     let output = run_wt_perf(&[
         "setup",
@@ -170,7 +170,7 @@ fn setup_layers_prune_state_onto_a_canonical_base() {
 
 #[test]
 fn setup_never_mutates_an_existing_destination() {
-    let root = tempfile::tempdir().expect("Failed to create temp dir");
+    let root = worktrunk::testing::tempdir().expect("Failed to create temp dir");
     let destination = root.path().join("existing");
     std::fs::create_dir(&destination).expect("Failed to create destination");
     let sentinel = destination.join("sentinel");
@@ -295,7 +295,7 @@ fn test_wt_perf_trace_empty_input() {
 #[test]
 fn test_wt_perf_trace_from_file() {
     // Create a temp file with sample trace data
-    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let temp_dir = worktrunk::testing::tempdir().expect("Failed to create temp dir");
     let log_file = temp_dir.path().join("trace.jsonl");
 
     let sample_trace = r#"{"kind":"cmd_completed","ts":1000000,"tid":1,"cmd":"git rev-parse","dur_us":5000,"ok":true}

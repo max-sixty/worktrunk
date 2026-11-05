@@ -288,6 +288,10 @@ pub(super) struct RepoCache {
     /// front over the persistent `merge-base/` [`sha_cache`] back; see
     /// [`Repository::merge_base_by_sha`].
     pub(super) merge_base: DashMap<(String, String), Option<String>>,
+    /// Ahead/behind counts keyed by the ordered (base, head) SHA pair. The
+    /// entry lock coalesces concurrent misses from list's parallel tasks.
+    /// The persistent `ahead-behind/` cache serves later processes.
+    pub(super) ahead_behind: DashMap<(String, String), (usize, usize)>,
     /// Commit→tree cache: commit_sha -> tree_sha. Keys are commit SHAs by
     /// contract; a commit's tree is immutable, so the mapping is never stale
     /// within a process. Dedups the `wt list` integration probe, where every
@@ -1992,10 +1996,11 @@ impl Repository {
         Ok(output.stdout)
     }
 
-    /// Run a git command and return whether it succeeded (exit code 0).
+    /// Run a Git predicate: status 0 is true, 1 is false, and other statuses fail.
     ///
-    /// This is useful for commands that use exit codes for boolean results,
-    /// like `git merge-base --is-ancestor`.
+    /// Use for commands with this exit-code contract, such as
+    /// `git merge-base --is-ancestor` and `git rev-parse --verify --quiet`.
+    /// A failed query must not be treated or cached as a negative answer.
     ///
     /// # Examples
     /// ```no_run
@@ -2006,7 +2011,12 @@ impl Repository {
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn run_command_check(&self, args: &[&str]) -> anyhow::Result<bool> {
-        Ok(self.run_command_output(args)?.status.success())
+        let output = self.run_command_output(args)?;
+        match output.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => Err(CommandError::from_failed_output("git", args, &output).into()),
+        }
     }
 
     /// Abbreviate a commit SHA for display, honoring `core.abbrev` and

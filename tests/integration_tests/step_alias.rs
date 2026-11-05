@@ -38,6 +38,21 @@ hello = "echo Hello from {{ branch }}"
     ));
 }
 
+/// Alias expansion errors retain the alias identity and underlying diagnostic.
+#[rstest]
+fn test_step_alias_runtime_undefined_variable(repo: TestRepo) {
+    repo.write_test_config(
+        r#"
+[aliases]
+deploy = "echo {{ nope }}"
+"#,
+    );
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        assert_cmd_snapshot!(make_snapshot_cmd(&repo, "step", &["deploy"], None));
+    });
+}
+
 /// `wt config alias dry-run <name>` shows the expanded command without running it
 /// (no approval needed — preview never executes project commands).
 #[rstest]
@@ -1421,11 +1436,34 @@ fn test_alias_group_sigint_does_not_escalate(
 #[cfg(unix)]
 fn test_alias_last_step_keeps_status_after_caught_ctrl_c(repo: TestRepo) {
     repo.write_test_config(
-        "[aliases]\nsignal-test = \"trap 'exit 0' INT; echo $$ > pid; while :; do sleep 0.1; done\"\n",
+        "[aliases]\nsignal-test = \"trap 'echo handled > int; while [ ! -e release ]; do sleep 0.01; done; exit 0' INT; echo $$ > pid; while :; do sleep 0.1; done\"\n",
     );
-    let mut job = SignalJob::spawn(&repo, &["-vv", "step", "signal-test"], Stdio::null());
+    let stderr_path = repo.root_path().join("stderr");
+    let stderr = std::fs::File::create(&stderr_path).unwrap();
+    let mut job = SignalJob::spawn(&repo, &["-vv", "step", "signal-test"], stderr.into());
     job.interrupt_admitted_child(&repo, &repo.root_path().join("pid"));
-    assert!(job.wait().success());
+    crate::common::wait_for_file_content(&repo.root_path().join("int"));
+    // Keep the child alive until wt has received the group signal. Otherwise
+    // the child can exit before SIGINT reaches wt, turning it into an idle key.
+    let trace = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/logs/trace.jsonl");
+    let receipt = format!(
+        "Foreground signal received:{}",
+        nix::sys::signal::Signal::SIGINT as i32
+    );
+    crate::common::wait_for("wt to receive SIGINT", || {
+        std::fs::read_to_string(&trace).is_ok_and(|records| {
+            worktrunk::trace::parse_lines(&records).iter().any(|entry| {
+                matches!(&entry.kind, worktrunk::trace::TraceEntryKind::Instant { name } if name == &receipt)
+            })
+        })
+    });
+    job.release();
+    let status = job.wait();
+    assert!(
+        status.success(),
+        "the final child handled Ctrl-C successfully: {status:?}\n{}",
+        std::fs::read_to_string(stderr_path).unwrap()
+    );
 }
 
 /// Non-UTF-8 bytes and CRLF line endings in child output must not stall the
@@ -1880,6 +1918,81 @@ greet = "echo hi {{ branch }}"
         &["alias", "show"],
         Some(&feature_path),
     ));
+}
+
+/// User alias discovery does not require a Git repository, with or without a
+/// name. A typo still gets alias suggestions rather than a repository error.
+#[rstest]
+fn test_config_alias_show_outside_repository(repo: TestRepo) {
+    let outside = crate::common::test_tempdir();
+    repo.write_test_config(
+        r#"
+[aliases]
+deploy = "echo {{ branch }}"
+"#,
+    );
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    for (snapshot, args) in [
+        ("alias_show_outside_all", vec!["alias", "show"]),
+        ("alias_show_outside_named", vec!["alias", "show", "deploy"]),
+        ("alias_show_outside_typo", vec!["alias", "show", "deplyo"]),
+    ] {
+        assert_cmd_snapshot!(
+            snapshot,
+            make_snapshot_cmd(&repo, "config", &args, Some(outside.path()))
+        );
+    }
+}
+
+/// Discovery stays quiet even when prewarm reads a deprecated user setting.
+#[rstest]
+fn test_config_alias_show_suppresses_deprecation_warnings(repo: TestRepo) {
+    repo.write_test_config(
+        r#"
+[aliases]
+deploy = "echo hi"
+[commit-generation]
+command = "echo message"
+"#,
+    );
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+    for (snapshot, args) in [
+        ("alias_show_deprecated_all", vec!["alias", "show"]),
+        (
+            "alias_show_deprecated_named",
+            vec!["alias", "show", "deploy"],
+        ),
+    ] {
+        assert_cmd_snapshot!(snapshot, make_snapshot_cmd(&repo, "config", &args, None));
+    }
+}
+
+/// Project and user aliases display the templates that run: a retired
+/// template variable shows as its replacement in both sources, matching the
+/// migration execution applies.
+#[rstest]
+fn test_config_alias_show_migrates_retired_template_vars(repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+open = "code {{ repo_root }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    repo.write_test_config(
+        r#"
+[aliases]
+here = "echo {{ worktree }}"
+"#,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "config", &["alias", "show"], None));
 }
 
 /// `wt config alias show` with no name and no aliases configured prints a note

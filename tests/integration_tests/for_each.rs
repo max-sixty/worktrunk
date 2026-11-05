@@ -108,9 +108,8 @@ fn test_for_each_detached_branch_variable(mut repo: TestRepo) {
 /// literal `HEAD` — a string git resolves as a ref, so the command ran against
 /// the wrong thing instead of saying so.
 #[rstest]
-fn test_for_each_detached_branch_variable_unguarded(mut repo: TestRepo) {
-    repo.add_worktree("detached-test");
-    repo.detach_head_in_worktree("detached-test");
+fn test_for_each_detached_branch_variable_unguarded(repo: TestRepo) {
+    repo.detach_head_in_worktree("feature-b");
 
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
@@ -118,6 +117,57 @@ fn test_for_each_detached_branch_variable_unguarded(mut repo: TestRepo) {
         &["for-each", "--", "echo", "Branch: {{ branch }}"],
         None,
     ));
+}
+
+/// Preparation failures belong to one worktree: retain earlier results and
+/// continue to the next worktree, just as for a child command failure.
+#[rstest]
+fn test_for_each_json_retains_results_after_template_failure(repo: TestRepo) {
+    repo.detach_head_in_worktree("feature-b");
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "for-each",
+            "--format=json",
+            "--",
+            "echo",
+            "{{ branch }}",
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap(), @r#"
+    [
+      {
+        "branch": "main",
+        "path": "_REPO_",
+        "exit_code": 0,
+        "success": true
+      },
+      {
+        "branch": "feature-a",
+        "path": "_REPO_.feature-a",
+        "exit_code": 0,
+        "success": true
+      },
+      {
+        "branch": null,
+        "path": "_REPO_.feature-b",
+        "exit_code": null,
+        "success": false,
+        "error": "Failed to expand for-each argument: undefined variable branch @ line 1"
+      },
+      {
+        "branch": "feature-c",
+        "path": "_REPO_.feature-c",
+        "exit_code": 0,
+        "success": true
+      }
+    ]
+    "#);
 }
 
 #[rstest]
@@ -246,7 +296,7 @@ fn test_for_each_aborts_on_signal_exit(repo: TestRepo) {
     // after the first signal. for-each exec's argv directly with no implicit
     // shell, so shell features (`&&`, `$$`, `$(...)`) need an explicit
     // `sh -c` invocation.
-    let marker_dir = tempfile::tempdir().expect("create marker tmpdir");
+    let marker_dir = worktrunk::testing::tempdir().expect("create marker tmpdir");
     let marker_path = marker_dir.path().to_string_lossy().to_string();
 
     let shell_cmd = format!("touch {marker_path}/$(basename \"$(pwd)\") && kill -TERM $$");
@@ -292,7 +342,7 @@ fn test_for_each_aborts_on_signal_exit(repo: TestRepo) {
 #[rstest]
 #[cfg(unix)]
 fn test_for_each_stops_on_caught_ctrl_c(repo: TestRepo) {
-    let marker_dir = tempfile::tempdir().unwrap();
+    let marker_dir = worktrunk::testing::tempdir().unwrap();
     let pid_file = marker_dir.path().join("pid");
     let script = format!(
         "trap 'exit 0' INT; touch {dir}/\"$(basename \"$PWD\")\"; echo $$ > {pid}; while :; do sleep 0.1; done",
@@ -386,7 +436,7 @@ fn test_for_each_json_preserves_caught_exit_on_controller_term(
         }
     }
 
-    let markers = tempfile::tempdir().unwrap();
+    let markers = worktrunk::testing::tempdir().unwrap();
     let ready = markers.path().join("ready");
     std::fs::create_dir(&ready).unwrap();
     let worker = r#"import json, os, pathlib, signal, sys
@@ -485,7 +535,7 @@ while True:
 fn test_for_each_does_not_inherit_git_discovery_vars(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
 
-    let marker_dir = tempfile::tempdir().expect("create marker tmpdir");
+    let marker_dir = worktrunk::testing::tempdir().expect("create marker tmpdir");
     let marker_path = marker_dir.path().to_string_lossy().to_string();
     let shell_cmd = format!(
         r#"printf '[%s][%s]' "$GIT_DIR" "$GIT_WORK_TREE" > {marker_path}/$(basename "$(pwd)")"#

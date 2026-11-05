@@ -11,6 +11,77 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
+/// A failed existence check must stop creation, not pretend a ref is absent.
+#[cfg(unix)]
+#[rstest]
+fn test_switch_create_propagates_ref_query_failure(repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let scratch = crate::common::test_tempdir();
+    let script = scratch.path().join("git");
+    let reached = scratch.path().join("reached");
+    let real_git = which::which("git").unwrap();
+    let mut path = vec![scratch.path().to_path_buf()];
+    path.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    let path = std::env::join_paths(path).unwrap();
+
+    for (reference, explicit_base) in [
+        ("main", true),
+        ("main", false),
+        ("refs/heads/new-branch", true),
+    ] {
+        fs::write(&reached, "").unwrap();
+        fs::write(
+            &script,
+            format!(
+                r#"#!/bin/sh
+if [ "$1" = rev-parse ]; then
+  for arg in "$@"; do
+    if [ "$arg" = '{reference}' ] || [ "$arg" = '{reference}^{{commit}}' ]; then
+      echo reached > {reached}
+      echo 'simulated query failure' >&2
+      exit 128
+    fi
+  done
+fi
+exec {real_git} "$@"
+"#,
+                reached = shell_escape::unix::escape(reached.to_string_lossy()),
+                real_git = shell_escape::unix::escape(real_git.to_string_lossy()),
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut cmd = repo.wt_command();
+        cmd.env("PATH", &path)
+            .args(["switch", "--create", "new-branch", "--yes"]);
+        if explicit_base {
+            cmd.args(["--base", "main"]);
+        }
+        let output = cmd.output().unwrap();
+        assert_eq!(
+            fs::read_to_string(&reached).unwrap(),
+            "reached\n",
+            "{reference}: {output:?}"
+        );
+        assert!(!output.status.success(), "{reference}: {output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("simulated query failure"),
+            "{reference}: {output:?}"
+        );
+        let probe = repo
+            .git_command()
+            .args(["show-ref", "--verify", "--quiet", "refs/heads/new-branch"])
+            .run()
+            .unwrap();
+        assert_eq!(
+            probe.status.code(),
+            Some(1),
+            "no branch may be created after a failed query"
+        );
+    }
+}
+
 // Snapshot helpers
 
 fn snapshot_switch(test_name: &str, repo: &TestRepo, args: &[&str]) {
@@ -232,6 +303,43 @@ fn test_switch_dwim_from_remote(#[from(repo_with_remote)] repo: TestRepo) {
     // Now we have origin/dwim-feature but no local dwim-feature
     // DWIM should create local branch from remote
     snapshot_switch("switch_dwim_from_remote", &repo, &["dwim-feature"]);
+}
+
+#[rstest]
+fn test_switch_dwim_from_remote_with_slash(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&["branch", "slash-remote-feature"]);
+    repo.run_git(&["push", "origin", "slash-remote-feature"]);
+    repo.run_git(&["branch", "-D", "slash-remote-feature"]);
+    repo.run_git(&["remote", "rename", "origin", "team/fork"]);
+
+    assert_eq!(repo.git_output(&["remote"]), "team/fork");
+    assert_eq!(
+        repo.git_output(&[
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/remotes/team/fork/slash-remote-feature",
+        ]),
+        "team/fork/slash-remote-feature",
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "slash-remote-feature"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch should find the branch on team/fork; stderr: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert_eq!(
+        repo.git_output(&[
+            "rev-parse",
+            "--abbrev-ref",
+            "slash-remote-feature@{upstream}",
+        ]),
+        "team/fork/slash-remote-feature",
+    );
 }
 
 /// When the branch argument includes the remote prefix (e.g., "origin/feature"),
@@ -1021,6 +1129,55 @@ fn test_switch_no_cd_execute_runs_in_worktree(mut repo: TestRepo) {
     assert!(
         header.contains('@'),
         "--no-cd leaves the shell behind, so the header must name the program's directory: {header}"
+    );
+}
+
+/// An `--execute` program can remove the worktree it started in, as a session
+/// does when it ends by removing its own worktree. The shell wrapper would then
+/// `cd` into a directory that no longer exists, so wt withdraws the directive
+/// and the shell stays where it was.
+///
+/// Unix only: Windows refuses to delete a directory that a running process
+/// holds as its cwd, so there the program can't remove the worktree it runs in.
+#[cfg(unix)]
+#[rstest]
+fn test_switch_execute_that_removes_worktree_withdraws_cd(mut repo: TestRepo) {
+    let worktree = repo.add_worktree("feature");
+    let root = repo.root_path().to_string_lossy().to_string();
+    let worktree_arg = worktree.to_string_lossy().to_string();
+
+    let (cd_path, _guard) = directive_file();
+    let mut cmd = repo.wt_command();
+    configure_directive_file(&mut cmd, &cd_path);
+    cmd.current_dir(repo.root_path()).args([
+        "switch",
+        "feature",
+        "--execute",
+        "git",
+        "--",
+        "-C",
+        &root,
+        "worktree",
+        "remove",
+        "--force",
+        &worktree_arg,
+    ]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "switch --execute failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !worktree.exists(),
+        "the --execute program should remove the worktree"
+    );
+    assert_eq!(
+        fs::read_to_string(&cd_path).unwrap(),
+        "",
+        "wt left a cd directive to the removed worktree"
     );
 }
 
@@ -2370,7 +2527,7 @@ fn test_switch_execute_stdin_inheritance(repo: TestRepo) {
 
 #[rstest]
 fn test_switch_outside_git_repo(temp_home: TempDir) {
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = worktrunk::testing::tempdir().unwrap();
 
     // Run wt switch --create outside a git repo - should show "Failed to switch worktree" context
     let settings = setup_home_snapshot_settings(&temp_home);
@@ -2881,7 +3038,7 @@ worktree-path = "{{ repo_path }}/../from-project-{{ branch | sanitize }}"
     // The rule is the same one layer down, where no invocation is involved:
     // with the entry moved to the system file, the user file's global key
     // answers for this repo. Written last because it rewrites the user config.
-    let system_dir = tempfile::tempdir().unwrap();
+    let system_dir = worktrunk::testing::tempdir().unwrap();
     let system_config = system_dir.path().join("config.toml");
     fs::write(
         &system_config,
@@ -3430,6 +3587,38 @@ fn configure_mock_cli_env(cmd: &mut std::process::Command, mock_bin: &Path) {
     cmd.env(path_var_name, new_path);
 }
 
+#[rstest]
+fn test_switch_pr_escapes_context_controls(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    let response = serde_json::json!({
+        "title": "hello\n\u{1b}]52;c;YQ==\u{7} café",
+        "user": {"login": "alice\u{1b}[31m"},
+        "state": "open\r",
+        "draft": false,
+        "head": {"ref": "feature-auth", "repo": {"name": "test-repo", "owner": {"login": "owner"}}},
+        "base": {"ref": "main", "repo": {"name": "test-repo", "owner": {"login": "owner"}}},
+        "html_url": "https://github.com/owner/test-repo/pull/101"
+    });
+    let mock_bin = setup_mock_gh_for_pr(&repo, &response.to_string());
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "--create", "pr:101", "--no-hooks"])
+        .env("CLICOLOR_FORCE", "1");
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(!output.status.success()); // --create conflicts after displaying the PR.
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains(r"\u{1b}]52;c;YQ==\u{7} café"), "{stderr:?}");
+    assert!(stderr.contains(r"alice\u{1b}[31m"), "{stderr:?}");
+    assert!(stderr.contains(r"open\r"), "{stderr:?}");
+    assert!(!stderr.contains("\x1b]52;"), "{stderr:?}");
+    assert!(stderr.contains("\x1b["), "test must exercise styled output");
+}
+
 /// Test that --create flag conflicts with pr: syntax
 #[rstest]
 fn test_switch_pr_create_conflict(#[from(repo_with_remote)] repo: TestRepo) {
@@ -3724,7 +3913,7 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         .command("config get git_protocol", MockResponse::output("ssh\n"))
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -4524,7 +4713,7 @@ fn test_switch_pr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
 /// A 404 is the one GitHub failure worded by us rather than forwarded from
 /// `gh`, because it answers about an owner/repo we chose — so the message has to
 /// name where that choice came from. With `gh repo set-default` configured, that
-/// is the default, and the remedy is to check it rather than the remotes.
+/// is the default, and the hint names the command that changes it.
 #[rstest]
 fn test_switch_pr_not_found_gh_default(#[from(repo_with_remote)] repo: TestRepo) {
     set_github_remote_url(&repo);
@@ -6240,7 +6429,7 @@ fn test_switch_pr_self_hosted_tea_authed_dispatches_to_gitea(
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -6323,7 +6512,7 @@ fn test_switch_pr_self_hosted_defaults_to_github(
     }
     #[cfg(unix)]
     std::os::unix::fs::symlink(which::which("git").unwrap(), mock_bin.join("git")).unwrap();
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -6369,7 +6558,7 @@ fn test_switch_pr_tea_login_matches_distinct_ssh_host(repo: TestRepo) {
     MockConfig::new("gh")
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     configure_mock_cli_env(&mut cmd, &mock_bin);
     let output = cmd
@@ -6426,7 +6615,7 @@ fn test_switch_pr_tea_login_native_interruption(
     MockConfig::new("gh")
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     configure_mock_cli_env(&mut cmd, &mock_bin);
     let output = cmd
@@ -7883,7 +8072,7 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
 
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
@@ -8785,7 +8974,7 @@ fn test_switch_format_json_already_at(mut repo: TestRepo) {
 }
 
 #[rstest]
-fn test_switch_format_json_failures_emit_one_error(repo: TestRepo) {
+fn test_switch_format_json_preserves_output_on_failure(repo: TestRepo) {
     let early = repo
         .wt_command()
         .args([
@@ -8798,13 +8987,11 @@ fn test_switch_format_json_failures_emit_one_error(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!early.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&early.stdout).unwrap();
-    assert_eq!(json.as_object().unwrap().len(), 1);
-    insta::assert_snapshot!(json["error"].as_str().expect("error is a plain string"), @"
-    ✗ No branch named missing-json
-    ↳ To create a new branch, run wt switch --create missing-json; to list branches, run wt list --branches --remotes
-    ");
-    assert!(!early.stderr.is_empty());
+    assert!(early.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&early.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(stderr.contains("No branch named missing-json"), "{stderr}");
 
     // An invalid branch name is rejected before any worktree is created.
     let rejected = repo
@@ -8820,17 +9007,14 @@ fn test_switch_format_json_failures_emit_one_error(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!rejected.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&rejected.stdout).unwrap();
-    let error = json["error"].as_str().expect("error is a plain string");
-    assert!(
-        error.contains("Invalid branch name bad..name"),
-        "JSON must retain the rejection reason: {error}"
-    );
-    assert_eq!(error, error.ansi_strip());
-    assert!(String::from_utf8_lossy(&rejected.stderr).contains("Invalid branch name"));
+    assert!(rejected.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&rejected.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(stderr.contains("Invalid branch name bad..name"), "{stderr}");
 
     // The worktree is created before --execute fails. The result must describe
-    // the whole synchronous command, rather than reporting success too early.
+    // the completed creation while the exit status reports the execution failure.
     let late = repo
         .wt_command()
         .args([
@@ -8849,7 +9033,17 @@ fn test_switch_format_json_failures_emit_one_error(repo: TestRepo) {
         .unwrap();
     assert_eq!(late.status.code(), Some(7));
     let json: serde_json::Value = serde_json::from_slice(&late.stdout).unwrap();
-    assert_eq!(json, serde_json::json!({ "error": "exit code 7" }));
+    assert_eq!(json["action"], "created");
+    assert_eq!(json["branch"], "failed-json");
+    assert_eq!(
+        json["path"],
+        repo.root_path()
+            .parent()
+            .unwrap()
+            .join("repo.failed-json")
+            .to_string_lossy()
+            .as_ref()
+    );
     assert!(String::from_utf8_lossy(&late.stderr).contains("child-output"));
     assert!(
         repo.root_path()
@@ -8858,6 +9052,32 @@ fn test_switch_format_json_failures_emit_one_error(repo: TestRepo) {
             .join("repo.failed-json")
             .is_dir()
     );
+}
+
+/// Pre-start is synchronous but runs after creation. Its failure must keep
+/// the created path even though the switch pipeline did not reach its output.
+#[rstest]
+fn test_switch_format_json_pre_start_failure(repo: TestRepo) {
+    repo.write_test_config("pre-start = \"exit 7\"\n");
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "failed-start",
+            "--format=json",
+            "--no-cd",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["action"], "created");
+    assert_eq!(json["branch"], "failed-start");
+    let path = Path::new(json["path"].as_str().unwrap());
+    assert!(path.is_dir());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("failed"));
 }
 
 #[rstest]
@@ -8879,18 +9099,17 @@ fn test_switch_format_json_fetch_failure(#[from(repo_with_remote)] repo: TestRep
     configure_mock_cli_env(&mut cmd, &mock_bin);
     let output = cmd.output().unwrap();
     assert!(!output.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    let message = json["error"].as_str().unwrap();
+    assert!(output.stdout.is_empty());
+    let message = String::from_utf8_lossy(&output.stderr);
     assert!(
         message.contains("does not appear to be a git repository"),
-        "{json}"
+        "{message}"
     );
-    assert!(message.contains(missing.to_str().unwrap()), "{json}");
-    assert!(json.get("action").is_none());
+    assert!(message.contains(missing.to_str().unwrap()), "{message}");
 }
 
 #[rstest]
-fn test_switch_format_json_directive_failure_emits_one_error(repo: TestRepo) {
+fn test_switch_format_json_retains_result_after_directive_failure(repo: TestRepo) {
     // The directory cannot be opened as a CD directive file. That write runs
     // after the worktree has already been created.
     let mut cmd = repo.wt_command();
@@ -8907,13 +9126,13 @@ fn test_switch_format_json_directive_failure_emits_one_error(repo: TestRepo) {
         .unwrap();
     assert!(!output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    let message = json["error"].as_str().unwrap();
+    let message = String::from_utf8_lossy(&output.stderr);
     assert!(
         message.contains("Failed to write the cd directive file"),
         "{message}"
     );
     assert!(message.contains(repo.root_path().to_str().unwrap()));
-    assert!(json.get("action").is_none());
+    assert_eq!(json["action"], "created");
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("Failed to write the cd directive file")
     );
@@ -8949,13 +9168,9 @@ fn test_switch_format_json_early_validation_errors(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!invalid_cwd.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&invalid_cwd.stdout).unwrap();
+    assert!(invalid_cwd.stdout.is_empty());
     assert!(
-        json["error"]
-            .as_str()
-            .unwrap()
-            .contains("git rev-parse --git-common-dir"),
-        "JSON: {json}"
+        String::from_utf8_lossy(&invalid_cwd.stderr).contains("git rev-parse --git-common-dir")
     );
 
     // A spawn failure must describe its producer, rather than expose only an
@@ -8974,10 +9189,9 @@ fn test_switch_format_json_early_validation_errors(repo: TestRepo) {
         .unwrap();
     assert!(!missing_program.status.success());
     let json: serde_json::Value = serde_json::from_slice(&missing_program.stdout).unwrap();
+    assert_eq!(json["action"], "already_at");
     assert!(
-        json["error"]
-            .as_str()
-            .unwrap()
+        String::from_utf8_lossy(&missing_program.stderr)
             .contains("Failed to execute wt-json-missing-executable-14")
     );
 }
@@ -9005,13 +9219,10 @@ fn test_switch_format_json_execute_signal(repo: TestRepo) {
         Some(15)
     );
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(
-        json,
-        serde_json::json!({ "error": "Interrupted by signal 15" })
-    );
+    assert_eq!(json["action"], "already_at");
 
     // Hook interruption has its own typed signal error whose terminal display
-    // is deliberately silent. JSON must still describe the actual signal.
+    // is deliberately silent. The exit status still reports the actual signal.
     repo.write_test_config("pre-switch = \"kill -INT $$\"\n");
     let interrupted = repo
         .wt_command()
@@ -9042,11 +9253,7 @@ fn test_switch_format_json_execute_signal(repo: TestRepo) {
             .exists()
     );
     assert!(!String::from_utf8_lossy(&interrupted.stderr).contains("should-not-run"));
-    let json: serde_json::Value = serde_json::from_slice(&interrupted.stdout).unwrap();
-    assert_eq!(
-        json,
-        serde_json::json!({ "error": "Interrupted by signal 2" })
-    );
+    assert!(interrupted.stdout.is_empty());
 }
 
 #[rstest]
@@ -9253,19 +9460,11 @@ fn test_switch_create_names_branch_left_by_failed_worktree_add(repo: TestRepo, #
         "expected a recovery suggestion for the leftover branch, got: {stderr}"
     );
     if json {
-        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        let error = result["error"].as_str().expect("error is a plain string");
+        assert!(output.stdout.is_empty());
         assert!(
-            error.contains("fatal: could not create leading directories"),
-            "JSON must retain Git's directory-creation error: {error}"
+            stderr.contains("fatal: could not create leading directories"),
+            "{stderr}"
         );
-        assert!(
-            error.contains("Branch stranded was created before the failure, with no worktree")
-                && error.contains("git branch -d -- stranded")
-                && error.contains("wt switch stranded"),
-            "JSON must name the leftover branch and both recovery choices: {error}"
-        );
-        assert_eq!(error, error.ansi_strip());
     }
 }
 

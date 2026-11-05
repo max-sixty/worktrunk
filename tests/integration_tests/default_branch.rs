@@ -812,7 +812,7 @@ fn test_default_branch_via_c_flag_from_non_repo_cwd(repo: TestRepo) {
     // local probe.
     repo.run_git(&["remote", "remove", "origin"]);
 
-    let non_repo_cwd = tempfile::tempdir().unwrap();
+    let non_repo_cwd = worktrunk::testing::tempdir().unwrap();
     let mut cmd = repo.wt_command();
     cmd.current_dir(non_repo_cwd.path()).args([
         "-C",
@@ -845,7 +845,7 @@ fn test_default_branch_via_c_flag_to_linked_worktree_of_bare_repo() {
     // Make sure there's a commit so refs resolve cleanly.
     test.commit_in(&main_worktree, "init");
 
-    let non_repo_cwd = tempfile::tempdir().unwrap();
+    let non_repo_cwd = worktrunk::testing::tempdir().unwrap();
     let mut cmd = test.wt_command();
     cmd.current_dir(non_repo_cwd.path()).args([
         "-C",

@@ -2,6 +2,7 @@ use crate::display::{format_relative_time_short, shorten_path};
 use anstyle::{Effects, Style};
 use unicode_width::UnicodeWidthStr;
 use worktrunk::styling::{DETACHED, StyledLine, truncate_visible};
+use worktrunk::utils::escape_controls;
 
 use super::columns::{ColumnKind, DiffVariant};
 use super::layout::{
@@ -653,7 +654,8 @@ impl ColumnLayout {
                     return self.placeholder_cell(placeholder);
                 };
                 let mut cell = StyledLine::new();
-                let msg = truncate_visible(&commit.commit_message, max_message_len);
+                let message = escape_controls(&commit.commit_message);
+                let msg = truncate_visible(&message, max_message_len);
                 cell.push_styled(msg, Style::new().dimmed());
                 cell
             }

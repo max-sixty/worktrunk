@@ -704,7 +704,7 @@ figure.demo img {
 }
 
 @media (min-width: 72rem) {
-  html:has(.wt-home) .main-pane {
+  html:has(.wt-home, .wt-try-it) .main-pane {
     --sl-content-margin-inline: auto 0;
     width: min(
       calc(100% - var(--sl-sidebar-width)),
@@ -728,7 +728,7 @@ figure.demo img {
 
   [data-has-toc] .right-sidebar-container,
   [data-has-sidebar][data-has-toc] .main-pane,
-  html:has(.wt-home) .main-pane {
+  html:has(.wt-home, .wt-try-it) .main-pane {
     flex-basis: 100%;
     width: 100%;
   }

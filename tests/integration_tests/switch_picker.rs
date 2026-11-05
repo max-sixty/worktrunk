@@ -859,7 +859,11 @@ fn test_switch_picker_abort_with_escape(repo: TestRepo) {
         &["switch"],
         repo.root_path(),
         &env_vars,
-        &[], // No inputs before abort
+        // Settle: the preview renders only after the list has a selected row,
+        // so gating on it confirms both panels before capture. Without a gate,
+        // a prompt that sits quiet for STABLE_DURATION on a slow runner gets
+        // captured before any rows arrive.
+        &[("", Some("has no file changes"))],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
@@ -1313,7 +1317,7 @@ fn test_switch_picker_open_url_keeps_launcher_output_out_of_terminal(
             )
             .write(&mock_bin);
     }
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut env_vars = forge_mock_env_vars(&repo, &mock_bin);
     env_vars.push((
         "WORKTRUNK_TEST_MOCK_CALL_LOG_DIR".into(),
@@ -1699,7 +1703,7 @@ fn test_switch_picker_preview_auto_refreshes_when_compute_lands(repo: TestRepo) 
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
     let release = MockReleaseGate::new(mock_bin.join("comments.release"));
-    let call_log = tempfile::tempdir().unwrap();
+    let call_log = worktrunk::testing::tempdir().unwrap();
     let mut env_vars = forge_mock_env_vars(&repo, &mock_bin);
     env_vars.push((
         "WORKTRUNK_TEST_MOCK_CALL_LOG_DIR".to_string(),
@@ -1763,7 +1767,18 @@ fn test_switch_picker_preview_auto_refreshes_when_compute_lands(repo: TestRepo) 
 /// succeeds — proving the pre-flight aborts cleanly rather than leaving a
 /// half-created worktree behind.
 #[rstest]
-fn test_switch_picker_create_validates_templates_before_worktree(repo: TestRepo) {
+#[case::unnamed(r#"pre-start = "echo {{ unclosed""#, "pre-start user hook")]
+#[case::named(
+    r#"[pre-start]
+broken = "echo {{ unclosed"
+"#,
+    "pre-start user:broken"
+)]
+fn test_switch_picker_create_validates_templates_before_worktree(
+    repo: TestRepo,
+    #[case] config: &str,
+    #[case] label: &str,
+) {
     repo.run_git(&["remote", "remove", "origin"]);
 
     // Broken `pre-start` in user config: unbalanced `{{` is a minijinja parse
@@ -1771,7 +1786,7 @@ fn test_switch_picker_create_validates_templates_before_worktree(repo: TestRepo)
     // Project config would also trigger the validation path, but it routes
     // through the approval gate first and would prompt for a TTY response —
     // user-config hooks are trusted and exercise validation directly.
-    repo.write_test_config(r#"pre-start = "echo {{ unclosed""#);
+    repo.write_test_config(config);
 
     let env_vars = repo.test_env_vars();
 
@@ -1790,6 +1805,13 @@ fn test_switch_picker_create_validates_templates_before_worktree(repo: TestRepo)
         result.exit_code,
         0,
         "Expected non-zero exit when pre-start template is broken.\nScreen:\n{}",
+        result.screen()
+    );
+    assert!(
+        result
+            .screen()
+            .contains(&format!("Failed to expand {label}: syntax error")),
+        "The pre-flight error must identify the hook source and command.\nScreen:\n{}",
         result.screen()
     );
 
@@ -2021,7 +2043,7 @@ fn test_switch_picker_pre_switch_hook_requires_approval(mut repo: TestRepo) {
 
     // Project `pre-switch` hook (in `.config/wt.toml`, so it routes through the
     // approval gate) that touches a marker outside the worktree if it runs.
-    let marker_dir = tempfile::tempdir().unwrap();
+    let marker_dir = worktrunk::testing::tempdir().unwrap();
     let marker = marker_dir.path().join("pre-switch-ran");
     repo.write_project_config(&format!(
         "pre-switch = {:?}\n",

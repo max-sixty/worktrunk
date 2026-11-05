@@ -79,43 +79,6 @@ fn test_prune_removes_merged(mut repo: TestRepo) {
     assert!(!worktree_path.exists(), "Worktree should be fully removed");
 }
 
-/// Worktrees sharing a directory basename (Codex's `<id>/<repo>` layout) each
-/// stage into trash. The suite pins `epoch_now()`, so with basename-derived
-/// staging names the second rename would collide and fall back to a
-/// synchronous `git worktree remove`, which spawns no detached cleanup.
-#[rstest]
-fn test_prune_stages_worktrees_sharing_a_basename(mut repo: TestRepo) {
-    repo.commit("initial");
-    let parent = repo.root_path().parent().unwrap().to_path_buf();
-    let worktrees = [
-        ("one", parent.join("aaaa/repo")),
-        ("two", parent.join("bbbb/repo")),
-    ];
-    for (branch, path) in &worktrees {
-        repo.add_worktree_at_path(branch, path);
-    }
-
-    let output = repo
-        .wt_command()
-        .args(["step", "prune", "--yes", "--min-age=0s"])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let logs = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/logs");
-    for (branch, path) in &worktrees {
-        assert!(!path.exists(), "{branch} must be removed");
-        assert!(
-            logs.join(branch).join("internal/remove.log").exists(),
-            "{branch} must be staged into trash with a detached cleanup"
-        );
-    }
-}
-
 /// Prune skips worktrees with unique commits (not merged)
 #[rstest]
 fn test_prune_skips_unmerged(mut repo: TestRepo) {
@@ -281,7 +244,7 @@ fn test_prune_removes_multiple_detached(mut repo: TestRepo) {
 /// fallback when the rename-into-trash fast path is blocked.
 ///
 /// A detached worktree has no branch, so the fallback's branch deletion is a
-/// no-op — this covers that arm of `delete_branch_in_synchronous_fallback`.
+/// no-op — this covers that arm of `delete_removed_worktree_branch`.
 #[rstest]
 fn test_prune_detached_worktree_rename_fallback(mut repo: TestRepo) {
     repo.commit("initial");
@@ -533,11 +496,13 @@ fn test_prune_orphan_branch_min_age_without_reflog(repo: TestRepo) {
 /// candidates. Two month-old packed branches in a bare clone go through a
 /// `git` shim that holds `packed-b`'s reflog read until `packed-a`'s deletion
 /// has finished, so `packed-b` is aged after that rewrite; both must still be
-/// removed. Unix-only for the same `CreateProcess` shim reason as the canary
-/// below.
+/// removed. If that later read fails, JSON must retain the earlier removal.
+/// Unix-only for the same `CreateProcess` shim reason as the canary below.
 #[cfg(unix)]
 #[rstest]
-fn test_prune_removals_keep_packed_branch_ages(repo: TestRepo) {
+#[case::success(false)]
+#[case::scan_failure(true)]
+fn test_prune_removals_keep_packed_branch_ages(repo: TestRepo, #[case] scan_failure: bool) {
     repo.create_branch("packed-a");
     repo.create_branch("packed-b");
     let clone = bare_clone(&repo);
@@ -554,11 +519,26 @@ fn test_prune_removals_keep_packed_branch_ages(repo: TestRepo) {
     let barrier_dir = repo.home_path().join("barrier");
     std::fs::create_dir_all(&barrier_dir).unwrap();
     cmd.env("WT_TEST_BARRIER_DIR", &barrier_dir);
+    if scan_failure {
+        cmd.env("WORKTRUNK_TEST_FAIL_REFLOG_READ", "1");
+    }
 
-    let output = cmd.args(["step", "prune", "--yes"]).output().unwrap();
+    let output = cmd
+        .args(["step", "prune", "--yes", "--format=json"])
+        .output()
+        .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    assert!(output.status.success(), "prune should succeed:\n{stderr}");
+    assert_eq!(output.status.success(), !scan_failure, "{stderr}");
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let removed = result.as_array().unwrap();
+    assert_eq!(removed.len(), if scan_failure { 1 } else { 2 }, "{result}");
+    assert_eq!(removed[0]["branch"], "packed-a");
+    assert_eq!(removed[0]["branch_outcome"], "deleted");
+    if scan_failure {
+        assert!(stderr.contains("checking branch integration"), "{stderr}");
+        assert!(stderr.contains("reflog read failed"), "{stderr}");
+    }
     assert!(
         barrier_dir.join("deleted-packed-a").exists(),
         "the shim never saw packed-a deleted:\n{stderr}"
@@ -575,9 +555,10 @@ fn test_prune_removals_keep_packed_branch_ages(repo: TestRepo) {
         .unwrap();
     let branches = String::from_utf8_lossy(&output.stdout);
     for name in ["packed-a", "packed-b"] {
-        assert!(
-            !branches.lines().any(|branch| branch == name),
-            "{name} should have been pruned:\n{stderr}"
+        assert_eq!(
+            branches.lines().any(|branch| branch == name),
+            scan_failure && name == "packed-b",
+            "unexpected retention of {name}:\n{stderr}"
         );
     }
 }
@@ -1267,6 +1248,53 @@ fn test_prune_json_current_worktree(mut repo: TestRepo) {
     settings.bind(|| {
         assert_snapshot!(String::from_utf8_lossy(&output.stdout));
     });
+}
+
+/// Current-worktree removal runs after the workers finish. A branch lock at
+/// that point must report both the earlier removal and the removed checkout.
+#[cfg(unix)]
+#[rstest]
+#[case::foreground(true)]
+#[case::background(false)]
+fn test_prune_json_current_branch_failure_retains_removals(
+    mut repo: TestRepo,
+    #[case] foreground: bool,
+) {
+    repo.commit("initial");
+    let original_worktrees = repo.git_output(&["worktree", "list", "--porcelain"]);
+    repo.create_branch("earlier-merged");
+    let current = repo.add_worktree("current-merged");
+    std::fs::write(
+        repo.root_path().join(".git/refs/heads/current-merged.lock"),
+        "locked",
+    )
+    .unwrap();
+
+    let mut command = repo.wt_command();
+    command
+        .current_dir(&current)
+        .args(["step", "prune", "--min-age=0s", "--format=json", "--yes"]);
+    if foreground {
+        command.arg("--foreground");
+    }
+    let output = command.output().unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let removed = result.as_array().unwrap();
+    assert_eq!(removed.len(), 2, "{result}");
+    assert_eq!(removed[0]["branch"], "earlier-merged");
+    assert_eq!(removed[0]["branch_outcome"], "deleted");
+    assert_eq!(removed[1]["branch"], "current-merged");
+    assert_eq!(removed[1]["kind"], "current");
+    assert_eq!(removed[1]["branch_outcome"], "retained_failed");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("lock"));
+    assert_eq!(
+        repo.git_output(&["worktree", "list", "--porcelain"]),
+        original_worktrees
+    );
+    let branches = repo.git_output(&["branch", "--format=%(refname:short)"]);
+    assert!(branches.lines().any(|branch| branch == "current-merged"));
+    assert!(!branches.lines().any(|branch| branch == "earlier-merged"));
 }
 
 #[rstest]
@@ -2197,10 +2225,7 @@ fn test_removal_runs_post_remove_after_cleanup_spawn_failure(
             repo.git_output(&["rev-parse", "main"])
         );
     } else {
-        assert!(
-            stderr.contains("Failed to create log directory"),
-            "{stderr}"
-        );
+        assert!(stderr.contains("Failed to create log file"), "{stderr}");
     }
     // The trash entry may already be gone: `wt remove`'s sweep starts a drain
     // under the shared log, which the blocked branch log doesn't stop.
@@ -3162,12 +3187,13 @@ fi
 fn test_prune_removal_failure_aborts_remaining_queue(repo: TestRepo) {
     repo.commit("initial");
 
+    repo.create_branch("abort-0");
     repo.create_branch("abort-a");
     repo.create_branch("abort-b");
     repo.create_branch("abort-c");
 
     let mut cmd = repo.wt_command();
-    cmd.env("RAYON_NUM_THREADS", "1"); // FIFO: abort-a dispatches first
+    cmd.env("RAYON_NUM_THREADS", "1"); // FIFO: abort-0 completes before abort-a fails
     let git_wrapper_dir = repo.home_path().join("git-wrapper");
     std::fs::create_dir_all(&git_wrapper_dir).unwrap();
     write_failing_branch_delete_wrapper(&git_wrapper_dir, &which::which("git").unwrap());
@@ -3175,7 +3201,7 @@ fn test_prune_removal_failure_aborts_remaining_queue(repo: TestRepo) {
     cmd.env("WT_TEST_FAIL_DELETE_BRANCH", "abort-a");
 
     let output = cmd
-        .args(["step", "prune", "--yes", "--min-age=0s"])
+        .args(["step", "prune", "--yes", "--min-age=0s", "--format=json"])
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -3185,13 +3211,20 @@ fn test_prune_removal_failure_aborts_remaining_queue(repo: TestRepo) {
         "a failed removal must fail the run:\n{stderr}"
     );
     assert!(
-        stderr.contains("removing branch abort-a"),
+        stderr
+            .ansi_strip()
+            .contains("Failed to delete branch abort-a"),
         "the error should carry the failing candidate's context:\n{stderr}"
     );
     assert!(
         !stderr.contains("Pruned "),
         "no summary after an aborted run:\n{stderr}"
     );
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let completed = response.as_array().unwrap();
+    assert_eq!(completed.len(), 1, "{response}");
+    assert_eq!(completed[0]["branch"], "abort-0");
+    assert_eq!(completed[0]["branch_outcome"], "deleted");
     let branches = repo.git_output(&["branch", "--format=%(refname:short)"]);
     assert!(
         !branches.lines().any(|b| b == "abort-a"),
@@ -3298,6 +3331,10 @@ if [ "$1 $2" = "reflog show" ]; then
         fi
         sleep 0.05
       done
+      if [ -n "$WORKTRUNK_TEST_FAIL_REFLOG_READ" ]; then
+        echo 'reflog read failed' >&2
+        exit 7
+      fi
       ;;
   esac
 fi

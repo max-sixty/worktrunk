@@ -663,7 +663,7 @@ mod tests {
     #[test]
     #[cfg(windows)]
     fn canonicalize_with_parents_agrees_across_the_verbatim_threshold() {
-        let tmp = tempfile::tempdir().expect("temp dir");
+        let tmp = crate::testing::tempdir().expect("temp dir");
         let root = tmp.path();
 
         // 260 characters is `dunce`'s cutoff for stripping the prefix; overshoot

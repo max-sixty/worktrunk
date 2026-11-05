@@ -346,10 +346,9 @@ pub struct RemoveOptions {
 /// Result of [`remove_worktree_with_cleanup`].
 ///
 /// `branch_result` is `None` when deletion was skipped (no branch supplied, or
-/// `deletion_mode.should_keep()`). Otherwise it carries the raw result so
-/// callers can decide how to surface branch-deletion failures — the
-/// foreground removal path reports them to the user, the TUI picker ignores
-/// them (best-effort), and external tools can do whatever fits.
+/// `deletion_mode.should_keep()`). A deletion failure carries
+/// [`GitError::BranchDeletionFailed`] with the removed worktree's path.
+/// Callers finish teardown and cleanup before propagating it.
 ///
 /// `staged_path` is `Some` only on the fast path. Callers are responsible for
 /// cleaning up the staged directory; `wt remove` does this with a detached
@@ -374,8 +373,8 @@ pub struct RemovalOutput {
 ///   `git worktree remove` also fails.
 /// - Branch-deletion errors are captured in
 ///   [`RemovalOutput::branch_result`] rather than returned — worktree removal
-///   is considered the primary operation, and callers can decide how to
-///   handle a residual branch-deletion failure.
+///   is already complete. Callers finish teardown and cleanup before
+///   propagating the contextual deletion failure.
 pub fn remove_worktree_with_cleanup(
     repo: &Repository,
     snapshot: &crate::git::RefSnapshot,
@@ -397,13 +396,23 @@ pub fn remove_worktree_with_cleanup(
         && !options.deletion_mode.should_keep()
     {
         let target = options.target_branch.as_deref().unwrap_or("HEAD");
-        Some(delete_branch_if_safe(
-            repo,
-            snapshot,
-            branch,
-            target,
-            options.deletion_mode.is_force(),
-        ))
+        Some(
+            delete_branch_if_safe(
+                repo,
+                snapshot,
+                branch,
+                target,
+                options.deletion_mode.is_force(),
+            )
+            .map_err(|error| {
+                GitError::BranchDeletionFailed {
+                    branch: branch.to_owned(),
+                    removed_worktree: Some(worktree_path.to_path_buf()),
+                    error,
+                }
+                .into()
+            }),
+        )
     } else {
         None
     };
@@ -656,6 +665,7 @@ pub fn delete_branch_if_safe(
     // behavior for the Worktree path). The user explicitly chose -D.
     if force_delete {
         repo.run_command(&["branch", "-D", "--", branch_name])?;
+        clear_deleted_branch_marker(repo, branch_name);
         return Ok(BranchDeletionResult {
             outcome: BranchDeletionOutcome::ForceDeleted,
             integration_target: target.to_string(),
@@ -684,11 +694,30 @@ pub fn delete_branch_if_safe(
         }
         None => BranchDeletionOutcome::NotDeleted,
     };
+    if matches!(outcome, BranchDeletionOutcome::Integrated(_)) {
+        clear_deleted_branch_marker(repo, branch_name);
+    }
 
     Ok(BranchDeletionResult {
         outcome,
         integration_target: effective_target,
     })
+}
+
+/// Drop the activity marker of a branch `wt` just deleted.
+///
+/// Markers are keyed by branch name in shared git config, so one left behind
+/// would reappear on a later branch reusing the name. Best effort: the branch
+/// is already gone, so a failed unset is logged rather than surfaced.
+fn clear_deleted_branch_marker(repo: &Repository, branch_name: &str) {
+    // `<name>.vars.marker` is also branch `<name>`'s var `marker`; only
+    // marker JSON belongs to the deleted branch (as in `clear_all_markers`).
+    if repo.branch_marker(branch_name).is_none() {
+        return;
+    }
+    if let Err(e) = repo.unset_config(&format!("worktrunk.state.{branch_name}.marker")) {
+        tracing::debug!(error = %e, "Failed to clear marker for deleted branch {branch_name}: {e}");
+    }
 }
 
 /// Find a live checkout of `branch` using a new repository cache.
@@ -826,7 +855,6 @@ fn open_drain_lock(trash_dir: &Path) -> anyhow::Result<fs::File> {
 
 /// Delete every staged entry in `trash_dir`, unless another drain is running.
 ///
-/// Every staged removal starts a drain, so a prune starts one per worktree.
 /// Concurrent deletions on one filesystem add CPU without adding throughput:
 /// a 193-worktree prune ran 193 `rm -rf` processes using about three cores to
 /// delete 1,500 files/s, where one process alone deleted 3,000–5,000 files/s
@@ -886,7 +914,7 @@ mod tests {
     /// drain that finds another holding the lock leaves the entries to it.
     #[test]
     fn drain_trash_deletes_staged_entries_once_the_lock_is_free() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::testing::tempdir().unwrap();
         let trash = temp.path().join("trash");
         let staged = trash.join("repo.feature-branch-1700000000");
         let foreign = trash.join("not-staged");
@@ -921,7 +949,7 @@ mod tests {
     fn drain_trash_stops_at_an_undeletable_entry() {
         use std::os::unix::fs::PermissionsExt;
 
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::testing::tempdir().unwrap();
         let trash = temp.path().join("trash");
         fs::create_dir(&trash).unwrap();
         fs::write(trash.join("stuck-1700000000"), "x").unwrap();
@@ -931,6 +959,44 @@ mod tests {
         drain_trash(&trash).unwrap();
 
         fs::set_permissions(&trash, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// Same-basename worktrees need distinct staging paths. Test staging
+    /// directly: a prune batch may share one detached drain, so per-branch
+    /// cleanup logs do not prove whether each worktree was staged.
+    #[test]
+    fn stages_worktrees_sharing_a_basename() {
+        let mut test = TestRepo::with_initial_commit();
+        let parent = test.root_path().parent().unwrap().to_path_buf();
+        let worktrees = [
+            ("one", parent.join("aaaa/repo")),
+            ("two", parent.join("bbbb/repo")),
+        ];
+        for (branch, path) in &worktrees {
+            test.add_worktree_at_path(branch, path);
+        }
+        let repo = Repository::at(test.root_path()).unwrap();
+        let mut staged_paths = Vec::new();
+        for (branch, path) in &worktrees {
+            let git_dir = repo.worktree_at(path).git_dir().unwrap();
+            let registration = git_dir.file_name().unwrap().to_string_lossy();
+            let staged = stage_worktree_removal(&repo, path, Some(branch), false)
+                .unwrap()
+                .expect("each worktree must stage successfully");
+            assert!(!path.exists());
+            assert!(staged.exists());
+            // Pin the registration prefix independently of the wall clock.
+            assert!(
+                staged
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with(&format!("{registration}-"))
+            );
+            staged_paths.push(staged);
+        }
+        assert_ne!(staged_paths[0], staged_paths[1]);
+        assert!(staged_paths.iter().all(|path| path.exists()));
     }
 
     /// A `git worktree lock` must stop the rename even when the caller skipped
@@ -1130,6 +1196,88 @@ mod tests {
             .status()
             .unwrap();
         assert!(!exit.success(), "branch should have been deleted");
+    }
+
+    /// Deleting a branch drops its marker, so a later branch reusing the name
+    /// doesn't inherit it; a retained branch keeps its marker.
+    #[test]
+    fn deletion_clears_branch_marker() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        for branch in ["integrated", "forced", "unmerged"] {
+            test.run_git(&["branch", branch]);
+            repo.set_config(
+                &format!("worktrunk.state.{branch}.marker"),
+                r#"{"marker":"🤖","set_at":0}"#,
+            )
+            .unwrap();
+        }
+        test.run_git(&["checkout", "unmerged"]);
+        std::fs::write(test.root_path().join("work.txt"), "work\n").unwrap();
+        test.run_git(&["add", "work.txt"]);
+        test.run_git(&["commit", "-m", "unmerged work"]);
+        test.run_git(&["checkout", "main"]);
+
+        let snapshot = repo.capture_refs().unwrap();
+        for (branch, force) in [("integrated", false), ("forced", true), ("unmerged", false)] {
+            delete_branch_if_safe(&repo, &snapshot, branch, "main", force).unwrap();
+        }
+
+        let fresh = Repository::at(test.root_path()).unwrap();
+        assert_eq!(fresh.branch_marker("integrated"), None);
+        assert_eq!(fresh.branch_marker("forced"), None);
+        assert_eq!(fresh.branch_marker("unmerged").as_deref(), Some("🤖"));
+    }
+
+    /// Deleting `<name>.vars` leaves branch `<name>`'s var named `marker`,
+    /// which shares the key `worktrunk.state.<name>.vars.marker`.
+    #[test]
+    fn deletion_keeps_var_sharing_marker_key() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        test.run_git(&["branch", "feature.vars"]);
+        repo.set_config("worktrunk.state.feature.vars.marker", "plain value")
+            .unwrap();
+
+        let snapshot = repo.capture_refs().unwrap();
+        delete_branch_if_safe(&repo, &snapshot, "feature.vars", "main", true).unwrap();
+
+        let fresh = Repository::at(test.root_path()).unwrap();
+        assert_eq!(
+            fresh
+                .config_last("worktrunk.state.feature.vars.marker")
+                .unwrap()
+                .as_deref(),
+            Some("plain value")
+        );
+    }
+
+    /// A marker that can't be unset doesn't fail a deletion that already
+    /// happened; Git itself only warns when the locked config blocks its own
+    /// branch-section cleanup.
+    #[test]
+    fn deletion_survives_marker_unset_failure() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        test.run_git(&["branch", "doomed"]);
+        repo.set_config(
+            "worktrunk.state.doomed.marker",
+            r#"{"marker":"🤖","set_at":0}"#,
+        )
+        .unwrap();
+        let lock = test.root_path().join(".git/config.lock");
+        std::fs::write(&lock, "").unwrap();
+
+        let snapshot = repo.capture_refs().unwrap();
+        let result = delete_branch_if_safe(&repo, &snapshot, "doomed", "main", true).unwrap();
+        std::fs::remove_file(&lock).unwrap();
+
+        assert!(matches!(
+            result.outcome,
+            BranchDeletionOutcome::ForceDeleted
+        ));
+        let fresh = Repository::at(test.root_path()).unwrap();
+        assert_eq!(fresh.branch_marker("doomed").as_deref(), Some("🤖"));
     }
 
     /// A packed-ref lock failure must preserve the branch and the original
@@ -1367,7 +1515,7 @@ mod tests {
     fn test_fsmonitor_socket_resolves_to_linked_worktree_git_dir() {
         use crate::git::Repository;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::testing::tempdir().unwrap();
         let git = |dir: &Path| crate::testing::configure_git_env(Cmd::new("git")).current_dir(dir);
 
         let main = tmp.path().join("repo");
@@ -1417,7 +1565,7 @@ mod tests {
     fn test_fsmonitor_stop_unresolvable_git_dir_is_noop() {
         use crate::git::Repository;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::testing::tempdir().unwrap();
         let main = tmp.path().join("repo");
         std::fs::create_dir(&main).unwrap();
         crate::testing::configure_git_env(Cmd::new("git"))
@@ -1446,7 +1594,7 @@ mod tests {
     fn test_fsmonitor_force_kill_unheld_socket_is_noop() {
         use crate::git::Repository;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::testing::tempdir().unwrap();
         let main = tmp.path().join("repo");
         std::fs::create_dir(&main).unwrap();
         crate::testing::configure_git_env(Cmd::new("git"))

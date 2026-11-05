@@ -5,8 +5,6 @@
 use anyhow::Context;
 use color_print::cformat;
 
-use std::path::PathBuf;
-
 use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 
@@ -32,8 +30,9 @@ pub fn step_relocate(
     format: crate::cli::SwitchFormat,
 ) -> anyhow::Result<()> {
     use super::super::relocate::{
-        GatherResult, RelocationExecutor, ValidationResult, gather_candidates, show_all_skipped,
-        show_dry_run_preview, show_no_relocations_needed, show_summary, validate_candidates,
+        GatherResult, RelocatedEntry, RelocationExecutor, ValidationResult, gather_candidates,
+        show_all_skipped, show_dry_run_preview, show_no_relocations_needed, show_summary,
+        validate_candidates,
     };
 
     let json_mode = format == crate::cli::SwitchFormat::Json;
@@ -66,7 +65,7 @@ pub fn step_relocate(
 
     if candidates.is_empty() {
         if json_mode {
-            print_relocate_json(&[], &template_skips, dry_run)?;
+            return print_relocations(&[], &template_skips, &[], dry_run);
         } else {
             show_no_relocations_needed(template_error_branches.len());
         }
@@ -78,13 +77,13 @@ pub fn step_relocate(
         if json_mode {
             let planned: Vec<_> = candidates
                 .iter()
-                .map(|c| RelocatedEntryView {
+                .map(|c| RelocatedEntry {
                     branch: c.branch().to_string(),
                     from: c.wt.path.clone(),
                     to: c.expected_path.clone(),
                 })
                 .collect();
-            print_relocate_json(&planned, &template_skips, true)?;
+            return print_relocations(&planned, &template_skips, &[], true);
         } else {
             show_dry_run_preview(&candidates);
         }
@@ -113,20 +112,37 @@ pub fn step_relocate(
     let ValidationResult {
         validated,
         skipped: validation_skipped,
-    } = validate_candidates(
+        commits,
+    } = match validate_candidates(
         &repo,
         &config,
         candidates,
         commit,
         &repo_path,
         project_append.as_deref(),
-    )?;
+    ) {
+        Ok(validation) => validation,
+        Err(failure) => {
+            if json_mode && let Some(validation) = failure.result {
+                print_relocations(
+                    &[],
+                    template_skips.iter().chain(&validation.skipped),
+                    &validation.commits,
+                    false,
+                )?;
+            }
+            return Err(failure.error);
+        }
+    };
 
     if validated.is_empty() {
         if json_mode {
-            let mut all_skipped = template_skips;
-            all_skipped.extend(validation_skipped);
-            print_relocate_json(&[], &all_skipped, false)?;
+            return print_relocations(
+                &[],
+                template_skips.iter().chain(&validation_skipped),
+                &commits,
+                false,
+            );
         } else {
             // Include template-error branches — the JSON path folds them into
             // `all_skipped`, so the human count must match.
@@ -136,28 +152,39 @@ pub fn step_relocate(
     }
 
     // Phase 3 & 4: Create executor (classifies targets) and execute relocations
-    let mut executor = RelocationExecutor::new(&repo, validated, clobber)?;
+    let mut executor = match RelocationExecutor::new(&repo, validated, clobber) {
+        Ok(executor) => executor,
+        Err(error) => {
+            if json_mode {
+                print_relocations(
+                    &[],
+                    template_skips.iter().chain(&validation_skipped),
+                    &commits,
+                    false,
+                )?;
+            }
+            return Err(error);
+        }
+    };
     // Where the user's shell stands — inherited from the parent `wt` when this
     // runs inside an alias or hook body, whose process cwd is the worktree
     // root (#3723).
     let cwd = worktrunk::shell_exec::shell_cwd();
-    executor.execute(&default_branch, cwd.as_deref())?;
+    let execution = executor.execute(&default_branch, cwd.as_deref());
 
     if json_mode {
-        let relocated_views: Vec<RelocatedEntryView> = executor
-            .relocated_entries
-            .iter()
-            .map(|e| RelocatedEntryView {
-                branch: e.branch.clone(),
-                from: e.from.clone(),
-                to: e.to.clone(),
-            })
-            .collect();
-        let mut all_skipped = template_skips;
-        all_skipped.extend(validation_skipped);
-        all_skipped.extend(executor.skipped_entries);
-        print_relocate_json(&relocated_views, &all_skipped, false)?;
+        print_relocations(
+            &executor.relocated_entries,
+            template_skips
+                .iter()
+                .chain(&validation_skipped)
+                .chain(&executor.skipped_entries),
+            &commits,
+            false,
+        )?;
+        return execution;
     } else {
+        execution?;
         // Template-error branches count as skips too — the JSON path folds
         // them into `all_skipped`, so keep the human total consistent.
         let total_skipped =
@@ -168,30 +195,23 @@ pub fn step_relocate(
     Ok(())
 }
 
-/// Internal projection of a relocation event for JSON output.
-struct RelocatedEntryView {
-    branch: String,
-    from: PathBuf,
-    to: PathBuf,
-}
-
-fn print_relocate_json(
-    entries: &[RelocatedEntryView],
-    skipped: &[super::super::relocate::SkippedEntry],
+fn print_relocations<'a>(
+    entries: &[super::super::relocate::RelocatedEntry],
+    skipped: impl IntoIterator<Item = &'a super::super::relocate::SkippedEntry>,
+    commits: &[super::super::relocate::RelocationCommit],
     dry_run: bool,
 ) -> anyhow::Result<()> {
-    let payload = serde_json::json!({
-        "dry_run": dry_run,
-        "entries": entries.iter().map(|e| serde_json::json!({
-            "branch": e.branch,
-            "from": e.from,
-            "to": e.to,
-        })).collect::<Vec<_>>(),
-        "skipped": skipped.iter().map(|s| serde_json::json!({
-            "branch": s.branch,
-            "reason": s.reason,
-        })).collect::<Vec<_>>(),
-    });
-    print_json(&payload)?;
-    Ok(())
+    #[derive(serde::Serialize)]
+    struct Output<'a> {
+        dry_run: bool,
+        entries: &'a [super::super::relocate::RelocatedEntry],
+        skipped: Vec<&'a super::super::relocate::SkippedEntry>,
+        commits: &'a [super::super::relocate::RelocationCommit],
+    }
+    print_json(&Output {
+        dry_run,
+        entries,
+        skipped: skipped.into_iter().collect(),
+        commits,
+    })
 }

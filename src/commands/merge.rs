@@ -394,136 +394,170 @@ fn merge_in(
     };
     let guidance = super::step::PreApprovedGuidance::Resolved(project_append);
 
-    // Handle uncommitted changes (skip if --no-commit) - track whether commit occurred
-    let committed = if has_committable_changes {
-        let ctx = env.context(yes);
-        let mut options = CommitOptions::new(&ctx);
-        options.target_branch = Some(&target_branch);
-        options.hooks = commit_hooks;
-        options.stage_mode = stage_mode;
-        options.show_no_squash_note = true;
-        options.guidance = guidance.clone();
-
-        let _ = options.commit(&mut announcer)?;
-        true // Committed directly
-    } else {
-        false // No dirty changes or --no-commit
-    };
-
-    // Squash commits if enabled - track whether squashing occurred.
-    // Pass `commit_hooks` (not the shadowed `verify`) so handle_squash gets the
-    // --no-hooks vs declined-approval distinction.
-    let squashed = if squash_enabled {
-        matches!(
-            super::step::squash::handle_squash_in(
-                env,
-                Some(&target_branch),
-                yes,
-                commit_hooks,
-                Some(stage_mode),
-                &mut announcer,
-                guidance,
-            )?,
-            super::step::SquashResult::Squashed { .. }
-        )
-    } else {
-        false
-    };
-
-    // Rebase onto target - track whether rebasing occurred
-    let rebased = if rebase {
-        // Auto-rebase onto target
-        matches!(
-            super::step::handle_rebase(repo, Some(&target_branch))?,
-            super::step::RebaseResult::Rebased { .. }
-        )
-    } else {
-        // --no-rebase preserves the graph produced by the commit/squash stages
-        // above. Merge commits in that graph are valid as long as the target
-        // can fast-forward to the final tip.
-        let target_ref = format!("refs/heads/{target_branch}");
-        let target_sha = repo
-            .run_command(&["rev-parse", "--verify", "--end-of-options", &target_ref])?
-            .trim()
-            .to_string();
-        let source_sha = current_wt
-            .run_command(&["rev-parse", "--verify", "HEAD"])?
-            .trim()
-            .to_string();
-        if !repo.is_ancestor_by_sha(&target_sha, &source_sha)? {
-            return Err(worktrunk::git::GitError::NotRebased { target_branch }.into());
-        }
-        false // Rebase skipped; the graph produced by earlier stages remains
-    };
-
-    // Run pre-merge checks unless --no-hooks was specified
-    // Do this after commit/squash/rebase to validate the final state that will be pushed
-    if verify {
-        let ctx = env.context(yes);
-        let mut vars = TemplateVars::new().with_target(&target_branch);
-        if let Some(p) = target_worktree_path.as_deref() {
-            vars = vars.with_target_worktree_path(p);
-        }
-        execute_planned_hook(
-            &plan,
-            &feature_root,
-            &ctx,
-            HookType::PreMerge,
-            &vars.as_extra_vars(),
-            FailureStrategy::FailFast,
-            crate::output::pre_hook_display_path(ctx.worktree_path),
-        )?;
+    // Only confirmed stages are reported on failure. In particular cleanup
+    // stays unknown until finish_after_merge records its removal decision.
+    #[derive(Default, serde::Serialize)]
+    struct MergeProgress<'a> {
+        branch: &'a str,
+        target: &'a str,
+        committed: bool,
+        squashed: bool,
+        rebased: bool,
+        merged: bool,
+        removed: Option<bool>,
     }
+    let mut progress = MergeProgress {
+        branch: &current_branch,
+        target: &target_branch,
+        ..MergeProgress::default()
+    };
+    let operation = (|| -> anyhow::Result<()> {
+        // Handle uncommitted changes (skip if --no-commit) - track whether commit occurred
+        progress.committed = if has_committable_changes {
+            let ctx = env.context(yes);
+            let mut options = CommitOptions::new(&ctx);
+            options.target_branch = Some(&target_branch);
+            options.hooks = commit_hooks;
+            options.stage_mode = stage_mode;
+            options.show_no_squash_note = true;
+            options.guidance = guidance.clone();
 
-    // Merge to target branch
-    let operations = Some(MergeOperations {
-        committed,
-        squashed,
-        rebased,
-    });
-    if !ff {
-        // Create a merge commit on the target branch via commit-tree + update-ref
-        handle_no_ff_merge(repo, Some(&target_branch), operations, &current_branch)?;
-    } else {
-        // Fast-forward push to target branch
-        handle_push(
-            repo,
-            Some(&target_branch),
-            PushKind::MergeFastForward,
-            operations,
-        )?;
-    }
+            let _ = options.commit(&mut announcer).map_err(|failure| {
+                progress.committed = failure.result.is_some();
+                failure.error
+            })?;
+            true // Committed directly
+        } else {
+            false // No dirty changes or --no-commit
+        };
 
-    let removed = finish_after_merge(
-        repo,
-        config,
-        env,
-        &mut announcer,
-        FinishAfterMergeArgs {
-            current_branch: &current_branch,
-            source_is_current,
-            target_branch: &target_branch,
-            target_worktree_path: target_worktree_path.as_deref(),
-            remove,
-            verify,
-            yes,
-            plan: &plan,
-        },
-    )?;
+        // Squash commits if enabled - track whether squashing occurred.
+        // Pass `commit_hooks` (not the shadowed `verify`) so handle_squash gets the
+        // --no-hooks vs declined-approval distinction.
+        progress.squashed = if squash_enabled {
+            matches!(
+                super::step::squash::handle_squash_in(
+                    env,
+                    Some(&target_branch),
+                    yes,
+                    commit_hooks,
+                    Some(stage_mode),
+                    &mut announcer,
+                    guidance,
+                )
+                .map_err(|failure| {
+                    progress.squashed = matches!(
+                        failure.result.as_deref(),
+                        Some(super::step::SquashResult::Squashed { .. })
+                    );
+                    failure.error
+                })?,
+                super::step::SquashResult::Squashed { .. }
+            )
+        } else {
+            false
+        };
 
-    announcer.flush()?;
+        // Rebase onto target - track whether rebasing occurred
+        progress.rebased = if rebase {
+            // Auto-rebase onto target
+            matches!(
+                super::step::handle_rebase(repo, Some(&target_branch))?,
+                super::step::RebaseResult::Rebased { .. }
+            )
+        } else {
+            // --no-rebase preserves the graph produced by the commit/squash stages
+            // above. Merge commits in that graph are valid as long as the target
+            // can fast-forward to the final tip.
+            let target_ref = format!("refs/heads/{target_branch}");
+            let target_sha = repo
+                .run_command(&["rev-parse", "--verify", "--end-of-options", &target_ref])?
+                .trim()
+                .to_string();
+            let source_sha = current_wt
+                .run_command(&["rev-parse", "--verify", "HEAD"])?
+                .trim()
+                .to_string();
+            if !repo.is_ancestor_by_sha(&target_sha, &source_sha)? {
+                return Err(worktrunk::git::GitError::NotRebased {
+                    target_branch: target_branch.clone(),
+                }
+                .into());
+            }
+            false // Rebase skipped; the graph produced by earlier stages remains
+        };
 
-    if json_mode {
-        let output = serde_json::json!({
-            "branch": current_branch,
-            "target": target_branch,
-            "committed": committed,
-            "squashed": squashed,
-            "rebased": rebased,
-            "removed": removed,
+        // Run pre-merge checks unless --no-hooks was specified
+        // Do this after commit/squash/rebase to validate the final state that will be pushed
+        if verify {
+            let ctx = env.context(yes);
+            let mut vars = TemplateVars::new().with_target(&target_branch);
+            if let Some(p) = target_worktree_path.as_deref() {
+                vars = vars.with_target_worktree_path(p);
+            }
+            execute_planned_hook(
+                &plan,
+                &feature_root,
+                &ctx,
+                HookType::PreMerge,
+                &vars.as_extra_vars(),
+                FailureStrategy::FailFast,
+                crate::output::pre_hook_display_path(ctx.worktree_path),
+            )?;
+        }
+
+        // Merge to target branch
+        let operations = Some(MergeOperations {
+            committed: progress.committed,
+            squashed: progress.squashed,
+            rebased: progress.rebased,
         });
-        print_json(&output)?;
-    }
+        let pushed = if !ff {
+            // Create a merge commit on the target branch via commit-tree + update-ref
+            handle_no_ff_merge(repo, Some(&target_branch), operations, &current_branch)
+        } else {
+            // Fast-forward push to target branch
+            handle_push(
+                repo,
+                Some(&target_branch),
+                PushKind::MergeFastForward,
+                operations,
+            )
+        };
+        pushed.map_err(|failure| {
+            progress.merged = failure.result.is_some();
+            failure.error
+        })?;
+        progress.merged = true;
 
-    Ok(())
+        let removed = finish_after_merge(
+            repo,
+            config,
+            env,
+            &mut announcer,
+            FinishAfterMergeArgs {
+                current_branch: &current_branch,
+                source_is_current,
+                target_branch: &target_branch,
+                target_worktree_path: target_worktree_path.as_deref(),
+                remove,
+                verify,
+                yes,
+                plan: &plan,
+            },
+        )
+        .map_err(|failure| {
+            progress.removed = failure.result.map(|result| *result);
+            failure.error
+        })?;
+        progress.removed = Some(removed);
+
+        announcer.flush()?;
+
+        Ok(())
+    })();
+    if json_mode {
+        print_json(&progress)?;
+    }
+    operation
 }

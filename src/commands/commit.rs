@@ -20,7 +20,9 @@ pub use worktrunk::config::StageMode;
 ///
 /// `stage_mode` is the *resolved* mode that was actually applied (CLI flag
 /// merged with config defaults), not the user-supplied flag.
+#[derive(serde::Serialize)]
 pub struct CommitOutcome {
+    #[serde(rename = "commit")]
     pub sha: String,
     pub message: String,
     pub stage_mode: StageMode,
@@ -141,10 +143,10 @@ impl<'a> CommitGenerator<'a> {
         show_progress: bool,
         show_no_squash_note: bool,
         stage_mode: StageMode,
-    ) -> anyhow::Result<CommitOutcome> {
+    ) -> crate::output::CommandResult<CommitOutcome> {
         // Fail early if nothing is staged (avoids confusing LLM prompt with empty diff)
         if !wt.has_staged_changes()? {
-            anyhow::bail!("Nothing to commit");
+            return Err(anyhow::anyhow!("Nothing to commit").into());
         }
 
         if show_progress {
@@ -195,19 +197,21 @@ impl<'a> CommitGenerator<'a> {
             .context("Failed to commit")?;
 
         let commit_sha = wt.run_command(&["rev-parse", "HEAD"])?.trim().to_string();
-        // Display uses `Repository::short_sha`; the JSON payload carries the full SHA.
-        let commit_hash = wt.repo().short_sha(&commit_sha)?;
-
+        let outcome = CommitOutcome {
+            sha: commit_sha,
+            message: commit_message,
+            stage_mode,
+        };
+        // The commit identity is known even if display preparation fails.
+        let commit_hash = match wt.repo().short_sha(&outcome.sha) {
+            Ok(hash) => hash,
+            Err(error) => return Err(crate::output::CommandFailure::with_result(error, outcome)),
+        };
         eprintln!(
             "{}",
             success_message(cformat!("Committed changes @ <dim>{commit_hash}</>"))
         );
-
-        Ok(CommitOutcome {
-            sha: commit_sha,
-            message: commit_message,
-            stage_mode,
-        })
+        Ok(outcome)
     }
 }
 
@@ -219,7 +223,10 @@ impl CommitOptions<'_> {
     /// --squash` batching post-commit + post-remove + post-switch + post-merge)
     /// share one announce line; standalone callers (e.g. `wt commit`)
     /// construct an announcer of their own and flush right after.
-    pub fn commit(self, announcer: &mut HookAnnouncer<'_>) -> anyhow::Result<CommitOutcome> {
+    pub fn commit(
+        self,
+        announcer: &mut HookAnnouncer<'_>,
+    ) -> crate::output::CommandResult<CommitOutcome> {
         // Use the worktree path from context — this is the target worktree when
         // --branch is specified, or the current worktree otherwise.
         let wt = self.ctx.repo.worktree_at(self.ctx.worktree_path);
@@ -284,7 +291,11 @@ impl CommitOptions<'_> {
         // Register post-commit hooks onto the caller's announcer (respects --no-hooks).
         if self.hooks.run() {
             let extra_vars = template_vars.as_extra_vars();
-            announcer.register(self.ctx, HookType::PostCommit, &extra_vars, None)?;
+            if let Err(error) =
+                announcer.register(self.ctx, HookType::PostCommit, &extra_vars, None)
+            {
+                return Err(crate::output::CommandFailure::with_result(error, outcome));
+            }
         }
 
         Ok(outcome)

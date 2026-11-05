@@ -12,6 +12,7 @@ repo). Entry — the confirmation, both `EnterWorktree` routes, and what each
 leaves behind at exit — was re-run live on 2026-07-28 against Claude Code
 2.1.220 and wt v0.69.2. The confirmation hook and `cd`-before-entry for another
 repo were verified live on 2026-09-16 against Claude Code 2.1.273 (#4149).
+Hook-based exit cleanup was checked live on Claude Code 2.1.308 on 2026-10-22.
 Re-verify against current versions before relying on a specific behavior; the
 *shape* of the argument should outlive the details.
 Binary symbol names are deliberately omitted — they re-minify every build.
@@ -21,11 +22,11 @@ Binary symbol names are deliberately omitted — they re-minify every build.
 Steps are numbered as in `SKILL.md`; step 1, picking the branch name, needs
 no rationale.
 
-2. `EnterWorktree({name})` for a new branch in this repo. It creates through
-   worktrunk's `WorktreeCreate` hook (`wt switch --create`), so the result is
-   an ordinary `wt` worktree, and it passes no `path`, which is what keeps M2's
-   confirmation from firing. It fails on an existing branch and from a session
-   that already entered a worktree, and it has no repo targeting.
+2. `EnterWorktree({name})` in this repo. Worktrunk's `WorktreeCreate` hook runs
+   `wt switch --create` for a new branch or `wt switch` for an existing one,
+   creating its checkout if needed. Passing no `path` keeps M2's confirmation
+   from firing. It fails from a session that already entered a worktree, and
+   it has no repo targeting.
 3. Otherwise `wt -C <repo> switch --create <branch> --no-cd --format=json` in
    Bash, then, for another repo, `cd <repo>`, then `EnterWorktree({path})`.
    `wt` solves repo targeting (`-C` works from anywhere), existing-branch
@@ -167,13 +168,13 @@ Verified: from a worktrunk session, `cd` into a prql worktree under `/tmp`, then
 
 ### The confirmation hook
 
-The plugin's `PermissionRequest` command runs the hidden
-`wt config plugins claude approve-enter-worktree`, which reads the hook payload
-and prints an `allow` decision when the call is `EnterWorktree` and its `path`
-is a worktree of the repository the payload's `cwd` is in, at the path the
-`worktree-path` template gives its branch. Anything else leaves stdout empty
-and exits 1, which leaves the dialog (or, where no dialog can show, the denial)
-in place. The tool's own validation still runs after an approval.
+The plugin's hooks run the hidden `wt config plugins claude hook`, which reads
+the hook payload. For `PermissionRequest` it prints an `allow` decision when
+the call is `EnterWorktree` and its `path` is a worktree of the repository the
+payload's `cwd` is in, at the path the `worktree-path` template gives its
+branch. Anything else leaves stdout empty, which leaves the dialog (or, where
+no dialog can show, the denial) in place. The tool's own validation still runs
+after an approval.
 
 The rule extends Claude Code's exemption rather than overriding its check.
 Claude Code enters a worktree under `.claude/worktrees/` without asking because
@@ -193,17 +194,16 @@ another repo before entering. The check lives in `wt` because it is
 `branch_mismatch`; a script over `wt list --format=json` would inherit that
 command's user config, where `list.full` adds CI fetches and LLM summaries
 (33s measured on a 54-worktree repository) and `list.json-schema` and `list.branches` change
-the output's shape. A `wt` too old to have the subcommand fails it, which
-leaves the dialog as it was before the hook existed.
+the output's shape. A `wt` too old to have the subcommand fails it, and the
+hook command's `|| true` leaves the dialog as it was before the hook existed.
 
-The approval shares one `hooks.json` command with the 💬 marker,
-`wt … approve-enter-worktree || wt … marker set 💬`, because Claude Code runs
-all matching hooks in parallel. A separate `EnterWorktree` entry would still
-fire the catch-all marker hook, and the launch worktree would read 💬 while the
-session works on. With one command, an approval skips the marker and every
-other permission request sets it as before. The `permission_prompt`
-notification can't set it either: Claude Code sends it only after a shown
-prompt has waited about six seconds.
+The approval shares one hook with the 💬 marker, setting the marker only when
+it doesn't approve, because Claude Code runs all matching hooks in parallel. A
+separate `EnterWorktree` entry would still fire the catch-all marker hook, and
+the launch worktree would read 💬 while the session works on. With one hook,
+an approval skips the marker and every other permission request sets it as
+before. The `permission_prompt` notification can't set it either: Claude Code
+sends it only after a shown prompt has waited about six seconds.
 
 Verified live in `--permission-mode default` sessions: a same-repo entry, and a
 cross-repo entry after `cd`, both reported "Allowed by PermissionRequest hook"
@@ -272,32 +272,25 @@ integrated machine and a no-op elsewhere. Don't drop it.
 The `name` route is worth having because it never asks M2's confirmation, with
 or without worktrunk's hook, and it creates and enters in one call. The same
 plugin hook backs `isolation: "worktree"` agents, so the worktree it produces is
-the one `wt` would have made either way. Three properties come with it, all
-verified live:
+the one `wt` would have made either way. Three properties come with it:
 
-1. **An untouched worktree is cleaned up at exit, branch included.** With no
-   changed files, no commits, and no user-set session title, the exiting
-   session removes it through the plugin's `WorktreeRemove` hook, which is
-   `wt remove`, so a clean fully-merged branch goes too. Verified end-to-end:
-   `EnterWorktree({name: "probe"})`, then `/exit`, leaves neither `repo.probe`
-   nor the `probe` branch; one untracked file is enough for exit to report
-   "Keeping worktree…" and leave both. This is a feature at this scale — a
-   research task that wrote nothing leaves nothing to prune — and it is the
-   reason step 2's worktrees are not described as durable. Path-entered
-   worktrees are always left in place ("worktree at <path> left in place").
-2. **It hard-fails on an existing branch.** The hook runs `wt switch --create`,
-   and a nonzero hook exit fails creation outright, with no git fallback
-   (binary: "Other exit codes - worktree creation failed"; docs: "the hook
-   replaces the default git behavior"). The failure is clean: `wt`'s own
-   `✗ Branch <branch> already exists` surfaces and nothing is created.
+1. **Exit asks whether to keep or remove a hook-created worktree.** Claude
+   Code 2.1.308 cannot infer unpushed commits in a worktree returned by a
+   `WorktreeCreate` hook. Even an untouched session gets a Keep / Remove
+   prompt, with Keep selected by default. This also applies when the hook
+   reopens an existing worktree. Keep leaves the checkout and branch intact;
+   Remove invokes `WorktreeRemove`, which uses normal `wt remove` safeguards.
+2. **It enters an existing branch's worktree.** The dispatcher uses `wt switch`
+   without `--create`, creating the checkout if needed.
 3. **It only works on a session's first entry, and only in its own repo.** From
    a session already in a worktree it returns "Already in a worktree session.
    Pass `path` to switch into another existing worktree", and it has no `-C`.
 
-Each failure names the route out, which is why step 3 needs no pre-check: try
-the cheap call, read the error, fall back. The hook contract (stdout's last
-non-empty line must be an existing directory) stays the hook's business, since
-the skill reads only the tool result.
+Step 3 handles repo targeting and a session's later entries. Other hook
+failures surface directly, with no git fallback: the hook replaces the default
+git behavior. The hook contract (stdout's last non-empty line must be an
+existing directory) stays the hook's business, since the skill reads only the
+tool result.
 
 ### Why escalate instead of grinding through absolute paths
 
@@ -316,21 +309,6 @@ fires only on an actual reset. Cheap to attempt, and the handback is actionable
 and durable (a `~/workspace` entry, set once, covers every future cross-repo
 task).
 
-## The hooks.json pipefail wrapper (agent-isolation path, not this skill)
-
-`WorktreeCreate` pipes `jq | xargs wt | jq`; without `pipefail` the trailing
-`jq` exits 0 on empty input and swallows a `wt` failure, so Claude Code saw a
-"successful" hook with no path. Hook commands are spawned with an empty args
-array and `shell: true` (binary), i.e. `/bin/sh -c` on Unix — bash 3.2 on
-macOS but dash on many Linuxes. dash rejects `set -o pipefail` fatally
-(`set` is a POSIX special builtin; no dash release through 0.5.12 supports
-pipefail — only post-0.5.12 upstream git and distro backports such as
-Debian's 0.5.12-7). And `/bin/sh -c` is evidently not universal: one user's
-hooks ran under fish (worktrunk PR #2962), which has no shell options at
-all. Hence the explicit `bash -c 'set -o pipefail; …'` wrapper. Verified
-end-to-end: success prints the path and exits 0; an existing-branch failure
-exits 1 with empty stdout.
-
 ## Known limits (deliberate)
 
 - Another repo is reachable only through `additionalDirectories` ("How they
@@ -347,7 +325,3 @@ exits 1 with empty stdout.
 - A subagent's `cd` doesn't carry to its next call, and it gets no reset notice
   (M1), so from a subagent step 3 can't enter another repo's worktree: the
   entry reaches the hook with the subagent's own repo as `cwd`.
-- `wt switch --create` is not idempotent. If that ever changes upstream
-  (enter-if-exists), step 3's existing-branch retry collapses to nothing, and
-  the hook stops failing on an existing branch, which removes one of the two
-  reasons step 3 exists.

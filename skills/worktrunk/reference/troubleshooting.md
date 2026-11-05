@@ -10,7 +10,7 @@ Check if the configured tool is installed:
 
 ```bash
 wt config show  # shows the configured command
-which claude    # or: which codex, which llm, which aichat
+which claude    # or: which codex, which opencode, which llm, which aichat
 ```
 
 If empty, install one of the supported tools. See [LLM commits docs](https://worktrunk.dev/llm-commits/) for setup instructions.
@@ -33,7 +33,7 @@ Common issues:
 1. View config path: `wt config show` shows location
 2. Verify file exists: `ls -la ~/.config/worktrunk/config.toml`
 3. Check TOML syntax: `cat ~/.config/worktrunk/config.toml`
-4. Look for validation errors (path must be relative, not absolute)
+4. Look for validation errors
 
 ### Template config errors
 
@@ -91,7 +91,7 @@ The timeout warning names the tasks that didn't finish:
 
 ```
 Listing worktrees timed out after 120s (170 results received); blocked tasks:
-  <branch>: working-tree-diff, working-tree-conflicts
+  <branch>: working-tree diff, working-tree conflict check
 ```
 
 Both tasks run `git status --porcelain` first. When the named worktree has `core.fsmonitor=true` and its `git fsmonitor--daemon` is wedged, `git status` blocks until the IPC attempt fails (several minutes), and the 120s drain deadline fires first.

@@ -512,11 +512,13 @@ impl Repository {
 
     /// SHA-keyed ahead/behind counts.
     ///
-    /// Inputs are commit SHAs. Backed by the persistent SHA-keyed cache
-    /// (`ahead-behind/{base_sha}-{head_sha}.json`) — content-addressed, so
-    /// the entry is never stale. `wt list` populates this per branch (and
-    /// in bulk from a `for-each-ref %(ahead-behind)` batch when most
-    /// entries are cold); subsequent runs are pure cache reads. Returns
+    /// Inputs are commit SHAs. An in-memory cache coalesces concurrent
+    /// requests; a persistent SHA-keyed cache
+    /// (`ahead-behind/{base_sha}-{head_sha}.json`) serves later runs. Both
+    /// are content-addressed, so entries are never stale. `wt list`
+    /// populates this per branch (and in bulk from a `for-each-ref
+    /// %(ahead-behind)` batch when most entries are cold); subsequent runs
+    /// are pure cache reads. Returns
     /// `(ahead, behind)` where ahead is commits in head not in base;
     /// orphan branches (no common ancestor) yield `(0, 0)` — caller should
     /// distinguish via [`Self::merge_base_by_sha`].
@@ -525,12 +527,18 @@ impl Repository {
         base_sha: &str,
         head_sha: &str,
     ) -> anyhow::Result<(usize, usize)> {
-        if let Some(cached) = super::sha_cache::ahead_behind(self, base_sha, head_sha) {
-            return Ok(cached);
+        let key = (base_sha.to_string(), head_sha.to_string());
+        match self.cache.ahead_behind.entry(key) {
+            Entry::Occupied(e) => Ok(*e.get()),
+            Entry::Vacant(e) => {
+                if let Some(cached) = super::sha_cache::ahead_behind(self, base_sha, head_sha) {
+                    return Ok(*e.insert(cached));
+                }
+                let result = self.compute_ahead_behind(base_sha, head_sha)?;
+                super::sha_cache::put_ahead_behind(self, base_sha, head_sha, result);
+                Ok(*e.insert(result))
+            }
         }
-        let result = self.compute_ahead_behind(base_sha, head_sha)?;
-        super::sha_cache::put_ahead_behind(self, base_sha, head_sha, result);
-        Ok(result)
     }
 
     fn compute_ahead_behind(&self, base: &str, head: &str) -> anyhow::Result<(usize, usize)> {
