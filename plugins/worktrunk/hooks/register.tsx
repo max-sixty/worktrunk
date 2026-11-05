@@ -109,29 +109,25 @@ export const register: Register = on => {
     if (ran.deny !== undefined || ran.isReadOnly === true) {
       return ran
     }
-    try {
-      const dirs: string[] = []
-      if (e.tool === 'Edit' || e.tool === 'Write') {
-        dirs.push(parentOf(e.file_path))
-      } else if (e.tool === 'NotebookEdit') {
-        dirs.push(parentOf(e.notebook_path))
-      } else if (e.tool === 'Bash') {
-        // Where the command ran: a subagent's own directory, in its calls.
-        dirs.push(await $.session.cwd(), ...changedFiles(ran.result).map(parentOf))
-      }
-      if (e.agentId === undefined) {
-        dirs.push(await noteHere($))
-      }
-      await note($, dirs)
-      // What the call changed shows once a burst of calls goes quiet.
-      if (await isPaneOpen($)) {
-        refreshTimer?.cancel()
-        refreshTimer = $.clock.after(400, () => {
-          void refresh($)
-        })
-      }
-    } catch (error) {
-      console.error('wt-diff: failed to track tool call', error)
+    const dirs: string[] = []
+    if (e.tool === 'Edit' || e.tool === 'Write') {
+      dirs.push(parentOf(e.file_path))
+    } else if (e.tool === 'NotebookEdit') {
+      dirs.push(parentOf(e.notebook_path))
+    } else if (e.tool === 'Bash') {
+      // Where the command ran: a subagent's own directory, in its calls.
+      dirs.push(await $.session.cwd(), ...changedFiles(ran.result).map(parentOf))
+    }
+    if (e.agentId === undefined) {
+      dirs.push(await noteHere($))
+    }
+    await note($, dirs)
+    // What the call changed shows once a burst of calls goes quiet.
+    if (await isPaneOpen($)) {
+      refreshTimer?.cancel()
+      refreshTimer = $.clock.after(400, () => {
+        void refresh($)
+      })
     }
     return ran
   })
