@@ -1794,7 +1794,7 @@ fn test_remove_force_refuses_when_backup_fails(mut repo: TestRepo) {
         .unwrap();
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!output.status.success(), "{stderr}");
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
     assert!(
         stderr.contains("Failed to back up uncommitted changes; worktree not removed"),
         "{stderr}"

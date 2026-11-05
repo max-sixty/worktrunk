@@ -513,17 +513,9 @@ pub fn stage_worktree_removal(
                 // changes it was meant to keep, so the discard is announced
                 // only once the backup exists.
                 let name = branch.unwrap_or_else(|| path_dir_name(worktree_path));
-                // The removal error renders git's stderr in place of anyhow
-                // context, so the refusal names itself in the message.
-                let backup =
-                    match worktree.create_removal_backup(&format!("{name} (remove --force)")) {
-                        Ok(backup) => backup,
-                        Err(error) if error.interrupt_signal().is_some() => return Err(error),
-                        Err(error) => anyhow::bail!(
-                            "Failed to back up uncommitted changes; worktree not removed\n{}",
-                            error.display_message()
-                        ),
-                    };
+                let backup = worktree
+                    .create_removal_backup(&format!("{name} (remove --force)"))
+                    .context("Failed to back up uncommitted changes; worktree not removed")?;
                 eprintln!(
                     "{}",
                     warning_message("Discarding uncommitted changes (--force):")
