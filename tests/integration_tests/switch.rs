@@ -7022,15 +7022,10 @@ fn test_switch_pr_azure_visualstudio_host(#[from(repo_with_remote)] mut repo: Te
     });
 }
 
-#[rstest]
-#[case::regular(false, false)]
-#[case::conflict(true, false)]
-#[case::missing_fork_url(true, true)]
-fn test_switch_pr_azure_fork(
-    #[from(repo_with_remote)] repo: TestRepo,
-    #[case] conflict: bool,
-    #[case] missing_fork_url: bool,
-) {
+/// Pushes an Azure DevOps fork PR head to `refs/pull/42/head` and mocks `az`
+/// to describe it. `fork_urls` is the fork's `(remoteUrl, sshUrl)`; `None`
+/// leaves both `null`.
+fn setup_azure_fork_pr(repo: &TestRepo, fork_urls: Option<(&str, &str)>) -> std::path::PathBuf {
     repo.run_git(&["checkout", "-b", "azure-pr-source"]);
     fs::write(
         repo.root_path().join("azure-pr-file.txt"),
@@ -7051,14 +7046,8 @@ fn test_switch_pr_azure_fork(
 
     repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
     repo.run_git(&["checkout", "main"]);
-    if conflict {
-        repo.run_git(&["branch", "feature-fix", "main"]);
-    }
 
-    set_azure_remote_url(
-        &repo,
-        "https://dev.azure.com/myorg/myproject/_git/test-repo",
-    );
+    set_azure_remote_url(repo, "https://dev.azure.com/myorg/myproject/_git/test-repo");
 
     let az_response = serde_json::json!({
         "title": "Add feature fix for edge case",
@@ -7073,35 +7062,65 @@ fn test_switch_pr_azure_fork(
         },
         "forkSource": {
             "repository": {
-                "remoteUrl": (!missing_fork_url)
-                    .then_some("https://dev.azure.com/myorg/myproject/_git/test-repo-fork"),
-                "sshUrl": (!missing_fork_url)
-                    .then_some("git@ssh.dev.azure.com:v3/myorg/myproject/test-repo-fork")
+                "remoteUrl": fork_urls.map(|(remote_url, _)| remote_url),
+                "sshUrl": fork_urls.map(|(_, ssh_url)| ssh_url)
             }
         }
     })
     .to_string();
-    let mock_bin = setup_mock_az(&repo, &az_response);
+    setup_mock_az(repo, &az_response)
+}
+
+const AZURE_FORK_URLS: (&str, &str) = (
+    "https://dev.azure.com/myorg/myproject/_git/test-repo-fork",
+    "git@ssh.dev.azure.com:v3/myorg/myproject/test-repo-fork",
+);
+
+#[rstest]
+fn test_switch_pr_azure_fork(#[from(repo_with_remote)] repo: TestRepo) {
+    let mock_bin = setup_azure_fork_pr(&repo, Some(AZURE_FORK_URLS));
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
-        if missing_fork_url {
-            assert_cmd_snapshot!("switch_pr_azure_fork_missing_url", cmd);
-        } else if conflict {
-            assert_cmd_snapshot!("switch_pr_azure_fork_conflict", cmd);
-        } else {
-            assert_cmd_snapshot!("switch_pr_azure_fork", cmd);
-        }
+        assert_cmd_snapshot!("switch_pr_azure_fork", cmd);
     });
-    if conflict && !missing_fork_url {
-        assert_eq!(
-            repo.git_output(&["config", "branch.test-repo-fork/feature-fix.merge"])
-                .trim(),
-            "refs/pull/42/head"
-        );
-    }
+}
+
+/// A local `feature-fix` that doesn't track the PR makes the checkout use the
+/// fork repository name as a prefix.
+#[rstest]
+fn test_switch_pr_azure_fork_conflict(#[from(repo_with_remote)] repo: TestRepo) {
+    let mock_bin = setup_azure_fork_pr(&repo, Some(AZURE_FORK_URLS));
+    repo.run_git(&["branch", "feature-fix", "main"]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_azure_fork_conflict", cmd);
+    });
+    assert_eq!(
+        repo.git_output(&["config", "branch.test-repo-fork/feature-fix.merge"])
+            .trim(),
+        "refs/pull/42/head"
+    );
+}
+
+/// Without a fork URL there is no repository name to prefix with, so a
+/// conflicting local branch still errors.
+#[rstest]
+fn test_switch_pr_azure_fork_missing_url(#[from(repo_with_remote)] repo: TestRepo) {
+    let mock_bin = setup_azure_fork_pr(&repo, None);
+    repo.run_git(&["branch", "feature-fix", "main"]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_azure_fork_missing_url", cmd);
+    });
 }
 
 /// With no `webUrl` in the response, the org and host come from the local
