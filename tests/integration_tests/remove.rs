@@ -434,6 +434,35 @@ fn test_remove_locked_worktree(mut repo: TestRepo) {
     ));
 }
 
+/// A checkout nested in the removal target holds work the target's dirty gate
+/// can't see once it's ignored. `--force` waives the target's own changes, not
+/// another checkout's, so both forms refuse and name the nested checkout.
+#[rstest]
+fn test_remove_refuses_worktree_containing_worktree(mut repo: TestRepo) {
+    fs::write(repo.root_path().join(".gitignore"), ".worktrees/\n").unwrap();
+    repo.commit("Ignore nested worktrees");
+    let parent = repo.add_worktree("parent");
+    let nested = repo.add_worktree_at_path("child", &parent.join(".worktrees/child"));
+    let work = nested.join("uncommitted.txt");
+    fs::write(&work, "only copy").unwrap();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["parent"], None));
+    let plain = repo
+        .wt_command()
+        .args(["remove", "parent"])
+        .output()
+        .unwrap();
+    let forced = repo
+        .wt_command()
+        .args(["remove", "--force", "parent"])
+        .output()
+        .unwrap();
+    assert!(!forced.status.success(), "{forced:?}");
+    assert_eq!(forced.stderr, plain.stderr);
+    assert_eq!(fs::read_to_string(&work).unwrap(), "only copy");
+    assert!(parent.join(".git").exists());
+}
+
 #[rstest]
 fn test_remove_locked_worktree_no_reason(mut repo: TestRepo) {
     // Create a worktree and lock it without a reason

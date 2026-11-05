@@ -30,7 +30,7 @@ use worktrunk::git::IntegrationReason;
 use worktrunk::git::Repository;
 use worktrunk::git::{
     BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemoveOptions,
-    delete_branch_if_safe, execute_branch_deletion, remove_worktree_with_cleanup,
+    delete_branch_if_safe, execute_branch_deletion, path_dir_name, remove_worktree_with_cleanup,
     stage_worktree_removal,
 };
 use worktrunk::path::{canonicalize_with_parents, format_path_for_display};
@@ -2119,12 +2119,11 @@ fn handle_removed_worktree_output(
     if ctx.protect_nested_worktrees
         && let Some(nested) = worktrunk::git::remove::nested_worktree(&repo, ctx.worktree_path)?
     {
-        return Err(anyhow::anyhow!(cformat!(
-            "Cannot remove worktree @ <bold>{}</>; contains worktree @ <bold>{}</>",
-            format_path_for_display(ctx.worktree_path),
-            format_path_for_display(&nested)
-        ))
-        .into());
+        let name = ctx
+            .branch_name
+            .map_or_else(|| path_dir_name(ctx.worktree_path), |branch| branch)
+            .to_string();
+        return Err(GitError::WorktreeContainsWorktree { name, nested }.into());
     }
 
     // The pre-rename `ensure_clean` catches a hook-dirtied worktree, and the

@@ -541,38 +541,14 @@ pub fn stage_worktree_removal(
     Ok(rename_into_trash(repo, worktree_path, &git_dir))
 }
 
-/// Find a registered worktree contained in `worktree_path`, using a fresh
-/// registry read. Ignored nested worktrees are invisible to `ensure_clean`,
-/// but renaming or removing their parent would destroy their independent work.
-/// Canonical paths catch registrations made through symlinks; a missing entry
-/// has no directory to protect, while other resolution errors fail closed.
+/// [`Repository::worktree_nested_in`] against a fresh registry read.
 ///
-/// Called only by merge cleanup: once while deciding whether to remove, then
-/// again after approved pre-remove hooks and before the final removal gates.
-/// Keep this live registry read out of `stage_worktree_removal`: batch prune
-/// staging must not wait for another removal's registry teardown (#3954).
+/// Planning asks its own inventory. Merge cleanup also asks after approved
+/// pre-remove hooks, before the final removal gates, which is why this reads
+/// afresh. Keep this live registry read out of `stage_worktree_removal`: batch
+/// prune staging must not wait for another removal's registry teardown (#3954).
 pub fn nested_worktree(repo: &Repository, worktree_path: &Path) -> anyhow::Result<Option<PathBuf>> {
-    let root =
-        dunce::canonicalize(worktree_path).context("Failed to resolve worktree for removal")?;
-    let fresh_repo = Repository::at(repo.discovery_path())?;
-    for worktree in fresh_repo.list_worktrees()? {
-        let path = match dunce::canonicalize(&worktree.path) {
-            Ok(path) => path,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!(
-                        "Failed to resolve worktree @ {}",
-                        format_path_for_display(&worktree.path)
-                    )
-                });
-            }
-        };
-        if path != root && path.starts_with(&root) {
-            return Ok(Some(path));
-        }
-    }
-    Ok(None)
+    Repository::at(repo.discovery_path())?.worktree_nested_in(worktree_path)
 }
 
 /// Rename a worktree into `<git-common-dir>/wt/trash/` and prune git metadata.

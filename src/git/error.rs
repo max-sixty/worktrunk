@@ -591,6 +591,11 @@ pub enum GitError {
         path: PathBuf,
         reason: Option<String>,
     },
+    WorktreeContainsWorktree {
+        /// The target's branch, or its directory name when detached.
+        name: String,
+        nested: PathBuf,
+    },
 
     // Merge/push errors
     ConflictingChanges {
@@ -967,6 +972,11 @@ impl GitError {
                     _ => String::new(),
                 };
                 cformat!("Cannot remove <bold>{branch}</>, worktree is locked{reason_text}")
+            }
+
+            GitError::WorktreeContainsWorktree { name, nested } => {
+                let nested = format_path_for_display(nested);
+                cformat!("Cannot remove <bold>{name}</>; contains worktree @ <bold>{nested}</>")
             }
 
             GitError::ConflictingChanges { target_branch, .. } => cformat!(
@@ -1467,6 +1477,19 @@ impl GitError {
                     error_message(&title),
                     hint_message(cformat!(
                         "To unlock, run <underline>git worktree unlock {path_display}</>"
+                    ))
+                )
+            }
+
+            GitError::WorktreeContainsWorktree { nested, .. } => {
+                let title = self.title();
+                let nested = format_path_for_display(nested);
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(&title),
+                    hint_message(cformat!(
+                        "To remove the nested worktree first, run <underline>wt remove {nested}</>"
                     ))
                 )
             }

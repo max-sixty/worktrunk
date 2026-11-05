@@ -37,7 +37,7 @@ use rayon::prelude::*;
 use worktrunk::HookType;
 use worktrunk::config::{Approvals, ProjectConfig, ProjectId, UserConfig};
 use worktrunk::git::{
-    BranchDeletionMode, IntegrationReason, RefSnapshot, Repository, WorktreeInfo,
+    BranchDeletionMode, GitError, IntegrationReason, RefSnapshot, Repository, WorktreeInfo,
 };
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
@@ -421,6 +421,9 @@ struct CheckOutcome {
     plan: Option<RemovalPlan>,
     /// Whether the item passed the removability gate (see `plan`).
     removable: bool,
+    /// The checkout that made planning refuse this item. Unlike dirty or
+    /// locked, `wt list` doesn't show it, so the scan reports the skip.
+    contains_worktree: Option<PathBuf>,
     /// What the removal takes, carried onto [`Candidate::deletes_branch`].
     deletes_branch: bool,
     /// `Some(_)` if `min_age` is set and the age could be resolved; the
@@ -450,6 +453,7 @@ fn check_one(
             reason,
             plan: None,
             removable: false,
+            contains_worktree: None,
             deletes_branch: false,
             age: None,
         });
@@ -465,20 +469,18 @@ fn check_one(
         }
         _ => None,
     };
-    let plan = if stale_detached.is_some() {
+    let planned = if stale_detached.is_some() {
         None
     } else {
-        match &item.source {
-            CheckSource::Orphan => repo
-                .prepare_worktree_removal(
-                    RemoveTarget::BranchOnly(item.integration_ref.clone()),
-                    BranchDeletionMode::SafeDelete,
-                    false,
-                    current_path,
-                    Some(worktrees),
-                    Some(snapshot),
-                )
-                .ok(),
+        Some(match &item.source {
+            CheckSource::Orphan => repo.prepare_worktree_removal(
+                RemoveTarget::BranchOnly(item.integration_ref.clone()),
+                BranchDeletionMode::SafeDelete,
+                false,
+                current_path,
+                Some(worktrees),
+                Some(snapshot),
+            ),
             CheckSource::Linked { wt_idx } | CheckSource::Prunable { wt_idx } => {
                 let wt = &worktrees[*wt_idx];
                 repo.prepare_worktree_removal(
@@ -496,10 +498,17 @@ fn check_one(
                     Some(worktrees),
                     Some(snapshot),
                 )
-                .ok()
             }
-        }
+        })
     };
+    let contains_worktree = planned
+        .as_ref()
+        .and_then(|planned| planned.as_ref().err())
+        .and_then(|error| match error.downcast_ref::<GitError>() {
+            Some(GitError::WorktreeContainsWorktree { nested, .. }) => Some(nested.clone()),
+            _ => None,
+        });
+    let plan = planned.and_then(Result::ok);
     let removable = match stale_detached {
         Some(wt) => matches!(repo.stale_worktree_work(&wt.path), Ok(None)),
         None => plan.is_some(),
@@ -524,6 +533,7 @@ fn check_one(
         reason,
         plan,
         removable,
+        contains_worktree,
         deletes_branch,
         age,
     })
@@ -840,11 +850,21 @@ fn mtime_epoch(path: &Path) -> anyhow::Result<Option<u64>> {
     }
 }
 
+/// The `Skipped` line for an item whose checkout holds another worktree.
+fn nesting_skip(label: &str, nested: &Path) -> String {
+    info_message(cformat!(
+        "Skipped <bold>{label}</> (contains worktree @ {})",
+        format_path_for_display(nested)
+    ))
+    .to_string()
+}
+
 /// Render dry-run output (text or JSON) and the `Skipped (younger than ...)`
 /// trailer. Returns once printing is complete; the caller exits early.
 fn render_dry_run(
     mut dry_run_info: Vec<(Candidate, DryRunInfo)>,
     mut skipped_young: Vec<String>,
+    mut skipped_nesting: Vec<String>,
     min_age: &str,
     format: crate::cli::SwitchFormat,
 ) -> anyhow::Result<()> {
@@ -902,9 +922,13 @@ fn render_dry_run(
             info_message(format!("Skipped {names} (younger than {min_age})"))
         );
     }
+    skipped_nesting.sort();
+    for line in &skipped_nesting {
+        eprintln!("{line}");
+    }
 
     if dry_candidates.is_empty() {
-        if skipped_young.is_empty() {
+        if skipped_young.is_empty() && skipped_nesting.is_empty() {
             eprintln!("{}", info_message("No merged worktrees to remove"));
         }
         return Ok(());
@@ -1034,6 +1058,7 @@ pub fn step_prune(
         RefWriteTimes::capture(&repo, &check_items).context("reading ref write times")?;
 
     let mut skipped_young: Vec<String> = Vec::new();
+    let mut skipped_nesting: Vec<String> = Vec::new();
 
     // Streaming dry-run path: scans run in parallel, results are collected and
     // sorted for deterministic output. No removals, no approval — just print.
@@ -1077,10 +1102,14 @@ pub fn step_prune(
                 let Some(reason) = outcome.reason else {
                     continue;
                 };
+                let item = &check_items[idx];
                 if !outcome.removable {
+                    if let Some(nested) = &outcome.contains_worktree {
+                        let (label, ..) = candidate_fields(item, &repo, worktrees, &current_root);
+                        skipped_nesting.push(nesting_skip(&label, nested));
+                    }
                     continue;
                 }
-                let item = &check_items[idx];
                 let (label, branch, path, kind, suffix) =
                     candidate_fields(item, &repo, worktrees, &current_root);
                 if let Some(age) = outcome.age
@@ -1109,7 +1138,13 @@ pub fn step_prune(
             anyhow::Ok(info)
         })?;
         drop(scan_span);
-        return render_dry_run(dry_run_info, skipped_young, min_age, format);
+        return render_dry_run(
+            dry_run_info,
+            skipped_young,
+            skipped_nesting,
+            min_age,
+            format,
+        );
     }
 
     // Live path: prune NEVER prompts for hook approval inline. Streaming
@@ -1314,10 +1349,16 @@ pub fn step_prune(
             let Some(_reason) = outcome.reason else {
                 continue;
             };
+            let item = &check_items[idx];
             if !outcome.removable {
+                if let Some(nested) = &outcome.contains_worktree {
+                    let (label, ..) = candidate_fields(item, &repo, worktrees, &current_root);
+                    let line = nesting_skip(&label, nested);
+                    let _ = job_tx.send(RemovalJob::PrintSkip(line.clone()));
+                    skipped_nesting.push(line);
+                }
                 continue;
             }
-            let item = &check_items[idx];
             let (label, branch, path, kind, _suffix) =
                 candidate_fields(item, &repo, worktrees, &current_root);
             if let Some(age) = outcome.age
@@ -1445,7 +1486,8 @@ pub fn step_prune(
             return Err(error);
         }
         if removed.is_empty() {
-            if skipped_young.is_empty() && skipped_approval.is_empty() {
+            if skipped_young.is_empty() && skipped_approval.is_empty() && skipped_nesting.is_empty()
+            {
                 eprintln!("{}", info_message("No merged worktrees to remove"));
             }
         } else {

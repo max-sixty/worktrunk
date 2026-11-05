@@ -340,6 +340,10 @@ pub(super) struct RepoCache {
     /// `collect::collect` pass hits memory instead of respawning the
     /// subprocess on the critical path to skeleton.
     pub(super) worktrees: OnceCell<Vec<WorktreeInfo>>,
+    /// Canonical paths of the checkouts in [`Self::worktrees`] still on disk,
+    /// resolved once per inventory. Populated lazily via
+    /// [`Repository::worktree_nested_in`].
+    pub(super) checkout_paths: OnceCell<std::collections::BTreeSet<PathBuf>>,
     /// In-memory branch diff stats cache: (base_sha, head_sha) -> LineDiff.
     /// Sits in front of the persistent `sha_cache` to prevent parallel tasks
     /// from racing through the file-based cache for the same SHA pair.
