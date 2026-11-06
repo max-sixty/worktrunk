@@ -1,5 +1,7 @@
 <!-- markdownlint-disable MD033 -->
 
+**English** | [Português (Brasil)](README.pt-BR.md) | [Español](README.es.md)
+
 <h1><img src="docs/public/logo.png" alt="Worktrunk logo" width="50" align="absmiddle">&nbsp;&nbsp;Worktrunk</h1>
 
 <!-- Crates.io badge below disabled while shields.io is rate-limited by crates.io

@@ -1,5 +1,8 @@
 [files]
-extend-exclude = ["docs/demos/vhs-keystrokes/", "*.snap", "vendor/", "*.log"]
+# The README translations are Portuguese and Spanish prose; typos' dictionary is
+# English, so ordinary words there ("comando" -> "commando", "seletor" ->
+# "selector", "varios" -> "various") would be flagged as misspellings.
+extend-exclude = ["docs/demos/vhs-keystrokes/", "*.snap", "vendor/", "*.log", "README.pt-BR.md", "README.es.md"]
 
 [default]
 # Generated `wt list` doc embeds (README, site docs, skills mirrors) truncate
