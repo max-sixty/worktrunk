@@ -146,19 +146,7 @@ An experimental native activity module is available in `dev/dsh/index.mjs`. It r
       name: file:///absolute/path/to/worktrunk/dev/dsh/index.mjs
 ```
 
-Pass the overlay through your profile's `--patch` option. SDK clients supply it through `patches`:
-
-```js
-import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client';
-
-const harness = new DeepSeekHarness({
-  profile: 'sdk-minimal',
-  cwd: '/absolute/path/to/worktree',
-  patches: ['/absolute/path/activity.patch.yml'],
-});
-```
-
-`sdk-minimal` is a JSON-RPC runtime driven by the SDK client. The plugin follows each root agent's current session directory, marks working or waiting, and clears its contribution on disposal. It does not route DSH worktree creation or removal. Markers are branch-scoped; independent processes or other integrations can overwrite them. Tested with DSH 0.2.2-rc.1 on Linux using a local subprocess provider.
+Pass the overlay through DSH's `--patch` option, or the SDK client's `patches` option. Root agents mark their initial checkout as working or idle, then clear on disposal. Keep the checkout and branch fixed during a session; changing or removing them can leave a marker requiring manual cleanup. Markers remain last-writer-wins, including when agents share a branch. The module does not route worktree creation or removal.
 
 ## Worktree isolation (Claude Code and OpenCode)
 

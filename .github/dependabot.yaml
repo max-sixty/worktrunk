@@ -14,18 +14,6 @@ updates:
     # Exclude labels due to https://github.com/dependabot/dependabot-core/issues/7645#issuecomment-1986212847
     labels: []
 
-  - package-ecosystem: npm
-    directory: "/dev/dsh"
-    schedule:
-      interval: weekly
-    commit-message:
-      prefix: "chore: "
-    groups:
-      dsh-tests:
-        patterns:
-          - "*"
-    labels: []
-
   - package-ecosystem: "github-actions"
     directories:
       - "/"
