@@ -345,6 +345,23 @@ test('every command reference receives semantic syntax roles', async () => {
   assert.equal(frameCount, headingCount, 'some command references remain plain code blocks');
 });
 
+test('built pages link a favicon Google Search accepts', async () => {
+  // Google Search ignores favicons that are not a multiple of 48px square.
+  for (const page of renderedPages) {
+    const html = await readFile(page, 'utf8');
+    assert.match(
+      html,
+      /<link rel="icon" type="image\/png" sizes="48x48" href="\/favicon-48\.png"\/?>/,
+      `${page} lacks a 48x48 favicon link`,
+    );
+    assert.match(
+      html,
+      /<link rel="apple-touch-icon" sizes="180x180" href="\/apple-touch-icon\.png"\/?>/,
+      `${page} lacks an apple-touch-icon link`,
+    );
+  }
+});
+
 test('built pages only reference emitted local assets', async () => {
   const files = new Set(await allFiles());
 

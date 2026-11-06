@@ -41,6 +41,17 @@ export default defineConfig({
       description: 'Git worktree management for parallel AI agent workflows.',
       disable404Route: true,
       favicon: '/favicon.png',
+      head: [
+        // Google Search only shows favicons sized in multiples of 48px.
+        {
+          tag: 'link',
+          attrs: { rel: 'icon', type: 'image/png', sizes: '48x48', href: '/favicon-48.png' },
+        },
+        {
+          tag: 'link',
+          attrs: { rel: 'apple-touch-icon', sizes: '180x180', href: '/apple-touch-icon.png' },
+        },
+      ],
       logo: {
         src: './public/logo.png',
         alt: 'Worktrunk',
