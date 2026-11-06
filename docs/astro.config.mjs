@@ -42,7 +42,8 @@ export default defineConfig({
       disable404Route: true,
       favicon: '/favicon.png',
       head: [
-        // Google Search only shows favicons sized in multiples of 48px.
+        // Restores the icon links the Zola site carried (#627); `favicon` above
+        // emits only the 32x32 shortcut icon.
         {
           tag: 'link',
           attrs: { rel: 'icon', type: 'image/png', sizes: '48x48', href: '/favicon-48.png' },

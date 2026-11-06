@@ -345,8 +345,9 @@ test('every command reference receives semantic syntax roles', async () => {
   assert.equal(frameCount, headingCount, 'some command references remain plain code blocks');
 });
 
-test('built pages link a favicon Google Search accepts', async () => {
-  // Google Search ignores favicons that are not a multiple of 48px square.
+test('built pages link the 48px favicon and apple-touch-icon', async () => {
+  // Starlight's `favicon` option links only favicon.png, so these icon files in
+  // docs/public/ stay reachable only through the `head` entries.
   for (const page of renderedPages) {
     const html = await readFile(page, 'utf8');
     assert.match(
