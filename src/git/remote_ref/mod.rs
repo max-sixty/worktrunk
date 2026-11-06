@@ -16,7 +16,7 @@
 //! use worktrunk::git::{ForgeKind, remote_ref};
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let repo = Repository::at(".")?;
-//! let info = remote_ref::fetch_info(ForgeKind::GitHub, 123, &repo)?;
+//! let info = remote_ref::fetch_info(ForgeKind::GitHub, 123, &repo, None)?;
 //! println!("PR #{}: {}", info.number, info.title);
 //! # Ok(())
 //! # }
@@ -105,13 +105,28 @@ pub fn fetch_info(
     forge: ForgeKind,
     number: u32,
     repo: &Repository,
+    url_host: Option<&str>,
 ) -> anyhow::Result<RemoteRefInfo> {
     match forge {
-        ForgeKind::GitHub => github::fetch_pr_info(number, repo),
+        // A GitHub `/pull/N` URL names its host. `pr:N` has none (`url_host` is
+        // `None`) and keeps the remote-host lookup.
+        ForgeKind::GitHub => github::fetch_pr_info(number, repo, url_host),
         ForgeKind::GitLab => gitlab::fetch_mr_info(number, repo),
         ForgeKind::Gitea => gitea::fetch_pr_info(number, repo),
         ForgeKind::AzureDevOps => azure::fetch_pr_info(number, repo),
     }
+}
+
+/// Host named by a GitHub `/pull/N` web URL.
+///
+/// Literal `pr:N` and the other forges' URL shapes (`/pulls/`, `/pullrequest/`,
+/// `/-/merge_requests/`) return `None`. A port in the authority is kept.
+pub fn github_pull_url_host(input: &str) -> Option<String> {
+    let parts = parse_ref_url_parts(input)?;
+    if parts.segments.get(parts.marker_index).copied() != Some("pull") {
+        return None;
+    }
+    authority_host(parts.segments.first().copied()?).map(str::to_string)
 }
 
 /// Whether `forge`'s CLI holds a login for `host`.
@@ -625,6 +640,35 @@ mod tests {
             parse_ref_url("https://gitlab.example.com/team/repo/-/merge_requests/12/diffs")
                 .as_deref(),
             Some("mr:12")
+        );
+    }
+
+    #[test]
+    fn github_pull_url_host_keeps_only_github_pull_urls() {
+        assert_eq!(
+            github_pull_url_host("https://github.example.com/acme/app/pull/62").as_deref(),
+            Some("github.example.com")
+        );
+        assert_eq!(
+            github_pull_url_host("https://github.com/owner/repo/pull/123/files").as_deref(),
+            Some("github.com")
+        );
+        assert_eq!(
+            github_pull_url_host("https://ghe.acme.internal/acme/app/pull/7").as_deref(),
+            Some("ghe.acme.internal")
+        );
+        assert_eq!(github_pull_url_host("pr:62"), None);
+        assert_eq!(
+            github_pull_url_host("https://codeberg.org/owner/repo/pulls/55"),
+            None
+        );
+        assert_eq!(
+            github_pull_url_host("https://gitlab.com/group/repo/-/merge_requests/42"),
+            None
+        );
+        assert_eq!(
+            github_pull_url_host("https://dev.azure.com/org/project/_git/repo/pullrequest/9"),
+            None
         );
     }
 
