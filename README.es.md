@@ -2,6 +2,8 @@
 
 [English](README.md) | [Português (Brasil)](README.pt-BR.md) | **Español**
 
+> Traducción del [README en inglés](README.md), que es la fuente de verdad. Si ambos difieren, manda el inglés.
+
 <h1><img src="docs/public/logo.png" alt="Logotipo de Worktrunk" width="50" align="absmiddle">&nbsp;&nbsp;Worktrunk</h1>
 
 [![Docs](https://img.shields.io/badge/docs-worktrunk.dev-blue?style=for-the-badge&logo=gitbook)](https://worktrunk.dev)
