@@ -13,6 +13,8 @@ leaves behind at exit — was re-run live on 2026-07-28 against Claude Code
 2.1.220 and wt v0.69.2. The confirmation hook and `cd`-before-entry for another
 repo were verified live on 2026-09-16 against Claude Code 2.1.273 (#4149).
 Hook-based exit cleanup was checked live on Claude Code 2.1.308 on 2026-10-22.
+Leaving a worktree session with `ExitWorktree` before path entry was verified
+live on 2026-11-05 against Claude Code 2.1.316 and wt v0.81.0.
 Re-verify against current versions before relying on a specific behavior; the
 *shape* of the argument should outlive the details.
 Binary symbol names are deliberately omitted — they re-minify every build.
@@ -28,7 +30,8 @@ no rationale.
    from firing. It fails from a session that already entered a worktree, and
    it has no repo targeting.
 3. Otherwise `wt -C <repo> switch --create <branch> --no-cd --format=json` in
-   Bash, then, for another repo, `cd <repo>`, then `EnterWorktree({path})`.
+   Bash, then `ExitWorktree({action: "keep"})`, then, for another repo,
+   `cd <repo>`, then `EnterWorktree({path})`.
    `wt` solves repo targeting (`-C` works from anywhere), existing-branch
    handling (rerun without `--create`), and machine-readable output (`.path`
    on stdout, status on stderr). Creating in another repo is fine; only
@@ -37,6 +40,17 @@ no rationale.
    worktrunk's hook answers the confirmation only for that repository's
    worktrees ("The confirmation hook"). The `cd` satisfies both. Entry that someone declined
    ends there, with the worktree left unentered (M2).
+
+   Leaving first lifts the stricter gate a session already in a worktree is
+   held to (M2, "Why leave before entering"), and does nothing for a session
+   in none. Leaving also moves the cwd and the session's base cwd (M1) back
+   to where they stood when the current worktree session began (a switch
+   within a session keeps that point; leaving and entering again resets it).
+   That is normally in the same repository as the worktree just left, so
+   with no repo argument step 3 enters from there. A `cd` back into the
+   worktree just left would reset under the default sibling layout unless an
+   `additionalDirectories` entry covers it, and after a `cd` into the new
+   worktree `EnterWorktree` would refuse it as the current directory.
 
    On a tool error (or a denial with no user behind it), the session can still
    work there iff the path sits
@@ -118,6 +132,13 @@ cwd.
     one registered to a repo nested inside it.
   - **Already in a worktree-session, or a pinned agent** → only under that
     repo's `.claude/worktrees/`; rejects even same-repo siblings.
+    `ExitWorktree({action: "keep"})` ends a worktree session, keeps its
+    worktree, and moves the cwd and the base cwd (M1) back to where they
+    stood when that worktree session began, after which the first bullet
+    applies again. In a subagent with a cwd override (`isolation: "worktree"`
+    or an explicit `cwd`) it refuses instead (`ExitWorktree cannot be called
+    from a subagent with a cwd override …`; read from the 2.1.316 binary, not
+    run live), so a pinned agent stays under this gate.
   - **cwd outside any git repo** → refuses entirely.
 - **Confirmation:** the safety check runs on the two facts the call carries —
   a `path` argument, and a target outside the project's `.claude/worktrees/` —
@@ -149,14 +170,22 @@ cwd.
   `permissions.deny` entry for `EnterWorktree`, with or without an argument
   pattern, drops the tool from the session instead, so there is no call to
   deny.
-- Rejections are graceful and side-effect-free (nothing is created). The three
-  the skill's own flow produces, verbatim (others exist — a worktree locked by
-  another running session, the main working tree, a prunable registration):
+- Rejections are graceful and side-effect-free (nothing is created). The ones
+  the skill's own flow can produce, verbatim (others exist — a worktree locked
+  by another running session, a prunable registration):
   - registered-check: `Cannot enter worktree: <path> is not a registered
     worktree of <repo>. Run 'git -C <repo> worktree list' …`
   - managed-location: `Cannot enter worktree: <path> is not under
     <repo>/.claude/worktrees. Switching from this session is limited to
-    worktrees managed by Claude Code …`
+    worktrees managed by Claude Code …`, or, in a repo with no
+    `.claude/worktrees/` at all, `Cannot enter worktree:
+    <repo>/.claude/worktrees does not exist, so <path> cannot be a worktree
+    managed by Claude Code.`
+  - current directory: `Cannot enter worktree: <path> is the current working
+    directory.`
+  - main working tree: `Cannot enter worktree: <path> is the main working
+    tree, not a linked worktree.`, when the user names the branch checked out
+    there and the rerun without `--create` returns its path.
   - no repo: `Cannot enter an existing worktree: the current directory is not in
     a git repository.`
 
@@ -309,14 +338,39 @@ fires only on an actual reset. Cheap to attempt, and the handback is actionable
 and durable (a `~/workspace` entry, set once, covers every future cross-repo
 task).
 
+### Why leave before entering
+
+Step 3 used to enter without leaving. A session already in a worktree, which is
+the usual way to reach step 3 since step 2 fails exactly there, then always took
+the managed-location rejection and the `cd` recovery: in one user's recorded
+sessions over 45 days, 14 of 16 invocations from inside a worktree went that
+way. The `cd` leaves the session's tracked worktree on the old one. Claude
+Code's Bash guard for worktree sessions keeps judging commands against it and
+names it when it refuses one ("run them from <old worktree>"), and session
+exit and `ExitWorktree` both act on it. Leaving costs one call, keeps the old worktree on
+disk, and makes the next entry a first entry. Verified live: from a session in
+one `wt` worktree, entering a sibling by path failed with the managed-location
+rejection, and after `ExitWorktree` the same call succeeded; entering another
+repo's worktree likewise succeeded after leaving and `cd` into that repo, and a
+session launched with `--worktree` left and entered the same way. With no repo
+argument and no `additionalDirectories` entry, entering from where
+`ExitWorktree` left the session succeeded, while a `cd` back into the old
+worktree reset.
+
+Leaving would also let step 2's name route work again, but its
+`WorktreeCreate` hook creates in `$CLAUDE_PROJECT_DIR`, the launch repo
+("Re-rooting keeps the launch repo's instructions"), so after an entry into
+another repo's worktree a retry would create the worktree in the wrong repo.
+`wt switch` creates it in the repo the session is working in.
+
 ## Known limits (deliberate)
 
 - Another repo is reachable only through `additionalDirectories` ("How they
   compose", above); outside it the skill escalates for the one-line config add
   rather than degrading to absolute-paths mode.
-- A pinned or already-in-worktree session can't even re-enter a *same-repo*
-  sibling worktree (the stricter `.claude/worktrees/` check); it lands in the
-  same reachability test and the same escalation.
+- A pinned agent can't even re-enter a *same-repo* sibling worktree (the
+  stricter `.claude/worktrees/` check), and `ExitWorktree` refuses to run in
+  it; it lands in the same reachability test and the same escalation.
 - Where the plugin's hooks don't run, or the worktree is off the
   `worktree-path` template (an existing branch whose worktree lives elsewhere,
   a detached worktree), step 3's entry asks the user to confirm, once per call,

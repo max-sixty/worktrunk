@@ -58,7 +58,8 @@ design choices behind this — read it before re-adding guards or routes. -->
    with no task text, confirm it's ready and wait).
 
    Mid-session, carry uncommitted work across: `git stash push -u` before the
-   `EnterWorktree` call, then `git stash pop` after — the call re-roots the
+   `EnterWorktree` call, then `git stash pop` once the session is in the new
+   worktree, which is after step 3 if this call fails. Entering re-roots the
    session into the new worktree, and the stash is shared across worktrees.
 
 3. **Otherwise create it with `wt` and enter by path.** Two cases reach here: a
@@ -76,12 +77,26 @@ design choices behind this — read it before re-adding guards or routes. -->
    worktree if missing); if step 1 picked the name, pick another and rerun. Any
    other failure (not a git repo, invalid name): report it and stop.
 
-   With a repo argument, `cd <repo>` next, in its own `Bash` call.
+   Next, call `ExitWorktree({action: "keep"})`. This invocation is the user
+   asking to move the session, which includes leaving the worktree it is in,
+   so make the call even when you're unsure the session is in one. A session
+   in a worktree can enter only one under its repository's
+   `.claude/worktrees/`; leaving lifts that limit, keeps the old worktree and
+   its branch on disk, and returns the session to the directory it was in
+   before it entered. Where there is nothing to leave (no worktree session, or
+   an agent pinned to its own worktree), the call returns an error and changes
+   nothing; carry on. If the session did leave a worktree
+   and the entry below doesn't happen, say so when you hand back: name the
+   worktree it left, still on disk, and where the session is now.
+
+   With a repo argument, `cd <repo>` next, in its own `Bash` call:
    `EnterWorktree` re-roots only within the repository the cwd is in, and
    worktrunk's `PermissionRequest` hook answers the confirmation that call
-   asks for only for a `wt` worktree of that same repository. If the `cd`
+   asks for only for a `wt` worktree of that same repository. If that `cd`
    reports `Shell cwd was reset`, the repo is unreachable: skip the entry and
-   hand back as in **Unreachable** below.
+   hand back as in **Unreachable** below. With no repo argument, don't `cd`:
+   leaving put the session back in this repository, and a `cd` into the
+   worktree it left can reset.
 
    Then call `EnterWorktree({path: "<path from the JSON>"})`.
 
@@ -96,12 +111,11 @@ design choices behind this — read it before re-adding guards or routes. -->
      with no task text, confirm it's ready and wait).
    - **Tool error** — the tool ran and returned an error (`Cannot enter
      worktree: …`) → graceful; nothing moved, and one recovery covers them
-     all. The common cause is a session already rooted in a worktree (or a
-     pinned agent), which limits entry to the current repo's
-     `.claude/worktrees/` and excludes even a same-repo `wt` sibling. The
-     recovery test is whether you can `cd` into the worktree, which works
-     when it's inside an allowed directory. So `cd <path>` and read the
-     result:
+     all. One cause is an agent pinned to its own worktree, which can
+     enter only under its repo's `.claude/worktrees/`, excluding even a
+     same-repo `wt` sibling. The recovery test is whether you can `cd` into
+     the worktree, which works when it's inside an allowed directory. So
+     `cd <path>` and read the result:
      - no `Shell cwd was reset` notice → it stuck; the worktree is reachable.
        Work there, but a bare `cd` is not a tracked re-root, so the cwd can
        revert to the session's launch worktree across turns (and in spawned
@@ -131,7 +145,8 @@ remove it unprompted.
 
 A worktree from step 2 that the session never touched — no changed files, no
 commits — is cleaned up when the session ends, branch included; anything
-written into it keeps it. A worktree from step 3 always stays. If the user asks
+written into it keeps it. A worktree from step 3 always stays, as does a
+worktree the session left in step 3. If the user asks
 to leave mid-session, `ExitWorktree({action: "keep"})` returns the session to
 its original directory;
 `ExitWorktree` cannot remove a worktree entered by `path`, so removing one of
