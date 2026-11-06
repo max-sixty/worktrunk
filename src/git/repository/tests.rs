@@ -521,7 +521,12 @@ fn config_bool_reads_key_without_value_as_true() {
     std::fs::write(&config_path, config).unwrap();
 
     let repo = Repository::at(test.root_path()).unwrap();
-    assert!(repo.is_builtin_fsmonitor_enabled());
+    assert!(repo.config_bool("core.fsmonitor").unwrap());
+    assert!(
+        repo.current_worktree()
+            .is_builtin_fsmonitor_enabled()
+            .unwrap()
+    );
 }
 
 #[test]
@@ -669,49 +674,41 @@ fn extract_failed_command_from_command_error() {
 
 #[test]
 fn is_builtin_fsmonitor_enabled_variants() {
-    use super::RepoCache;
-    use indexmap::IndexMap;
-    use std::sync::{Arc, RwLock};
-
-    fn repo_with_fsmonitor(value: Option<&str>) -> super::Repository {
-        let cache = RepoCache::default();
-        let mut map: IndexMap<String, Vec<String>> = IndexMap::new();
-        if let Some(v) = value {
-            map.insert("core.fsmonitor".to_string(), vec![v.to_string()]);
-        }
-        cache.all_config.set(RwLock::new(map)).unwrap();
-        super::Repository {
-            discovery_path: PathBuf::from("/nonexistent/repo"),
-            git_common_dir: PathBuf::from("/nonexistent/.git"),
-            cache: Arc::new(cache),
-            locks: Arc::new(super::RepositoryLocks::default()),
-            temporary_object_store: None,
-        }
-    }
+    let test = TestRepo::with_initial_commit();
+    let repo = Repository::at(test.root_path()).unwrap();
+    let worktree = repo.current_worktree();
+    assert!(!worktree.is_builtin_fsmonitor_enabled().unwrap());
 
     // Builtin daemon: any git-bool truthy value enables it.
-    for truthy in ["true", "1", "yes", "on", "TRUE"] {
+    for truthy in ["true", "1", "yes", "on", "TRUE", "2", "-1"] {
+        test.run_git(&["config", "core.fsmonitor", truthy]);
         assert!(
-            repo_with_fsmonitor(Some(truthy)).is_builtin_fsmonitor_enabled(),
+            worktree.is_builtin_fsmonitor_enabled().unwrap(),
             "{truthy} should enable builtin fsmonitor"
         );
     }
 
     // Watchman hook path is NOT the builtin daemon — must return false even
     // though the value is non-empty and truthy in the colloquial sense.
-    assert!(
-        !repo_with_fsmonitor(Some("/usr/local/bin/git-fsmonitor-watchman.sh"))
-            .is_builtin_fsmonitor_enabled()
-    );
+    test.run_git(&[
+        "config",
+        "core.fsmonitor",
+        "/usr/local/bin/git-fsmonitor-watchman.sh",
+    ]);
+    assert!(!worktree.is_builtin_fsmonitor_enabled().unwrap());
 
     // Explicitly disabled and unset both report false.
-    for falsy in ["false", "0", "no", "off"] {
+    for falsy in ["false", "0", "no", "off", ""] {
+        test.run_git(&["config", "core.fsmonitor", falsy]);
         assert!(
-            !repo_with_fsmonitor(Some(falsy)).is_builtin_fsmonitor_enabled(),
+            !worktree.is_builtin_fsmonitor_enabled().unwrap(),
             "{falsy} should disable builtin fsmonitor"
         );
     }
-    assert!(!repo_with_fsmonitor(None).is_builtin_fsmonitor_enabled());
+
+    // A malformed config is a failure, not an external monitor hook path.
+    std::fs::write(test.root_path().join(".git/config"), "[invalid\n").unwrap();
+    assert!(worktree.is_builtin_fsmonitor_enabled().is_err());
 }
 
 /// A daemon answering on the worktree's IPC socket means no `git

@@ -1632,15 +1632,11 @@ pub fn collect(
     // Git's builtin fsmonitor has race conditions under parallel load - pre-starting
     // daemons before parallel operations avoids hangs.
     #[cfg(target_os = "macos")]
-    let fsmonitor_worktrees: Vec<_> = if repo.is_builtin_fsmonitor_enabled() {
-        sorted_worktrees
-            .iter()
-            .map(|(wt, _)| *wt)
-            .filter(|wt| !wt.is_prunable())
-            .collect()
-    } else {
-        vec![]
-    };
+    let fsmonitor_worktrees: Vec<_> = sorted_worktrees
+        .iter()
+        .map(|(wt, _)| *wt)
+        .filter(|wt| !wt.is_prunable())
+        .collect();
     #[cfg(not(target_os = "macos"))]
     let fsmonitor_worktrees: Vec<&WorktreeInfo> = vec![];
 
@@ -1728,7 +1724,13 @@ pub fn collect(
             repo.prime_worktree_path_caches(worktrees);
             for wt in &fsmonitor_worktrees {
                 s.spawn(|_| {
-                    repo.start_fsmonitor_daemon_at(&wt.path);
+                    if repo
+                        .worktree_at(&wt.path)
+                        .is_builtin_fsmonitor_enabled()
+                        .unwrap_or(false)
+                    {
+                        repo.start_fsmonitor_daemon_at(&wt.path);
+                    }
                 });
             }
         });
