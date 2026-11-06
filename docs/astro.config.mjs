@@ -41,6 +41,18 @@ export default defineConfig({
       description: 'Git worktree management for parallel AI agent workflows.',
       disable404Route: true,
       favicon: '/favicon.png',
+      head: [
+        // Restores the icon links the Zola site carried (#627); `favicon` above
+        // emits only the 32x32 shortcut icon.
+        {
+          tag: 'link',
+          attrs: { rel: 'icon', type: 'image/png', sizes: '48x48', href: '/favicon-48.png' },
+        },
+        {
+          tag: 'link',
+          attrs: { rel: 'apple-touch-icon', sizes: '180x180', href: '/apple-touch-icon.png' },
+        },
+      ],
       logo: {
         src: './public/logo.png',
         alt: 'Worktrunk',
