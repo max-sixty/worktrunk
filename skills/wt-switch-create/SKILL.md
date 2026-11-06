@@ -60,7 +60,9 @@ design choices behind this — read it before re-adding guards or routes. -->
    Mid-session, carry uncommitted work across: `git stash push -u` before the
    `EnterWorktree` call, then `git stash pop` once the session is in the new
    worktree, which is after step 3 if this call fails. Entering re-roots the
-   session into the new worktree, and the stash is shared across worktrees.
+   session into the new worktree, and the stash is shared across worktrees. If
+   step 3 hands back without the session in the new worktree, restore the work
+   where it came from first (`git -C <that worktree> stash pop`).
 
 3. **Otherwise create it with `wt` and enter by path.** Two cases reach here: a
    repo argument, which step 2 can't target, and a failed step 2, whose error
