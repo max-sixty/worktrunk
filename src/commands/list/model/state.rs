@@ -7,7 +7,7 @@ use worktrunk::git::{InProgressOperation, IntegrationReason};
 
 /// Upstream divergence state relative to remote tracking branch.
 ///
-/// Used only for upstream/remote divergence. Main branch divergence is now
+/// Used only for upstream/remote divergence. Main branch divergence is
 /// handled by [`MainState`] which combines divergence with integration states.
 ///
 /// | Variant   | Symbol |
@@ -122,7 +122,7 @@ impl std::fmt::Display for WorktreeState {
 /// Default branch relationship state
 ///
 /// Represents the combined relationship to the default branch in a single position.
-/// Uses horizontal arrows (vs vertical arrows for Remote column).
+/// Uses solid vertical arrows (vs dashed arrows for the Remote column).
 ///
 /// Priority order determines which symbol is shown:
 /// 1. IsMain (^) - this IS the main worktree
@@ -146,7 +146,7 @@ impl std::fmt::Display for WorktreeState {
 /// downstream conflict.)
 ///
 /// The `Integrated` variant carries an [`IntegrationReason`] explaining how the
-/// content was integrated (ancestor, trees match, no added changes, or merge adds nothing).
+/// content was integrated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum MainState {
@@ -176,7 +176,7 @@ pub enum MainState {
 }
 
 impl std::fmt::Display for MainState {
-    /// Single-stroke vertical arrows for Main column (vs double-stroke arrows for Remote column).
+    /// Solid vertical arrows for the Main column (vs dashed arrows for the Remote column).
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::None => Ok(()),
@@ -825,7 +825,7 @@ mod tests {
         // WT probe is authoritative: rule out even when HEAD probe says
         // "would conflict" (uncommitted changes resolve it). This
         // combination shouldn't arise in production — the
-        // The merge-tree conflict task's skip-when-dirty path keeps HEAD as a
+        // merge-tree conflict task's skip-when-dirty path keeps HEAD as a
         // sentinel `false` whenever WT is `Some(Some(_))` — but pin the
         // contract so a future refactor that reorders the matches
         // doesn't silently regress.
