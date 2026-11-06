@@ -113,9 +113,9 @@ pub(super) fn fetch_pr_info(
 
     // `gh api` doesn't infer the host from the repository: without
     // `--hostname` it asks gh's default host, which is github.com once several
-    // hosts are logged in. A configured `forge.hostname` wins. Otherwise the
-    // host in a `/pull/N` URL the user passed wins when gh is logged in there
-    // (#4709), then a GitHub Enterprise remote's host. An SSH alias
+    // hosts are logged in. A configured `forge.hostname` wins. Otherwise a
+    // non-github.com host in a `/pull/N` URL the user passed wins when gh is
+    // logged in there (#4709), then a GitHub Enterprise remote's host. An SSH alias
     // (`git@github-personal:…`) has no login, so it keeps gh's default (#1790).
     let hostname = repo.forge_hostname().or_else(|| {
         authed_enterprise_host(url_host).or_else(|| {

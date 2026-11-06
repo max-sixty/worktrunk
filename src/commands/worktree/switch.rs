@@ -541,22 +541,19 @@ fn fetch_same_repo_branch(repo: &Repository, info: &RemoteRefInfo) -> anyhow::Re
 /// name, which callers resolve as an ordinary ref.
 fn parse_ref_shortcut(input: &str) -> Option<(RefType, u32, Option<String>)> {
     let normalised = parse_ref_url(input);
-    // Only a GitHub `/pull/N` URL names a host. `pr:N` and other forges don't.
-    let url_host = normalised
-        .as_ref()
-        .and_then(|_| remote_ref::github_pull_url_host(input));
-    let input = normalised.as_deref().unwrap_or(input);
-    if let Some(number) = input
+    let shortcut = normalised.as_deref().unwrap_or(input);
+    if let Some(number) = shortcut
         .strip_prefix("pr:")
         .and_then(|s| s.parse::<u32>().ok())
     {
-        return Some((RefType::Pr, number, url_host));
+        // Only a GitHub `/pull/N` URL names a host; literal `pr:N` doesn't.
+        return Some((RefType::Pr, number, remote_ref::github_pull_url_host(input)));
     }
-    if let Some(number) = input
+    if let Some(number) = shortcut
         .strip_prefix("mr:")
         .and_then(|s| s.parse::<u32>().ok())
     {
-        return Some((RefType::Mr, number, url_host));
+        return Some((RefType::Mr, number, None));
     }
     None
 }
