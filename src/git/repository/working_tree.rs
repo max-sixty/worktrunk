@@ -1714,7 +1714,9 @@ mod tests {
             b"staged data"
         );
         assert!(index_dir.join("index.lock").exists());
-        drop(owner);
+        // Parallel tests can fork with this descriptor before the child execs.
+        // Explicitly unlock: closing our copy need not release the child's.
+        owner.unlock().unwrap();
         sweep_stale_temp_indexes(dir.path());
         assert!(!index_dir.exists());
     }
