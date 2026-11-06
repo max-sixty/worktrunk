@@ -905,7 +905,12 @@ fn run_json() -> Result<()> {
     // to the default schema without corrupting the prompt.
     let json_schema = list::resolve_json_schema(&repo);
 
-    let options = statusline_options(&repo);
+    let mut options = statusline_options(&repo);
+    // Schema 2 JSON carries `worktree.modified_at`, so it needs the per-file
+    // mtimes like the `wt list` JSON path; schema 1 has no such field, so it
+    // keeps the cheap plan. Only this one worktree is populated, so the cost
+    // is one worktree's stats, not the whole repo's.
+    options.needs_mtime = json_schema == 2;
     // What the schema-2 envelope reports as requested — read from the task
     // plan itself (like `collect()` does), so it can't drift from the gates.
     let collected = list::model::Collected {

@@ -1548,6 +1548,9 @@ impl PipelineFactory {
                     // Picker renders its own UI through `progressive_handler`;
                     // collect must not write to stdout.
                     RenderTarget::Json,
+                    // The picker never reads per-file mtimes, so it skips the
+                    // `--untracked-files=all` query and the mtime stat loop.
+                    false,
                 );
             })
             .context("Failed to spawn picker-collect thread")?;

@@ -355,11 +355,17 @@ pub(super) struct RepoCache {
     // result. The data is filesystem-keyed and process-invariant, so per-Repo
     // scoping never bought anything.
     //
-    /// Cached `git status --porcelain` output per worktree: worktree_path -> raw porcelain.
+    /// Cached `git status --porcelain` output per worktree and untracked-files
+    /// mode: (worktree_path, untracked_files_all) -> raw porcelain.
     /// Populated by `WorkingTree::status_porcelain_cached()` so parallel tasks
     /// (working-tree diff + conflict detection) share one subprocess per worktree
-    /// instead of spawning `git status` twice.
-    pub(super) status_porcelain: DashMap<PathBuf, String>,
+    /// instead of spawning `git status` twice. The mode is part of the key:
+    /// the JSON list path asks for `--untracked-files=all` (individual
+    /// untracked files, for mtime collection) while every other caller uses
+    /// `normal` (one record per untracked directory); the two byte streams
+    /// are not interchangeable, so a `normal` entry must never be served to
+    /// a caller that needs `all` (and vice versa).
+    pub(super) status_porcelain: DashMap<(PathBuf, bool), Vec<u8>>,
     /// Process-scoped object databases created by observational repository
     /// clones. Original clones consult this shared set so Worktrunk's own
     /// temporary directories never appear as untracked worktree content.

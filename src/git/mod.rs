@@ -2,7 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
-fn git_path_from_bytes(bytes: &[u8]) -> std::io::Result<PathBuf> {
+/// Decode a Git path without losing non-UTF-8 bytes on Unix.
+pub fn git_path_from_bytes(bytes: &[u8]) -> std::io::Result<PathBuf> {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStringExt;
@@ -134,7 +135,7 @@ pub use error::{
     // Render a single error via Diagnostic if it implements one
     try_render_diagnostic,
 };
-pub use parse::{parse_porcelain_z, parse_untracked_files};
+pub use parse::{parse_porcelain_z, parse_untracked_files, porcelain_entries_z};
 pub use recover::{current_or_recover, cwd_removed_hint};
 pub use remove::{
     BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemovalOutput, RemoveOptions,

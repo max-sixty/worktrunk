@@ -376,19 +376,20 @@ Item fields:
 
 Present only on worktree rows. The location attributes are independent, so they co-occur — see Worktree for the symbols, which pick one:
 
-      Field          Type                                              Description                                          
- ──────────────── ─────────── ───────────────────────────────────────────────────────────────────────────────────────────── 
- [2mpath[0m             string      Worktree path                                                                                 
- [2mmain[0m             boolean     Is the main worktree                                                                          
- [2mcurrent[0m          boolean     Is the worktree the command ran from                                                          
- [2mprevious[0m         boolean     Is the previous worktree ([2mwt switch -[0m)                                                        
- [2mdetached[0m         boolean     HEAD is detached                                                                              
- [2mlocked[0m           object      [2m{reason}[0m; absent when not locked                                                              
- [2mprunable[0m         object      [2m{reason}[0m; absent when git doesn't report the worktree prunable                                
- [2mbranch_mismatch[0m  boolean     Worktree isn't at the path its branch implies                                                 
- [2mduplicate_branch[0m boolean     Another worktree has the same branch checked out                                              
- [2moperation[0m        string/null In-progress operation: [2m"merge"[0m, [2m"rebase"[0m, [2m"cherry_pick"[0m, [2m"revert"[0m, [2m"bisect"[0m; absent when none 
- [2mchanges[0m          object/null Working-tree state (see changes object)                                                       
+      Field          Type                                                       Description                                                   
+ ──────────────── ─────────── ─────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+ [2mpath[0m             string      Worktree path                                                                                                   
+ [2mmodified_at[0m      string/null Later of HEAD committer time and the newest changed or untracked file mtime, RFC 3339 UTC; null when unresolved 
+ [2mmain[0m             boolean     Is the main worktree                                                                                            
+ [2mcurrent[0m          boolean     Is the worktree the command ran from                                                                            
+ [2mprevious[0m         boolean     Is the previous worktree ([2mwt switch -[0m)                                                                          
+ [2mdetached[0m         boolean     HEAD is detached                                                                                                
+ [2mlocked[0m           object      [2m{reason}[0m; absent when not locked                                                                                
+ [2mprunable[0m         object      [2m{reason}[0m; absent when git doesn't report the worktree prunable                                                  
+ [2mbranch_mismatch[0m  boolean     Worktree isn't at the path its branch implies                                                                   
+ [2mduplicate_branch[0m boolean     Another worktree has the same branch checked out                                                                
+ [2moperation[0m        string/null In-progress operation: [2m"merge"[0m, [2m"rebase"[0m, [2m"cherry_pick"[0m, [2m"revert"[0m, [2m"bisect"[0m; absent when none                   
+ [2mchanges[0m          object/null Working-tree state (see changes object)                                                                         
 
 [32mchanges object[0m
 
