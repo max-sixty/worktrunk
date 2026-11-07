@@ -1414,9 +1414,10 @@ impl PickerRow {
         let Ok(status) = repo.worktree_at(path).status_porcelain_cached() else {
             return WorktreeDiffState::Unknown;
         };
-        if status.trim().is_empty() {
+        if status.is_empty() {
             WorktreeDiffState::Clean
-        } else if status.lines().any(|line| line.starts_with("?? ")) {
+        } else if worktrunk::git::porcelain_entries_z(&status).any(|line| line.starts_with(b"?? "))
+        {
             WorktreeDiffState::HasUntracked
         } else {
             WorktreeDiffState::TrackedOnly

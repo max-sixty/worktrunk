@@ -461,6 +461,9 @@ co-occur — see Worktree for the symbols, which pick one:
       Field          Type                        Description                    
  ──────────────── ─────────── ───────────────────────────────────────────────── 
  [2mpath[0m             string      Worktree path                                     
+ [2mmodified_at[0m      string/null Later of HEAD committer time and the newest       
+                              changed or untracked file mtime, RFC 3339 UTC;    
+                              null when unresolved                              
  [2mmain[0m             boolean     Is the main worktree                              
  [2mcurrent[0m          boolean     Is the worktree the command ran from              
  [2mprevious[0m         boolean     Is the previous worktree ([2mwt switch -[0m)            

@@ -643,31 +643,60 @@ impl<'a> WorkingTree<'a> {
         self.repo.index_base_for(self.head_sha()?)
     }
 
-    /// Return cached `git status --porcelain` output for this worktree.
+    /// Return cached `git status --porcelain -z` bytes for this worktree.
     ///
     /// Keyed by worktree path in the shared `RepoCache`, so parallel tasks that
     /// each want porcelain (e.g., working-tree diff + conflict detection during
     /// `wt list`) share a single subprocess. Uses `--no-optional-locks` to avoid
     /// index-lock contention with the `git write-tree` run by
-    /// the working-tree conflict task in parallel. Explicitly requests normal
-    /// untracked-file reporting so `status.showUntrackedFiles=no` cannot make
-    /// an untracked-only worktree look clean to callers.
-    pub fn status_porcelain_cached(&self) -> anyhow::Result<String> {
-        match self.repo.cache.status_porcelain.entry(self.path.clone()) {
+    /// the working-tree conflict task in parallel. An explicit
+    /// `--untracked-files` flag overrides `status.showUntrackedFiles`, so
+    /// untracked-only dirtiness is reported in either mode.
+    ///
+    /// Pass `untracked_files_all` only when the caller needs individual
+    /// untracked files — the JSON list path, which stats each one for
+    /// `modified_at`. Every other caller uses `--untracked-files=normal`:
+    /// one record per untracked directory, which keeps the per-worktree
+    /// cache (cloned on every hit) small on renders that never read mtimes.
+    /// The two modes are cached under separate keys, so a `normal` entry can
+    /// never be served to a caller that needs `all` (and vice versa).
+    pub fn status_porcelain_cached_with(
+        &self,
+        untracked_files_all: bool,
+    ) -> anyhow::Result<Vec<u8>> {
+        match self
+            .repo
+            .cache
+            .status_porcelain
+            .entry((self.path.clone(), untracked_files_all))
+        {
             Entry::Occupied(e) => Ok(e.get().clone()),
             Entry::Vacant(e) => {
                 let exclusions = self.observation_path_exclusions()?;
+                let untracked_flag = if untracked_files_all {
+                    "--untracked-files=all"
+                } else {
+                    "--untracked-files=normal"
+                };
                 let mut args = vec![
                     "--no-optional-locks",
                     "status",
                     "--porcelain",
-                    "--untracked-files=normal",
+                    "-z",
+                    untracked_flag,
                 ];
                 args.extend(exclusions.iter().map(String::as_str));
-                let stdout = self.run_command(&args)?;
+                let stdout = self.run_command_bytes(&args)?;
                 Ok(e.insert(stdout).clone())
             }
         }
+    }
+
+    /// [`Self::status_porcelain_cached_with`] with `--untracked-files=normal`:
+    /// one record per untracked directory. The default for every caller that
+    /// only needs to know whether (and how) the tree is dirty.
+    pub fn status_porcelain_cached(&self) -> anyhow::Result<Vec<u8>> {
+        self.status_porcelain_cached_with(false)
     }
 
     fn observation_path_exclusions(&self) -> anyhow::Result<Vec<String>> {
@@ -1860,7 +1889,9 @@ mod tests {
         let status = repo.current_worktree().status_porcelain_cached().unwrap();
 
         assert!(
-            status.contains("?? hidden-by-config.txt"),
+            status
+                .windows(b"?? hidden-by-config.txt".len())
+                .any(|w| w == b"?? hidden-by-config.txt"),
             "the shared status snapshot must override status.showUntrackedFiles=no: {status:?}"
         );
     }
@@ -2210,8 +2241,16 @@ mod tests {
         let wt = repo.current_worktree();
 
         let status = wt.status_porcelain_cached().unwrap();
-        assert!(status.contains("?? untracked.txt"));
-        assert!(!status.contains("worktrunk-list-objects-test"));
+        assert!(
+            status
+                .windows(b"?? untracked.txt".len())
+                .any(|w| w == b"?? untracked.txt")
+        );
+        assert!(
+            !status
+                .windows(b"worktrunk-list-objects-test".len())
+                .any(|w| w == b"worktrunk-list-objects-test")
+        );
 
         let stats = wt.working_tree_diff_stats_with_untracked().unwrap();
         assert_eq!(stats.added, 1);

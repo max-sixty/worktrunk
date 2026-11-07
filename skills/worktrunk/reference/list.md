@@ -303,6 +303,7 @@ Present only on worktree rows. The location attributes are independent, so they 
 | Field | Type | Description |
 |-------|------|-------------|
 | `path` | string | Worktree path |
+| `modified_at` | string/null | Later of HEAD committer time and the newest changed or untracked file mtime, RFC 3339 UTC; null when unresolved |
 | `main` | boolean | Is the main worktree |
 | `current` | boolean | Is the worktree the command ran from |
 | `previous` | boolean | Is the previous worktree (`wt switch -`) |
