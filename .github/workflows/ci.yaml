@@ -159,6 +159,11 @@ jobs:
       uses: actions/checkout@v7
 
     - uses: ./.github/actions/test-setup
+      with:
+        # Restore-only: this job finishes minutes before `test (linux)`, so
+        # when the cache key changes it would win the save race with a cache
+        # missing the nextest build, and `test` could no longer reserve the key.
+        save-cache: "false"
 
     - name: Install wt
       uses: baptiste0928/cargo-install@v3
