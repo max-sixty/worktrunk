@@ -7,16 +7,21 @@
 //! [`Repository::has_merge_conflicts_by_tree_with_base_sha`]. No TTL, no invalidation
 //! logic, only a per-kind LRU size bound to prevent unbounded growth.
 //!
+//! The exception is `patch-id-scan`, which records progress rather than a
+//! result and is overwritten as later checks resume it; see
+//! `patch_id_scan`.
+//!
 //! Layout: `.git/wt/cache/{kind}/{key}.json` where `kind` is one of
 //! `merge-tree-conflicts`, `merge-add-probe`, `is-ancestor`,
-//! `has-added-changes`, `diff-stats`, `ahead-behind`, or `merge-base`.
+//! `has-added-changes`, `diff-stats`, `ahead-behind`, `merge-base`, or
+//! `patch-id-scan`.
 //! Symmetric kinds sort the SHA pair so `(A, B)` and `(B, A)` hit the same
 //! entry; asymmetric kinds preserve ordering. See [`crate::cache`] for
 //! read/write/clear mechanics, torn-write semantics, and the
 //! user-initiated clear error policy.
 
 use super::Repository;
-use super::integration::MergeProbeResult;
+use super::integration::{MergeProbeResult, PATCH_ID_SCAN_MAX_CANDIDATES, PatchIdScan};
 use crate::cache;
 use crate::git::LineDiff;
 
@@ -32,6 +37,7 @@ const KIND_HAS_ADDED_CHANGES: &str = "has-added-changes";
 const KIND_DIFF_STATS: &str = "diff-stats";
 const KIND_AHEAD_BEHIND: &str = "ahead-behind";
 const KIND_MERGE_BASE: &str = "merge-base";
+const KIND_PATCH_ID_SCAN: &str = "patch-id-scan";
 
 /// All cache kind identifiers, used by [`clear_all`].
 const ALL_KINDS: &[&str] = &[
@@ -42,6 +48,7 @@ const ALL_KINDS: &[&str] = &[
     KIND_DIFF_STATS,
     KIND_AHEAD_BEHIND,
     KIND_MERGE_BASE,
+    KIND_PATCH_ID_SCAN,
 ];
 
 /// Build a symmetric filename from a SHA pair (order-independent).
@@ -256,6 +263,51 @@ pub(super) fn put_merge_base(repo: &Repository, sha1: &str, sha2: &str, value: &
         repo,
         KIND_MERGE_BASE,
         &symmetric_key(sha1, sha2),
+        value,
+        MAX_ENTRIES_PER_KIND,
+    );
+}
+
+// patch-id scan (asymmetric)
+
+/// Build the filename for a patch-id scan: the branch and merge-base, plus
+/// the candidate cap the scan ran under.
+fn patch_id_scan_key(branch_sha: &str, merge_base: &str) -> String {
+    format!("{branch_sha}-{merge_base}-{PATCH_ID_SCAN_MAX_CANDIDATES}.json")
+}
+
+/// Look up how far the patch-id squash-merge scan for `branch_sha` got from
+/// `merge_base`.
+///
+/// Unlike the other kinds, the value isn't a pure function of the key: it
+/// records the target the last scan reached, and the caller checks that
+/// target is an ancestor of its own before resuming. Concurrent writers for
+/// the same key each store a scan that was true for its own target, so last
+/// writer wins is still benign.
+pub(super) fn patch_id_scan(
+    repo: &Repository,
+    branch_sha: &str,
+    merge_base: &str,
+) -> Option<PatchIdScan> {
+    cache::read(
+        repo,
+        KIND_PATCH_ID_SCAN,
+        &patch_id_scan_key(branch_sha, merge_base),
+    )
+}
+
+/// Store how far the patch-id squash-merge scan for `branch_sha` got from
+/// `merge_base`.
+pub(super) fn put_patch_id_scan(
+    repo: &Repository,
+    branch_sha: &str,
+    merge_base: &str,
+    value: &PatchIdScan,
+) {
+    cache::write_with_lru(
+        repo,
+        KIND_PATCH_ID_SCAN,
+        &patch_id_scan_key(branch_sha, merge_base),
         value,
         MAX_ENTRIES_PER_KIND,
     );
@@ -818,9 +870,19 @@ mod tests {
         );
         put_ahead_behind(&repo, "a", "b", (1, 0));
         put_merge_base(&repo, "a", "b", &Some("c".to_string()));
+        put_patch_id_scan(
+            &repo,
+            "a",
+            "b",
+            &PatchIdScan {
+                scanned_target: "c".to_string(),
+                candidates: 1,
+                matched: false,
+            },
+        );
 
         let cleared = clear_all(&repo).unwrap();
-        assert_eq!(cleared, 7, "should clear one entry per kind");
+        assert_eq!(cleared, 8, "should clear one entry per kind");
 
         // All kinds should be empty
         assert_eq!(merge_conflicts(&repo, "a", "b"), None);
@@ -830,6 +892,7 @@ mod tests {
         assert_eq!(diff_stats(&repo, "a", "b"), None);
         assert_eq!(ahead_behind(&repo, "a", "b"), None);
         assert_eq!(merge_base(&repo, "a", "b"), None);
+        assert_eq!(patch_id_scan(&repo, "a", "b"), None);
     }
 
     #[test]
