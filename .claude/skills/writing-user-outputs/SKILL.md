@@ -537,8 +537,10 @@ warning_message("Failed to restore stash")
 hint_message("To restore manually, run <underline>git stash pop {ref}</>")
 ```
 
-**Multiple suggestions in one hint:** When combining suggestions with semicolons,
-put the more commonly needed command last for easy terminal copying:
+**Multiple suggestions in one hint:** Give a message at most one hint line. When
+it has a second suggestion, fold both into that hint with a semicolon rather
+than adding another `hint_message`, and put the more commonly needed command
+last for easy terminal copying:
 
 ```rust
 // GOOD - common action (create) last, easy to select and copy
