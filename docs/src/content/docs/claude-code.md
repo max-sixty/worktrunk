@@ -138,6 +138,19 @@ For other agent CLIs, configure these commands to run on session events:
 | Agent finishes a turn and waits for input | `wt config state marker set "💬"` |
 | Session ends | `wt config state marker clear` |
 
+### Experimental DeepSeek Harness (DSH)
+
+An experimental native activity module is available in `dev/dsh/index.mjs`. It requires a source checkout containing that file; installing the Worktrunk binary alone does not install it. It is separate from the supported integrations above. Mount it using a DSH overlay:
+
+```yaml
+# /absolute/path/activity.patch.yml
+- insert:
+    - id: worktrunk-activity
+      name: file:///absolute/path/to/worktrunk/dev/dsh/index.mjs
+```
+
+Pass the overlay through DSH's `--patch` option, or the SDK client's `patches` option. Root agents mark their initial checkout as working or idle, then clear on disposal. Keep the checkout and branch fixed during a session; changing or removing them can leave a marker requiring manual cleanup. Markers remain last-writer-wins, including when agents share a branch. The module does not route worktree creation or removal.
+
 ## Worktree isolation (Claude Code and OpenCode)
 
 Claude Code agents can run in isolated worktrees (`isolation: "worktree"`). By default, Claude Code creates these with `git worktree add`. The plugin's `WorktreeCreate` and `WorktreeRemove` hooks route this through `wt switch --create` and `wt remove` instead, so worktrees created by agents get worktrunk's naming conventions, hooks, and lifecycle management. If the branch already exists, the hook runs `wt switch` without `--create`, which returns the branch's worktree, creating one if it has none.
