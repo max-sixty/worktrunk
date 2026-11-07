@@ -3964,7 +3964,9 @@ command = "cat >/dev/null && echo 'feat: add new_file'"
 /// `--dry-run` should mirror `--stage` against a temp index so the prompt reflects what a
 /// real run would send the LLM — including untracked files that aren't yet in the index.
 #[rstest]
-fn test_step_commit_dry_run_stages_untracked(repo: TestRepo) {
+#[case::default(false)]
+#[case::glob_pathspecs(true)]
+fn test_step_commit_dry_run_stages_untracked(repo: TestRepo, #[case] glob_pathspecs: bool) {
     // Untracked, never `git add`'d. Default --stage=all would pick this up at commit time.
     fs::write(repo.root_path().join("untracked.txt"), "untracked content")
         .expect("Failed to write file");
@@ -3979,6 +3981,7 @@ command = "cat >/dev/null && echo 'feat: add untracked'"
         // The worktree-root case exercises the empty relative path in the
         // temporary-index exclusion.
         .env("TMPDIR", repo.root_path())
+        .env("GIT_GLOB_PATHSPECS", if glob_pathspecs { "1" } else { "0" })
         .output()
         .expect("wt step commit --dry-run failed");
     let stdout = String::from_utf8(output.stdout).unwrap();

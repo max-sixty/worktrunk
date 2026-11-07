@@ -541,12 +541,13 @@ pub fn stage_worktree_removal(
         worktree.ensure_clean("remove worktree", branch, true)?;
     }
 
+    let recheck_without_fsmonitor = !force_worktree && worktree.is_builtin_fsmonitor_enabled()?;
     stop_fsmonitor_daemon(&worktree);
 
     // The daemon answered the gate above, and a write can land while it shuts
     // down. Recheck without it; with fsmonitor configured, a plain status
     // would start a new daemon in the worktree about to go.
-    if !force_worktree && repo.is_builtin_fsmonitor_enabled() {
+    if recheck_without_fsmonitor {
         worktree.ensure_clean_without_fsmonitor("remove worktree", branch, true)?;
     }
 
