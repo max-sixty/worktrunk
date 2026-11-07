@@ -20,13 +20,14 @@ use worktrunk::config::{
 use worktrunk::git::remote_ref::{self, RemoteRefInfo, parse_ref_url};
 use worktrunk::git::{
     ErrorExt, ForgeKind, GitError, GitRemoteUrl, RefType, Repository, ResolvedWorktree, Selector,
-    SwitchSuggestionCtx, WorktreeId, branch_tracks_ref, current_or_recover, resolve_input_path,
+    SwitchSuggestionCtx, WorktreeId, add_hook_retry_hint, branch_tracks_ref, current_or_recover,
+    resolve_input_path,
 };
 use worktrunk::path::{canonicalize_with_parents, format_path_for_display};
 use worktrunk::shell_exec::{ShellEscapeMode, shell_cwd};
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, suggest_command,
-    warning_message,
+    suggest_command_in_dir, warning_message,
 };
 use worktrunk::utils::escape_controls;
 
@@ -1469,11 +1470,20 @@ fn execute_switch(
                         vars = vars
                             .with_base_strs(base_branch.as_deref(), base_worktree_path.as_deref());
                     }
+                    // The worktree stays behind when setup fails, and switching
+                    // to it again doesn't re-run pre-start, so name the command
+                    // that does.
                     ctx.execute_pre_create_commands(
                         &vars.as_extra_vars(),
                         hook_plan,
                         &worktree_path,
-                    )?;
+                    )
+                    .map_err(|err| {
+                        add_hook_retry_hint(
+                            err,
+                            suggest_command_in_dir(&worktree_path, "hook", &["pre-start"], &[]),
+                        )
+                    })?;
                 }
 
                 // Record successful switch in history
