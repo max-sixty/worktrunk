@@ -586,8 +586,9 @@ impl ColumnLayout {
                     return StyledLine::new(); // Loaded, no active upstream
                 };
                 // Show centered | when in sync instead of ⇡0  ⇣0
-                // Note: This duplicates the InSync check from Divergence::Special, but
-                // checking counts directly is simpler than threading the enum through.
+                // Note: This duplicates the `Divergence::InSync` check in
+                // `Divergence::from_counts_with_remote`, but checking counts
+                // directly is simpler than threading the enum through.
                 if active.ahead == 0 && active.behind == 0 {
                     let mut cell = StyledLine::new();
                     cell.push_styled("|", Style::new().dimmed());
