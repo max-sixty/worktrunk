@@ -645,7 +645,9 @@ impl ColumnLayout {
                 Some(None) => StyledLine::new(),
                 Some(Some(summary)) => {
                     let mut cell = StyledLine::new();
-                    let msg = truncate_visible(summary, max_summary_len);
+                    // LLM output: escape control bytes like commit subjects.
+                    let summary = escape_controls(summary);
+                    let msg = truncate_visible(&summary, max_summary_len);
                     cell.push_styled(msg, Style::new());
                     cell
                 }
@@ -1582,6 +1584,12 @@ mod tests {
         item.summary = Some(Some("Add user authentication".into()));
         let cell = summary_col.render_cell(&item, &cell_layout(summary_col.clone()), PLACEHOLDER);
         insta::assert_snapshot!(cell.render(), @"Add user authentication");
+
+        // Case 4: control bytes from the LLM command render escaped, so an
+        // OSC sequence never reaches the terminal.
+        item.summary = Some(Some("Add \x1b]52;c;aGk=\x07auth".into()));
+        let cell = summary_col.render_cell(&item, &cell_layout(summary_col.clone()), PLACEHOLDER);
+        assert_eq!(cell.render(), r"Add \u{1b}]52;c;aGk=\u{7}auth");
     }
 
     /// The skeleton renders the task-free Age/Message columns from
