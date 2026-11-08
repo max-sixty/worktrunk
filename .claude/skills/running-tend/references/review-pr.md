@@ -80,8 +80,7 @@ every reader passes through; name a better spot rather than approving past it.
 
 A newly published surface that enumerates config keys, commands, or flags (a
 JSON schema, completions, a docs table) lists only the current names. Deprecated
-aliases stay accepted by the loader with their warning, but are not advertised
-anew.
+aliases stay accepted by the loader, but are not advertised anew.
 
 **Proportionality and the canonical approach:**
 
