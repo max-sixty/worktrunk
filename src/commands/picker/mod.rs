@@ -1800,7 +1800,7 @@ pub fn handle_picker(
 
     // The picker runs every task — it is `wt list --full` (`ShowConfig::Resolved`
     // forces `show_full`, so `collect` plans the full task set from all columns).
-    // `main…±` (BranchDiff) is a default `wt list` column, so the picker surfaces
+    // `^…±` (BranchDiff) is a default `wt list` column, so the picker surfaces
     // it too; it's local git keyed by a persistent content-addressed cache, so
     // warm rows are instant and a cold row computes once in the background (its
     // merge-base walk streams in behind the frame, never blocking the picker).

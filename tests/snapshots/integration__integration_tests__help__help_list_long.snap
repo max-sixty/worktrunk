@@ -103,7 +103,7 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 List all worktrees:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m list[0m
-[107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message[0m
+[107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status       @±        ^↕        ^…±     Remote⇅  Commit    Age  Message[0m
 [107m [0m [2m[0m[2m[34m@[0m[2m feature-api  +   ↕⇡     +54   [0m[2m[36m-5[0m[2m   ↑4  ↓1  +234  [0m[2m[36m-24[0m[2m   ⇡3      6814f02   30m  Add API tests[0m
 [107m [0m [2m[0m[2m[34m^[0m[2m main             ^⇅                                    ⇡1  ⇣1  41ee083    4d  Merge fix-auth: ha…[0m
 [107m [0m [2m[0m[2m[34m+[0m[2m fix-auth         ↕[0m[2m[36m|[0m[2m                [0m[2m[34m↑2[0m[2m  ↓1   +25  [0m[2m[36m-11[0m[2m     [0m[2m[36m|[0m[2m     [0m[2m[34mb772e68[0m[2m    5h  Add secure token s…[0m
@@ -114,7 +114,7 @@ List all worktrees:
 Include CI status and LLM summaries:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--full[0m
-[107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status      HEAD±     main↕    main…±    Summary                       Remote⇅  CI[0m
+[107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status       @±        ^↕        ^…±     Summary                       Remote⇅  CI[0m
 [107m [0m [2m[0m[2m[34m@[0m[2m feature-api  +   ↕⇡     +54   [0m[2m[36m-5[0m[2m   ↑4  ↓1  +234  [0m[2m[36m-24[0m[2m  Refactor API to REST archit…   ⇡3      #412[0m
 [107m [0m [2m[0m[2m[34m^[0m[2m main             ^⇅                                                                  ⇡1  ⇣1  #[0m
 [107m [0m [2m[0m[2m[34m+[0m[2m fix-auth         ↕[0m[2m[36m|[0m[2m                [0m[2m[34m↑2[0m[2m  ↓1   +25  [0m[2m[36m-11[0m[2m  Harden auth with constant-t…     [0m[2m[36m|[0m[2m     #408[0m
@@ -125,7 +125,7 @@ Include CI status and LLM summaries:
 Include branches that don't have worktrees:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--branches[0m[2m [0m[2m[36m--full[0m
-[107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status      HEAD±     main↕    main…±    Summary                       Remote⇅  CI[0m
+[107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status       @±        ^↕        ^…±     Summary                       Remote⇅  CI[0m
 [107m [0m [2m[0m[2m[34m@[0m[2m feature-api  +   ↕⇡     +54   [0m[2m[36m-5[0m[2m   ↑4  ↓1  +234  [0m[2m[36m-24[0m[2m  Refactor API to REST archit…   ⇡3      #412[0m
 [107m [0m [2m[0m[2m[34m^[0m[2m main             ^⇅                                                                  ⇡1  ⇣1  #[0m
 [107m [0m [2m[0m[2m[34m+[0m[2m fix-auth         ↕[0m[2m[36m|[0m[2m                [0m[2m[34m↑2[0m[2m  ↓1   +25  [0m[2m[36m-11[0m[2m  Harden auth with constant-t…     [0m[2m[36m|[0m[2m     #408[0m
@@ -145,9 +145,9 @@ Output as JSON for scripting:
  ──────── ─────────────────────────────────────────────────────────────────────────────────────── 
  Branch   Branch name, elided with … past 32 characters; a detached worktree shows its short hash 
  Status   Compact symbols (see below)                                                             
- HEAD±    Uncommitted changes, including untracked files: +added -deleted lines                   
- main↕    Commits ahead/behind default branch                                                     
- main…±   Line diffs since the merge-base (three-dot) with the default branch                     
+ @±       Uncommitted changes, including untracked files: +added -deleted lines                   
+ ^↕       Commits ahead/behind default branch                                                     
+ ^…±      Line diffs since the merge-base (three-dot) with the default branch                     
  Summary  LLM-generated branch summary; requires [2m--full[0m, [2msummary = true[0m, and [2mcommit.generation[0m    
  Remote⇅  Commits ahead/behind tracking branch                                                    
  CI       PR/MR number colored by pipeline status; [2m--full[0m only                                    
@@ -158,7 +158,7 @@ Output as JSON for scripting:
  Age      Time since last commit                                                                  
  Message  Last commit message (truncated)                                                         
 
-The [2mmain↕[0m and [2mmain…±[0m headers keep the familiar [2mmain[0m label in every repository.
+In the headers, [2m@[0m stands for the worktree's own [2mHEAD[0m and [2m^[0m for the default branch, whatever it is named — the same shortcuts [2mwt switch[0m accepts.
 
 The table sizes itself to the terminal. When the columns don't all fit, the least important go first — roughly right to left, since the order above runs from identity to nice-to-have — and the summary footer names them ([2mhidden: Commit, Age, Message[0m). A wider terminal brings them back. To pin a set rather than leave it to the width, name the columns in [2m[list] columns[0m; [2m--format=json[0m carries every field at any width.
 

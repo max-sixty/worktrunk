@@ -809,7 +809,7 @@ List all worktrees:
 <!-- wt list -->
 ```console
 $ wt list
-  Branch       Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message
+  Branch       Status       @±        ^↕        ^…±     Remote⇅  Commit    Age  Message
 @ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      6814f02   30m  Add API tests
 ^ main             ^⇅                                    ⇡1  ⇣1  41ee083    4d  Merge fix-auth: ha…
 + fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68    5h  Add secure token s…
@@ -823,7 +823,7 @@ Include CI status and LLM summaries:
 <!-- wt list --full -->
 ```console
 $ wt list --full
-  Branch       Status      HEAD±     main↕    main…±    Summary                       Remote⇅  CI
+  Branch       Status       @±        ^↕        ^…±     Summary                       Remote⇅  CI
 @ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archit…   ⇡3      #412
 ^ main             ^⇅                                                                  ⇡1  ⇣1  #
 + fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-t…     |     #408
@@ -837,7 +837,7 @@ Include branches that don't have worktrees:
 <!-- wt list --branches --full -->
 ```console
 $ wt list --branches --full
-  Branch       Status      HEAD±     main↕    main…±    Summary                       Remote⇅  CI
+  Branch       Status       @±        ^↕        ^…±     Summary                       Remote⇅  CI
 @ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archit…   ⇡3      #412
 ^ main             ^⇅                                                                  ⇡1  ⇣1  #
 + fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-t…     |     #408
@@ -860,9 +860,9 @@ $ wt list --format=json
 |--------|-------|
 | Branch | Branch name, elided with `…` past 32 characters; a detached worktree shows its short hash |
 | Status | Compact symbols (see below) |
-| HEAD± | Uncommitted changes, including untracked files: +added -deleted lines |
-| main↕ | Commits ahead/behind default branch |
-| main…± | Line diffs since the merge-base (three-dot) with the default branch |
+| @± | Uncommitted changes, including untracked files: +added -deleted lines |
+| ^↕ | Commits ahead/behind default branch |
+| ^…± | Line diffs since the merge-base (three-dot) with the default branch |
 | Summary | LLM-generated branch summary; requires `--full`, `summary = true`, and [`commit.generation`](/config/#commit) |
 | Remote⇅ | Commits ahead/behind tracking branch |
 | CI | PR/MR number colored by pipeline status; `--full` only |
@@ -873,7 +873,7 @@ $ wt list --format=json
 | Age | Time since last commit |
 | Message | Last commit message (truncated) |
 
-The `main↕` and `main…±` headers keep the familiar `main` label in every repository.
+In the headers, `@` stands for the worktree's own `HEAD` and `^` for the default branch, whatever it is named — the same shortcuts `wt switch` accepts.
 
 The table sizes itself to the terminal. When the columns don't all fit, the least important go first — roughly right to left, since the order above runs from identity to nice-to-have — and the summary footer names them (`hidden: Commit, Age, Message`). A wider terminal brings them back. To pin a set rather than leave it to the width, name the columns in [`[list] columns`](/config/#list); `--format=json` carries every field at any width.
 
@@ -2207,9 +2207,9 @@ Valid built-in names:
 
 - `branch` — The branch name
 - `status` — Git status symbols, plus any user-defined status
-- `working-diff` — Uncommitted line changes against `HEAD`, including untracked files (header `HEAD±`)
-- `ahead-behind` — Commits ahead of and behind the default branch (header `main↕`)
-- `branch-diff` — Line changes against the default branch (header `main…±`)
+- `working-diff` — Uncommitted line changes against `HEAD`, including untracked files (header `@±`)
+- `ahead-behind` — Commits ahead of and behind the default branch (header `^↕`)
+- `branch-diff` — Line changes against the default branch (header `^…±`)
 - `summary` — An LLM-generated summary of the branch
 - `upstream` — Commits ahead of and behind the upstream tracking branch (header `Remote⇅`)
 - `ci` — CI status of the head commit

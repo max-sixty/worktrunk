@@ -20,9 +20,9 @@ export type Row = {
   /** Commits ahead of and behind the default branch. */
   ahead: number
   behind: number
-  /** `main…±`: committed changes since the merge base. */
+  /** `^…±`: committed changes since the merge base. */
   committed: Lines
-  /** `HEAD±`: uncommitted changes, untracked files included. */
+  /** `@±`: uncommitted changes, untracked files included. */
   uncommitted: Lines
   isMain: boolean
 }

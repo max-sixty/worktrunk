@@ -16,7 +16,7 @@ List all worktrees:
 
 ```console
 $ wt list
-  Branch       Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message
+  Branch       Status       @±        ^↕        ^…±     Remote⇅  Commit    Age  Message
 @ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      6814f02   30m  Add API tests
 ^ main             ^⇅                                    ⇡1  ⇣1  41ee083    4d  Merge fix-auth: ha…
 + fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68    5h  Add secure token s…
@@ -29,7 +29,7 @@ Include CI status and LLM summaries:
 
 ```console
 $ wt list --full
-  Branch       Status      HEAD±     main↕    main…±    Summary                       Remote⇅  CI
+  Branch       Status       @±        ^↕        ^…±     Summary                       Remote⇅  CI
 @ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archit…   ⇡3      #412
 ^ main             ^⇅                                                                  ⇡1  ⇣1  #
 + fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-t…     |     #408
@@ -42,7 +42,7 @@ Include branches that don't have worktrees:
 
 ```console
 $ wt list --branches --full
-  Branch       Status      HEAD±     main↕    main…±    Summary                       Remote⇅  CI
+  Branch       Status       @±        ^↕        ^…±     Summary                       Remote⇅  CI
 @ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archit…   ⇡3      #412
 ^ main             ^⇅                                                                  ⇡1  ⇣1  #
 + fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-t…     |     #408
@@ -65,9 +65,9 @@ $ wt list --format=json
 |--------|-------|
 | Branch | Branch name, elided with `…` past 32 characters; a detached worktree shows its short hash |
 | Status | Compact symbols (see below) |
-| HEAD± | Uncommitted changes, including untracked files: +added -deleted lines |
-| main↕ | Commits ahead/behind default branch |
-| main…± | Line diffs since the merge-base (three-dot) with the default branch |
+| @± | Uncommitted changes, including untracked files: +added -deleted lines |
+| ^↕ | Commits ahead/behind default branch |
+| ^…± | Line diffs since the merge-base (three-dot) with the default branch |
 | Summary | LLM-generated branch summary; requires `--full`, `summary = true`, and [`commit.generation`](https://worktrunk.dev/config/#commit) |
 | Remote⇅ | Commits ahead/behind tracking branch |
 | CI | PR/MR number colored by pipeline status; `--full` only |
@@ -78,7 +78,7 @@ $ wt list --format=json
 | Age | Time since last commit |
 | Message | Last commit message (truncated) |
 
-The `main↕` and `main…±` headers keep the familiar `main` label in every repository.
+In the headers, `@` stands for the worktree's own `HEAD` and `^` for the default branch, whatever it is named — the same shortcuts `wt switch` accepts.
 
 The table sizes itself to the terminal. When the columns don't all fit, the least important go first — roughly right to left, since the order above runs from identity to nice-to-have — and the summary footer names them (`hidden: Commit, Age, Message`). A wider terminal brings them back. To pin a set rather than leave it to the width, name the columns in [`[list] columns`](https://worktrunk.dev/config/#list); `--format=json` carries every field at any width.
 
@@ -556,7 +556,7 @@ The line carries the same cells as the worktree's row in `wt list`. A stale CI s
 
 ### Output formats
 
-- `table` (default): `branch  status  HEAD±  main↕  main…±  Remote⇅  CI  URL`
+- `table` (default): `branch  status  @±  ^↕  ^…±  Remote⇅  CI  URL`
 - `json`: the current [`wt list --format=json`](https://worktrunk.dev/list/#json-output) schema — a one-item envelope by default, or a one-item array with `[list] json-schema = 1`
 - `claude-code`: the `table` cells, preceded by `dir` and followed by `model  context  pace`
 

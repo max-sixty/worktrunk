@@ -729,7 +729,7 @@ mod tests {
             },
             ColumnLayout {
                 kind: ColumnKind::WorkingDiff,
-                header: std::borrow::Cow::Borrowed("HEAD±"),
+                header: std::borrow::Cow::Borrowed("@±"),
                 start: 0,
                 width: 9,
                 format: ColumnFormat::Diff(DiffColumnConfig {
@@ -771,7 +771,7 @@ mod tests {
             .join("|");
 
         assert_snapshot!(format!("{headers}\n{placeholders}"), @"
-        Branch| Age|  HEAD±
+        Branch| Age|   @±
         ·|   ·|    ·
         ");
     }
@@ -1426,7 +1426,7 @@ mod tests {
         insta::assert_snapshot!(arrow_overflow2.render(), @"[32m↑50[0m [1m[31m↓1K[0m");
 
         // Case 7: dimmed base steps up one level to normal, not two to dim+bold.
-        // The `main↕` / upstream behind subcolumn is `DELETION.dimmed()`, so a
+        // The `^↕` / upstream behind subcolumn is `DELETION.dimmed()`, so a
         // compact `↓1C` drops the dim (→ plain red) instead of leaping to bold.
         let arrow_behind_dim = format_diff_like_column(
             0,

@@ -141,7 +141,7 @@ This creates a new branch and worktree, then switches to it. Do your work, then 
 
 ```console
 $ wt list
-  Branch        Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message
+  Branch        Status       @±        ^↕        ^…±     Remote⇅  Commit    Age  Message
 @ feature-auth  +   ↑      +27   -8   ↑1       +31                4bc72dc    2h  Add authenticatio…
 ^ main              ^⇡                                    ⇡1      0e631ad    1d  Initial commit
 

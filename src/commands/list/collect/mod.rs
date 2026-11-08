@@ -373,7 +373,7 @@
 //! | `IsAncestor` | `sha_cache` (is-ancestor) |
 //! | `HasFileChanges` | `sha_cache` (has-added-changes) |
 //! | `BranchDiff` | `sha_cache` (diff-stats, skipped when sparse checkout is active) |
-//! | `AheadBehind`, `Upstream` | `sha_cache` (ahead-behind for counts, merge-base for the orphan check); on a cold cache both columns are pre-filled from `for-each-ref %(ahead-behind:SHA)` walks — one against the default branch (`main↕`, in `RefSnapshot::capture_ahead_behind`) and one per unique upstream SHA (`Remote⇅`, in `Repository::prime_upstream_ahead_behind_cache`) |
+//! | `AheadBehind`, `Upstream` | `sha_cache` (ahead-behind for counts, merge-base for the orphan check); on a cold cache both columns are pre-filled from `for-each-ref %(ahead-behind:SHA)` walks — one against the default branch (`^↕`, in `RefSnapshot::capture_ahead_behind`) and one per unique upstream SHA (`Remote⇅`, in `Repository::prime_upstream_ahead_behind_cache`) |
 //! | `CiStatus` | `ci_status::cache` |
 //! | `SummaryGenerate` | `summary` |
 //!
@@ -1686,7 +1686,7 @@ pub fn collect(
 
         // Prime the `ahead-behind/` SHA-cache for the `Remote⇅` column,
         // pairing each local branch with its configured upstream. Mirrors
-        // the `main↕` priming inside `inventory_snapshot`, but
+        // the `^↕` priming inside `inventory_snapshot`, but
         // per-upstream-group instead of single-base: one serial
         // `for-each-ref %(ahead-behind:UPSTREAM_SHA)` walk per unique
         // upstream that's both cold and above the same threshold. It reads

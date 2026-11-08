@@ -123,7 +123,7 @@
 //!      they're gated off, so `renders_given_run` filters the column out entirely
 //!      (bypasses the tier system). A `[list] columns` listing forces them on —
 //!      the planner then includes the task and the column renders
-//!    - **BranchDiff** (`main…±`) is pure local git, so it is *not* gated — it
+//!    - **BranchDiff** (`^…±`) is pure local git, so it is *not* gated — it
 //!      shows by default and follows the normal two-tier priority (6/16);
 //!      CiStatus is 5/15
 //!
@@ -1634,7 +1634,7 @@ mod tests {
         let widths = metadata.widths;
 
         // Line diffs (Signs variant: +/-) allocate 3 digits for 100-999 range
-        // Format: "+999 -999" = 1+3+1+1+3 = 9, header "HEAD±" is 5, so total is 9
+        // Format: "+999 -999" = 1+3+1+1+3 = 9, header "@±" is 2, so total is 9
         assert_eq!(
             widths.working_diff.total, 9,
             "Working diff should pre-allocate for '+999 -999' (9 chars)"
@@ -1649,7 +1649,7 @@ mod tests {
         );
 
         // Branch diff also uses Signs variant when show_full=true
-        // Format: "+999 -999" = 9, header "main…±" is 6, so total is 9
+        // Format: "+999 -999" = 9, header "^…±" is 3, so total is 9
         assert_eq!(
             widths.branch_diff.total, 9,
             "Branch diff should pre-allocate for '+999 -999' (9 chars)"
@@ -1664,7 +1664,7 @@ mod tests {
         );
 
         // Commit counts (Arrows variant: ↑↓) use compact notation, allocate 2 digits
-        // Format: "↑99 ↓99" = 1+2+1+1+2 = 7, header "main↕" is 5, so total is 7
+        // Format: "↑99 ↓99" = 1+2+1+1+2 = 7, header "^↕" is 2, so total is 7
         assert_eq!(
             widths.ahead_behind.total, 7,
             "Ahead/behind should pre-allocate for '↑99 ↓99' (7 chars)"
@@ -1987,7 +1987,7 @@ mod tests {
     }
 
     /// Non-full mode: CI and Summary aren't planned (BranchDiff still runs, so
-    /// the `main…±` column shows by default).
+    /// the `^…±` column shows by default).
     fn non_full_run_tasks() -> HashSet<TaskKind> {
         run_except(&[TaskKind::CiStatus, TaskKind::SummaryGenerate])
     }
