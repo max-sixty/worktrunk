@@ -105,6 +105,8 @@ Show current configuration and file locations:
 
 Organizations can deploy a system-wide config file for shared defaults — run [2mwt config show[0m for the platform-specific location.
 
+For validation and completion in editors that support TOML schemas (such as Taplo or Tombi), start the file with [2m#:schema https://worktrunk.dev/schema/user-config.json[0m (user config) or [2m#:schema https://worktrunk.dev/schema/project-config.json[0m (project config).
+
 [1mUser config[0m — personal preferences:
 
 [107m [0m [2m# ~/.config/worktrunk/config.toml[0m

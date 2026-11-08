@@ -43,6 +43,8 @@ $ wt config show
 
 Organizations can deploy a system-wide config file for shared defaults — run `wt config show` for the platform-specific location.
 
+For validation and completion in editors that support TOML schemas (such as Taplo or Tombi), start the file with `#:schema https://worktrunk.dev/schema/user-config.json` (user config) or `#:schema https://worktrunk.dev/schema/project-config.json` (project config).
+
 **User config** — personal preferences:
 
 ```toml
