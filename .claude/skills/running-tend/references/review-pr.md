@@ -72,6 +72,16 @@ learns that they wouldn't already assume, and how many readers need it. When the
 answer is nothing, ask for its removal in the review rather than approving past
 it.
 
+Placement follows the same audience test. A capability few readers need goes in
+its own section late on the relevant page, not in the overview or setup material
+every reader passes through; name a better spot rather than approving past it.
+
+**New surfaces list current names only:**
+
+A newly published surface that enumerates config keys, commands, or flags (a
+JSON schema, completions, a docs table) lists only the current names. Deprecated
+aliases stay accepted by the loader, but are not advertised anew.
+
 **Proportionality and the canonical approach:**
 
 A correct diff is not yet an approval. Approve only when the change leaves the
