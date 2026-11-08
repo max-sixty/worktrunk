@@ -423,18 +423,6 @@
           ],
           "description": "Commands to execute after committing (background)"
         },
-        "post-create": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CommandConfig"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "deprecated": true,
-          "description": "Deprecated alias for `post-start`."
-        },
         "post-merge": {
           "anyOf": [
             {
@@ -489,18 +477,6 @@
             }
           ],
           "description": "Commands to execute before committing during merge (blocking, fail-fast)"
-        },
-        "pre-create": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CommandConfig"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "deprecated": true,
-          "description": "Deprecated alias for `pre-start`."
         },
         "pre-merge": {
           "anyOf": [
@@ -601,18 +577,6 @@
       ],
       "description": "Commands to execute after committing (background)"
     },
-    "post-create": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/CommandConfig"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "deprecated": true,
-      "description": "Deprecated alias for `post-start`."
-    },
     "post-merge": {
       "anyOf": [
         {
@@ -667,18 +631,6 @@
         }
       ],
       "description": "Commands to execute before committing during merge (blocking, fail-fast)"
-    },
-    "pre-create": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/CommandConfig"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "deprecated": true,
-      "description": "Deprecated alias for `pre-start`."
     },
     "pre-merge": {
       "anyOf": [
