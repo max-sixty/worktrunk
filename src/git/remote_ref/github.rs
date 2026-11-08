@@ -148,8 +148,21 @@ pub(super) fn fetch_pr_info(
         if serde_json::from_slice::<GhApiErrorResponse>(&output.stdout)
             .is_ok_and(|error| error.status == "404")
         {
-            let hint =
-                cformat!("To query a different repository, run <underline>gh repo set-default</>");
+            let missing_enterprise_hostname = hostname.is_none()
+                && url_host.map_or_else(
+                    || {
+                        repo.forge_remote_parsed_url(|url| url.is_github())
+                            .is_some_and(|url| !url.host().eq_ignore_ascii_case("github.com"))
+                    },
+                    |host| !host.eq_ignore_ascii_case("github.com"),
+                );
+            let hint = if missing_enterprise_hostname {
+                cformat!(
+                    "For GitHub Enterprise, set <underline>forge.hostname</> to the API host. To query a different repository, run <underline>gh repo set-default</>"
+                )
+            } else {
+                cformat!("To query a different repository, run <underline>gh repo set-default</>")
+            };
             return Err(cli_api_error(
                 ForgeKind::GitHub.ref_type(),
                 format!("PR #{pr_number} not found on {owner}/{repo_name} ({source})"),
