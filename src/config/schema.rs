@@ -9,16 +9,12 @@
 //! mark defaulted fields required because the serializer always emits them,
 //! rejecting configs that omit optional settings. The documents are strict
 //! about unknown keys so an editor flags typos instead of silently ignoring
-//! them.
-//!
-//! Schemars sees canonical `#[serde(rename = "…")]` names and drops
-//! `#[serde(alias = "…")]` names, so the hook aliases serde still accepts
-//! ([`super::HOOK_ALIASES`]) are added here, marked deprecated.
+//! them. That includes the deprecated `pre-create`/`post-create` hook
+//! aliases: serde still accepts them, but schemars only sees the canonical
+//! names, so an editor flags them for migration.
 
 use schemars::JsonSchema;
-use serde_json::{Map, Value};
-
-use super::HOOK_ALIASES;
+use serde_json::Value;
 
 /// JSON Schema for `~/.config/worktrunk/config.toml`.
 pub fn user_config_schema_document() -> Value {
@@ -54,9 +50,9 @@ fn schema_document<T: JsonSchema>(id: &str, title: &str, description: &str) -> V
     value
 }
 
-/// Walk every subschema, adding the hook aliases beside their canonical names
-/// and closing object schemas to unknown keys. Flattened hook fields appear at
-/// the root and inside a `[projects."…"]` entry, so the walk is generic.
+/// Walk every subschema, closing object schemas to unknown keys. Flattened
+/// hook fields appear at the root and inside a `[projects."…"]` entry, so the
+/// walk is generic.
 ///
 /// Only objects that declare named `properties` without their own
 /// `additionalProperties` are closed: map-valued schemas (`projects`,
@@ -65,31 +61,14 @@ fn schema_document<T: JsonSchema>(id: &str, title: &str, description: &str) -> V
 fn finalize(value: &mut Value) {
     match value {
         Value::Object(object) => {
-            if let Some(properties) = object.get_mut("properties").and_then(Value::as_object_mut) {
-                for (canonical, alias) in HOOK_ALIASES {
-                    add_hook_alias(properties, canonical, alias);
-                }
-                if !object.contains_key("additionalProperties") {
-                    object.insert("additionalProperties".to_string(), false.into());
-                }
+            if object.contains_key("properties") && !object.contains_key("additionalProperties") {
+                object.insert("additionalProperties".to_string(), false.into());
             }
             object.values_mut().for_each(finalize);
         }
         Value::Array(items) => items.iter_mut().for_each(finalize),
         _ => {}
     }
-}
-
-fn add_hook_alias(properties: &mut Map<String, Value>, canonical: &str, alias: &str) {
-    let Some(Value::Object(mut schema)) = properties.get(canonical).cloned() else {
-        return;
-    };
-    schema.insert("deprecated".to_string(), true.into());
-    schema.insert(
-        "description".to_string(),
-        format!("Deprecated alias for `{canonical}`.").into(),
-    );
-    properties.entry(alias).or_insert(schema.into());
 }
 
 #[cfg(test)]
@@ -119,7 +98,7 @@ mod tests {
     fn user_schema_accepts_representative_config() {
         let config = r#"
 worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
-pre-create = "npm ci"
+pre-start = "npm ci"
 post-start = ["npm run dev"]
 skip-shell-integration-prompt = true
 
@@ -143,7 +122,7 @@ deploy = "make deploy"
 
 [projects."github.com/acme/repo"]
 worktree-path = ".worktrees/{{ branch | sanitize }}"
-post-create = "echo project"
+post-start = "echo project"
 "#;
         let errors = schema_errors::<UserConfig>(&user_config_schema_document(), config);
         assert!(errors.is_empty(), "config rejected: {errors:#?}");
@@ -153,7 +132,7 @@ post-create = "echo project"
     fn project_schema_accepts_representative_config() {
         let config = r#"
 pre-start = "npm ci"
-post-create = "npm run dev"
+post-start = "npm run dev"
 pre-merge = ["npm test", "npm run lint"]
 
 [list]
@@ -191,5 +170,10 @@ deploy = "make deploy"
         assert!(rejects(&project, "[forge]\nplatfrom = \"github\""));
         // User-only settings don't belong in a project file.
         assert!(rejects(&project, "[projects.\"github.com/acme/repo\"]"));
+
+        // Deprecated hook aliases load, but the schema steers editors to the
+        // canonical names.
+        assert!(rejects(&user, r#"pre-create = "x""#));
+        assert!(rejects(&project, r#"post-create = "x""#));
     }
 }

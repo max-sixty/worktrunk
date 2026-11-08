@@ -105,8 +105,6 @@ Show current configuration and file locations:
 
 Organizations can deploy a system-wide config file for shared defaults — run [2mwt config show[0m for the platform-specific location.
 
-For validation and completion in editors that support TOML schemas (such as Taplo or Tombi), start the file with [2m#:schema https://worktrunk.dev/schema/user-config.json[0m (user config) or [2m#:schema https://worktrunk.dev/schema/project-config.json[0m (project config).
-
 [1mUser config[0m — personal preferences:
 
 [107m [0m [2m# ~/.config/worktrunk/config.toml[0m
@@ -668,5 +666,9 @@ A [2m--config-set[0m that names a project entry is both the highest layer and 
 [107m [0m [2m[0m[2m[34mwt[0m[2m [0m[2m[36m--config-set[0m[2m [0m[2m[32m'projects."github.com/owner/repo".worktree-path = "/tmp/scratch"'[0m[2m switch [0m[2m[36m--create[0m[2m feature[0m
 
 Hooks, aliases and [2mstep.copy-ignored.exclude[0m accumulate rather than replace, so an env-set hook and a project's hook both run.
+
+[1m[32mEditor schemas[0m
+
+For validation and completion in editors that support TOML schemas (such as Taplo or Tombi), start the file with [2m#:schema https://worktrunk.dev/schema/user-config.json[0m (user config) or [2m#:schema https://worktrunk.dev/schema/project-config.json[0m (project config).
 
 ----- stderr -----

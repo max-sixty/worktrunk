@@ -122,15 +122,10 @@ pub(crate) fn is_default<T: Default + PartialEq>(value: &T) -> bool {
 /// round-trip from flagging an accepted name as unknown.
 pub(crate) fn schema_top_level_keys<T: schemars::JsonSchema>() -> Vec<String> {
     let mut keys = schema_property_names::<T>();
-    keys.extend(HOOK_ALIASES.iter().map(|(_, alias)| alias.to_string()));
+    keys.push("pre-create".to_string());
+    keys.push("post-create".to_string());
     keys
 }
-
-/// `(canonical, alias)` pairs for the `#[serde(alias = "…")]` hook keys in
-/// `HooksConfig`, which schemars can't see. Shared by
-/// [`schema_top_level_keys`] and the published config schemas.
-pub(crate) const HOOK_ALIASES: &[(&str, &str)] =
-    &[("pre-start", "pre-create"), ("post-start", "post-create")];
 
 /// The field names `T`'s schema declares, with `#[serde(rename = "…")]`
 /// applied.
