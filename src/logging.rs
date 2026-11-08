@@ -446,16 +446,18 @@ where
 ///
 /// Stage-by-stage:
 ///
-/// 1. Set verbosity for downstream styling code (unchanged).
+/// 1. Set verbosity for downstream styling code.
 /// 2. Open the file sinks before the subscriber registers, so the
 ///    `Repository::current()` rev-parse fired by `try_create` doesn't emit
 ///    records into a half-built pipeline. Pre-tracing-init `log::*` calls
 ///    are dropped by the default no-op `log` logger, which is the right
 ///    behavior — there's nothing meaningful to attribute the call to before
 ///    the subscriber exists.
-/// 3. Build four layered subscribers, each gated by both a verbosity check
-///    and the relevant `LogSink::is_active()` so a failed file open turns
-///    its layer into a no-op rather than silently dropping records.
+/// 3. Build four layers: stderr, filtered by verbosity (or `RUST_LOG`) with
+///    no sink to check, and three file layers, each gated by both a
+///    verbosity check and the relevant
+///    `LogSink::is_active()` so a failed file open turns its layer into a
+///    no-op rather than silently dropping records.
 /// 4. Bridge `log::*` into tracing via `LogTracer`. Idempotent on
 ///    re-invocation (init is `.ok()`-discarded).
 /// 5. Announce the file destinations on stderr at `-vv`.
@@ -836,8 +838,8 @@ mod tests {
     /// emit one event per field-type variant under [`WT_TRACE_TARGET`],
     /// capture the visitor output, and assert the field landed in the
     /// expected slot. Covers `record_debug` (`err = %display`) — the
-    /// production path nothing else exercises — plus the unknown-name `_`
-    /// arms in `record_u64` / `record_str`.
+    /// production path nothing else exercises — plus the unknown-name paths:
+    /// a non-`dur_us` field in `record_u64` and the `_` arm in `record_string`.
     #[test]
     fn wt_trace_fields_visit_records_every_type() {
         use std::sync::{Arc, Mutex};
