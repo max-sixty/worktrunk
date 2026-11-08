@@ -1128,13 +1128,13 @@ eprintln!("{}", success_message(format!(
 - **Text columns** (Branch, Path, Message): left-aligned
 - **Single-value numeric columns** (Age): right-aligned, so `now` and `4m` line
   up on the unit
-- **Diff columns** (HEAD±, main↕): two right-aligned halves either side of a
+- **Diff columns** (@±, ^↕): two right-aligned halves either side of a
   separator (`+999 -999`); a state for the whole field, such as a loading or
   in-sync marker, is centered
 
 A header follows its content, except over a diff column, where it centres:
 pushed to either edge it stands over one half and reads as that half's label,
-leaving a lone `+1` stranded left of `HEAD±`.
+leaving a lone `+1` stranded left of `@±`.
 
 Rows carry no trailing padding. Padding places a cell; past the last one it
 places nothing, and a reader who selects the row gets it anyway.

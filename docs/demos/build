@@ -154,7 +154,7 @@ def prepare_basic(env: DemoEnv):
 # Each carries a commit of its own: a branch sitting on main's tip renders as an
 # empty row and, because branch CI is keyed by commit, borrows main's checks —
 # seven of those in a row look like a fixture. `dirty` leaves an uncommitted
-# edit behind so the Status and HEAD± columns have something to say. api, auth
+# edit behind so the Status and @± columns have something to say. api, auth
 # and billing are the branches DEMO_PRS gives PRs to.
 PICKER_EXTRA_BRANCHES = [
     ("api", "src/api.rs", "feat: add the /health endpoint", False),

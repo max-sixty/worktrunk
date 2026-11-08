@@ -1391,7 +1391,7 @@ impl<'a> WorkingTree<'a> {
 /// index would mutate the user's staging state. The trick is to copy the
 /// real index, point `GIT_INDEX_FILE` at the copy, and run those
 /// operations there. Today the callers are
-/// [`WorkingTree::working_tree_diff_stats_with_untracked`] (HEAD± with
+/// [`WorkingTree::working_tree_diff_stats_with_untracked`] (@± with
 /// untracked, used by list and statusline),
 /// the working-tree conflict task (write-tree of tracked changes, for
 /// merge-conflict probing), `wt step diff` (diff vs target merge-base with
@@ -2086,7 +2086,7 @@ mod tests {
                 .working_tree_diff_stats_with_untracked()
                 .unwrap(),
             LineDiff::default(),
-            "HEAD± uses one rename policy whether or not untracked files exist"
+            "@± uses one rename policy whether or not untracked files exist"
         );
     }
 

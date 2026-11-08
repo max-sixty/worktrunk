@@ -1103,7 +1103,7 @@ fn test_list_with_upstream_tracking(mut repo: TestRepo) {
 }
 
 /// When the local default branch lags its upstream (a fork whose `main` sits
-/// behind `origin/main`), the `main↕`/`main…±` columns must measure each
+/// behind `origin/main`), the `^↕`/`^…±` columns must measure each
 /// branch against the upstream tip, not the stale local tip. Otherwise every
 /// branch reads as ahead by every commit the local default is missing.
 #[rstest]
@@ -1552,7 +1552,7 @@ mod tests {
 /// - feature-auth: 1 commit ahead of main + staged WIP changes (adds + removes)
 ///
 /// The staged WIP extends auth.rs and restructures lib.rs, producing both
-/// additions and deletions in HEAD± to showcase more of `wt list`.
+/// additions and deletions in @± to showcase more of `wt list`.
 ///
 /// Returns the feature-auth worktree path.
 fn setup_quickstart_repo(repo: &mut TestRepo) -> std::path::PathBuf {
@@ -1607,7 +1607,7 @@ impl Session {
     repo.run_git_in(&feature_auth, &["add", "auth.rs", "lib.rs"]);
     repo.commit_staged_with_age("Add authentication module", 2 * HOUR, &feature_auth);
 
-    // === Staged WIP: extend auth + restructure lib (produces both +N and -N in HEAD±) ===
+    // === Staged WIP: extend auth + restructure lib (produces both +N and -N in @±) ===
 
     // Extend auth.rs with is_authenticated and tests
     std::fs::write(
@@ -1707,7 +1707,7 @@ pub fn init() -> bool {
 ///   Midway through migrating from function-based handlers to a REST module.
 ///   Staged the new controller base class; still removing the legacy dispatcher.
 ///   Three commits ready to push once local tests pass.
-///   - `+234 -24` main…± — Major refactoring: new Router, handlers, middleware (~250 LOC)
+///   - `+234 -24` ^…± — Major refactoring: new Router, handlers, middleware (~250 LOC)
 ///   - `+` staged, `↑⇡` ahead of main and remote, `⇡3` unpushed commits
 ///
 /// **`^ main`**
@@ -1718,20 +1718,20 @@ pub fn init() -> bool {
 /// **`+ fix-auth`** — Token validation hardening
 ///   Replaced manual token parsing with constant-time comparison and added rate limiting.
 ///   Pushed and CI green — waiting on security review before merge.
-///   - `+25 -11` main…± — Deleted insecure validation, added proper checks
+///   - `+25 -11` ^…± — Deleted insecure validation, added proper checks
 ///   - `|` in sync with remote, ready for merge
 ///
 /// **`exp`** — GraphQL spike
 ///   Spike branch exploring GraphQL for the subscription API. Added schema definitions
 ///   and proof-of-concept resolvers with Query, Mutation, and Subscription roots.
-///   - `+137` main…± — Schema types, resolvers, pagination (~140 LOC)
+///   - `+137` ^…± — Schema types, resolvers, pagination (~140 LOC)
 ///   - `⎇` branch without worktree
 ///
 /// **`wip`** — REST docs (stale)
 ///   Started API docs last week but got pulled away. Main has since moved on
 ///   (fix-auth was merged). Needs rebase before continuing.
 ///   - `↓1` behind main — main advanced while branch was idle
-///   - `+33` main…± — Doc skeleton with structure
+///   - `+33` ^…± — Doc skeleton with structure
 ///   - `⎇` branch without worktree
 ///
 /// Returns feature_api_path for running commands from feature-api.
@@ -2167,7 +2167,7 @@ mod tests {
     repo.run_git_in(&feature_api, &["add", "tests.rs"]);
     repo.commit_staged_with_age("Add API tests", 30 * MINUTE, &feature_api);
 
-    // Staged changes: new files + refactor existing (creates mixed +/- for HEAD±)
+    // Staged changes: new files + refactor existing (creates mixed +/- for @±)
     // Adding caching and rate limiting, plus refactoring validation
     std::fs::write(
         feature_api.join("cache.rs"),
@@ -2874,7 +2874,7 @@ fn test_readme_example_list(mut repo: TestRepo) {
 
 /// Generate README example: `wt list --full` output
 ///
-/// Shows additional columns: main…± (line diffs), CI status, and LLM summaries.
+/// Shows additional columns: ^…± (line diffs), CI status, and LLM summaries.
 /// Uses the documentation width (99 cols) so the sample fits the site content column.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_full.snap
 #[rstest]
@@ -3695,7 +3695,7 @@ fn test_list_ignores_untracked_paths_for_conflict_estimate(mut repo: TestRepo) {
     assert_eq!(feature["default_branch"]["merge_conflicts"], false);
 }
 
-/// `HEAD±` describes the whole working tree in every list mode. A move whose
+/// `@±` describes the whole working tree in every list mode. A move whose
 /// destination is still untracked changes no lines, while an unrelated new file
 /// contributes its added lines.
 #[rstest]

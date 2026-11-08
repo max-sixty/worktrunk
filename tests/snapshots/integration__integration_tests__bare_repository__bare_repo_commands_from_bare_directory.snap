@@ -47,7 +47,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-  Branch  Status      HEAD±     main↕    main…±    Remote⇅  Path  Commit    Age  Message
+  Branch  Status       @±        ^↕        ^…±     Remote⇅  Path  Commit    Age  Message
 ^ main        ^                                             .     b834638    1d  Initial commit
 
 ----- stderr -----

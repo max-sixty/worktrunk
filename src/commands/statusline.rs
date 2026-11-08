@@ -2,7 +2,7 @@
 //! statusline, a `tmux` status bar).
 //!
 //! Outputs a single-line status for the current worktree:
-//! `branch  status  HEAD±  main↕  main…±  Remote⇅  CI  URL`
+//! `branch  status  @±  ^↕  ^…±  Remote⇅  CI  URL`
 //!
 //! This command reuses the data collection infrastructure from `wt list`,
 //! avoiding duplication of git operations.
