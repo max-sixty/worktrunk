@@ -2876,9 +2876,10 @@ fn test_docs_are_in_sync() {
     tag("llms.txt", llms_errors, llms_files);
 
     // Step 5b: Generate docs/public/schema/*.json (list-v2 plus the user and
-    // project config schemas) from the derived schemas. Grouped here because it also writes docs/public/, but it reads
-    // the binary rather than the markdown pipeline, so it has no ordering
-    // dependency on the steps above.
+    // project config schemas) from the derived schemas. Grouped here because
+    // it also writes docs/public/, but it reads the schemas from code rather
+    // than the markdown pipeline, so it has no ordering dependency on the
+    // steps above.
     let (schema_errors, schema_files) = sync_json_schema(project_root);
     tag("json schema", schema_errors, schema_files);
 
