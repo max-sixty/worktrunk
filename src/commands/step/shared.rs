@@ -276,12 +276,18 @@ impl IncludePatterns {
         {
             return Ok(());
         }
+        // Directories, files and symlinks, as `git ls-files` would list them;
+        // a socket or FIFO holds nothing to copy.
         let mut children = fs::read_dir(path)
             .and_then(|entries| {
                 entries
-                    .map(|child| {
-                        let child = child?;
-                        Ok((child.path(), child.file_type()?.is_dir()))
+                    .filter_map(|child| {
+                        let entry = child.and_then(|child| {
+                            let kind = child.file_type()?;
+                            Ok((kind.is_dir() || kind.is_file() || kind.is_symlink())
+                                .then(|| (child.path(), kind.is_dir())))
+                        });
+                        entry.transpose()
                     })
                     .collect::<std::io::Result<Vec<_>>>()
             })
@@ -317,7 +323,7 @@ impl AnchoredPattern {
     fn parse(line: &str) -> Option<Self> {
         // As in a `.gitignore`, trailing spaces drop unless a backslash escapes
         // the last one.
-        let trimmed = line.trim_end();
+        let trimmed = line.trim_end_matches(' ');
         let line = if trimmed.ends_with('\\') && line.len() > trimmed.len() {
             &line[..=trimmed.len()]
         } else {
@@ -515,6 +521,7 @@ mod tests {
         assert!(!reaches(".cache/wanted*/**/types", ".cache/unrelated"));
         assert!(reaches("**cache/types", ".cache"));
         assert!(reaches(r"cache/file\ ", "cache"));
+        assert!(reaches("cache/a\\\\\u{2003}", "cache"));
         assert!(!reaches("**/types/x", ".cache"));
         assert!(!reaches("types/", ".cache"));
         assert!(!reaches("!.cache/types/", ".cache"));
