@@ -32,6 +32,7 @@ use insta::assert_snapshot;
 use portable_pty::CommandBuilder;
 use rstest::rstest;
 use std::io::Write;
+use std::num::NonZeroU16;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -40,6 +41,15 @@ use std::time::{Duration, Instant};
 /// Terminal dimensions for TUI tests
 const TERM_ROWS: u16 = 30;
 const TERM_COLS: u16 = 120;
+
+/// A vt100 screen sized to match the PTY.
+fn new_screen_parser() -> vt100::Parser {
+    vt100::Parser::new(
+        NonZeroU16::new(TERM_ROWS).unwrap(),
+        NonZeroU16::new(TERM_COLS).unwrap(),
+        0,
+    )
+}
 
 /// Maximum time to wait for skim to become ready (show "> " prompt).
 /// Long timeout ensures reliability on slow CI.
@@ -285,7 +295,7 @@ fn boot_picker_pty(
     // startup cursor-position query (see `spawn_pty_reader_answering_queries`).
     let rx = crate::common::pty::spawn_pty_reader_answering_queries(reader, Arc::clone(&writer));
 
-    let mut parser = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
+    let mut parser = new_screen_parser();
 
     // Wait for skim to be ready (show "> " prompt)
     let start = Instant::now();
@@ -339,7 +349,7 @@ fn abort_and_exit_code(
 
     // Teardown bytes are discarded rather than parsed, so this waits with a
     // sink parser — the caller's frame was captured before the Escape.
-    let mut sink = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
+    let mut sink = new_screen_parser();
     wait_for_exit(&mut child, &rx, &mut sink, "Escape")
 }
 

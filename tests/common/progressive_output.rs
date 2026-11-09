@@ -101,6 +101,7 @@
 use crate::common::{ExponentialBackoff, TestRepo, wt_bin};
 use portable_pty::CommandBuilder;
 use std::io::Read;
+use std::num::NonZeroU16;
 use std::time::{Duration, Instant};
 
 /// Polling interval when waiting for output or child process exit.
@@ -358,8 +359,8 @@ pub fn capture_progressive_output(
 
     // Create terminal emulator
     let mut parser = vt100::Parser::new(
-        options.terminal_size.0,
-        options.terminal_size.1,
+        NonZeroU16::new(options.terminal_size.0).expect("terminal rows must be nonzero"),
+        NonZeroU16::new(options.terminal_size.1).expect("terminal cols must be nonzero"),
         0, // No scrollback
     );
 
