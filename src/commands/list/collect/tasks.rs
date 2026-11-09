@@ -414,8 +414,8 @@ fn compute_would_merge_add(ctx: &TaskContext) -> anyhow::Result<TaskResult> {
 /// Returns true when the branch HEAD is in target's history (merged via fast-forward
 /// or rebase).
 ///
-/// Uses target (target) for the Ancestor integration reason in `⊂`.
-/// The `_` symbol uses ahead/behind counts (vs default_branch) instead.
+/// Feeds the Ancestor integration reason in `⊂`. The `_` symbol uses the
+/// ahead/behind counts (vs [`TaskContext::comparison_base`]) instead.
 fn compute_is_ancestor(ctx: &TaskContext) -> anyhow::Result<TaskResult> {
     // When integration_targets is None, return false (conservative: don't mark as ancestor)
     let Some(targets) = ctx.integration_targets() else {

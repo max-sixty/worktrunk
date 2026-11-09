@@ -3,13 +3,12 @@ repos:
     rev: v6.0.0
     hooks:
       - id: end-of-file-fixer
-        exclude: '.*\.snap$|^vendor/'
+        exclude: '.*\.snap$'
       - id: check-yaml
       - id: mixed-line-ending
-        exclude: '^vendor/'
       - id: trailing-whitespace
         # rustfmt handles rust files, and in snapshots we expect trailing spaces.
-        exclude: '.*\.(rs|snap)$|^vendor/'
+        exclude: '.*\.(rs|snap)$'
   # pre-commit autoupdate reverts to mutable v1 tag; update manually
   - repo: https://github.com/crate-ci/typos
     rev: v1.51.1
@@ -21,7 +20,6 @@ repos:
     rev: v1.0.1
     hooks:
       - id: fmt
-        exclude: '^vendor/'
   - repo: https://github.com/r0x0d/pre-commit-rust
     rev: v1.0.1
     hooks:
@@ -67,7 +65,7 @@ repos:
         # format.rs strips ANSI codes injected by wrap_ansi crate
         # picker tests verify ANSI dimming behavior
         # src/testing: validate_ansi_codes tests raw escape sequences
-        exclude: '^(tests/|.*_test\.rs$|src/styling/(mod|format)\.rs$|src/commands/picker/|src/testing/|vendor/)'
+        exclude: '^(tests/|.*_test\.rs$|src/styling/(mod|format)\.rs$|src/commands/picker/|src/testing/)'
       - id: no-std-canonicalize-in-tests
         name: no-std-canonicalize-in-tests
         description: Use dunce::canonicalize in tests to avoid Windows \\?\ prefix issues
@@ -82,11 +80,8 @@ repos:
         entry: '\.output\(\)'
         # shell_exec.rs: defines Cmd which legitimately calls .output()
         # picker: skim API's selected.output() is not Command::output()
-        # tests/benches: test utilities run commands directly
-        # src/config/{test,expansion,mod}.rs: TestRepo test fixtures use git init directly
-        # src/config/user/tests.rs: TestRepo test fixtures use git init directly
-        # src/styling/mod.rs: terminal width detection probes should be silent/quick
-        exclude: '^(src/shell_exec\.rs|src/commands/picker/|src/config/(test|expansion|mod)\.rs|src/config/user/tests\.rs|src/styling/mod\.rs|src/testing/|tests/|benches/)'
+        # src/testing, tests, benches: test utilities run commands directly
+        exclude: '^(src/shell_exec\.rs|src/commands/picker/|src/testing/|tests/|benches/)'
 
 ci:
   # pre-commit.ci doesn't have Rust toolchain, so skip Rust-specific hooks.

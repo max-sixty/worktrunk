@@ -26,6 +26,8 @@
 //! **Concurrent groups** spawn each child as soon as its own template is
 //! expanded, then wait for every child before proceeding. If any child fails,
 //! the group is reported as failed, but all children are allowed to finish.
+//! A setup or expansion error partway through the group kills and reaps the
+//! children already spawned before the error propagates.
 //! Expansion runs in a single sequential loop in command order — each command
 //! is expanded immediately before its own child is spawned (expansion may read
 //! git config, so order matters for `vars.*`), so a later command's expansion
@@ -53,7 +55,8 @@
 //! communication channel (cheap git-config reads), while rebuilding the full
 //! base context would spawn multiple git subprocesses per step.
 //!
-//! Template values are shell-escaped at expansion time (`shell_escape=true`)
+//! Template values are shell-escaped at expansion time
+//! ([`ShellEscapeMode::Posix`](worktrunk::shell_exec::ShellEscapeMode::Posix))
 //! since the expanded string is passed to a shell for interpretation.
 
 use std::fs;
@@ -96,8 +99,9 @@ pub(super) struct PipelineSpec {
 /// The orchestrator is a long-lived background process spawned by
 /// `spawn_detached_exec`; stdout/stderr are already redirected to a log file.
 ///
-/// Each command's output is written to its own repository log file,
-/// named `{branch}-{source}-{hook_type}-{name}.log`. The runner process's
+/// Each command's output is written to its own repository log file at
+/// `{branch}/{source}/{hook_type}/{name}.log` under the log directory
+/// (see [`HookLog::path`]). The runner process's
 /// own stdout/stderr captures only runner-level errors.
 pub fn run_pipeline() -> anyhow::Result<()> {
     let mut contents = String::new();
@@ -212,9 +216,9 @@ fn wait_resolving(
 /// failure (in spawn order) is returned, matching the serial-step bail
 /// format. Per-command output already lives in each command's log file.
 ///
-/// When `WORKTRUNK_TEST_SERIAL_CONCURRENT=1` is set, each command's child is
-/// awaited before the next is spawned so output ordering is deterministic for
-/// snapshot tests. The serial path bails on the first failure rather than
+/// When `WORKTRUNK_TEST_SERIAL_CONCURRENT` is set (to any value), each
+/// command's child is awaited before the next is spawned so output ordering
+/// is deterministic for snapshot tests. The serial path bails on the first failure rather than
 /// running every child to completion (the test hatch is for ordering, not
 /// error semantics).
 fn run_concurrent_group(
