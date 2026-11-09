@@ -61,6 +61,7 @@ pub struct SignalJob {
     child: Option<std::process::Child>,
     keeper: std::process::Child,
     pub release: std::path::PathBuf,
+    trace: std::path::PathBuf,
 }
 
 #[cfg(unix)]
@@ -81,6 +82,7 @@ impl SignalJob {
             child: None,
             keeper,
             release: repo.root_path().join("release"),
+            trace: resolve_git_common_dir(repo.root_path()).join("wt/logs/trace.jsonl"),
         };
         let mut command = repo.wt_command();
         command.args(args);
@@ -130,9 +132,49 @@ impl SignalJob {
             if let Some(status) = self.child.as_mut().unwrap().try_wait().unwrap() {
                 return status;
             }
-            assert!(std::time::Instant::now() < deadline, "wt did not finish");
+            if std::time::Instant::now() >= deadline {
+                panic!("wt did not finish\n{}", self.hang_report());
+            }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
+    }
+
+    /// What a hang leaves behind: the job's live processes, which show whether
+    /// wt or its child is still running, and wt's foreground trace instants
+    /// (present with `-vv`), which show whether wt received the signal.
+    fn hang_report(&self) -> String {
+        let group = self.group().as_raw().to_string();
+        let processes = std::process::Command::new("ps")
+            .args(["-A", "-o", "pid=,ppid=,pgid=,stat=,comm="])
+            .output()
+            .map(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .filter(|line| line.split_whitespace().nth(2) == Some(group.as_str()))
+                    .map(|line| format!("{line}\n"))
+                    .collect::<String>()
+            })
+            .unwrap_or_else(|error| format!("ps failed: {error}\n"));
+        let instants = std::fs::read_to_string(&self.trace).map_or_else(
+            |error| format!("no trace: {error}\n"),
+            |records| {
+                worktrunk::trace::parse_lines(&records)
+                    .iter()
+                    .filter_map(|entry| match &entry.kind {
+                        worktrunk::trace::TraceEntryKind::Instant { name }
+                            if name.starts_with("Foreground") =>
+                        {
+                            Some(format!("{name}\n"))
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            },
+        );
+        format!(
+            "wt pid {}; job processes (pid ppid pgid stat comm):\n{processes}foreground trace:\n{instants}",
+            self.pid()
+        )
     }
 }
 
