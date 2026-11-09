@@ -4745,6 +4745,7 @@ dependencies = [
  "fastrand",
  "fs2",
  "gix-url",
+ "globset",
  "home",
  "humantime",
  "ignore",

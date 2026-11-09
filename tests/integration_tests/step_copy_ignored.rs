@@ -276,6 +276,28 @@ fn test_copy_ignored_worktreeinclude_reaches_inside_ignored_directory(mut repo: 
     assert!(!feature_path.join("node_modules").exists());
 }
 
+/// An include pattern reaching inside an ignored directory stops at another
+/// worktree checked out there: its files belong to that worktree.
+#[rstest]
+fn test_copy_ignored_worktreeinclude_skips_nested_worktree(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+    let root = repo.root_path();
+    fs::write(root.join(".gitignore"), ".cache/\n").unwrap();
+    fs::write(
+        root.join(".worktreeinclude"),
+        ".cache/types/\n.cache/nested/notes.txt\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join(".cache/types")).unwrap();
+    fs::write(root.join(".cache/types/a.d.ts"), "types").unwrap();
+    repo.run_git(&["worktree", "add", "-b", "nested", ".cache/nested"]);
+    fs::write(root.join(".cache/nested/notes.txt"), "nested").unwrap();
+
+    run_copy_ignored(&repo, &feature_path);
+    assert!(feature_path.join(".cache/types/a.d.ts").exists());
+    assert!(!feature_path.join(".cache/nested").exists());
+}
+
 /// A `[step.copy-ignored].exclude` directory pattern skips the ignored files
 /// inside that directory.
 #[rstest]
@@ -1042,7 +1064,7 @@ fn assert_copy_ignored_rejects_symlinked_dest_dir(repo: &TestRepo, feature_path:
     assert!(!output.status.success(), "copy-ignored should fail");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("refusing to copy outside destination worktree"),
+        stderr.contains("refusing to write outside destination worktree"),
         "expected outside-destination error, got: {stderr}",
     );
 }
@@ -1071,6 +1093,22 @@ fn test_copy_ignored_rejects_symlinked_destination_directory(mut repo: TestRepo)
     assert_symlinked_dest_outside_unchanged(&outside);
 }
 
+/// A file an include pattern names inside an ignored directory is refused
+/// before any directory gets created beyond the destination's symlink.
+#[cfg(unix)]
+#[rstest]
+fn test_copy_ignored_nested_file_creates_nothing_through_symlink(mut repo: TestRepo) {
+    let (feature_path, outside) = setup_copy_ignored_symlinked_dest_dir(&mut repo);
+    fs::write(
+        repo.root_path().join(".worktreeinclude"),
+        "target/debug/output\n",
+    )
+    .unwrap();
+
+    assert_copy_ignored_rejects_symlinked_dest_dir(&repo, &feature_path);
+    assert!(!outside.path().join("target").join("debug").exists());
+}
+
 /// --force must not overwrite files through destination directory symlinks.
 #[cfg(unix)]
 #[rstest]
@@ -1087,7 +1125,7 @@ fn test_copy_ignored_force_rejects_symlinked_destination_directory(mut repo: Tes
     assert!(!output.status.success(), "copy-ignored --force should fail");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("refusing to copy outside destination worktree"),
+        stderr.contains("refusing to write outside destination worktree"),
         "expected outside-destination error, got: {stderr}",
     );
     assert_symlinked_dest_outside_unchanged(&outside);
