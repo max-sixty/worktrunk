@@ -6580,14 +6580,16 @@ const ALIAS_REMOTE: &str = "git@github-work:owner/test-repo.git";
 const GHE_PR_URL: &str = "https://github.example.com/owner/test-repo/pull/101";
 
 #[rstest]
-#[case::enterprise_remote(GHE_REMOTE, "pr:101", None)]
-#[case::enterprise_url(ALIAS_REMOTE, GHE_PR_URL, None)]
-#[case::configured_host(GHE_REMOTE, "pr:101", Some("github.example.com"))]
+#[case::enterprise_remote(GHE_REMOTE, "pr:101", None, false)]
+#[case::ssh_alias(ALIAS_REMOTE, "pr:101", None, false)]
+#[case::enterprise_url(ALIAS_REMOTE, GHE_PR_URL, None, true)]
+#[case::configured_host(GHE_REMOTE, GHE_PR_URL, Some("github.example.com"), false)]
 fn test_switch_pr_enterprise_not_found_names_hostname(
     #[from(repo_with_remote)] repo: TestRepo,
     #[case] origin_url: &str,
     #[case] switch_arg: &str,
     #[case] configured_host: Option<&str>,
+    #[case] expect_enterprise_hint: bool,
 ) {
     repo.run_git(&["remote", "set-url", "origin", origin_url]);
     if let Some(host) = configured_host {
@@ -6630,7 +6632,12 @@ fn test_switch_pr_enterprise_not_found_names_hostname(
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(
         stderr.contains("forge.hostname"),
-        configured_host.is_none(),
+        expect_enterprise_hint,
+        "{stderr}"
+    );
+    assert_eq!(
+        stderr.contains("gh auth login --hostname github.example.com"),
+        expect_enterprise_hint,
         "{stderr}"
     );
     assert!(stderr.contains("gh repo set-default"), "{stderr}");
