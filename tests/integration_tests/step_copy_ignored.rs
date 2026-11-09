@@ -243,6 +243,39 @@ fn test_copy_ignored_worktreeinclude_directory_pattern_covers_files(mut repo: Te
     );
 }
 
+/// A `.worktreeinclude` pattern naming a path inside a wholly ignored
+/// directory copies that path, which `git ls-files --directory` never lists on
+/// its own. Its sibling stays behind, and a pattern that matches at any depth
+/// (`index.js`) doesn't search an ignored directory git lists whole.
+#[rstest]
+fn test_copy_ignored_worktreeinclude_reaches_inside_ignored_directory(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+    let root = repo.root_path();
+    for dir in [".cache/types/sub", ".cache/other", "node_modules/pkg"] {
+        fs::create_dir_all(root.join(dir)).unwrap();
+    }
+    fs::write(root.join(".cache/types/sub/a.d.ts"), "types").unwrap();
+    fs::write(root.join(".cache/other/b"), "other").unwrap();
+    fs::write(root.join("node_modules/pkg/index.js"), "pkg").unwrap();
+    fs::write(root.join(".gitignore"), ".cache/\nnode_modules/\n").unwrap();
+    fs::write(root.join(".worktreeinclude"), "/.cache/types/\nindex.js\n").unwrap();
+
+    assert_cmd_snapshot!(snapshot_cmd(
+        &repo,
+        "step",
+        &["copy-ignored", "--dry-run"],
+        Some(&feature_path),
+    ));
+
+    run_copy_ignored(&repo, &feature_path);
+    assert_eq!(
+        fs::read_to_string(feature_path.join(".cache/types/sub/a.d.ts")).unwrap(),
+        "types"
+    );
+    assert!(!feature_path.join(".cache/other").exists());
+    assert!(!feature_path.join("node_modules").exists());
+}
+
 /// A `[step.copy-ignored].exclude` directory pattern skips the ignored files
 /// inside that directory.
 #[rstest]
