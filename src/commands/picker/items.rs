@@ -1787,12 +1787,12 @@ impl PickerRow {
         // dim/bright split tracks main's current position. See the cache
         // entry docstring for why we keep this off the SHA-keyed disk cache.
         //
-        // Don't pre-resolve `default_branch` to a SHA via
-        // `Repository::default_branch_sha` here. That accessor is a
-        // snapshot of the local-branch inventory at first scan (see its
-        // docstring) — feeding the snapshot into a merge-base call would
-        // freeze the dim/bright styling at the SHA main pointed at when
-        // the picker started, instead of the current SHA. The
+        // Don't pre-resolve `default_branch` to a SHA from the local-branch
+        // inventory here. Its `commit_sha` is a snapshot at first scan (see
+        // `Repository::local_branches`) — feeding the snapshot into a
+        // merge-base call would freeze the dim/bright styling at the SHA
+        // main pointed at when the picker started, instead of the current
+        // SHA. The
         // `log_cache_dim_split_tracks_main_advance` test pins this
         // contract. `Repository::merge_base` is safe here: it re-resolves
         // ref names through an uncached `git rev-parse` before hitting its
@@ -3402,7 +3402,7 @@ mod tests {
         repo.run_command(&["commit", "-m", "real"]).unwrap();
         let item = item_at(&repo, "feature");
 
-        let base_sha = repo.default_branch_sha().unwrap();
+        let base_sha = repo.branch_diff_spec(item.head()).unwrap().cache_sha;
         let sentinel = "SENTINEL_FROM_CACHE";
         super::preview_cache::write_branch_diff(
             &repo,
@@ -3439,7 +3439,7 @@ mod tests {
 
         // beta shares (base, head) with alpha, so its read hits alpha's entry.
         let beta = item_at(&repo, "beta");
-        let base_sha = repo.default_branch_sha().unwrap();
+        let base_sha = repo.branch_diff_spec(beta.head()).unwrap().cache_sha;
         assert!(
             super::preview_cache::read_branch_diff(&repo, &base_sha, beta.head(), 80).is_some(),
             "precondition: beta's key must already be populated by alpha's compute"
@@ -3462,7 +3462,7 @@ mod tests {
         repo.run_command(&["commit", "-m", "wb"]).unwrap();
         let item = item_at(&repo, "feature");
 
-        let base_sha = repo.default_branch_sha().unwrap();
+        let base_sha = repo.branch_diff_spec(item.head()).unwrap().cache_sha;
 
         assert!(
             super::preview_cache::read_branch_diff(&repo, &base_sha, item.head(), 80).is_none()
