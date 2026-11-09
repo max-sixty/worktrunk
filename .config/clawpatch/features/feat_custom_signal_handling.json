@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "featureId": "feat_custom_signal_handling",
   "title": "Signal handling: Ctrl-C aborts every child-process loop",
-  "summary": "wt installs a signal_hook SIGINT/SIGTERM handler that forwards signals to child process groups, so wt itself does not die from the user's Ctrl-C, only the current child does. Every foreground loop that runs multiple child processes (`wt step for-each`, hook pipelines, alias steps, concurrent groups) MUST abort on a signal-derived child exit instead of charging into the next iteration: otherwise one Ctrl-C against `wt merge` runs the remaining hook steps, with FailureStrategy::Warn silently swallowing each interrupt. Detect via `err.interrupt_signal()` (the worktrunk::git::ErrorExt trait); the check happens before any FailureStrategy branch. The structured channel is WorktrunkError::ChildProcessExited { signal }, never sniff code >= 128. See AGENTS.md > Signal Handling.",
+  "summary": "Foreground children share the caller's job group, so a terminal Ctrl-C reaches wt and the child alike; wt never signals the child for it. wt's own receipt of SIGINT/SIGTERM while a child runs is the cancellation evidence: once the child exits, every foreground loop that runs multiple child processes (`wt step for-each`, hook pipelines, alias steps, concurrent groups) MUST start nothing more and exit interrupted, instead of charging into the next iteration: otherwise one Ctrl-C against `wt merge` runs the remaining hook steps, with FailureStrategy::Warn silently swallowing each interrupt. Detect via `err.interrupt_signal()` (the worktrunk::git::ErrorExt trait) and propagate WorktrunkError::Interrupted; the check happens before any FailureStrategy branch. Never infer cancellation from a numeric exit code such as 130. A final interactive child (pager, --execute program, custom subcommand, an alias's last serial step) owns the key as input instead. See AGENTS.md > Signal Handling and src/signal_forwarder.rs.",
   "kind": "library",
   "source": "manual",
   "confidence": "high",
@@ -25,13 +25,17 @@
     },
     {
       "path": "src/git/error.rs",
-      "reason": "ErrorExt::interrupt_signal and the WorktrunkError::ChildProcessExited signal channel"
+      "reason": "ErrorExt::interrupt_signal and WorktrunkError::Interrupted, the cancellation channel loops propagate"
     }
   ],
   "contextFiles": [
     {
       "path": "src/shell_exec.rs",
-      "reason": "Cmd: spawns children into the process groups the signal handler forwards to"
+      "reason": "Cmd: spawns foreground children into the caller's job group and classifies native SIGINT/SIGTERM exits in capture mode"
+    },
+    {
+      "path": "src/signal_forwarder.rs",
+      "reason": "Contract for foreground job-group sharing, wt's receipt of the key as cancellation evidence, and PID-targeted SIGTERM forwarding"
     },
     {
       "path": "AGENTS.md",
