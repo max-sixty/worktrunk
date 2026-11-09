@@ -513,6 +513,7 @@ mod tests {
         assert!(reaches("/.cache/types/", ".cache"));
         assert!(!reaches(".cache/types", "node_modules"));
         assert!(!reaches(".cache/types", ".cache/types"));
+        assert!(!reaches(".cache/types", ".cache/types/deeper"));
         assert!(reaches(".c?che/types", ".cache"));
         assert!(reaches(r"\#cache/types", "#cache"));
         assert!(reaches(".cache/*/types", ".cache/claude"));

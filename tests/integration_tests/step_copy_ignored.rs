@@ -320,6 +320,27 @@ fn test_copy_ignored_exclude_directory_pattern_covers_files(mut repo: TestRepo) 
     );
 }
 
+/// An invalid `[step.copy-ignored].exclude` pattern fails with the pattern named.
+#[rstest]
+fn test_copy_ignored_invalid_exclude_pattern(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+    repo.write_test_config("[step.copy-ignored]\nexclude = [\"{unclosed\"]\n");
+
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("Invalid [step.copy-ignored].exclude pattern \"{unclosed\""),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// Test error handling when .worktreeinclude has invalid syntax
 #[rstest]
 fn test_copy_ignored_invalid_worktreeinclude(mut repo: TestRepo) {
