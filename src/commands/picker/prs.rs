@@ -149,7 +149,8 @@ struct PrEntry {
     /// markdown in the `pr` preview tab. Rides the one list call — empty when
     /// the forge returns no body.
     body: String,
-    /// CI + review status for the CI column, built from the same forge call.
+    /// CI + review status, built from the same forge call. Feeds the CI column
+    /// and, overlaid by [`Self::display_status`], the row's PR slot.
     status: PrStatus,
     /// GitHub PR `updatedAt`, riding the one list call — keys the row's on-disk
     /// comments cache so a repeat `--prs` open skips the per-row comments fetch
