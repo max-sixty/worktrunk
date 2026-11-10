@@ -1887,6 +1887,13 @@ mod tests {
         // An SSH remote without the `v3/{org}/{project}` path names no project.
         let parsed = GitRemoteUrl::parse("git@ssh.dev.azure.com:myorg/my-repo").unwrap();
         assert_eq!(parsed.azure_project(), None);
+        let parsed = GitRemoteUrl::parse("git@ssh.dev.azure.com:v2/myorg/proj/my-repo").unwrap();
+        assert_eq!(parsed.azure_project(), None);
+
+        // A path without `_git` still reads `{org}/{project}`.
+        let parsed = GitRemoteUrl::parse("https://dev.azure.com/myorg/proj/my-repo").unwrap();
+        assert_eq!(parsed.azure_organization(), Some("myorg"));
+        assert_eq!(parsed.azure_project(), Some("proj"));
     }
 
     #[test]
