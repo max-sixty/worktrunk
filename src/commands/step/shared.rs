@@ -104,8 +104,10 @@ pub(super) fn resolve_copy_ignored_config(repo: &Repository) -> anyhow::Result<C
 /// in full, so a pattern that matches at any depth (`.env`) also finds a path
 /// inside an ignored `node_modules/`, a pattern naming a path inside a wholly
 /// ignored directory (`.cache/types/`) finds it, and a negation can't
-/// re-include a path inside a selected directory. Worktrunk parses no include
-/// pattern itself. The second listing walks every untracked directory, about
+/// re-include a path inside a selected directory. Like every git listing, both
+/// stop at a nested repository: a path inside one belongs to that repository,
+/// so no include line reaches it. Worktrunk parses no include pattern itself.
+/// The second listing walks every untracked directory, about
 /// 0.3 s per 100k ignored files with a warm cache. [`Boundaries`] then drops
 /// configured excludes, built-in VCS and tool-state directories, and other
 /// worktrees.
