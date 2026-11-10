@@ -144,6 +144,10 @@ non-required `benchmarks` job routinely runs 80+ minutes after
 `test (linux|macos|windows)` finish. Rerun failed jobs in workflow runs that
 have finished now, and those in a run still going once it completes.
 
+Rerun only runs on the PR's current head. The CI workflows' concurrency groups
+are keyed by PR number with `cancel-in-progress`, so rerunning an older head's
+run cancels the current head's run in that workflow.
+
 The codecov-failure dismissal pattern is different and remains correct:
 `AGENTS.md` requires explicit user approval before merging with failing
 `codecov/patch`, so dismissing the approval until the coverage gap is
