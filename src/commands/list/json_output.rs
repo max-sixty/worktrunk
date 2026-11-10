@@ -435,15 +435,13 @@ impl JsonItem {
 
 /// Convert UpstreamStatus to JsonRemote
 fn upstream_to_json(upstream: &UpstreamStatus, branch: Option<&str>) -> Option<JsonRemote> {
-    upstream.active().map(|active| {
-        // Use local branch name since UpstreamStatus only stores the remote name,
-        // not the full tracking refspec. In most cases these match (e.g., feature -> origin/feature).
-        JsonRemote {
-            name: active.remote.to_string(),
-            branch: branch.unwrap_or_default().to_string(),
-            ahead: active.ahead,
-            behind: active.behind,
-        }
+    upstream.active().map(|active| JsonRemote {
+        name: active.remote.to_string(),
+        // The tracked branch's name on the remote; the local name stands in
+        // only when the upstream's short name isn't known.
+        branch: active.branch.or(branch).unwrap_or_default().to_string(),
+        ahead: active.ahead,
+        behind: active.behind,
     })
 }
 
@@ -731,6 +729,21 @@ mod tests {
         assert_eq!(json.branch, "feature");
         assert_eq!(json.ahead, 3);
         assert_eq!(json.behind, 2);
+    }
+
+    #[test]
+    fn test_upstream_to_json_reports_tracked_branch_name() {
+        // A local `feature` tracking `origin/other-name` reports the remote
+        // branch, matching schema 2's `upstream.branch`.
+        let upstream = UpstreamStatus {
+            remote: Some("origin".to_string()),
+            upstream_short: Some("origin/other-name".to_string()),
+            ahead: 1,
+            behind: 0,
+        };
+        let json = upstream_to_json(&upstream, Some("feature")).unwrap();
+        assert_eq!(json.name, "origin");
+        assert_eq!(json.branch, "other-name");
     }
 
     #[test]
