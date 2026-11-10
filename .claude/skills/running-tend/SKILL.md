@@ -102,9 +102,10 @@ Before opening a PR for a CI failure, classify it:
 
 - **Transient infrastructure** (link-check timeouts, apt-get flakes, GitHub
   outages, runner disk issues, codecov upload blips) — do **not** create a
-  PR. The maintainer will rerun CI. Comment on the run or exit silently; a
-  permanent config change for a one-off timeout is churn the maintainer will
-  close.
+  PR. Rerun the failed jobs yourself (**Rerunning failed jobs** in the bundled
+  `monitor-ci` skill) rather than leaving the rerun to the maintainer, and
+  report its result where you post the diagnosis. A permanent config change
+  for a one-off timeout is churn the maintainer will close.
 - **Flaky test** (known-flaky or first-seen PTY/shell test) — try to fix it.
 - **Real regression** — proceed with a fix PR.
 
@@ -130,17 +131,18 @@ If surrounding lines also need updating, note that in your reply.
 
 ## PR Review: Don't Self-Dismiss Over Unrelated Test Flakes
 
-If a clearly-unrelated test fails after you've already approved a PR, leave
-the approval in place and post a comment noting the flake. Do **not** dismiss
-your own approval to "gate" on a rerun.
+If a clearly-unrelated test or infrastructure failure turns a check red after
+you've already approved a PR, leave the approval in place. Do **not** dismiss
+your own approval to "gate" on a rerun — but do start the rerun yourself and
+report its result; a diagnosis that says a rerun should clear the failure is
+the cue to run it, not to hand it to the maintainer.
 
 GitHub blocks both `gh run rerun --failed` and per-job rerun
 (`POST /repos/{owner}/{repo}/actions/jobs/{id}/rerun`) with HTTP 403 while
-*any* job in the same workflow run is still `in_progress`. The non-required
-`benchmarks` job routinely runs 80+ minutes after `test (linux|macos|windows)`
-finish, so dismiss-then-wait-then-rerun cascades into a long session for no
-benefit — the maintainer can rerun the failed job directly once `benchmarks`
-clears, or merge regardless if the failure is clearly a flake.
+*any* job in the same workflow run is still `in_progress`, and the
+non-required `benchmarks` job routinely runs 80+ minutes after
+`test (linux|macos|windows)` finish. Rerun failed jobs in workflow runs that
+have finished now, and those in a run still going once it completes.
 
 The codecov-failure dismissal pattern is different and remains correct:
 `AGENTS.md` requires explicit user approval before merging with failing
