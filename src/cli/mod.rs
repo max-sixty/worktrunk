@@ -2130,7 +2130,7 @@ PR/MR number for `wt switch pr:N`, branch otherwise (`~/code/myproject/.worktree
 worktree-path = "{{ repo_path }}/.worktrees/{{ pr_number or branch | sanitize }}"
 ```
 
-`wt list` and `wt step relocate` compute the expected path without a PR number, so they treat such a worktree as away from its template path.
+`wt list` marks such a worktree as away from its template path, and `wt step relocate` moves it to the branch's path.
 
 Bare repository cloned to `~/code/myproject/.git` (`~/code/myproject/feature-auth`):
 
