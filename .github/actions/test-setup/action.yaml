@@ -71,4 +71,4 @@ runs:
       if: runner.os != 'Windows'
       uses: hustcer/setup-nu@v3
       with:
-        version: '0.116.1'
+        version: '0.117.0'
