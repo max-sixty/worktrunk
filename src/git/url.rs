@@ -177,6 +177,17 @@ fn identity_host(host: &str) -> Option<String> {
     Some(format!("[{inner}]"))
 }
 
+/// Whether `label` is a single DNS hostname label: 1–63 ASCII letters,
+/// digits, or hyphens, not starting or ending with a hyphen.
+fn is_dns_label(label: &str) -> bool {
+    (1..=63).contains(&label.len())
+        && label
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        && !label.starts_with('-')
+        && !label.ends_with('-')
+}
+
 impl GitRemoteUrl {
     /// Parse a git remote URL into structured components.
     ///
@@ -335,6 +346,11 @@ impl GitRemoteUrl {
             let web_host = if host == "ssh.dev.azure.com" {
                 "dev.azure.com".to_string()
             } else {
+                // The organization becomes a hostname label, so a URL
+                // delimiter in it would redirect the web host elsewhere.
+                if !is_dns_label(organization) {
+                    return None;
+                }
                 format!("{}.visualstudio.com", organization.to_ascii_lowercase())
             };
             return Some((web_host, organization, project));
@@ -1882,6 +1898,19 @@ mod tests {
             assert_eq!(info.name, "my-repo", "input: {input}");
             assert_eq!(info.project.as_deref(), Some(project), "input: {input}");
             assert_eq!(info.url, url, "input: {input}");
+        }
+
+        // A legacy SSH organization that isn't a single DNS label can't name
+        // a `{org}.visualstudio.com` web host.
+        for input in [
+            "org@vs-ssh.visualstudio.com:v3/attacker.example#/proj/repo",
+            "org@vs-ssh.visualstudio.com:v3/attacker.example/proj/repo",
+            "org@vs-ssh.visualstudio.com:v3/user@attacker.example/proj/repo",
+            "org@vs-ssh.visualstudio.com:v3/-myorg/proj/repo",
+        ] {
+            let parsed = GitRemoteUrl::parse(input).unwrap();
+            assert_eq!(parsed.azure_web_host(), None, "input: {input}");
+            assert_eq!(parsed.web_url(), None, "input: {input}");
         }
 
         // An SSH remote without the `v3/{org}/{project}` path names no project.
