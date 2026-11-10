@@ -139,10 +139,10 @@ the cue to run it, not to hand it to the maintainer.
 
 GitHub blocks both `gh run rerun --failed` and per-job rerun
 (`POST /repos/{owner}/{repo}/actions/jobs/{id}/rerun`) with HTTP 403 while
-*any* job in the same workflow run is still `in_progress`, and the
-non-required `benchmarks` job routinely runs 80+ minutes after
-`test (linux|macos|windows)` finish. Rerun failed jobs in workflow runs that
-have finished now, and those in a run still going once it completes.
+*any* job in the same workflow run is still `in_progress`, and
+`tend runtime rerun-failed-jobs` doesn't wait for that. Rerun failed jobs in
+workflow runs that have finished now, and those in a run still going once it
+completes.
 
 Rerun only runs on the PR's current head. The CI workflows' concurrency groups
 are keyed by PR number with `cancel-in-progress`, so rerunning an older head's
