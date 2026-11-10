@@ -88,6 +88,7 @@ Controls where new worktrees are created.
 - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
 - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)
 - `{{ branch | codename(2) }}` — deterministic friendly name from a ~1.26M-combo pool (e.g., `malleable-opah`)
+- `{{ pr_number }}` — PR/MR number when `wt switch pr:N` / `mr:N` creates the worktree; undefined otherwise, so pair it with a fallback such as `pr_number or branch`
 
 This is a smaller set than [the variables hooks and aliases get](/hook/#template-variables).
 
@@ -128,6 +129,14 @@ By remote owner path (`~/development/max-sixty/myproject/feature/auth`):
 ```toml
 worktree-path = "~/development/{{ owner }}/{{ repo }}/{{ branch }}"
 ```
+
+PR/MR number for `wt switch pr:N`, branch otherwise (`~/code/myproject/.worktrees/123`):
+
+```toml
+worktree-path = "{{ repo_path }}/.worktrees/{{ pr_number or branch | sanitize }}"
+```
+
+`wt list` and `wt step relocate` compute the expected path without a PR number, so they treat such a worktree as away from its template path.
 
 Bare repository cloned to `~/code/myproject/.git` (`~/code/myproject/feature-auth`):
 

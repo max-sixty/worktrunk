@@ -298,7 +298,7 @@ mod tests {
         };
         assert_eq!(
             config
-                .format_path("myproject", "feature-x", &test.repo, None)
+                .format_path("myproject", "feature-x", &test.repo, None, None)
                 .unwrap(),
             "myproject.feature-x"
         );
@@ -313,7 +313,7 @@ mod tests {
         };
         assert_eq!(
             config
-                .format_path("myproject", "feature-x", &test.repo, None)
+                .format_path("myproject", "feature-x", &test.repo, None, None)
                 .unwrap(),
             "myproject-feature-x"
         );
@@ -328,7 +328,7 @@ mod tests {
         };
         assert_eq!(
             config
-                .format_path("myproject", "feature-x", &test.repo, None)
+                .format_path("myproject", "feature-x", &test.repo, None, None)
                 .unwrap(),
             ".worktrees/myproject/feature-x"
         );
@@ -344,7 +344,7 @@ mod tests {
         };
         assert_eq!(
             config
-                .format_path("myproject", "feature/foo", &test.repo, None)
+                .format_path("myproject", "feature/foo", &test.repo, None, None)
                 .unwrap(),
             "myproject.feature-foo"
         );
@@ -359,7 +359,7 @@ mod tests {
         };
         assert_eq!(
             config
-                .format_path("myproject", "feature/sub/task", &test.repo, None)
+                .format_path("myproject", "feature/sub/task", &test.repo, None, None)
                 .unwrap(),
             ".worktrees/myproject/feature-sub-task"
         );
@@ -375,7 +375,7 @@ mod tests {
         };
         assert_eq!(
             config
-                .format_path("myproject", r"feature\foo", &test.repo, None)
+                .format_path("myproject", r"feature\foo", &test.repo, None, None)
                 .unwrap(),
             ".worktrees/myproject/feature-foo"
         );
@@ -391,7 +391,7 @@ mod tests {
         };
         assert_eq!(
             config
-                .format_path("myproject", "feature/foo", &test.repo, None)
+                .format_path("myproject", "feature/foo", &test.repo, None, None)
                 .unwrap(),
             "myproject.feature/foo"
         );

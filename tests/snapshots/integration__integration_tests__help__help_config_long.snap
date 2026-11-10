@@ -145,6 +145,7 @@ Controls where new worktrees are created.
 - [2m{{ branch | sanitize }}[0m — filesystem-safe: [2m/[0m and [2m\[0m become [2m-[0m (e.g., [2mfeature-auth[0m)
 - [2m{{ branch | sanitize_db }}[0m — database-safe: lowercase, underscores, hash suffix (e.g., [2mfeature_auth_x7k[0m)
 - [2m{{ branch | codename(2) }}[0m — deterministic friendly name from a ~1.26M-combo pool (e.g., [2mmalleable-opah[0m)
+- [2m{{ pr_number }}[0m — PR/MR number when [2mwt switch pr:N[0m / [2mmr:N[0m creates the worktree; undefined otherwise, so pair it with a fallback such as [2mpr_number or branch[0m
 
 This is a smaller set than the variables hooks and aliases get.
 
@@ -173,6 +174,12 @@ Centralized worktrees directory ([2m~/worktrees/myproject/feature-auth[0m):
 By remote owner path ([2m~/development/max-sixty/myproject/feature/auth[0m):
 
 [107m [0m [2mworktree-path = [0m[2m[32m"~/development/{{ owner }}/{{ repo }}/{{ branch }}"[0m
+
+PR/MR number for [2mwt switch pr:N[0m, branch otherwise ([2m~/code/myproject/.worktrees/123[0m):
+
+[107m [0m [2mworktree-path = [0m[2m[32m"{{ repo_path }}/.worktrees/{{ pr_number or branch | sanitize }}"[0m
+
+[2mwt list[0m and [2mwt step relocate[0m compute the expected path without a PR number, so they treat such a worktree as away from its template path.
 
 Bare repository cloned to [2m~/code/myproject/.git[0m ([2m~/code/myproject/feature-auth[0m):
 

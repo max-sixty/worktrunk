@@ -4346,6 +4346,71 @@ post-switch = "echo 'branch={{ branch }} target={{ target }} pr_number={{ pr_num
     }
 }
 
+/// The `worktree-path` template sees `pr_number` when `pr:N` creates the
+/// worktree, and `pr_number or branch` falls back to the branch otherwise.
+#[rstest]
+fn test_switch_pr_worktree_path_uses_pr_number(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&["branch", "feature-auth"]);
+    repo.run_git(&["push", "origin", "feature-auth"]);
+    repo.run_git(&["branch", "-D", "feature-auth"]);
+
+    set_github_remote_url(&repo);
+    repo.write_test_config(
+        r#"worktree-path = "{{ repo_path }}/.worktrees/{{ pr_number or branch | sanitize }}""#,
+    );
+
+    let gh_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/101"
+    }"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, gh_response);
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "pr:101", "--yes"]);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().expect("wt switch pr:101 should run");
+    assert!(
+        output.status.success(),
+        "wt switch pr:101 failed: stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let pr_path = repo.root_path().join(".worktrees/101");
+    assert!(pr_path.is_dir(), "pr:101 should create {pr_path:?}");
+    assert_eq!(
+        repo.git_command()
+            .current_dir(&pr_path)
+            .args(["branch", "--show-current"])
+            .run()
+            .unwrap()
+            .stdout,
+        b"feature-auth\n",
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "feature/other", "--yes"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(repo.root_path().join(".worktrees/feature-other").is_dir());
+}
+
 /// A second `wt switch pr:N`, onto the worktree the first one created, is the
 /// path with nothing else to fall back on. It returns `SwitchResult::Existing`,
 /// which carries no PR identity of its own and no base branch — so `pr_number`

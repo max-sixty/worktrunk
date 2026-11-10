@@ -261,13 +261,14 @@ fn test_format_path_with_project_override() {
             "feature/branch",
             &test.repo,
             Some(&ProjectId::from("github.com/user/repo")),
+            None,
         )
         .unwrap();
     assert_eq!(path, ".worktrees/feature-branch");
 
     // Without project identifier, should use global template
     let path = config
-        .format_path("myrepo", "feature/branch", &test.repo, None)
+        .format_path("myrepo", "feature/branch", &test.repo, None, None)
         .unwrap();
     assert_eq!(path, "../myrepo.feature-branch");
 }
@@ -342,7 +343,7 @@ fn test_worktrunk_config_format_path() {
     let test = test_repo();
     let config = UserConfig::default();
     let path = config
-        .format_path("myrepo", "feature/branch", &test.repo, None)
+        .format_path("myrepo", "feature/branch", &test.repo, None, None)
         .unwrap();
     // Default path is now absolute: {{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}
     // The template uses forward slashes which work on all platforms
@@ -372,7 +373,7 @@ fn test_worktrunk_config_format_path_custom_template() {
         ..Default::default()
     };
     let path = config
-        .format_path("myrepo", "feature", &test.repo, None)
+        .format_path("myrepo", "feature", &test.repo, None, None)
         .unwrap();
     assert_eq!(path, ".worktrees/feature");
 }
@@ -386,7 +387,7 @@ fn test_worktrunk_config_format_path_repo_path_variable() {
         ..Default::default()
     };
     let path = config
-        .format_path("myrepo", "feature/branch", &test.repo, None)
+        .format_path("myrepo", "feature/branch", &test.repo, None, None)
         .unwrap();
     // Path should contain the expected components
     assert!(
@@ -414,7 +415,7 @@ fn test_worktrunk_config_format_path_tilde_expansion() {
         ..Default::default()
     };
     let path = config
-        .format_path("myrepo", "feature/branch", &test.repo, None)
+        .format_path("myrepo", "feature/branch", &test.repo, None, None)
         .unwrap();
     // Tilde should be expanded to home directory
     assert!(
@@ -450,7 +451,7 @@ fn test_worktrunk_config_format_path_owner_variable() {
     };
 
     let path = config
-        .format_path("myrepo", "feature/branch", &test.repo, None)
+        .format_path("myrepo", "feature/branch", &test.repo, None, None)
         .unwrap();
 
     assert_eq!(path, "max-sixty/myrepo/feature/branch");
@@ -473,7 +474,7 @@ fn test_worktrunk_config_format_path_remote_repo_variable() {
     };
 
     let path = config
-        .format_path("myrepo", "feature/branch", &test.repo, None)
+        .format_path("myrepo", "feature/branch", &test.repo, None, None)
         .unwrap();
 
     assert_eq!(path, "project/myrepo/feature/branch");
@@ -496,7 +497,7 @@ fn test_worktrunk_config_format_path_owner_uses_full_namespace() {
     };
 
     let path = config
-        .format_path("myrepo", "feature/branch", &test.repo, None)
+        .format_path("myrepo", "feature/branch", &test.repo, None, None)
         .unwrap();
 
     assert_eq!(path, "group/subgroup/myrepo/feature/branch");

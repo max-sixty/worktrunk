@@ -30,7 +30,7 @@ use worktrunk::styling::{
 };
 use worktrunk::utils::escape_controls;
 
-use super::resolve::{compute_worktree_path, offer_bare_repo_worktree_path_fix};
+use super::resolve::offer_bare_repo_worktree_path_fix;
 use super::types::{CreationMethod, RefIdentity, SwitchBranchInfo, SwitchPlan, SwitchResult};
 use crate::cli::{SwitchArgs, SwitchFormat};
 use crate::commands::backup::back_up_clobbered_path_now;
@@ -1009,7 +1009,7 @@ fn plan_switch(
     } = target;
 
     // Phase 1: an existing worktree answers without the ~7 git commands
-    // `compute_worktree_path` runs.
+    // the `worktree-path` template runs.
     let branch = match destination {
         SwitchDestination::Existing { path, branch } => {
             let name = branch
@@ -1055,7 +1055,11 @@ fn plan_switch(
             reject_path_overlapping_worktrees(repo, &path)?;
             path
         }
-        None => compute_worktree_path(repo, &branch, config)?,
+        None => config.expected_worktree_path_for_pr(
+            repo,
+            &branch,
+            ref_identity.as_ref().map(|r| r.number),
+        )?,
     };
 
     // Phase 4: Validate we can create at this path

@@ -240,6 +240,8 @@ impl UserConfig {
     ///   `{{ owner }}` is absent when the primary remote has no parseable URL
     /// * `project` - Optional project identifier (e.g., "github.com/user/repo") to look up
     ///   project-specific worktree-path template
+    /// * `pr_number` - The PR/MR a `pr:N` / `mr:N` creation names; supplies
+    ///   `{{ pr_number }}`, left undefined otherwise so `pr_number or branch` falls back
     ///
     /// The default template uses `{{ repo_path }}`, `{{ repo }}`, and
     /// `{{ branch | sanitize }}`; the full user-facing list is in
@@ -250,6 +252,7 @@ impl UserConfig {
         branch: &str,
         repo: &crate::git::Repository,
         project: Option<&ProjectId>,
+        pr_number: Option<u32>,
     ) -> anyhow::Result<String> {
         let template = match project {
             Some(p) => self.worktree_path_for_project(p),
@@ -261,6 +264,10 @@ impl UserConfig {
         vars.insert("repo", main_worktree);
         vars.insert("branch", branch);
         vars.insert("repo_path", repo_path.as_str());
+        let pr_number = pr_number.map(|n| n.to_string());
+        if let Some(ref pr_number) = pr_number {
+            vars.insert("pr_number", pr_number.as_str());
+        }
         let parsed_remote = repo.primary_remote_parsed_url();
         if let Some(ref parsed_remote) = parsed_remote {
             vars.insert("owner", parsed_remote.owner());
@@ -286,6 +293,21 @@ impl UserConfig {
         &self,
         repo: &crate::git::Repository,
         branch: &str,
+    ) -> anyhow::Result<PathBuf> {
+        self.expected_worktree_path_for_pr(repo, branch, None)
+    }
+
+    /// [`Self::expected_worktree_path`] for a worktree that `pr:N` / `mr:N`
+    /// creates, exposing the number to the template as `{{ pr_number }}`.
+    ///
+    /// Only creation knows the number: every later lookup goes through
+    /// [`Self::expected_worktree_path`], so a template that renders
+    /// `pr_number` places the worktree somewhere those lookups don't expect.
+    pub fn expected_worktree_path_for_pr(
+        &self,
+        repo: &crate::git::Repository,
+        branch: &str,
+        pr_number: Option<u32>,
     ) -> anyhow::Result<PathBuf> {
         let repo_root = repo.repo_path()?;
         let default_branch = repo.default_branch().unwrap_or_default();
@@ -314,7 +336,8 @@ impl UserConfig {
             })?;
 
         let project = repo.project_identifier().ok();
-        let expanded_path = self.format_path(repo_name, branch, repo, project.as_ref())?;
+        let expanded_path =
+            self.format_path(repo_name, branch, repo, project.as_ref(), pr_number)?;
 
         Ok(repo_root.join(expanded_path).normalize())
     }
