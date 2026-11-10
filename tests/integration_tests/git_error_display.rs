@@ -521,7 +521,7 @@ fn command_errors_render() {
 }
 
 #[test]
-fn multiline_error_helpers_normalize_line_endings() {
+fn multiline_error_renders_in_gutter() {
     use worktrunk::styling::{error_message, format_with_gutter};
 
     let message = "fatal: Unable to read current working directory\nerror: Could not determine cwd";
@@ -531,17 +531,6 @@ fn multiline_error_helpers_normalize_line_endings() {
         format_with_gutter(message, None)
     );
     assert_snapshot!("multiline_error_formatting", rendered);
-
-    let normalize = |message: &str| message.replace("\r\n", "\n").replace('\r', "\n");
-    let expected = format_with_gutter("line1\nline2\nline3", None);
-    assert_eq!(
-        format_with_gutter(&normalize("line1\r\nline2\r\nline3"), None),
-        expected
-    );
-    assert_eq!(
-        format_with_gutter(&normalize("line1\rline2\rline3"), None),
-        expected
-    );
 }
 
 #[test]
