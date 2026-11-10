@@ -27,7 +27,7 @@ fn azure_context(repo: &Repository, branch: &CiBranchName) -> Option<AzureContex
         if !parsed.is_azure_devops() {
             return None;
         }
-        let host = parsed.host().to_string();
+        let host = parsed.azure_web_host()?;
         let organization = parsed.azure_organization()?.to_string();
         let project = parsed.azure_project()?.to_string();
         // Clone URLs percent-encode the name (`My%20Repo`), and `az` encodes

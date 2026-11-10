@@ -141,12 +141,7 @@ struct AzForkRepository {
 fn detect_azure_target(repo: &Repository) -> Option<(String, String)> {
     let target = |parsed: &GitRemoteUrl| {
         let org = parsed.azure_organization()?;
-        let host = if host_is_within(parsed.host(), "visualstudio.com") {
-            parsed.host()
-        } else {
-            "dev.azure.com"
-        };
-        Some((host.to_string(), org.to_string()))
+        Some((parsed.azure_web_host()?, org.to_string()))
     };
     if let Ok(remote) = repo.primary_remote()
         && let Some(url) = repo.effective_remote_url(&remote)

@@ -288,41 +288,74 @@ impl GitRemoteUrl {
 
     /// Extract the Azure DevOps organization from the URL.
     ///
-    /// Azure DevOps URLs do not fit the standard `host/owner/repo` shape:
-    /// - `https://dev.azure.com/{org}/{project}/_git/{repo}` — owner is `{org}/{project}/_git`
-    /// - `git@ssh.dev.azure.com:v3/{org}/{project}/{repo}` — owner is `v3/{org}/{project}`
-    /// - `https://{org}.visualstudio.com/{project}/_git/{repo}` — org is in the hostname
+    /// See `azure_coordinates` for URL shape details.
     pub fn azure_organization(&self) -> Option<&str> {
-        if !self.is_azure_devops() {
-            return None;
-        }
-        let parts: Vec<&str> = self.owner.split('/').collect();
-        let host = normalized_hostname(&self.host);
-        if host == "ssh.dev.azure.com" {
-            parts.get(1).copied()
-        } else if host_is_within(&host, "dev.azure.com") {
-            parts.first().copied()
-        } else {
-            self.host.split('.').next()
-        }
+        self.azure_coordinates()
+            .map(|(_, organization, _)| organization)
     }
 
     /// Extract the Azure DevOps project from the URL.
     ///
-    /// See [`azure_organization`](Self::azure_organization) for URL shape details.
+    /// See `azure_coordinates` for URL shape details.
     pub fn azure_project(&self) -> Option<&str> {
+        self.azure_coordinates().map(|(_, _, project)| project)
+    }
+
+    /// The Azure DevOps web host: `dev.azure.com`, or `{org}.visualstudio.com`
+    /// for legacy remotes (whose SSH host `vs-ssh.visualstudio.com` names no
+    /// organization).
+    pub fn azure_web_host(&self) -> Option<String> {
+        self.azure_coordinates().map(|(host, _, _)| host)
+    }
+
+    /// `(web host, organization, project)` of an Azure DevOps remote.
+    ///
+    /// Azure DevOps URLs do not fit the standard `host/owner/repo` shape:
+    /// - `https://dev.azure.com/{org}/{project}/_git/{repo}` — owner is `{org}/{project}/_git`
+    /// - `git@ssh.dev.azure.com:v3/{org}/{project}/{repo}` — owner is `v3/{org}/{project}`
+    /// - `https://{org}.visualstudio.com/[DefaultCollection/]{project}/_git/{repo}` —
+    ///   org is in the hostname
+    /// - `{org}@vs-ssh.visualstudio.com:v3/{org}/{project}/{repo}` — legacy SSH
+    ///
+    /// The HTTPS forms may omit `{project}` for a project's default
+    /// repository, which shares the project's name.
+    fn azure_coordinates(&self) -> Option<(String, &str, &str)> {
         if !self.is_azure_devops() {
             return None;
         }
         let parts: Vec<&str> = self.owner.split('/').collect();
         let host = normalized_hostname(&self.host);
-        if host == "ssh.dev.azure.com" {
-            parts.get(2).copied()
-        } else if host_is_within(&host, "dev.azure.com") {
-            parts.get(1).copied()
-        } else {
-            parts.first().copied()
+        if host == "ssh.dev.azure.com" || host == "vs-ssh.visualstudio.com" {
+            let [v3, organization, project] = parts[..] else {
+                return None;
+            };
+            if !v3.eq_ignore_ascii_case("v3") {
+                return None;
+            }
+            let web_host = if host == "ssh.dev.azure.com" {
+                "dev.azure.com".to_string()
+            } else {
+                format!("{}.visualstudio.com", organization.to_ascii_lowercase())
+            };
+            return Some((web_host, organization, project));
         }
+        let path = match parts.split_last() {
+            Some((&"_git", rest)) => rest,
+            _ => &parts[..],
+        };
+        let (web_host, organization, path) = if host_is_within(&host, "dev.azure.com") {
+            let (organization, rest) = path.split_first()?;
+            ("dev.azure.com".to_string(), *organization, rest)
+        } else {
+            let organization = self.host.split('.').next()?;
+            let rest = match path.split_first() {
+                Some((first, rest)) if first.eq_ignore_ascii_case("DefaultCollection") => rest,
+                _ => path,
+            };
+            (self.host.clone(), organization, rest)
+        };
+        let project = path.first().copied().unwrap_or(self.repo.as_str());
+        Some((web_host, organization, project))
     }
 
     /// Build the repository web URL from the already-parsed components.
@@ -336,28 +369,17 @@ impl GitRemoteUrl {
     /// - Azure DevOps: `https://dev.azure.com/{org}/{project}/_git/{repo}`, or
     ///   `https://{host}/{project}/_git/{repo}` for legacy `*.visualstudio.com`
     ///   (where the org is in the hostname). The naive `host/owner/repo` form is
-    ///   wrong for the SSH (`ssh.dev.azure.com:v3/...`) remote shape, so the
-    ///   [`azure_organization`](Self::azure_organization) /
-    ///   [`azure_project`](Self::azure_project) accessors feed the canonical
+    ///   wrong for the SSH (`ssh.dev.azure.com:v3/...`) remote shape, so
+    ///   `azure_coordinates` feeds the canonical
     ///   [`fork_remote_url`](crate::git::remote_ref::azure::fork_remote_url)
-    ///   builder. The SSH `ssh.dev.azure.com` host is normalized to the
-    ///   `dev.azure.com` web host.
+    ///   builder. SSH hosts are normalized to their web host.
     ///
     /// Returns `None` only when an Azure DevOps URL is missing its org/project.
     pub fn web_url(&self) -> Option<String> {
         if self.is_azure_devops() {
-            let organization = self.azure_organization()?;
-            let project = self.azure_project()?;
-            // `*.visualstudio.com` keeps the org in the hostname; every other
-            // Azure remote shape (including `ssh.dev.azure.com`) maps to the
-            // `dev.azure.com` web host.
-            let host = if host_is_within(&self.host, "visualstudio.com") {
-                self.host.as_str()
-            } else {
-                "dev.azure.com"
-            };
+            let (host, organization, project) = self.azure_coordinates()?;
             return Some(crate::git::remote_ref::azure::fork_remote_url(
-                host,
+                &host,
                 organization,
                 project,
                 &self.repo,
@@ -428,14 +450,7 @@ impl GitRemoteUrl {
     }
 
     fn azure_repo_info_parts(&self) -> Option<(String, String, String)> {
-        if let (Some(organization), Some(project)) =
-            (self.azure_organization(), self.azure_project())
-        {
-            let host = if host_is_within(&self.host, "visualstudio.com") {
-                self.host.clone()
-            } else {
-                "dev.azure.com".to_string()
-            };
+        if let Some((host, organization, project)) = self.azure_coordinates() {
             return Some((host, organization.to_string(), project.to_string()));
         }
 
@@ -1805,6 +1820,73 @@ mod tests {
             assert_eq!(info.name, "myrepo", "input: {input}");
             assert_eq!(info.project.as_deref(), Some("myproject"), "input: {input}");
         }
+    }
+
+    #[test]
+    fn repo_info_from_remote_azure_devops_collection_legacy_ssh_and_default_repo() {
+        // (remote, host, owner, project, url)
+        let cases = [
+            (
+                "https://myorg.visualstudio.com/DefaultCollection/My%20Project/_git/my-repo",
+                "myorg.visualstudio.com",
+                "myorg",
+                "My%20Project",
+                "https://myorg.visualstudio.com/My%20Project/_git/my-repo",
+            ),
+            (
+                "myorg@vs-ssh.visualstudio.com:v3/myorg/My%20Project/my-repo",
+                "myorg.visualstudio.com",
+                "myorg",
+                "My%20Project",
+                "https://myorg.visualstudio.com/My%20Project/_git/my-repo",
+            ),
+            // The default repository of a project may omit the project.
+            (
+                "https://dev.azure.com/myorg/_git/my-repo",
+                "dev.azure.com",
+                "myorg",
+                "my-repo",
+                "https://dev.azure.com/myorg/my-repo/_git/my-repo",
+            ),
+            (
+                "https://myorg.visualstudio.com/_git/my-repo",
+                "myorg.visualstudio.com",
+                "myorg",
+                "my-repo",
+                "https://myorg.visualstudio.com/my-repo/_git/my-repo",
+            ),
+            (
+                "https://myorg.visualstudio.com/DefaultCollection/_git/my-repo",
+                "myorg.visualstudio.com",
+                "myorg",
+                "my-repo",
+                "https://myorg.visualstudio.com/my-repo/_git/my-repo",
+            ),
+        ];
+
+        for (input, host, owner, project, url) in cases {
+            let parsed = GitRemoteUrl::parse(input).unwrap();
+            assert_eq!(
+                parsed.azure_web_host().as_deref(),
+                Some(host),
+                "input: {input}"
+            );
+            let info = parsed.repo_info(None).unwrap();
+            assert_eq!(
+                info.provider,
+                GitRepoProvider::AzureDevOps,
+                "input: {input}"
+            );
+            assert_eq!(info.host, host, "input: {input}");
+            assert_eq!(info.owner, owner, "input: {input}");
+            assert_eq!(info.name, "my-repo", "input: {input}");
+            assert_eq!(info.project.as_deref(), Some(project), "input: {input}");
+            assert_eq!(info.url, url, "input: {input}");
+        }
+
+        // An SSH remote without the `v3/{org}/{project}` path names no project.
+        let parsed = GitRemoteUrl::parse("git@ssh.dev.azure.com:myorg/my-repo").unwrap();
+        assert_eq!(parsed.azure_project(), None);
     }
 
     #[test]
