@@ -243,22 +243,44 @@ fn test_copy_ignored_worktreeinclude_directory_pattern_covers_files(mut repo: Te
     );
 }
 
-/// A `.worktreeinclude` pattern naming a path inside a wholly ignored
-/// directory copies that path, which `git ls-files --directory` never lists on
-/// its own. Its sibling stays behind, and a pattern that matches at any depth
-/// (`index.js`) doesn't search an ignored directory git lists whole.
+/// `.worktreeinclude` selects by gitignore rules inside directories
+/// `git ls-files --directory` lists whole: a path named inside an ignored
+/// directory, and a pattern matching at any depth (`.env`), each find their
+/// entry while its siblings stay behind. A negation can't re-include a path
+/// inside a selected directory. An include line naming a directory only
+/// partly ignored (`build/`) selects just its ignored files.
 #[rstest]
 fn test_copy_ignored_worktreeinclude_reaches_inside_ignored_directory(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
     let root = repo.root_path();
-    for dir in [".cache/types/sub", ".cache/other", "node_modules/pkg"] {
+    for dir in [
+        ".cache/types/sub",
+        ".cache/other",
+        "node_modules/pkg",
+        "build",
+    ] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }
-    fs::write(root.join(".cache/types/sub/a.d.ts"), "types").unwrap();
-    fs::write(root.join(".cache/other/b"), "other").unwrap();
-    fs::write(root.join("node_modules/pkg/index.js"), "pkg").unwrap();
-    fs::write(root.join(".gitignore"), ".cache/\nnode_modules/\n").unwrap();
-    fs::write(root.join(".worktreeinclude"), "/.cache/types/\nindex.js\n").unwrap();
+    for (file, contents) in [
+        (".cache/types/sub/a.d.ts", "types"),
+        (".cache/other/b", "other"),
+        ("node_modules/pkg/.env", "pkg secret"),
+        ("node_modules/pkg/index.js", "pkg"),
+        ("build/a.o", "object"),
+        ("build/notes.txt", "notes"),
+    ] {
+        fs::write(root.join(file), contents).unwrap();
+    }
+    fs::write(
+        root.join(".gitignore"),
+        ".cache/\nnode_modules/\nbuild/*.o\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".worktreeinclude"),
+        "/.cache/types/\n!.cache/types/sub/\n.env\nbuild/\n",
+    )
+    .unwrap();
 
     assert_cmd_snapshot!(snapshot_cmd(
         &repo,
@@ -272,8 +294,14 @@ fn test_copy_ignored_worktreeinclude_reaches_inside_ignored_directory(mut repo: 
         fs::read_to_string(feature_path.join(".cache/types/sub/a.d.ts")).unwrap(),
         "types"
     );
+    assert_eq!(
+        fs::read_to_string(feature_path.join("node_modules/pkg/.env")).unwrap(),
+        "pkg secret"
+    );
+    assert!(feature_path.join("build/a.o").exists());
     assert!(!feature_path.join(".cache/other").exists());
-    assert!(!feature_path.join("node_modules").exists());
+    assert!(!feature_path.join("node_modules/pkg/index.js").exists());
+    assert!(!feature_path.join("build/notes.txt").exists());
 }
 
 /// An include pattern reaching inside an ignored directory stops at another
@@ -339,23 +367,6 @@ fn test_copy_ignored_invalid_exclude_pattern(mut repo: TestRepo) {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-}
-
-/// Test error handling when .worktreeinclude has invalid syntax
-#[rstest]
-fn test_copy_ignored_invalid_worktreeinclude(mut repo: TestRepo) {
-    let feature_path = repo.add_worktree("feature");
-
-    // Create invalid .worktreeinclude (unclosed brace in alternate group)
-    fs::write(repo.root_path().join(".worktreeinclude"), "{unclosed\n").unwrap();
-
-    // Should fail with parse error
-    assert_cmd_snapshot!(snapshot_cmd(
-        &repo,
-        "step",
-        &["copy-ignored"],
-        Some(&feature_path),
-    ));
 }
 
 /// Test with .worktreeinclude but nothing ignored

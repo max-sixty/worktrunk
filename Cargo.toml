@@ -246,9 +246,6 @@ urlencoding = "2.1"
 gix-url = "0.40"
 regex = "1.12.3"
 ignore = "0.4"
-# The glob engine behind `ignore`, matched one path component at a time to find
-# which ignored directories a `.worktreeinclude` pattern leads into.
-globset = "0.4"
 reflink-copy = "0.1"
 # Atomic, no-overwrite rename (renameat2 / renamex_np / MoveFileExW) for
 # `--clobber` backups — closes the check-then-rename TOCTOU. Keeps the FFI

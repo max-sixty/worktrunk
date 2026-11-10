@@ -59,7 +59,9 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-[2m○[22m Would copy 1 entry:
+[2m○[22m Would copy 3 entries:
 [107m [0m .cache/types (dir)
+[107m [0m build/a.o (file)
+[107m [0m node_modules/pkg/.env (file)
 
 ----- stderr -----
