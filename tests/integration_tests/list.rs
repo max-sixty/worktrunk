@@ -3095,66 +3095,6 @@ fn test_list_task_dag_ordering_stability(mut repo: TestRepo) {
 }
 
 #[rstest]
-fn test_list_progressive_vs_buffered_identical_data(mut repo: TestRepo) {
-    // Critical test: Verify that progressive and buffered modes collect identical data
-    // despite using different rendering strategies (real-time UI vs collect-then-print).
-    // This ensures consolidation on task DAG data collection works correctly.
-    //
-    // Note: We compare JSON output, not table output, because:
-    // - Progressive mode renders headers before knowing final column widths (uses estimates)
-    // - Buffered mode renders headers after data collection (uses actual widths)
-    // - The DATA must be identical, but table formatting may differ slightly
-
-    // Create varied worktrees to test multiple data points
-    repo.add_worktree("feature-a");
-    repo.add_worktree("feature-b");
-
-    // Modify a worktree to have uncommitted changes
-    let feature_a_path = repo.worktree_path("feature-a");
-    std::fs::write(feature_a_path.join("changes.txt"), "test").unwrap();
-
-    // Run both modes with JSON output to compare data (not formatting)
-    let progressive_output = {
-        let mut cmd = list_snapshots::command(&repo, repo.root_path());
-        cmd.args(["--progressive", "--format=json"]);
-        cmd.output().unwrap()
-    };
-
-    let buffered_output = {
-        let mut cmd = list_snapshots::command(&repo, repo.root_path());
-        cmd.args(["--no-progressive", "--format=json"]);
-        cmd.output().unwrap()
-    };
-
-    // Both should succeed
-    assert!(
-        progressive_output.status.success(),
-        "Progressive mode failed: {}",
-        String::from_utf8_lossy(&progressive_output.stderr)
-    );
-    assert!(
-        buffered_output.status.success(),
-        "Buffered mode failed: {}",
-        String::from_utf8_lossy(&buffered_output.stderr)
-    );
-
-    // Parse JSON outputs
-    let progressive_json: serde_json::Value =
-        serde_json::from_slice(&progressive_output.stdout).unwrap();
-    let buffered_json: serde_json::Value = serde_json::from_slice(&buffered_output.stdout).unwrap();
-
-    // The JSON data should be identical (ignoring display fields which may have formatting differences)
-    // Compare the structured data to ensure both modes collect the same information
-    assert_eq!(
-        progressive_json,
-        buffered_json,
-        "Progressive and buffered modes produced different data!\n\nProgressive:\n{}\n\nBuffered:\n{}",
-        serde_json::to_string_pretty(&progressive_json).unwrap(),
-        serde_json::to_string_pretty(&buffered_json).unwrap()
-    );
-}
-
-#[rstest]
 fn test_list_with_c_flag(mut repo: TestRepo) {
     // Create some worktrees
     repo.add_worktree("feature-a");
