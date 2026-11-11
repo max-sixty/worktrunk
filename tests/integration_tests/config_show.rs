@@ -8,6 +8,7 @@ use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
+use std::path::Path;
 use tempfile::TempDir;
 
 #[rstest]
@@ -679,6 +680,56 @@ pager = "delta --paging=never"
     assert!(
         stdout.contains("npm install"),
         "deprecated post-create key should migrate to post-start and stay active, got: {stdout}"
+    );
+}
+
+/// `wt config update` never rewrites the system config, so a system-config
+/// deprecation points at editing the file instead. A user-config deprecation
+/// in the same run still gets the `wt config update` hint.
+#[rstest]
+fn test_system_config_deprecation_hint_points_at_the_file(repo: TestRepo) {
+    let system_config_dir = worktrunk::testing::tempdir().unwrap();
+    let system_config_path = system_config_dir.path().join("config.toml");
+    fs::write(&system_config_path, "[select]\npager = \"less\"\n").unwrap();
+
+    let run = |user_config: Option<&Path>| {
+        let mut cmd = repo.wt_command();
+        cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path)
+            .env("NO_COLOR", "1");
+        if let Some(path) = user_config {
+            cmd.env("WORKTRUNK_CONFIG_PATH", path);
+        }
+        cmd.args(["hook", "show"]).current_dir(repo.root_path());
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "Command should succeed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    };
+
+    let stderr = run(None);
+    assert!(
+        stderr.contains("System config: [select] is deprecated"),
+        "system config deprecation should warn, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("run wt config update"),
+        "wt config update doesn't rewrite the system config, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("to apply updates, edit"),
+        "system config hint should point at the file, got: {stderr}"
+    );
+
+    let user_config_dir = worktrunk::testing::tempdir().unwrap();
+    let user_config_path = user_config_dir.path().join("config.toml");
+    fs::write(&user_config_path, "[select]\npager = \"less\"\n").unwrap();
+    let stderr = run(Some(&user_config_path));
+    assert!(
+        stderr.contains("to apply updates, edit") && stderr.contains("run wt config update"),
+        "both hints should appear when both files are deprecated, got: {stderr}"
     );
 }
 
