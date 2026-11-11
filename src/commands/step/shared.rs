@@ -124,20 +124,23 @@ pub(super) fn list_and_filter_ignored_entries(
 ) -> anyhow::Result<Vec<(PathBuf, bool)>> {
     let ignored = list_ignored_entries(worktree_path, context, "--exclude-standard")?;
     let include_path = worktree_path.join(".worktreeinclude");
-    let entries = if include_path.exists() {
-        let included =
-            list_ignored_entries(worktree_path, context, "--exclude-from=.worktreeinclude")?;
-        let lines = fs::read_to_string(&include_path).with_context(|| {
-            format!("Failed to read {}", format_path_for_display(&include_path))
-        })?;
-        let searched = |dir: &Path| {
-            relative_entry(dir, worktree_path)
-                .to_slash()
-                .is_some_and(|dir| lines.lines().any(|line| opens(line, &dir)))
-        };
-        overlap(&ignored, &included, searched)
-    } else {
-        ignored
+    let entries = match fs::read_to_string(&include_path) {
+        Ok(lines) => {
+            let included =
+                list_ignored_entries(worktree_path, context, "--exclude-from=.worktreeinclude")?;
+            let searched = |dir: &Path| {
+                relative_entry(dir, worktree_path)
+                    .to_slash()
+                    .is_some_and(|dir| lines.lines().any(|line| opens(line, &dir)))
+            };
+            overlap(&ignored, &included, searched)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => ignored,
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!("Failed to read {}", format_path_for_display(&include_path))
+            });
+        }
     };
     let boundaries = Boundaries::new(worktree_path, worktree_paths, exclude_patterns)?;
     Ok(entries

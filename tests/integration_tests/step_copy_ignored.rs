@@ -371,6 +371,27 @@ fn test_copy_ignored_invalid_exclude_pattern(mut repo: TestRepo) {
     );
 }
 
+/// An unreadable `.worktreeinclude` (here a directory) fails the command rather
+/// than copying as if the file were absent.
+#[rstest]
+fn test_copy_ignored_unreadable_worktreeinclude(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+    fs::create_dir(repo.root_path().join(".worktreeinclude")).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Failed to read"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// Test with .worktreeinclude but nothing ignored
 #[rstest]
 fn test_copy_ignored_empty_intersection(mut repo: TestRepo) {
