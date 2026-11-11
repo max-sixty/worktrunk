@@ -160,6 +160,8 @@ Output as JSON for scripting:
 
 In the headers, [2m@[0m stands for the worktree's own [2mHEAD[0m and [2m^[0m for the default branch, whatever it is named — the same shortcuts [2mwt switch[0m accepts.
 
+Counts too large for their column are shortened, rounded down, and drawn brighter: [2mC[0m is hundreds and [2mK[0m thousands ([2m↑3C[0m is 300–399 commits, [2m+2K[0m is 2,000–2,999 lines), and [2m∞[0m means 10,000 or more. Line counts stay exact up to 999; commit counts up to 99. [2m--format=json[0m carries the exact counts.
+
 The table sizes itself to the terminal. When the columns don't all fit, the least important go first — roughly right to left, since the order above runs from identity to nice-to-have — and the summary footer names them ([2mhidden: Commit, Age, Message[0m). A wider terminal brings them back. To pin a set rather than leave it to the width, name the columns in [2m[list] columns[0m; [2m--format=json[0m carries every field at any width.
 
 [32mGutter[0m

@@ -875,6 +875,8 @@ $ wt list --format=json
 
 In the headers, `@` stands for the worktree's own `HEAD` and `^` for the default branch, whatever it is named — the same shortcuts `wt switch` accepts.
 
+Counts too large for their column are shortened, rounded down, and drawn brighter: `C` is hundreds and `K` thousands (`↑3C` is 300–399 commits, `+2K` is 2,000–2,999 lines), and `∞` means 10,000 or more. Line counts stay exact up to 999; commit counts up to 99. `--format=json` carries the exact counts.
+
 The table sizes itself to the terminal. When the columns don't all fit, the least important go first — roughly right to left, since the order above runs from identity to nice-to-have — and the summary footer names them (`hidden: Commit, Age, Message`). A wider terminal brings them back. To pin a set rather than leave it to the width, name the columns in [`[list] columns`](/config/#list); `--format=json` carries every field at any width.
 
 ### Gutter
