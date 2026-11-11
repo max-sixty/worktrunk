@@ -394,14 +394,6 @@ enum WorktreeDiffState {
     Unknown,
 }
 
-/// Wrapper to implement SkimItem for ListItem.
-///
-/// Progressive updates live inside `rendered` — the picker handler rewrites
-/// the ANSI-colored display string in place as task results arrive. skim 4.x
-/// renders on demand, so the handler pokes an `Event::Render` after each
-/// mutation (see `progressive_handler`); skim then re-reads `display()` and the
-/// new value surfaces — no re-send through the item channel.
-///
 /// Append the PR/MR fields a row filters on — reference (`#123`/`!7`), title,
 /// author — to `text`, space-separated, in the order shared by worktree rows
 /// and listed `--prs` rows. A PR thus filters identically however it's shown,
@@ -433,6 +425,14 @@ pub(super) fn push_pr_search_tokens(
     }
 }
 
+/// Wrapper to implement SkimItem for ListItem.
+///
+/// Progressive updates live inside `rendered` — the picker handler rewrites
+/// the ANSI-colored display string in place as task results arrive. skim 4.x
+/// renders on demand, so the handler pokes an `Event::Render` after each
+/// mutation (see `progressive_handler`); skim then re-reads `display()` and the
+/// new value surfaces — no re-send through the item channel.
+///
 /// The matcher text (`text()`) is assembled live from `search_base` + the
 /// `gutter` glyph + the current `pr_status` slot, so a PR's reference, title,
 /// and author become filterable the moment the CI fetch lands them — the same
@@ -2416,7 +2416,10 @@ mod tests {
             !plain.contains("comments"),
             "inactive label dropped: {plain:?}"
         );
-        assert!(!plain.contains("HEAD"), "inactive label dropped: {plain:?}");
+        assert!(
+            !plain.contains("committed"),
+            "inactive label dropped: {plain:?}"
+        );
         // The compact bar fits a narrow pane where the full bar would not.
         assert!(visual_width(&plain) <= 40, "fits the pane: {plain:?}");
 
@@ -3719,10 +3722,11 @@ mod tests {
         repo.run_command(&["checkout", "feature"]).unwrap();
         let item = item_at(&repo, "feature");
         let output = PickerRow::compute_upstream_diff_preview(&repo, &item, 80);
-        // Diverged path runs the diff; symmetric difference includes both files.
+        // Diverged shows this branch's unique changes (merge-base..head), not
+        // upstream's.
         assert!(
-            output.contains("feat.txt") || output.contains("upstream.txt"),
-            "expected diverged diff, got: {output:?}"
+            output.contains("feat.txt") && !output.contains("upstream.txt"),
+            "expected the branch's side of the diverged diff, got: {output:?}"
         );
     }
 
