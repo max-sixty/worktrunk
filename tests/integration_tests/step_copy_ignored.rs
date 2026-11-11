@@ -306,6 +306,36 @@ fn test_copy_ignored_worktreeinclude_reaches_inside_ignored_directory(mut repo: 
     assert!(!feature_path.join("build/notes.txt").exists());
 }
 
+/// A glob line naming a path in each package searches only the ignored
+/// directories it matches inside: `packages/foo/.cache/` is searched, but
+/// `.env` still finds nothing in `packages/foo/node_modules/` beside it.
+#[rstest]
+fn test_copy_ignored_worktreeinclude_glob_line_searches_only_its_directory(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+    let root = repo.root_path();
+    for dir in ["packages/foo/.cache/types", "packages/foo/node_modules/pkg"] {
+        fs::create_dir_all(root.join(dir)).unwrap();
+    }
+    fs::write(root.join("packages/foo/.cache/types/a.d.ts"), "types").unwrap();
+    fs::write(root.join("packages/foo/node_modules/pkg/.env"), "pkg").unwrap();
+    fs::write(root.join(".env"), "root").unwrap();
+    fs::write(root.join(".gitignore"), ".cache/\nnode_modules/\n.env\n").unwrap();
+    fs::write(
+        root.join(".worktreeinclude"),
+        "packages/*/.cache/types/\n.env\n",
+    )
+    .unwrap();
+
+    run_copy_ignored(&repo, &feature_path);
+    assert!(
+        feature_path
+            .join("packages/foo/.cache/types/a.d.ts")
+            .exists()
+    );
+    assert!(feature_path.join(".env").exists());
+    assert!(!feature_path.join("packages/foo/node_modules").exists());
+}
+
 /// An include pattern reaching inside an ignored directory stops at another
 /// worktree checked out there: its files belong to that worktree.
 #[rstest]

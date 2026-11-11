@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use ignore::gitignore::GitignoreBuilder;
-use path_slash::PathExt as _;
 use worktrunk::config::CopyIgnoredConfig;
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
@@ -110,30 +109,42 @@ pub(super) fn resolve_copy_ignored_config(repo: &Repository) -> anyhow::Result<C
 /// repository: a path inside one belongs to that repository.
 ///
 /// As in Claude Code, which defines `.worktreeinclude`, a directory git lists
-/// whole is searched only when an include line names a path inside it. So
-/// `.env` copies the root `.env` and every `.env` git lists on its own, but no
-/// `.env` that a package left inside `node_modules/`. The second listing still
-/// walks every untracked directory, about 0.3 s per 100k ignored files with a
-/// warm cache. [`Boundaries`] then drops configured excludes, built-in VCS and
-/// tool-state directories, and other worktrees.
+/// whole is searched only when a line that names a path ([`names_path`])
+/// reaches inside it; a third listing of just those lines says where they
+/// match. So `.env` copies the root `.env` and every `.env` git lists on its
+/// own, but no `.env` that a package left inside `node_modules/`, even beside a
+/// `packages/*/.cache/types/` line that searches `packages/foo/.cache/`. Each
+/// include listing walks every untracked directory, about 0.3 s per 100k
+/// ignored files with a warm cache. [`Boundaries`] then drops configured
+/// excludes, built-in VCS and tool-state directories, and other worktrees.
 pub(super) fn list_and_filter_ignored_entries(
     worktree_path: &Path,
     context: &str,
     worktree_paths: &[PathBuf],
     exclude_patterns: &[String],
 ) -> anyhow::Result<Vec<(PathBuf, bool)>> {
-    let ignored = list_ignored_entries(worktree_path, context, "--exclude-standard")?;
+    let ignored = list_ignored_entries(worktree_path, context, &["--exclude-standard"])?;
     let include_path = worktree_path.join(".worktreeinclude");
     let entries = match fs::read_to_string(&include_path) {
         Ok(lines) => {
             let included =
-                list_ignored_entries(worktree_path, context, "--exclude-from=.worktreeinclude")?;
-            let searched = |dir: &Path| {
-                relative_entry(dir, worktree_path)
-                    .to_slash()
-                    .is_some_and(|dir| lines.lines().any(|line| opens(line, &dir)))
+                list_ignored_entries(worktree_path, context, &["--exclude-from=.worktreeinclude"])?;
+            let naming: Vec<String> = lines
+                .lines()
+                .filter(|line| names_path(line))
+                .map(|line| format!("--exclude={line}"))
+                .collect();
+            let named = if naming.is_empty() {
+                Vec::new()
+            } else {
+                let naming: Vec<&str> = naming.iter().map(String::as_str).collect();
+                list_ignored_entries(worktree_path, context, &naming)?
             };
-            overlap(&ignored, &included, searched)
+            let searched: HashSet<&Path> = leaves(&named)
+                .into_iter()
+                .flat_map(|(path, _)| path.ancestors().skip(1))
+                .collect();
+            overlap(&ignored, &included, |dir| searched.contains(dir))
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => ignored,
         Err(error) => {
@@ -149,42 +160,19 @@ pub(super) fn list_and_filter_ignored_entries(
         .collect())
 }
 
-/// Whether an include line opens `dir`, a directory git lists whole (relative,
-/// without a trailing slash), by Claude Code's rule: the line, less a leading
-/// `/`, starts inside `dir`; or its text before the first wildcard is a prefix
-/// of `dir`; or, after leading `**/`, its first component is one of `dir`'s
-/// components, compared without case (a prefix of one, if it has a wildcard).
-fn opens(line: &str, dir: &str) -> bool {
-    let wildcard = |text: &str| text.find(['*', '?', '[']);
+/// Whether an include line names a path rather than a name to match at any
+/// depth: once a leading `/` and any leading `**/` are dropped, a slash comes
+/// before its end. `.cache/types/` and `**/.cache/types/` name paths; `.env`,
+/// `**/.env` and `node_modules/` don't.
+fn names_path(line: &str) -> bool {
     if line.starts_with(['#', '!']) {
         return false;
     }
-    let line = line.strip_prefix('/').unwrap_or(line);
-    if line.starts_with(&format!("{dir}/"))
-        || wildcard(line).is_some_and(|at| at > 0 && dir.starts_with(&line[..at]))
-    {
-        return true;
-    }
-    let mut rest = line;
+    let mut rest = line.strip_prefix('/').unwrap_or(line);
     while let Some(after) = rest.strip_prefix("**/") {
         rest = after;
     }
-    if rest.len() == line.len() {
-        return false;
-    }
-    let first = rest.split('/').next().unwrap_or_default();
-    let glob = wildcard(first);
-    let literal = first[..glob.unwrap_or(first.len())]
-        .replace('\\', "")
-        .to_lowercase();
-    !literal.is_empty()
-        && dir
-            .split('/')
-            .map(str::to_lowercase)
-            .any(|component| match glob {
-                Some(_) => component.starts_with(&literal),
-                None => component == literal,
-            })
+    rest.trim_end_matches('/').contains('/')
 }
 
 /// The entries two git listings both cover: for each pair where one entry is
@@ -317,10 +305,11 @@ fn relative_entry<'a>(path: &'a Path, worktree_path: &Path) -> &'a Path {
 
 /// List untracked entries that an exclude source ignores, using git ls-files
 ///
-/// Runs `git ls-files -z --ignored <exclude_source> -o --directory`, where
-/// `exclude_source` is `--exclude-standard` (global excludes, `.gitignore` files
-/// and `.git/info/exclude`) or `--exclude-from=<file>`. `--directory` lists a
-/// wholly ignored directory as one entry rather than every file inside it.
+/// Runs `git ls-files -z --ignored <excludes> -o --directory`, where `excludes`
+/// is `--exclude-standard` (global excludes, `.gitignore` files and
+/// `.git/info/exclude`), `--exclude-from=<file>`, or `--exclude=<pattern>`
+/// lines. `--directory` lists a wholly ignored directory as one entry rather
+/// than every file inside it.
 ///
 /// `-z` NUL-terminates the entries and, crucially, disables path quoting. Without
 /// it, `core.quotePath` (git's default) renders a non-ASCII name like
@@ -331,18 +320,15 @@ fn relative_entry<'a>(path: &'a Path, worktree_path: &Path) -> &'a Path {
 fn list_ignored_entries(
     worktree_path: &Path,
     context: &str,
-    exclude_source: &str,
+    excludes: &[&str],
 ) -> anyhow::Result<Vec<(std::path::PathBuf, bool)>> {
-    let args = [
-        "ls-files",
-        "-z",
-        "--ignored",
-        exclude_source,
-        "-o",
-        "--directory",
-    ];
+    let args: Vec<&str> = ["ls-files", "-z", "--ignored"]
+        .into_iter()
+        .chain(excludes.iter().copied())
+        .chain(["-o", "--directory"])
+        .collect();
     let output = Cmd::new("git")
-        .args(args)
+        .args(&args)
         .current_dir(worktree_path)
         .context(context)
         .scrub_git_discovery_env()
@@ -395,7 +381,7 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         std::fs::write(test.root_path().join(".git/config"), "[bad\n").unwrap();
 
-        let err = super::list_ignored_entries(test.root_path(), "test", "--exclude-standard")
+        let err = super::list_ignored_entries(test.root_path(), "test", &["--exclude-standard"])
             .unwrap_err();
         let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
         assert!(cmd_err.command_string().starts_with("git ls-files"));
@@ -424,7 +410,7 @@ mod tests {
         let ignored_path = root.join("data").join(ignored_name);
         std::fs::write(&ignored_path, "x").unwrap();
 
-        let entries = super::list_ignored_entries(root, "test", "--exclude-standard").unwrap();
+        let entries = super::list_ignored_entries(root, "test", &["--exclude-standard"]).unwrap();
         let (path, is_dir) = entries
             .iter()
             .find(|(path, _)| path.file_name().and_then(|n| n.to_str()) == Some(ignored_name))
@@ -436,34 +422,25 @@ mod tests {
         );
     }
 
-    /// Claude Code's rule for opening a directory git lists whole: a line
-    /// naming a path inside it opens it, literally, through a glob after a
-    /// literal prefix, or after `**/` by a matching component. A line matching
-    /// at any depth, a comment and a negation open nothing.
+    /// A line names a path when a slash comes before its end past any leading
+    /// `/` or `**/`; a name matched at any depth, a comment and a negation
+    /// don't.
     #[test]
-    fn include_line_opens_directory() {
+    fn include_line_names_path() {
         let cases = [
-            (".cache/types/", ".cache", true),
-            ("/.cache/types/", ".cache", true),
-            ("packages/*/.cache/types/", "packages/foo/.cache", true),
-            ("**/.cache/types/", "packages/foo/.cache", true),
-            ("**/.CACHE/types/", "packages/foo/.cache", true),
-            ("**/.ca*/types/", "packages/foo/.cache", true),
-            (".cache/types/", ".cachefoo", false),
-            ("packages/*/.cache/types/", "node_modules", false),
-            ("**/.cache/types/", "node_modules", false),
-            ("**/.env", "node_modules", false),
-            (".env", "node_modules", false),
-            ("*.local", "node_modules", false),
-            ("# .cache/types/", ".cache", false),
-            ("!.cache/types/", ".cache", false),
+            (".cache/types/", true),
+            ("/.cache/types", true),
+            ("packages/*/.cache/types/", true),
+            ("**/.cache/types/", true),
+            (".env", false),
+            ("/.env", false),
+            ("**/.env", false),
+            ("node_modules/", false),
+            ("# .cache/types/", false),
+            ("!.cache/types/", false),
         ];
-        for (line, dir, expected) in cases {
-            assert_eq!(
-                super::opens(line, dir),
-                expected,
-                "{line:?} opening {dir:?}"
-            );
+        for (line, expected) in cases {
+            assert_eq!(super::names_path(line), expected, "{line:?}");
         }
     }
 }
