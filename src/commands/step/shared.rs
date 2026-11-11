@@ -133,13 +133,7 @@ pub(super) fn list_and_filter_ignored_entries(
         let searched = |dir: &Path| {
             relative_entry(dir, worktree_path)
                 .to_slash()
-                .is_some_and(|dir| {
-                    let dir = format!("{dir}/");
-                    lines.lines().any(|line| {
-                        !line.starts_with(['#', '!'])
-                            && line.strip_prefix('/').unwrap_or(line).starts_with(&dir)
-                    })
-                })
+                .is_some_and(|dir| lines.lines().any(|line| opens(line, &dir)))
         };
         overlap(&ignored, &included, searched)
     } else {
@@ -150,6 +144,44 @@ pub(super) fn list_and_filter_ignored_entries(
         .into_iter()
         .filter(|(path, is_dir)| !boundaries.excludes(path, *is_dir))
         .collect())
+}
+
+/// Whether an include line opens `dir`, a directory git lists whole (relative,
+/// without a trailing slash), by Claude Code's rule: the line, less a leading
+/// `/`, starts inside `dir`; or its text before the first wildcard is a prefix
+/// of `dir`; or, after leading `**/`, its first component is one of `dir`'s
+/// components, compared without case (a prefix of one, if it has a wildcard).
+fn opens(line: &str, dir: &str) -> bool {
+    let wildcard = |text: &str| text.find(['*', '?', '[']);
+    if line.starts_with(['#', '!']) {
+        return false;
+    }
+    let line = line.strip_prefix('/').unwrap_or(line);
+    if line.starts_with(&format!("{dir}/"))
+        || wildcard(line).is_some_and(|at| at > 0 && dir.starts_with(&line[..at]))
+    {
+        return true;
+    }
+    let mut rest = line;
+    while let Some(after) = rest.strip_prefix("**/") {
+        rest = after;
+    }
+    if rest.len() == line.len() {
+        return false;
+    }
+    let first = rest.split('/').next().unwrap_or_default();
+    let glob = wildcard(first);
+    let literal = first[..glob.unwrap_or(first.len())]
+        .replace('\\', "")
+        .to_lowercase();
+    !literal.is_empty()
+        && dir
+            .split('/')
+            .map(str::to_lowercase)
+            .any(|component| match glob {
+                Some(_) => component.starts_with(&literal),
+                None => component == literal,
+            })
 }
 
 /// The entries two git listings both cover: for each pair where one entry is
@@ -399,5 +431,36 @@ mod tests {
             path.exists(),
             "discovered path does not exist on disk: {path:?}"
         );
+    }
+
+    /// Claude Code's rule for opening a directory git lists whole: a line
+    /// naming a path inside it opens it, literally, through a glob after a
+    /// literal prefix, or after `**/` by a matching component. A line matching
+    /// at any depth, a comment and a negation open nothing.
+    #[test]
+    fn include_line_opens_directory() {
+        let cases = [
+            (".cache/types/", ".cache", true),
+            ("/.cache/types/", ".cache", true),
+            ("packages/*/.cache/types/", "packages/foo/.cache", true),
+            ("**/.cache/types/", "packages/foo/.cache", true),
+            ("**/.CACHE/types/", "packages/foo/.cache", true),
+            ("**/.ca*/types/", "packages/foo/.cache", true),
+            (".cache/types/", ".cachefoo", false),
+            ("packages/*/.cache/types/", "node_modules", false),
+            ("**/.cache/types/", "node_modules", false),
+            ("**/.env", "node_modules", false),
+            (".env", "node_modules", false),
+            ("*.local", "node_modules", false),
+            ("# .cache/types/", ".cache", false),
+            ("!.cache/types/", ".cache", false),
+        ];
+        for (line, dir, expected) in cases {
+            assert_eq!(
+                super::opens(line, dir),
+                expected,
+                "{line:?} opening {dir:?}"
+            );
+        }
     }
 }
