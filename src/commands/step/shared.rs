@@ -132,13 +132,22 @@ pub(super) fn list_and_filter_ignored_entries(
             let included =
                 list_ignored_entries(worktree_path, context, &["--exclude-from=.worktreeinclude"])?;
             let named = if lines.lines().any(names_path) {
-                let naming: Vec<String> = lines
+                // A file, not `--exclude=` arguments, so git reads these lines
+                // exactly as it reads `.worktreeinclude`.
+                let naming: String = lines
                     .lines()
                     .filter(|line| names_path(line) || line.starts_with('!'))
-                    .map(|line| format!("--exclude={line}"))
+                    .map(|line| format!("{line}\n"))
                     .collect();
-                let naming: Vec<&str> = naming.iter().map(String::as_str).collect();
-                list_ignored_entries(worktree_path, context, &naming)?
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "production code; the disallowed-methods rule targets the test suite (#4692)"
+                )]
+                let dir = tempfile::tempdir().context("Failed to create a temporary directory")?;
+                let naming_path = dir.path().join("worktreeinclude");
+                fs::write(&naming_path, naming).context("Failed to write include lines")?;
+                let exclude_from = format!("--exclude-from={}", naming_path.display());
+                list_ignored_entries(worktree_path, context, &[&exclude_from])?
             } else {
                 Vec::new()
             };
@@ -159,10 +168,11 @@ pub(super) fn list_and_filter_ignored_entries(
 }
 
 /// Whether an include line names a path rather than a name to match at any
-/// depth: once a leading `/` and any leading `**/` are dropped, a slash comes
-/// before its end. `.cache/types/` and `**/.cache/types/` name paths; `.env`,
-/// `**/.env` and `node_modules/` don't.
+/// depth: once trailing whitespace, a leading `/` and any leading `**/` are
+/// dropped, a slash comes before its end. `.cache/types/` and
+/// `**/.cache/types/` name paths; `.env`, `**/.env` and `node_modules/` don't.
 fn names_path(line: &str) -> bool {
+    let line = line.trim_end();
     if line.starts_with(['#', '!']) {
         return false;
     }
@@ -173,32 +183,33 @@ fn names_path(line: &str) -> bool {
     rest.trim_end_matches('/').contains('/')
 }
 
-/// The ignored entries the include file selects, in git's byte order: an entry
-/// both listings name, an ignored entry inside a directory the include listing
-/// names, and what the path-naming lines (`named`) match inside a directory git
-/// lists whole, unless the include listing already covers it.
+/// The ignored entries the include file selects, in git's byte order. The
+/// include listing selects where it isn't inside a directory git lists whole:
+/// an entry both listings name, and an ignored entry inside a directory it
+/// names. Inside a directory git lists whole, what the path-naming lines
+/// (`named`) match is selected, unless a selected directory already holds it.
 fn overlap(
     ignored: &[(PathBuf, bool)],
     included: &[(PathBuf, bool)],
     named: &[(PathBuf, bool)],
 ) -> Vec<(PathBuf, bool)> {
     let (ignored, included, named) = (leaves(ignored), leaves(included), leaves(named));
-    let ignored_paths: HashSet<&Path> = ignored.iter().map(|(path, _)| path.as_path()).collect();
-    let included_paths: HashSet<&Path> = included.iter().map(|(path, _)| path.as_path()).collect();
     let inside =
         |path: &Path, set: &HashSet<&Path>| path.ancestors().skip(1).any(|dir| set.contains(dir));
+    let ignored_paths: HashSet<&Path> = ignored.iter().map(|(path, _)| path.as_path()).collect();
+    let selecting: HashSet<&Path> = included
+        .iter()
+        .map(|(path, _)| path.as_path())
+        .filter(|path| !inside(path, &ignored_paths))
+        .collect();
     let mut entries: Vec<(PathBuf, bool)> = included
         .iter()
         .filter(|(path, _)| ignored_paths.contains(path.as_path()))
-        .chain(
-            ignored
-                .iter()
-                .filter(|(path, _)| inside(path, &included_paths)),
-        )
+        .chain(ignored.iter().filter(|(path, _)| inside(path, &selecting)))
         .chain(
             named
                 .iter()
-                .filter(|(path, _)| inside(path, &ignored_paths) && !inside(path, &included_paths)),
+                .filter(|(path, _)| inside(path, &ignored_paths) && !inside(path, &selecting)),
         )
         .map(|entry| (*entry).clone())
         .collect();
@@ -442,21 +453,29 @@ mod tests {
         }
     }
 
-    /// A path-naming match inside a directory git lists whole is dropped when
-    /// a directory around it is already selected, so no selected entry nests
-    /// inside another: `foo/` selecting the untracked `packages/foo/` carries
-    /// the ignored `packages/foo/.cache/`, and `packages/foo/.cache/types/`
-    /// adds nothing.
+    /// A path-naming match inside a directory git lists whole is dropped only
+    /// when a selected directory already holds it. `foo/` selecting the
+    /// untracked `packages/foo/` carries the ignored `packages/foo/.cache/`, so
+    /// `packages/foo/.cache/types/` adds nothing; but `foo/` matching
+    /// `node_modules/foo/` selects nothing inside the ignored `node_modules/`,
+    /// so `node_modules/foo/types/` still counts.
     #[test]
-    fn overlap_selects_no_nested_entries() {
-        let entries = |paths: &[&str]| -> Vec<(std::path::PathBuf, bool)> {
-            paths.iter().map(|path| (path.into(), true)).collect()
+    fn overlap_drops_only_entries_a_selection_holds() {
+        let entries = |path: &str| vec![(std::path::PathBuf::from(path), true)];
+        let selected = |ignored, included, named| {
+            super::overlap(&entries(ignored), &entries(included), &entries(named))
         };
-        let selected = super::overlap(
-            &entries(&["packages/foo/.cache"]),
-            &entries(&["packages/foo"]),
-            &entries(&["packages/foo/.cache/types"]),
+        assert_eq!(
+            selected(
+                "packages/foo/.cache",
+                "packages/foo",
+                "packages/foo/.cache/types"
+            ),
+            entries("packages/foo/.cache")
         );
-        assert_eq!(selected, entries(&["packages/foo/.cache"]));
+        assert_eq!(
+            selected("node_modules", "node_modules/foo", "node_modules/foo/types"),
+            entries("node_modules/foo/types")
+        );
     }
 }
