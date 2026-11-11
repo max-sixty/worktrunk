@@ -59,8 +59,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-[2m○[22m Would copy 3 entries:
-[107m [0m .cache/other/.env (file)
+[2m○[22m Would copy 2 entries:
 [107m [0m .cache/types (dir)
 [107m [0m build/a.o (file)
 

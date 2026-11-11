@@ -243,13 +243,11 @@ fn test_copy_ignored_worktreeinclude_directory_pattern_covers_files(mut repo: Te
     );
 }
 
-/// `.worktreeinclude` selects by gitignore rules inside a directory
-/// `git ls-files --directory` lists whole once a line names a path inside it,
-/// as Claude Code does: `/.cache/types/` finds its entry and opens `.cache/`,
-/// where `.env` then applies too, while `.env` alone never opens
-/// `node_modules/`. A negation can't re-include a path inside a selected
-/// directory. An include line naming a directory only partly ignored
-/// (`build/`) selects just its ignored files.
+/// Inside a directory `git ls-files --directory` lists whole, only a line that
+/// names a path selects: `/.cache/types/` finds its entry, while `.env`
+/// selects neither `.cache/other/.env` nor `node_modules/pkg/.env`. A negation
+/// can't re-include a path inside a selected directory. An include line naming
+/// a directory only partly ignored (`build/`) selects just its ignored files.
 #[rstest]
 fn test_copy_ignored_worktreeinclude_reaches_inside_ignored_directory(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
@@ -296,44 +294,49 @@ fn test_copy_ignored_worktreeinclude_reaches_inside_ignored_directory(mut repo: 
         fs::read_to_string(feature_path.join(".cache/types/sub/a.d.ts")).unwrap(),
         "types"
     );
-    assert_eq!(
-        fs::read_to_string(feature_path.join(".cache/other/.env")).unwrap(),
-        "cache secret"
-    );
     assert!(feature_path.join("build/a.o").exists());
-    assert!(!feature_path.join(".cache/other/b").exists());
+    assert!(!feature_path.join(".cache/other").exists());
     assert!(!feature_path.join("node_modules").exists());
     assert!(!feature_path.join("build/notes.txt").exists());
 }
 
-/// A glob line naming a path in each package searches only the ignored
-/// directories it matches inside: `packages/foo/.cache/` is searched, but
-/// `.env` still finds nothing in `packages/foo/node_modules/` beside it.
+/// Glob and `**/` lines that name a path select what they match inside
+/// ignored directories, in a monorepo package and under `node_modules/` alike,
+/// and leave `.env` matching only outside them: no package `.env` comes along
+/// from beside a match.
 #[rstest]
-fn test_copy_ignored_worktreeinclude_glob_line_searches_only_its_directory(mut repo: TestRepo) {
+fn test_copy_ignored_worktreeinclude_glob_line_selects_only_its_match(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
     let root = repo.root_path();
-    for dir in ["packages/foo/.cache/types", "packages/foo/node_modules/pkg"] {
-        fs::create_dir_all(root.join(dir)).unwrap();
+    for (file, contents) in [
+        ("packages/foo/.cache/types/a.d.ts", "types"),
+        ("packages/foo/node_modules/pkg/.env", "pkg"),
+        ("node_modules/x/.cache/types/b.d.ts", "types"),
+        ("node_modules/y/.env", "pkg"),
+        (".env", "root"),
+    ] {
+        let path = root.join(file);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
     }
-    fs::write(root.join("packages/foo/.cache/types/a.d.ts"), "types").unwrap();
-    fs::write(root.join("packages/foo/node_modules/pkg/.env"), "pkg").unwrap();
-    fs::write(root.join(".env"), "root").unwrap();
     fs::write(root.join(".gitignore"), ".cache/\nnode_modules/\n.env\n").unwrap();
     fs::write(
         root.join(".worktreeinclude"),
-        "packages/*/.cache/types/\n.env\n",
+        "packages/*/.cache/types/\n**/.cache/types/\n.env\n",
     )
     .unwrap();
 
     run_copy_ignored(&repo, &feature_path);
-    assert!(
-        feature_path
-            .join("packages/foo/.cache/types/a.d.ts")
-            .exists()
-    );
-    assert!(feature_path.join(".env").exists());
-    assert!(!feature_path.join("packages/foo/node_modules").exists());
+    for copied in [
+        "packages/foo/.cache/types/a.d.ts",
+        "node_modules/x/.cache/types/b.d.ts",
+        ".env",
+    ] {
+        assert!(feature_path.join(copied).exists(), "{copied} not copied");
+    }
+    for left in ["packages/foo/node_modules", "node_modules/y"] {
+        assert!(!feature_path.join(left).exists(), "{left} copied");
+    }
 }
 
 /// An include pattern reaching inside an ignored directory stops at another
