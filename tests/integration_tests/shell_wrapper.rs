@@ -776,6 +776,38 @@ mod unix_tests {
     use crate::common::repo;
     use rstest::rstest;
 
+    /// A CD directive is a raw path, including any trailing newlines.
+    #[rstest]
+    #[case("bash")]
+    #[case("zsh")]
+    fn wrapper_switch_preserves_worktree_path(mut repo: TestRepo, #[case] shell: &str) {
+        let parent = repo.root_path().parent().unwrap().to_path_buf();
+        let ordinary = parent.join("ordinary worktree");
+        let prefix = parent.join("目录 worktree");
+        let special = parent.join("目录 worktree\n\n");
+        fs::create_dir(&prefix).unwrap();
+        repo.add_worktree_at_path("ordinary", &ordinary);
+        repo.add_worktree_at_path("special", &special);
+
+        let script = format!(
+            "{}\nwt switch \"$WORKTRUNK_TEST_BRANCH\" || exit $?\n[[ \"$PWD\" == \"$WORKTRUNK_TEST_TARGET\" ]]\n",
+            generate_wrapper(&repo, shell)
+        );
+        for (branch, target) in [("ordinary", ordinary), ("special", special)] {
+            let mut command = Command::new(shell);
+            repo.configure_wt_cmd(&mut command);
+            let output = command
+                .args(["-c", &script])
+                .current_dir(repo.root_path())
+                .env("WORKTRUNK_BIN", wt_bin())
+                .env("WORKTRUNK_TEST_BRANCH", branch)
+                .env("WORKTRUNK_TEST_TARGET", canonicalize(&target).unwrap())
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{shell} {branch}: {output:?}");
+        }
+    }
+
     /// Errexit must wait for cleanup, and a failed CD must retain child failure.
     #[rstest]
     #[case("bash", "/bin/bash")]
