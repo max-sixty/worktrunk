@@ -131,6 +131,8 @@ pub(super) fn list_and_filter_ignored_entries(
         Ok(lines) => {
             let included =
                 list_ignored_entries(worktree_path, context, &["--exclude-from=.worktreeinclude"])?;
+            // Git skips a leading byte-order mark, so the first line is read without it.
+            let lines = lines.strip_prefix('\u{feff}').unwrap_or(&lines);
             let named = if lines.lines().any(names_path) {
                 // A file, not `--exclude=` arguments, so git reads these lines
                 // exactly as it reads `.worktreeinclude`.
