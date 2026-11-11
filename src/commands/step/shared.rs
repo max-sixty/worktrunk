@@ -6,12 +6,15 @@
 
 use std::collections::HashSet;
 use std::ffi::OsStr;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use ignore::gitignore::GitignoreBuilder;
+use path_slash::PathExt as _;
 use worktrunk::config::CopyIgnoredConfig;
 use worktrunk::git::Repository;
+use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{format_bash_with_gutter, format_heading, format_with_gutter};
 
@@ -100,17 +103,19 @@ pub(super) fn resolve_copy_ignored_config(repo: &Repository) -> anyhow::Result<C
 /// Git decides both what is ignored and what `.worktreeinclude` selects:
 /// [`list_ignored_entries`] runs once with git's standard exclude sources and,
 /// when the include file exists, once more with that file as the only source,
-/// and [`overlap`] keeps what both listings cover. Git applies gitignore rules
-/// in full, so a pattern that matches at any depth (`.env`) also finds a path
-/// inside an ignored `node_modules/`, a pattern naming a path inside a wholly
-/// ignored directory (`.cache/types/`) finds it, and a negation can't
-/// re-include a path inside a selected directory. Like every git listing, both
-/// stop at a nested repository: a path inside one belongs to that repository,
-/// so no include line reaches it. Worktrunk parses no include pattern itself.
-/// The second listing walks every untracked directory, about
-/// 0.3 s per 100k ignored files with a warm cache. [`Boundaries`] then drops
-/// configured excludes, built-in VCS and tool-state directories, and other
-/// worktrees.
+/// and [`overlap`] keeps what both listings cover. Git applies gitignore rules,
+/// so a pattern naming a path inside a wholly ignored directory
+/// (`.cache/types/`) finds it, and a negation can't re-include a path inside a
+/// selected directory. Like every git listing, both stop at a nested
+/// repository: a path inside one belongs to that repository.
+///
+/// As in Claude Code, which defines `.worktreeinclude`, a directory git lists
+/// whole is searched only when an include line names a path inside it. So
+/// `.env` copies the root `.env` and every `.env` git lists on its own, but no
+/// `.env` that a package left inside `node_modules/`. The second listing still
+/// walks every untracked directory, about 0.3 s per 100k ignored files with a
+/// warm cache. [`Boundaries`] then drops configured excludes, built-in VCS and
+/// tool-state directories, and other worktrees.
 pub(super) fn list_and_filter_ignored_entries(
     worktree_path: &Path,
     context: &str,
@@ -118,10 +123,25 @@ pub(super) fn list_and_filter_ignored_entries(
     exclude_patterns: &[String],
 ) -> anyhow::Result<Vec<(PathBuf, bool)>> {
     let ignored = list_ignored_entries(worktree_path, context, "--exclude-standard")?;
-    let entries = if worktree_path.join(".worktreeinclude").exists() {
+    let include_path = worktree_path.join(".worktreeinclude");
+    let entries = if include_path.exists() {
         let included =
             list_ignored_entries(worktree_path, context, "--exclude-from=.worktreeinclude")?;
-        overlap(&ignored, &included)
+        let lines = fs::read_to_string(&include_path).with_context(|| {
+            format!("Failed to read {}", format_path_for_display(&include_path))
+        })?;
+        let searched = |dir: &Path| {
+            relative_entry(dir, worktree_path)
+                .to_slash()
+                .is_some_and(|dir| {
+                    let dir = format!("{dir}/");
+                    lines.lines().any(|line| {
+                        !line.starts_with(['#', '!'])
+                            && line.strip_prefix('/').unwrap_or(line).starts_with(&dir)
+                    })
+                })
+        };
+        overlap(&ignored, &included, searched)
     } else {
         ignored
     };
@@ -135,15 +155,27 @@ pub(super) fn list_and_filter_ignored_entries(
 /// The entries two git listings both cover: for each pair where one entry is
 /// or holds the other, the deeper one, in git's byte order. Git lists a wholly
 /// excluded directory as one entry, so a path one listing names inside a
-/// directory the other lists whole is covered by both.
-fn overlap(ignored: &[(PathBuf, bool)], included: &[(PathBuf, bool)]) -> Vec<(PathBuf, bool)> {
+/// directory the other lists whole is covered by both, where `searched` says
+/// that ignored directory is searched.
+fn overlap(
+    ignored: &[(PathBuf, bool)],
+    included: &[(PathBuf, bool)],
+    searched: impl Fn(&Path) -> bool,
+) -> Vec<(PathBuf, bool)> {
     let (ignored, included) = (leaves(ignored), leaves(included));
     let ignored_paths: HashSet<&Path> = ignored.iter().map(|(path, _)| path.as_path()).collect();
     let included_paths: HashSet<&Path> = included.iter().map(|(path, _)| path.as_path()).collect();
     let within = |path: &Path, set: &HashSet<&Path>| path.ancestors().any(|a| set.contains(a));
     let mut entries: Vec<(PathBuf, bool)> = included
         .iter()
-        .filter(|(path, _)| within(path, &ignored_paths))
+        .filter(|(path, _)| {
+            ignored_paths.contains(path.as_path())
+                || path
+                    .ancestors()
+                    .skip(1)
+                    .find(|dir| ignored_paths.contains(dir))
+                    .is_some_and(&searched)
+        })
         .chain(ignored.iter().filter(|(path, _)| {
             !included_paths.contains(path.as_path()) && within(path, &included_paths)
         }))

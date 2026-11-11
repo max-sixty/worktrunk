@@ -243,12 +243,13 @@ fn test_copy_ignored_worktreeinclude_directory_pattern_covers_files(mut repo: Te
     );
 }
 
-/// `.worktreeinclude` selects by gitignore rules inside directories
-/// `git ls-files --directory` lists whole: a path named inside an ignored
-/// directory, and a pattern matching at any depth (`.env`), each find their
-/// entry while its siblings stay behind. A negation can't re-include a path
-/// inside a selected directory. An include line naming a directory only
-/// partly ignored (`build/`) selects just its ignored files.
+/// `.worktreeinclude` selects by gitignore rules inside a directory
+/// `git ls-files --directory` lists whole once a line names a path inside it,
+/// as Claude Code does: `/.cache/types/` finds its entry and opens `.cache/`,
+/// where `.env` then applies too, while `.env` alone never opens
+/// `node_modules/`. A negation can't re-include a path inside a selected
+/// directory. An include line naming a directory only partly ignored
+/// (`build/`) selects just its ignored files.
 #[rstest]
 fn test_copy_ignored_worktreeinclude_reaches_inside_ignored_directory(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
@@ -264,6 +265,7 @@ fn test_copy_ignored_worktreeinclude_reaches_inside_ignored_directory(mut repo: 
     for (file, contents) in [
         (".cache/types/sub/a.d.ts", "types"),
         (".cache/other/b", "other"),
+        (".cache/other/.env", "cache secret"),
         ("node_modules/pkg/.env", "pkg secret"),
         ("node_modules/pkg/index.js", "pkg"),
         ("build/a.o", "object"),
@@ -295,12 +297,12 @@ fn test_copy_ignored_worktreeinclude_reaches_inside_ignored_directory(mut repo: 
         "types"
     );
     assert_eq!(
-        fs::read_to_string(feature_path.join("node_modules/pkg/.env")).unwrap(),
-        "pkg secret"
+        fs::read_to_string(feature_path.join(".cache/other/.env")).unwrap(),
+        "cache secret"
     );
     assert!(feature_path.join("build/a.o").exists());
-    assert!(!feature_path.join(".cache/other").exists());
-    assert!(!feature_path.join("node_modules/pkg/index.js").exists());
+    assert!(!feature_path.join(".cache/other/b").exists());
+    assert!(!feature_path.join("node_modules").exists());
     assert!(!feature_path.join("build/notes.txt").exists());
 }
 
