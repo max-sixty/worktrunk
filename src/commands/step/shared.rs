@@ -175,8 +175,8 @@ fn names_path(line: &str) -> bool {
 
 /// The ignored entries the include file selects, in git's byte order: an entry
 /// both listings name, an ignored entry inside a directory the include listing
-/// names, and, inside a directory git lists whole that the include file
-/// doesn't select whole, what the path-naming lines (`named`) match there.
+/// names, and what the path-naming lines (`named`) match inside a directory git
+/// lists whole, unless the include listing already covers it.
 fn overlap(
     ignored: &[(PathBuf, bool)],
     included: &[(PathBuf, bool)],
@@ -185,19 +185,21 @@ fn overlap(
     let (ignored, included, named) = (leaves(ignored), leaves(included), leaves(named));
     let ignored_paths: HashSet<&Path> = ignored.iter().map(|(path, _)| path.as_path()).collect();
     let included_paths: HashSet<&Path> = included.iter().map(|(path, _)| path.as_path()).collect();
-    let within = |path: &Path, set: &HashSet<&Path>| path.ancestors().any(|a| set.contains(a));
+    let inside =
+        |path: &Path, set: &HashSet<&Path>| path.ancestors().skip(1).any(|dir| set.contains(dir));
     let mut entries: Vec<(PathBuf, bool)> = included
         .iter()
         .filter(|(path, _)| ignored_paths.contains(path.as_path()))
-        .chain(ignored.iter().filter(|(path, _)| {
-            !included_paths.contains(path.as_path()) && within(path, &included_paths)
-        }))
-        .chain(named.iter().filter(|(path, _)| {
-            path.ancestors()
-                .skip(1)
-                .find(|dir| ignored_paths.contains(dir))
-                .is_some_and(|dir| !included_paths.contains(dir))
-        }))
+        .chain(
+            ignored
+                .iter()
+                .filter(|(path, _)| inside(path, &included_paths)),
+        )
+        .chain(
+            named
+                .iter()
+                .filter(|(path, _)| inside(path, &ignored_paths) && !inside(path, &included_paths)),
+        )
         .map(|entry| (*entry).clone())
         .collect();
     entries.sort_by(|(a, _), (b, _)| a.as_os_str().cmp(b.as_os_str()));
@@ -438,5 +440,23 @@ mod tests {
         for (line, expected) in cases {
             assert_eq!(super::names_path(line), expected, "{line:?}");
         }
+    }
+
+    /// A path-naming match inside a directory git lists whole is dropped when
+    /// a directory around it is already selected, so no selected entry nests
+    /// inside another: `foo/` selecting the untracked `packages/foo/` carries
+    /// the ignored `packages/foo/.cache/`, and `packages/foo/.cache/types/`
+    /// adds nothing.
+    #[test]
+    fn overlap_selects_no_nested_entries() {
+        let entries = |paths: &[&str]| -> Vec<(std::path::PathBuf, bool)> {
+            paths.iter().map(|path| (path.into(), true)).collect()
+        };
+        let selected = super::overlap(
+            &entries(&["packages/foo/.cache"]),
+            &entries(&["packages/foo"]),
+            &entries(&["packages/foo/.cache/types"]),
+        );
+        assert_eq!(selected, entries(&["packages/foo/.cache"]));
     }
 }
