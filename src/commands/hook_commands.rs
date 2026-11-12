@@ -98,14 +98,14 @@ fn build_manual_hook_template_vars(ctx: &CommandContext, hook_type: HookType) ->
     let branch = ctx.branch;
     let worktree_path = ctx.worktree_path;
     match hook_type {
-        // Merge/commit hooks: target = merge target (default branch for commit,
-        // current for merge). Only this arm needs the default branch, and
+        // Commit hooks: target = default branch. Only this arm needs it, and
         // resolving it can cost a `git ls-remote` on a fresh clone — so it is
         // fetched here rather than up front.
         HookType::PreCommit | HookType::PostCommit => ctx
             .repo
             .default_branch()
             .map_or_else(TemplateVars::new, |t| TemplateVars::new().with_target(&t)),
+        // Merge hooks: target = current branch
         HookType::PreMerge | HookType::PostMerge => TemplateVars::new()
             .with_target_opt(branch)
             .with_target_worktree_path(worktree_path),
@@ -282,9 +282,7 @@ pub fn run_hook(
     let template_vars = build_manual_hook_template_vars(&ctx, hook_type);
     let mut extra_vars = template_vars.as_extra_vars();
     extra_vars.extend(custom_vars_refs.iter().copied());
-    // Forward positional CLI args as `{{ args }}` (empty sequence when
-    // nothing was forwarded). `expand_template` rehydrates this JSON into a
-    // `ShellArgs` sequence that renders space-joined, per-element escaped.
+    // Empty sequence when nothing was forwarded.
     extra_vars.push((ALIAS_ARGS_KEY, &args_json));
 
     if dry_run {
