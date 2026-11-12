@@ -787,6 +787,7 @@ mod tests {
             locked: None,
             prunable: None,
             working_tree_diff: None,
+            newest_file_mtime: None,
             working_tree_status: None,
             has_conflicts: None,
             has_working_tree_conflicts: None,

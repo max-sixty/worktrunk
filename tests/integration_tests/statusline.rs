@@ -742,6 +742,37 @@ fn test_statusline_json_schema_2(repo: TestRepo) {
     );
 }
 
+/// Schema 2 statusline JSON reports `worktree.modified_at` from the working
+/// tree, like `wt list --format=json`: a dirty worktree reports its newest
+/// file's mtime, not the HEAD commit time.
+#[rstest]
+fn test_statusline_json_modified_at(repo: TestRepo) {
+    let statusline_item = || {
+        let output = run_statusline(&repo, &["--format=json"], None);
+        let parsed: Value = serde_json::from_str(&output).expect("should be valid JSON");
+        parsed["items"][0].clone()
+    };
+    let clean = statusline_item();
+    assert_eq!(
+        clean["worktree"]["modified_at"], clean["head"]["committed_at"],
+        "a clean worktree's modified_at falls back to the commit time"
+    );
+
+    // A nested untracked file must contribute its own mtime, not its directory's.
+    let directory = repo.root_path().join("activity");
+    std::fs::create_dir(&directory).unwrap();
+    let path = directory.join("new file.txt");
+    let file = std::fs::File::create(path).unwrap();
+    let timestamp = worktrunk::testing::TEST_EPOCH + 86400;
+    file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(timestamp))
+        .unwrap();
+    let dirty = statusline_item();
+    assert_eq!(
+        dirty["worktree"]["modified_at"],
+        worktrunk::utils::format_timestamp_iso8601_opt(timestamp as i64).unwrap()
+    );
+}
+
 /// Outside a worktree the JSON surface emits an empty result in the
 /// selected schema, and the schema-2 empty envelope skips default-branch
 /// detection (no `default_branch` key — nothing to relate to).

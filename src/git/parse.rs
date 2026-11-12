@@ -137,6 +137,23 @@ impl DefaultBranchName {
     }
 }
 
+/// Status records, excluding rename/copy source-path fields. Paths remain raw bytes.
+pub fn porcelain_entries_z(output: &[u8]) -> impl Iterator<Item = &[u8]> {
+    let mut fields = output.split(|b| *b == 0);
+    std::iter::from_fn(move || {
+        loop {
+            let entry = fields.next()?;
+            if entry.len() < 4 {
+                continue;
+            }
+            if entry[..2].contains(&b'R') || entry[..2].contains(&b'C') {
+                fields.next();
+            }
+            return Some(entry);
+        }
+    })
+}
+
 /// Parse `git status --porcelain -z` output into a list of affected filenames.
 ///
 /// The -z format uses NUL separators and handles renames specially:
@@ -370,6 +387,20 @@ mod tests {
     // ============================================================================
     // parse_porcelain_z Tests
     // ============================================================================
+
+    #[test]
+    fn status_records_skip_both_rename_columns_and_preserve_paths() {
+        let output = b"R  new\nname\0?? source\0 R destination\0 M source\0?? non-utf8-\xff\0";
+        let entries: Vec<_> = porcelain_entries_z(output).collect();
+        assert_eq!(
+            entries,
+            vec![
+                &b"R  new\nname"[..],
+                &b" R destination"[..],
+                &b"?? non-utf8-\xff"[..]
+            ]
+        );
+    }
 
     #[test]
     fn test_parse_porcelain_z_empty() {

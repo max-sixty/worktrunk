@@ -231,6 +231,10 @@ pub struct JsonWorktreeV2 {
     /// Filesystem path.
     pub path: PathBuf,
 
+    /// Later of HEAD committer time and changed-file mtimes, RFC 3339 UTC; null when unresolved.
+    #[serde(skip_serializing_if = "Tri::is_absent")]
+    pub modified_at: Tri<String>,
+
     /// This is the main worktree.
     pub main: bool,
 
@@ -622,6 +626,7 @@ impl JsonItemV2 {
         let worktree = worktree_data.map(|data| {
             json_worktree(
                 data,
+                item.commit.as_ref().map(|c| c.timestamp),
                 item.worktree_path()
                     .expect("typed worktree rows always carry a worktree path"),
             )
@@ -724,7 +729,11 @@ impl JsonItemV2 {
     }
 }
 
-fn json_worktree(data: &WorktreeData, path: &std::path::Path) -> JsonWorktreeV2 {
+fn json_worktree(
+    data: &WorktreeData,
+    committed_at: Option<i64>,
+    path: &std::path::Path,
+) -> JsonWorktreeV2 {
     // Empty lock/prune reasons (git records the state without a message)
     // become `reason: null`.
     let reason = |r: &Option<String>| {
@@ -751,6 +760,7 @@ fn json_worktree(data: &WorktreeData, path: &std::path::Path) -> JsonWorktreeV2 
 
     JsonWorktreeV2 {
         path: path.to_path_buf(),
+        modified_at: modified_at(data.newest_file_mtime, committed_at),
         main: data.is_main,
         current: data.is_current,
         previous: data.is_previous,
@@ -761,6 +771,18 @@ fn json_worktree(data: &WorktreeData, path: &std::path::Path) -> JsonWorktreeV2 
         duplicate_branch: data.duplicate_branch,
         operation,
         changes,
+    }
+}
+
+fn modified_at(newest_file_mtime: Option<Option<i64>>, committed_at: Option<i64>) -> Tri<String> {
+    match newest_file_mtime {
+        None => Tri::Unknown,
+        Some(mtime) => committed_at
+            .into_iter()
+            .chain(mtime)
+            .max()
+            .and_then(worktrunk::utils::format_timestamp_iso8601_opt)
+            .map_or(Tri::Unknown, Tri::Known),
     }
 }
 
@@ -957,6 +979,20 @@ mod tests {
             comment_count: None,
             updated_at: None,
         }
+    }
+
+    #[test]
+    fn modified_at_requires_status_and_selects_latest() {
+        let known = |t| Tri::Known(worktrunk::utils::format_timestamp_iso8601_opt(t).unwrap());
+        assert_eq!(modified_at(None, Some(20)), Tri::Unknown);
+        assert_eq!(modified_at(Some(None), None), Tri::Unknown);
+        assert_eq!(modified_at(Some(None), Some(20)), known(20));
+        assert_eq!(modified_at(Some(Some(10)), Some(20)), known(20));
+        assert_eq!(modified_at(Some(Some(30)), Some(20)), known(30));
+        assert_eq!(
+            serde_json::to_value(modified_at(None, Some(20))).unwrap(),
+            serde_json::Value::Null
+        );
     }
 
     #[test]

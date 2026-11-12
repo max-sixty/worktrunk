@@ -85,6 +85,13 @@ pub struct TaskContext {
     /// point-in-time ref state. `None` when snapshot capture failed (degraded
     /// mode — tasks fall back to ref-taking methods).
     pub snapshot: Option<Arc<RefSnapshot>>,
+
+    /// Whether this invocation needs per-file mtimes (schema 2 JSON's
+    /// `worktree.modified_at`). When false, the working-tree diff task skips
+    /// the mtime stat loop, and every porcelain query in this invocation uses
+    /// `--untracked-files=normal` instead of `all`, so table, statusline and
+    /// picker renders never pay either cost.
+    pub needs_mtime: bool,
 }
 
 impl TaskContext {
@@ -479,7 +486,10 @@ fn compute_working_tree_diff(ctx: &TaskContext) -> anyhow::Result<TaskResult> {
     // Shared cache: the working-tree conflict task also needs porcelain. First
     // accessor spawns the subprocess; second hits the cache. Uses
     // --no-optional-locks to avoid index lock contention with `git write-tree`.
-    let status_output = wt.status_porcelain_cached()?;
+    // The untracked-files mode follows this invocation: only the JSON path
+    // asks for individual untracked files (for mtime collection), so every
+    // other render shares the cheaper `normal` entry.
+    let status_output = wt.status_porcelain_cached_with(ctx.needs_mtime)?;
 
     let (working_tree_status, is_dirty, has_conflicts) = parse_working_tree_status(&status_output);
 
@@ -493,12 +503,40 @@ fn compute_working_tree_diff(ctx: &TaskContext) -> anyhow::Result<TaskResult> {
         wt.working_tree_diff_stats()?
     };
 
+    // The mtime stat loop runs only when a consumer reads it (schema 2
+    // JSON's `modified_at`). Other renders discard the value, so skip the
+    // per-file stats there entirely.
+    let newest_file_mtime = if ctx.needs_mtime && (is_dirty || has_conflicts) {
+        newest_changed_file_mtime(wt.path(), &status_output)
+    } else {
+        None
+    };
+
     Ok(TaskResult::WorkingTreeDiff {
+        newest_file_mtime,
         item_idx: ctx.item_idx,
         working_tree_diff,
         working_tree_status,
         has_conflicts,
     })
+}
+
+/// Missing paths (including deletions and races) contribute no timestamp.
+fn newest_changed_file_mtime(root: &std::path::Path, status: &[u8]) -> Option<i64> {
+    worktrunk::git::porcelain_entries_z(status)
+        .filter_map(|entry| {
+            let path = worktrunk::git::git_path_from_bytes(&entry[3..]).ok()?;
+            let modified = std::fs::symlink_metadata(root.join(path))
+                .ok()?
+                .modified()
+                .ok()?;
+            let seconds = modified
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()?
+                .as_secs();
+            i64::try_from(seconds).ok()
+        })
+        .max()
 }
 
 /// Potential merge conflicts check (merge-tree vs the local default branch).
@@ -532,7 +570,10 @@ fn compute_merge_tree_conflicts(ctx: &TaskContext) -> anyhow::Result<TaskResult>
     // returns `Some(None)` from that task, which falls
     // back to this HEAD probe.
     if let Some(wt) = ctx.branch_ref.working_tree(&ctx.repo) {
-        let porcelain = wt.status_porcelain_cached()?;
+        // Same untracked-files mode as the rest of this invocation, so this
+        // peek shares the diff task's cache entry instead of spawning a
+        // second `git status`.
+        let porcelain = wt.status_porcelain_cached_with(ctx.needs_mtime)?;
         if has_tracked_changes(&porcelain) && !has_unmerged_entries(&porcelain) {
             return Ok(TaskResult::MergeTreeConflicts {
                 item_idx: ctx.item_idx,
@@ -576,7 +617,8 @@ fn compute_working_tree_conflicts(ctx: &TaskContext) -> anyhow::Result<TaskResul
         .ok_or_else(|| anyhow::anyhow!("requires a worktree"))?;
 
     // Shared cache with the working-tree diff task — single subprocess per worktree.
-    let status_output = wt.status_porcelain_cached()?;
+    // Same untracked-files mode as the diff task, so the two share one entry.
+    let status_output = wt.status_porcelain_cached_with(ctx.needs_mtime)?;
 
     if !has_tracked_changes(&status_output) {
         // A clean or untracked-only worktree uses the commit-based check.
@@ -602,9 +644,8 @@ fn compute_working_tree_conflicts(ctx: &TaskContext) -> anyhow::Result<TaskResul
     // index. Unstaged tracked changes also run `add -u` against that copy so
     // the user's staging state stays untouched. Untracked entries are
     // ignored.
-    let has_unstaged_tracked_changes = status_output
-        .lines()
-        .any(|line| !line.starts_with("??") && line.as_bytes().get(1) != Some(&b' '));
+    let has_unstaged_tracked_changes = worktrunk::git::porcelain_entries_z(&status_output)
+        .any(|line| !line.starts_with(b"??") && line.get(1) != Some(&b' '));
     let tree_sha = if has_unstaged_tracked_changes {
         wt.write_tracked_worktree_tree()?
     } else {
@@ -825,7 +866,7 @@ fn probe_addr(addr: SocketAddr) -> bool {
 
 /// Parse git status output to extract working tree status and conflict state.
 /// Returns (WorkingTreeStatus, is_dirty, has_conflicts).
-pub(super) fn parse_working_tree_status(status_output: &str) -> (WorkingTreeStatus, bool, bool) {
+pub(super) fn parse_working_tree_status(status_output: &[u8]) -> (WorkingTreeStatus, bool, bool) {
     let mut has_untracked = false;
     let mut has_modified = false;
     let mut has_staged = false;
@@ -833,12 +874,7 @@ pub(super) fn parse_working_tree_status(status_output: &str) -> (WorkingTreeStat
     let mut has_deleted = false;
     let mut has_conflicts = false;
 
-    for line in status_output.lines() {
-        if line.len() < 2 {
-            continue;
-        }
-
-        let bytes = line.as_bytes();
+    for bytes in worktrunk::git::porcelain_entries_z(status_output) {
         let index_status = bytes[0] as char;
         let worktree_status = bytes[1] as char;
 
@@ -893,18 +929,16 @@ pub(super) fn parse_working_tree_status(status_output: &str) -> (WorkingTreeStat
 ///
 /// All seven unmerged status codes: UU, AU, UA, DU, UD, DD, AA.
 /// Five contain `U`; `DD` and `AA` do not and must be matched explicitly.
-fn has_unmerged_entries(status_output: &str) -> bool {
-    status_output.lines().any(|l| {
-        l.len() >= 2 && {
-            let xy = &l.as_bytes()[0..2];
-            xy.contains(&b'U') || xy == b"AA" || xy == b"DD"
-        }
+fn has_unmerged_entries(status_output: &[u8]) -> bool {
+    worktrunk::git::porcelain_entries_z(status_output).any(|entry| {
+        let xy = &entry[..2];
+        xy.contains(&b'U') || xy == b"AA" || xy == b"DD"
     })
 }
 
 /// Whether porcelain status contains a staged or unstaged tracked path.
-fn has_tracked_changes(status_output: &str) -> bool {
-    status_output.lines().any(|line| !line.starts_with("??"))
+fn has_tracked_changes(status_output: &[u8]) -> bool {
+    worktrunk::git::porcelain_entries_z(status_output).any(|line| !line.starts_with(b"??"))
 }
 
 #[cfg(test)]
@@ -912,6 +946,31 @@ mod tests {
     use super::*;
     use worktrunk::git::BranchRef;
     use worktrunk::testing::TestRepo;
+
+    #[test]
+    fn newest_changed_file_mtime_skips_missing_and_uses_latest() {
+        let dir = worktrunk::testing::test_tempdir();
+        let older = dir.path().join("older");
+        let newer = dir.path().join("newer");
+        let epoch = std::time::UNIX_EPOCH + Duration::from_secs(worktrunk::testing::TEST_EPOCH);
+        for (path, seconds) in [(&older, 10), (&newer, 20)] {
+            let file = std::fs::File::create(path).unwrap();
+            file.set_modified(epoch + Duration::from_secs(seconds))
+                .unwrap();
+        }
+        let paths = b" M older\0 D missing\0?? newer\0";
+        assert_eq!(
+            newest_changed_file_mtime(dir.path(), paths),
+            Some(worktrunk::testing::TEST_EPOCH as i64 + 20)
+        );
+        // The source still exists with a newer mtime: only the destination counts.
+        assert_eq!(
+            newest_changed_file_mtime(dir.path(), b"R  older\0newer\0"),
+            Some(worktrunk::testing::TEST_EPOCH as i64 + 10)
+        );
+        assert_eq!(newest_changed_file_mtime(dir.path(), &[]), None);
+        assert_eq!(newest_changed_file_mtime(dir.path(), b" D missing\0"), None);
+    }
 
     fn task_context(test: &TestRepo) -> TaskContext {
         TaskContext {
@@ -923,6 +982,7 @@ mod tests {
             default_branch: None,
             integration_targets: None,
             snapshot: None,
+            needs_mtime: false,
         }
     }
 
@@ -1016,43 +1076,43 @@ mod tests {
 
     #[test]
     fn unmerged_entries_detected_with_u() {
-        assert!(has_unmerged_entries("UU src/main.rs"));
-        assert!(has_unmerged_entries("AU src/main.rs"));
-        assert!(has_unmerged_entries("UA src/main.rs"));
-        assert!(has_unmerged_entries("DU src/main.rs"));
-        assert!(has_unmerged_entries("UD src/main.rs"));
+        assert!(has_unmerged_entries(b"UU src/main.rs"));
+        assert!(has_unmerged_entries(b"AU src/main.rs"));
+        assert!(has_unmerged_entries(b"UA src/main.rs"));
+        assert!(has_unmerged_entries(b"DU src/main.rs"));
+        assert!(has_unmerged_entries(b"UD src/main.rs"));
     }
 
     #[test]
     fn unmerged_entries_detected_aa_dd() {
-        assert!(has_unmerged_entries("AA src/main.rs"));
-        assert!(has_unmerged_entries("DD src/main.rs"));
+        assert!(has_unmerged_entries(b"AA src/main.rs"));
+        assert!(has_unmerged_entries(b"DD src/main.rs"));
     }
 
     #[test]
     fn unmerged_entries_mixed_status() {
-        assert!(has_unmerged_entries("M  src/lib.rs\nAA src/main.rs"));
-        assert!(has_unmerged_entries("?? untracked.txt\nDD deleted.rs"));
+        assert!(has_unmerged_entries(b"M  src/lib.rs\0AA src/main.rs"));
+        assert!(has_unmerged_entries(b"?? untracked.txt\0DD deleted.rs"));
     }
 
     #[test]
     fn unmerged_entries_not_detected_for_normal_status() {
-        assert!(!has_unmerged_entries("M  src/main.rs"));
-        assert!(!has_unmerged_entries("A  src/new.rs"));
-        assert!(!has_unmerged_entries("D  src/old.rs"));
-        assert!(!has_unmerged_entries("?? untracked.txt"));
-        assert!(!has_unmerged_entries(""));
+        assert!(!has_unmerged_entries(b"M  src/main.rs"));
+        assert!(!has_unmerged_entries(b"A  src/new.rs"));
+        assert!(!has_unmerged_entries(b"D  src/old.rs"));
+        assert!(!has_unmerged_entries(b"?? untracked.txt"));
+        assert!(!has_unmerged_entries(b""));
     }
 
     #[test]
     fn tracked_changes_ignore_untracked_porcelain_entries() {
-        assert!(!has_tracked_changes("?? artifact.bin"));
-        assert!(has_tracked_changes("?? artifact.bin\n M src/main.rs"));
+        assert!(!has_tracked_changes(b"?? artifact.bin"));
+        assert!(has_tracked_changes(b"?? artifact.bin\0 M src/main.rs"));
     }
 
     #[test]
     fn worktree_rename_is_reported_as_dirty() {
-        let (status, is_dirty, has_conflicts) = parse_working_tree_status(" R old.txt -> new.txt");
+        let (status, is_dirty, has_conflicts) = parse_working_tree_status(b" R new.txt\0old.txt\0");
 
         assert_eq!(
             status,

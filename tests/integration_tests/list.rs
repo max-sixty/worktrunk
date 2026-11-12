@@ -410,6 +410,59 @@ fn test_list_json_schema_2_envelope(mut repo: TestRepo) {
     });
 }
 
+#[rstest]
+fn test_list_json_modified_at(repo: TestRepo) {
+    let list = || {
+        let output = repo
+            .wt_command()
+            .args(["list", "--format=json"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    let clean = list();
+    let row = clean["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["worktree"]["current"] == true)
+        .unwrap();
+    assert!(row["head"]["committed_at"].is_string());
+    assert_eq!(row["worktree"]["modified_at"], row["head"]["committed_at"]);
+
+    // A nested untracked file must contribute its own mtime, not its directory's.
+    let directory = repo.root_path().join("activity");
+    std::fs::create_dir(&directory).unwrap();
+    // Windows rejects newlines in filenames (os error 123), so only use the
+    // newline name where it can exist; the -z parsing coverage stays on Unix.
+    let filename = if cfg!(target_os = "windows") {
+        "new file.txt"
+    } else {
+        "new \nfile.txt"
+    };
+    let path = directory.join(filename);
+    let file = std::fs::File::create(path).unwrap();
+    let timestamp = worktrunk::testing::TEST_EPOCH + 86400;
+    file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(timestamp))
+        .unwrap();
+    let dirty = list();
+    let row = dirty["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["worktree"]["current"] == true)
+        .unwrap();
+    assert_eq!(
+        row["worktree"]["modified_at"],
+        worktrunk::utils::format_timestamp_iso8601_opt(timestamp as i64).unwrap()
+    );
+}
+
 /// `[list] json-schema` selects the output schema: unset emits schema 2,
 /// explicit schema 1 preserves the bare array, and invalid values warn before
 /// falling back to schema 2.
@@ -966,6 +1019,18 @@ fn test_list_json_with_display_fields(mut repo: TestRepo) {
     std::fs::write(feature_path.join("uncommitted.txt"), "uncommitted").unwrap();
     std::fs::write(feature_path.join("feature.txt"), "modified content").unwrap();
 
+    for name in ["uncommitted.txt", "feature.txt"] {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(feature_path.join(name))
+            .unwrap()
+            .set_modified(
+                std::time::UNIX_EPOCH
+                    + std::time::Duration::from_secs(worktrunk::testing::TEST_EPOCH),
+            )
+            .unwrap();
+    }
+
     // Create another feature that will be behind after main advances
     repo.add_worktree("feature-behind");
 
@@ -1427,6 +1492,15 @@ fn test_list_json_with_git_operation(mut repo: TestRepo) {
         !rebase_output.status.success(),
         "Rebase should fail with conflicts"
     );
+
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(feature.join("conflict.txt"))
+        .unwrap()
+        .set_modified(
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(worktrunk::testing::TEST_EPOCH),
+        )
+        .unwrap();
 
     // JSON output should show git_operation: "rebase" for the feature worktree
     assert_cmd_snapshot!({

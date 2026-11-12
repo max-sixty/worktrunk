@@ -676,6 +676,10 @@
           "description": "This is the main worktree.",
           "type": "boolean"
         },
+        "modified_at": {
+          "$ref": "#/$defs/Nullable_string",
+          "description": "Later of HEAD committer time and changed-file mtimes, RFC 3339 UTC; null when unresolved."
+        },
         "operation": {
           "$ref": "#/$defs/Nullable_JsonOperation",
           "description": "In-progress operation; absent when none, null while unresolved."

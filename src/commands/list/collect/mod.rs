@@ -587,6 +587,15 @@ pub struct CollectOptions {
     /// plain ref snapshot and let per-row tasks fall back to per-pair
     /// queries. `None` when capture failed (degraded mode).
     pub snapshot: Option<std::sync::Arc<worktrunk::git::RefSnapshot>>,
+
+    /// Whether this invocation needs per-file mtimes (schema 2 JSON's
+    /// `worktree.modified_at`). Only JSON output reads it — the list path
+    /// and the statusline's schema 2 JSON; table, text statusline and
+    /// picker renders leave it off, so they never pay the
+    /// `--untracked-files=all` query or the mtime stat loop in
+    /// `compute_working_tree_diff`. `false` unless the caller sets it (see
+    /// `collect()`).
+    pub needs_mtime: bool,
 }
 
 impl CollectOptions {
@@ -615,6 +624,7 @@ impl CollectOptions {
             default_branch: None,
             integration_targets: None,
             snapshot: None,
+            needs_mtime: false,
         }
     }
 }
@@ -911,10 +921,16 @@ fn format_drain_timeout_diag(
 /// - [`RenderTarget::Json`]: collects silently and returns data without
 ///   writing to stdout. Used by `--format=json` and the picker (which has its
 ///   own progressive UI driven via `ShowConfig::Resolved::progressive_handler`).
+///
+/// `needs_mtime` is true only when the caller reads per-file mtimes (schema 2
+/// JSON's `worktree.modified_at`). When false, the working-tree diff task
+/// skips the mtime stat loop and every porcelain query in the invocation uses
+/// `--untracked-files=normal` instead of `all`.
 pub fn collect(
     repo: &Repository,
     show_config: ShowConfig,
     render_target: RenderTarget,
+    needs_mtime: bool,
 ) -> anyhow::Result<Option<super::model::ListData>> {
     // `wt list`'s merge and conflict probes write ephemeral Git objects
     // (`write-tree`, `commit-tree`, `merge-tree --write-tree`) that nothing
@@ -1526,6 +1542,7 @@ pub fn collect(
         default_branch: default_branch.clone(),
         integration_targets: None,
         snapshot: None,
+        needs_mtime,
     };
 
     // Track expected results per item - populated as spawns are queued

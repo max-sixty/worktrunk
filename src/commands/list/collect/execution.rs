@@ -355,6 +355,7 @@ pub fn work_items_for_worktree(
         default_branch: options.default_branch.clone(),
         integration_targets: options.integration_targets.clone(),
         snapshot: options.snapshot.clone(),
+        needs_mtime: options.needs_mtime,
     };
 
     let has_commits = item.head() != worktrunk::git::NULL_OID;
@@ -444,6 +445,7 @@ pub fn work_items_for_branch(
         default_branch: options.default_branch.clone(),
         integration_targets: options.integration_targets.clone(),
         snapshot: options.snapshot.clone(),
+        needs_mtime: options.needs_mtime,
     };
 
     let mut items = Vec::with_capacity(11);
