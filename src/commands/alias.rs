@@ -709,8 +709,7 @@ fn run_alias(
     // `expand_template` rehydrates it into a `ShellArgs` sequence.
     context_map.insert(
         ALIAS_ARGS_KEY,
-        serde_json::to_string(&opts.positional_args)
-            .expect("Vec<String> serialization should never fail"),
+        serde_json::to_string(&opts.positional_args).context("Failed to encode forwarded args")?,
     );
 
     if verbosity() >= 1 {
