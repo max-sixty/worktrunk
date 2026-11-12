@@ -277,8 +277,7 @@ pub fn run_hook(
     // `expand_template` rehydrates it as `ShellArgs` so bare `{{ args }}`
     // renders space-joined with per-element shell escaping. Mirrors
     // `run_alias` at `src/commands/alias.rs`.
-    let args_json =
-        serde_json::to_string(&args).expect("Vec<String> serialization should never fail");
+    let args_json = serde_json::to_string(&args).context("Failed to encode forwarded args")?;
     let template_vars = build_manual_hook_template_vars(&ctx, hook_type);
     let mut extra_vars = template_vars.as_extra_vars();
     extra_vars.extend(custom_vars_refs.iter().copied());
