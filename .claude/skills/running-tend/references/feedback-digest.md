@@ -27,8 +27,9 @@ Blogs, dev.to, Medium, Substack, newsletters and Lobsters have no search API
 the script can window by date. Search the web for `worktrunk`, open the results
 that may be new, and keep posts from the last month whose URL isn't in
 `previous_digests.md`; the URL check stops a post being reported twice, and the
-month lets a run pick up what a failed search missed. Posts that only mention
-Worktrunk stay out of the mention counts, which cover the collected records.
+month lets a run pick up what a few weeks of failed searches missed. Posts that
+only mention Worktrunk stay out of the mention counts, which cover the collected
+records.
 
 Reddit refuses unauthenticated clients, Bluesky's search needs a login, and X
 and YouTube have no open search, so nothing in CI reads them.
