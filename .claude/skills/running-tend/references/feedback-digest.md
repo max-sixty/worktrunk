@@ -27,9 +27,11 @@ Blogs, dev.to, Medium, Substack, newsletters and Lobsters have no search API
 the script can window by date. Search the web for `worktrunk`, open the results
 that may be new, and keep posts from the last month whose URL isn't in
 `previous_digests.md`; the URL check stops a post being reported twice, and the
-month lets a run pick up what a failed search missed. Reddit refuses
-unauthenticated clients, Bluesky's search needs a login, and X and YouTube have
-no open search, so nothing in CI reads them.
+month lets a run pick up what a failed search missed. Posts that only mention
+Worktrunk stay out of the mention counts, which cover the collected records.
+
+Reddit refuses unauthenticated clients, Bluesky's search needs a login, and X
+and YouTube have no open search, so nothing in CI reads them.
 
 ## Sort the items
 
@@ -62,15 +64,16 @@ purpose and stars of the repository, or the tool they maintain.
 
 For each bug, friction, request or reason for leaving, look for this repo's
 response: search its issues, and `git log --grep` on `main` for the source's
-repository name or the behavior, since fix commits often cite the thread that
+`owner/repo` or the behavior, since fix commits often cite the thread that
 prompted them. Give each a status: tracked (the issue), fixed (the fix, and the
 release that ships it or "unreleased"), by design (where that's documented),
 another tool's behavior, or untracked.
 
 A claim about how Worktrunk behaves is the author's until checked. Where a
 scratch repo can show it, run the claim on `main` and report confirmed or not
-reproduced; attribute requests and frictions without checking. The digest is
-the report: the maintainer decides which confirmed items become issues.
+reproduced; otherwise say how far you checked, such as by reading the code.
+Requests and frictions need no reproduction. The digest is the report: the
+maintainer decides which confirmed items become issues.
 
 ## Write and post the digest
 
@@ -82,19 +85,24 @@ empty one:
 - **Frictions, workarounds and requests**
 - **Left, replaced or declined**
 - **Adoption and praise**, including comparisons and projects built on Worktrunk
-- **New issues here from outside the project**, one line each with its state
+- **New issues here from outside the project**, one line each with its state,
+  and listed only here
 
-Give each point one bullet: the point in a phrase, its sources, one short quote
-and its status. Where several projects make the same point, list them all in
-that bullet. Projects that build on Worktrunk without a specific point share
-one bullet. Write authors as plain logins, never `@login`, which notifies them.
-Link issues, pull requests and comments in other repositories through
+Give each point one bullet: the point in a phrase, its sources with author and
+date, one short quote and its status. Where several projects make the same
+point, list them all in that bullet and quote the clearest. Projects that build
+on Worktrunk without a specific point share one bullet. When a week holds more
+than a few minutes' reading, shorten adoption and praise first, and keep every
+bug and every departure.
+
+Write authors as plain logins, never `@login`, which notifies them. Link issues,
+pull requests and comments in other repositories through
 `https://redirect.github.com/` plus the github.com path, so GitHub doesn't
 record the digest as a mention on their thread.
 
 Close with a collapsed `<details>` block holding the coverage note: each
-source's window, records read and items kept, the mention counts by kind, any
-source that failed, and the sources nothing in CI reads. End the comment with
+source's window and records read, the mention counts by kind, any source that
+failed, and the sources nothing in CI reads. End the comment with
 `summary.json`'s `marker` as its last line, verbatim; the next run reads it.
 
 Post the digest even in a quiet week, since its marker records that the run
