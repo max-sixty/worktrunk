@@ -51,7 +51,10 @@ if command -v custom >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
             local event=$1 status=$2 cd_status=0
             if [[ "$owns_exit" == true ]]; then builtin trap - EXIT; fi
             if [[ -s "$cd_file" ]]; then
-                builtin cd -- "$(<"$cd_file")" || cd_status=$?
+                # Read to EOF to preserve trailing newlines; read returns 1 at EOF.
+                local target_dir=""
+                IFS= builtin read -r -d "" target_dir < "$cd_file" || :
+                builtin cd -- "$target_dir" || cd_status=$?
             fi
             command rm -f "$cd_file"
             if [[ ${PROMPT_COMMAND-} == "$prompt_provider" ]]; then

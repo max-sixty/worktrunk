@@ -40,7 +40,10 @@ if command -v {{ cmd }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
             # `alias cd=__zoxide_z`) that would otherwise be substituted into this
             # function body when it's defined. See #2643.
             if [[ -s "$cd_file" ]]; then
-                builtin cd -- "$(<"$cd_file")"
+                # Read to EOF to preserve trailing newlines; read returns 1 at EOF.
+                local target_dir=""
+                IFS= builtin read -r -d "" target_dir < "$cd_file" || :
+                builtin cd -- "$target_dir"
                 local cd_exit=$?
                 if [[ $exit_code -eq 0 ]]; then
                     exit_code=$cd_exit
