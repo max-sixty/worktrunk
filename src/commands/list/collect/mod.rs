@@ -1628,22 +1628,6 @@ pub fn collect(
     // These operations run in parallel using rayon::scope with single-level parallelism.
     // See module docs for the timing diagram.
 
-    // Collect worktree paths for fsmonitor starts (macOS only, fast, no git commands).
-    // Git's builtin fsmonitor has race conditions under parallel load - pre-starting
-    // daemons before parallel operations avoids hangs.
-    #[cfg(target_os = "macos")]
-    let fsmonitor_worktrees: Vec<_> = if repo.is_builtin_fsmonitor_enabled() {
-        sorted_worktrees
-            .iter()
-            .map(|(wt, _)| *wt)
-            .filter(|wt| !wt.is_prunable())
-            .collect()
-    } else {
-        vec![]
-    };
-    #[cfg(not(target_os = "macos"))]
-    let fsmonitor_worktrees: Vec<&WorktreeInfo> = vec![];
-
     // Single-level parallelism: all spawns in one rayon::scope.
     // See: https://gitlab.com/gitlab-org/git/-/merge_requests/148 (scalar's fsmonitor workaround)
     // See: https://github.com/jj-vcs/jj/issues/6440 (jj hit same fsmonitor issue)
@@ -1722,15 +1706,25 @@ pub fn collect(
         // discovery-worktree root); in this scope, because the fs reads then
         // overlap the ref snapshot instead of delaying it.
         //
-        // The fsmonitor starts (one spawn per worktree) nest under the seed:
+        // The parallel fsmonitor starts nest under the seed:
         // each probe reads its worktree's git dir, which the seed supplies.
-        s.spawn(|s| {
+        s.spawn(|_| {
             repo.prime_worktree_path_caches(worktrees);
-            for wt in &fsmonitor_worktrees {
-                s.spawn(|_| {
-                    repo.start_fsmonitor_daemon_at(&wt.path);
+            // Git's builtin fsmonitor can hang under parallel startup on macOS.
+            // Pre-start each enabled worktree's daemon before the task pool.
+            #[cfg(target_os = "macos")]
+            worktrees
+                .par_iter()
+                .filter(|wt| !wt.is_prunable())
+                .for_each(|wt| {
+                    if repo
+                        .worktree_at(&wt.path)
+                        .is_builtin_fsmonitor_enabled()
+                        .unwrap_or(false)
+                    {
+                        repo.start_fsmonitor_daemon_at(&wt.path);
+                    }
                 });
-            }
         });
     });
 

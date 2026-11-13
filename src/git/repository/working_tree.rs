@@ -23,10 +23,11 @@ const TEMP_INDEX_PREFIX: &str = "worktrunk-temp-index-";
 const TEMP_INDEX_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 
 /// Reclaim index copies and Git's `.lock` siblings left by abrupt exits.
-/// Age is a retention policy, not proof that an owner has exited: a suspended
-/// operation or Git filter lasting over an hour can lose its scratch index.
-/// Keep indexes out of interactive approval waits. Cleanup is best-effort;
-/// normal exits still remove each index through `TempPath`.
+/// Each current index lives in a private directory with a locked owner file.
+/// Git replaces index files, so the lock must live beside the index rather than
+/// on its inode. Age limits retention; the owner lock proves the directory is
+/// abandoned. Legacy flat indexes have no ownership marker and retain their
+/// age-only cleanup. Normal exits remove the directory through `TempDir`.
 fn sweep_stale_temp_indexes(dir: &Path) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -46,7 +47,25 @@ fn sweep_stale_temp_indexes(dir: &Path) {
             .and_then(|metadata| metadata.modified().ok())
             .and_then(|modified| now.duration_since(modified).ok())
             .is_some_and(|age| age >= TEMP_INDEX_MAX_AGE);
-        if expired && let Err(error) = std::fs::remove_file(entry.path()) {
+        if !expired {
+            continue;
+        }
+        let removal = (|| -> std::io::Result<()> {
+            if entry.file_type()?.is_dir() {
+                let owner = std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(entry.path().join("owner"))?;
+                match owner.try_lock() {
+                    Err(std::fs::TryLockError::WouldBlock) => return Ok(()),
+                    result => result.map_err(std::io::Error::from)?,
+                }
+                std::fs::remove_dir_all(entry.path())
+            } else {
+                std::fs::remove_file(entry.path())
+            }
+        })();
+        if let Err(error) = removal {
             tracing::debug!(
                 "Failed to remove stale temporary index {}: {error}",
                 entry.path().display()
@@ -424,6 +443,28 @@ impl<'a> WorkingTree<'a> {
     /// For the canonical git-determined root, use [`root()`](Self::root) instead.
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Whether Git's builtin fsmonitor is enabled in this worktree.
+    ///
+    /// Read and normalize through Git so worktree-local config, includes, and
+    /// every supported boolean spelling are honored. Hook paths select an
+    /// external monitor rather than the builtin daemon.
+    pub fn is_builtin_fsmonitor_enabled(&self) -> anyhow::Result<bool> {
+        let args = ["config", "--type=bool", "--get", "core.fsmonitor"];
+        let output = self.run_command_output(&args)?;
+        match output.status.code() {
+            Some(0) => Ok(String::from_utf8_lossy(&output.stdout).trim() == "true"),
+            Some(1) => Ok(false),
+            Some(128) => {
+                // A hook path is valid fsmonitor config but not a boolean.
+                // An untyped read distinguishes it from an unreadable config;
+                // those errors must still stop a removal's safety check.
+                self.run_command(&["config", "--get", "core.fsmonitor"])?;
+                Ok(false)
+            }
+            _ => Err(CommandError::from_failed_output("git", &args, &output).into()),
+        }
     }
 
     /// Run a git command in this worktree and return stdout.
@@ -1143,45 +1184,52 @@ impl<'a> WorkingTree<'a> {
         let real_index = git_dir.join("index");
         let log_ctx = path_to_logging_context(self.path());
 
-        // Keep the exclusively-created file open while copying a real index;
-        // removing it first would expose its random name to a symlink race in
-        // a shared system temp directory. A missing `<gitdir>/index` is
-        // semantically an empty index (nothing staged), so only that case
-        // closes and removes the 0-byte file before Git creates a valid index.
+        // A private directory owns the index and Git's replacement `.lock`.
+        // Its stable owner lock protects both across Git's atomic renames,
+        // including a command suspended beyond the cleanup retention period.
         let mut builder = tempfile::Builder::new();
         builder.prefix(TEMP_INDEX_PREFIX);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            builder.permissions(std::fs::Permissions::from_mode(0o700));
+        }
         // Parallel probes don't wait for the one caller doing this sweep.
         static SWEPT_SYSTEM_TEMP: AtomicBool = AtomicBool::new(false);
         if !SWEPT_SYSTEM_TEMP.swap(true, Ordering::Relaxed) {
             sweep_stale_temp_indexes(&std::env::temp_dir());
         }
-        let mut temp_file = match builder.tempfile() {
-            Ok(file) => file,
+        let directory = match builder.tempdir() {
+            Ok(directory) => directory,
             Err(temp_error) => {
                 sweep_stale_temp_indexes(&git_dir);
-                builder.tempfile_in(&git_dir).context(format!(
+                builder.tempdir_in(&git_dir).context(format!(
                     "Failed to create temporary index in the system temp directory or Git directory; system temp error: {temp_error}"
                 ))?
             }
         };
+        let owner = std::fs::File::create_new(directory.path().join("owner"))
+            .context("Failed to create temporary index owner")?;
+        owner
+            .lock()
+            .context("Failed to lock temporary index owner")?;
+        let temp = directory.path().join("index");
         let mut real_index_file = match std::fs::File::open(&real_index) {
             Ok(file) => Some(file),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => return Err(error).context("Failed to open index file"),
         };
         if let Some(real_index_file) = &mut real_index_file {
-            std::io::copy(real_index_file, temp_file.as_file_mut())
-                .context("Failed to copy index file")?;
+            let mut temp_file =
+                std::fs::File::create_new(&temp).context("Failed to create temporary index")?;
+            std::io::copy(real_index_file, &mut temp_file).context("Failed to copy index file")?;
         }
-        let temp = temp_file.into_temp_path();
-        if real_index_file.is_none() {
-            // `into_temp_path` closes the handle first, which matters on
-            // Windows: deleting a still-open file leaves the name pending.
-            std::fs::remove_file(&temp).context("Failed to clear temporary index")?;
-        }
+        // No real index means an empty index; let Git create it when needed.
 
         Ok(TempIndex {
             temp,
+            directory,
+            _owner: owner,
             worktree_root,
             log_ctx,
             object_store_environment: self.repo.object_store_environment().map(
@@ -1383,7 +1431,7 @@ impl<'a> WorkingTree<'a> {
 /// A temporary copy of a worktree's index, plus the bits needed to run
 /// `git` commands against it.
 ///
-/// Built by [`WorkingTree::temp_index`]. Drop deletes the temp file.
+/// Built by [`WorkingTree::temp_index`]. Drop deletes its private directory.
 ///
 /// Some operations need to "stage something" — register untracked files,
 /// or `git add -A` everything — to feed a follow-up `git diff` /
@@ -1399,7 +1447,10 @@ impl<'a> WorkingTree<'a> {
 /// changing the user's index), `wt merge` (check whether its `--stage` mode
 /// would produce a commit), and the `wt switch` unified/working preview tabs.
 pub struct TempIndex {
-    temp: tempfile::TempPath,
+    temp: PathBuf,
+    // Field drop order removes the directory before releasing its owner lock.
+    directory: tempfile::TempDir,
+    _owner: std::fs::File,
     worktree_root: PathBuf,
     log_ctx: String,
     /// Copied from the [`Repository`] so a redirected `wt list` writes the temp
@@ -1467,9 +1518,9 @@ impl TempIndex {
     /// contents. A following `git diff <base>` can then include those files as
     /// new while preserving the user's real index and staging state. If the
     /// system temp directory is inside the worktree, the pathspec excludes all
-    /// files in that directory with Worktrunk's dedicated prefix so concurrent
-    /// temporary indexes cannot enter each other's diffs. Keeping the random
-    /// files directly in the OS temp directory avoids a predictable shared
+    /// directories with Worktrunk's dedicated prefix so concurrent temporary
+    /// indexes cannot enter each other's diffs. Keeping the random directories
+    /// directly in the OS temp directory avoids a predictable shared
     /// parent on multi-user systems.
     pub(super) fn register_untracked(&self) -> anyhow::Result<()> {
         let mut args = vec![
@@ -1515,7 +1566,8 @@ impl TempIndex {
 
     fn append_temp_index_exclusion(&self, args: &mut Vec<String>) -> anyhow::Result<()> {
         let temp_dir = canonicalize_with_parents(
-            self.temp
+            self.directory
+                .path()
                 .parent()
                 .context("Temporary index has no parent directory")?,
         );
@@ -1523,9 +1575,13 @@ impl TempIndex {
         if let Ok(relative) = temp_dir.strip_prefix(&worktree_root) {
             let relative = escape_pathspec_glob_literal(&relative.to_slash_lossy());
             let separator = if relative.is_empty() { "" } else { "/" };
-            args.push(format!(
-                ":(top,exclude,glob){relative}{separator}{TEMP_INDEX_PREFIX}*"
-            ));
+            // Explicit glob semantics cover legacy flat indexes and owned
+            // directory contents regardless of inherited GIT_GLOB_PATHSPECS.
+            for suffix in ["*", "*/**"] {
+                args.push(format!(
+                    ":(top,exclude,glob){relative}{separator}{TEMP_INDEX_PREFIX}{suffix}"
+                ));
+            }
         }
         args.extend(self.observation_path_exclusions.iter().cloned());
         Ok(())
@@ -1633,6 +1689,36 @@ mod tests {
             ]
         );
         sweep_stale_temp_indexes(&dir.path().join("missing"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sweep_stale_temp_index_directory_requires_released_owner() {
+        use super::sweep_stale_temp_indexes;
+
+        let dir = crate::testing::test_tempdir();
+        let index_dir = dir.path().join("worktrunk-temp-index-owned");
+        std::fs::create_dir(&index_dir).unwrap();
+        let owner = std::fs::File::create_new(index_dir.join("owner")).unwrap();
+        owner.lock().unwrap();
+        std::fs::write(index_dir.join("index"), "staged data").unwrap();
+        std::fs::write(index_dir.join("index.lock"), "pending index").unwrap();
+        std::fs::File::open(&index_dir)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::UNIX_EPOCH))
+            .unwrap();
+
+        sweep_stale_temp_indexes(dir.path());
+        assert_eq!(
+            std::fs::read(index_dir.join("index")).unwrap(),
+            b"staged data"
+        );
+        assert!(index_dir.join("index.lock").exists());
+        // Parallel tests can fork with this descriptor before the child execs.
+        // Explicitly unlock: closing our copy need not release the child's.
+        owner.unlock().unwrap();
+        sweep_stale_temp_indexes(dir.path());
+        assert!(!index_dir.exists());
     }
 
     #[test]
@@ -2342,6 +2428,12 @@ mod tests {
         assert!(
             !real_index.exists(),
             "temp_index must not resurrect the real index"
+        );
+        let temporary_directory = idx.path().parent().unwrap().to_path_buf();
+        drop(idx);
+        assert!(
+            !temporary_directory.exists(),
+            "dropping an index must remove its directory, including the open owner file"
         );
     }
 }

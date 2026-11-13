@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.82.0
+
+### Improved
+
+- **Backups before forced removal**: `wt remove --force` snapshots the worktree, including untracked files, to `refs/wt-backup/<branch>` and prints a recovery command. Ignored files, changes inside submodules, and separate staged versions are excluded. A failed backup stops removal; an unreadable status still permits removal without one. [Docs](https://worktrunk.dev/remove/#force-flags) ([#4545](https://github.com/max-sixty/worktrunk/pull/4545), thanks @yajo for [#4544](https://github.com/max-sixty/worktrunk/issues/4544))
+
+- **Codex activity hooks ship separately**: skills stay in `worktrunk`; activity hooks move to `worktrunk-markers`, so skill updates don't trigger hook reapproval. (Breaking: existing installs need `codex plugin add worktrunk-markers@worktrunk` to retain activity markers after updating.) [Docs](https://worktrunk.dev/claude-code/#codex) ([#4707](https://github.com/max-sixty/worktrunk/pull/4707), thanks @win5do for [#4654](https://github.com/max-sixty/worktrunk/issues/4654))
+
+- **Claude Code `/wt-diff` pane**: shows the branch diff for worktrees the session has worked in, including work detected from subagents. Failed worktree lookups are retried, and tool errors reach Claude's hook diagnostics. [Docs](https://worktrunk.dev/claude-code/#wt-diff-pane-claude-code-only) ([#4638](https://github.com/max-sixty/worktrunk/pull/4638), [#4668](https://github.com/max-sixty/worktrunk/pull/4668), [#4689](https://github.com/max-sixty/worktrunk/pull/4689), thanks @rudycelekli and @Yash2031v)
+
+- **Shell completion**: typing `wt switch origin/` completes that remote's branches. Hook names honor per-project user overrides and source-qualified filters; completion honors `-C`, `--config`, config overrides, and alias precedence over executables on PATH. ([#4613](https://github.com/max-sixty/worktrunk/pull/4613), [#4549](https://github.com/max-sixty/worktrunk/pull/4549), [#4551](https://github.com/max-sixty/worktrunk/pull/4551), [#4548](https://github.com/max-sixty/worktrunk/pull/4548), [#4560](https://github.com/max-sixty/worktrunk/pull/4560), thanks @thernstig for [#4612](https://github.com/max-sixty/worktrunk/issues/4612))
+
+- **JSON survives later failures**: commands retain confirmed results when a later step fails, while diagnostics go to stderr and the exit status signals failure. `wt switch --format=json` emits one result after execution. ([#4345](https://github.com/max-sixty/worktrunk/pull/4345), [#4574](https://github.com/max-sixty/worktrunk/pull/4574), [#4584](https://github.com/max-sixty/worktrunk/pull/4584))
+
+- **Removal feedback**: failures describe the surviving checkout and branch. `--delete-branch` is visible in help as the override for `delete-branch = false`, and the picker briefly confirms successful `Alt-x` removal. ([#4457](https://github.com/max-sixty/worktrunk/pull/4457), [#4615](https://github.com/max-sixty/worktrunk/pull/4615), [#4669](https://github.com/max-sixty/worktrunk/pull/4669), thanks @Yash2031v for the picker feedback and @cazador481 for [#4614](https://github.com/max-sixty/worktrunk/issues/4614))
+
+- **Fewer repeated Git operations**: committing skips the second staging pass when no pre-commit hook ran; concurrent list tasks share identical ahead/behind counts. ([#4540](https://github.com/max-sixty/worktrunk/pull/4540), [#4663](https://github.com/max-sixty/worktrunk/pull/4663))
+
+### Fixed
+
+- **Foreground cancellation**: signal handling closes races around child startup and completion, so Ctrl-C stops subsequent command steps. On Unix, `wt step tether` stops its supervised processes on interruption and now propagates a command's failure status. ([#4596](https://github.com/max-sixty/worktrunk/pull/4596), [#4609](https://github.com/max-sixty/worktrunk/pull/4609), [#4623](https://github.com/max-sixty/worktrunk/pull/4623), [#4598](https://github.com/max-sixty/worktrunk/pull/4598), thanks @drldavis for [#4622](https://github.com/max-sixty/worktrunk/issues/4622))
+
+- **Filtered hooks**: unselected templates no longer cause errors or consume arguments. Filtered background hooks retain independent user and project pipelines, and template failures identify the command. ([#4429](https://github.com/max-sixty/worktrunk/pull/4429))
+
+- **Config loading**: rejected environment overrides warn and fall back to file settings consistently across commands; unreadable config files are reported instead of silently ignored. Clearing a state key removes all repeated values. ([#4358](https://github.com/max-sixty/worktrunk/pull/4358), [#4564](https://github.com/max-sixty/worktrunk/pull/4564), [#4566](https://github.com/max-sixty/worktrunk/pull/4566))
+
+- **Log and terminal handling**: authentication-probe output is redacted from diagnostics; Unix logs use private permissions, and permission repair leaves symlink targets unchanged. Commit subjects and PR context escape terminal control characters. ([#4604](https://github.com/max-sixty/worktrunk/pull/4604), [#4611](https://github.com/max-sixty/worktrunk/pull/4611), [#4605](https://github.com/max-sixty/worktrunk/pull/4605))
+
+- **SSH remotes with a non-default port**: port-less legacy project IDs no longer supply approvals or project settings to a different SSH server. Those repositories need port-qualified approvals and project overrides. ([#4606](https://github.com/max-sixty/worktrunk/pull/4606))
+
+- **Removal with fsmonitor or submodules**: with Git’s built-in fsmonitor enabled, removal rescans for changes after stopping the daemon. Text-mode removal warns about submodule commits reachable from no remote; the warning does not prevent removal. ([#4456](https://github.com/max-sixty/worktrunk/pull/4456), [#4460](https://github.com/max-sixty/worktrunk/pull/4460))
+
+- **Fork branch conflicts and GitHub Enterprise**: GitLab and Azure DevOps use a prefixed, fetch-only branch when a fork's branch name conflicts locally. GitHub Enterprise PR lookup uses the remote's host when `gh` is authenticated there. ([#4542](https://github.com/max-sixty/worktrunk/pull/4542), [#4710](https://github.com/max-sixty/worktrunk/pull/4710), thanks @pgilad-rna for [#4709](https://github.com/max-sixty/worktrunk/issues/4709))
+
+- **Shell integration**: directory changes preserve trailing whitespace, and PowerShell treats paths containing brackets literally. Installation continues configuring other shells after an rc-file error; uninstall matches recognized standalone setup lines and leaves customized lines for manual removal. ([#4608](https://github.com/max-sixty/worktrunk/pull/4608), [#4680](https://github.com/max-sixty/worktrunk/pull/4680), [#4583](https://github.com/max-sixty/worktrunk/pull/4583), [#4595](https://github.com/max-sixty/worktrunk/pull/4595), thanks @dajiaohuang for the PowerShell fix and @lucasfonte21 for [#4582](https://github.com/max-sixty/worktrunk/issues/4582))
+
+- **Agent plugins**: Claude's worktree-switching skill leaves the current worktree session before entering another by path. On Windows, Pi, oh-my-pi, and OpenCode select Worktrunk rather than Windows Terminal's `wt`; Claude activity markers are written without launching another `wt`. ([#4714](https://github.com/max-sixty/worktrunk/pull/4714), [#4698](https://github.com/max-sixty/worktrunk/pull/4698), [#4619](https://github.com/max-sixty/worktrunk/pull/4619), thanks @tian-yu200 for [#4697](https://github.com/max-sixty/worktrunk/issues/4697))
+
+- **Branch markers**: deleting a branch through Worktrunk or creating it with `wt switch --create` clears its marker, so reused names don't inherit stale activity. Clearing all markers preserves a state variable named `marker`. ([#4684](https://github.com/max-sixty/worktrunk/pull/4684), [#4704](https://github.com/max-sixty/worktrunk/pull/4704), [#4528](https://github.com/max-sixty/worktrunk/pull/4528), thanks @wsgavin for [#4683](https://github.com/max-sixty/worktrunk/issues/4683))
+
+- **List and picker display**: emoji with variation selectors fit their columns; IPv6-only loopback servers are recognized as listening; the loading footer shows task progress; an older refresh cannot overwrite the picker's removal layout. ([#4682](https://github.com/max-sixty/worktrunk/pull/4682), [#4694](https://github.com/max-sixty/worktrunk/pull/4694), [#4620](https://github.com/max-sixty/worktrunk/pull/4620), [#4708](https://github.com/max-sixty/worktrunk/pull/4708), thanks @saltcoffee for the IPv6 fix and @NorfeldtKnowit for [#4681](https://github.com/max-sixty/worktrunk/issues/4681))
+
+- **Linux process cleanup**: `wt remove --reap` discovers process working directories through `/proc`, avoiding a timed-out system-wide `lsof` scan. ([#4631](https://github.com/max-sixty/worktrunk/pull/4631), thanks @OmerFarukOruc for [#4630](https://github.com/max-sixty/worktrunk/issues/4630))
+
+- **Aliases and custom commands**: named aliases can be inspected outside a repository; project aliases display migrated template variables. Custom-command discovery excludes non-executable entries. ([#4547](https://github.com/max-sixty/worktrunk/pull/4547), [#4690](https://github.com/max-sixty/worktrunk/pull/4690), [#4565](https://github.com/max-sixty/worktrunk/pull/4565))
+
+- **Fixes for unusual setups**: slash-named remotes work in branch inventory; same-named tags don't affect the push range; non-UTF-8 environment entries no longer panic config loading; invalid alias arguments cannot fall through to a PATH executable; failed Git ref queries propagate as errors. ([#4271](https://github.com/max-sixty/worktrunk/pull/4271), [#4499](https://github.com/max-sixty/worktrunk/pull/4499), [#4563](https://github.com/max-sixty/worktrunk/pull/4563), [#4550](https://github.com/max-sixty/worktrunk/pull/4550), [#4562](https://github.com/max-sixty/worktrunk/pull/4562), thanks @Duang777)
+
+### Documentation
+
+- **Interactive browser demo**: a [Try it page](https://worktrunk.dev/try-it/) runs Worktrunk in a browser workspace. ([#4280](https://github.com/max-sixty/worktrunk/pull/4280), [#4546](https://github.com/max-sixty/worktrunk/pull/4546), [#4579](https://github.com/max-sixty/worktrunk/pull/4579), [#4581](https://github.com/max-sixty/worktrunk/pull/4581), thanks @kooler)
+
+- **Guides and examples**: shorter setup and configuration guidance, repaired skill-reference anchors, and a move-changes alias that stops if stashing or restoring fails. ([#4575](https://github.com/max-sixty/worktrunk/pull/4575), [#4576](https://github.com/max-sixty/worktrunk/pull/4576), [#4688](https://github.com/max-sixty/worktrunk/pull/4688), [#4678](https://github.com/max-sixty/worktrunk/pull/4678), thanks @viwe-monai)
+
+### Internal
+
+- **Temporary-index cleanup** reclaims abandoned scratch indexes while owner locks protect active operations, including removal backups. ([#4469](https://github.com/max-sixty/worktrunk/pull/4469), thanks @jonah-osmo)
+
+- **Breaking Rust library changes**: public types and function signatures changed; downstream crates need to update for 0.82.0.
+
 ## 0.81.0
 
 ### Improved
