@@ -207,7 +207,9 @@ impl Repository {
     /// through our coherent `set_config_value` helper.
     pub fn vars_entries(&self, branch: &str) -> std::collections::BTreeMap<String, String> {
         let escaped = regex::escape(branch);
-        let pattern = format!(r"^worktrunk\.state\.{escaped}\.vars\.");
+        // Variable names can't contain a dot, so anchoring past one keeps
+        // out the vars of a branch named `{branch}.vars.<x>`.
+        let pattern = format!(r"^worktrunk\.state\.{escaped}\.vars\.[^.]+$");
         let prefix = format!("worktrunk.state.{branch}.vars.");
         self.config_regexp_entries(&pattern)
             .unwrap_or_default()
@@ -1298,6 +1300,25 @@ mod tests {
         assert_eq!(snapshot["feature"]["ticket"], "JIRA-1");
         assert_eq!(snapshot["feature"]["note"], "a note\ncontinued");
         assert_eq!(snapshot["weird.vars.branch"]["key"], "v");
+    }
+
+    /// A branch's vars exclude those of a branch whose name extends it with
+    /// `.vars.<x>`: `worktrunk.state.weird.vars.branch.vars.key` belongs to
+    /// `weird.vars.branch`, though it also starts with `weird`'s vars prefix.
+    #[test]
+    fn test_vars_entries_excludes_extended_branch_names() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        repo.set_config("worktrunk.state.weird.vars.own", "1")
+            .unwrap();
+        repo.set_config("worktrunk.state.weird.vars.branch.vars.key", "v")
+            .unwrap();
+
+        let weird = repo.vars_entries("weird");
+        assert_eq!(weird.len(), 1, "{weird:?}");
+        assert_eq!(weird["own"], "1");
+        assert_eq!(repo.vars_entries("weird.vars.branch")["key"], "v");
     }
 
     /// The branch-config snapshot read parses `branch.<name>.*` keys, including
