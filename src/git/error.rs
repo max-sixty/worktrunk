@@ -2094,7 +2094,29 @@ pub fn add_hook_skip_hint(err: anyhow::Error) -> anyhow::Error {
         // Not a hook failure — pass the typed leaf through unchanged.
         _ => return inner.into(),
     };
-    HookErrorWithHint { inner, hook_type }.into()
+    HookErrorWithHint {
+        inner,
+        hook_type,
+        retry_command: None,
+    }
+    .into()
+}
+
+/// If the error is a [`HookErrorWithHint`], add a hint naming `command` as
+/// the way to retry the failed hooks. Pass-through for any other error.
+///
+/// For operations that leave state behind when a hook fails — `wt switch
+/// --create` keeps the new worktree when `pre-start` fails, so re-running the
+/// switch doesn't run setup again.
+pub fn add_hook_retry_hint(err: anyhow::Error, command: String) -> anyhow::Error {
+    match err.downcast::<HookErrorWithHint>() {
+        Ok(hinted) => HookErrorWithHint {
+            retry_command: Some(command),
+            ..hinted
+        }
+        .into(),
+        Err(err) => err,
+    }
 }
 
 /// Wrapper that displays a [`WorktrunkError::HookCommandFailed`] with a
@@ -2107,6 +2129,8 @@ pub fn add_hook_skip_hint(err: anyhow::Error) -> anyhow::Error {
 pub struct HookErrorWithHint {
     inner: WorktrunkError,
     hook_type: HookType,
+    /// Command that re-runs the failed hooks, set by [`add_hook_retry_hint`].
+    retry_command: Option<String>,
 }
 
 impl std::fmt::Display for HookErrorWithHint {
@@ -2122,14 +2146,18 @@ impl Diagnostic for HookErrorWithHint {
         // No empty-body fallback needed.
         // Can't derive command from hook type (e.g., PreRemove is used
         // by both `wt remove` and `wt merge`), so the hint stays generic.
-        format!(
-            "{}\n{}",
-            self.inner.render(),
-            hint_message(cformat!(
-                "To skip {} hooks, re-run with <underline>--no-hooks</>",
-                self.hook_type
-            ))
-        )
+        let skip = cformat!(
+            "To skip {} hooks, re-run with <underline>--no-hooks</>",
+            self.hook_type
+        );
+        // One hint line; the retry command goes last so it's easy to copy.
+        let hint = match &self.retry_command {
+            Some(command) => {
+                cformat!("{skip}; to retry setup, run <underline>{command}</>")
+            }
+            None => skip,
+        };
+        format!("{}\n{}", self.inner.render(), hint_message(hint))
     }
 }
 
@@ -2519,6 +2547,40 @@ mod tests {
         }
         .into();
         assert!(!render_anyhow(&add_hook_skip_hint(err)).contains("--no-hooks"));
+    }
+
+    #[test]
+    fn snapshot_add_hook_retry_hint() {
+        let inner: anyhow::Error = WorktrunkError::HookCommandFailed {
+            hook_type: HookType::PreCreate,
+            source: HookSource::Project,
+            template: Some("npm ci".into()),
+            command_name: Some("deps".into()),
+            error: WorktrunkError::ChildProcessExited {
+                cancellation: None,
+                code: 1,
+                physical_signal: None,
+            }
+            .into(),
+        }
+        .into();
+        let err = add_hook_retry_hint(
+            add_hook_skip_hint(inner),
+            "wt -C /tmp/repo.feature hook pre-start".into(),
+        );
+        assert_snapshot!(render_anyhow(&err), @"
+        [31m✗[39m [31m[1mpre-start project:deps[22m failed (exit code 1)[39m
+        [2m↳[22m [2mTo skip pre-start hooks, re-run with [4m--no-hooks[24m; to retry setup, run [4mwt -C /tmp/repo.feature hook pre-start[24m[22m
+        ");
+
+        // Passes through errors without a --no-hooks hint unchanged
+        let err: anyhow::Error = GitError::Other {
+            message: "some error".into(),
+        }
+        .into();
+        assert!(
+            !render_anyhow(&add_hook_retry_hint(err, "wt hook pre-start".into())).contains("retry")
+        );
     }
 
     /// `Display` is the short single-line label per variant — no symbol,
