@@ -733,6 +733,45 @@ fn test_push_remote_url_returns_non_github_url(repo: TestRepo) {
     assert_eq!(parsed.host(), "gitlab.com");
 }
 
+#[rstest]
+#[case::scp_custom_user("org-14957082@github.com:contributor/repo.git", None)]
+#[case::named_with_at("git@mirror", Some("https://github.com/mirror/repo.git"))]
+#[case::slash_named("team/origin", Some("https://github.com/team/repo.git"))]
+#[case::file_url("file:///example/fork.git", None)]
+#[case::absolute_path("/example/fork.git", None)]
+#[case::relative_path("../fork.git", None)]
+fn test_push_remote_url_resolves_names_and_preserves_literal_destinations(
+    repo: TestRepo,
+    #[case] destination: &str,
+    #[case] remote_url: Option<&str>,
+) {
+    repo.run_git(&[
+        "config",
+        "remote.origin.url",
+        "https://github.com/base/repo.git",
+    ]);
+    setup_push_tracking(&repo, "main", "origin");
+    if let Some(url) = remote_url {
+        repo.run_git(&["remote", "add", destination, url]);
+    }
+    repo.run_git(&["config", "branch.main.pushRemote", destination]);
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    assert_eq!(
+        git_repo.branch("main").push_remote().as_deref(),
+        Some(destination),
+    );
+    // A cached failed named-remote lookup must not erase a literal destination.
+    assert_eq!(
+        git_repo.effective_remote_url(destination).as_deref(),
+        remote_url
+    );
+    assert_eq!(
+        git_repo.branch("main").push_remote_url().as_deref(),
+        Some(remote_url.unwrap_or(destination)),
+    );
+}
+
 /// `push_remote_url`: result is cached on the Repository.
 ///
 /// `wt list`'s CI-status detection calls `push_remote_url` from both the
@@ -863,4 +902,87 @@ fn test_default_branch_via_c_flag_to_linked_worktree_of_bare_repo() {
         String::from_utf8_lossy(&output.stderr),
     );
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "main");
+}
+
+#[rstest]
+fn test_push_remote_url_preserves_logical_forge_url_with_local_push_transport(repo: TestRepo) {
+    let logical = "https://github.com/acme/demo.git";
+    repo.run_git(&["config", "remote.origin.url", logical]);
+    repo.run_git(&[
+        "config",
+        "url./example/local-bare.git.pushInsteadOf",
+        logical,
+    ]);
+    setup_push_tracking(&repo, "main", "origin");
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    assert_eq!(
+        git_repo.branch("main").push_remote_url().as_deref(),
+        Some(logical)
+    );
+}
+
+#[rstest]
+fn test_push_remote_url_resolves_worktree_only_named_remote(mut repo: TestRepo) {
+    repo.run_git(&["config", "extensions.worktreeConfig", "true"]);
+    let path = repo.add_worktree("linked-push");
+    setup_push_tracking(&repo, "linked-push", "origin");
+    repo.run_git(&["config", "branch.linked-push.pushRemote", "git@mirror"]);
+    let url = "https://github.com/worktree/repo.git";
+    let configured = repo
+        .git_command()
+        .current_dir(&path)
+        .args(["config", "--worktree", "remote.git@mirror.url", url])
+        .run()
+        .unwrap();
+    assert!(configured.status.success());
+    let git_repo = Repository::at(&path).unwrap();
+    assert_eq!(
+        git_repo.branch("linked-push").push_remote_url().as_deref(),
+        Some(url)
+    );
+}
+
+#[rstest]
+fn test_push_remote_url_does_not_treat_git_configuration_errors_as_literals(repo: TestRepo) {
+    repo.run_git(&[
+        "config",
+        "remote.origin.url",
+        "https://github.com/base/repo.git",
+    ]);
+    setup_push_tracking(&repo, "main", "origin");
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    assert_eq!(
+        git_repo.branch("main").push_remote().as_deref(),
+        Some("origin")
+    );
+    let config = repo.root_path().join(".git/config");
+    let mut contents = std::fs::read_to_string(&config).unwrap();
+    contents.push_str("\n[invalid\n");
+    std::fs::write(config, contents).unwrap();
+    assert_eq!(git_repo.branch("main").push_remote_url(), None);
+}
+
+#[rstest]
+fn test_push_remote_url_reuses_a_successful_fetch_resolution(repo: TestRepo) {
+    let url = "https://github.com/base/repo.git";
+    repo.run_git(&["config", "remote.origin.url", url]);
+    setup_push_tracking(&repo, "main", "origin");
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    assert_eq!(
+        git_repo.branch("main").push_remote().as_deref(),
+        Some("origin")
+    );
+    assert_eq!(
+        git_repo.effective_remote_url("origin").as_deref(),
+        Some(url)
+    );
+    // Any new Git query would now fail: the successful cache must be reused.
+    let config = repo.root_path().join(".git/config");
+    let mut contents = std::fs::read_to_string(&config).unwrap();
+    contents.push_str("\n[invalid\n");
+    std::fs::write(config, contents).unwrap();
+    assert_eq!(
+        git_repo.branch("main").push_remote_url().as_deref(),
+        Some(url)
+    );
 }

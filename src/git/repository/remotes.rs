@@ -159,6 +159,38 @@ impl Repository {
             .clone()
     }
 
+    /// Resolve a push remote name before treating it as a literal destination.
+    /// Preserve the logical forge URL: `pushInsteadOf` may redirect transport.
+    pub(super) fn resolve_push_remote_url(&self, remote: &str) -> Option<String> {
+        self.cache
+            .push_remote_urls
+            .entry(remote.to_string())
+            .or_insert_with(|| {
+                // The same query/context already resolved this named remote.
+                // A cached miss cannot distinguish literals from other Git errors.
+                if let Some(url) = self
+                    .cache
+                    .effective_remote_urls
+                    .get(remote)
+                    .and_then(|entry| entry.value().clone())
+                {
+                    return Some(url);
+                }
+                let output = self
+                    .run_command_output(&["remote", "get-url", "--", remote])
+                    .ok()?;
+                match output.status.code() {
+                    Some(0) => String::from_utf8(output.stdout)
+                        .ok()
+                        .map(|url| url.trim().to_string())
+                        .filter(|url| !url.is_empty()),
+                    Some(2) => Some(remote.to_string()),
+                    _ => None,
+                }
+            })
+            .clone()
+    }
+
     /// Find a remote that points to a specific owner/repo.
     ///
     /// Searches all configured remotes and returns the name of the first one
