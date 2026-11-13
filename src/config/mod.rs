@@ -23,6 +23,7 @@ mod error;
 mod expansion;
 mod hooks;
 mod project;
+mod schema;
 mod template_analysis;
 #[cfg(test)]
 mod test;
@@ -224,6 +225,7 @@ pub use project::{
     ProjectCiConfig, ProjectCommitConfig, ProjectCommitGenerationConfig, ProjectConfig,
     ProjectForgeConfig, ProjectListConfig, valid_project_config_keys,
 };
+pub use schema::{project_config_schema_document, user_config_schema_document};
 pub use unknown_tree::{
     UnknownTree, UnknownWarning, collect_unknown_warnings, compute_unknown_tree,
 };

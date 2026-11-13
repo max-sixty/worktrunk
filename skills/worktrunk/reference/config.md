@@ -684,6 +684,10 @@ $ wt --config-set 'projects."github.com/owner/repo".worktree-path = "/tmp/scratc
 
 Hooks, aliases and `step.copy-ignored.exclude` accumulate rather than replace, so an env-set hook and a project's hook both run.
 
+## Editor schemas
+
+For validation and completion in editors that support TOML schemas (such as Taplo or Tombi), start the file with `#:schema https://worktrunk.dev/schema/user-config.json` (user config) or `#:schema https://worktrunk.dev/schema/project-config.json` (project config).
+
 ## Command reference
 
 ```

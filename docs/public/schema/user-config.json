@@ -1,0 +1,717 @@
+{
+  "$defs": {
+    "CommandConfig": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        {
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              }
+            ]
+          },
+          "type": "array"
+        }
+      ]
+    },
+    "CommitConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for the `wt step commit` command\n\nAlso used by `wt merge` for shared settings like `stage`.",
+      "properties": {
+        "generation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CommitGenerationConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "LLM commit message generation settings\n\nNested under `[commit.generation]` in TOML."
+        },
+        "stage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StageMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What to stage before committing (default: all)\nValues: \"all\", \"tracked\", \"none\""
+        }
+      },
+      "type": "object"
+    },
+    "CommitGenerationConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for commit message generation\n\nThe command is a shell string executed via `sh -c`. Environment variables\ncan be set inline (e.g., `MAX_THINKING_TOKENS=0 claude -p ...`).",
+      "properties": {
+        "command": {
+          "default": null,
+          "description": "Shell command to invoke for generating commit messages\n\nExamples:\n- `\"llm -m claude-haiku-4.5\"`\n- `\"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku\"`\n\nThe command receives the prompt via stdin and should output the commit message.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "squash-template": {
+          "default": null,
+          "description": "Inline template for squash commit message prompt\nAvailable variables: {{ commit_details }}, {{ target_branch }}, {{ branch }}, {{ repo }}",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "template": {
+          "default": null,
+          "description": "Inline template for commit message prompt\nAvailable variables: {{ git_diff }}, {{ branch }}, {{ recent_commits }}, {{ repo }}",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "template-append": {
+          "default": null,
+          "description": "Inline text appended to the commit and squash prompts inside a\n`<user-guidance>` block, after the main template's `<style>`\nsection. Rendered as a minijinja template with the same variables\n(`{{ branch }}`, `{{ git_diff }}`, etc.). Unlike `template`, this\n*adds to* the default prompt instead of replacing it — use it for\npersonal commit-message preferences without restating the whole\ntemplate. The project config has a `[commit.generation]\ntemplate-append` of its own; it renders into a separate\n`<project-guidance>` block right after this one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "CopyIgnoredConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for `wt step copy-ignored`",
+      "properties": {
+        "exclude": {
+          "description": "Gitignore-style patterns to exclude from `wt step copy-ignored`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "ListColumnConfig": {
+      "additionalProperties": false,
+      "description": "A custom column in the `wt list` table, keyed by its header text.\n\nThe value is a minijinja template rendered per row with `{{ branch }}`,\n`{{ worktree_path }}`, `{{ worktree_name }}` (empty for branch-only rows),\nand `{{ vars.* }}` (per-branch state from `wt config state vars set`).\nRows where the template renders empty show an empty cell; a column that is\nempty for every row is dropped from the table.\n\n*(Experimental — fields may change in future releases.)*\n\n```toml\n[list.custom-columns.Ticket]\ntemplate = \"{{ vars.ticket }}\"\n```",
+      "properties": {
+        "priority": {
+          "description": "Drop order when the terminal narrows; lower = kept longer (default: 9,\nalongside the URL column; built-in columns range 0-13)",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "template": {
+          "description": "Template rendered per row; the result is the cell text",
+          "type": "string"
+        },
+        "width": {
+          "description": "Maximum display width; longer values truncate (default: 40).\nValues below the header's width are raised to it — a column is never\nnarrower than its header.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "template"
+      ],
+      "type": "object"
+    },
+    "ListConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for the `wt list` command",
+      "properties": {
+        "branches": {
+          "description": "Include branches without worktrees by default",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "columns": {
+          "description": "Columns to render, in order. When non-empty this is exhaustive — only\nthese columns appear (a subset and/or reorder); empty means the default\nset. Built-ins are kebab identifiers (`branch`, `status`, `working-diff`,\n`ahead-behind`, `branch-diff`, `summary`, `upstream`, `ci`, `path`,\n`url`, `commit`, `age`, `message`); custom columns are named by their\n`[list.custom-columns]` header, so a selection mixes both in one list. A\nbuilt-in wins over a custom header that collides with its name. The\ngutter type indicator always shows. A custom column omitted from a\nnon-empty selection is hidden; with no selection, custom columns append\nto the default set. Set as a TOML array in config files.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "custom-columns": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ListColumnConfig"
+          },
+          "description": "Custom columns, keyed by header text. See [`ListColumnConfig`].\n\n*(Experimental — fields may change in future releases.)*",
+          "type": "object"
+        },
+        "full": {
+          "description": "Show CI and `main` diffstat by default",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "json-schema": {
+          "description": "JSON output schema for `wt list --format=json` (1 or 2).\nSchema 2 wraps items in an envelope of per-item facts (see the\n`wt list` JSON docs) and is the default.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "remotes": {
+          "description": "Include remote branches by default",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "summary": {
+          "description": "Enable LLM-generated branch summaries (picker tab 6 + list Summary column).\nRequires `[commit.generation] command` to be configured.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "timeout-ms": {
+          "description": "Wall-clock budget for the entire collect phase in milliseconds.\nTasks that complete within the budget contribute data; tasks still\nrunning when it expires are abandoned silently. Set to 0 to disable.\nDisabled when --full is used. Default: no budget (wait for all results).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "MergeConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for the `wt merge` command\n\nNote: `stage` defaults from `[commit]` section, not here.",
+      "properties": {
+        "commit": {
+          "description": "Commit, squash, and rebase during merge (default: true)",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "ff": {
+          "description": "Fast-forward merge instead of creating a merge commit (default: true)",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "rebase": {
+          "description": "Rebase onto target branch before merging (default: true)\n\nWhen false, merge fails if branch is not already rebased.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "remove": {
+          "description": "Remove worktree after merge (default: true)",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "squash": {
+          "description": "Squash commits when merging (default: true)",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "verify": {
+          "description": "Run project hooks (default: true)",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ProjectForgeConfig": {
+      "additionalProperties": false,
+      "description": "Project-level forge configuration.\n\nNames the forge explicitly, for a remote whose hostname carries no forge\nname for [`ForgeKind::from_host`](crate::git::ForgeKind::from_host) to read\n(a Forgejo instance at `forge.example.com`, a company git server).\n\n# Example\n\n```toml\n[forge]\nplatform = \"github\"              # or \"gitlab\", \"gitea\" (experimental), \"azure-devops\" (experimental)\nhostname = \"github.example.com\"  # API hostname for GHE / self-hosted GitLab\n```",
+      "properties": {
+        "hostname": {
+          "default": null,
+          "description": "API hostname for GitHub Enterprise or self-hosted GitLab.\n\nOnly needed when the remote URL uses an SSH host alias that doesn't\nresolve to the real API hostname. For standard github.com/gitlab.com\nsetups, this is not needed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "platform": {
+          "default": null,
+          "description": "Forge platform. When unset, the platform is detected from the remote URL.\n\nValues: \"github\", \"gitlab\", \"gitea\" (experimental), or \"azure-devops\"\n(experimental). Both the `wt switch pr:` shortcut and `wt list --full`\nCI status detection use `forge.platform` to pick the forge CLI (`gh`,\n`glab`, `tea`, or `az`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "RemoveConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for the `wt remove` command",
+      "properties": {
+        "delete-branch": {
+          "description": "Delete the branch after removing the worktree (default: true)",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "StageMode": {
+      "description": "What to stage before committing",
+      "oneOf": [
+        {
+          "const": "all",
+          "description": "Stage everything: untracked files + unstaged tracked changes",
+          "type": "string"
+        },
+        {
+          "const": "tracked",
+          "description": "Stage tracked changes only (like `git add -u`)",
+          "type": "string"
+        },
+        {
+          "const": "none",
+          "description": "Stage nothing, commit only what's already in the index",
+          "type": "string"
+        }
+      ]
+    },
+    "StepConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for `wt step` subcommands.",
+      "properties": {
+        "copy-ignored": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CopyIgnoredConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Configuration for `wt step copy-ignored`."
+        }
+      },
+      "type": "object"
+    },
+    "SwitchConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for the `wt switch` command",
+      "properties": {
+        "cd": {
+          "description": "Change directory after switch (default: true)",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "picker": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SwitchPickerConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Picker settings for the interactive selector"
+        }
+      },
+      "type": "object"
+    },
+    "SwitchPickerConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for the `wt switch` interactive picker.\n\nNew format under `[switch.picker]`. Replaces the deprecated `[select]` section.",
+      "properties": {
+        "pager": {
+          "description": "Pager command with flags for diff preview\n\nOverrides git's core.pager for the interactive picker's preview panel.\nUse this to specify pager flags needed for non-TTY contexts.\n\nExample: `pager = \"delta --paging=never\"`",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "preview": {
+          "description": "Show the preview panel when the picker opens (default: true)\n\nWith `preview = false` the picker opens list-only; `Alt-p` still\ntoggles the preview.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "UserProjectOverrides": {
+      "additionalProperties": false,
+      "description": "Per-project overrides in the user's config file\n\nStored under `[projects.\"project-id\"]` in the user's config.\nThese are user preferences (not checked into git) that override\nthe corresponding global settings when set.\n\nThe key is a project identifier (`host/owner/repo`) or a `*` pattern\ncovering a set of them, so one entry can carry settings for every\nrepository on a host. Every matching entry applies, least- to\nmost-specific; the `project_match` module states the rules.\n\n# TOML Format\n```toml\n[projects.\"github.com/user/repo\"]\nworktree-path = \".worktrees/{{ branch | sanitize }}\"\n\n[projects.\"github.com/user/repo\".commit.generation]\ncommand = \"llm -m gpt-4\"\n\n[projects.\"github.com/user/repo\".list]\nfull = true\n\n[projects.\"github.com/user/repo\".merge]\nsquash = false\n\n# Every repository on a self-hosted forge whose name carries no brand\n[projects.\"git.company.example/*\"]\nforge.platform = \"gitlab\"\n```",
+      "properties": {
+        "aliases": {
+          "additionalProperties": {
+            "$ref": "#/$defs/CommandConfig"
+          },
+          "type": "object"
+        },
+        "approved-commands": {
+          "description": "Commands that have been approved for automatic execution in this project",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "commit": {
+          "$ref": "#/$defs/CommitConfig"
+        },
+        "forge": {
+          "$ref": "#/$defs/ProjectForgeConfig",
+          "description": "Forge platform and API hostname for the matched repositories.\n\nSame shape as the repository's own `[forge]` block, which wins field by\nfield where both are set. Both fields describe the host rather than the\nrepository, so a `*` pattern keyed to a hostname is the usual way to\nwrite them."
+        },
+        "list": {
+          "$ref": "#/$defs/ListConfig"
+        },
+        "merge": {
+          "$ref": "#/$defs/MergeConfig"
+        },
+        "post-commit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CommandConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Commands to execute after committing (background)"
+        },
+        "post-merge": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CommandConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Commands to execute after successful merge (background)"
+        },
+        "post-remove": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CommandConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Commands to execute after worktree removal (background)"
+        },
+        "post-start": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CommandConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Commands to execute after worktree creation (background)"
+        },
+        "post-switch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CommandConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Commands to execute after switching to a worktree (background)"
+        },
+        "pre-commit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CommandConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Commands to execute before committing during merge (blocking, fail-fast)"
+        },
+        "pre-merge": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CommandConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Commands to execute before merging (blocking, fail-fast)"
+        },
+        "pre-remove": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CommandConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Commands to execute before worktree removal (blocking, fail-fast)"
+        },
+        "pre-start": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CommandConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Commands to execute after worktree creation (blocking, fail-fast)"
+        },
+        "pre-switch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CommandConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Commands to execute before switch begins (blocking, fail-fast)"
+        },
+        "remove": {
+          "$ref": "#/$defs/RemoveConfig"
+        },
+        "step": {
+          "$ref": "#/$defs/StepConfig"
+        },
+        "switch": {
+          "$ref": "#/$defs/SwitchConfig"
+        },
+        "worktree-path": {
+          "description": "Per-project worktree path template override",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$id": "https://worktrunk.dev/schema/user-config.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Schema for ~/.config/worktrunk/config.toml.",
+  "properties": {
+    "aliases": {
+      "additionalProperties": {
+        "$ref": "#/$defs/CommandConfig"
+      },
+      "description": "Command aliases for `wt <name>`",
+      "type": "object"
+    },
+    "commit": {
+      "$ref": "#/$defs/CommitConfig",
+      "description": "Configuration for the `wt step commit` command (also used by merge)"
+    },
+    "list": {
+      "$ref": "#/$defs/ListConfig",
+      "description": "Configuration for the `wt list` command"
+    },
+    "merge": {
+      "$ref": "#/$defs/MergeConfig",
+      "description": "Configuration for the `wt merge` command"
+    },
+    "post-commit": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CommandConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Commands to execute after committing (background)"
+    },
+    "post-merge": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CommandConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Commands to execute after successful merge (background)"
+    },
+    "post-remove": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CommandConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Commands to execute after worktree removal (background)"
+    },
+    "post-start": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CommandConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Commands to execute after worktree creation (background)"
+    },
+    "post-switch": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CommandConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Commands to execute after switching to a worktree (background)"
+    },
+    "pre-commit": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CommandConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Commands to execute before committing during merge (blocking, fail-fast)"
+    },
+    "pre-merge": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CommandConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Commands to execute before merging (blocking, fail-fast)"
+    },
+    "pre-remove": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CommandConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Commands to execute before worktree removal (blocking, fail-fast)"
+    },
+    "pre-start": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CommandConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Commands to execute after worktree creation (blocking, fail-fast)"
+    },
+    "pre-switch": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CommandConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Commands to execute before switch begins (blocking, fail-fast)"
+    },
+    "projects": {
+      "additionalProperties": {
+        "$ref": "#/$defs/UserProjectOverrides"
+      },
+      "default": {},
+      "description": "Per-project configuration (approved commands, etc.)\nUses BTreeMap for deterministic serialization order and better diff readability",
+      "type": "object"
+    },
+    "remove": {
+      "$ref": "#/$defs/RemoveConfig",
+      "description": "Configuration for the `wt remove` command"
+    },
+    "skip-commit-generation-prompt": {
+      "description": "Skip the first-run commit generation prompt",
+      "type": "boolean"
+    },
+    "skip-shell-integration-prompt": {
+      "description": "Skip the first-run shell integration prompt",
+      "type": "boolean"
+    },
+    "step": {
+      "$ref": "#/$defs/StepConfig",
+      "description": "Configuration for `wt step` subcommands"
+    },
+    "switch": {
+      "$ref": "#/$defs/SwitchConfig",
+      "description": "Configuration for the `wt switch` command"
+    },
+    "worktree-path": {
+      "description": "Worktree path template",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "title": "Worktrunk user config",
+  "type": "object"
+}
