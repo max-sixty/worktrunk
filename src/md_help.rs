@@ -298,21 +298,42 @@ fn render_table(lines: &[&str], max_width: Option<usize>) -> String {
 
 /// Render a table from headers and rows using termimad.
 ///
-/// Column widths are computed by termimad based on content.
+/// Column widths are computed by termimad based on content. Cells are data —
+/// var values, summary subjects, branch names — so each is escaped to print as
+/// written, and the help-text preprocessing (link stripping, `\|` unescaping)
+/// is skipped.
 pub(crate) fn render_data_table(headers: &[&str], rows: &[Vec<String>]) -> String {
-    let header_line = format!("| {} |", headers.join(" | "));
-    let separator = format!("|{}|", vec!["---"; headers.len()].join("|"));
-    let row_lines: Vec<String> = rows
-        .iter()
-        .map(|row| format!("| {} |", row.join(" | ")))
-        .collect();
+    let row_line = |cells: Vec<String>| format!("| {} |", cells.join(" | "));
+    let mut lines = vec![
+        row_line(headers.iter().map(|h| escape_table_cell(h)).collect()),
+        format!("|{}|", vec!["---"; headers.len()].join("|")),
+    ];
+    lines.extend(
+        rows.iter()
+            .map(|row| row_line(row.iter().map(|cell| escape_table_cell(cell)).collect())),
+    );
 
-    let mut lines: Vec<&str> = Vec::with_capacity(rows.len() + 2);
-    lines.push(&header_line);
-    lines.push(&separator);
-    lines.extend(row_lines.iter().map(|s| s.as_str()));
+    help_table_skin()
+        .text(&lines.join("\n"), Some(DEFAULT_HELP_WIDTH))
+        .to_string()
+}
 
-    render_table_with_termimad(&lines, None)
+/// Escape a data value for a termimad table cell: backslash-escape the
+/// characters minimad gives meaning to (`|` splits cells; `*`, `~` and `` ` ``
+/// style text), and flatten line breaks, which would end the row.
+fn escape_table_cell(cell: &str) -> String {
+    let mut escaped = String::with_capacity(cell.len());
+    for c in cell.chars() {
+        match c {
+            '\\' | '|' | '*' | '~' | '`' => {
+                escaped.push('\\');
+                escaped.push(c);
+            }
+            '\n' | '\r' => escaped.push(' '),
+            _ => escaped.push(c),
+        }
+    }
+    escaped
 }
 
 /// Render a markdown table using termimad
@@ -802,6 +823,24 @@ mod tests {
         ───── ───── 
         Alice 42    
         Bob   7
+        ");
+    }
+
+    /// Cells hold data (var values, summary subjects, branch names), not
+    /// markdown: a `|` stays in its cell, and `*`, `` ` ``, `\`, `[x](y)` and a
+    /// line break print as written rather than restyling or splitting the row.
+    #[test]
+    fn test_render_data_table_cells_are_literal() {
+        let rows = vec![
+            vec!["a|b".into(), "x *y* `z` \\ [l](u)".into()],
+            vec!["two\nlines".into(), "ok".into()],
+        ];
+        let result = render_data_table(&["K", "V"], &rows);
+        assert_snapshot!(result, @r"
+            K             V          
+        ───────── ────────────────── 
+        a|b       x *y* `z` \ [l](u) 
+        two lines ok
         ");
     }
 
