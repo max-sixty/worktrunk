@@ -2721,3 +2721,66 @@ fn test_switch_picker_cursor_wait_recovers_under_filter(mut repo: TestRepo) {
     assert!(cursor_points_at(&parser.screen().contents(), first));
     assert_valid_abort_exit_code(abort_and_exit_code(child, writer, rx));
 }
+
+/// Column of the list/preview separator on a body row of the screen. Read from
+/// the screen grid rather than fixed constants, so it follows the terminal when
+/// the test resizes it.
+fn separator_col(screen: &vt100::Screen) -> Option<u16> {
+    let (rows, cols) = screen.size();
+    (2..rows.get()).find_map(|row| {
+        (0..cols.get()).find(|&col| {
+            screen
+                .cell(row, col)
+                .is_some_and(|cell| cell.contents() == "│")
+        })
+    })
+}
+
+/// A terminal resized after the picker opens keeps the 50/50 split. The picker
+/// hands skim an absolute `right:N` window sized from the startup width, so a
+/// floating pane whose pty grows after launch shows a narrow preview beside a
+/// wide list (#4793).
+#[rstest]
+fn test_switch_picker_preview_split_follows_terminal_resize(repo: TestRepo) {
+    let env_vars = repo.test_env_vars();
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+    );
+    let before = separator_col(parser.screen()).expect("startup split");
+
+    const WIDE_COLS: u16 = 200;
+    _master
+        .resize(portable_pty::PtySize {
+            rows: TERM_ROWS,
+            cols: WIDE_COLS,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .unwrap();
+    parser.screen_mut().set_size(
+        NonZeroU16::new(TERM_ROWS).unwrap(),
+        NonZeroU16::new(WIDE_COLS).unwrap(),
+    );
+    wait_for_stable(&rx, &mut parser);
+    let after = separator_col(parser.screen()).expect("split after resize");
+    let exit_code = abort_and_exit_code(child, writer, rx);
+    assert_valid_abort_exit_code(exit_code);
+
+    assert!(
+        before.abs_diff(TERM_COLS / 2) <= 1,
+        "startup split near the middle, got column {before}"
+    );
+    assert!(
+        after.abs_diff(WIDE_COLS / 2) <= 1,
+        "the split must stay in the middle after a resize, got column {after}"
+    );
+}
