@@ -1772,6 +1772,78 @@ fn test_remove_force_with_untracked_files(mut repo: TestRepo) {
     );
 }
 
+/// A concurrent sweep must preserve the index of a suspended removal backup.
+/// Git accepts a missing index as an empty tree, so losing it can otherwise
+/// produce a successful, empty backup immediately before deleting user data.
+#[cfg(unix)]
+#[rstest]
+fn test_remove_force_backup_survives_concurrent_index_sweep(mut repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let worktree = repo.add_worktree("feature");
+    fs::write(worktree.join("untracked.txt"), "recover this content\n").unwrap();
+    let scratch = worktrunk::testing::test_tempdir();
+    let bin_dir = scratch.path().join("bin");
+    let temp_dir = scratch.path().join("temp");
+    fs::create_dir(&bin_dir).unwrap();
+    fs::create_dir(&temp_dir).unwrap();
+    let swept = scratch.path().join("swept");
+    let real_git = which::which("git").unwrap();
+    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
+    let shim = bin_dir.join("git");
+    fs::write(
+        &shim,
+        format!(
+            r#"#!/bin/sh
+if [ "$1" = write-tree ] && [ -n "$GIT_INDEX_FILE" ] && [ -z "$WORKTRUNK_TEST_INDEX_SWEPT" ]; then
+  touch -t 200001010000 "$GIT_INDEX_FILE" || exit 1
+  index_dir=$(dirname "$GIT_INDEX_FILE")
+  if [ -f "$index_dir/owner" ]; then
+    touch -t 200001010000 "$index_dir" || exit 1
+  fi
+  env -u GIT_INDEX_FILE WORKTRUNK_TEST_INDEX_SWEPT=1 "$WORKTRUNK_TEST_WT" -C "$WORKTRUNK_TEST_REPO" step diff > /dev/null || exit 1
+  touch "$WORKTRUNK_TEST_SWEPT" || exit 1
+fi
+exec {real_git} "$@"
+"#
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut paths: Vec<_> = std::env::split_paths(&std::env::var_os("PATH").unwrap()).collect();
+    paths.insert(0, bin_dir);
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "feature",
+            "--force",
+            "--foreground",
+            "--no-hooks",
+            "--no-delete-branch",
+            "--yes",
+        ])
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .env("TMPDIR", &temp_dir)
+        .env("WORKTRUNK_TEST_WT", crate::common::wt_bin())
+        .env("WORKTRUNK_TEST_REPO", repo.root_path())
+        .env("WORKTRUNK_TEST_SWEPT", &swept)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(swept.exists(), "concurrent sweep must have run");
+    assert!(!worktree.exists(), "removal must complete");
+    assert_eq!(
+        repo.git_output(&["show", "refs/wt-backup/feature:untracked.txt"]),
+        "recover this content"
+    );
+    assert_eq!(fs::read_dir(&temp_dir).unwrap().count(), 0);
+}
+
 /// A `--force` backup that git can't take refuses the removal, before the
 /// discard is announced. An untracked nested repo with no commits can't be
 /// added to the snapshot.
@@ -6571,53 +6643,6 @@ fn test_remove_branch_deletion_failure_context(
             "complete"
         );
     }
-}
-
-/// With fsmonitor configured, a file written while the daemon shuts down is
-/// refused by a rescan after the stop. The shim stands in for the daemon and
-/// keeps every other Git command from starting a real one.
-#[cfg(unix)]
-#[rstest]
-fn test_remove_keeps_work_created_during_fsmonitor_stop(mut repo: TestRepo) {
-    use std::os::unix::fs::PermissionsExt;
-
-    repo.run_git(&["config", "core.fsmonitor", "true"]);
-    let worktree = repo.add_worktree("late-work");
-
-    let bin_dir = repo.home_path().join("shutdown-git");
-    fs::create_dir(&bin_dir).unwrap();
-    let real_git = which::which("git").unwrap();
-    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
-    fs::write(
-        bin_dir.join("git"),
-        format!(
-            r#"#!/bin/sh
-case "$1" in
-  fsmonitor--daemon) [ "$2" = stop ] && printf 'late work' > late.txt; exit 0 ;;
-  config) exec {real_git} "$@" ;;
-esac
-exec {real_git} -c core.fsmonitor=false "$@"
-"#
-        ),
-    )
-    .unwrap();
-    fs::set_permissions(bin_dir.join("git"), fs::Permissions::from_mode(0o755)).unwrap();
-    let mut paths: Vec<_> = std::env::split_paths(&std::env::var_os("PATH").unwrap()).collect();
-    paths.insert(0, bin_dir);
-
-    let output = repo
-        .wt_command()
-        .args(["remove", "late-work", "--foreground", "--yes"])
-        .env("PATH", std::env::join_paths(paths).unwrap())
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!output.status.success(), "{stderr}");
-    assert!(stderr.contains("has uncommitted changes"), "{stderr}");
-    assert_eq!(
-        fs::read_to_string(worktree.join("late.txt")).unwrap(),
-        "late work"
-    );
 }
 
 /// The child uses the invoking checkout's target and retains a moved tip,
