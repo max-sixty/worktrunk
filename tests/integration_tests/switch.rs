@@ -6575,15 +6575,24 @@ fn test_switch_pr_self_hosted_defaults_to_github(
     }
 }
 
-/// A GitHub Enterprise remote with no `forge.hostname`: `gh api` sends a
-/// request without `--hostname` to gh's default host, so the PR lookup must
-/// name the remote's host when gh holds a login for it, and leave gh's default
-/// alone when it doesn't (an SSH alias such as `github-personal`, #1790).
+const GHE_REMOTE: &str = "https://github.example.com/owner/test-repo.git";
+const ALIAS_REMOTE: &str = "git@github-work:owner/test-repo.git";
+const GHE_PR_URL: &str = "https://github.example.com/owner/test-repo/pull/101";
+
+/// With no `forge.hostname`, `gh api` sends a request without `--hostname` to
+/// gh's default host. The PR lookup names a host only when gh holds a login
+/// for it: the host in a `/pull/N` URL first (#4709), then a GitHub Enterprise
+/// remote's host. An SSH alias (`github-work`, #1790) has no login; the alias
+/// cases pass only if the URL host is tried before the remote host.
 #[rstest]
-#[case::authed_host(true)]
-#[case::unauthed_host(false)]
-fn test_switch_pr_enterprise_remote_passes_hostname(
+#[case::authed_remote_host(GHE_REMOTE, "pr:101", true)]
+#[case::unauthed_remote_host(GHE_REMOTE, "pr:101", false)]
+#[case::authed_url_host_over_alias_remote(ALIAS_REMOTE, GHE_PR_URL, true)]
+#[case::unauthed_url_host(ALIAS_REMOTE, GHE_PR_URL, false)]
+fn test_switch_pr_enterprise_passes_hostname(
     #[from(repo_with_remote)] mut repo: TestRepo,
+    #[case] origin_url: &str,
+    #[case] switch_arg: &str,
     #[case] gh_authed: bool,
 ) {
     repo.add_worktree("feature-auth");
@@ -6599,9 +6608,8 @@ fn test_switch_pr_enterprise_remote_passes_hostname(
     )
     .trim()
     .to_string();
-    let ghe_url = "https://github.example.com/owner/test-repo.git";
-    repo.run_git(&["remote", "set-url", "origin", ghe_url]);
-    repo.run_git(&["config", &format!("url.{bare_url}.insteadOf"), ghe_url]);
+    repo.run_git(&["remote", "set-url", "origin", origin_url]);
+    repo.run_git(&["config", &format!("url.{bare_url}.insteadOf"), origin_url]);
 
     let gh_response = r#"{
         "title": "Enterprise PR",
@@ -6623,6 +6631,7 @@ fn test_switch_pr_enterprise_remote_passes_hostname(
     fs::write(mock_bin.join("pr_response.json"), gh_response).unwrap();
     let mut gh = MockConfig::new("gh").command("api", MockResponse::file("pr_response.json"));
     if gh_authed {
+        // Answers for any host, so the alias cases check host precedence.
         gh = gh.command("auth token --hostname", MockResponse::output("gho_mock"));
     }
     gh.command("_default", MockResponse::exit(1))
@@ -6632,7 +6641,7 @@ fn test_switch_pr_enterprise_remote_passes_hostname(
     let mut cmd = repo.wt_command();
     configure_mock_cli_env(&mut cmd, &mock_bin);
     let output = cmd
-        .args(["switch", "pr:101"])
+        .args(["switch", switch_arg])
         .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
         .output()
         .unwrap();

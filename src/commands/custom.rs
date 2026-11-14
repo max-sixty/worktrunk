@@ -72,7 +72,7 @@ pub(crate) fn handle_custom_command(
     let mut iter = args.into_iter();
     let name_os = iter
         .next()
-        .expect("clap guarantees at least one arg for external_subcommand variants");
+        .context("external subcommand invoked without a name")?;
     let rest: Vec<OsString> = iter.collect();
 
     let name = name_os
@@ -251,9 +251,9 @@ mod tests {
     #[test]
     fn similar_subcommands_never_suggests_the_input_itself() {
         // An exact match — e.g. a user-config alias named like the input — is
-        // never a "similar" suggestion: dispatch paths that reach the error
-        // with the input in the candidate pool (alias outside a repository,
-        // alias skipped as non-UTF-8) must not tip the typed name back.
+        // never a "similar" suggestion: a dispatch path that reaches the error
+        // with the input in the candidate pool must not tip the typed name
+        // back.
         let cmd = build_command();
         let aliases = vec!["list".to_string()];
         let suggestions = similar_subcommands("list", &cmd, &aliases);

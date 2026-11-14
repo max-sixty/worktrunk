@@ -213,9 +213,9 @@ Valid built-in names:
 
 - `branch` — The branch name
 - `status` — Git status symbols, plus any user-defined status
-- `working-diff` — Uncommitted line changes against `HEAD`, including untracked files (header `HEAD±`)
-- `ahead-behind` — Commits ahead of and behind the default branch (header `main↕`)
-- `branch-diff` — Line changes against the default branch (header `main…±`)
+- `working-diff` — Uncommitted line changes against `HEAD`, including untracked files (header `@±`)
+- `ahead-behind` — Commits ahead of and behind the default branch (header `^↕`)
+- `branch-diff` — Line changes against the default branch (header `^…±`)
 - `summary` — An LLM-generated summary of the branch
 - `upstream` — Commits ahead of and behind the upstream tracking branch (header `Remote⇅`)
 - `ci` — CI status of the head commit
@@ -1441,7 +1441,7 @@ Markers appear at the end of the Status column, after git symbols:
 
 ```console
 $ wt list
-  Branch       Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message
+  Branch       Status       @±        ^↕        ^…±     Remote⇅  Commit    Age  Message
 @ main             ^⇡                                    ⇡1      33323bc    1d  Initial commit
 + feature-api      ↑ 🤖              ↑1        +1                70343f0    1d  Add REST API endpo…
 + review-ui      ? ↑ 💬    +1        ↑1        +1                a585d6e    1d  Add dashboard comp…

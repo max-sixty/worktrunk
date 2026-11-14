@@ -370,8 +370,8 @@ impl WorkingTreeStatus {
 /// Display order (left to right):
 /// - Working tree: +, !, ? (staged, modified, untracked - NOT mutually exclusive)
 /// - Worktree state: ✘, ↻, /, ⚐, ⊘, ⊟, ⊞ (operations + location)
-/// - Main state: ^, ✗, _, ⊂, ↕, ↑, ↓ (relationship to default branch - single-stroke vertical arrows)
-/// - Upstream divergence: |, ⇅, ⇡, ⇣ (relationship to remote - vertical arrows)
+/// - Main state: ^, ✗, _, –, ⊂, ∅, ↕, ↑, ↓ (relationship to default branch - solid vertical arrows)
+/// - Upstream divergence: |, ⇅, ⇡, ⇣ (relationship to remote - dashed vertical arrows)
 /// - User marker: custom labels, emoji
 ///
 /// ## Mutual Exclusivity

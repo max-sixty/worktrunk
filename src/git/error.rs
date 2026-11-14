@@ -647,9 +647,6 @@ pub enum GitError {
     ParseError {
         message: String,
     },
-    WorktreeIncludeParseError {
-        error: String,
-    },
     LlmCommandFailed {
         command: String,
         error: String,
@@ -1022,10 +1019,6 @@ impl GitError {
             GitError::ProjectConfigNotFound { .. } => "No project configuration found".to_string(),
 
             GitError::ParseError { message } => message.clone(),
-
-            GitError::WorktreeIncludeParseError { .. } => {
-                cformat!("Error parsing <bold>.worktreeinclude</>")
-            }
 
             GitError::WorktreeNotFound { branch } => {
                 cformat!("Branch <bold>{branch}</> has no worktree")
@@ -1650,11 +1643,6 @@ impl GitError {
             GitError::ParseError { .. } => {
                 let title = self.title();
                 write!(f, "{}", error_message(&title))
-            }
-
-            GitError::WorktreeIncludeParseError { error } => {
-                let title = self.title();
-                write!(f, "{}", format_error_block(error_message(&title), error))
             }
 
             GitError::WorktreeNotFound { branch } => {

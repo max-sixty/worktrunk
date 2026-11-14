@@ -9,10 +9,12 @@ inputs:
     description: >-
       Whether this job may save the shared rust cache (and then only on main).
       `test` is the canonical saver and leaves this at the default; everyone
-      else (collect-affected, affected-tests, release-target) passes 'false' so
-      they restore main's cache but never write — keeps instrumented
-      (collect-affected) and cross-compiled (release-target) artifacts out of
-      the shared cache, and stops PR runs depositing single-use caches.
+      else (fast-checks, collect-affected, affected-tests, release-target)
+      passes 'false' so they restore main's cache but never write — keeps
+      instrumented (collect-affected) and cross-compiled (release-target)
+      artifacts out of the shared cache, stops a faster job (fast-checks)
+      winning the save race with a partial build, and stops PR runs
+      depositing single-use caches.
     default: "true"
 
 runs:
@@ -28,7 +30,7 @@ runs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-nextest
-        version: "=0.9.150"
+        version: "=0.9.151"
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
@@ -69,4 +71,4 @@ runs:
       if: runner.os != 'Windows'
       uses: hustcer/setup-nu@v3
       with:
-        version: '0.116.1'
+        version: '0.117.0'

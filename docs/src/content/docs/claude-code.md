@@ -102,7 +102,7 @@ Every plugin tracks agent sessions with status markers in `wt list`:
 
 ```console
 $ wt list
-  Branch       Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message
+  Branch       Status       @±        ^↕        ^…±     Remote⇅  Commit    Age  Message
 @ main             ^⇡                                    ⇡1      33323bc    1d  Initial commit
 + feature-api      ↑ 🤖              ↑1        +1                70343f0    1d  Add REST API endpo…
 + review-ui      ? ↑ 💬    +1        ↑1        +1                a585d6e    1d  Add dashboard comp…
@@ -140,7 +140,9 @@ For other agent CLIs, configure these commands to run on session events:
 
 ## Worktree isolation (Claude Code and OpenCode)
 
-Claude Code agents can run in isolated worktrees (`isolation: "worktree"`). By default, Claude Code creates these with `git worktree add`. The plugin's `WorktreeCreate` and `WorktreeRemove` hooks route this through `wt switch --create` and `wt remove` instead, so worktrees created by agents get worktrunk's naming conventions, hooks, and lifecycle management. If the branch already exists, the hook runs `wt switch` without `--create`, which returns the branch's worktree, creating one if it has none.
+Claude Code agents can run in isolated worktrees (`isolation: "worktree"`). By default, Claude Code creates these with `git worktree add`. The plugin's `WorktreeCreate` and `WorktreeRemove` hooks route this through `wt switch --create` and `wt remove` instead, so worktrees created by agents get worktrunk's naming conventions, hooks, and lifecycle management. If the branch already exists, the hook runs `wt switch` without `--create`, which returns the branch's worktree, creating one if it has none. New branches start from the default branch: Claude Code's hook input names the worktree but no base, so its `worktree.baseRef` setting has no effect.
+
+The Claude desktop app creates worktree sessions itself and doesn't run plugin `WorktreeCreate` or `WorktreeRemove` hooks, so those worktrees bypass `wt` ([anthropics/claude-code#29716](https://github.com/anthropics/claude-code/issues/29716)).
 
 Under OpenCode 2, the plugin registers a `worktrunk` worktree strategy, so worktrees OpenCode creates and removes go through the same commands. Each gets a branch named after the worktree name OpenCode chooses, at the path from `worktree-path`; OpenCode's `worktree.directory` setting is ignored. New branches start from the default branch (or the starting ref OpenCode passes), not the current checkout's HEAD. A dirty worktree fails removal with worktrunk's message rather than an offer to force.
 

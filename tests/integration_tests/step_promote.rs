@@ -8,6 +8,7 @@ use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
+use std::path::Path;
 use worktrunk::shell_exec::Cmd;
 
 /// Helper to get the current branch in a directory
@@ -545,54 +546,6 @@ fn test_promote_swap_only_main_has_ignored(mut repo: TestRepo) {
     );
 }
 
-/// `require-include` must not affect `wt step promote` — promote swaps all
-/// gitignored artifacts between worktrees by design and ignores copy-ignored
-/// config. Regression guard for the require-include feature.
-#[rstest]
-fn test_promote_swap_ignores_require_include(mut repo: TestRepo) {
-    let feature_path = repo.add_worktree("feature");
-
-    let gitignore = "build/\n*.log\n";
-    commit_gitignore(&repo, repo.root_path(), gitignore);
-    commit_gitignore(&repo, &feature_path, gitignore);
-
-    // require-include is set via CLI override, but promote must still swap
-    // ignored files — it never reads copy-ignored config. Using --config-set
-    // avoids leaving an untracked .config/ that would itself block promote.
-    fs::create_dir_all(repo.root_path().join("build")).unwrap();
-    fs::write(repo.root_path().join("build/artifact"), "main artifact").unwrap();
-    fs::write(repo.root_path().join("app.log"), "main log").unwrap();
-
-    let output = repo
-        .wt_command()
-        .args([
-            "--config-set",
-            "step.copy-ignored.require-include=true",
-            "step",
-            "promote",
-            "feature",
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    // Ignored files still swapped to feature despite require-include.
-    assert!(!repo.root_path().join("build").exists());
-    assert!(!repo.root_path().join("app.log").exists());
-    assert_eq!(
-        fs::read_to_string(feature_path.join("build/artifact")).unwrap(),
-        "main artifact"
-    );
-    assert_eq!(
-        fs::read_to_string(feature_path.join("app.log")).unwrap(),
-        "main log"
-    );
-}
-
 /// Only feature worktree has gitignored files — they should move to the main worktree
 #[rstest]
 fn test_promote_swap_only_feature_has_ignored(mut repo: TestRepo) {
@@ -879,6 +832,85 @@ fn test_promote_swap_respects_worktreeinclude(mut repo: TestRepo) {
     );
 }
 
+/// Commit the same .gitignore and .worktreeinclude on main and in `feature`.
+fn commit_ignore_and_include(repo: &TestRepo, feature_path: &Path, ignore: &str, include: &str) {
+    for dir in [repo.root_path(), feature_path] {
+        fs::write(dir.join(".gitignore"), ignore).unwrap();
+        fs::write(dir.join(".worktreeinclude"), include).unwrap();
+        repo.run_git_in(dir, &["add", ".gitignore", ".worktreeinclude"]);
+        repo.run_git_in(dir, &["commit", "-m", "add ignore and include"]);
+    }
+}
+
+/// An include pattern naming a path inside a wholly ignored directory swaps
+/// that path and leaves its siblings. VCS state inside a built-in excluded
+/// directory stays put even when a pattern names it.
+#[rstest]
+fn test_promote_swap_include_inside_ignored_directory(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+    commit_ignore_and_include(
+        &repo,
+        &feature_path,
+        ".cache/\n.jj/\n",
+        ".cache/types/\n.jj/repo/\n",
+    );
+    for (dir, name) in [
+        (repo.root_path(), "main"),
+        (feature_path.as_path(), "feature"),
+    ] {
+        for sub in [".cache/types", ".cache/other", ".jj/repo"] {
+            fs::create_dir_all(dir.join(sub)).unwrap();
+            fs::write(dir.join(sub).join("f"), name).unwrap();
+        }
+    }
+
+    let output = repo
+        .wt_command()
+        .args(["step", "promote", "feature"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let read = |dir: &Path, sub: &str| fs::read_to_string(dir.join(sub).join("f")).unwrap();
+    assert_eq!(read(repo.root_path(), ".cache/types"), "feature");
+    assert_eq!(read(&feature_path, ".cache/types"), "main");
+    assert_eq!(read(repo.root_path(), ".cache/other"), "main");
+    assert_eq!(read(repo.root_path(), ".jj/repo"), "main");
+    assert_eq!(read(&feature_path, ".jj/repo"), "feature");
+}
+
+/// A destination reached through a symlinked directory outside the worktree
+/// fails the promote and leaves the outside directory untouched.
+#[cfg(unix)]
+#[rstest]
+fn test_promote_swap_refuses_destination_outside_worktree(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+    commit_ignore_and_include(&repo, &feature_path, ".cache\n", ".cache/types/\n");
+    fs::create_dir_all(repo.root_path().join(".cache/types")).unwrap();
+    fs::write(repo.root_path().join(".cache/types/f"), "main").unwrap();
+    let outside = repo.root_path().parent().unwrap().join("outside-cache");
+    fs::create_dir_all(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, feature_path.join(".cache")).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "promote", "feature"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("refusing to write outside destination worktree"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+}
+
 /// No stale staging directory left after successful promote
 #[rstest]
 fn test_promote_swap_no_staging_leftover(mut repo: TestRepo) {
@@ -975,7 +1007,8 @@ fn test_promote_stale_staging_blocks_with_guidance(mut repo: TestRepo) {
     let _settings_guard = setup_snapshot_settings(&repo).bind_to_scope();
     let feature_path = repo.add_worktree("feature");
 
-    // Need gitignored files so stage_ignored is actually called
+    // Ignored files present, as after a real interrupted promote. The leftover
+    // check runs before any ignored-file discovery, so they are never staged.
     let gitignore = "build/\n";
     commit_gitignore(&repo, repo.root_path(), gitignore);
     commit_gitignore(&repo, &feature_path, gitignore);

@@ -16,6 +16,12 @@
 //!
 //! This ensures approval happens exactly once at the command entry point,
 //! eliminating the need to thread `auto_trust` through execution layers.
+//!
+//! Commands that mutate state between approval and execution (`wt merge`,
+//! `wt remove`, `wt switch --create`) gate through
+//! [`HookPlan::approve`](super::hook_plan::HookPlan::approve) instead, which
+//! freezes the approved commands into an `ApprovedHookPlan`; see
+//! `hook_plan.rs`.
 
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
@@ -216,8 +222,9 @@ pub fn approve_alias_commands(
 
 /// Collect project commands for hooks and request batch approval.
 ///
-/// This is the "gate" function that should be called at command entry points
-/// (like `wt remove`, `wt switch --create`, `wt merge`) before any hooks execute.
+/// The gate for hooks that run without an intervening state mutation (e.g.
+/// `pre-switch`), called at the command entry point before any hooks execute.
+/// Mutating commands use [`HookPlan::approve`](super::hook_plan::HookPlan::approve).
 /// Shows command templates (not expanded values) so users see exactly what
 /// patterns they're approving.
 ///

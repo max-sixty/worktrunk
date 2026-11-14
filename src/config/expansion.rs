@@ -1383,12 +1383,17 @@ pub fn vars_map_to_value(entries: &std::collections::BTreeMap<String, String>) -
 /// [`validate_template`] does) would wrongly reject the dominant pattern.
 /// Answering every key keeps the trial render exercising filters without
 /// constraining which keys exist.
+///
+/// The placeholder is a numeric string: runtime values are strings, often
+/// counts or ports, and `| int` / `| float` on a non-numeric placeholder
+/// would reject a template that renders fine against real values. String
+/// filters accept it just the same.
 #[derive(Debug)]
 struct AnyKeyVars;
 
 impl Object for AnyKeyVars {
     fn get_value(self: &Arc<Self>, _key: &Value) -> Option<Value> {
-        Some(Value::from("PLACEHOLDER"))
+        Some(Value::from("1"))
     }
 }
 
@@ -3591,6 +3596,14 @@ mod tests {
         validate_list_column_template("{{ git.branch.jira }}", &test.repo, "t").unwrap();
         validate_list_column_template(
             "{{ git.branch.description | lines | first }}",
+            &test.repo,
+            "t",
+        )
+        .unwrap();
+        // Values are strings at runtime, often numeric ones (counts, ports);
+        // a numeric conversion must not fail against the placeholder
+        validate_list_column_template(
+            "{% if (git.branch.ahead | default(0) | int) > 0 %}{{ vars.port | float }}{% endif %}",
             &test.repo,
             "t",
         )

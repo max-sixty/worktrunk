@@ -67,6 +67,6 @@ exit_code: 0
 
 [2m○[22m [2mShowing 5 worktrees, 1 with
   changes, 3 ahead, hidden:
-  Status, HEAD±, main↕,
-  main…±, Remote⇅, Path,
-  Commit, Age, Message[0m
+  Status, @±, ^↕, ^…±,
+  Remote⇅, Path, Commit, Age,
+  Message[0m

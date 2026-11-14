@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use color_print::cformat;
-use worktrunk::copy::{copy_dir_recursive, copy_leaf};
+use worktrunk::copy::{copy_dir_recursive, copy_leaf, ensure_path_within_root};
 use worktrunk::git::{Repository, path_dir_name};
 use worktrunk::path::format_path_for_display;
 use worktrunk::progress::{Progress, format_bytes, format_reflink_paren};
@@ -225,6 +225,9 @@ pub fn step_copy_ignored(
                         })?;
             } else {
                 if let Some(parent) = dest_entry.parent() {
+                    // Before creating anything: a symlinked directory in the
+                    // destination must not get directories made beyond it.
+                    ensure_path_within_root(parent, &dest_path)?;
                     fs::create_dir_all(parent).with_context(|| {
                         format!(
                             "creating directory for {}",

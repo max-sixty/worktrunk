@@ -394,14 +394,6 @@ enum WorktreeDiffState {
     Unknown,
 }
 
-/// Wrapper to implement SkimItem for ListItem.
-///
-/// Progressive updates live inside `rendered` — the picker handler rewrites
-/// the ANSI-colored display string in place as task results arrive. skim 4.x
-/// renders on demand, so the handler pokes an `Event::Render` after each
-/// mutation (see `progressive_handler`); skim then re-reads `display()` and the
-/// new value surfaces — no re-send through the item channel.
-///
 /// Append the PR/MR fields a row filters on — reference (`#123`/`!7`), title,
 /// author — to `text`, space-separated, in the order shared by worktree rows
 /// and listed `--prs` rows. A PR thus filters identically however it's shown,
@@ -433,6 +425,14 @@ pub(super) fn push_pr_search_tokens(
     }
 }
 
+/// Wrapper to implement SkimItem for ListItem.
+///
+/// Progressive updates live inside `rendered` — the picker handler rewrites
+/// the ANSI-colored display string in place as task results arrive. skim 4.x
+/// renders on demand, so the handler pokes an `Event::Render` after each
+/// mutation (see `progressive_handler`); skim then re-reads `display()` and the
+/// new value surfaces — no re-send through the item channel.
+///
 /// The matcher text (`text()`) is assembled live from `search_base` + the
 /// `gutter` glyph + the current `pr_status` slot, so a PR's reference, title,
 /// and author become filterable the moment the CI fetch lands them — the same
@@ -1787,12 +1787,12 @@ impl PickerRow {
         // dim/bright split tracks main's current position. See the cache
         // entry docstring for why we keep this off the SHA-keyed disk cache.
         //
-        // Don't pre-resolve `default_branch` to a SHA via
-        // `Repository::default_branch_sha` here. That accessor is a
-        // snapshot of the local-branch inventory at first scan (see its
-        // docstring) — feeding the snapshot into a merge-base call would
-        // freeze the dim/bright styling at the SHA main pointed at when
-        // the picker started, instead of the current SHA. The
+        // Don't pre-resolve `default_branch` to a SHA from the local-branch
+        // inventory here. Its `commit_sha` is a snapshot at first scan (see
+        // `Repository::local_branches`) — feeding the snapshot into a
+        // merge-base call would freeze the dim/bright styling at the SHA
+        // main pointed at when the picker started, instead of the current
+        // SHA. The
         // `log_cache_dim_split_tracks_main_advance` test pins this
         // contract. `Repository::merge_base` is safe here: it re-resolves
         // ref names through an uncached `git rev-parse` before hitting its
@@ -2416,7 +2416,10 @@ mod tests {
             !plain.contains("comments"),
             "inactive label dropped: {plain:?}"
         );
-        assert!(!plain.contains("HEAD"), "inactive label dropped: {plain:?}");
+        assert!(
+            !plain.contains("committed"),
+            "inactive label dropped: {plain:?}"
+        );
         // The compact bar fits a narrow pane where the full bar would not.
         assert!(visual_width(&plain) <= 40, "fits the pane: {plain:?}");
 
@@ -3402,7 +3405,7 @@ mod tests {
         repo.run_command(&["commit", "-m", "real"]).unwrap();
         let item = item_at(&repo, "feature");
 
-        let base_sha = repo.default_branch_sha().unwrap();
+        let base_sha = repo.branch_diff_spec(item.head()).unwrap().cache_sha;
         let sentinel = "SENTINEL_FROM_CACHE";
         super::preview_cache::write_branch_diff(
             &repo,
@@ -3439,7 +3442,7 @@ mod tests {
 
         // beta shares (base, head) with alpha, so its read hits alpha's entry.
         let beta = item_at(&repo, "beta");
-        let base_sha = repo.default_branch_sha().unwrap();
+        let base_sha = repo.branch_diff_spec(beta.head()).unwrap().cache_sha;
         assert!(
             super::preview_cache::read_branch_diff(&repo, &base_sha, beta.head(), 80).is_some(),
             "precondition: beta's key must already be populated by alpha's compute"
@@ -3462,7 +3465,7 @@ mod tests {
         repo.run_command(&["commit", "-m", "wb"]).unwrap();
         let item = item_at(&repo, "feature");
 
-        let base_sha = repo.default_branch_sha().unwrap();
+        let base_sha = repo.branch_diff_spec(item.head()).unwrap().cache_sha;
 
         assert!(
             super::preview_cache::read_branch_diff(&repo, &base_sha, item.head(), 80).is_none()
@@ -3719,10 +3722,11 @@ mod tests {
         repo.run_command(&["checkout", "feature"]).unwrap();
         let item = item_at(&repo, "feature");
         let output = PickerRow::compute_upstream_diff_preview(&repo, &item, 80);
-        // Diverged path runs the diff; symmetric difference includes both files.
+        // Diverged shows this branch's unique changes (merge-base..head), not
+        // upstream's.
         assert!(
-            output.contains("feat.txt") || output.contains("upstream.txt"),
-            "expected diverged diff, got: {output:?}"
+            output.contains("feat.txt") && !output.contains("upstream.txt"),
+            "expected the branch's side of the diverged diff, got: {output:?}"
         );
     }
 

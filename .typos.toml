@@ -1,5 +1,5 @@
 [files]
-extend-exclude = ["docs/demos/vhs-keystrokes/", "*.snap", "vendor/", "*.log"]
+extend-exclude = ["docs/demos/vhs-keystrokes/", "*.snap", "*.log"]
 
 [default]
 # Generated `wt list` doc embeds (README, site docs, skills mirrors) truncate

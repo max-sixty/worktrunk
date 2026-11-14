@@ -529,8 +529,8 @@ fn detect_deprecations_from_doc(doc: &toml_edit::DocumentMut) -> Deprecations {
 /// Run every rule in table order against `doc`, appending each rule's warning
 /// kinds to `kinds` and returning whether the document changed.
 ///
-/// The load pass excludes [`DeprecationRule::UpdateOnly`] rewrites (cosmetic
-/// or still-valid serde fields, so serde doesn't need them applied).
+/// The load pass excludes [`DeprecationRule::UpdateOnly`] rewrites (still-valid
+/// serde fields, so serde doesn't need them applied).
 /// Detection and [`compute_migrated_content`] run the update pass.
 fn apply_rules(doc: &mut toml_edit::DocumentMut, pass: RulePass, kinds: &mut Deprecations) -> bool {
     let mut modified = false;
@@ -1228,8 +1228,7 @@ fn migrate_negated_bool_doc(
 /// [`DeprecationRule::Silent`] rule — to a parsed document, in table order.
 /// Returns true if any modifications were made.
 ///
-/// [`DeprecationRule::UpdateOnly`] rules are excluded — template variable
-/// renaming is cosmetic (would break `--var` overrides), and approved-commands
+/// [`DeprecationRule::UpdateOnly`] rules are excluded — `approved-commands`
 /// is still a valid serde field. They apply in [`compute_migrated_content`].
 fn migrate_content_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     apply_rules(doc, RulePass::Load, &mut Vec::new())
@@ -1494,8 +1493,10 @@ pub struct CheckAndMigrateResult {
 /// the main worktree" hint when viewing project config from a linked worktree.
 ///
 /// When `emit_inline_warnings` is true, per-kind deprecation warnings are printed to stderr
-/// with a hint pointing at `wt config show`/`wt config update`. When false, nothing is
-/// printed and the caller is expected to render via `format_deprecation_details`. Use this for commands other than `config show`.
+/// with a hint pointing at `wt config show`/`wt config update`, or at editing the file for
+/// the system config, which `wt config update` never rewrites. When false, nothing is
+/// printed and the caller is expected to render via `format_deprecation_details`;
+/// `wt config show` and `wt config update` pass false.
 ///
 /// Warnings are deduplicated per path per process.
 ///
@@ -1570,7 +1571,17 @@ pub fn check_and_migrate(
     if emit_inline_warnings && !warnings_suppressed() {
         let warnings = format_warning_lines(info.deprecations.iter(), info.label());
         eprint!("{warnings}");
-        if DEPRECATION_HINT_EMITTED.set(()).is_ok() {
+        if kind == ConfigFileKind::System {
+            // `wt config update` never rewrites the system config, and the
+            // per-path dedup above already limits this to once per process.
+            eprintln!(
+                "{}",
+                hint_message(cformat!(
+                    "<underline>wt config update</> leaves the system config unchanged; to apply updates, edit <underline>{}</>",
+                    crate::path::format_path_for_display(path)
+                ))
+            );
+        } else if DEPRECATION_HINT_EMITTED.set(()).is_ok() {
             eprintln!(
                 "{}",
                 hint_message(cformat!(
@@ -1590,8 +1601,8 @@ pub fn check_and_migrate(
 /// Apply all deprecation fixes to `content` in memory and return the migrated
 /// TOML string.
 ///
-/// Applies variable renames (cosmetic, string-level), structural section and
-/// field migrations, and removes `approved-commands` under `[projects]` (which
+/// Applies template variable renames, structural section and field
+/// migrations, and removes `approved-commands` under `[projects]` (which
 /// `wt config update` copies to `approvals.toml` before overwriting).
 ///
 /// Pure function — no filesystem access. Idempotent: feeding its own output

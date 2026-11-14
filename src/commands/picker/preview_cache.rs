@@ -1,7 +1,7 @@
 //! Persistent cache for picker preview content, keyed by a stable content
 //! signature + dimensions.
 //!
-//! This is the on-disk tier for three of the modes; the in-memory tier above it
+//! This is the on-disk tier for four of the modes; the in-memory tier above it
 //! and the system-wide invalidation rules live in [`super::preview_orchestrator`].
 //!
 //! Three of the picker's preview modes are deterministic functions of git

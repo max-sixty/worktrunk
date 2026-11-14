@@ -81,7 +81,11 @@ fn gh_default_repo(repo_root: &Path) -> Option<(String, String)> {
 }
 
 /// Fetch PR information from GitHub using the `gh` CLI.
-pub(super) fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
+pub(super) fn fetch_pr_info(
+    pr_number: u32,
+    repo: &Repository,
+    url_host: Option<&str>,
+) -> anyhow::Result<RemoteRefInfo> {
     let repo_root = repo.repo_path()?;
 
     // Determine which owner/repo to query. Prefer gh's default repo
@@ -109,14 +113,16 @@ pub(super) fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result
 
     // `gh api` doesn't infer the host from the repository: without
     // `--hostname` it asks gh's default host, which is github.com once several
-    // hosts are logged in. A configured `forge.hostname` wins; otherwise a
-    // GitHub Enterprise remote's host is the API host when gh holds a login
-    // for it. An SSH alias (`git@github-personal:…`) has no login, so it keeps
-    // gh's default (#1790).
+    // hosts are logged in. A configured `forge.hostname` wins. Otherwise a
+    // non-github.com host in a `/pull/N` URL the user passed wins when gh is
+    // logged in there (#4709), then a GitHub Enterprise remote's host. An SSH alias
+    // (`git@github-personal:…`) has no login, so it keeps gh's default (#1790).
     let hostname = repo.forge_hostname().or_else(|| {
-        repo.forge_remote_parsed_url(|u| u.is_github())
-            .map(|u| u.host().to_string())
-            .filter(|host| !host.eq_ignore_ascii_case("github.com") && is_authed_for(host))
+        authed_enterprise_host(url_host).or_else(|| {
+            repo.forge_remote_parsed_url(|u| u.is_github())
+                .map(|u| u.host().to_string())
+                .and_then(|host| authed_enterprise_host(Some(&host)))
+        })
     });
 
     let mut args = vec!["api", api_path.as_str()];
@@ -222,6 +228,20 @@ pub(super) fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result
 /// Get the git protocol preference from `gh` (GitHub CLI).
 fn use_ssh_protocol(host: &str) -> bool {
     cli_config_value("gh", &["git_protocol", "--host", host]).as_deref() == Some("ssh")
+}
+
+/// Enterprise host to pass as `gh api --hostname`, when gh is logged in there.
+///
+/// `github.com` is the no-flag default once more than one host is logged in,
+/// so naming it would only repeat that path. No login reads as `None` and the
+/// caller tries the next candidate.
+fn authed_enterprise_host(host: Option<&str>) -> Option<String> {
+    let host = host?;
+    if host.eq_ignore_ascii_case("github.com") || !is_authed_for(host) {
+        None
+    } else {
+        Some(host.to_string())
+    }
 }
 
 /// Whether `gh` has an authentication token configured for `host`.

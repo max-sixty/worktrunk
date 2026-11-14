@@ -47,7 +47,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-  Branch    Status      HEAD±     main↕    main…±    Remote⇅  Path         Commit    Age  Message
+  Branch    Status       @±        ^↕        ^…±     Remote⇅  Path         Commit    Age  Message
 @ main          ^                                             .            b37a293    1d  Main commit
 + feature1      _                                             ../feature1  b37a293    1d  Main commit
 + feature2      _                                             ../feature2  b37a293    1d  Main commit

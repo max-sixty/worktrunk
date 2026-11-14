@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     fn test_parse_hook_type_aliases() {
-        // `pre-create`/`post-create` are deprecated aliases for the canonical
+        // `pre-create`/`post-create` are silent aliases for
         // `pre-start`/`post-start`; both forms parse to the same `HookType`.
         for name in ["pre-start", "pre-create"] {
             assert_eq!(

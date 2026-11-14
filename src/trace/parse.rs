@@ -108,8 +108,8 @@ impl TraceEntry {
 /// skipped this way.
 fn parse_line(line: &str) -> Option<TraceEntry> {
     let line = line.trim();
-    // Cheap reject before handing the line to serde — most non-record lines
-    // (start echoes, blank lines) don't even start with `{`.
+    // Cheap reject before serde for lines that can't be a JSON object: blank
+    // lines, or a non-JSONL file passed to `wt config state logs profile`.
     if !line.starts_with('{') {
         return None;
     }

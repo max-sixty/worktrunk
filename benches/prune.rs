@@ -8,8 +8,10 @@
 //      first scan after new commits is cold and later scans are warm.
 //   2. The removals — each integrated candidate runs the removal chain
 //      (final clean check, fsmonitor stop, rename-to-trash, branch CAS
-//      delete) serially under the write side of the scan lock, reusing the
-//      removal plan its scan check computed.
+//      delete) on a worker pool sized like rayon's, concurrently with the
+//      remaining scan, reusing the removal plan its scan check computed.
+//      Only `--foreground` and current-worktree removals serialize, and the
+//      live variant passes neither.
 //
 // The generated base gets a prune overlay: squash-merged candidates
 // (integrated by content — the expensive probe path, the post-PR-squash shape

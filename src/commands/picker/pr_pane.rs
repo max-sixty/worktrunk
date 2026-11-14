@@ -22,9 +22,9 @@ use worktrunk::styling::{format_heading, format_with_gutter};
 use super::super::list::ci_status::PrRef;
 
 /// Column (in cells) where a metadata line's value begins, after its cyan label.
-/// The widest labels (`branch`/`author`, 6) plus a 3-space gap; shorter labels
-/// (`url`, `state`) pad out to the same column so every value lines up — across
-/// lines and across the two panes.
+/// The widest label (`comments`, 8) plus a 1-space gap; shorter labels
+/// (`branch`, `author`, `state`, `url`) pad out to the same column so every
+/// value lines up.
 const VALUE_COLUMN: usize = 9;
 
 /// The pane header: a bold PR/MR reference, the title when known, then a blank
@@ -52,7 +52,7 @@ fn field_label(text: &str) -> String {
 
 /// One cyan all-caps labeled metadata line (`BRANCH`, `AUTHOR`, `URL`, …). The
 /// label pads so the value starts at [`VALUE_COLUMN`], aligning values down the
-/// pane and between the two panes. `value` may carry its own styling (e.g. a
+/// pane. `value` may carry its own styling (e.g. a
 /// yellow `draft`) and must close its own spans.
 pub(super) fn metadata_line(label: &str, value: &str) -> String {
     let pad = " ".repeat(VALUE_COLUMN.saturating_sub(label.len()));
@@ -61,10 +61,9 @@ pub(super) fn metadata_line(label: &str, value: &str) -> String {
 
 /// The `BRANCH` metadata line, with the branch name bold — the app convention
 /// for branch identifiers (git and error messages throughout the CLI, the
-/// branch summary in `src/summary.rs`). Both panes build
-/// the line through here so the styling can't drift between them. The trailing
-/// full `{reset}` closes the bold span, the same way the `DESCRIPTION` label and
-/// the `draft` state value close theirs: a run ends at a full reset wherever
+/// branch summary in `src/summary.rs`). The trailing full `{reset}` closes the
+/// bold span, the same way the `DESCRIPTION` label and the `draft` state value
+/// close theirs: a run ends at a full reset wherever
 /// what follows it isn't this code's to know — a caller's value, the next line
 /// of the pane. The tab bar's `items::TAB_DIVIDER` is the case where it is
 /// known, and closes only the dim it opened.
@@ -78,8 +77,8 @@ pub(super) fn branch_line(branch: &str) -> String {
 /// preview is clickable — skim parses the pane with `ansi_to_tui`, which keeps
 /// no OSC 8 — so the underline here marks a reference rather than a link, which
 /// is why `render_preview_tabs` can spend the same attribute on the active tab.
-/// Both panes build the line through here so the styling can't drift. The
-/// trailing full `{reset}` closes the underline span, per the reset rule above.
+/// The trailing full `{reset}` closes the underline span, per the reset rule
+/// above.
 pub(super) fn url_line(url: &str) -> String {
     let reset = Reset;
     metadata_line("url", &cformat!("<underline>{url}</>{reset}"))
@@ -98,10 +97,7 @@ pub(super) fn url_line(url: &str) -> String {
 /// boundary so the label renders clean regardless of what precedes it (the
 /// metadata lines already reset their own spans).
 ///
-/// `width` is the preview-pane width, which the markdown wraps prose to. The
-/// `--prs` pane is built before skim renders, so it passes the list width as a
-/// close proxy (Right splits ~50/50; Down gives list and preview the full
-/// width); the worktree pane reads the live preview width.
+/// `width` is the live preview-pane width, which the markdown wraps prose to.
 pub(super) fn description(body: &str, width: usize) -> String {
     let body = body.trim();
     if body.is_empty() {

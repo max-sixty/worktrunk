@@ -1583,10 +1583,9 @@ struct RemovalDisplayInfo {
 }
 
 impl RemovalDisplayInfo {
-    /// Build display info from the refreshed integration check (background mode).
-    ///
-    /// The caller refreshes this after `pre-remove` hooks and immediately
-    /// before staging/removing the worktree.
+    /// Build display info from the planning-time integration verdict
+    /// (background mode). The branch deletion itself re-decides against fresh
+    /// refs.
     fn from_precomputed(
         deletion_mode: BranchDeletionMode,
         pre_computed_integration: Option<IntegrationReason>,
@@ -2234,7 +2233,7 @@ fn remove_removed_worktree_silently(
 /// safe to pass through.
 ///
 /// - `DirectivePassthrough::default()` — scrubs all directive env vars from
-///   the child. Used by background hooks (outlive the parent shell).
+///   the child.
 /// - `DirectivePassthrough::inherit_from_env()` — re-adds CD. Used by aliases
 ///   and foreground hooks, which may emit `cd` directives.
 ///
@@ -2275,7 +2274,7 @@ pub fn execute_shell_command(
     redirect_stdout_to_stderr: bool,
     scrub_git_discovery: bool,
 ) -> anyhow::Result<()> {
-    // Flush stdout before executing command to ensure all our messages appear
+    // Flush stderr before executing command to ensure all our messages appear
     // before the child process output
     stderr().flush()?;
 

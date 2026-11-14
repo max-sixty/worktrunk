@@ -32,6 +32,7 @@ use insta::assert_snapshot;
 use portable_pty::CommandBuilder;
 use rstest::rstest;
 use std::io::Write;
+use std::num::NonZeroU16;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -40,6 +41,15 @@ use std::time::{Duration, Instant};
 /// Terminal dimensions for TUI tests
 const TERM_ROWS: u16 = 30;
 const TERM_COLS: u16 = 120;
+
+/// A vt100 screen sized to match the PTY.
+fn new_screen_parser() -> vt100::Parser {
+    vt100::Parser::new(
+        NonZeroU16::new(TERM_ROWS).unwrap(),
+        NonZeroU16::new(TERM_COLS).unwrap(),
+        0,
+    )
+}
 
 /// Maximum time to wait for skim to become ready (show "> " prompt).
 /// Long timeout ensures reliability on slow CI.
@@ -285,7 +295,7 @@ fn boot_picker_pty(
     // startup cursor-position query (see `spawn_pty_reader_answering_queries`).
     let rx = crate::common::pty::spawn_pty_reader_answering_queries(reader, Arc::clone(&writer));
 
-    let mut parser = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
+    let mut parser = new_screen_parser();
 
     // Wait for skim to be ready (show "> " prompt)
     let start = Instant::now();
@@ -339,7 +349,7 @@ fn abort_and_exit_code(
 
     // Teardown bytes are discarded rather than parsed, so this waits with a
     // sink parser — the caller's frame was captured before the Escape.
-    let mut sink = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
+    let mut sink = new_screen_parser();
     wait_for_exit(&mut child, &rx, &mut sink, "Escape")
 }
 
@@ -1525,8 +1535,8 @@ fn test_switch_picker_alt_x_flashes_unremovable_reason(mut repo: TestRepo) {
     wait_for_stable_with_content(&rx, &mut parser, Some("wt-b"));
 
     // Prove main is genuinely mid-list before relying on cursor preservation:
-    // row-specific gutter/name pairs keep the `main↕` column header from
-    // satisfying the main lookup.
+    // row-specific gutter/name pairs keep header text from satisfying the
+    // main lookup.
     let list = list_pane_text(parser.screen());
     let row = |needle: &str| {
         list.lines()
@@ -2581,7 +2591,7 @@ fn test_switch_picker_alt_x_lands_on_neighbor_under_filter(mut repo: TestRepo) {
 ///
 /// Flush-left because the leading spaces before each gutter glyph are the frame.
 const OVERSHOT_SCREEN: &str = r">
-    Branch   Status      HEAD±     main↕    main…±    Remote
+    Branch   Status       @±       ^↕       ^…±      Remote
   @ main       ? |     +16                              |
   + wt-drop      _
 > # fix/fl…
@@ -2590,7 +2600,7 @@ const OVERSHOT_SCREEN: &str = r">
 /// The same list with the pointer still on the pinned current worktree — the
 /// state an item-list refresh resets to, which the re-issue exists to repair.
 const UNSTARTED_SCREEN: &str = r">
-    Branch   Status      HEAD±     main↕    main…±    Remote
+    Branch   Status       @±       ^↕       ^…±      Remote
 > @ main       ? |     +16                              |
   + wt-drop      _
   # fix/fl…
@@ -2612,17 +2622,17 @@ fn test_arrow_toward_row_recovers_from_an_overshoot() {
 
 #[test]
 fn test_arrow_toward_row_ignores_the_column_header() {
-    // `main↕` and `main…±` put the target's name on the header line. Matching it
-    // would place the row above every item and send the pointer off `@ main`.
+    // `Remote` appears only on the header line. Matching it would place the
+    // row above every item and send the pointer off `@ main`.
     assert_eq!(
-        arrow_toward_row(UNSTARTED_SCREEN, "main"),
+        arrow_toward_row(UNSTARTED_SCREEN, "Remote"),
         None,
-        "the pointer is already on the only `main` row"
+        "header text is not a row to steer toward"
     );
     assert_eq!(
         arrow_toward_row(OVERSHOT_SCREEN, "main"),
         Some(ARROW_UP),
-        "the `main` row, not the header, is what the pointer walks back to"
+        "the `main` row is what the pointer walks back to"
     );
 }
 
@@ -2645,7 +2655,7 @@ fn test_cursor_wait_uses_item_area_with_query_and_blank_gutters() {
     // Query text can itself look like a selected item. Neither it nor the
     // header is part of the item area, even before skeleton gutters appear.
     let screen = "> + wt-drop
-    Branch  main↕
+    Branch  ^↕
 >   main
     wt-drop
 ";
@@ -2655,7 +2665,7 @@ fn test_cursor_wait_uses_item_area_with_query_and_blank_gutters() {
     assert_eq!(arrow_toward_row(screen, "main"), None);
 
     let overshot = "> + wt-drop
-    Branch  main↕
+    Branch  ^↕
     wt-drop
 >   main
 ";

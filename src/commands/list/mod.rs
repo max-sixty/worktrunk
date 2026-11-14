@@ -66,7 +66,7 @@
 //! - `git rev-parse <ref>` - Ref resolution (uses ref cache)
 //!
 //! Both line-diff columns use plumbing with rename detection on, so the user's diff
-//! configuration can't change them. For `HEAD±`, renames also pair a tracked deletion
+//! configuration can't change them. For `@±`, renames also pair a tracked deletion
 //! with an untracked destination, making a move line-neutral.
 //!
 //! Plus one global command:

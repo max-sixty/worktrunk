@@ -12,9 +12,11 @@ use rstest::rstest;
 use std::fs;
 
 ///
-/// When WORKTRUNK_DIRECTIVE_CD_FILE is set (shell integration active), we should:
-/// 1. Never call prompt_shell_integration()
-/// 2. Have zero overhead from the prompt feature
+/// When WORKTRUNK_DIRECTIVE_CD_FILE is set (shell integration active), the
+/// switch writes the CD directive and shows neither the prompt nor the
+/// install hint. This runs without a TTY, where the prompt can't appear
+/// anyway, so the hint is what distinguishes active integration: without the
+/// CD file, a non-TTY switch prints it (`test_switch_non_tty_shows_hint`).
 #[rstest]
 fn test_switch_with_active_shell_integration_no_prompt(repo: TestRepo) {
     // Create a worktree first
@@ -52,35 +54,9 @@ fn test_switch_with_active_shell_integration_no_prompt(repo: TestRepo) {
         "CD file should contain a path when shell integration active"
     );
 
-    // No install prompt in output (would contain "Install shell integration")
     assert!(
-        !stderr.contains("Install shell integration"),
-        "Should not show install prompt when shell integration active: {stderr}"
-    );
-}
-
-#[rstest]
-fn test_switch_with_skip_prompt_flag(repo: TestRepo) {
-    // Set the skip flag in config
-    std::fs::write(
-        repo.test_config_path(),
-        "skip-shell-integration-prompt = true\n",
-    )
-    .unwrap();
-
-    let output = repo
-        .wt_command()
-        .args(["switch", "--create", "feature"])
-        .output()
-        .unwrap();
-
-    assert!(output.status.success(), "Switch should succeed");
-
-    // No install prompt in output
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.contains("Install shell integration"),
-        "Should not show install prompt when already prompted: {stderr}"
+        !stderr.contains("wt config shell install"),
+        "Should not show install hint when shell integration active: {stderr}"
     );
 }
 

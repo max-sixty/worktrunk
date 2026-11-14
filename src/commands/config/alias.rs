@@ -146,8 +146,7 @@ pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<(
     let mut context_map = build_hook_context(&ctx, &extra_refs, VarScope::All)?;
     context_map.insert(
         ALIAS_ARGS_KEY,
-        serde_json::to_string(&opts.positional_args)
-            .expect("Vec<String> serialization should never fail"),
+        serde_json::to_string(&opts.positional_args).context("Failed to encode forwarded args")?,
     );
 
     let routing = format_routing_summary(&opts);

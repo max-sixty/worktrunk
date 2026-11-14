@@ -37,7 +37,7 @@ use super::types::{ErrorCause, TaskError, TaskKind, TaskResult};
 ///   writes use it, since that is the branch the merge actually updates and
 ///   a remote-tracking ref is not writable.
 /// - [`comparison_base`](Self::comparison_base) is the upstream-aware
-///   superset tip. The ahead/behind (`main↕`) and branch-diff (`main…±`)
+///   superset tip. The ahead/behind (`^↕`) and branch-diff (`^…±`)
 ///   columns measure against it, so a local default that lags its upstream
 ///   does not inflate the distance from the real mainline.
 /// - [`integration_targets`](Self::integration_targets) is that superset
@@ -123,7 +123,7 @@ impl TaskContext {
     }
 
     /// The base ref the informational comparison columns — ahead/behind
-    /// (`main↕`) and branch diff (`main…±`) — measure a branch against.
+    /// (`^↕`) and branch diff (`^…±`) — measure a branch against.
     ///
     /// This is the same upstream-aware "superset" mainline ref the
     /// integration column already uses ([`IntegrationTargets::primary`]):
@@ -414,8 +414,8 @@ fn compute_would_merge_add(ctx: &TaskContext) -> anyhow::Result<TaskResult> {
 /// Returns true when the branch HEAD is in target's history (merged via fast-forward
 /// or rebase).
 ///
-/// Uses target (target) for the Ancestor integration reason in `⊂`.
-/// The `_` symbol uses ahead/behind counts (vs default_branch) instead.
+/// Feeds the Ancestor integration reason in `⊂`. The `_` symbol uses the
+/// ahead/behind counts (vs [`TaskContext::comparison_base`]) instead.
 fn compute_is_ancestor(ctx: &TaskContext) -> anyhow::Result<TaskResult> {
     // When integration_targets is None, return false (conservative: don't mark as ancestor)
     let Some(targets) = ctx.integration_targets() else {
@@ -683,7 +683,7 @@ fn compute_upstream(ctx: &TaskContext) -> anyhow::Result<TaskResult> {
     // capture and pre-fills the cache via one `for-each-ref
     // %(ahead-behind:UPSTREAM_SHA)` walk per unique upstream — same
     // shared-graph-traversal win that `capture_ahead_behind` uses for
-    // the `main↕` column. This per-row call then falls through to a
+    // the `^↕` column. This per-row call then falls through to a
     // cache read.
     let upstream_sha = ctx.resolve_sha(&upstream_branch)?;
     let (ahead, behind) = repo.ahead_behind_by_sha(&upstream_sha, &ctx.branch_ref.commit_sha)?;
