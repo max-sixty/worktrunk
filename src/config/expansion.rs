@@ -185,9 +185,10 @@ impl TemplateContext {
     /// functions, which read the repository. Without a `branch` there is no
     /// git config to read, and `vars` is the empty map whenever the step runs.
     /// A template that reads no changing input renders now exactly as it will
-    /// then, so this renders it, with no `-v` output. `None` when it renders,
-    /// when its outcome waits on that later state, or when it doesn't parse,
-    /// which [`validate_template_syntax`] reports before any step runs.
+    /// then, so this renders it, with no `-v` output; escaping can't make a
+    /// render fail, so none is applied. `None` when it renders, when its
+    /// outcome waits on that later state, or when it doesn't parse, which
+    /// [`validate_template_syntax`] reports.
     ///
     /// Every read counts, a local's included, since `{% set f = f() %}`
     /// binds the name it calls and so hides the call from
@@ -195,7 +196,6 @@ impl TemplateContext {
     pub fn known_expansion_error(
         &self,
         template: &str,
-        escape_mode: ShellEscapeMode,
         repo: &Repository,
         name: &str,
     ) -> Option<TemplateExpandError> {
@@ -216,7 +216,7 @@ impl TemplateContext {
         render_template(
             template,
             &self.borrowed(),
-            escape_mode,
+            ShellEscapeMode::Literal,
             repo,
             name,
             VarsMode::Resolve,
@@ -1126,10 +1126,10 @@ pub fn referenced_vars_for_config(
 ///
 /// Every path that runs hooks calls this on each template, via
 /// `PreparedPipeline::validated`, so syntax errors (e.g. `{{ vars..foo }}`) abort
-/// before the first pipeline step runs; rendering — and with it semantic errors
-/// like undefined variables — is deferred to execution time. Alias dispatch has
-/// already parsed each template for argument routing by then, so it skips the
-/// check. The error matches [`expand_template`]'s
+/// before the first pipeline step runs, along with the render errors
+/// [`TemplateContext::known_expansion_error`] already decides. Alias dispatch
+/// has already parsed each template for argument routing by then, so it skips
+/// the check. The error matches [`expand_template`]'s
 /// parse-failure shape so syntax errors render identically wherever they
 /// surface.
 pub fn validate_template_syntax(template: &str, name: &str) -> Result<(), TemplateExpandError> {
@@ -1934,7 +1934,7 @@ mod tests {
         let on_branch =
             TemplateContext::from_vars(HashMap::from([("branch".to_string(), "main".to_string())]));
         let known = |ctx: &TemplateContext, template: &str| {
-            ctx.known_expansion_error(template, ShellEscapeMode::Posix, &test.repo, "test")
+            ctx.known_expansion_error(template, &test.repo, "test")
                 .map(|err| err.message)
         };
         let unset_branch = Some("Failed to expand test: undefined variable branch @ line 1");

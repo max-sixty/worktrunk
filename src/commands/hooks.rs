@@ -76,7 +76,7 @@ use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::{CommandConfig, format_hook_variables};
-use worktrunk::git::{Diagnostic, Repository, add_hook_skip_hint};
+use worktrunk::git::{Repository, add_hook_skip_hint};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, verbosity,
@@ -138,7 +138,8 @@ pub(crate) fn prepare_selected(
 ) -> anyhow::Result<Vec<SourcedStep>> {
     let mut out = Vec::new();
     for (source, config) in entries {
-        let steps = prepare_steps(config, ctx, extra_vars, hook_type, *source)?.validated()?;
+        let steps =
+            prepare_steps(config, ctx, extra_vars, hook_type, *source)?.validated(ctx.repo)?;
         out.extend(steps.into_iter().map(|step| SourcedStep {
             step,
             source: *source,
@@ -428,33 +429,11 @@ fn run_hooks_background(
     for group in groups {
         announce_pipelines(&group, show_branch);
         for pipeline in group {
-            report_known_expansion_error(repo, &pipeline);
             spawn_hook_pipeline_quiet(repo, pipeline)?;
         }
     }
 
     Ok(())
-}
-
-/// Print the template error a background pipeline will hit, when the context
-/// frozen into it already decides it.
-///
-/// The runner writes an expansion failure to a log nothing reads back, so
-/// without this report the hook is announced, never runs, and the command
-/// exits 0. The common case is an unguarded `{{ branch }}` in a detached
-/// worktree, where `branch` is unset. The pipeline still spawns, so the steps
-/// before the broken one run as they would have, and the command's exit
-/// status doesn't change. Only the first such error prints, because the
-/// runner stops at it.
-fn report_known_expansion_error(repo: &Repository, pipeline: &PendingPipeline) {
-    if let Some(err) = pipeline
-        .steps
-        .iter()
-        .flat_map(|sourced| sourced.step.commands())
-        .find_map(|cmd| cmd.known_expansion_error(repo))
-    {
-        eprintln!("{}", err.render());
-    }
 }
 
 /// Print one combined `Running ...` line for pipelines sharing a display path.
