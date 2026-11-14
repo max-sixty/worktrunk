@@ -145,12 +145,12 @@ The worktree is a normal worktrunk worktree: it shows up in `wt list` and is
 merged or removed with `wt merge` / `wt remove <branch>` like any other. Don't
 remove it unprompted.
 
-A worktree from step 2 that the session never touched — no changed files, no
-commits — is cleaned up when the session ends, branch included; anything
-written into it keeps it. A worktree from step 3 always stays, as does a
-worktree the session left in step 3. If the user asks
-to leave mid-session, `ExitWorktree({action: "keep"})` returns the session to
-its original directory;
+A worktree entered by name in step 2 gets Claude Code's Keep / Remove prompt
+when the session ends, with Keep selected by default. Remove runs `wt remove`
+with its normal safeguards. A worktree entered by path in step 3 stays, as
+does a worktree the session left with `action: "keep"`. If the user asks to
+leave mid-session, `ExitWorktree({action: "keep"})` returns the session to its
+original directory;
 `ExitWorktree` cannot remove a worktree entered by `path`, so removing one of
 those is always `wt remove <branch>`.
 

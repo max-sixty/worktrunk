@@ -1,8 +1,10 @@
+# programs.worktrunk for home-manager releases that predate their own
+# programs/worktrunk.nix. The flake's homeModules.default imports it there and
+# defaults `package` to the flake's build.
 {
   lib,
   config,
   pkgs,
-  worktrunk-pkgs,
   ...
 }:
 
@@ -15,8 +17,6 @@ in
 
     package = lib.mkOption {
       type = lib.types.package;
-      default = worktrunk-pkgs.worktrunk;
-      defaultText = lib.literalExpression "inputs.worktrunk.packages.\${stdenv.hostPlatform.system}.worktrunk";
       example = lib.literalExpression "inputs.worktrunk.packages.\${stdenv.hostPlatform.system}.worktrunk-with-git-wt";
       description = ''
         The worktrunk package to use.
