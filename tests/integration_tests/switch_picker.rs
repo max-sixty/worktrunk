@@ -2722,17 +2722,28 @@ fn test_switch_picker_cursor_wait_recovers_under_filter(mut repo: TestRepo) {
     assert_valid_abort_exit_code(abort_and_exit_code(child, writer, rx));
 }
 
-/// Column of the list/preview separator on a body row of the screen. Read from
-/// the screen grid rather than fixed constants, so it follows the terminal when
-/// the test resizes it.
+/// Column of the list/preview separator, read from the screen grid rather than
+/// fixed constants so it follows the terminal when the test resizes it. Located
+/// as the column before the preview's `1: diff` tab header, since the │ border
+/// glyph itself renders inconsistently across platforms.
 fn separator_col(screen: &vt100::Screen) -> Option<u16> {
+    const HEADER: &str = "1: diff";
     let (rows, cols) = screen.size();
-    (2..rows.get()).find_map(|row| {
-        (0..cols.get()).find(|&col| {
+    // A blank cell skim skipped over with a cursor move reads as empty, not " ".
+    let header_at = |row: u16, start: u16| {
+        HEADER.chars().zip(start..).all(|(ch, col)| {
             screen
                 .cell(row, col)
-                .is_some_and(|cell| cell.contents() == "│")
+                .is_some_and(|cell| match cell.contents() {
+                    "" => ch == ' ',
+                    text => text.chars().eq([ch]),
+                })
         })
+    };
+    (0..rows.get()).find_map(|row| {
+        (1..cols.get())
+            .find(|&col| header_at(row, col))
+            .map(|col| col - 1)
     })
 }
 
