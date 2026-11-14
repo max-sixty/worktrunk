@@ -92,7 +92,8 @@ empty one:
   and listed only here
 
 Give each point one bullet: the point in a phrase, its sources with author and
-date, one short quote and its status. Where several projects make the same
+date, one short quote and its status. A departure's point is the reason its
+author gave, not what replaced Worktrunk. Where several projects make the same
 point, list them all in that bullet and quote the clearest. Projects that build
 on Worktrunk without a specific point share one bullet. When a week holds more
 than a few minutes' reading, shorten adoption and praise first, and keep every
