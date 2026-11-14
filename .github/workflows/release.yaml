@@ -517,6 +517,7 @@ jobs:
         with:
           identifier: max-sixty.worktrunk
           version: ${{ needs.plan.outputs.tag }}
+          release-tag: ${{ needs.plan.outputs.tag }}
           installers-regex: '^worktrunk-.*-windows-.*\.zip$'
           token: ${{ secrets.TEND_BOT_TOKEN }}
           fork-user: max-sixty
