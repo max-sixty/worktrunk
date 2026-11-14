@@ -34,7 +34,9 @@
 //! | `pre-start`, `post-start`, `post-switch` (on switch) | the new/destination worktree | `worktree::switch::approve_switch_hooks` |
 //!
 //! "Runs in" is the *anchor* — the executor's plan lookup key and render root,
-//! not a config source. A `pre-start`'s new worktree need not exist when the
+//! not a config source. `post-remove` is the exception: its anchor (the
+//! removed worktree) is only the plan key, and it runs and renders in the
+//! removal destination. A `pre-start`'s new worktree need not exist when the
 //! gate runs; the config came from the invoking worktree regardless. A
 //! background pipeline anchored on a worktree the command removed is dropped
 //! and reported rather than spawned (see [`report_dropped_pipelines`]); only
