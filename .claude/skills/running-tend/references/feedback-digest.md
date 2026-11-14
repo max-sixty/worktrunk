@@ -72,8 +72,10 @@ another tool's behavior, or untracked.
 
 A claim about how Worktrunk behaves is the author's until checked. Where a
 scratch repo can show it, run the claim on `main` and report confirmed or not
-reproduced; otherwise say how far you checked, such as by reading the code.
-Requests and frictions need no reproduction. The digest is the report: the
+reproduced; otherwise say how far you checked, such as by reading the code. A
+behavior that reproduces can still be the one Worktrunk intends, so read the
+code and docs that set it before listing it as a bug. Requests and frictions
+need no reproduction. The digest is the report: the
 maintainer decides which confirmed items become issues.
 
 ## Write and post the digest
