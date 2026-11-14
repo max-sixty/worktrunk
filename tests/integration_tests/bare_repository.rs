@@ -329,6 +329,33 @@ fn test_bare_repo_identifies_primary_correctly() {
     });
 }
 
+/// A bare repo's primary worktree is the one holding the default branch, so
+/// with every worktree detached (as jj leaves a colocated repo) none is
+/// primary. No row is marked `^`, and `feature` reports its commit ahead of
+/// `main`. Git lists `feature` before `main`, so falling back to the first
+/// listed worktree would mark `feature` primary.
+#[test]
+fn test_bare_repo_no_primary_when_every_worktree_detached() {
+    let test = BareRepoTest::new();
+
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Main commit");
+    let feature_worktree = test.create_worktree("feature", "feature");
+    test.commit_in(&feature_worktree, "Work on feature");
+    for worktree in [&main_worktree, &feature_worktree] {
+        test.run_git_in(worktree, &["checkout", "--detach"]);
+    }
+
+    let settings = setup_temp_snapshot_settings(test.temp_path());
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        test.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(test.bare_repo_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 #[test]
 fn test_bare_repo_path_used_for_worktree_paths() {
     let test = BareRepoTest::new();
