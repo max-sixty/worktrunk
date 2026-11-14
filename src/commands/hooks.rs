@@ -230,11 +230,12 @@ fn no_matching_commands_error(
 
 /// Coordinates background hook announcements within a single `wt` command.
 ///
-/// The principle: one `◎ Running …` line per command. Sites that would have
-/// individually spawned background hooks instead `register` their pipelines
-/// here, and the command `flush`es once after all phases have been resolved —
-/// every registered hook type ends up on the same combined announce line, in
-/// registration order, with `;` between clauses (see module spec).
+/// The principle: one `◎ Running …` line per command and directory. Sites that
+/// would have individually spawned background hooks instead `register` their
+/// pipelines here, and the command `flush`es once after all phases have been
+/// resolved — every registered hook type sharing a display path ends up on the
+/// same combined announce line, in registration order, with `;` between
+/// clauses (see module spec).
 ///
 /// Just-in-time honesty: registration happens at each phase's normal moment,
 /// so if an earlier phase fails (e.g. pre-merge errors before post-merge is
@@ -381,11 +382,11 @@ impl Drop for HookAnnouncer<'_> {
 /// `flush` lands here. The function stays separate to keep the announce/spawn
 /// formatting isolated from the announcer's pending-list bookkeeping.
 ///
-/// Emits a single combined `Running ...` line covering every registered hook
-/// type (see module-level grammar), with the path suffix at the end. Pipelines
-/// may carry different worktrees (e.g., post-remove uses the removed branch
-/// while post-switch uses the destination branch); the announce shares one
-/// line because every bundled clause shares the same path.
+/// Emits one combined `Running ...` line per display path, covering every hook
+/// type registered with that path (see module-level grammar), with the path
+/// suffix at the end. Pipelines may carry different worktrees (e.g.,
+/// post-remove uses the removed branch while post-switch uses the destination
+/// branch) yet share one line when they share a display path.
 ///
 /// When `show_branch` is true, the announce includes the branch name for
 /// disambiguation in batch contexts (e.g., prune removing multiple worktrees):
@@ -407,16 +408,38 @@ fn run_hooks_background(
         return Ok(());
     }
 
+    // The `@ path` suffix covers the whole line, so pipelines announced
+    // together must share a display path. `wt merge --no-remove` registers
+    // `post-commit` (in the feature worktree, no path) beside `post-merge`
+    // (@ the target), so group by path and give each group its own line.
+    let mut groups: Vec<Vec<PendingPipeline>> = Vec::new();
+    for pipeline in pipelines {
+        match groups
+            .iter_mut()
+            .find(|g| g[0].display_path == pipeline.display_path)
+        {
+            Some(group) => group.push(pipeline),
+            None => groups.push(vec![pipeline]),
+        }
+    }
+
+    for group in groups {
+        announce_pipelines(&group, show_branch);
+        for pipeline in group {
+            spawn_hook_pipeline_quiet(repo, pipeline)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Print one combined `Running ...` line for pipelines sharing a display path.
+fn announce_pipelines(pipelines: &[PendingPipeline], show_branch: bool) {
     // Merge per-source summaries by hook type so user+project for the same
     // type render as one clause: `post-merge: sync, push (user); build (project)`.
-    // Pull `display_path` off the first pipeline that has one — every hook
-    // pipeline in this batch shares a path; the path slot is bundle-wide.
-    let mut display_path: Option<&Path> = None;
+    let display_path = pipelines[0].display_path.as_deref();
     let mut type_summaries: Vec<(HookType, Vec<String>)> = Vec::new();
-    for pipeline in &pipelines {
-        if display_path.is_none() {
-            display_path = pipeline.display_path.as_deref();
-        }
+    for pipeline in pipelines {
         let summary = format_pipeline_summary(&pipeline.steps);
         if let Some(entry) = type_summaries
             .iter_mut()
@@ -442,7 +465,7 @@ fn run_hooks_background(
 
     if verbosity() >= 1 {
         for (ht, _) in &type_summaries {
-            print_background_variable_table(&pipelines, *ht);
+            print_background_variable_table(pipelines, *ht);
         }
     }
     let suffix = branch_suffix.as_deref().unwrap_or("");
@@ -459,12 +482,6 @@ fn run_hooks_background(
         None => format!("Running {combined}"),
     };
     eprintln!("{}", progress_message(message));
-
-    for pipeline in pipelines {
-        spawn_hook_pipeline_quiet(repo, pipeline)?;
-    }
-
-    Ok(())
 }
 
 /// Report background hook pipelines dropped because this command removed the
@@ -525,7 +542,7 @@ fn into_source_groups(flat: Vec<SourcedStep>) -> Vec<Vec<SourcedStep>> {
 ///
 /// Background hooks don't flow through `announce_command` (which prints the
 /// table in the foreground path), so this is the symmetric entry point.
-/// Called once per hook type from `run_hooks_background`, immediately before
+/// Called once per hook type from `announce_pipelines`, immediately before
 /// that hook type's `Running ...` line, so each hook type reads as one block.
 fn print_background_variable_table(pipelines: &[PendingPipeline], hook_type: HookType) {
     for pipeline in pipelines {

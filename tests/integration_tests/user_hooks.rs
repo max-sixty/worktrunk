@@ -1287,6 +1287,34 @@ mark = "git rev-parse --show-toplevel > {{ repo_path }}/post-commit-toplevel.txt
     }
 }
 
+/// `wt merge --no-remove` registers `post-commit` in the feature worktree and
+/// `post-merge` in the target. The announce's `@ <path>` suffix covers the
+/// whole line, so the two get separate lines rather than one line implying
+/// `post-commit` ran in the target.
+#[rstest]
+fn test_merge_announces_post_commit_and_post_merge_by_directory(mut repo: TestRepo) {
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature", "Add feature");
+    // Uncommitted work so the merge squashes, which is what fires post-commit.
+    fs::write(feature_wt.join("dirty.txt"), "uncommitted").unwrap();
+
+    repo.write_test_config(
+        r#"[post-commit]
+mark = "echo commit"
+
+[post-merge]
+sync = "echo merge"
+"#,
+    );
+
+    snapshot_merge(
+        "merge_announces_post_commit_and_post_merge_by_directory",
+        &repo,
+        &["main", "--yes", "--no-remove"],
+        Some(&feature_wt),
+    );
+}
+
 /// When post-merge template prep errors after post-remove + post-switch are
 /// already registered, the announcer's `Drop` impl flushes the pending hooks
 /// so they still spawn — preserving the prior fire-and-forget behavior in
