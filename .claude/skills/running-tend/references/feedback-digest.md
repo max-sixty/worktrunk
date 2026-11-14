@@ -104,7 +104,8 @@ third-party file or directory. The notice is the copyright line and permission
 text of `LICENSE-MIT`, or the Apache-2.0 license.
 
 Where the copy is unmistakable, whole functions or modules, and the notice is
-missing, file one issue in the project, directly rather than asking here first.
+missing, file one issue in the project, directly (an exception listed under
+**Filing issues in other repos** in `SKILL.md`).
 First search the project's open and closed issues for an earlier request about
 Worktrunk's notice, whoever wrote it; with one there, report its state in the
 digest instead of filing. Where the copy is small, or you can't tell whether it
