@@ -395,6 +395,11 @@ What to flag:
 
 Don't open a PR speculatively. File one issue per relevant change, linking the upstream entry and noting what Worktrunk would need to do. If nothing changed, say so and move on.
 
+## Weekly Maintenance: Feedback Digest
+
+Post a digest of public feedback on Worktrunk since the previous one to the
+open `feedback-digest` issue, following `references/feedback-digest.md`.
+
 ## README Date Check
 
 The README blockquote opens with a month+year (e.g., "**April 2026**"). During daily
