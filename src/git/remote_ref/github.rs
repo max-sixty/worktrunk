@@ -148,8 +148,15 @@ pub(super) fn fetch_pr_info(
         if serde_json::from_slice::<GhApiErrorResponse>(&output.stdout)
             .is_ok_and(|error| error.status == "404")
         {
-            let hint =
-                cformat!("To query a different repository, run <underline>gh repo set-default</>");
+            let enterprise_url_host =
+                url_host.filter(|host| !host.eq_ignore_ascii_case("github.com"));
+            let hint = if let (None, Some(host)) = (&hostname, enterprise_url_host) {
+                cformat!(
+                    "To sign in to {host}, run <underline>gh auth login --hostname {host}</>. If its API uses a different host, set <underline>forge.hostname</> to that host. To query a different repository, run <underline>gh repo set-default</>"
+                )
+            } else {
+                cformat!("To query a different repository, run <underline>gh repo set-default</>")
+            };
             return Err(cli_api_error(
                 ForgeKind::GitHub.ref_type(),
                 format!("PR #{pr_number} not found on {owner}/{repo_name} ({source})"),

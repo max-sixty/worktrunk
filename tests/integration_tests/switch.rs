@@ -6579,6 +6579,70 @@ const GHE_REMOTE: &str = "https://github.example.com/owner/test-repo.git";
 const ALIAS_REMOTE: &str = "git@github-work:owner/test-repo.git";
 const GHE_PR_URL: &str = "https://github.example.com/owner/test-repo/pull/101";
 
+#[rstest]
+#[case::enterprise_remote(GHE_REMOTE, "pr:101", None, false)]
+#[case::ssh_alias(ALIAS_REMOTE, "pr:101", None, false)]
+#[case::enterprise_url(ALIAS_REMOTE, GHE_PR_URL, None, true)]
+#[case::configured_host(GHE_REMOTE, GHE_PR_URL, Some("github.example.com"), false)]
+fn test_switch_pr_enterprise_not_found_names_hostname(
+    #[from(repo_with_remote)] repo: TestRepo,
+    #[case] origin_url: &str,
+    #[case] switch_arg: &str,
+    #[case] configured_host: Option<&str>,
+    #[case] expect_enterprise_hint: bool,
+) {
+    repo.run_git(&["remote", "set-url", "origin", origin_url]);
+    if let Some(host) = configured_host {
+        repo.write_project_config(&format!(
+            "[forge]\nplatform = \"github\"\nhostname = \"{host}\"\n"
+        ));
+    }
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    MockConfig::new("gh")
+        .command(
+            "repo set-default --view",
+            MockResponse::output("owner/test-repo\n"),
+        )
+        .command(
+            "api",
+            MockResponse::output(r#"{"message":"Not Found","status":"404"}"#)
+                .with_stderr("gh: Not Found (HTTP 404)")
+                .with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    let call_log = worktrunk::testing::tempdir().unwrap();
+
+    let mut cmd = repo.wt_command();
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd
+        .args(["switch", switch_arg])
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let calls = fs::read_to_string(call_log.path().join("gh.calls")).unwrap();
+    let api_call = calls.lines().find(|line| line.starts_with("api ")).unwrap();
+    let expected_call = configured_host.map_or_else(
+        || "api repos/owner/test-repo/pulls/101".to_string(),
+        |host| format!("api repos/owner/test-repo/pulls/101 --hostname {host}"),
+    );
+    assert_eq!(api_call, expected_call);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr.contains("forge.hostname"),
+        expect_enterprise_hint,
+        "{stderr}"
+    );
+    assert_eq!(
+        stderr.contains("gh auth login --hostname github.example.com"),
+        expect_enterprise_hint,
+        "{stderr}"
+    );
+    assert!(stderr.contains("gh repo set-default"), "{stderr}");
+}
+
 /// With no `forge.hostname`, `gh api` sends a request without `--hostname` to
 /// gh's default host. The PR lookup names a host only when gh holds a login
 /// for it: the host in a `/pull/N` URL first (#4709), then a GitHub Enterprise
