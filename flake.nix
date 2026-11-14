@@ -147,6 +147,59 @@
           # Check formatting
           worktrunk-fmt = craneLib.cargoFmt { inherit src; };
 
+          # `nix flake check` doesn't run `homeModules` through the module
+          # system, so this check does, under two stand-ins for home-manager:
+          # one whose `modulesPath` has programs/worktrunk.nix (a stub declaring
+          # `programs.worktrunk.package`), and a legacy one without it, which
+          # gets nix/home-manager-module.nix.
+          home-module =
+            let
+              # The legacy module builds its shell options with home-manager's lib.
+              lib = pkgs.lib.extend (
+                _: prev: {
+                  hm.shell = prev.genAttrs [
+                    "mkBashIntegrationOption"
+                    "mkZshIntegrationOption"
+                    "mkFishIntegrationOption"
+                    "mkNushellIntegrationOption"
+                  ] (_: _: prev.mkEnableOption "shell integration");
+                }
+              );
+              eval =
+                modulesPath: modules:
+                (lib.evalModules {
+                  specialArgs = { inherit modulesPath; };
+                  modules = [
+                    self.homeModules.default
+                    { _module.args.pkgs = pkgs; }
+                  ]
+                  ++ modules;
+                }).config;
+              package = modulesPath: modules: (eval modulesPath modules).programs.worktrunk.package;
+              current = toString ./nix/home-manager-stub;
+              currentModule = "${current}/programs/worktrunk.nix";
+              legacy = toString ./nix;
+              # The legacy module also sets options a bare evaluation lacks,
+              # such as `home.packages`; this lets those definitions pass.
+              unchecked = {
+                _module.check = false;
+              };
+              userPackage = {
+                programs.worktrunk.package = pkgs.hello;
+              };
+            in
+            # The flake's build replaces the option's default...
+            assert package current [ currentModule ] == worktrunk;
+            assert package legacy [ unchecked ] == worktrunk;
+            # ...and the user's own setting replaces the flake's build.
+            assert package current [ currentModule userPackage ] == pkgs.hello;
+            assert package legacy [ unchecked userPackage ] == pkgs.hello;
+            # With programs/worktrunk.nix present but not loaded, the module's
+            # throw fails evaluation; `unchecked` keeps the module system's own
+            # undeclared-option error from failing it instead.
+            assert !(builtins.tryEval (builtins.deepSeq (eval current [ unchecked ]) null)).success;
+            pkgs.runCommand "home-module-check" { } "touch $out";
+
           # Run tests inside the nix sandbox. Catches packaging-environment
           # bugs (#2624 is the canonical example) before nixpkgs maintainers
           # do — see .github/workflows/nightly.yaml.
@@ -234,18 +287,41 @@
       }
     )
     // {
-      homeModules = {
-        default =
-          {
-            lib,
-            config,
-            pkgs,
-            ...
-          }:
-          (import ./nix/home-manager-module.nix) {
-            inherit lib config pkgs;
-            worktrunk-pkgs = self.packages.${pkgs.stdenv.hostPlatform.system};
-          };
-      };
+      # home-manager owns `programs.worktrunk`, whose `package` defaults to
+      # nixpkgs' release; this module points it at this flake's build.
+      homeModules.default =
+        {
+          lib,
+          modulesPath,
+          options,
+          pkgs,
+          ...
+        }:
+        {
+          # home-manager ships programs/worktrunk.nix from release 26.11; older
+          # releases get this flake's own module instead. Once home-manager
+          # 26.05 is end-of-life (about end of December 2026), delete this
+          # import, nix/home-manager-module.nix, and the home-module check's
+          # legacy cases.
+          imports = lib.optional (
+            !builtins.pathExists "${modulesPath}/programs/worktrunk.nix"
+          ) ./nix/home-manager-module.nix;
+
+          # Reading `options` inside `config` doesn't cause infinite recursion,
+          # because the module system derives which options exist from
+          # declarations alone.
+          config =
+            if options ? programs.worktrunk.package then
+              {
+                programs.worktrunk.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.worktrunk;
+              }
+            else
+              throw ''
+                worktrunk's homeModules.default sets programs.worktrunk.package, but no module
+                declares that option. This home-manager ships programs/worktrunk.nix, which
+                declares it, but doesn't load it: remove it from disabledModules, or in minimal
+                mode add "''${modulesPath}/programs/worktrunk.nix" to imports.
+              '';
+        };
     };
 }
