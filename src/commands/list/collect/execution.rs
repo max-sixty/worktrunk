@@ -285,8 +285,7 @@ pub(super) fn seed_prunable_item(item: &mut ListItem) {
 ///   directly here would leave it stuck behind whatever task happens to
 ///   complete first.
 ///
-/// Task preconditions (unborn branch, missing llm_command) are
-/// enforced here — not in callers. This function is called from both
+/// Task preconditions (unborn branch) are enforced here — not in callers. This function is called from both
 /// `collect()` and `populate_item()`, so guards must live here to cover all
 /// entry points.
 ///
