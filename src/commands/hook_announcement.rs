@@ -1,7 +1,9 @@
 //! # Hook announcement format
 //!
 //! Background hook execution emits a single `Running ...` line covering every
-//! hook type that fires from one event. Separators form a precedence hierarchy
+//! hook type that fires from one event in one directory; hooks running in a
+//! different directory get their own line, since the `@ <path>` suffix
+//! covers the whole line. Separators form a precedence hierarchy
 //! from tightest to loosest:
 //!
 //! ```text
@@ -51,8 +53,12 @@
 //!
 //! Multi-source for one hook type: `sync, push (user); build (project)`.
 //!
-//! Multi-type bundle (e.g., `wt merge` firing four hook types):
-//! `Running post-commit: mark (user); post-remove: cleanup (user); post-switch: notify (user); post-merge: sync (user) @ ~/repo`.
+//! Multi-type bundle (e.g., `wt merge` firing three hook types):
+//! `Running post-remove: cleanup (user); post-switch: notify (user); post-merge: sync (user) @ ~/repo`.
+//!
+//! Split by path (`wt merge --no-remove`, where `post-commit` runs in the
+//! feature worktree and `post-merge` in the target):
+//! `Running post-commit: mark (user)` then `Running post-merge: sync (user) @ ~/repo`.
 //!
 //! ## Implementation
 //!
@@ -61,9 +67,10 @@
 //! - [`format_pipeline_summary`] wraps it with the per-pipeline source label,
 //!   collapsing the all-unnamed case to the bare `<source>` / `<source> ×N`
 //!   form.
-//! - `run_hooks_background` (in `hooks.rs`) joins source summaries with `;`
-//!   within each hook-type clause, then joins clauses with `;` into one
-//!   announce line with the path suffix at the end.
+//! - `run_hooks_background` (in `hooks.rs`) groups pipelines by display path;
+//!   for each group it joins source summaries with `;` within each hook-type
+//!   clause, then joins clauses with `;` into one announce line with the path
+//!   suffix at the end.
 
 use color_print::cformat;
 
