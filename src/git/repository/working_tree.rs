@@ -195,26 +195,6 @@ fn temporary_path_exclusion(worktree_root: &Path, temporary_path: &Path) -> Opti
         .map(|relative| format!(":(top,exclude,literal){}", relative.to_slash_lossy()))
 }
 
-/// Refuse `action` when `dirty_files` (status porcelain lines) is non-empty.
-fn require_no_dirty_files(
-    dirty_files: Vec<String>,
-    action: &str,
-    branch: Option<&str>,
-    force_hint: bool,
-) -> anyhow::Result<()> {
-    if !dirty_files.is_empty() {
-        return Err(GitError::UncommittedChanges {
-            action: Some(action.into()),
-            branch: branch.map(String::from),
-            force_hint,
-            dirty_files,
-        }
-        .into());
-    }
-
-    Ok(())
-}
-
 /// Parse `git submodule status` output and detect whether any submodule is initialized.
 ///
 /// Status lines start with a one-character state marker:
@@ -443,28 +423,6 @@ impl<'a> WorkingTree<'a> {
     /// For the canonical git-determined root, use [`root()`](Self::root) instead.
     pub fn path(&self) -> &Path {
         &self.path
-    }
-
-    /// Whether Git's builtin fsmonitor is enabled in this worktree.
-    ///
-    /// Read and normalize through Git so worktree-local config, includes, and
-    /// every supported boolean spelling are honored. Hook paths select an
-    /// external monitor rather than the builtin daemon.
-    pub fn is_builtin_fsmonitor_enabled(&self) -> anyhow::Result<bool> {
-        let args = ["config", "--type=bool", "--get", "core.fsmonitor"];
-        let output = self.run_command_output(&args)?;
-        match output.status.code() {
-            Some(0) => Ok(String::from_utf8_lossy(&output.stdout).trim() == "true"),
-            Some(1) => Ok(false),
-            Some(128) => {
-                // A hook path is valid fsmonitor config but not a boolean.
-                // An untyped read distinguishes it from an unreadable config;
-                // those errors must still stop a removal's safety check.
-                self.run_command(&["config", "--get", "core.fsmonitor"])?;
-                Ok(false)
-            }
-            _ => Err(CommandError::from_failed_output("git", &args, &output).into()),
-        }
     }
 
     /// Run a git command in this worktree and return stdout.
@@ -751,19 +709,12 @@ impl<'a> WorkingTree<'a> {
     /// [`GitError::UncommittedChanges`] in [`Self::ensure_clean`]. The same
     /// caveats as [`Self::is_dirty`] apply (skip-worktree files are invisible).
     pub fn dirty_files(&self) -> anyhow::Result<Vec<String>> {
-        self.dirty_files_with(&[])
-    }
-
-    /// [`Self::dirty_files`] with `git -c` overrides ahead of `status`.
-    fn dirty_files_with(&self, config: &[&str]) -> anyhow::Result<Vec<String>> {
-        let mut args = config.to_vec();
-        args.extend([
+        let stdout = self.run_command(&[
             "status",
             "--porcelain",
             "--untracked-files=normal",
             "--ignore-submodules=none",
-        ]);
-        let stdout = self.run_command(&args)?;
+        ])?;
         Ok(stdout.lines().map(str::to_owned).collect())
     }
 
@@ -1086,19 +1037,18 @@ impl<'a> WorkingTree<'a> {
         branch: Option<&str>,
         force_hint: bool,
     ) -> anyhow::Result<()> {
-        require_no_dirty_files(self.dirty_files()?, action, branch, force_hint)
-    }
+        let dirty_files = self.dirty_files()?;
+        if !dirty_files.is_empty() {
+            return Err(GitError::UncommittedChanges {
+                action: Some(action.into()),
+                branch: branch.map(String::from),
+                force_hint,
+                dirty_files,
+            }
+            .into());
+        }
 
-    /// [`Self::ensure_clean`] with fsmonitor disabled, for a worktree whose
-    /// daemon was just stopped: a full rescan, and no daemon restarted.
-    pub fn ensure_clean_without_fsmonitor(
-        &self,
-        action: &str,
-        branch: Option<&str>,
-        force_hint: bool,
-    ) -> anyhow::Result<()> {
-        let dirty_files = self.dirty_files_with(&["-c", "core.fsmonitor=false"])?;
-        require_no_dirty_files(dirty_files, action, branch, force_hint)
+        Ok(())
     }
 
     /// Get line diff statistics for working tree changes (unstaged + staged).

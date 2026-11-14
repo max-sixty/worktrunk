@@ -6645,69 +6645,6 @@ fn test_remove_branch_deletion_failure_context(
     }
 }
 
-/// With fsmonitor configured, a file written while the daemon shuts down is
-/// refused by a rescan after the stop. The shim stands in for the daemon and
-/// keeps every other Git command from starting a real one.
-#[cfg(unix)]
-#[rstest]
-#[case::shared(false, "true")]
-#[case::worktree_local(true, "true")]
-#[case::numeric_boolean(true, "2")]
-fn test_remove_keeps_work_created_during_fsmonitor_stop(
-    mut repo: TestRepo,
-    #[case] worktree_local: bool,
-    #[case] fsmonitor_value: &str,
-) {
-    use std::os::unix::fs::PermissionsExt;
-
-    let worktree = repo.add_worktree("late-work");
-    if worktree_local {
-        repo.run_git(&["config", "extensions.worktreeConfig", "true"]);
-        repo.run_git(&["config", "core.fsmonitor", "false"]);
-        repo.run_git_in(
-            &worktree,
-            &["config", "--worktree", "core.fsmonitor", fsmonitor_value],
-        );
-    } else {
-        repo.run_git(&["config", "core.fsmonitor", fsmonitor_value]);
-    }
-
-    let bin_dir = repo.home_path().join("shutdown-git");
-    fs::create_dir(&bin_dir).unwrap();
-    let real_git = which::which("git").unwrap();
-    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
-    fs::write(
-        bin_dir.join("git"),
-        format!(
-            r#"#!/bin/sh
-case "$1" in
-  fsmonitor--daemon) [ "$2" = stop ] && printf 'late work' > late.txt; exit 0 ;;
-  config) exec {real_git} "$@" ;;
-esac
-exec {real_git} -c core.fsmonitor=false "$@"
-"#
-        ),
-    )
-    .unwrap();
-    fs::set_permissions(bin_dir.join("git"), fs::Permissions::from_mode(0o755)).unwrap();
-    let mut paths: Vec<_> = std::env::split_paths(&std::env::var_os("PATH").unwrap()).collect();
-    paths.insert(0, bin_dir);
-
-    let output = repo
-        .wt_command()
-        .args(["remove", "late-work", "--foreground", "--yes"])
-        .env("PATH", std::env::join_paths(paths).unwrap())
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!output.status.success(), "{stderr}");
-    assert!(stderr.contains("has uncommitted changes"), "{stderr}");
-    assert_eq!(
-        fs::read_to_string(worktree.join("late.txt")).unwrap(),
-        "late work"
-    );
-}
-
 /// The child uses the invoking checkout's target and retains a moved tip,
 /// even when the replacement commit is integrated into that target.
 #[test]

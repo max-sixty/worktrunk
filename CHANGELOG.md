@@ -30,7 +30,7 @@
 
 - **SSH remotes with a non-default port**: port-less legacy project IDs no longer supply approvals or project settings to a different SSH server. Those repositories need port-qualified approvals and project overrides. ([#4606](https://github.com/max-sixty/worktrunk/pull/4606))
 
-- **Removal with fsmonitor or submodules**: with Git’s built-in fsmonitor enabled, removal rescans for changes after stopping the daemon. Text-mode removal warns about submodule commits reachable from no remote; the warning does not prevent removal. ([#4456](https://github.com/max-sixty/worktrunk/pull/4456), [#4460](https://github.com/max-sixty/worktrunk/pull/4460))
+- **Removal with submodules**: text-mode removal warns about submodule commits reachable from no remote; the warning does not prevent removal. ([#4460](https://github.com/max-sixty/worktrunk/pull/4460))
 
 - **Fork branch conflicts and GitHub Enterprise**: GitLab and Azure DevOps use a prefixed, fetch-only branch when a fork's branch name conflicts locally. GitHub Enterprise PR lookup uses the remote's host when `gh` is authenticated there. ([#4542](https://github.com/max-sixty/worktrunk/pull/4542), [#4710](https://github.com/max-sixty/worktrunk/pull/4710), thanks @pgilad-rna for [#4709](https://github.com/max-sixty/worktrunk/issues/4709))
 
