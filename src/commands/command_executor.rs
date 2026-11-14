@@ -453,6 +453,20 @@ fn resolve_command_str(cmd: &PreparedCommand, repo: &Repository) -> Result<Strin
     expand_shell_template(&cmd.template, &cmd.context, repo, &cmd.template_name)
 }
 
+impl PreparedCommand {
+    /// The error [`expand_shell_template`] will return for this command when
+    /// it runs, if the frozen context already decides it — see
+    /// [`TemplateContext::known_expansion_error`].
+    pub fn known_expansion_error(&self, repo: &Repository) -> Option<TemplateExpandError> {
+        self.context.known_expansion_error(
+            &self.template,
+            ShellEscapeMode::Posix,
+            repo,
+            &self.template_name,
+        )
+    }
+}
+
 /// Render a template for dry-run / preview display.
 ///
 /// Everything renders against `context` as it would at execution time, except

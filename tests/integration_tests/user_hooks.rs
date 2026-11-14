@@ -951,29 +951,34 @@ capture = "echo 'branch={{ branch }} worktree_path={{ worktree_path }} worktree_
 /// (issue #4009). `post-remove` overrides `branch` through
 /// `PostRemoveContext::extra_vars`, which is applied after the base context, so
 /// it needs the same `None` the base context has.
+///
+/// The guarded step renders `branch` as empty. The unguarded step can't
+/// expand, and the context frozen at spawn already decides that, so
+/// `wt remove` prints the error in the terminal. Before, the error appeared
+/// only in the background runner's log: a `post-remove` running
+/// `jj workspace forget {{ branch }}` was announced, never ran, and
+/// `wt remove` exited 0. The report changes nothing that runs. The removal
+/// succeeds and the guarded step still runs.
 #[rstest]
 fn test_user_post_remove_branch_unset_in_detached_worktree(mut repo: TestRepo) {
     repo.add_worktree("feature");
     repo.detach_head_in_worktree("feature");
-    let feature_wt_path = repo.worktree_path("feature");
+    let feature_wt_path = repo.worktree_path("feature").to_path_buf();
 
-    // Guarded the way the hook docs prescribe for every optional variable.
     repo.write_test_config(
-        r#"[post-remove]
-capture = "echo 'branch=[{% if branch %}{{ branch }}{% endif %}]' > ../postremove_detached.txt"
+        r#"post-remove = [
+    { capture = "echo 'branch=[{% if branch %}{{ branch }}{% endif %}]' > ../postremove_detached.txt" },
+    { unguarded = "echo {{ branch }} > ../postremove_unguarded.txt" },
+]
 "#,
     );
 
-    repo.wt_command()
-        .args([
-            "remove",
-            feature_wt_path.to_str().unwrap(),
-            "--force",
-            "--yes",
-        ])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    snapshot_remove(
+        "user_post_remove_branch_unset_in_detached_worktree",
+        &repo,
+        &[feature_wt_path.to_str().unwrap(), "--force", "--yes"],
+        None,
+    );
 
     let vars_file = repo
         .root_path()
@@ -1378,8 +1383,10 @@ sync = "echo POST_MERGE_RAN > {} {{{{ bad..syntax }}}}"
 
 /// A semantic template error (undefined variable) in a background hook does
 /// not fail the foreground command: templates render when each step runs, so
-/// the error surfaces in the detached runner and lands in its log. Only
-/// syntax errors abort at prep (see
+/// the error surfaces in the detached runner and lands in its log. The
+/// foreground also prints it when the frozen context already decides it (see
+/// test_user_post_remove_branch_unset_in_detached_worktree), without changing
+/// the exit status. Only syntax errors abort at prep (see
 /// test_merge_drops_pending_hooks_when_post_merge_fails).
 #[rstest]
 fn test_background_hook_undefined_var_fails_in_runner(repo: TestRepo) {
