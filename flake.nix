@@ -44,7 +44,8 @@
 
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
-        # Filter source to include Cargo files, askama templates, and compile-time data.
+        # Filter source to include Cargo files, askama templates, compile-time
+        # data, and the agent skills the package installs.
         # Gemini's loader requires its manifest at the repo root (see #2807).
         # The benchmark fixture definition stays extensionless so Cargo does not
         # auto-discover it as a bench target.
@@ -57,9 +58,19 @@
             || (baseNameOf (dirOf p) == "templates")
             || (pkgs.lib.hasInfix "/dev/" p)
             || (baseNameOf (dirOf p) == "dev")
+            || (pkgs.lib.hasInfix "/skills/" p)
             || (baseNameOf p == "gemini-extension.json")
             || (baseNameOf p == "imported-fixture");
         };
+
+        # Install the agent skills where nixpkgs' `installAgentSkills` hook
+        # puts them, `share/skills/worktrunk/<skill>`. home-manager's
+        # `programs.worktrunk.claudeCodeIntegration` links them from there, and
+        # fails the build when they are missing.
+        installSkills = ''
+          mkdir -p $out/share/skills/worktrunk
+          cp -RL skills/. $out/share/skills/worktrunk/
+        '';
 
         # Common arguments for crane builds
         commonArgs = {
@@ -103,6 +114,8 @@
             # which bloat the source. Tests should run in CI instead.
             doCheck = false;
 
+            postInstall = installSkills;
+
             meta = with pkgs.lib; {
               description = "A CLI for Git worktree management, designed for parallel AI agent workflows";
               homepage = "https://github.com/max-sixty/worktrunk";
@@ -123,6 +136,7 @@
             inherit cargoArtifacts;
             cargoExtraArgs = "--features git-wt";
             doCheck = false;
+            postInstall = installSkills;
 
             meta = worktrunk.meta // {
               description = "Worktrunk with git-wt binary (for 'git wt' subcommand)";
