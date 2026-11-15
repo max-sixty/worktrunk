@@ -11,18 +11,15 @@ use tempfile::TempDir;
 
 #[rstest]
 fn test_hook_show_with_both_configs(repo: TestRepo, temp_home: TempDir) {
-    // Create user config with hooks
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
-    fs::write(
-        global_config_dir.join("config.toml"),
+    // Create user config with hooks. `configure_wt_cmd` points
+    // WORKTRUNK_CONFIG_PATH at the test config, so write it there.
+    repo.write_test_config(
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [pre-commit]
 user-lint = "pre-commit run --all-files"
 "#,
-    )
-    .unwrap();
+    );
 
     // Create project config with hooks
     repo.write_project_config(
