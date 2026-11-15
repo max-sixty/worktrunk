@@ -532,6 +532,17 @@ pub fn allow_network_transports(cmd: &mut Command) {
     cmd.env_remove("GIT_ALLOW_PROTOCOL");
 }
 
+/// Overrides for each agent CLI's `is_*_available()` check: "1" or "0" stands
+/// in for the `which` lookup. [`configure_cli_command`] sets each to "0".
+const AGENT_CLI_DETECTION_VARS: [&str; 6] = [
+    "WORKTRUNK_TEST_CLAUDE_INSTALLED",
+    "WORKTRUNK_TEST_CODEX_INSTALLED",
+    "WORKTRUNK_TEST_OPENCODE_INSTALLED",
+    "WORKTRUNK_TEST_PI_INSTALLED",
+    "WORKTRUNK_TEST_OMP_INSTALLED",
+    "WORKTRUNK_TEST_GEMINI_INSTALLED",
+];
+
 /// Determinism knobs every isolated wt subprocess needs, whatever it's
 /// attached to.
 ///
@@ -1031,14 +1042,11 @@ pub fn configure_cli_command(cmd: &mut Command) {
     // of debug-level `[wt-trace]` records. Tests that need warn-level output
     // can opt in after command construction.
     cmd.env_remove("RUST_LOG");
-    // Treat Claude as not installed by default (tests can override with "1")
-    cmd.env("WORKTRUNK_TEST_CLAUDE_INSTALLED", "0");
-    // Treat Codex as not installed by default (tests can override with "1")
-    cmd.env("WORKTRUNK_TEST_CODEX_INSTALLED", "0");
-    // Treat OpenCode as not installed by default (tests can override with "1")
-    cmd.env("WORKTRUNK_TEST_OPENCODE_INSTALLED", "0");
-    // Treat Gemini as not installed by default (tests can override with "1")
-    cmd.env("WORKTRUNK_TEST_GEMINI_INSTALLED", "0");
+    // Treat every agent CLI as not installed by default, so a host install
+    // can't add sections to `wt config show` (tests can override with "1")
+    for var in AGENT_CLI_DETECTION_VARS {
+        cmd.env(var, "0");
+    }
 
     // Apply shared static env vars (see STATIC_TEST_ENV_VARS)
     for &(key, value) in STATIC_TEST_ENV_VARS {
@@ -3099,14 +3107,7 @@ impl TestRepo {
         // executables prepended above. Otherwise each override forces
         // detection on for the CLIs whose `setup_mock_*_installed()` ran.
         if self.detect_clis_via_path {
-            for var in [
-                "WORKTRUNK_TEST_CLAUDE_INSTALLED",
-                "WORKTRUNK_TEST_CODEX_INSTALLED",
-                "WORKTRUNK_TEST_OPENCODE_INSTALLED",
-                "WORKTRUNK_TEST_PI_INSTALLED",
-                "WORKTRUNK_TEST_OMP_INSTALLED",
-                "WORKTRUNK_TEST_GEMINI_INSTALLED",
-            ] {
+            for var in AGENT_CLI_DETECTION_VARS {
                 cmd.env_remove(var);
             }
         } else {
@@ -3986,6 +3987,24 @@ mod tests {
             matches!(rust_log, Some(None)),
             "RUST_LOG should be explicitly removed from CLI test children"
         );
+    }
+
+    #[test]
+    fn configure_cli_command_hides_host_agent_clis() {
+        let mut cmd = Command::new("true");
+        configure_cli_command(&mut cmd);
+
+        for var in AGENT_CLI_DETECTION_VARS {
+            let value = cmd
+                .get_envs()
+                .find(|(key, _)| key.to_string_lossy() == var)
+                .and_then(|(_, value)| value);
+            assert_eq!(
+                value.map(|v| v.to_string_lossy().into_owned()).as_deref(),
+                Some("0"),
+                "{var} should default to not installed"
+            );
+        }
     }
 
     /// The isolation the whole suite rests on, asserted where it is weakest.
