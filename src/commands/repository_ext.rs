@@ -116,8 +116,8 @@ impl RepositoryCliExt for Repository {
             Some(wts) => wts,
             None => self.list_worktrees()?,
         };
-        // Primary worktree path: prefer default branch's worktree, fall back to first
-        // worktree, then repo base for bare repos with no worktrees.
+        // Primary worktree path, or the repo base for a bare repo with no
+        // worktree on the default branch.
         let primary_path = self.home_path()?;
 
         // Reuse caller's snapshot when present; otherwise capture once for

@@ -1166,22 +1166,17 @@ pub fn collect(
     // - Normal repos: the main worktree (repo root)
     // - Bare repos: the default branch's worktree
     //
-    // `None` when no worktree can be the main one — a bare repo with no linked
-    // worktrees, and the degenerate case where every registration is prunable.
-    // Rows can still exist there (branch-only rows under `--branches`), so this
-    // is a normal answer rather than an error: no row is flagged main, and path
-    // shortening falls back to the repo root, which no row uses because a
-    // branch-only row has no path.
+    // `None` when a bare repo has no worktree on the default branch — none at
+    // all, or every one detached or on another branch. That is a normal answer
+    // rather than an error: no row is flagged main, and paths are shortened
+    // relative to the repo root, where `home_path()` also lands.
     let primary_id = repo.primary_worktree()?.as_ref().map(WorktreeId::new);
     let (main_worktree_path, main_worktree_id) = {
-        let main = primary_id
-            .as_ref()
-            .and_then(|id| {
-                worktree_subjects
-                    .iter()
-                    .find(|(_, worktree_ref)| worktree_ref.id() == id)
-            })
-            .or_else(|| worktree_subjects.iter().find(|(wt, _)| !wt.is_prunable()));
+        let main = primary_id.as_ref().and_then(|id| {
+            worktree_subjects
+                .iter()
+                .find(|(_, worktree_ref)| worktree_ref.id() == id)
+        });
         match main {
             Some((wt, worktree_ref)) => (wt.path.clone(), Some(worktree_ref.id().clone())),
             None => (repo.repo_path()?.to_path_buf(), None),
@@ -2236,7 +2231,7 @@ where
 /// Uses the pre-fetched commit-details map for efficiency.
 ///
 /// `main_worktree_id` is `None` when the repo has no main worktree (a bare repo
-/// with no linked worktrees); the middle tier is then simply empty.
+/// with no worktree on the default branch); the middle tier is then simply empty.
 fn sort_worktrees_with_cache<'a>(
     mut worktrees: Vec<(&'a WorktreeInfo, WorktreeRef)>,
     main_worktree_id: Option<&WorktreeId>,
