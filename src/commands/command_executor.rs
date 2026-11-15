@@ -34,9 +34,9 @@ use worktrunk::config::HookSource;
 pub struct PreparedCommand {
     pub name: Option<String>,
     /// Raw template, rendered against `context` when the command runs.
-    /// Execution paths validate syntax via [`PreparedPipeline::validated`];
-    /// rendering is deferred so `vars.*` set by earlier pipeline steps are
-    /// read fresh from git config.
+    /// Execution paths reject what the frozen context already decides via
+    /// [`PreparedPipeline::validated`]; rendering is deferred so `vars.*` set
+    /// by earlier pipeline steps are read fresh from git config.
     pub template: String,
     /// Template variables, frozen at preparation. Serialized to JSON only at
     /// the process boundary (the background pipeline spec).
@@ -795,7 +795,7 @@ pub fn map_config_steps(
         .collect()
 }
 
-/// A prepared pipeline that has not yet chosen a syntax-error policy.
+/// A prepared pipeline that has not yet chosen a template-error policy.
 ///
 /// [`prepare_steps`] returns this rather than the steps themselves so the
 /// choice is a method call the compiler demands: running hooks takes
@@ -807,19 +807,29 @@ pub fn map_config_steps(
 pub struct PreparedPipeline(Vec<PreparedStep>);
 
 impl PreparedPipeline {
-    /// The steps, rejected if any template cannot parse — so a pipeline that
-    /// cannot render in full never starts.
+    /// The steps, rejected if any template fails in a way the frozen context
+    /// already decides — so a pipeline that cannot render in full never
+    /// starts, in the foreground or the background.
     ///
-    /// Semantic errors (undefined variable, filter failure) are not checked:
-    /// rendering is deferred, so they surface at the failing step.
-    pub fn validated(self) -> Result<Vec<PreparedStep>> {
+    /// Two failures are decided now: a template that cannot parse, and one
+    /// whose render fails without reading anything an earlier step can change
+    /// (see [`TemplateContext::known_expansion_error`]), such as an unguarded
+    /// `{{ branch }}` in a detached worktree. A failure that depends on
+    /// `vars.*` or a template function surfaces when its step runs.
+    pub fn validated(self, repo: &Repository) -> Result<Vec<PreparedStep>> {
         for cmd in self.0.iter().flat_map(PreparedStep::commands) {
             validate_template_syntax(&cmd.template, &cmd.template_name)?;
+            if let Some(err) =
+                cmd.context
+                    .known_expansion_error(&cmd.template, repo, &cmd.template_name)
+            {
+                return Err(err.into());
+            }
         }
         Ok(self.0)
     }
 
-    /// The steps with no syntax check, for `wt hook show --expanded`: a
+    /// The steps with no template check, for `wt hook show --expanded`: a
     /// listing annotates a broken template in place rather than blanking the
     /// rest of the listing.
     pub fn into_unvalidated(self) -> Vec<PreparedStep> {
@@ -832,11 +842,10 @@ impl PreparedPipeline {
 /// and background) and the `wt hook show --expanded` listing come through here,
 /// so a context key added here reaches both with no second edit.
 ///
-/// Each command freezes its context and keeps its raw template;
-/// rendering happens when the command runs, so semantic errors (undefined
-/// variable, filter failure) surface at the failing step. The returned
-/// [`PreparedPipeline`] makes the caller choose what an unparsable template
-/// does.
+/// Each command freezes its context and keeps its raw template; rendering
+/// happens when the command runs, so `vars.*` set by an earlier step are read
+/// fresh. The returned [`PreparedPipeline`] makes the caller choose what a
+/// template that cannot render does.
 pub fn prepare_steps(
     command_config: &CommandConfig,
     ctx: &CommandContext<'_>,
