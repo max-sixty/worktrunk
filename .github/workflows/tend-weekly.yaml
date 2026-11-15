@@ -34,7 +34,7 @@ jobs:
           token: ${{ secrets.TEND_BOT_TOKEN }}
 
       - uses: ./.github/actions/tend-setup
-      - run: for t in cargo-insta cargo-nextest pre-commit nu nix; do command -v "$t" >/dev/null || { echo "::error::tend setup is missing $t; see Sandbox toolchain in .github/AGENTS.md"; exit 1; }; done
+      - run: for t in cargo-insta cargo-nextest pre-commit nu; do command -v "$t" >/dev/null || { echo "::error::tend setup is missing $t; see Sandbox toolchain in .github/AGENTS.md"; exit 1; }; done
 
       - uses: max-sixty/tend/claude@0.3.25
         with:

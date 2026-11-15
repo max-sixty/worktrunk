@@ -1,9 +1,8 @@
 bot_name: worktrunk-bot
 setup:
 - uses: ./.github/actions/tend-setup
-# Verify the toolchain installed above before the agent starts. Four tools
-# support the pre-merge gate; nix supports the weekly flake.lock refresh.
-- run: 'for t in cargo-insta cargo-nextest pre-commit nu nix; do command -v "$t" >/dev/null || { echo "::error::tend setup is missing $t; see Sandbox toolchain in .github/AGENTS.md"; exit 1; }; done'
+# Verify the toolchain the pre-merge gate needs before the agent starts.
+- run: 'for t in cargo-insta cargo-nextest pre-commit nu; do command -v "$t" >/dev/null || { echo "::error::tend setup is missing $t; see Sandbox toolchain in .github/AGENTS.md"; exit 1; }; done'
 secrets:
   allowed:
   - CODECOV_TOKEN
