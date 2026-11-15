@@ -152,10 +152,11 @@ struct PermissionRequest {
 ///   session 💬 while the dialog waits. One hook does both because Claude Code
 ///   runs every matching hook in parallel.
 /// - `WorktreeCreate` runs `wt switch --create` and prints the new worktree's
-///   path, which Claude Code reads as the hook's answer. A name whose branch
-///   already exists switches to it without `--create`, since Claude Code fires
-///   the hook again when `claude --worktree <name>` reopens a kept worktree
-///   (#4486). A failure exits nonzero with nothing on stdout (#3545).
+///   path, resolved through symlinks, which Claude Code reads as the hook's
+///   answer. A name whose branch already exists switches to it without
+///   `--create`, since Claude Code fires the hook again when
+///   `claude --worktree <name>` reopens a kept worktree (#4486). A failure
+///   exits nonzero with nothing on stdout (#3545).
 /// - `WorktreeRemove` resolves against the worktree path Claude Code hands
 ///   over, never `CLAUDE_PROJECT_DIR`: the `claude agents` view spans
 ///   repositories, so no single project dir is right for every session
@@ -203,7 +204,11 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
             let path = created["path"]
                 .as_str()
                 .context("`wt switch --format=json` output has no `path`")?;
-            println!("{path}");
+            // Claude Code refuses an answer that goes through a symlink inside
+            // the project, and a templated `worktree-path` can (#4812).
+            let path = dunce::canonicalize(path)
+                .with_context(|| format!("Failed to resolve worktree path {path}"))?;
+            println!("{}", path.display());
             Ok(())
         }
         ClaudeHook::WorktreeRemove { worktree_path } => {

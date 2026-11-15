@@ -221,3 +221,28 @@ fn test_claude_hook_worktree_remove(mut repo: TestRepo) {
     let again = run_hook(&repo, &outside, &outside, &payload.to_string());
     assert!(again.status.success());
 }
+
+/// `WorktreeCreate` prints the worktree's resolved path. Claude Code refuses a
+/// hook answer that goes through a symlink inside the project, so a
+/// `worktree-path` under a symlinked directory in the repository must not
+/// reach it in templated form (#4812).
+#[cfg(unix)]
+#[rstest]
+fn test_claude_hook_worktree_create_resolves_symlink(repo: TestRepo) {
+    let root = repo.root_path().to_path_buf();
+    let target = repo.home_path().join("real-worktrees");
+    std::fs::create_dir_all(&target).unwrap();
+    std::os::unix::fs::symlink(&target, root.join(".worktrees")).unwrap();
+    repo.write_test_config(
+        r#"worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"
+"#,
+    );
+
+    let payload = r#"{"hook_event_name":"WorktreeCreate","name":"agent-task"}"#;
+    let created = run_hook(&repo, &root, &root, payload);
+    assert!(created.status.success(), "{created:?}");
+    let printed = stdout(&created);
+    let printed = Path::new(printed.trim_end());
+    let expected = dunce::canonicalize(target.join("agent-task")).unwrap();
+    assert_eq!(printed, expected);
+}
