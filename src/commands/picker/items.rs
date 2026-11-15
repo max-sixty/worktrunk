@@ -77,9 +77,12 @@ pub(super) fn ansi_to_line(s: &str) -> Line<'static> {
 /// background — the gray vanishes exactly when the row is highlighted. A
 /// span-level foreground overrides the line-level `current`, so re-anchoring the
 /// faint text to an explicit muted gray makes the de-emphasis read through the
-/// selection. Gray 245 ≈ the perceived faint-gray off-cursor, so the row's look
-/// is continuous as the cursor lands on it. See [`anchor_faint_under_selection`].
-const SELECTED_FAINT_FG: Color = Color::Indexed(245);
+/// selection. Gray 240 (`#585858`) gives about 4.2:1 contrast on the 251 bar
+/// (`#c6c6c6`) while still reading lighter than the row's 237 text; the earlier
+/// 245 matched the off-cursor faint gray but fell to about 2:1, which was hard to
+/// read on dark themes, where the bright bar stands out (#1264). See
+/// [`anchor_faint_under_selection`].
+const SELECTED_FAINT_FG: Color = Color::Indexed(240);
 
 /// Re-anchor a row's faint (`DIM`) spans to an explicit gray when it is the
 /// selected row, so the de-emphasis survives skim's selection highlight.
