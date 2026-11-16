@@ -30,8 +30,8 @@
       "reason": "copy_approved_commands_to_approvals_file: legacy migration into the store, must fail closed"
     },
     {
-      "path": "src/config/mod.rs",
-      "reason": "config path resolution"
+      "path": "src/config/user/path.rs",
+      "reason": "config_path: the user config directory approvals_path resolves against"
     },
     {
       "path": "AGENTS.md",
@@ -44,8 +44,12 @@
       "command": "cargo test --test integration user_hooks"
     },
     {
-      "path": "tests/integration_tests/custom.rs",
-      "command": "cargo test --test integration custom"
+      "path": "tests/integration_tests/approvals.rs",
+      "command": "cargo test --test integration approvals"
+    },
+    {
+      "path": "tests/integration_tests/approval_save.rs",
+      "command": "cargo test --test integration approval_save"
     }
   ],
   "tags": [
