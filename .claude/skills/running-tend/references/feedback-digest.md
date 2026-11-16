@@ -63,11 +63,11 @@ quote them verbatim, a sentence or two, with a translation when it isn't in
 English. Say who they are when it bears on the item's weight, such as the
 purpose and stars of the repository, or the tool they maintain.
 
-Then look for each kept point in `previous_digests.md`, which holds the earlier
-digests, each under its comment's URL. A point an earlier digest reported, from
-this project or another, has come up again, which tells the maintainer more
-than a new point does. Link the earliest digest that reported it, say how many
-digests have, and note any change in its status since.
+The digest reports this week. `previous_digests.md` holds the earlier digests,
+each under its comment's URL, as context: a point this week that earlier
+digests also reported, from this project or another, has become a theme, which
+tells the maintainer more than a single report does. Say so in its bullet, with
+how often it has come up and a link to the digest that first reported it.
 
 ## Check what might call for a change
 
@@ -132,8 +132,8 @@ the measurement and a link to the issue.
 ## Write and post the digest
 
 Head the digest with its window, then two to four sentences on the week: the
-themes, those that recur from earlier digests, and the items most worth
-reading. Then these sections, leaving out an empty one:
+themes, saying which have come up in earlier weeks too, and the items most
+worth reading. Then these sections, leaving out an empty one:
 
 - **Bugs and wrong behavior**
 - **Frictions, workarounds and requests**
@@ -143,13 +143,13 @@ reading. Then these sections, leaving out an empty one:
   and listed only here
 
 Give each point one bullet: the point in a phrase, its sources with author and
-date, one short quote, its status, and for a recurring point the link to its
-earlier digest. A departure's point is the reason its author gave, not what
-replaced Worktrunk. Where several projects make the same
-point, list them all in that bullet and quote the clearest. Projects that build
-on Worktrunk without a specific point share one bullet. When a week holds more
-than a few minutes' reading, shorten adoption and praise first, and keep every
-bug and every departure.
+date, one short quote, its status, and for a theme from earlier weeks the link
+to its first digest. A departure's point is the reason its author gave, not what
+replaced Worktrunk. Where several projects make the same point, list them all in
+that bullet and quote the clearest. Projects that build on Worktrunk without a
+specific point share one bullet. When a week holds more than a few minutes'
+reading, shorten adoption and praise first, and keep every bug and every
+departure.
 
 Write authors as plain logins, never `@login`, which notifies them. Link issues,
 pull requests and comments in other repositories through

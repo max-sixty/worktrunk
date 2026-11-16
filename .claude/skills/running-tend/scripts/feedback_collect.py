@@ -16,7 +16,7 @@ source left off up to now. Writes to `$TMPDIR/feedback-digest/`:
   digest ends with.
 - `previous_digests.md`: the earlier digests, oldest first, each under its
   comment's URL, for checking whether a URL was already reported and for
-  linking a point an earlier digest made.
+  linking a theme to the digest that first reported it.
 
 A source whose request fails keeps its old start in the marker, so the next
 run covers its gap; a source that answers with zero results advances.
