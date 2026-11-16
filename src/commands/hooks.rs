@@ -138,7 +138,8 @@ pub(crate) fn prepare_selected(
 ) -> anyhow::Result<Vec<SourcedStep>> {
     let mut out = Vec::new();
     for (source, config) in entries {
-        let steps = prepare_steps(config, ctx, extra_vars, hook_type, *source)?.validated()?;
+        let steps =
+            prepare_steps(config, ctx, extra_vars, hook_type, *source)?.validated(ctx.repo)?;
         out.extend(steps.into_iter().map(|step| SourcedStep {
             step,
             source: *source,

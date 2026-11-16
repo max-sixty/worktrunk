@@ -274,32 +274,10 @@ Bump the nightly pins only when the pinned date is more than three months old.
 Cargo refuses a workspace whose `rust-version` exceeds the toolchain, so an
 MSRV bump past a stale pin fails both jobs before they check anything.
 
-`flake.nix` reads the channel from `rust-toolchain.toml`, so no separate bump
-is needed. After updating the toolchain, refresh `flake.lock` so the locked
-`rust-overlay` revision knows about the new version. `tend-setup` installs Nix
-with flakes enabled:
-
-```bash
-# Name the input: a bare `nix flake update` also relocks nixpkgs, an
-# unrelated bump in a toolchain-scoped PR.
-nix flake update rust-overlay
-# Check the bumped channel still evaluates
-nix eval .#devShells.x86_64-linux.default.name
-```
-
-Commit `flake.lock` alongside the other toolchain changes once both commands
-succeed. A failure is reported in the PR, never worked around: leave the file
-alone if the update fails, `git checkout flake.lock` if the eval does, and
-hand-compute an entry in neither case.
-
-**Expect both commands to fail from tend 0.2.5 on, with `cannot create Unix
-domain socket: Address family not supported by protocol`.** `nix` resolves on
-the agent's PATH, but the multi-user client reaches the store by connecting to
-`/nix/var/nix/daemon-socket/socket`, and the sandbox blocks
-`socket(AF_UNIX, …)` outright — still true under 0.2.14's systemd unit. That
-is the reported failure above, not a problem with the bump: say so in the PR,
-leave `flake.lock` untouched, and carry the rest of the toolchain change as
-normal. It clears when max-sixty/tend#1197 gives the action a lever for it.
+`flake.nix` reads the channel from `rust-toolchain.toml`, so the Nix build
+follows this bump. Dependabot keeps `flake.lock` current, including the
+`rust-overlay` revision that has to know the new channel; a lock too old for
+it fails the `nix-flake` job this PR triggers.
 
 After bumping, run the full test suite (`cargo run -- hook pre-merge --yes`)
 and verify `cargo msrv verify` passes.
@@ -381,26 +359,74 @@ Check the latest IDs at <https://docs.anthropic.com/en/docs/about-claude/models>
 
 **On drift, open a PR — don't file an issue.** The source of truth is `after_long_help` in `src/cli/mod.rs`; edit it and let `cargo test --test integration test_docs_are_in_sync` regenerate the mirrors under `docs/src/content/docs/` and `skills/worktrunk/reference/`. The "smallest current variant" call is a judgment — pick the one the vendor's models page currently positions as fastest/smallest, and explain the choice in the PR body. Verifying the new model name with an installed CLI (`codex -m <name>`, etc.) isn't possible in this CI sandbox; the PR is the right output anyway, and the maintainer tests on merge.
 
-## Weekly Maintenance: Agent App Integration Surfaces
+## Weekly Maintenance: Projects Worktrunk Integrates With
 
-Worktrunk ships a plugin for each agent CLI it integrates with, and those CLIs
-change their integration surfaces without notice. Each week, scan the upstream
-changelogs and flag changes that affect what Worktrunk consumes or produces.
+Other projects change on their own schedules. Agent CLIs change the surfaces
+Worktrunk's plugins hook into, and packagers and module authors carry copies of
+Worktrunk that fall behind it. Each week, check both tables below.
+
+For each change that needs action, search this repo's open issues for it, then
+file one issue or add to the one already open. Link the upstream entry or the
+downstream file, and say what would fix it and in which repository. A fix in
+another repository needs the maintainer's go-ahead under **Filing issues in
+other repos**, and the issue here asks for it. Don't open a PR speculatively.
+If nothing changed, say so and move on. A source that errors or returns
+nothing leaves its row unchecked, so name it rather than report no change.
+
+### Agent CLIs
+
+Read what each source published in the last week. For a GitHub repository,
+list its releases with `gh release list -R <repo> -L 50` and read each new
+one's notes with `gh release view`.
 
 | App | Source to check | Integration surface |
 |-----|-----------------|---------------------|
 | Claude Code | `gh api repos/anthropics/claude-code/contents/CHANGELOG.md -H 'Accept: application/vnd.github.raw'`, plus `curl -sL https://code.claude.com/docs/en/statusline.md` for the statusline JSON schema | statusline stdin JSON, `WorktreeCreate`/`WorktreeRemove` hooks, plugin marketplace, `/wt-switch-create` |
-| Codex | `gh release list -R openai/codex -L 10` | plugin marketplace |
-| Gemini CLI | `gh release list -R google-gemini/gemini-cli -L 10` | native extension loading |
-| OpenCode | `gh release list -R sst/opencode -L 10` | plugins API in `~/.config/opencode/plugins/` |
+| Codex | `openai/codex` | plugin marketplace |
+| Gemini CLI | `google-gemini/gemini-cli` | native extension loading |
+| OpenCode | `anomalyco/opencode` | plugins API in `~/.config/opencode/plugins/` |
+| Pi | `earendil-works/pi` | the extension events `dev/pi-extension.ts` uses, loaded from `~/.pi/agent/extensions/` |
+| oh-my-pi | `can1357/oh-my-pi` | the hook events `dev/omp-hook.ts` uses, loaded from `~/.omp/agent/hooks/pre/` by its extension runner |
 
 What to flag:
 
 - **New statusline JSON fields** — `src/commands/statusline.rs` parses `workspace.current_dir`, `model.display_name`, `context_window.used_percentage`, and `rate_limits.{five_hour,seven_day}.{used_percentage,resets_at}`. A newly added field (session cost, PR review state) may be worth surfacing in `wt list statusline`.
 - **Renamed or removed hook events** — `WorktreeCreate`/`WorktreeRemove` route agent worktree creation through `wt`; a renamed event silently disables isolation rather than erroring.
-- **Changed plugin install mechanisms** — `wt config plugins {claude,codex,opencode} install` and the Gemini extension manifest break if the marketplace or plugins-directory contract changes.
+- **Changed plugin install mechanisms** — `wt config plugins <app> install` and the Gemini extension manifest break if the marketplace, plugins directory, or hook API changes.
 
-Don't open a PR speculatively. File one issue per relevant change, linking the upstream entry and noting what Worktrunk would need to do. If nothing changed, say so and move on.
+### Projects that carry Worktrunk
+
+| Project | Source to check | What it carries |
+|---------|-----------------|-----------------|
+| Distribution packages | Repology, below | a release |
+| conda-forge | `curl -sSf https://api.anaconda.org/package/conda-forge/worktrunk` (`latest_version`); Repology doesn't list it | a release |
+| home-manager | `modules/programs/worktrunk.nix` in `nix-community/home-manager` | the shell init lines, its own Claude Code hook for each event in `plugins/worktrunk/hooks/hooks.json`, the skills path inside the package |
+| nixpkgs | `pkgs/by-name/wo/worktrunk/package.nix` in `NixOS/nixpkgs` | the `skills/` directories it installs by name, the shell completions command |
+
+Repology reports each distribution's version and whether it is outdated:
+
+```bash
+curl -sSf -A 'worktrunk-weekly (https://github.com/max-sixty/worktrunk)' \
+  https://repology.org/api/v1/project/worktrunk |
+  jq -er '.[] | "\(.repo) \(.version) \(.status)"'
+```
+
+What to flag:
+
+- **A package behind Worktrunk's releases for longer than its usual lag.** Find
+  its pending update, usually a bot's version-bump PR in the package's
+  repository, and say why it stalled. Stable channels that freeze versions,
+  such as NixOS stable and Manjaro stable, lag by design.
+- **A copy that no longer matches Worktrunk.** Compare the downstream file with
+  `main`: each hook event and the command it runs, each skill directory, each
+  init line. Either side's commits can open a difference. Flag one that gives
+  the copy's users different behavior from Worktrunk's own integration.
+- **A downstream change that breaks this repo's packaging**, such as
+  home-manager declaring an option that `homeModules.default` in `flake.nix`
+  also declares.
+
+When a project that carries Worktrunk is missing from the table, such as a new
+module the feedback digest turns up, add it in a PR.
 
 ## Weekly Maintenance: Feedback Digest
 

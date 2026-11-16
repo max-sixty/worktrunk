@@ -19,7 +19,7 @@ Generated tend agent workflows use environment {name: tend, deployment: false}. 
 
 ## Sandbox toolchain
 
-Tend agents run in a copy-on-write view of the runner checkout and home. The `tend-setup` action installs the gate's tools; the following `setup` step checks their presence. Keep the probe when changing setup. A binary on PATH does not guarantee its service is reachable: Nix currently cannot connect to its daemon from the sandbox, so a flake.lock refresh needs a different execution path.
+Tend agents run in a copy-on-write view of the runner checkout and home. The `tend-setup` action installs the gate's tools; the following `setup` step checks their presence. Keep the probe when changing setup.
 
 ## Build environment
 
