@@ -157,5 +157,4 @@ those is always `wt remove <branch>`.
 ## Scope
 
 The command's mandate is ONE worktree (in the named repo, if one was given)
-and the requested task inside it. Commits, pushes, and merges still each
-require explicit user permission.
+and the requested task inside it.

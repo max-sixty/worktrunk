@@ -77,6 +77,12 @@ the steps don't apply. So the lead makes the invocation the explicit request
 itself, and Scope states bounds rather than permission. Don't reintroduce
 either wording.
 
+Scope also stays silent on committing, pushing, and merging. A sentence there
+reserving them for explicit user permission read as the user's own rule and
+overrode harness or user instructions to commit finished work, so sessions
+handed work back uncommitted. Those permissions come from the harness and the
+user's instructions, as they would without the command.
+
 ## wt CLI and git behavior (all live-tested)
 
 - `wt switch --create <branch>` exits 1 with `✗ Branch <branch> already
