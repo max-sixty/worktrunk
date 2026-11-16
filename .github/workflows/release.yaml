@@ -583,6 +583,70 @@ jobs:
           commit_message: Update to ${{ needs.plan.outputs.tag }}
           updpkgsums: true
 
+  # Repackages the GitHub Release archives as wheels, so PyPI ships the same
+  # binaries (including the signed Windows one) rather than a second build.
+  # Runs on PRs against the latest release to exercise the packaging; only
+  # publish-pypi uploads. Prereleases are skipped, as for Homebrew.
+  build-pypi-wheels:
+    needs:
+      - plan
+      - host
+    if: ${{ always() && needs.plan.result == 'success' && (needs.plan.outputs.publishing != 'true' || needs.host.result == 'success') && !fromJson(needs.plan.outputs.val).announcement_is_prerelease }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.source-sha }}
+          persist-credentials: false
+      - name: Download release archives
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          TAG="${RELEASE_TAG:-$(gh release view --json tagName --jq .tagName)}"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          gh release download "$TAG" --dir "$RUNNER_TEMP/archives" \
+            --pattern 'worktrunk-*.tar.xz' --pattern 'worktrunk-*.zip' --pattern 'worktrunk-*.sha256'
+          cd "$RUNNER_TEMP/archives" && sha256sum -c worktrunk-*.sha256
+      - name: Build wheels
+        run: python3 .github/build-wheels.py --version "${TAG#v}" --out-dir pypi-dist "$RUNNER_TEMP"/archives/worktrunk-*.{tar.xz,zip}
+      - name: Check wheels
+        run: |
+          pipx run twine check --strict pypi-dist/*
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --no-index --find-links pypi-dist worktrunk
+          "$RUNNER_TEMP/venv/bin/wt" --version
+          "$RUNNER_TEMP/venv/bin/git-wt" --version
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pypi-wheels
+          path: pypi-dist/
+
+  # Auth is via PyPI Trusted Publishing (GitHub Actions OIDC), which needs a
+  # trusted publisher for the `worktrunk` project on PyPI scoped to this repo,
+  # the `release.yaml` workflow, and the `release` environment. Kept out of
+  # `announce`'s needs so a PyPI outage doesn't hold up the release.
+  publish-pypi:
+    needs:
+      - plan
+      - build-pypi-wheels
+    if: ${{ needs.plan.outputs.publishing == 'true' }}
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: pypi-wheels
+          path: pypi-dist/
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: pypi-dist/
+
   announce:
     needs:
       - plan
