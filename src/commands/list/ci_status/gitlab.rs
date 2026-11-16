@@ -204,24 +204,11 @@ pub(super) fn detect_gitlab(
         info.ci_status()
     } else {
         // Found MR but couldn't fetch details - treat as error so it surfaces
-        // (not NoCI, which would imply no MR exists). Carry the MR identity
-        // already in hand: the ⚠ stays clickable and the iid still feeds the
-        // CI column width ratchet.
+        // (not NoCI, which would imply no MR exists). The MR identity already
+        // in hand still goes out below: the ⚠ stays clickable and the iid
+        // still feeds the CI column width ratchet.
         tracing::debug!(iid = %mr_entry.iid, "Could not fetch MR details for !{}", mr_entry.iid);
-        return Some(PrStatus {
-            ci_status: CiStatus::Error,
-            source: CiSource::PullRequest,
-            is_stale: mr_entry.sha != local_head,
-            is_priming: false,
-            url: mr_entry.web_url.clone(),
-            number: Some(PrRef::mr(mr_entry.iid)),
-            review_state: mr_entry.review_state(),
-            title: mr_entry.title.clone(),
-            body: mr_entry.description.clone(),
-            author: mr_entry.author.as_ref().map(|a| a.username.clone()),
-            comment_count: mr_entry.comment_count(),
-            updated_at: None,
-        });
+        CiStatus::Error
     };
 
     let is_stale = mr_entry.sha != local_head;
