@@ -124,17 +124,51 @@ struct PatchIdIntegration {
     commits: bool,
 }
 
-/// How many commits the patch-id fallback is willing to walk on the target
-/// side before giving up.
+/// A commit with its author identity, `<author time>\t<author email>`, from
+/// [`Repository::authored_commits`].
 ///
-/// [`Repository::patch_id_integration`] runs
-/// `git rev-list {merge-base}..{target} | git diff-tree --stdin -p | git
-/// patch-id` — one patch per commit in the range. That range is unbounded:
-/// on a fast-moving repo an old branch can sit tens of thousands of commits
-/// behind the tip, and a single such check then dominates `wt list`,
-/// `wt remove`, and `wt step prune` (the latter goes visibly silent waiting
-/// for it). A cheap graph-only `git rev-list --count` pre-flight enforces
-/// this cap.
+/// A rebase, a cherry-pick and a forge's rebase merge all keep the author, so
+/// a landed commit shares its original's identity. That makes the identity a
+/// cheap filter for which target commits to diff, never evidence of a match:
+/// an amended commit keeps it too.
+struct AuthoredCommit {
+    sha: String,
+    author: String,
+}
+
+/// The target commits worth diffing for the per-commit patch-id check past
+/// [`PATCH_ID_SCAN_MAX_COMMITS`]: those sharing an author identity with a
+/// branch commit. `None` when some branch commit's identity is absent from
+/// the target, so no target commit can be its rebased copy, or when more than
+/// [`PATCH_ID_SCAN_MAX_COMMITS`] commits qualify.
+fn same_author_candidates<'a>(
+    own: &[AuthoredCommit],
+    target: &'a [AuthoredCommit],
+) -> Option<Vec<&'a str>> {
+    let authors: HashSet<&str> = own.iter().map(|c| c.author.as_str()).collect();
+    let landed: HashSet<&str> = target.iter().map(|c| c.author.as_str()).collect();
+    if !authors.is_subset(&landed) {
+        return None;
+    }
+    let candidates: Vec<&str> = target
+        .iter()
+        .filter(|c| authors.contains(c.author.as_str()))
+        .map(|c| c.sha.as_str())
+        .collect();
+    (candidates.len() <= PATCH_ID_SCAN_MAX_COMMITS).then_some(candidates)
+}
+
+/// How many target commits the patch-id fallback is willing to diff.
+///
+/// [`Repository::patch_id_integration`] runs `git diff-tree --stdin -p | git
+/// patch-id` over target commits — one patch per commit. Within this many
+/// commits since the merge base, it diffs all of them, as the squash check
+/// needs. Past it, the squash check gives up, and the per-commit check diffs
+/// only the target commits sharing an author identity with a branch commit,
+/// at most this many. The range itself is unbounded: on a fast-moving repo an
+/// old branch can sit tens of thousands of commits behind the tip, and
+/// diffing all of it would dominate `wt list`, `wt remove`, and
+/// `wt step prune` (the latter goes visibly silent waiting for it).
 ///
 /// `500` is conservative because count is only a rough proxy for cost — the
 /// per-commit work scales with `changed_files × changed_lines`, so a few
@@ -146,15 +180,28 @@ struct PatchIdIntegration {
 ///
 /// # Limitation
 ///
-/// A branch that was squash- or rebase-merged but whose merge point now sits
-/// more than `PATCH_ID_SCAN_MAX_COMMITS` commits behind the default-branch tip
-/// is reported as *not* integrated. This is the safe direction — the branch is
-/// kept rather than wrongly deleted — and `wt remove -D` still removes it. The
-/// fallback also only runs when `git merge-tree` itself conflicts (the same
-/// files were modified again after the squash), so the affected set is already
-/// narrow. There is no config knob; bump this constant if the trade-off needs
-/// tuning.
+/// A branch that was squash-merged but whose merge point now sits more than
+/// `PATCH_ID_SCAN_MAX_COMMITS` commits behind the default-branch tip is
+/// reported as *not* integrated, as is a rebase-merged one that far behind
+/// whose landed commits lost their author time, or one more than
+/// [`PATCH_ID_WALK_MAX_COMMITS`] behind. This is the safe direction — the
+/// branch is kept rather than wrongly deleted — and `wt remove -D` still
+/// removes it. The fallback also only runs when `git merge-tree` itself
+/// conflicts (the same files were modified again after the merge), so the
+/// affected set is already narrow. There is no config knob; bump this
+/// constant if the trade-off needs tuning.
 const PATCH_ID_SCAN_MAX_COMMITS: usize = 500;
+
+/// How many target commits the patch-id fallback walks before giving up on a
+/// branch altogether.
+///
+/// The walk reads commit headers only: it counts `merge_base..target` against
+/// [`PATCH_ID_SCAN_MAX_COMMITS`] and lists each commit's author identity for
+/// [`same_author_candidates`]. Git walks the whole range either way, as for
+/// the `git rev-list --count` this walk replaced; the cap bounds the headers
+/// formatted and the candidates scanned. `10_000` keeps that well under a
+/// second on a large repo.
+const PATCH_ID_WALK_MAX_COMMITS: usize = 10_000;
 
 /// Outcome of `git merge-tree --write-tree`, classified by exit code.
 ///
@@ -433,8 +480,11 @@ impl Repository {
     ///
     /// Only runs when `merge-tree` conflicts (both sides modified the same files),
     /// since `MergeAddsNothing` handles the non-conflict case. Cost scales with the
-    /// number of commits on target since the merge-base (`git diff-tree`), so it is
-    /// capped at [`PATCH_ID_SCAN_MAX_COMMITS`].
+    /// number of target commits diffed (`git diff-tree`): past
+    /// [`PATCH_ID_SCAN_MAX_COMMITS`] commits since the merge base, the squash
+    /// check gives up and the per-commit check diffs only the target commits
+    /// sharing an author identity with a branch commit; past
+    /// [`PATCH_ID_WALK_MAX_COMMITS`], both give up.
     ///
     /// Returns neither match when the target history is too deep to scan
     /// (conservative). A failing git command propagates as `Err`; the caller
@@ -448,51 +498,78 @@ impl Repository {
             return Ok(PatchIdIntegration::default());
         };
 
-        // Bound the target-side history walk. The patch-id scan diffs every
-        // commit landed on the default branch since this branch diverged; on
-        // a fast-moving repo with an old branch that is tens of thousands of
+        // Bound the target-side history walk. The patch-id scan diffs commits
+        // landed on the default branch since this branch diverged; on a
+        // fast-moving repo with an old branch that is tens of thousands of
         // commits, turning one integration check into seconds (or tens of
         // seconds) of work — visible as `wt step prune` / `wt list` going
-        // silent. A `git rev-list --count` pre-flight (graph walk only, no
-        // diffs) is cheap; bail above the cap. See the limitation note on
-        // [`PATCH_ID_SCAN_MAX_COMMITS`].
-        let target_commit_count: usize = self
-            .run_command(&["rev-list", "--count", &format!("{merge_base}..{target}")])?
-            .trim()
-            .parse()
-            .unwrap_or(0);
-        if target_commit_count > PATCH_ID_SCAN_MAX_COMMITS {
+        // silent. A header-only walk (no diffs) counts the range and reads
+        // each commit's author identity; bail above the walk cap. See the
+        // limitation note on [`PATCH_ID_SCAN_MAX_COMMITS`].
+        let target_commits = self.authored_commits(
+            &format!("{merge_base}..{target}"),
+            PATCH_ID_WALK_MAX_COMMITS + 1,
+        )?;
+        if target_commits.len() > PATCH_ID_WALK_MAX_COMMITS {
             tracing::debug!(
-                target_commit_count,
                 merge_base = %merge_base,
                 target = %target,
-                "skipping patch-id checks: {target_commit_count} commits in {merge_base}..{target} exceeds cap of {PATCH_ID_SCAN_MAX_COMMITS}"
+                "skipping patch-id checks: {merge_base}..{target} exceeds {PATCH_ID_WALK_MAX_COMMITS} commits"
             );
             return Ok(PatchIdIntegration::default());
         }
+        let branch_commits = self.patch_id_branch_commits(
+            &merge_base,
+            branch,
+            target_commits.len().min(PATCH_ID_SCAN_MAX_COMMITS),
+        )?;
+
+        // Which target commits to diff: all of them within the scan cap, as
+        // the squash check needs. Past it the squash check gives up, and the
+        // per-commit check diffs only the target commits that share an author
+        // identity with a branch commit.
+        let full_scan = target_commits.len() <= PATCH_ID_SCAN_MAX_COMMITS;
+        let candidates: Vec<&str> = if full_scan {
+            target_commits.iter().map(|c| c.sha.as_str()).collect()
+        } else if let Some(candidates) = branch_commits
+            .as_deref()
+            .and_then(|own| same_author_candidates(own, &target_commits))
+        {
+            candidates
+        } else {
+            return Ok(PatchIdIntegration::default());
+        };
 
         // Compute the squashed patch-id (combined diff of all branch changes).
-        let squash_pids = self.patch_ids_from(
-            &PlumbingDiff::Tree.args(&["--patch", &merge_base, branch, "--"]),
-            None,
-        )?;
+        let squash_pids = if full_scan {
+            self.patch_ids_from(
+                &PlumbingDiff::Tree.args(&["--patch", &merge_base, branch, "--"]),
+                None,
+            )?
+        } else {
+            String::new()
+        };
         let squash_pid = squash_pids.split_whitespace().next();
 
-        // Get all target commits' patch-ids in one pass. The diffs are
-        // generated by `git diff-tree` — plumbing, like the branch side —
-        // never `git log -p` (porcelain). Both sides must use the same
-        // generator: `git patch-id --verbatim` hashes context lines, and
-        // `log -p` honors `diff.context` / `diff.algorithm` from the user's
-        // git config while `diff-tree` ignores them, so a mismatched pair
-        // never agrees on a byte-identical change. `diff-tree --stdin` reads
-        // the commit list on stdin and emits one diff per commit.
+        // Get the candidates' patch-ids in one pass. The diffs are generated
+        // by `git diff-tree` — plumbing, like the branch side — never
+        // `git log -p` (porcelain). Both sides must use the same generator:
+        // `git patch-id --verbatim` hashes context lines, and `log -p` honors
+        // `diff.context` / `diff.algorithm` from the user's git config while
+        // `diff-tree` ignores them, so a mismatched pair never agrees on a
+        // byte-identical change. `diff-tree --stdin` reads the commit list on
+        // stdin and emits one diff per commit.
         //
         // The branch's own commits ride the same pipe, after the target's, so
         // the per-commit check spawns no process of its own.
-        let branch_commits =
-            self.patch_id_branch_commits(&merge_base, branch, target_commit_count)?;
-        let mut to_diff = self.run_command(&["rev-list", &format!("{merge_base}..{target}")])?;
-        for commit in branch_commits.iter().flatten() {
+        let own: HashSet<&str> = branch_commits
+            .iter()
+            .flatten()
+            .map(|c| c.sha.as_str())
+            .collect();
+        let own_in_order = branch_commits.iter().flatten().map(|c| c.sha.as_str());
+        let mut to_diff = String::new();
+        for commit in candidates.iter().copied().chain(own_in_order) {
             to_diff.push_str(commit);
             to_diff.push('\n');
         }
@@ -505,11 +582,6 @@ impl Repository {
         // non-empty diff, and the commit names which side a line is from. Only
         // a branch with merges can share a commit with `merge_base..target`,
         // and its merge commits, having no patch-id, fail the check anyway.
-        let own: HashSet<&str> = branch_commits
-            .iter()
-            .flatten()
-            .map(String::as_str)
-            .collect();
         let mut target_pids: HashMap<&str, usize> = HashMap::new();
         let mut branch_pids: HashMap<&str, &str> = HashMap::new();
         for line in pids.lines() {
@@ -530,7 +602,7 @@ impl Repository {
                 // Each target commit vouches for one branch commit. A branch
                 // commit without a patch-id (an empty commit) has no twin.
                 let twins = branch_pids
-                    .get(commit.as_str())
+                    .get(commit.sha.as_str())
                     .and_then(|pid| target_pids.get_mut(pid));
                 match twins {
                     Some(remaining) if *remaining > 0 => {
@@ -545,26 +617,51 @@ impl Repository {
     }
 
     /// The branch's own commits (`merge_base..branch`) for the per-commit
-    /// patch-id check, or `None` when it has none or more than `target_commits`
-    /// — the commits in `merge_base..target`, too few to give each branch
-    /// commit a distinct twin.
+    /// patch-id check, or `None` when it has none or more than `limit`: more
+    /// than the target has since the merge base can't each have a distinct
+    /// twin, and more than [`PATCH_ID_SCAN_MAX_COMMITS`] would cost too much
+    /// to diff.
     fn patch_id_branch_commits(
         &self,
         merge_base: &str,
         branch: &str,
-        target_commits: usize,
-    ) -> anyhow::Result<Option<Vec<String>>> {
+        limit: usize,
+    ) -> anyhow::Result<Option<Vec<AuthoredCommit>>> {
         // One commit past the limit is enough to tell that it is exceeded.
-        let output = self.run_command(&[
-            "rev-list",
-            &format!("--max-count={}", target_commits + 1),
-            &format!("{merge_base}..{branch}"),
-        ])?;
-        let commits: Vec<String> = output.split_whitespace().map(String::from).collect();
-        if commits.is_empty() || commits.len() > target_commits {
+        let commits = self.authored_commits(&format!("{merge_base}..{branch}"), limit + 1)?;
+        if commits.is_empty() || commits.len() > limit {
             return Ok(None);
         }
         Ok(Some(commits))
+    }
+
+    /// Walk `range` newest first, reading commit headers only (no diffs), and
+    /// return at most `max_count` commits with their author identities.
+    fn authored_commits(
+        &self,
+        range: &str,
+        max_count: usize,
+    ) -> anyhow::Result<Vec<AuthoredCommit>> {
+        let output = self.run_command(&[
+            "rev-list",
+            &format!("--max-count={max_count}"),
+            "--no-commit-header",
+            "--format=%H%x09%at%x09%ae",
+            range,
+        ])?;
+        Ok(output
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                // The SHA leads the line, so a malformed identity can only
+                // cost a candidate, never drop a commit.
+                let (sha, author) = line.split_once('\t').unwrap_or((line, ""));
+                AuthoredCommit {
+                    sha: sha.to_string(),
+                    author: author.to_string(),
+                }
+            })
+            .collect())
     }
 
     /// Pipe the output of `git <args>` directly into `git patch-id --verbatim`
@@ -1271,8 +1368,10 @@ mod patch_id_tests {
         let test = TestRepo::new();
         // base..target = 1 (squash) + PATCH_ID_SCAN_MAX_COMMITS pads — one
         // over the cap. The squash is still in the range; we just refuse to
-        // walk that far. Asserting `false` while the under-cap case asserts
-        // `true` pins the difference to the cap, not the topology.
+        // diff that far. Asserting `false` while the under-cap case asserts
+        // `true` pins the difference to the cap, not the topology. The
+        // per-commit check misses too: the squash commit's author time
+        // differs from the feature commit's, so it is no candidate.
         build(&test, PATCH_ID_SCAN_MAX_COMMITS);
         let repo = Repository::at(test.root_path()).unwrap();
         let feature = rev_parse(&repo, "refs/heads/feature");
@@ -1433,9 +1532,9 @@ mod patch_id_tests {
         commit_file(test, "a", "A2\n", "re-edit a");
     }
 
-    fn patch_id_integration(test: &TestRepo, branch: &str) -> PatchIdIntegration {
+    fn patch_id_integration(test: &TestRepo, branch: &str, target: &str) -> PatchIdIntegration {
         let branch = test.git_output(&["rev-parse", branch]);
-        let target = test.git_output(&["rev-parse", "main"]);
+        let target = test.git_output(&["rev-parse", target]);
         test.repo.patch_id_integration(&branch, &target).unwrap()
     }
 
@@ -1460,7 +1559,7 @@ mod patch_id_tests {
             "fixture must make merge-tree conflict"
         );
         assert_eq!(
-            patch_id_integration(&test, "feature"),
+            patch_id_integration(&test, "feature", "main"),
             PatchIdIntegration {
                 squash: false,
                 commits: true
@@ -1483,7 +1582,7 @@ mod patch_id_tests {
         let first = commit_file(&test, "a", "A1\n", "change a");
         commit_file(&test, "b", "B1\n", "change b");
         rebase_merge_then_reedit(&test, &[&first]);
-        assert!(!patch_id_integration(&test, "feature").commits);
+        assert!(!patch_id_integration(&test, "feature", "main").commits);
     }
 
     /// The match is a multiset: each `main` commit vouches for one branch
@@ -1496,10 +1595,10 @@ mod patch_id_tests {
         let remove = commit_file(&test, "b", "b\n", "remove X");
         let add_again = commit_file(&test, "b", "b\nX\n", "add X again");
         rebase_merge_then_reedit(&test, &[&add, &remove]);
-        assert!(!patch_id_integration(&test, "feature").commits);
+        assert!(!patch_id_integration(&test, "feature", "main").commits);
 
         test.run_git(&["cherry-pick", &add_again]);
-        assert!(patch_id_integration(&test, "feature").commits);
+        assert!(patch_id_integration(&test, "feature", "main").commits);
     }
 
     /// A merge on the branch refuses the check even though every non-merge
@@ -1515,7 +1614,7 @@ mod patch_id_tests {
         test.run_git(&["merge", "--no-edit", "main"]);
         let second = commit_file(&test, "b", "B1\n", "change b");
         rebase_merge_then_reedit(&test, &[&first, &second]);
-        assert!(!patch_id_integration(&test, "feature").commits);
+        assert!(!patch_id_integration(&test, "feature", "main").commits);
     }
 
     /// An empty commit yields no patch-id, so nothing can vouch for it.
@@ -1525,7 +1624,7 @@ mod patch_id_tests {
         let first = commit_file(&test, "a", "A1\n", "change a");
         test.run_git(&["commit", "--allow-empty", "--message", "empty"]);
         rebase_merge_then_reedit(&test, &[&first]);
-        assert!(!patch_id_integration(&test, "feature").commits);
+        assert!(!patch_id_integration(&test, "feature", "main").commits);
     }
 
     /// Reverting the landed commits, with no later edit to those lines,
@@ -1541,7 +1640,7 @@ mod patch_id_tests {
         commit_file(&test, "c", "C\n", "unrelated main work");
         test.run_git(&["cherry-pick", &first, &second]);
         test.run_git(&["revert", "--no-edit", "HEAD", "HEAD~1"]);
-        assert!(patch_id_integration(&test, "feature").commits);
+        assert!(patch_id_integration(&test, "feature", "main").commits);
 
         let snapshot = test.repo.capture_refs().unwrap();
         let signals = compute_integration_lazy(&test.repo, &snapshot, "feature", "main").unwrap();
@@ -1559,7 +1658,7 @@ mod patch_id_tests {
         rebase_merge_then_reedit(&test, &[&first]);
         test.run_git(&["cherry-pick", "--no-commit", &second]);
         test.run_git(&["commit", "--message", "change b, reworded"]);
-        assert!(patch_id_integration(&test, "feature").commits);
+        assert!(patch_id_integration(&test, "feature", "main").commits);
     }
 
     /// The per-commit check is immune to the user's `diff.*` config for the
@@ -1597,6 +1696,162 @@ mod patch_id_tests {
             Some(IntegrationReason::CommitsMatch),
             "rebase merge must be detected via patch-id regardless of diff.* config"
         );
+    }
+
+    /// Append one `git fast-import` commit to `s`.
+    fn fast_import_commit(
+        s: &mut String,
+        mark: usize,
+        branch: &str,
+        from: Option<usize>,
+        (author, committer): (u64, u64),
+        changes: &[(&str, usize)],
+    ) {
+        writeln!(
+            s,
+            "commit refs/heads/{branch}\nmark :{mark}\nauthor T <t@x> {author} +0000\ncommitter T <t@x> {committer} +0000\ndata 0"
+        )
+        .unwrap();
+        if let Some(from) = from {
+            writeln!(s, "from :{from}").unwrap();
+        }
+        for (path, blob) in changes {
+            writeln!(s, "M 100644 :{blob} {path}").unwrap();
+        }
+        s.push('\n');
+    }
+
+    /// Build, via one `git fast-import` stream, a two-commit `feature` and
+    /// the `targets` (any of `kept`, `reset`, `amended`), each a rebase merge
+    /// of `feature` followed by `n_padding` empty commits:
+    ///
+    /// ```text
+    /// base ─── feature                    (a: A → A1, then b: B → B1)
+    ///   ├───── kept ──── pad1 … padN      (both replayed, author identity kept)
+    ///   ├───── reset ─── pad1 … padN      (both replayed, author time reset)
+    ///   └───── amended ─ pad1 … padN      (identity kept, but b: B → B2)
+    /// ```
+    ///
+    /// Each replayed commit gets a new committer time, so it has a new SHA.
+    fn build_rebase_merged(test: &TestRepo, targets: &[&str], n_padding: usize) {
+        const T: u64 = 1_700_000_000;
+        let mut s = String::new();
+        for (mark, data) in [(1, "A"), (2, "B"), (3, "A1"), (4, "B1"), (5, "B2")] {
+            writeln!(s, "blob\nmark :{mark}\ndata {}\n{data}", data.len()).unwrap();
+        }
+        let mut mark = 10;
+        fast_import_commit(&mut s, mark, "base", None, (T, T), &[("a", 1), ("b", 2)]);
+        let base = mark;
+        mark += 1;
+        fast_import_commit(
+            &mut s,
+            mark,
+            "feature",
+            Some(base),
+            (T + 100, T + 100),
+            &[("a", 3)],
+        );
+        mark += 1;
+        fast_import_commit(
+            &mut s,
+            mark,
+            "feature",
+            Some(mark - 1),
+            (T + 101, T + 101),
+            &[("b", 4)],
+        );
+        for &target in targets {
+            let (first_author, second_author, second_blob) = match target {
+                "kept" => (T + 100, T + 101, 4),
+                "reset" => (T + 200, T + 201, 4),
+                "amended" => (T + 100, T + 101, 5),
+                _ => unreachable!("unknown target {target}"),
+            };
+            mark += 1;
+            fast_import_commit(
+                &mut s,
+                mark,
+                target,
+                Some(base),
+                (first_author, T + 200),
+                &[("a", 3)],
+            );
+            mark += 1;
+            fast_import_commit(
+                &mut s,
+                mark,
+                target,
+                Some(mark - 1),
+                (second_author, T + 201),
+                &[("b", second_blob)],
+            );
+            for i in 0..n_padding as u64 {
+                mark += 1;
+                fast_import_commit(
+                    &mut s,
+                    mark,
+                    target,
+                    Some(mark - 1),
+                    (T + 1000 + i, T + 1000 + i),
+                    &[],
+                );
+            }
+        }
+        let output = test
+            .git_command()
+            .args(["fast-import", "--quiet"])
+            .stdin_bytes(s.into_bytes())
+            .run()
+            .expect("fast-import spawn");
+        assert!(
+            output.status.success(),
+            "fast-import failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    /// Past the scan cap, only target commits sharing a branch commit's author
+    /// identity are diffed. A forge's rebase merge keeps the identity and is
+    /// found; one that reset the author time is missed, the safe direction,
+    /// though within the cap the full scan finds it. The identity selects but
+    /// never decides: an amended commit keeps it and still has no twin.
+    #[test]
+    fn past_scan_cap_selects_candidates_by_author_identity() {
+        let past = TestRepo::new();
+        build_rebase_merged(
+            &past,
+            &["kept", "reset", "amended"],
+            PATCH_ID_SCAN_MAX_COMMITS,
+        );
+        let found = |target: &str| patch_id_integration(&past, "feature", target);
+        assert_eq!(
+            found("kept"),
+            PatchIdIntegration {
+                squash: false,
+                commits: true
+            }
+        );
+        assert!(!found("reset").commits);
+        assert!(!found("amended").commits);
+
+        let under = TestRepo::new();
+        build_rebase_merged(&under, &["reset"], 0);
+        assert!(patch_id_integration(&under, "feature", "reset").commits);
+    }
+
+    /// The walk cap bounds how far back the per-commit check looks: a rebase
+    /// merge [`PATCH_ID_WALK_MAX_COMMITS`] commits back is found, one commit
+    /// further back is not.
+    #[test]
+    fn walk_cap_bounds_the_rebase_merge_check() {
+        let test = TestRepo::new();
+        build_rebase_merged(&test, &["kept"], PATCH_ID_WALK_MAX_COMMITS - 2);
+        assert!(patch_id_integration(&test, "feature", "kept").commits);
+
+        let tree = test.git_output(&["rev-parse", "kept^{tree}"]);
+        let over = test.git_output(&["commit-tree", &tree, "-p", "kept", "-m", "pad"]);
+        test.run_git(&["update-ref", "refs/heads/over", &over]);
+        assert!(!patch_id_integration(&test, "feature", "over").commits);
     }
 }
 

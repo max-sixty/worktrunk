@@ -56,7 +56,7 @@ Worktrunk checks seven conditions:
 6. **Patch-id match** — Branch's entire diff matches a single squash-merge commit on target. Fallback for when the simulated merge conflicts because target later modified the same files the branch touched. Shows `⊂`.
 7. **Commits match** — Every commit on the branch matches its own commit on target by patch-id, as after a rebase merge (GitHub "Rebase and merge", Bitbucket "Rebase, fast-forward") or cherry-picks. The same fallback as patch-id match. Shows `⊂`.
 
-The default-branch walk is capped so a single check stays fast; a squash or rebase merge with hundreds of commits landed since the merge point falls outside the cap and needs `-D` to remove.
+The default-branch walk is capped so a single check stays fast: a squash merge with hundreds of commits landed since the merge point, or a rebase merge more than 10,000 commits back, needs `-D` to remove.
 
 The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., `origin/main`) when strictly ahead.
 
