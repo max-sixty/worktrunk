@@ -1217,6 +1217,7 @@ The single highest-priority state describing the branch's relation to the defaul
 | `"trees_match"` | Different history, but the branch's tree is identical to the default branch's |
 | `"merge_adds_nothing"` | The branch has changes, but merging them leaves the default branch's tree unchanged (e.g. a squash merge where the target advanced on other files) |
 | `"patch_id_match"` | The branch's squashed diff matches a single commit on the default branch (e.g. a GitHub/GitLab squash merge) |
+| `"commits_match"` | Every branch commit matches its own commit on the default branch by patch-id (e.g. a GitHub/Bitbucket rebase merge) |
 
 ### review states
 
@@ -1347,7 +1348,7 @@ $ wt remove -D experimental
 
 By default, branches are deleted when they would add no changes to the default branch if merged. This works with both unchanged git histories, and squash-merge or rebase workflows where commit history differs but file changes match.
 
-Worktrunk checks six conditions:
+Worktrunk checks seven conditions:
 
 1. **Same commit** — Branch HEAD equals the default branch. Shows `_` in `wt list`.
 2. **Ancestor** — Branch is in target's history (fast-forward or rebase case). Shows `⊂`.
@@ -1355,8 +1356,9 @@ Worktrunk checks six conditions:
 4. **Trees match** — Branch tree SHA equals target tree SHA. Shows `⊂`.
 5. **Merge adds nothing** — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced with changes to different files. Shows `⊂`.
 6. **Patch-id match** — Branch's entire diff matches a single squash-merge commit on target. Fallback for when the simulated merge conflicts because target later modified the same files the branch touched. Shows `⊂`.
+7. **Commits match** — Every commit on the branch matches its own commit on target by patch-id, as after a rebase merge (GitHub "Rebase and merge", Bitbucket "Rebase, fast-forward") or cherry-picks. The same fallback as patch-id match. Shows `⊂`.
 
-The default-branch walk is capped so a single check stays fast; a squash merge with hundreds of commits landed since the merge point falls outside the cap and needs `-D` to remove.
+The default-branch walk is capped so a single check stays fast; a squash or rebase merge with hundreds of commits landed since the merge point falls outside the cap and needs `-D` to remove.
 
 The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., `origin/main`) when strictly ahead.
 

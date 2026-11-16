@@ -618,6 +618,8 @@ cheapest-first and the first match wins. See Default branch for symbols.
                 advanced on other files)                                        
  [2m"patch_id_matc[0m The branch's squashed diff matches a single commit on the       
  [2mh"[0m             default branch (e.g. a GitHub/GitLab squash merge)              
+ [2m"commits_match[0m Every branch commit matches its own commit on the default       
+ [2m"[0m              branch by patch-id (e.g. a GitHub/Bitbucket rebase merge)       
 
 [32mreview states[0m
 

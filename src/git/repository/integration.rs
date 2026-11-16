@@ -3,6 +3,8 @@
 //! Methods for determining if a branch has been integrated into the target
 //! (same commit, ancestor, trees match, etc.).
 
+use std::collections::{HashMap, HashSet};
+
 use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};
 
@@ -94,6 +96,11 @@ pub struct BranchDiffSpec {
 /// Encapsulates the two-step sequence: first try `merge-tree --write-tree` to
 /// check if merging would add anything, then fall back to patch-id matching
 /// when merge-tree conflicts.
+///
+/// Persisted in the `merge-add-probe` cache. No field has `#[serde(default)]`:
+/// an entry written before a field existed fails to deserialize and reads as a
+/// miss, so a new check recomputes old cached negatives instead of trusting
+/// them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeProbeResult {
     /// Whether merging the branch into target would change the target's tree.
@@ -102,12 +109,25 @@ pub struct MergeProbeResult {
     /// Whether patch-id matching found the branch's squashed diff in a target commit.
     /// Only `true` when merge-tree conflicted AND patch-id found a match.
     pub is_patch_id_match: bool,
+    /// Whether every commit on the branch has a distinct target commit with the
+    /// same patch-id (a rebase merge). Only `true` when merge-tree conflicted.
+    pub is_commits_match: bool,
 }
 
-/// How many commits the patch-id squash-merge fallback is willing to walk on
-/// the target side before giving up.
+/// What the patch-id fallback found for one branch against one target. See
+/// [`Repository::patch_id_integration`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct PatchIdIntegration {
+    /// The branch's combined diff matches a single target commit (a squash merge).
+    squash: bool,
+    /// Every branch commit matches a distinct target commit (a rebase merge).
+    commits: bool,
+}
+
+/// How many commits the patch-id fallback is willing to walk on the target
+/// side before giving up.
 ///
-/// [`Repository::is_squash_merged_via_patch_id`] runs
+/// [`Repository::patch_id_integration`] runs
 /// `git rev-list {merge-base}..{target} | git diff-tree --stdin -p | git
 /// patch-id` — one patch per commit in the range. That range is unbounded:
 /// on a fast-moving repo an old branch can sit tens of thousands of commits
@@ -126,9 +146,9 @@ pub struct MergeProbeResult {
 ///
 /// # Limitation
 ///
-/// A branch that was squash-merged but whose merge point now sits more than
-/// `PATCH_ID_SCAN_MAX_COMMITS` commits behind the default-branch tip is
-/// reported as *not* integrated. This is the safe direction — the branch is
+/// A branch that was squash- or rebase-merged but whose merge point now sits
+/// more than `PATCH_ID_SCAN_MAX_COMMITS` commits behind the default-branch tip
+/// is reported as *not* integrated. This is the safe direction — the branch is
 /// kept rather than wrongly deleted — and `wt remove -D` still removes it. The
 /// fallback also only runs when `git merge-tree` itself conflicts (the same
 /// files were modified again after the squash), so the affected set is already
@@ -389,14 +409,25 @@ impl Repository {
         }
     }
 
-    /// Detect squash merges via patch-id matching.
+    /// Detect squash and rebase merges via patch-id matching.
     ///
-    /// Computes the combined diff of the entire branch (`diff-tree -p merge-base branch`)
-    /// and checks if any single commit on the target has the same patch-id. A match means
-    /// the target has a commit containing the exact same file changes as the whole branch
-    /// — i.e., a squash merge.
+    /// Two checks share one `diff-tree --stdin -p | patch-id` pass over the
+    /// target's commits since the merge base:
     ///
-    /// Both sides of the comparison generate their diffs with `git diff-tree`
+    /// - **Squash** ([`IntegrationReason::PatchIdMatch`]): the combined diff of
+    ///   the whole branch (`diff-tree -p merge-base branch`) has the same
+    ///   patch-id as a single target commit.
+    /// - **Commits** ([`IntegrationReason::CommitsMatch`]): every commit of the
+    ///   branch has the same patch-id as a target commit — a rebase merge
+    ///   (GitHub "Rebase and merge", Bitbucket "Rebase, fast-forward") or
+    ///   cherry-picks, which land the branch's commits under new SHAs. The match
+    ///   is a multiset: each target commit vouches for one branch commit, so a
+    ///   branch that repeats a patch needs the target to repeat it too. A branch
+    ///   with a commit that yields no patch-id never matches: an empty commit,
+    ///   or a merge, for which `diff-tree --stdin` emits no patch (its conflict
+    ///   resolution could hold content that no patch-id covers).
+    ///
+    /// Both sides of each comparison generate their diffs with `git diff-tree`
     /// (plumbing), so the patch-ids are immune to the user's `diff.*` git
     /// config — see [`Self::patch_ids_from`].
     ///
@@ -405,13 +436,16 @@ impl Repository {
     /// number of commits on target since the merge-base (`git diff-tree`), so it is
     /// capped at [`PATCH_ID_SCAN_MAX_COMMITS`].
     ///
-    /// Returns `Ok(true)` if a matching squash-merge commit is found on the target,
-    /// `Ok(false)` otherwise (including when the target history is too deep to
-    /// scan — conservative). A failing git command propagates as `Err`; the
-    /// caller treats that as no match.
-    fn is_squash_merged_via_patch_id(&self, branch: &str, target: &str) -> anyhow::Result<bool> {
+    /// Returns neither match when the target history is too deep to scan
+    /// (conservative). A failing git command propagates as `Err`; the caller
+    /// treats that as no match.
+    fn patch_id_integration(
+        &self,
+        branch: &str,
+        target: &str,
+    ) -> anyhow::Result<PatchIdIntegration> {
         let Some(merge_base) = self.merge_base(target, branch)? else {
-            return Ok(false);
+            return Ok(PatchIdIntegration::default());
         };
 
         // Bound the target-side history walk. The patch-id scan diffs every
@@ -432,19 +466,17 @@ impl Repository {
                 target_commit_count,
                 merge_base = %merge_base,
                 target = %target,
-                "skipping patch-id squash-merge check: {target_commit_count} commits in {merge_base}..{target} exceeds cap of {PATCH_ID_SCAN_MAX_COMMITS}"
+                "skipping patch-id checks: {target_commit_count} commits in {merge_base}..{target} exceeds cap of {PATCH_ID_SCAN_MAX_COMMITS}"
             );
-            return Ok(false);
+            return Ok(PatchIdIntegration::default());
         }
 
         // Compute the squashed patch-id (combined diff of all branch changes).
-        let branch_pids = self.patch_ids_from(
+        let squash_pids = self.patch_ids_from(
             &PlumbingDiff::Tree.args(&["--patch", &merge_base, branch, "--"]),
             None,
         )?;
-        let Some(branch_pid) = branch_pids.split_whitespace().next() else {
-            return Ok(false);
-        };
+        let squash_pid = squash_pids.split_whitespace().next();
 
         // Get all target commits' patch-ids in one pass. The diffs are
         // generated by `git diff-tree` — plumbing, like the branch side —
@@ -454,15 +486,85 @@ impl Repository {
         // git config while `diff-tree` ignores them, so a mismatched pair
         // never agrees on a byte-identical change. `diff-tree --stdin` reads
         // the commit list on stdin and emits one diff per commit.
-        let target_commits = self.run_command(&["rev-list", &format!("{merge_base}..{target}")])?;
-        let target_pids = self.patch_ids_from(
+        //
+        // The branch's own commits ride the same pipe, after the target's, so
+        // the per-commit check spawns no process of its own.
+        let branch_commits =
+            self.patch_id_branch_commits(&merge_base, branch, target_commit_count)?;
+        let mut to_diff = self.run_command(&["rev-list", &format!("{merge_base}..{target}")])?;
+        for commit in branch_commits.iter().flatten() {
+            to_diff.push_str(commit);
+            to_diff.push('\n');
+        }
+        let pids = self.patch_ids_from(
             &PlumbingDiff::Tree.args(&["--stdin", "--patch"]),
-            Some(target_commits.into_bytes()),
+            Some(to_diff.into_bytes()),
         )?;
 
-        Ok(target_pids
-            .lines()
-            .any(|line| line.split_whitespace().next() == Some(branch_pid)))
+        // `patch-id` prints `<patch-id> <commit>` for each commit with a
+        // non-empty diff, and the commit names which side a line is from. Only
+        // a branch with merges can share a commit with `merge_base..target`,
+        // and its merge commits, having no patch-id, fail the check anyway.
+        let own: HashSet<&str> = branch_commits
+            .iter()
+            .flatten()
+            .map(String::as_str)
+            .collect();
+        let mut target_pids: HashMap<&str, usize> = HashMap::new();
+        let mut branch_pids: HashMap<&str, &str> = HashMap::new();
+        for line in pids.lines() {
+            let mut fields = line.split_whitespace();
+            let (Some(pid), Some(commit)) = (fields.next(), fields.next()) else {
+                continue;
+            };
+            if own.contains(commit) {
+                branch_pids.insert(commit, pid);
+            } else {
+                *target_pids.entry(pid).or_default() += 1;
+            }
+        }
+
+        let squash = squash_pid.is_some_and(|pid| target_pids.contains_key(pid));
+        let commits = branch_commits.as_deref().is_some_and(|own_commits| {
+            own_commits.iter().all(|commit| {
+                // Each target commit vouches for one branch commit. A branch
+                // commit without a patch-id (an empty commit) has no twin.
+                let twins = branch_pids
+                    .get(commit.as_str())
+                    .and_then(|pid| target_pids.get_mut(pid));
+                match twins {
+                    Some(remaining) if *remaining > 0 => {
+                        *remaining -= 1;
+                        true
+                    }
+                    _ => false,
+                }
+            })
+        });
+        Ok(PatchIdIntegration { squash, commits })
+    }
+
+    /// The branch's own commits (`merge_base..branch`) for the per-commit
+    /// patch-id check, or `None` when it has none or more than `target_commits`
+    /// — the commits in `merge_base..target`, too few to give each branch
+    /// commit a distinct twin.
+    fn patch_id_branch_commits(
+        &self,
+        merge_base: &str,
+        branch: &str,
+        target_commits: usize,
+    ) -> anyhow::Result<Option<Vec<String>>> {
+        // One commit past the limit is enough to tell that it is exceeded.
+        let output = self.run_command(&[
+            "rev-list",
+            &format!("--max-count={}", target_commits + 1),
+            &format!("{merge_base}..{branch}"),
+        ])?;
+        let commits: Vec<String> = output.split_whitespace().map(String::from).collect();
+        if commits.is_empty() || commits.len() > target_commits {
+            return Ok(None);
+        }
+        Ok(Some(commits))
     }
 
     /// Pipe the output of `git <args>` directly into `git patch-id --verbatim`
@@ -532,6 +634,7 @@ impl Repository {
             let result = MergeProbeResult {
                 would_merge_add: true,
                 is_patch_id_match: false,
+                is_commits_match: false,
             };
             super::sha_cache::put_merge_add_probe(self, branch_sha, target_sha, result);
             return Ok(result);
@@ -542,17 +645,19 @@ impl Repository {
             Some(would_add) => MergeProbeResult {
                 would_merge_add: would_add,
                 is_patch_id_match: false,
+                is_commits_match: false,
             },
             None => {
                 // merge-tree conflicted — try patch-id fallback.
                 // Patch-id errors are non-fatal: if we can't compute patch-ids,
                 // conservatively report no match (branch appears not integrated).
-                let matched = self
-                    .is_squash_merged_via_patch_id(branch_sha, target_sha)
-                    .unwrap_or(false);
+                let found = self
+                    .patch_id_integration(branch_sha, target_sha)
+                    .unwrap_or_default();
                 MergeProbeResult {
                     would_merge_add: true,
-                    is_patch_id_match: matched,
+                    is_patch_id_match: found.squash,
+                    is_commits_match: found.commits,
                 }
             }
         };
@@ -1150,10 +1255,14 @@ mod patch_id_tests {
         let feature = rev_parse(&repo, "refs/heads/feature");
         let target = rev_parse(&repo, "refs/heads/target");
 
+        let found = repo.patch_id_integration(&feature, &target).unwrap();
         assert!(
-            repo.is_squash_merged_via_patch_id(&feature, &target)
-                .unwrap(),
+            found.squash,
             "squash commit's patch-id matches feature's; should be detected within the cap"
+        );
+        assert!(
+            found.commits,
+            "a one-commit branch's only commit is the squash commit's twin"
         );
     }
 
@@ -1169,11 +1278,10 @@ mod patch_id_tests {
         let feature = rev_parse(&repo, "refs/heads/feature");
         let target = rev_parse(&repo, "refs/heads/target");
 
-        assert!(
-            !repo
-                .is_squash_merged_via_patch_id(&feature, &target)
-                .unwrap(),
-            "should bail (return false) when base..target exceeds {PATCH_ID_SCAN_MAX_COMMITS}"
+        assert_eq!(
+            repo.patch_id_integration(&feature, &target).unwrap(),
+            PatchIdIntegration::default(),
+            "should bail (no match) when base..target exceeds {PATCH_ID_SCAN_MAX_COMMITS}"
         );
     }
 
@@ -1289,6 +1397,206 @@ mod patch_id_tests {
         };
         assert_eq!(reason("dropped"), None);
         assert_eq!(reason("carried"), Some(IntegrationReason::PatchIdMatch));
+    }
+
+    /// Write `content` to `file` and commit it on the current branch.
+    fn commit_file(test: &TestRepo, file: &str, content: &str, message: &str) -> String {
+        std::fs::write(test.path().join(file), content).unwrap();
+        test.run_git(&["add", file]);
+        test.run_git(&["commit", "--message", message]);
+        test.git_output(&["rev-parse", "HEAD"])
+    }
+
+    /// `main` and `feature` at a shared base holding files `a`, `b` and `c`,
+    /// with the current branch left at `feature`.
+    fn rebase_fixture() -> TestRepo {
+        let test = TestRepo::new();
+        for file in ["a", "b", "c"] {
+            std::fs::write(test.path().join(file), format!("{file}\n")).unwrap();
+        }
+        test.run_git(&["add", "."]);
+        test.run_git(&["commit", "--message", "base"]);
+        test.run_git(&["switch", "--create", "feature"]);
+        test
+    }
+
+    /// Rebase-merge `commits` onto `main` the way a forge does: replay them
+    /// one by one after an unrelated `main` commit, so they land under new
+    /// SHAs. Then re-edit `a` on `main`, so a branch that changed `a`
+    /// conflicts with `main` and only the patch-id fallback can find it.
+    fn rebase_merge_then_reedit(test: &TestRepo, commits: &[&str]) {
+        test.run_git(&["switch", "main"]);
+        commit_file(test, "c", "C\n", "unrelated main work");
+        for commit in commits {
+            test.run_git(&["cherry-pick", commit]);
+        }
+        commit_file(test, "a", "A2\n", "re-edit a");
+    }
+
+    fn patch_id_integration(test: &TestRepo, branch: &str) -> PatchIdIntegration {
+        let branch = test.git_output(&["rev-parse", branch]);
+        let target = test.git_output(&["rev-parse", "main"]);
+        test.repo.patch_id_integration(&branch, &target).unwrap()
+    }
+
+    /// The Bitbucket "Rebase, fast-forward" / GitHub "Rebase and merge" case:
+    /// a two-commit branch lands commit by commit under new SHAs, then `main`
+    /// edits a line the branch changed. The branch isn't an ancestor,
+    /// merge-tree conflicts, and no single `main` commit holds the branch's
+    /// combined diff — but every branch commit has a twin.
+    #[test]
+    fn detects_rebase_merge_when_target_edits_same_lines() {
+        let test = rebase_fixture();
+        let first = commit_file(&test, "a", "A1\n", "change a");
+        let second = commit_file(&test, "b", "B1\n", "change b");
+        rebase_merge_then_reedit(&test, &[&first, &second]);
+
+        let feature = test.git_output(&["rev-parse", "feature"]);
+        let main = test.git_output(&["rev-parse", "main"]);
+        assert!(
+            test.repo
+                .has_merge_conflicts_by_sha(&main, &feature)
+                .unwrap(),
+            "fixture must make merge-tree conflict"
+        );
+        assert_eq!(
+            patch_id_integration(&test, "feature"),
+            PatchIdIntegration {
+                squash: false,
+                commits: true
+            }
+        );
+        let snapshot = test.repo.capture_refs().unwrap();
+        let signals = compute_integration_lazy(&test.repo, &snapshot, "feature", "main").unwrap();
+        assert_eq!(
+            check_integration(&signals),
+            Some(IntegrationReason::CommitsMatch)
+        );
+    }
+
+    /// Every branch commit needs its own twin: a branch is kept when only
+    /// some of its commits landed — partially merged, given a commit after the
+    /// merge, or stacked on a branch whose commits landed while its own didn't.
+    #[test]
+    fn rejects_branch_with_a_commit_that_did_not_land() {
+        let test = rebase_fixture();
+        let first = commit_file(&test, "a", "A1\n", "change a");
+        commit_file(&test, "b", "B1\n", "change b");
+        rebase_merge_then_reedit(&test, &[&first]);
+        assert!(!patch_id_integration(&test, "feature").commits);
+    }
+
+    /// The match is a multiset: each `main` commit vouches for one branch
+    /// commit. Branch `+X, -X, +X` against `main` `+X, -X` has one `+X`
+    /// without a twin; a second `+X` on `main` supplies it.
+    #[test]
+    fn twin_counts_as_one_match() {
+        let test = rebase_fixture();
+        let add = commit_file(&test, "b", "b\nX\n", "add X");
+        let remove = commit_file(&test, "b", "b\n", "remove X");
+        let add_again = commit_file(&test, "b", "b\nX\n", "add X again");
+        rebase_merge_then_reedit(&test, &[&add, &remove]);
+        assert!(!patch_id_integration(&test, "feature").commits);
+
+        test.run_git(&["cherry-pick", &add_again]);
+        assert!(patch_id_integration(&test, "feature").commits);
+    }
+
+    /// A merge on the branch refuses the check even though every non-merge
+    /// commit landed: `diff-tree` emits no patch for a merge, so a conflict
+    /// resolution's content would go unchecked.
+    #[test]
+    fn rejects_branch_with_merge_commit() {
+        let test = rebase_fixture();
+        let first = commit_file(&test, "a", "A1\n", "change a");
+        test.run_git(&["switch", "main"]);
+        commit_file(&test, "c", "C0\n", "main work merged into feature");
+        test.run_git(&["switch", "feature"]);
+        test.run_git(&["merge", "--no-edit", "main"]);
+        let second = commit_file(&test, "b", "B1\n", "change b");
+        rebase_merge_then_reedit(&test, &[&first, &second]);
+        assert!(!patch_id_integration(&test, "feature").commits);
+    }
+
+    /// An empty commit yields no patch-id, so nothing can vouch for it.
+    #[test]
+    fn rejects_branch_with_empty_commit() {
+        let test = rebase_fixture();
+        let first = commit_file(&test, "a", "A1\n", "change a");
+        test.run_git(&["commit", "--allow-empty", "--message", "empty"]);
+        rebase_merge_then_reedit(&test, &[&first]);
+        assert!(!patch_id_integration(&test, "feature").commits);
+    }
+
+    /// Reverting the landed commits, with no later edit to those lines,
+    /// leaves merge-tree clean: merging the branch would re-add its changes, so
+    /// the branch is kept even though each of its commits has a twin. The
+    /// patch-id fallback only runs when merge-tree conflicts.
+    #[test]
+    fn keeps_rebase_merged_branch_whose_commits_were_reverted() {
+        let test = rebase_fixture();
+        let first = commit_file(&test, "a", "A1\n", "change a");
+        let second = commit_file(&test, "b", "B1\n", "change b");
+        test.run_git(&["switch", "main"]);
+        commit_file(&test, "c", "C\n", "unrelated main work");
+        test.run_git(&["cherry-pick", &first, &second]);
+        test.run_git(&["revert", "--no-edit", "HEAD", "HEAD~1"]);
+        assert!(patch_id_integration(&test, "feature").commits);
+
+        let snapshot = test.repo.capture_refs().unwrap();
+        let signals = compute_integration_lazy(&test.repo, &snapshot, "feature", "main").unwrap();
+        assert_eq!(signals.would_merge_add, Some(true));
+        assert_eq!(check_integration(&signals), None);
+    }
+
+    /// Patch-ids ignore the commit message, so a commit reworded on landing
+    /// still has its twin.
+    #[test]
+    fn detects_reworded_commit() {
+        let test = rebase_fixture();
+        let first = commit_file(&test, "a", "A1\n", "change a");
+        let second = commit_file(&test, "b", "B1\n", "change b");
+        rebase_merge_then_reedit(&test, &[&first]);
+        test.run_git(&["cherry-pick", "--no-commit", &second]);
+        test.run_git(&["commit", "--message", "change b, reworded"]);
+        assert!(patch_id_integration(&test, "feature").commits);
+    }
+
+    /// The per-commit check is immune to the user's `diff.*` config for the
+    /// same reason as the squash check: both sides of each comparison come from
+    /// one `diff-tree` pipe (see `detects_squash_merge_under_nondefault_diff_config`).
+    #[test]
+    fn detects_rebase_merge_under_nondefault_diff_config() {
+        let test = TestRepo::new();
+        test.run_git(&["config", "diff.context", "25"]);
+        test.run_git(&["config", "diff.algorithm", "histogram"]);
+
+        let base: String = (1..=60).map(|i| format!("l{i}\n")).collect();
+        commit_file(&test, "file", &base, "base");
+        test.run_git(&["switch", "--create", "feature"]);
+        let with_first = base.replace("l20\n", "FIRST\n");
+        let first = commit_file(&test, "file", &with_first, "first");
+        let with_both = with_first.replace("l40\n", "SECOND\n");
+        let second = commit_file(&test, "file", &with_both, "second");
+
+        test.run_git(&["switch", "main"]);
+        commit_file(&test, "other", "other\n", "unrelated main work");
+        test.run_git(&["cherry-pick", &first]);
+        test.run_git(&["cherry-pick", &second]);
+        commit_file(
+            &test,
+            "file",
+            &with_both.replace("FIRST\n", "PADDED\n"),
+            "follow-up on same line",
+        );
+
+        let snapshot = test.repo.capture_refs().unwrap();
+        let signals = compute_integration_lazy(&test.repo, &snapshot, "feature", "main").unwrap();
+        assert_eq!(
+            check_integration(&signals),
+            Some(IntegrationReason::CommitsMatch),
+            "rebase merge must be detected via patch-id regardless of diff.* config"
+        );
     }
 }
 
