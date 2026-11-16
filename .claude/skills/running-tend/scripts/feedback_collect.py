@@ -387,7 +387,7 @@ def main() -> None:
     )
     issue = issues[0]["number"] if issues else None
 
-    digests: list[str] = []
+    digests: list[dict[str, str]] = []
     if issue is not None:
         lines = gh(
             "api",
