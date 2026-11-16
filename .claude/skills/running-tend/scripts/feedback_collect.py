@@ -14,8 +14,9 @@ source left off up to now. Writes to `$TMPDIR/feedback-digest/`:
 - `summary.json`: the tracking issue number (null before the first digest),
   each source's window, status and item count, and `marker`, the line the new
   digest ends with.
-- `previous_digests.md`: the earlier digests' text, for checking whether a URL
-  was already reported.
+- `previous_digests.md`: the earlier digests, oldest first, each under its
+  comment's URL, for checking whether a URL was already reported and for
+  linking a theme to the digest that first reported it.
 
 A source whose request fails keeps its old start in the marker, so the next
 run covers its gap; a source that answers with zero results advances.
@@ -386,18 +387,22 @@ def main() -> None:
     )
     issue = issues[0]["number"] if issues else None
 
-    digests: list[str] = []
+    digests: list[dict[str, str]] = []
     if issue is not None:
         lines = gh(
             "api",
             "--paginate",
             f"repos/{repo}/issues/{issue}/comments?per_page=100",
             "--jq",
-            f'.[] | select(.user.login == "{ctx.me}") | .body | tojson',
+            f'.[] | select(.user.login == "{ctx.me}") | {{url: .html_url, body}} | tojson',
         )
-        digests = [b for b in map(json.loads, lines.splitlines()) if MARKER_RE.search(b)]
-    state = json.loads(MARKER_RE.findall(digests[-1])[-1]) if digests else {}
-    (out / "previous_digests.md").write_text("\n\n---\n\n".join(digests))
+        digests = [
+            d for d in map(json.loads, lines.splitlines()) if MARKER_RE.search(d["body"])
+        ]
+    state = json.loads(MARKER_RE.findall(digests[-1]["body"])[-1]) if digests else {}
+    (out / "previous_digests.md").write_text(
+        "\n\n---\n\n".join(f"{d['url']}\n\n{d['body']}" for d in digests)
+    )
 
     now = datetime.now(UTC).replace(microsecond=0)
     items: list[dict] = []
