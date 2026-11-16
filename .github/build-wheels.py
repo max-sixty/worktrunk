@@ -35,6 +35,10 @@ PLATFORM_TAGS = {
 
 ARCHIVE_RE = re.compile(r"^worktrunk-(?P<target>.+?)\.(?:tar\.xz|zip)$")
 
+# PyPI renders the long description without a base URL, so relative links in
+# the README (the logo) would break. Point them at the release tag instead.
+RELATIVE_LINK_RE = re.compile(r'\b(src|href)="(?![a-z][a-z0-9+.-]*:|#|/)')
+
 # Fixed timestamp so rebuilding the same archives yields identical wheels.
 ZIP_DATE = (1980, 1, 1, 0, 0, 0)
 
@@ -73,6 +77,8 @@ def metadata(version: str, readme: str) -> str:
         "Project-URL: Changelog, https://github.com/max-sixty/worktrunk/blob/main/CHANGELOG.md",
         "Description-Content-Type: text/markdown",
     ]
+    raw_base = f"https://raw.githubusercontent.com/max-sixty/worktrunk/v{version}/"
+    readme = RELATIVE_LINK_RE.sub(lambda m: f'{m[1]}="{raw_base}', readme)
     return "\n".join(headers) + "\n\n" + readme
 
 
