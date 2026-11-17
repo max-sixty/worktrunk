@@ -105,7 +105,7 @@ The flags only reach a command you type; shell completion runs as its own proces
 
 Created by `wt switch <branch>` when switching to a branch that doesn't have a worktree. Use `wt switch --create <branch>` to create a new branch. Default location is `../<repo>.<branch>` (sibling to the main worktree), configurable via `worktree-path` in user config.
 
-**To remove:** `wt remove <branch>` removes the worktree directory and deletes the branch.
+**To remove:** `wt remove <branch>` removes the worktree directory and deletes the branch if it's merged.
 
 ### 2. Config files
 

@@ -152,8 +152,8 @@ pub(super) fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result
         tool: "tea",
         args: &["api", "--include", &api_path],
         repo_root,
-        // tea reads no prompt-disable env var; pass a no-op key/value so the
-        // shared helper has something to set without inventing a fake var.
+        // tea reads no prompt-disable env var. The shared helper requires one,
+        // so this name is a placeholder tea ignores.
         prompt_env: ("TEA_NO_PROMPT", "1"),
         install_hint: "Gitea CLI (tea) not installed; install from https://gitea.com/gitea/tea",
         run_context: "Failed to run tea api",

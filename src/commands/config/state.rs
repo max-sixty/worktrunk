@@ -859,7 +859,7 @@ pub fn handle_state_get(
         }
         _ => {
             anyhow::bail!(
-                "Unknown key: {key}. Valid keys: default-branch, previous-branch, ci-status, marker, logs"
+                "Unknown key: {key}. Valid keys: default-branch, previous-branch, ci-status, marker"
             )
         }
     }
