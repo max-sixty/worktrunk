@@ -1533,7 +1533,7 @@ dev = "npm start -- --port {{ vars.config.port }}"
 
 ### Storage format
 
-Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys may contain only letters, digits, and hyphens.
+Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys start with a lowercase letter and contain only lowercase letters, digits, and hyphens.
 
 ### Command reference
 
