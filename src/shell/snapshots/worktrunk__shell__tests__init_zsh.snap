@@ -13,27 +13,26 @@ if command -v wt >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
     # Override wt command so it can change the parent shell's directory.
     # WORKTRUNK_BIN can override the binary path (for testing dev builds).
     wt() {
+        # `wt --source ...` runs wt through `cargo run` in the current checkout.
+        # Only a leading --source is this wrapper's flag; every later argument
+        # belongs to wt or to a command it runs.
         local use_source=false
-        local -a args
-
-        for arg in "$@"; do
-            if [[ "$arg" == "--source" ]]; then use_source=true; else args+=("$arg"); fi
-        done
+        if [[ "${1-}" == --source ]]; then use_source=true; shift; fi
 
         # Completion mode: call binary directly, no directive files needed.
         # This check MUST be here (not in the binary) because clap's completion
         # handler runs before argument parsing.
         if [[ -n "${COMPLETE:-}" ]]; then
-            command "${WORKTRUNK_BIN:-wt}" "${args[@]}"
+            command "${WORKTRUNK_BIN:-wt}" "$@"
             return
         fi
 
         local cd_file exit_code=0
         cd_file="$(mktemp)"
 
-        local -a execution=("${WORKTRUNK_BIN:-wt}" "${args[@]}")
+        local -a execution=("${WORKTRUNK_BIN:-wt}" "$@")
         if [[ "$use_source" == true ]]; then
-            execution=(cargo run --bin wt --quiet -- "${args[@]}")
+            execution=(cargo run --bin wt --quiet -- "$@")
         fi
         {
             WORKTRUNK_DIRECTIVE_CD_FILE="$cd_file" command "${execution[@]}"

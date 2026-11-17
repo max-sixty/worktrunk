@@ -6,16 +6,16 @@ if command -v {{ cmd }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
     # Override {{ cmd }} command so it can change the parent shell's directory.
     # WORKTRUNK_BIN can override the binary path (for testing dev builds).
     {{ cmd }}() {
+        # `{{ cmd }} --source ...` runs {{ cmd }} through `cargo run` in the current checkout.
+        # Only a leading --source is this wrapper's flag; every later argument
+        # belongs to {{ cmd }} or to a command it runs.
         local use_source=false
-        local args=()
-        for arg in "$@"; do
-            if [[ "$arg" == --source ]]; then use_source=true; else args+=("$arg"); fi
-        done
+        if [[ "${1-}" == --source ]]; then use_source=true; shift; fi
         # Completion mode: call binary directly, no directive files needed.
         # This check MUST be here (not in the binary) because clap's completion
         # handler runs before argument parsing.
         if [[ -n "${COMPLETE:-}" ]]; then
-            command "${WORKTRUNK_BIN:-{{ cmd }}}" "${args[@]}"
+            command "${WORKTRUNK_BIN:-{{ cmd }}}" "$@"
             return
         fi
 
@@ -82,8 +82,8 @@ if command -v {{ cmd }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
         prompt_flags=${prompt_flags%% *}
 
         local exit_code=0
-        local execution=("${WORKTRUNK_BIN:-{{ cmd }}}" "${args[@]}")
-        if [[ "$use_source" == true ]]; then execution=(cargo run --bin {{ cmd }} --quiet -- "${args[@]}"); fi
+        local execution=("${WORKTRUNK_BIN:-{{ cmd }}}" "$@")
+        if [[ "$use_source" == true ]]; then execution=(cargo run --bin {{ cmd }} --quiet -- "$@"); fi
         if [[ "$owns_exit" == true ]]; then
             local exit_provider="$owner exit \"\$?\""
             if [[ -n "$exit_trap" ]]; then
