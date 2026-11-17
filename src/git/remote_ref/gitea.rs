@@ -297,13 +297,21 @@ fn extract_source_branch_from_parts(label: &str, ref_name: &str) -> Option<Strin
 
 /// A branch name candidate is real when it's non-empty, has no whitespace
 /// (placeholders like `"unknown repository"` carry a space), and isn't a
-/// PR-tracking ref like `refs/pull/<n>/head` or `pulls/<n>/head`.
+/// fully-qualified ref or a PR-tracking ref like `pulls/<n>/head`. A branch
+/// merely named `pull/...` (e.g. `pull/fix-login`) is real.
 fn is_real_branch_name(s: &str) -> bool {
     !s.is_empty()
         && !s.contains(char::is_whitespace)
         && !s.starts_with("refs/")
-        && !s.starts_with("pulls/")
-        && !s.starts_with("pull/")
+        && !is_pr_tracking_ref(s)
+}
+
+/// Whether `s` has the shape `pull/<n>/head` or `pulls/<n>/head`.
+fn is_pr_tracking_ref(s: &str) -> bool {
+    s.strip_prefix("pulls/")
+        .or_else(|| s.strip_prefix("pull/"))
+        .and_then(|rest| rest.strip_suffix("/head"))
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Whether `tea` has a login configured for `host`.
@@ -529,6 +537,19 @@ mod tests {
             extract_source_branch_from_parts(&head.label, &head.ref_name),
             None
         );
+    }
+
+    #[test]
+    fn test_extract_source_branch_accepts_branch_named_pull() {
+        // A same-repo PR from a branch whose name starts with `pull/` is a
+        // real branch, not a tracking ref.
+        for name in ["pull/fix-login", "pulls/cleanup", "pull/42/head-fix"] {
+            assert_eq!(
+                extract_source_branch_from_parts(name, name),
+                Some(name.to_string()),
+                "{name}"
+            );
+        }
     }
 
     #[test]
