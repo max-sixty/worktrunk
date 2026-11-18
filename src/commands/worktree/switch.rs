@@ -1923,6 +1923,19 @@ pub(crate) struct SwitchPipeline<'a> {
     pub shell_integration_binary: Option<&'a str>,
 }
 
+/// Wrap a [`GitError`] so its `wt switch` hint carries the invocation's
+/// `--path`, `--execute`, and trailing args. Other errors pass through.
+fn with_switch_suggestion(err: anyhow::Error, ctx: &SwitchSuggestionCtx) -> anyhow::Error {
+    match err.downcast::<GitError>() {
+        Ok(git_err) => GitError::WithSwitchSuggestion {
+            source: Box::new(git_err),
+            ctx: ctx.clone(),
+        }
+        .into(),
+        Err(err) => err,
+    }
+}
+
 impl SwitchPipeline<'_> {
     /// Plan, approve, execute, and report the switch, then spawn its
     /// background hooks and run any `--execute` command.
@@ -1993,14 +2006,7 @@ impl SwitchPipeline<'_> {
         let plan =
             plan_switch(repo, target, create, base, path, clobber, config).map_err(|err| {
                 match suggestion_ctx {
-                    Some(ref ctx) => match err.downcast::<GitError>() {
-                        Ok(git_err) => GitError::WithSwitchSuggestion {
-                            source: Box::new(git_err),
-                            ctx: ctx.clone(),
-                        }
-                        .into(),
-                        Err(err) => err,
-                    },
+                    Some(ref ctx) => with_switch_suggestion(err, ctx),
                     None => err,
                 }
             })?;
@@ -2026,7 +2032,17 @@ impl SwitchPipeline<'_> {
                     {
                         print_json(&SwitchJsonOutput::from_result(result, branch_info))?;
                     }
-                    return Err(failure.error);
+                    // A leftover branch's hint suggests `wt switch <branch>`;
+                    // it needs the same flags as the `plan_switch` hints, or
+                    // following it drops `--path` and `--execute`.
+                    let leftover_hint = matches!(
+                        failure.error.downcast_ref::<GitError>(),
+                        Some(GitError::WorktreeCreationFailed { .. })
+                    );
+                    return Err(match &suggestion_ctx {
+                        Some(ctx) if leftover_hint => with_switch_suggestion(failure.error, ctx),
+                        _ => failure.error,
+                    });
                 }
             };
 
