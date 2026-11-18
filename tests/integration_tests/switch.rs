@@ -9657,6 +9657,40 @@ fn test_switch_create_names_branch_left_by_failed_worktree_add(repo: TestRepo, #
     }
 }
 
+#[rstest]
+fn test_switch_create_leftover_branch_hint_keeps_flags(repo: TestRepo) {
+    // The leftover-branch hint's `wt switch <branch>` must carry `--path`,
+    // `--execute`, and trailing args (minus `--create`), or following it would
+    // create the worktree somewhere else and skip the command (issue #4839).
+    fs::write(repo.root_path().join("blocked"), "not a directory").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "stranded",
+            "--path",
+            "blocked/stranded",
+            "--execute",
+            "echo hi",
+            "--",
+            "extra",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr.ansi_strip();
+    assert!(
+        stderr.contains(
+            "to use it, run wt switch stranded --path=blocked/stranded --execute='echo hi' -- extra"
+        ),
+        "expected the recovery suggestion to keep the original flags, got: {stderr}"
+    );
+}
+
 // `--path` tests
 
 #[rstest]

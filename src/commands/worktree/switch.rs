@@ -2031,7 +2031,28 @@ impl SwitchPipeline<'_> {
                     {
                         print_json(&SwitchJsonOutput::from_result(result, branch_info))?;
                     }
-                    return Err(failure.error);
+                    // A leftover branch's hint suggests `wt switch <branch>`;
+                    // it needs the same flags as the `plan_switch` hints, or
+                    // following it drops `--path` and `--execute`.
+                    let error = match &suggestion_ctx {
+                        Some(ctx)
+                            if matches!(
+                                failure.error.downcast_ref::<GitError>(),
+                                Some(GitError::WorktreeCreationFailed { .. })
+                            ) =>
+                        {
+                            match failure.error.downcast::<GitError>() {
+                                Ok(git_err) => GitError::WithSwitchSuggestion {
+                                    source: Box::new(git_err),
+                                    ctx: ctx.clone(),
+                                }
+                                .into(),
+                                Err(err) => err,
+                            }
+                        }
+                        _ => failure.error,
+                    };
+                    return Err(error);
                 }
             };
 
