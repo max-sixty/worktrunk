@@ -1,7 +1,7 @@
 //! Shared LLM summary generation for branches.
 //!
 //! Generates branch summaries using the configured LLM command, with caching
-//! in `.git/wt/cache/summary/{sanitized_branch}/{diff_hash}.json`. The
+//! in `.git/wt/cache/summary/{sanitized_key}/{diff_hash}.json`. The
 //! combined diff (branch diff + working tree diff) is hashed with SHA-256
 //! and the hex-truncated digest becomes the filename — so a cache hit is
 //! just "does the file exist?" rather than parsing JSON to compare a field.
@@ -21,11 +21,25 @@
 //! diff; it stays open because the value is display-only and rebuilding it
 //! costs a model call per branch.
 //!
+//! # Directory key
+//!
+//! The directory is keyed by branch name. A detached worktree has no branch,
+//! so its key adds a hash of the worktree path ([`cache_key`]); without it
+//! every detached row would share one directory and each write would prune
+//! the others' entries.
+//!
+//! Older releases keyed every detached row as plain `(detached)`. That legacy
+//! directory is indistinguishable from the one for a real branch named
+//! `(detached)`, which Git permits, so a detached write removes it only when
+//! no such local branch exists ([`CachedSummary::prune_legacy_detached`]).
+//! Otherwise `wt config state get` would list the stale pre-upgrade summary
+//! next to the current one indefinitely.
+//!
 //! # Prune on write
 //!
-//! After a successful write, the branch directory is trimmed to one entry
+//! After a successful write, the key's directory is trimmed to one entry
 //! via [`cache::sweep_lru`] with a cap of 1 — same mechanism `sha_cache`
-//! uses, just at a per-branch directory with a size of one. The newest-mtime
+//! uses, just at a per-key directory with a size of one. The newest-mtime
 //! file (the one we just wrote) survives; older hashes are dead weight.
 //!
 //! Best-effort: two concurrent writers for the same branch can briefly
@@ -59,12 +73,29 @@ static LLM_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(8));
 /// Subdirectory of `.git/wt/cache/` holding cached summaries.
 const KIND: &str = "summary";
 
-/// Cached summary stored in `.git/wt/cache/summary/{branch}/{hash}.json`.
+/// Display name for a row without a branch, matching `wt list`.
+const DETACHED: &str = "(detached)";
+
+/// Cache directory key for a row (before filename sanitization).
 ///
-/// The diff hash lives in the filename; the branch lives in the directory
-/// name. The `branch` field holds the original (un-sanitized) branch name
-/// so `list_all` can surface it for display without needing to reverse
-/// `sanitize_for_filename`.
+/// A branch names its own directory. A detached worktree adds a hash of its
+/// path so detached rows don't share — and prune — one directory.
+fn cache_key(branch: Option<&str>, worktree_path: Option<&Path>) -> String {
+    match branch {
+        Some(branch) => branch.to_string(),
+        None => {
+            let path = worktree_path.map(Path::to_string_lossy).unwrap_or_default();
+            format!("{DETACHED}-{}", hash_diff(&path))
+        }
+    }
+}
+
+/// Cached summary stored in `.git/wt/cache/summary/{key}/{hash}.json`.
+///
+/// The diff hash lives in the filename; the [`cache_key`] lives in the
+/// directory name. The `branch` field holds the display name (the original
+/// branch name, or `(detached)`) so `list_all` can surface it without
+/// reversing `sanitize_for_filename`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct CachedSummary {
     pub summary: String,
@@ -109,28 +140,42 @@ impl CachedSummary {
         cache::cache_dir(repo, KIND)
     }
 
-    /// Per-branch directory holding one file per cached diff hash.
-    fn branch_dir(repo: &Repository, branch: &str) -> PathBuf {
-        Self::cache_root(repo).join(sanitize_for_filename(branch))
+    /// Per-key directory holding one file per cached diff hash.
+    fn key_dir(repo: &Repository, key: &str) -> PathBuf {
+        Self::cache_root(repo).join(sanitize_for_filename(key))
     }
 
-    /// Full path for a specific (branch, hash) pair.
-    pub(crate) fn cache_file(repo: &Repository, branch: &str, hash: &str) -> PathBuf {
-        Self::branch_dir(repo, branch).join(format!("{hash}.json"))
+    /// Full path for a specific (key, hash) pair.
+    pub(crate) fn cache_file(repo: &Repository, key: &str, hash: &str) -> PathBuf {
+        Self::key_dir(repo, key).join(format!("{hash}.json"))
     }
 
-    /// Read the cached summary for a branch at a specific diff hash.
+    /// Read the cached summary for a [`cache_key`] at a specific diff hash.
     /// See [`worktrunk::cache::read_json`] for the miss semantics.
-    pub(crate) fn read(repo: &Repository, branch: &str, hash: &str) -> Option<Self> {
-        cache::read_json(&Self::cache_file(repo, branch, hash))
+    pub(crate) fn read(repo: &Repository, key: &str, hash: &str) -> Option<Self> {
+        cache::read_json(&Self::cache_file(repo, key, hash))
     }
 
-    /// Write the summary at `{branch}/{hash}.json` and prune sibling hashes
-    /// for the same branch. `hash` is the SHA-256 digest of the combined
+    /// Write the summary at `{key}/{hash}.json` and prune sibling hashes
+    /// under the same key. `hash` is the SHA-256 digest of the combined
     /// diff that produced this summary.
-    pub(crate) fn write(&self, repo: &Repository, hash: &str) {
-        cache::write_json(&Self::cache_file(repo, &self.branch, hash), self);
-        cache::sweep_lru(&Self::branch_dir(repo, &self.branch), 1);
+    pub(crate) fn write(&self, repo: &Repository, key: &str, hash: &str) {
+        cache::write_json(&Self::cache_file(repo, key, hash), self);
+        cache::sweep_lru(&Self::key_dir(repo, key), 1);
+    }
+
+    /// Remove the pre-per-worktree `summary/(detached)/` directory, which
+    /// older releases shared across every detached worktree. Kept when a local
+    /// branch named `(detached)` exists, since that branch keys the same
+    /// directory. Best-effort: the entries are a regenerable cache.
+    fn prune_legacy_detached(repo: &Repository) {
+        if !matches!(repo.branch(DETACHED).exists_locally(), Ok(false)) {
+            return;
+        }
+        let dir = Self::key_dir(repo, DETACHED);
+        let _ = cache::clear_json_files(&dir)
+            .inspect_err(|e| log::debug!("Failed to prune legacy detached summaries: {e:#}"));
+        let _ = fs::remove_dir(&dir);
     }
 
     /// List one cached summary per branch — the freshest by `generated_at`
@@ -233,7 +278,7 @@ pub(crate) fn hash_diff(diff: &str) -> String {
 /// (default branch with no changes, or no comparison base and no working tree
 /// diff).
 pub(crate) fn compute_combined_diff(
-    branch: &str,
+    branch: Option<&str>,
     head: &str,
     worktree_path: Option<&Path>,
     repo: &Repository,
@@ -243,7 +288,7 @@ pub(crate) fn compute_combined_diff(
 
     // Branch diff vs the comparison base — skipped for the default-branch row
     // itself (the baseline) and when no comparison base resolves.
-    let is_default_branch = repo.default_branch().as_deref() == Some(branch);
+    let is_default_branch = branch.is_some() && repo.default_branch().as_deref() == branch;
     if !is_default_branch
         && let Some(spec) = repo.branch_diff_spec(head)
         && let Some(base) = spec.diff_base
@@ -292,6 +337,8 @@ pub(crate) fn render_prompt(diff: &str, stat: &str) -> anyhow::Result<String> {
 
 /// Core summary generation pipeline: diff → cache check → LLM → cache write.
 ///
+/// `branch` is `None` for a detached worktree.
+///
 /// Returns `Ok(None)` when there are no changes to summarize (e.g., default branch
 /// with clean worktree). Returns `Ok(Some(full_summary))` on success. Errors
 /// propagate from template rendering or LLM execution.
@@ -299,7 +346,7 @@ pub(crate) fn render_prompt(diff: &str, stat: &str) -> anyhow::Result<String> {
 /// Both `generate_summary` (TUI) and the list summary task delegate
 /// to this function, wrapping its result with their own error formatting.
 pub(crate) fn generate_summary_core(
-    branch: &str,
+    branch: Option<&str>,
     head: &str,
     worktree_path: Option<&Path>,
     llm_command: &str,
@@ -310,10 +357,11 @@ pub(crate) fn generate_summary_core(
     };
 
     let diff_hash = hash_diff(&combined.diff);
+    let key = cache_key(branch, worktree_path);
 
     // Cache hit is "does the file exist?" — no JSON parse needed for the
     // staleness check because the hash lives in the filename.
-    if let Some(cached) = CachedSummary::read(repo, branch, &diff_hash) {
+    if let Some(cached) = CachedSummary::read(repo, &key, &diff_hash) {
         return Ok(Some(cached.summary));
     }
 
@@ -330,10 +378,13 @@ pub(crate) fn generate_summary_core(
 
     let cached = CachedSummary {
         summary: summary.clone(),
-        branch: branch.to_string(),
+        branch: branch.unwrap_or(DETACHED).to_string(),
         generated_at: epoch_now(),
     };
-    cached.write(repo, &diff_hash);
+    cached.write(repo, &key, &diff_hash);
+    if branch.is_none() {
+        CachedSummary::prune_legacy_detached(repo);
+    }
 
     Ok(Some(summary))
 }
@@ -343,7 +394,7 @@ pub(crate) fn generate_summary_core(
 /// This is the TUI-friendly wrapper that returns a formatted string for all cases,
 /// including errors and "no changes" — suitable for `wt switch` preview pane.
 pub(crate) fn generate_summary(
-    branch: &str,
+    branch: Option<&str>,
     head: &str,
     worktree_path: Option<&Path>,
     llm_command: &str,
@@ -352,6 +403,7 @@ pub(crate) fn generate_summary(
     match generate_summary_core(branch, head, worktree_path, llm_command, repo) {
         Ok(Some(summary)) => summary,
         Ok(None) => {
+            let branch = branch.unwrap_or(DETACHED);
             let reset = Reset;
             cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no changes to summarize\n")
         }
