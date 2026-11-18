@@ -2078,7 +2078,7 @@ impl ErrorExt for anyhow::Error {
 /// user's intent:
 /// - `wt merge` — user wants to merge, hooks run as part of that
 /// - `wt commit` — user wants to commit, pre-commit hooks run
-/// - `wt switch --create` — user wants a worktree, post-start hooks run
+/// - `wt switch --create` — user wants a worktree, pre-switch and pre-start hooks run
 ///
 /// ## When NOT to use
 ///

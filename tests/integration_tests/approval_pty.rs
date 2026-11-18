@@ -85,7 +85,7 @@ fn test_approval_prompt_accept(repo: TestRepo) {
     repo.write_project_config(r#"pre-start = "echo 'test command'""#);
     repo.commit("Add config");
 
-    // Configure shell integration so we get the "Restart shell" hint instead of the prompt
+    // Configure shell integration so the shell-install prompt stays out of the output
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
     let (output, exit_code) = exec_wt_in_pty(
@@ -109,7 +109,7 @@ fn test_approval_prompt_decline(repo: TestRepo) {
     repo.write_project_config(r#"pre-start = "echo 'test command'""#);
     repo.commit("Add config");
 
-    // Configure shell integration so we get the "Restart shell" hint instead of the prompt
+    // Configure shell integration so the shell-install prompt stays out of the output
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
     let (output, exit_code) = exec_wt_in_pty(
@@ -176,7 +176,7 @@ fn test_approval_prompt_multiple_commands(repo: TestRepo) {
     );
     repo.commit("Add config");
 
-    // Configure shell integration so we get the "Restart shell" hint instead of the prompt
+    // Configure shell integration so the shell-install prompt stays out of the output
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
     let (output, exit_code) = exec_wt_in_pty(
@@ -282,7 +282,7 @@ fn test_approval_prompt_named_commands(repo: TestRepo) {
     );
     repo.commit("Add config");
 
-    // Configure shell integration so we get the "Restart shell" hint instead of the prompt
+    // Configure shell integration so the shell-install prompt stays out of the output
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
     let (output, exit_code) = exec_wt_in_pty(
@@ -333,7 +333,7 @@ approved-commands = ["echo 'Second command'"]
         repo.project_id()
     ));
 
-    // Configure shell integration so we get the "Restart shell" hint instead of the prompt
+    // Configure shell integration so the shell-install prompt stays out of the output
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
     let (output, exit_code) = exec_wt_in_pty(
@@ -390,7 +390,7 @@ approved-commands = ["echo 'Second command'"]
         repo.project_id()
     ));
 
-    // Configure shell integration so we get the "Restart shell" hint instead of the prompt
+    // Configure shell integration so the shell-install prompt stays out of the output
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
     let (output, exit_code) = exec_wt_in_pty(

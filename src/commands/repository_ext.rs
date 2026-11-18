@@ -144,8 +144,8 @@ impl RepositoryCliExt for Repository {
                 /// carried into the plan for execution-time pruning. `None`
                 /// when the branch has no worktree entry at all, which is also
                 /// the only case with no sibling to check — a branch that has
-                /// one resolves to `Worktree` above, or, named as a `Branch`
-                /// target, errors.
+                /// one resolves to `Worktree` above, or, named as a
+                /// [`RemoveTarget::BranchOnly`] target, errors.
                 pruned_from: Option<PathBuf>,
                 branch: String,
             },

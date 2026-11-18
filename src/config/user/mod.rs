@@ -665,13 +665,15 @@ pub struct UserConfig {
 }
 
 impl UserConfig {
-    /// Load configuration from system config, user config, and environment variables.
+    /// Load configuration from system config, user config, environment variables,
+    /// and `--config-set` overrides.
     ///
     /// Configuration is loaded in the following order (later sources override earlier ones):
     /// 1. Default values
     /// 2. System config (organization-wide defaults)
     /// 3. User config file (personal preferences)
     /// 4. Environment variables (WORKTRUNK_*)
+    /// 5. CLI `--config-set` overrides
     pub fn load() -> Result<Self, ConfigError> {
         Self::load_with_cause().map_err(ConfigError::Load)
     }
