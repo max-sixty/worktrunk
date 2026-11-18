@@ -972,7 +972,7 @@ fn configure_fork_branch(
 /// executed later. Call this BEFORE approval prompts to ensure users aren't
 /// asked to approve hooks for operations that will fail.
 ///
-/// Warnings (remote branch shadow, --base without --create, invalid default branch)
+/// Warnings (remote branch shadow, --base without --create)
 /// are printed during planning since they're informational, not blocking.
 fn plan_switch(
     repo: &Repository,
@@ -1150,7 +1150,7 @@ fn execute_switch(
     repo: &Repository,
     plan: SwitchPlan,
     config: &UserConfig,
-    force: bool,
+    yes: bool,
     run_hooks: bool,
     hook_plan: &ApprovedHookPlan,
 ) -> CommandResult<(SwitchResult, SwitchBranchInfo)> {
@@ -1454,13 +1454,8 @@ fn execute_switch(
                 // worktree's config.
                 if run_hooks {
                     let hook_repo = Repository::at(&worktree_path)?;
-                    let ctx = CommandContext::new(
-                        &hook_repo,
-                        config,
-                        Some(&branch),
-                        &worktree_path,
-                        force,
-                    );
+                    let ctx =
+                        CommandContext::new(&hook_repo, config, Some(&branch), &worktree_path, yes);
                     let mut vars = TemplateVars::new()
                         .with_target(&branch)
                         .with_target_worktree_path(&worktree_path)
@@ -1906,7 +1901,7 @@ pub(crate) struct SwitchPipeline<'a> {
     pub path: Option<&'a Path>,
     pub clobber: bool,
     pub verify: bool,
-    /// `--yes`: skip approval prompts and force past clobber checks.
+    /// `--yes`: skip approval prompts. Clobbering is governed by `clobber` alone.
     pub yes: bool,
     pub change_dir: bool,
     pub format: SwitchFormat,

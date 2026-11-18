@@ -940,8 +940,10 @@ fn test_vv_debug_pipeline_silent_on_stderr(repo: TestRepo) {
 /// and present on every run. It's suppressed at the Info baseline `-v` selects
 /// and surfaces when `RUST_LOG=debug` raises it. (At `-v 0` the same
 /// `RUST_LOG=debug` path is already covered by
-/// `test_rust_log_debug_fallback_without_vv`; at `-vv` the baseline is
-/// already Debug so there's no flag/env conflict to assert.)
+/// `test_rust_log_debug_fallback_without_vv`.) At `-vv` the baseline is
+/// already Debug, so the test instead checks the other direction:
+/// `RUST_LOG=error` lowers the filter and leaves `trace.log` and
+/// `subprocess.log` empty.
 #[rstest]
 fn test_rust_log_overrides_verbose_flag(repo: TestRepo) {
     // Baseline: -v alone caps at Info, so debug-level trace records are
