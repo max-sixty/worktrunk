@@ -28,6 +28,13 @@
 //! every detached row would share one directory and each write would prune
 //! the others' entries.
 //!
+//! Older releases keyed every detached row as plain `(detached)`. That legacy
+//! directory is indistinguishable from the one for a real branch named
+//! `(detached)`, which Git permits, so a detached write removes it only when
+//! no such local branch exists ([`CachedSummary::prune_legacy_detached`]).
+//! Otherwise `wt config state get` would list the stale pre-upgrade summary
+//! next to the current one indefinitely.
+//!
 //! # Prune on write
 //!
 //! After a successful write, the key's directory is trimmed to one entry
@@ -155,6 +162,20 @@ impl CachedSummary {
     pub(crate) fn write(&self, repo: &Repository, key: &str, hash: &str) {
         cache::write_json(&Self::cache_file(repo, key, hash), self);
         cache::sweep_lru(&Self::key_dir(repo, key), 1);
+    }
+
+    /// Remove the pre-per-worktree `summary/(detached)/` directory, which
+    /// older releases shared across every detached worktree. Kept when a local
+    /// branch named `(detached)` exists, since that branch keys the same
+    /// directory. Best-effort: the entries are a regenerable cache.
+    fn prune_legacy_detached(repo: &Repository) {
+        if !matches!(repo.branch(DETACHED).exists_locally(), Ok(false)) {
+            return;
+        }
+        let dir = Self::key_dir(repo, DETACHED);
+        let _ = cache::clear_json_files(&dir)
+            .inspect_err(|e| log::debug!("Failed to prune legacy detached summaries: {e:#}"));
+        let _ = fs::remove_dir(&dir);
     }
 
     /// List one cached summary per branch — the freshest by `generated_at`
@@ -361,6 +382,9 @@ pub(crate) fn generate_summary_core(
         generated_at: epoch_now(),
     };
     cached.write(repo, &key, &diff_hash);
+    if branch.is_none() {
+        CachedSummary::prune_legacy_detached(repo);
+    }
 
     Ok(Some(summary))
 }

@@ -795,4 +795,74 @@ mod tests {
         assert_eq!(summarize(&wt_a, "echo 'regenerated'"), "Summary A");
         assert_eq!(summarize(&wt_b, "echo 'regenerated'"), "Summary B");
     }
+
+    /// Older releases shared one `summary/(detached)/` directory across every
+    /// detached worktree. Once a detached summary is written under its
+    /// per-worktree key, that legacy entry would otherwise stay listed in
+    /// `wt config state get` beside the current one indefinitely.
+    fn detached_with_legacy_entry() -> (TestRepo, Repository, String, std::path::PathBuf) {
+        use crate::summary::CachedSummary;
+        let (t, repo, head) = temp_repo_with_feature();
+        let wt = t.path().parent().unwrap().join("detached-legacy");
+        repo.run_command(&["worktree", "add", "--detach", wt.to_str().unwrap(), "HEAD"])
+            .unwrap();
+        fs::write(wt.join("wip.txt"), "wip\n").unwrap();
+        Repository::at(&wt)
+            .unwrap()
+            .run_command(&["add", "wip.txt"])
+            .unwrap();
+        CachedSummary {
+            summary: "Pre-upgrade summary".to_string(),
+            branch: "(detached)".to_string(),
+            generated_at: 1,
+        }
+        .write(&repo, "(detached)", "0123456789abcdef");
+        (t, repo, head, wt)
+    }
+
+    #[test]
+    fn test_detached_summary_prunes_legacy_shared_entry() {
+        use crate::summary::CachedSummary;
+        let (_t, repo, head, wt) = detached_with_legacy_entry();
+
+        let summary = crate::summary::generate_summary(
+            None,
+            &head,
+            Some(&wt),
+            "cat >/dev/null && echo 'Current summary'",
+            &repo,
+        );
+        assert_eq!(summary, "Current summary");
+
+        let summaries: Vec<_> = CachedSummary::list_all(&repo)
+            .into_iter()
+            .map(|s| s.summary)
+            .collect();
+        assert_eq!(summaries, ["Current summary"]);
+        assert!(!CachedSummary::cache_root(&repo).join("(detached)").exists());
+    }
+
+    /// Git permits a branch named `(detached)`, and its summaries live in the
+    /// same directory the legacy detached entries used, so they must survive.
+    #[test]
+    fn test_detached_summary_keeps_real_detached_named_branch() {
+        use crate::summary::CachedSummary;
+        let (_t, repo, head, wt) = detached_with_legacy_entry();
+        repo.run_command(&["branch", "(detached)"]).unwrap();
+
+        crate::summary::generate_summary(
+            None,
+            &head,
+            Some(&wt),
+            "cat >/dev/null && echo 'Current summary'",
+            &repo,
+        );
+
+        let mut summaries: Vec<_> = CachedSummary::list_all(&repo)
+            .into_iter()
+            .map(|s| s.summary)
+            .collect();
+        summaries.sort();
+        assert_eq!(summaries, ["Current summary", "Pre-upgrade summary"]);
+    }
 }
