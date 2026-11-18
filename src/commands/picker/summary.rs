@@ -45,9 +45,8 @@ pub(super) fn generate_summary_for_item(
     llm_command: &str,
     repo: &Repository,
 ) -> String {
-    let branch = item.branch_name();
     let worktree_path = item.worktree_path();
-    crate::summary::generate_summary(branch, item.head(), worktree_path, llm_command, repo)
+    crate::summary::generate_summary(item.branch(), item.head(), worktree_path, llm_command, repo)
 }
 
 #[cfg(test)]
@@ -129,7 +128,7 @@ mod tests {
             branch: branch.to_string(),
             generated_at: 100,
         };
-        first.write(&repo, "deadbeef");
+        first.write(&repo, branch, "deadbeef");
 
         let loaded = CachedSummary::read(&repo, branch, "deadbeef").unwrap();
         assert_eq!(loaded.summary, first.summary);
@@ -151,7 +150,7 @@ mod tests {
             branch: branch.to_string(),
             generated_at: 200,
         };
-        second.write(&repo, "cafebabe");
+        second.write(&repo, branch, "cafebabe");
 
         assert!(CachedSummary::read(&repo, branch, "deadbeef").is_none());
         assert_eq!(
@@ -187,7 +186,7 @@ mod tests {
             generated_at: 0,
         };
         // Should not panic — just logs and returns
-        cached.write(&repo, "deadbeef");
+        cached.write(&repo, "main", "deadbeef");
         assert!(CachedSummary::read(&repo, "main", "deadbeef").is_none());
 
         // Cleanup: remove the blocker file so TempDir cleanup works
@@ -213,7 +212,7 @@ mod tests {
             generated_at: 0,
         };
         // Should not panic — just logs and returns
-        cached.write(&repo, "deadbeef");
+        cached.write(&repo, "main", "deadbeef");
         assert!(CachedSummary::read(&repo, "main", "deadbeef").is_none());
 
         // Restore permissions so TempDir cleanup works
@@ -257,13 +256,13 @@ mod tests {
             branch: "feature-a".to_string(),
             generated_at: 100,
         }
-        .write(&repo, "aaaa");
+        .write(&repo, "feature-a", "aaaa");
         CachedSummary {
             summary: "b".to_string(),
             branch: "feature-b".to_string(),
             generated_at: 200,
         }
-        .write(&repo, "bbbb");
+        .write(&repo, "feature-b", "bbbb");
 
         let entries = CachedSummary::list_all(&repo);
         assert_eq!(entries.len(), 2);
@@ -285,13 +284,13 @@ mod tests {
             branch: "feature-a".to_string(),
             generated_at: 0,
         }
-        .write(&repo, "aaaa");
+        .write(&repo, "feature-a", "aaaa");
         CachedSummary {
             summary: "b".to_string(),
             branch: "feature-b".to_string(),
             generated_at: 0,
         }
-        .write(&repo, "bbbb");
+        .write(&repo, "feature-b", "bbbb");
 
         assert_eq!(CachedSummary::clear_all(&repo).unwrap(), 2);
         assert!(CachedSummary::read(&repo, "feature-a", "aaaa").is_none());
@@ -327,7 +326,7 @@ mod tests {
             branch: "feature".to_string(),
             generated_at: 0,
         }
-        .write(&repo, "aaaa");
+        .write(&repo, "feature", "aaaa");
 
         // Replace the json file with a directory named `bad.json` so
         // remove_file returns a non-NotFound error (EISDIR / similar).
@@ -457,7 +456,7 @@ mod tests {
         use crate::summary::compute_combined_diff;
         let (t, repo, head) = temp_repo_with_feature();
 
-        let result = compute_combined_diff("feature", &head, Some(t.path()), &repo);
+        let result = compute_combined_diff(Some("feature"), &head, Some(t.path()), &repo);
         assert!(result.is_some());
         let combined = result.unwrap();
         assert!(combined.diff.contains("new.txt"));
@@ -469,7 +468,7 @@ mod tests {
         use crate::summary::compute_combined_diff;
         let (t, repo, head) = temp_repo_configured();
 
-        let result = compute_combined_diff("main", &head, Some(t.path()), &repo);
+        let result = compute_combined_diff(Some("main"), &head, Some(t.path()), &repo);
         assert!(result.is_none());
     }
 
@@ -481,7 +480,7 @@ mod tests {
         fs::write(t.path().join("uncommitted.txt"), "wip\n").unwrap();
         repo.run_command(&["add", "uncommitted.txt"]).unwrap();
 
-        let result = compute_combined_diff("feature", &head, Some(t.path()), &repo);
+        let result = compute_combined_diff(Some("feature"), &head, Some(t.path()), &repo);
         assert!(result.is_some());
         let combined = result.unwrap();
         // Should contain both the branch diff and the working tree diff
@@ -494,7 +493,7 @@ mod tests {
         use crate::summary::compute_combined_diff;
         let (_t, repo, head) = temp_repo_with_feature();
         // Branch-only item (no worktree data) — only branch diff included
-        let result = compute_combined_diff("feature", &head, None, &repo);
+        let result = compute_combined_diff(Some("feature"), &head, None, &repo);
         assert!(result.is_some());
         let combined = result.unwrap();
         assert!(combined.diff.contains("new.txt"));
@@ -532,7 +531,7 @@ mod tests {
             "expected no default branch with exotic branch names"
         );
 
-        let result = compute_combined_diff("feature", &head, Some(t.path()), &repo);
+        let result = compute_combined_diff(Some("feature"), &head, Some(t.path()), &repo);
         assert!(
             result.is_some(),
             "should include working tree diff even without default branch"
@@ -564,7 +563,7 @@ mod tests {
             .to_string();
         let repo = Repository::at(t.path()).unwrap();
 
-        let result = compute_combined_diff("orphan-feature", &head, Some(t.path()), &repo);
+        let result = compute_combined_diff(Some("orphan-feature"), &head, Some(t.path()), &repo);
         let combined = result.expect("orphan branch with content must summarize");
         assert!(
             combined.diff.contains("orphan.txt"),
@@ -612,7 +611,7 @@ mod tests {
             .to_string();
         let repo = Repository::at(t.path()).unwrap();
 
-        let combined = compute_combined_diff("feature", &head, Some(t.path()), &repo)
+        let combined = compute_combined_diff(Some("feature"), &head, Some(t.path()), &repo)
             .expect("feature has changes to summarize");
         assert!(
             combined.diff.contains("feature.txt"),
@@ -631,7 +630,7 @@ mod tests {
         let (t, repo, head) = temp_repo_with_feature();
 
         let summary = crate::summary::generate_summary(
-            "feature",
+            Some("feature"),
             &head,
             Some(t.path()),
             "cat >/dev/null && echo 'Add new file'",
@@ -660,8 +659,13 @@ mod tests {
 
         let prompt = || {
             CachedSummary::clear_all(&repo).unwrap();
-            let summary =
-                crate::summary::generate_summary("feature", &head, Some(t.path()), &command, &repo);
+            let summary = crate::summary::generate_summary(
+                Some("feature"),
+                &head,
+                Some(t.path()),
+                &command,
+                &repo,
+            );
             assert_eq!(summary, "Add new file");
             fs::read(&capture).unwrap()
         };
@@ -693,7 +697,7 @@ mod tests {
         let (t, repo, head) = temp_repo_with_feature();
 
         let summary1 = crate::summary::generate_summary(
-            "feature",
+            Some("feature"),
             &head,
             Some(t.path()),
             "cat >/dev/null && echo 'Add new file'",
@@ -703,7 +707,7 @@ mod tests {
 
         // Second call with different command should return cached value
         let summary2 = crate::summary::generate_summary(
-            "feature",
+            Some("feature"),
             &head,
             Some(t.path()),
             "cat >/dev/null && echo 'Different output'",
@@ -717,7 +721,7 @@ mod tests {
         let (t, repo, head) = temp_repo_configured();
 
         let summary = crate::summary::generate_summary(
-            "main",
+            Some("main"),
             &head,
             Some(t.path()),
             "echo 'should not run'",
@@ -731,7 +735,7 @@ mod tests {
         let (t, repo, head) = temp_repo_with_feature();
 
         let summary = crate::summary::generate_summary(
-            "feature",
+            Some("feature"),
             &head,
             Some(t.path()),
             "cat >/dev/null && echo 'fail' >&2 && exit 1",
@@ -749,5 +753,46 @@ mod tests {
             generate_summary_for_item(&item, "cat >/dev/null && echo 'Add new file'", &repo);
 
         assert_eq!(summary, "Add new file");
+    }
+
+    /// Two detached worktrees have no branch to key their summaries by, so
+    /// each needs its own cache directory: sharing one let every write prune
+    /// the other row's entry, and each `wt list --full` re-ran the LLM for both.
+    #[test]
+    fn test_detached_worktrees_keep_separate_cached_summaries() {
+        let (t, repo, head) = temp_repo_with_feature();
+        let wt_a = t.path().parent().unwrap().join("detached-a");
+        let wt_b = t.path().parent().unwrap().join("detached-b");
+        for (path, file) in [(&wt_a, "a.txt"), (&wt_b, "b.txt")] {
+            repo.run_command(&[
+                "worktree",
+                "add",
+                "--detach",
+                path.to_str().unwrap(),
+                "HEAD",
+            ])
+            .unwrap();
+            fs::write(path.join(file), "wip\n").unwrap();
+            Repository::at(path)
+                .unwrap()
+                .run_command(&["add", file])
+                .unwrap();
+        }
+        let summarize = |path: &std::path::Path, command: &str| {
+            crate::summary::generate_summary(None, &head, Some(path), command, &repo)
+        };
+
+        assert_eq!(
+            summarize(&wt_a, "cat >/dev/null && echo 'Summary A'"),
+            "Summary A"
+        );
+        assert_eq!(
+            summarize(&wt_b, "cat >/dev/null && echo 'Summary B'"),
+            "Summary B"
+        );
+
+        // Both rows hit their own cache: the LLM command doesn't run again.
+        assert_eq!(summarize(&wt_a, "echo 'regenerated'"), "Summary A");
+        assert_eq!(summarize(&wt_b, "echo 'regenerated'"), "Summary B");
     }
 }

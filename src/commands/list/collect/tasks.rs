@@ -767,11 +767,10 @@ fn compute_summary_generate(ctx: &TaskContext) -> anyhow::Result<TaskResult> {
         anyhow::bail!("summary generation requires an LLM command");
     };
 
-    let branch = ctx.branch_ref.short_name().unwrap_or("(detached)");
     let worktree_path = ctx.branch_ref.worktree_path();
 
     let summary = crate::summary::generate_summary_core(
-        branch,
+        ctx.branch_ref.short_name(),
         &ctx.branch_ref.commit_sha,
         worktree_path,
         llm_command,
