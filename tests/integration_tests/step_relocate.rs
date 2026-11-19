@@ -12,6 +12,34 @@ fn worktree_parent(repo: &TestRepo) -> std::path::PathBuf {
     repo.root_path().parent().unwrap().to_path_buf()
 }
 
+/// Assert that the worktree at `path` has `branch` checked out.
+fn assert_branch_at(repo: &TestRepo, path: &Path, branch: &str) {
+    let output = repo
+        .git_command()
+        .current_dir(path)
+        .args(["branch", "--show-current"])
+        .run()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        branch,
+        "{} should contain {branch}",
+        path.display()
+    );
+}
+
+/// Assert that relocate left nothing in its staging directory. The executor
+/// removes the directory once it is empty, so any leftover entry keeps it.
+fn assert_staging_empty(repo: &TestRepo) {
+    let staging = repo.root_path().join(".git/wt/staging/relocate");
+    assert!(
+        !staging.exists(),
+        "nothing should be stranded in {}: {:?}",
+        staging.display(),
+        fs::read_dir(&staging).map(|d| d.flatten().map(|e| e.file_name()).collect::<Vec<_>>())
+    );
+}
+
 /// Test with no mismatched worktrees
 #[rstest]
 fn test_relocate_no_mismatches(mut repo: TestRepo) {
@@ -914,8 +942,9 @@ fn test_relocate_swap(repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "step", &["relocate"], None));
 
     // Verify both are now at their expected locations
-    assert!(path_for_alpha.exists(), "alpha should be at repo.alpha");
-    assert!(path_for_beta.exists(), "beta should be at repo.beta");
+    assert_branch_at(&repo, &path_for_alpha, "alpha");
+    assert_branch_at(&repo, &path_for_beta, "beta");
+    assert_staging_empty(&repo);
 }
 
 /// Two independent relocation cycles must not share a temporary worktree path.
@@ -984,18 +1013,7 @@ worktree-path = "{{% if branch == '{FIRST}' %}}{}{{% elif branch == 'first-partn
         (&second_target, SECOND),
         (&second_source, "second-partner"),
     ] {
-        let output = repo
-            .git_command()
-            .current_dir(path)
-            .args(["branch", "--show-current"])
-            .run()
-            .unwrap();
-        assert_eq!(
-            String::from_utf8_lossy(&output.stdout).trim(),
-            branch,
-            "{} should contain {branch}",
-            path.display()
-        );
+        assert_branch_at(&repo, path, branch);
     }
 }
 
@@ -1046,20 +1064,10 @@ fn test_relocate_blocked_occupant_skips_dependent(repo: TestRepo) {
     ));
 
     // alpha stays at its original location (not stranded in staging).
-    assert!(
-        wrong_alpha.exists(),
-        "alpha should remain at its original location: {}",
-        wrong_alpha.display()
-    );
+    assert_branch_at(&repo, &wrong_alpha, "alpha");
     // beta stays where it was (still occupying repo.alpha).
-    assert!(path_alpha.exists(), "beta should remain at repo.alpha");
-    // Nothing left behind in the staging dir.
-    let stranded = repo.root_path().join(".git/wt/staging/relocate/alpha");
-    assert!(
-        !stranded.exists(),
-        "alpha must not be stranded in the staging dir: {}",
-        stranded.display()
-    );
+    assert_branch_at(&repo, &path_alpha, "beta");
+    assert_staging_empty(&repo);
 }
 
 /// A blocked occupant must propagate transitively down a chain of dependents,
@@ -1136,25 +1144,10 @@ fn test_relocate_blocked_occupant_skips_chain(repo: TestRepo) {
 
     // Every worktree stays put — none stranded in staging or misplaced into an
     // occupied target.
-    assert!(
-        wrong_alpha.exists(),
-        "alpha should remain at its original location: {}",
-        wrong_alpha.display()
-    );
-    assert!(path_alpha.exists(), "beta should remain at repo.alpha");
-    assert!(path_beta.exists(), "gamma should remain at repo.beta");
-    let stranded = repo.root_path().join(".git/wt/staging/relocate/alpha");
-    assert!(
-        !stranded.exists(),
-        "alpha must not be stranded in the staging dir: {}",
-        stranded.display()
-    );
-    let misplaced = path_alpha.join("alpha");
-    assert!(
-        !misplaced.exists(),
-        "alpha must not be misplaced inside beta's worktree: {}",
-        misplaced.display()
-    );
+    assert_branch_at(&repo, &wrong_alpha, "alpha");
+    assert_branch_at(&repo, &path_alpha, "beta");
+    assert_branch_at(&repo, &path_beta, "gamma");
+    assert_staging_empty(&repo);
 }
 
 /// Test relocating multiple worktrees shows compact output
