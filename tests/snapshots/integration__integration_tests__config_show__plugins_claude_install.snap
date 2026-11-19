@@ -64,6 +64,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mAdding plugin from marketplace...[39m
 [36m◎[39m [36mInstalling plugin...[39m
 [32m✓[39m [32mPlugin installed[39m
