@@ -1653,13 +1653,26 @@ fn summaries_json(repo: &Repository) -> Vec<serde_json::Value> {
 
 // ==================== Vars Operations ====================
 
-/// Validate a vars key name: letters, digits, and hyphens only.
+/// Validate a vars key name: a lowercase letter, then lowercase letters,
+/// digits, and hyphens.
+///
+/// The key is a git config variable name, which git requires to start with a
+/// letter and stores lowercased. An uppercase key would read back from
+/// `vars_entries` under a different name than the user set, so
+/// `{{ vars.Ticket }}` would render empty.
 fn validate_vars_key(key: &str) -> anyhow::Result<()> {
     if key.is_empty() {
         anyhow::bail!("Key cannot be empty");
     }
-    if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-        anyhow::bail!("Invalid key {key:?}: keys must contain only letters, digits, and hyphens");
+    let starts_with_letter = key.starts_with(|c: char| c.is_ascii_lowercase());
+    if !starts_with_letter
+        || !key
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        anyhow::bail!(
+            "Invalid key {key:?}: keys must start with a lowercase letter and contain only lowercase letters, digits, and hyphens"
+        );
     }
     Ok(())
 }
