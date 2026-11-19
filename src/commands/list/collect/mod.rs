@@ -72,8 +72,9 @@
 //!   - `%H` full SHA, `%h` abbreviated SHA, `%ct` committer date (Unix
 //!     epoch), `%T` tree SHA, `%s` subject (first line of message).
 //!
-//! SHAs come from #4 (worktree HEADs) ∪ #5 (branch tips), deduplicated.
-//! Argv length scales with N — Linux `ARG_MAX` (~128 KB) bounds the
+//! SHAs come from #4 (worktree HEADs) ∪ #5 (branch tips) ∪ remote-branch
+//! tips (with `--remotes`). Repeats stay in argv; git collapses them in its
+//! output. Argv length scales with N — Linux `ARG_MAX` (~128 KB) bounds the
 //! unchunked form at roughly 3,000 SHAs.
 //!
 //! What each field feeds:
@@ -94,8 +95,9 @@
 //! each commit object to read its timestamp anyway, so the extra bytes add no
 //! measurable latency to the round trip. Without this batch you'd be forking
 //! `git log -1` (and `rev-parse ^{tree}`) per SHA later — same data, N forks
-//! instead of one. The full `(timestamp, subject)` map is handed to the
-//! post-skeleton loop that populates `ListItem.commit` directly.
+//! instead of one. The full `(short_sha, timestamp, subject)` map feeds the
+//! pre-skeleton `%h` fold and the post-skeleton loop that populates
+//! `ListItem.commit`.
 //!
 //! When the batch fails (e.g., a listed SHA was deleted mid-run), the
 //! failure is surfaced once and Age/Message cells render placeholders for

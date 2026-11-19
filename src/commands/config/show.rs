@@ -1601,8 +1601,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                     out,
                     "{}",
                     hint_message(cformat!(
-                        "Note: <bold>{cmd}.exe</> creates shell function <bold>{cmd}</>. \
-                         Aliases should use <underline>{cmd}</>, not <underline>{cmd}.exe</>"
+                        "Note: <bold>{cmd}.exe</> creates shell function <bold>{cmd}</>. Aliases should use <underline>{cmd}</>, not <underline>{cmd}.exe</>"
                     ))
                 )?;
             }

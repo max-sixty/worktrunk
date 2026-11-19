@@ -169,7 +169,7 @@ The OpenCode path follows `$OPENCODE_CONFIG_DIR` > `$XDG_CONFIG_HOME/opencode` >
 
 ### 6. Temporary files (automatic)
 
-Worktrunk creates temporary Git index copies inside `$TMPDIR/worktrunk-temp-index-*` directories. `wt list`, `wt list statusline`, `wt step diff`, `wt step commit --dry-run`, and `wt switch` use them to inspect staged or working-tree state without changing the real index; `wt remove --force` uses them to back up uncommitted changes. `wt list` also creates a `$TMPDIR/worktrunk-list-objects-*` directory so its merge probes do not add unreachable objects to the repository. When the system temp directory is unavailable, both fall back to Git's metadata: `worktrunk-list-objects-*` under the Git common directory and `worktrunk-temp-index-*` under the worktree's Git directory. A normal exit removes these directories. Later commands that create a temporary index reclaim abandoned index directories older than one hour, preserving indexes still in use; object directories left by an interrupted process may still need manual cleanup.
+Worktrunk creates temporary Git index copies inside `$TMPDIR/worktrunk-temp-index-*` directories. `wt list`, `wt list statusline`, `wt step diff`, `wt step commit --dry-run`, `wt step squash --dry-run`, and `wt switch` use them to inspect staged or working-tree state without changing the real index; `wt remove --force` uses them to back up uncommitted changes. `wt list` also creates a `$TMPDIR/worktrunk-list-objects-*` directory so its merge probes do not add unreachable objects to the repository. When the system temp directory is unavailable, both fall back to Git's metadata: `worktrunk-list-objects-*` under the Git common directory and `worktrunk-temp-index-*` under the worktree's Git directory. A normal exit removes these directories. Later commands that create a temporary index reclaim abandoned index directories older than one hour, preserving indexes still in use; object directories left by an interrupted process may still need manual cleanup.
 
 ### What Worktrunk does NOT create
 
@@ -222,7 +222,7 @@ See [What files does Worktrunk create?](#what-files-does-worktrunk-create) for d
 
 ## What commands does Worktrunk execute?
 
-Worktrunk runs `git` commands internally and optionally runs the forge CLI (`gh`, `glab`, `tea`, or `az`) for CI status. Beyond that, user-defined commands execute in four contexts:
+Worktrunk runs `git` commands internally and optionally runs the forge CLI (`gh`, `glab`, `tea`, or `az`) for CI status and PR/MR lookups. Beyond that, user-defined commands execute in four contexts:
 
 1. **User hooks** (`~/.config/worktrunk/config.toml`) — Personal automation for all repositories
 2. **Project hooks** (`.config/wt.toml`) — Repository-specific automation
