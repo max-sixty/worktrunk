@@ -367,13 +367,17 @@ Worktrunk that fall behind it. Each week, check both tables below.
 
 For each change that needs action, search this repo's open issues for it, then
 file one issue or add to the one already open. Link the upstream entry or the
-downstream file, and say what would fix it and in which repository. A fix in
+downstream file, and say what should change and in which repository. A fix in
 another repository needs the maintainer's go-ahead under **Filing issues in
 other repos**, and the issue here asks for it. Don't open a PR speculatively.
 If nothing changed, say so and move on. A source that errors or returns
 nothing leaves its row unchecked, so name it rather than report no change.
 
 ### Agent CLIs
+
+Keep Worktrunk making full use of each agent CLI. A release that adds something
+Worktrunk could use, to do more or to do what it already does more simply,
+needs action as much as one that breaks something Worktrunk relies on.
 
 Read what each source published in the last week. For a GitHub repository,
 list its releases with `gh release list -R <repo> -L 50` and read each new
