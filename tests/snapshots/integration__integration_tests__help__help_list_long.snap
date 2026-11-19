@@ -111,7 +111,7 @@ List all worktrees:
 [107m [0m [2m[0m[2m[34m+[0m[2m fix-auth         ↕[0m[2m[36m|[0m[2m                [0m[2m[34m↑2[0m[2m  ↓1   +25  [0m[2m[36m-11[0m[2m     [0m[2m[36m|[0m[2m     [0m[2m[34mb772e68[0m[2m    5h  Add secure token s…[0m
 [107m [0m [2m+ fix-typos        _[0m[2m[36m|[0m[2m                                      [0m[2m[36m|[0m[2m     [0m[2m[34m41ee083[0m[2m    4d  Merge fix-auth: ha…[0m
 [107m [0m [0m
-[107m [0m [2m○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path[0m
+[107m [0m [2m○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path  (+ staged files  ⇡ ahead of remote)[0m
 
 Include CI status and LLM summaries:
 
@@ -217,6 +217,8 @@ The custom columns config covers templates, widths, and drop priority.
 [1m[32mStatus symbols[0m
 
 The Status column packs several subcolumns, left to right, each mapping to a schema-2 field in [2m--format=json[0m (schema 1 spells several of them differently — see Schema 1). Working-tree flags are independent and co-occur — any combination shows at once. The other subcolumns are mutually exclusive: each shows a single symbol, the highest-priority state in top-to-bottom table order, and is blank when nothing applies.
+
+When space permits, the footer explains symbols shown in the Status column.
 
 [32mWorking tree[0m
 
