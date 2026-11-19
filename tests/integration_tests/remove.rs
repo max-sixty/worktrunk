@@ -1233,7 +1233,7 @@ fn test_remove_worktree_with_git_generated_registration_paths(mut repo: TestRepo
 #[rstest]
 fn test_remove_partial_success(mut repo: TestRepo) {
     // Create one valid worktree
-    let _feature_path = repo.add_worktree("feature");
+    let feature_path = repo.add_worktree("feature");
 
     // Try to remove both the valid worktree and a nonexistent one
     // The valid one should be removed; error for nonexistent; exit with failure
@@ -1245,9 +1245,8 @@ fn test_remove_partial_success(mut repo: TestRepo) {
     ));
 
     // Verify the valid worktree was actually removed
-    let worktrees_dir = repo.root_path().parent().unwrap();
     assert!(
-        !worktrees_dir.join("feature").exists(),
+        !feature_path.exists(),
         "feature worktree should have been removed despite partial failure"
     );
 }
@@ -6518,10 +6517,8 @@ fn test_force_remove_interrupted_status_preserves_worktrees(
         );
     }
     let worktrees_before = repo.git_output(&["worktree", "list", "--porcelain"]);
-    let staged_path = crate::common::resolve_git_common_dir(repo.root_path())
-        .join("wt/trash")
-        .join(format!("interrupted-status-{}", crate::common::TEST_EPOCH));
-    assert!(!staged_path.exists());
+    let trash_dir = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/trash");
+    assert!(worktrunk::git::staged_trash_entries(&trash_dir).is_empty());
     let monitor = repo.root_path().join(".git/interrupt-status");
     fs::write(
         &monitor,
@@ -6570,7 +6567,11 @@ fn test_force_remove_interrupted_status_preserves_worktrees(
     );
     assert!(worktree.join(".git").is_file());
     assert!(later_worktree.join(".git").is_file());
-    assert!(!staged_path.exists());
+    assert_eq!(
+        worktrunk::git::staged_trash_entries(&trash_dir),
+        Vec::<std::path::PathBuf>::new(),
+        "an interrupted removal must not stage either worktree"
+    );
     assert_eq!(
         fs::read_to_string(later_worktree.join("untracked.txt")).unwrap(),
         "preserve later data\n"
@@ -6789,10 +6790,11 @@ fn test_remove_no_argument_in_moved_worktree_refuses(mut repo: TestRepo) {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let status = std::process::Command::new("git")
+    let status = repo
+        .git_command()
         .args(["status", "--porcelain"])
         .current_dir(&moved)
-        .output()
+        .run()
         .unwrap();
     assert!(
         status.status.success(),
