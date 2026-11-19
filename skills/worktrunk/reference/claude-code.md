@@ -23,8 +23,7 @@ wt config plugins claude install
 Manual equivalent:
 
 ```bash
-claude plugin marketplace add max-sixty/worktrunk
-claude plugin install worktrunk@worktrunk
+claude plugin install worktrunk --marketplace max-sixty/worktrunk
 ```
 
 `wt config plugins claude uninstall` removes the plugin and its marketplace entry.
