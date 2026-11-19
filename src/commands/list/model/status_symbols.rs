@@ -521,6 +521,43 @@ impl StatusSymbols {
             .collect()
     }
 
+    /// Complete glyph-and-label pairs for resolved built-in terminal slots.
+    pub(crate) fn explanations(&self) -> impl Iterator<Item = &'static str> {
+        self.symbols(SymbolFormat::PlainTerminal)
+            .into_iter()
+            .filter_map(|(position, slot)| match slot {
+                SlotState::Visible(glyph) if position != PositionMask::USER_MARKER => {
+                    match glyph.as_str() {
+                        "+" => Some("+ staged files"),
+                        "!" => Some("! unstaged changes"),
+                        "?" => Some("? untracked files"),
+                        "✘" => Some("✘ merge conflicts"),
+                        "↻" => Some("↻ operation in progress"),
+                        "⊟" => Some("⊟ prunable worktree"),
+                        "⊞" => Some("⊞ locked worktree"),
+                        "⊘" => Some("⊘ detached HEAD"),
+                        "⚐" => Some("⚐ unexpected worktree path or duplicate branch"),
+                        "/" => Some("/ branch without worktree"),
+                        "^" => Some("^ main worktree"),
+                        "∅" => Some("∅ no common ancestor"),
+                        "_" => Some("_ clean at default commit"),
+                        "⊂" => Some("⊂ already integrated"),
+                        "✗" => Some("✗ would conflict"),
+                        "–" => Some("– dirty at default commit"),
+                        "↕" => Some("↕ diverged from default"),
+                        "↑" => Some("↑ ahead of default"),
+                        "↓" => Some("↓ behind default"),
+                        "|" => Some("| in sync with remote"),
+                        "⇡" => Some("⇡ ahead of remote"),
+                        "⇣" => Some("⇣ behind remote"),
+                        "⇅" => Some("⇅ diverged from remote"),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+    }
+
     /// Build symbols in Status-column order with shared gate selection.
     ///
     /// Returns one [`SlotState`] per position. The renderer uses this to
@@ -553,7 +590,10 @@ impl StatusSymbols {
             Some(wt) => {
                 let flag = |has: bool, sym: char| -> SlotState {
                     if has {
-                        SlotState::Visible(cformat!("<cyan>{sym}</>"))
+                        SlotState::Visible(match format {
+                            SymbolFormat::PlainTerminal => sym.to_string(),
+                            _ => cformat!("<cyan>{sym}</>"),
+                        })
                     } else {
                         SlotState::Empty
                     }
@@ -570,7 +610,7 @@ impl StatusSymbols {
         // Gate 3 — main state (position 4).
         let main_state_slot = match self.main_state {
             Some(ms) => SlotState::from_content(match format {
-                SymbolFormat::Raw => ms.to_string(),
+                SymbolFormat::PlainTerminal | SymbolFormat::Raw => ms.to_string(),
                 SymbolFormat::Styled => ms.styled().unwrap_or_default(),
             }),
             None => SlotState::Loading,
@@ -579,7 +619,7 @@ impl StatusSymbols {
         // Gate 4 — upstream divergence (position 5).
         let upstream_slot = match self.upstream_divergence {
             Some(d) => SlotState::from_content(match format {
-                SymbolFormat::Raw => d.symbol().to_string(),
+                SymbolFormat::PlainTerminal | SymbolFormat::Raw => d.symbol().to_string(),
                 SymbolFormat::Styled => d.styled().unwrap_or_default(),
             }),
             None => SlotState::Loading,
@@ -596,13 +636,13 @@ impl StatusSymbols {
         let worktree_slot = match self.operation_state {
             None => SlotState::Loading,
             Some(op) if op != OperationState::None => SlotState::Visible(match format {
-                SymbolFormat::Raw => op.to_string(),
+                SymbolFormat::PlainTerminal | SymbolFormat::Raw => op.to_string(),
                 SymbolFormat::Styled => op.styled().unwrap_or_default(),
             }),
             Some(_) => match self.worktree_state {
                 None | Some(WorktreeState::None) => SlotState::Empty,
                 Some(state) => SlotState::Visible(match format {
-                    SymbolFormat::Raw => state.to_string(),
+                    SymbolFormat::PlainTerminal | SymbolFormat::Raw => state.to_string(),
                     SymbolFormat::Styled => match state {
                         WorktreeState::Branch
                         | WorktreeState::BranchWorktreeMismatch
@@ -639,6 +679,7 @@ impl StatusSymbols {
 enum SymbolFormat {
     Raw,
     Styled,
+    PlainTerminal,
 }
 
 /// State of a single Status-column slot when rendering.
@@ -679,6 +720,26 @@ mod tests {
     // ============================================================================
     // format_raw_symbols Tests
     // ============================================================================
+
+    #[test]
+    fn explanations_follow_visible_terminal_slots() {
+        let symbols = StatusSymbols {
+            working_tree: Some(WorkingTreeStatus::new(false, true, false, true, true)),
+            operation_state: Some(OperationState::Conflicts),
+            worktree_state: Some(WorktreeState::Locked),
+            main_state: Some(MainState::WouldConflict),
+            upstream_divergence: None,
+            user_marker: Some(Some("⇡".into())),
+        };
+        assert_eq!(
+            symbols.explanations().collect::<Vec<_>>(),
+            [
+                "! unstaged changes",
+                "✘ merge conflicts",
+                "✗ would conflict"
+            ]
+        );
+    }
 
     #[test]
     fn test_format_raw_symbols_empty() {

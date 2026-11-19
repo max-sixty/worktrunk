@@ -53,4 +53,4 @@ exit_code: 0
 
 ----- stderr -----
 
-○ Showing 2 worktrees, 1 ahead
+○ Showing 2 worktrees, 1 ahead  (⊘ detached HEAD  ↑ ahead of default  _ clean at default commit)
