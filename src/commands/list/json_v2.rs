@@ -1607,6 +1607,7 @@ mod tests {
                     url: "https://github.com/org/repo".to_string(),
                     provider: worktrunk::git::GitRepoProvider::GitHub,
                     host: "github.com".to_string(),
+                    api_host: Some("api.github.com".to_string()),
                     owner: "org".to_string(),
                     name: "repo".to_string(),
                     project: None,

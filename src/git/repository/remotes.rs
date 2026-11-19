@@ -342,8 +342,8 @@ impl Repository {
     /// Repository metadata derived from the primary remote.
     ///
     /// Local-only: built from the cached primary remote URL and the configured
-    /// forge platform, with no network access. This may load/cache project and
-    /// user config to resolve that platform. The returned
+    /// forge settings, with no network access. This may load/cache project and
+    /// user config to resolve the platform and API hostname. The returned
     /// [`GitRepoInfo::remote`] names which local remote was used, so structured
     /// JSON can report it.
     pub fn repo_info(&self) -> Option<GitRepoInfo> {
@@ -353,6 +353,7 @@ impl Repository {
         let provider_override = self.configured_forge_platform();
         let mut info = parsed.repo_info(provider_override.as_deref())?;
         info.remote = Some(remote);
+        info.api_host = self.forge_hostname();
         Some(info)
     }
 

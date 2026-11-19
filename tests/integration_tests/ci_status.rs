@@ -145,6 +145,8 @@ fn test_list_full_json_ci_repo_from_pr_url(mut repo: TestRepo) {
     repo.write_test_config("[list]\njson-schema = 1\n");
     let head_sha = setup_github_repo_with_feature(&mut repo);
 
+    repo.write_project_config("[forge]\nhostname = \"checkout-api.example\"\n");
+
     let pr_json = format!(
         r#"[{{
         "headRefOid": "{}",
@@ -152,7 +154,7 @@ fn test_list_full_json_ci_repo_from_pr_url(mut repo: TestRepo) {
         "statusCheckRollup": [
             {{"status": "COMPLETED", "conclusion": "SUCCESS"}}
         ],
-        "url": "https://github.com/test-owner/test-repo/pull/1",
+        "url": "https://github.com/upstream/test-repo/pull/1",
         "headRepositoryOwner": {{"login": "test-owner"}}
     }}]"#,
         head_sha
@@ -174,18 +176,20 @@ fn test_list_full_json_ci_repo_from_pr_url(mut repo: TestRepo) {
         .iter()
         .find(|row| row["branch"].as_str() == Some("feature"))
         .expect("feature row should be present");
+    assert_eq!(row["repo"]["api_host"], "checkout-api.example");
     let ci = &row["ci"];
+    assert!(ci["repo"].get("api_host").is_none());
     assert_eq!(
         ci["repo_url"].as_str(),
-        Some("https://github.com/test-owner/test-repo")
+        Some("https://github.com/upstream/test-repo")
     );
     assert_eq!(
         ci["repo"]["url"].as_str(),
-        Some("https://github.com/test-owner/test-repo")
+        Some("https://github.com/upstream/test-repo")
     );
     assert_eq!(ci["repo"]["provider"].as_str(), Some("github"));
     assert_eq!(ci["repo"]["host"].as_str(), Some("github.com"));
-    assert_eq!(ci["repo"]["owner"].as_str(), Some("test-owner"));
+    assert_eq!(ci["repo"]["owner"].as_str(), Some("upstream"));
     assert_eq!(ci["repo"]["name"].as_str(), Some("test-repo"));
     assert!(
         ci["repo"].get("remote").is_none(),
