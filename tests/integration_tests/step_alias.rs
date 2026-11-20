@@ -1891,8 +1891,7 @@ binding = "printf '<%s>\\n' {{ help }}"
     }
 }
 
-/// `wt <alias> -- --help` bypasses the intercept and forwards `--help` into
-/// the alias body — the documented escape.
+/// A forwarding project alias invoked with `-- --help` reaches the approval gate.
 #[rstest]
 fn test_alias_help_flag_after_double_dash_forwards(mut repo: TestRepo) {
     repo.write_project_config(
