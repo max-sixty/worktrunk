@@ -647,7 +647,7 @@ impl SkimItem for PickerRow {
         // `preview_cache_key` so the awaited key matches the typed identity and
         // width the background fill writes. skim reports the pane's width
         // border included; the text width is what renderers wrap to.
-        let width = PreviewStateData::layout().text_width(context.width);
+        let width = PreviewStateData::text_width(context.width);
         let cache_key = preview_cache_key(self.preview_key(), mode, width);
         self.notifier.note_awaiting(&cache_key);
         // A miss on a local-git tab means the placeholder below would sit
@@ -2108,6 +2108,33 @@ mod tests {
     /// Width at which all eight full-form tabs fit, so the snapshots capture the
     /// full bar (the compact fallback has its own test).
     const WIDE: usize = 200;
+
+    #[test]
+    fn listed_pr_log_survives_a_width_change() {
+        // A `--prs` row fetches its `log` once, at the startup width. After a
+        // resize the pane renders at another width and must still find that
+        // fetch rather than fall back to a loading placeholder nothing refills.
+        let cache: PreviewCache = Arc::new(DashMap::new());
+        let pr_ref = PrRef::pr(42);
+        let row = PickerRow {
+            search_base: String::new(),
+            gutter: '#',
+            rendered: Arc::new(Mutex::new(String::new())),
+            branch_name: "feature".to_string(),
+            output_token: "pr:42".to_string(),
+            subject: PickerRowSubject::ChangeRequest(pr_ref),
+            preview_cache: Arc::clone(&cache),
+            pr_status: Arc::new(Mutex::new(None)),
+            notifier: PreviewNotifier::detached(),
+        };
+        cache.insert(
+            preview_cache_key(row.preview_key(), PreviewMode::Log, 58),
+            "abc12345  Fix it\n".to_string(),
+        );
+
+        let pane = row.render_preview(PreviewMode::Log, 99, 24);
+        assert!(pane.ends_with("abc12345  Fix it\n"), "pane: {pane:?}");
+    }
 
     /// A worktree row whose diff tabs all have content — every diff signal known
     /// and non-empty.

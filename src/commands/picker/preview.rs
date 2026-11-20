@@ -3,7 +3,7 @@
 //! Tracks the active preview tab (in process memory) and selects the preview
 //! layout for the interactive selector.
 
-use std::sync::atomic::{AtomicBool, AtomicI8, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicI8, AtomicU8, AtomicUsize, Ordering};
 
 use ratatui::layout::{Constraint, Layout, Rect};
 
@@ -237,9 +237,14 @@ impl PreviewLayout {
     /// (`PreviewContext::width`): what renderers wrap to, and the width the
     /// in-memory preview cache keys on. Right gives up its border column.
     pub(super) fn text_width(self, pane_cols: usize) -> usize {
+        pane_cols.saturating_sub(self.border_cols())
+    }
+
+    /// Columns of the pane skim reports that its border takes.
+    fn border_cols(self) -> usize {
         match self {
-            Self::Right => pane_cols.saturating_sub(PREVIEW_BORDER_COLS),
-            Self::Down => pane_cols,
+            Self::Right => PREVIEW_BORDER_COLS,
+            Self::Down => 0,
         }
     }
 
@@ -320,10 +325,11 @@ static PREVIEW_SELECTION: AtomicU8 = AtomicU8::new(0);
 /// A Tab keypress is resolved by the selected row when `RunPreview` renders it,
 /// because that row already owns the live availability data.
 static PENDING_CYCLE: AtomicI8 = AtomicI8::new(0);
-/// Whether the session's preview sits below the list ([`PreviewLayout::Down`])
-/// rather than beside it. Set once per session by [`PreviewState::new`];
-/// `PickerRow::preview` reads it to turn skim's pane width into a text width.
-static LAYOUT_IS_DOWN: AtomicBool = AtomicBool::new(false);
+/// Border columns inside the pane width skim reports for the session's layout
+/// (see [`PreviewLayout::text_width`]). Set once per session by
+/// [`PreviewState::new`]; `PickerRow::preview` reads it through
+/// [`PreviewStateData::text_width`].
+static PANE_BORDER_COLS: AtomicUsize = AtomicUsize::new(PREVIEW_BORDER_COLS);
 
 pub(super) struct PreviewStateData;
 
@@ -352,17 +358,14 @@ impl PreviewStateData {
         }
     }
 
-    /// The session's preview layout, as recorded by [`PreviewState::new`].
-    pub(super) fn layout() -> PreviewLayout {
-        if LAYOUT_IS_DOWN.load(Ordering::Relaxed) {
-            PreviewLayout::Down
-        } else {
-            PreviewLayout::Right
-        }
+    /// The text width of a pane skim reports as `pane_cols` wide, for the
+    /// session's layout — [`PreviewLayout::text_width`] without the layout.
+    pub(super) fn text_width(pane_cols: usize) -> usize {
+        pane_cols.saturating_sub(PANE_BORDER_COLS.load(Ordering::Relaxed))
     }
 
     fn reset(layout: PreviewLayout) {
-        LAYOUT_IS_DOWN.store(layout == PreviewLayout::Down, Ordering::Relaxed);
+        PANE_BORDER_COLS.store(layout.border_cols(), Ordering::Relaxed);
         PREVIEW_SELECTION.store(0, Ordering::Relaxed);
         PENDING_CYCLE.store(0, Ordering::Relaxed);
     }

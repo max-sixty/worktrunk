@@ -1334,7 +1334,7 @@ mod tests {
         // The demand worker fills the key with the real diff. Bounded poll so
         // a dead worker fails instead of hanging the suite. The key carries the
         // text width the 80-column pane leaves once its border is taken.
-        let width = super::super::preview::PreviewStateData::layout().text_width(80);
+        let width = super::super::preview::PreviewStateData::text_width(80);
         let key = preview_cache_key(row_id, PreviewMode::UnifiedDiff, width);
         let deadline = std::time::Instant::now() + Duration::from_secs(60);
         while !orch.cache.contains_key(&key) {
