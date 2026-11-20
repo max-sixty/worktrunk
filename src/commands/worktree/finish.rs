@@ -7,9 +7,9 @@
 //! 1. Capture the feature worktree's path + commit BEFORE removal — afterward
 //!    the worktree directory is gone, but post-merge hooks still need to
 //!    reference it via Active template overrides.
-//! 2. Decide whether to remove the feature worktree. Six conditions block
-//!    removal: `--no-remove`, on-target, primary-worktree, locked, and
-//!    default-branch, and nested worktrees. Otherwise `ensure_clean` gates removal and
+//! 2. Decide whether to remove the feature worktree. Six conditions preserve
+//!    it: `--no-remove`, on-target, primary-worktree, locked, nested
+//!    worktrees, and default-branch. Otherwise `ensure_clean` gates removal and
 //!    `handle_merge_remove_output` performs it (sharing the staging path with
 //!    `wt remove`).
 //! 3. Register the post-merge hook with the announcer. The caller owns
@@ -35,8 +35,7 @@ use crate::commands::context::CommandEnv;
 use crate::commands::hook_plan::{ApprovedHookPlan, register_planned};
 use crate::commands::hooks::HookAnnouncer;
 use crate::commands::repository_ext::{
-    check_not_default_branch, compute_integration_reason, is_primary_worktree,
-    live_sibling_checkout,
+    compute_integration_reason, is_primary_worktree, live_sibling_checkout,
 };
 use crate::commands::template_vars::TemplateVars;
 use crate::output::{
@@ -117,8 +116,7 @@ pub fn finish_after_merge(
     }
 
     // Finish worktree unless removal is disabled or blocked.
-    // Guards are shared with `wt remove`: is_primary_worktree (Phase 2) and
-    // check_not_default_branch (Phase 3) are the same helpers both paths use.
+    // `is_primary_worktree` is the same helper `wt remove` uses (Phase 2).
     let removed = if !remove {
         eprintln!("{}", info_message("Worktree preserved (--no-remove)"));
         false
@@ -152,10 +150,13 @@ pub fn finish_after_merge(
             ))
         );
         false
+    } else if repo.default_branch().as_deref() == Some(current_branch) {
+        // `wt remove` refuses the default branch without `-D`, and merge always
+        // uses SafeDelete. The merge already landed, so preserve the worktree
+        // like the guards above rather than failing after the fact.
+        eprintln!("{}", info_message("Worktree preserved (default branch)"));
+        false
     } else {
-        // Phase 3: reject removing default branch (merge always uses SafeDelete).
-        check_not_default_branch(repo, current_branch, &BranchDeletionMode::SafeDelete)?;
-
         let current_wt = repo.current_worktree();
         current_wt.ensure_clean("remove worktree after merge", Some(current_branch), false)?;
 
