@@ -96,7 +96,8 @@
 //! - `is_main` (metadata)
 //! - `is_orphan` (from `AheadBehind`)
 //! - Integration signals: `is_ancestor`, `committed_trees_match`,
-//!   `has_file_changes`, `would_merge_add`, `is_patch_id_match`
+//!   `has_file_changes`, `would_merge_add`, `is_patch_id_match`,
+//!   `is_commits_match`
 //! - `has_merge_tree_conflicts` (from `MergeTreeConflicts`)
 //! - `has_working_tree_conflicts` (from `WorkingTreeConflicts`)
 //! - `counts` (from `AheadBehind`)

@@ -609,6 +609,8 @@ mod tests {
         assert_eq!(s, "merge-adds-nothing");
         let s: &'static str = IntegrationReason::PatchIdMatch.into();
         assert_eq!(s, "patch-id-match");
+        let s: &'static str = IntegrationReason::CommitsMatch.into();
+        assert_eq!(s, "commits-match");
     }
 
     #[test]

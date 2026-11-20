@@ -278,6 +278,9 @@ pub struct ListItem {
     /// Whether the branch's squashed patch-id matches a commit on the integration target.
     /// Detects squash merges when merge-tree conflicts (both sides modified the same files).
     pub is_patch_id_match: Option<bool>,
+    /// Whether every branch commit's patch-id matches a distinct commit on the integration
+    /// target. Detects rebase merges when merge-tree conflicts.
+    pub is_commits_match: Option<bool>,
     /// Whether branch HEAD is an ancestor of the integration target (or same commit).
     /// True means branch is already part of the integration target's history.
     /// This is the cheapest integration check (~1ms).
@@ -415,6 +418,7 @@ impl ListItem {
             has_file_changes: None,
             would_merge_add: None,
             is_patch_id_match: None,
+            is_commits_match: None,
             is_ancestor: None,
             is_orphan: None,
             upstream: None,
@@ -883,6 +887,7 @@ impl ListItem {
             && self.committed_trees_match.is_some()
             && self.would_merge_add.is_some()
             && self.is_patch_id_match.is_some()
+            && self.is_commits_match.is_some()
     }
 
     /// Gate 4: upstream divergence. Resolves once `upstream` is loaded.
@@ -936,6 +941,7 @@ impl ListItem {
             trees_match: self.committed_trees_match,
             would_merge_add: self.would_merge_add,
             is_patch_id_match: self.is_patch_id_match,
+            is_commits_match: self.is_commits_match,
         };
         let reason = check_integration(&signals);
 
@@ -1526,6 +1532,7 @@ mod tests {
         seed_patch_id_integration(&mut item);
         item.would_merge_add = None; // integration verdict not yet final
         item.is_patch_id_match = None;
+        item.is_commits_match = None;
         item.refresh_status_symbols(Some("main"));
         assert_eq!(item.status_symbols.main_state, None);
 
@@ -1540,6 +1547,26 @@ mod tests {
     }
 
     #[test]
+    fn gate_main_state_conflict_holds_until_commits_match_resolves() {
+        // A squash miss alone doesn't settle the verdict: the rebase-merge
+        // check from the same probe can still find the branch integrated.
+        let mut item = make_worktree_item();
+        seed_patch_id_integration(&mut item);
+        item.would_merge_add = Some(true);
+        item.is_patch_id_match = Some(false);
+        item.is_commits_match = None;
+        item.refresh_status_symbols(Some("main"));
+        assert_eq!(item.status_symbols.main_state, None);
+
+        item.is_commits_match = Some(true);
+        item.refresh_status_symbols(Some("main"));
+        assert_eq!(
+            item.status_symbols.main_state,
+            Some(MainState::Integrated(IntegrationReason::CommitsMatch))
+        );
+    }
+
+    #[test]
     fn gate_main_state_genuine_conflict_shows_would_conflict() {
         // Not integrated (patch-id resolves negative) AND a real conflict →
         // ✗ is correct and still rendered.
@@ -1547,6 +1574,7 @@ mod tests {
         seed_patch_id_integration(&mut item);
         item.would_merge_add = Some(true);
         item.is_patch_id_match = Some(false); // resolved: NOT integrated
+        item.is_commits_match = Some(false);
         item.refresh_status_symbols(Some("main"));
         assert_eq!(
             item.status_symbols.main_state,

@@ -4395,6 +4395,50 @@ fn test_list_integrated_when_squash_merged_on_remote_with_local_diverged(
     );
 }
 
+/// A rebase-merged branch reports `commits_match` once main edits a file the
+/// branch added (merge-tree conflicts, and no single main commit holds the
+/// branch's whole diff).
+#[rstest]
+fn test_list_json_rebase_merged_reports_commits_match(repo: TestRepo) {
+    repo.run_git(&["checkout", "-b", "feature-list-rebased"]);
+    for file in ["a.txt", "b.txt"] {
+        std::fs::write(repo.root_path().join(file), "feature\n").unwrap();
+        repo.run_git(&["add", file]);
+        repo.run_git(&["commit", "-m", &format!("Add {file}")]);
+    }
+    repo.run_git(&["checkout", "main"]);
+    std::fs::write(repo.root_path().join("other.txt"), "other work\n").unwrap();
+    repo.run_git(&["add", "other.txt"]);
+    repo.run_git(&["commit", "-m", "Other work"]);
+    repo.run_git(&["cherry-pick", "main..feature-list-rebased"]);
+    std::fs::write(repo.root_path().join("a.txt"), "feature\nmore on main\n").unwrap();
+    repo.run_git(&["add", "a.txt"]);
+    repo.run_git(&["commit", "-m", "Advance same file on main"]);
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--branches", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let feature = json["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["branch"] == "feature-list-rebased")
+        .expect("feature-list-rebased should appear in wt list output");
+    assert_eq!(
+        feature["default_branch"]["integration"]["reason"], "commits_match",
+        "entry: {feature}"
+    );
+    assert_eq!(
+        feature["display"]["state"], "integrated",
+        "entry: {feature}"
+    );
+}
+
 /// Regression: `wt list` against a worktree whose `<gitdir>/index` file is
 /// absent must not surface `working-tree-conflicts (Failed to copy index
 /// file)`. A missing index is semantically empty (nothing staged), so the
