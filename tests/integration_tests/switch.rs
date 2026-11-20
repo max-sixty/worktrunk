@@ -6227,6 +6227,7 @@ fn test_switch_pr_gitea_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
+#[cfg(unix)]
 #[rstest]
 fn test_switch_pr_gitea_tea_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
@@ -6236,10 +6237,7 @@ fn test_switch_pr_gitea_tea_not_installed(#[from(repo_with_remote)] repo: TestRe
         "https://gitea.example.com/owner/test-repo.git",
     ]);
 
-    let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
-        eprintln!("Skipping test: symlinks not available on this system");
-        return;
-    };
+    let minimal_bin = setup_minimal_bin_without_cli(&repo);
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -6391,12 +6389,10 @@ fn test_switch_pr_malformed_project_config_bails_before_forge_selection(
 
 /// With no parseable remote URL, dispatch defaults to GitHub. Without `gh`
 /// installed, the GitHub backend returns its install hint.
+#[cfg(unix)]
 #[rstest]
 fn test_switch_pr_no_remote_defaults_to_github(repo: TestRepo) {
-    let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
-        eprintln!("Skipping test: symlinks not available on this system");
-        return;
-    };
+    let minimal_bin = setup_minimal_bin_without_cli(&repo);
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -7521,6 +7517,7 @@ fn test_switch_pr_azure_not_found(#[from(repo_with_remote)] repo: TestRepo) {
 
 /// `az` not installed: with an Azure remote, dispatch routes to the Azure
 /// backend, which returns the install hint when `az` isn't on PATH.
+#[cfg(unix)]
 #[rstest]
 fn test_switch_pr_azure_az_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
@@ -7530,10 +7527,7 @@ fn test_switch_pr_azure_az_not_installed(#[from(repo_with_remote)] repo: TestRep
         "https://dev.azure.com/myorg/myproject/_git/test-repo",
     ]);
 
-    let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
-        eprintln!("Skipping test: symlinks not available on this system");
-        return;
-    };
+    let minimal_bin = setup_minimal_bin_without_cli(&repo);
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -8685,12 +8679,12 @@ fn test_switch_mr_unknown_error(#[from(repo_with_remote)] repo: TestRepo) {
 
 /// Set up a minimal bin directory with only git (no gh/glab).
 ///
-/// Creates a temporary directory with a symlink to git, excluding gh/glab.
-/// Returns the path to use as PATH.
-/// Create a minimal bin directory with only git, excluding gh/glab.
-/// Returns None on Windows where this approach doesn't work reliably.
+/// Creates a directory with a symlink to git, excluding gh/glab, and returns
+/// the path to use as PATH. Unix only: on Windows, git needs its whole
+/// installation directory, so a PATH holding just git can't run it, and the
+/// tests that use this are `#[cfg(unix)]`.
 #[cfg(unix)]
-fn setup_minimal_bin_without_cli(repo: &TestRepo) -> Option<std::path::PathBuf> {
+fn setup_minimal_bin_without_cli(repo: &TestRepo) -> std::path::PathBuf {
     let minimal_bin = repo.root_path().join("minimal-bin");
     fs::create_dir_all(&minimal_bin).unwrap();
 
@@ -8699,24 +8693,19 @@ fn setup_minimal_bin_without_cli(repo: &TestRepo) -> Option<std::path::PathBuf> 
 
     // Symlink git into our minimal bin directory
     std::os::unix::fs::symlink(&git_path, minimal_bin.join("git")).unwrap();
-    Some(minimal_bin)
-}
-
-/// On Windows, git requires its entire installation directory to function,
-/// so we can't easily create a minimal PATH with just git. Skip these tests.
-#[cfg(windows)]
-fn setup_minimal_bin_without_cli(_repo: &TestRepo) -> Option<std::path::PathBuf> {
-    None
+    minimal_bin
 }
 
 /// Configure PATH to exclude gh/glab, keeping only git.
 ///
 /// This simulates the "CLI not installed" scenario.
+#[cfg(unix)]
 fn configure_cli_not_installed_env(cmd: &mut std::process::Command, minimal_bin: &Path) {
     cmd.env("PATH", minimal_bin);
 }
 
 /// Test pr: when gh CLI is not installed
+#[cfg(unix)]
 #[rstest]
 fn test_switch_pr_gh_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
     // Set a GitHub URL so fetch_pr_info can parse owner/repo before checking for gh
@@ -8726,11 +8715,7 @@ fn test_switch_pr_gh_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
         "origin",
         "https://github.com/owner/test-repo.git",
     ]);
-    let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
-        // Symlinks not available (Windows without Developer Mode)
-        eprintln!("Skipping test: symlinks not available on this system");
-        return;
-    };
+    let minimal_bin = setup_minimal_bin_without_cli(&repo);
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -8741,13 +8726,10 @@ fn test_switch_pr_gh_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
 }
 
 /// Test mr: when glab CLI is not installed
+#[cfg(unix)]
 #[rstest]
 fn test_switch_mr_glab_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
-    let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
-        // Symlinks not available (Windows without Developer Mode)
-        eprintln!("Skipping test: symlinks not available on this system");
-        return;
-    };
+    let minimal_bin = setup_minimal_bin_without_cli(&repo);
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
