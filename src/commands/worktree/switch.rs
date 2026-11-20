@@ -4,6 +4,7 @@
 //! full switch sequence (bare-repo fix-up, hooks, approval, execution, output)
 //! shared by the `wt switch` argument path and the interactive picker.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::display::format_relative_time_short;
@@ -14,19 +15,20 @@ use normalize_path::NormalizePath;
 use serde::Serialize;
 use worktrunk::HookType;
 use worktrunk::config::{
-    HookSource, UserConfig, ValidationScope, VarScope, referenced_vars_for_templates,
-    template_references_var, validate_template,
+    HookSource, UserConfig, ValidationScope, VarScope, binds_cli_var,
+    referenced_vars_for_templates, template_references_var, validate_template,
 };
 use worktrunk::git::remote_ref::{self, RemoteRefInfo, parse_ref_url};
 use worktrunk::git::{
     ErrorExt, ForgeKind, GitError, GitRemoteUrl, RefType, Repository, ResolvedWorktree, Selector,
-    SwitchSuggestionCtx, WorktreeId, branch_tracks_ref, current_or_recover, resolve_input_path,
+    SwitchSuggestionCtx, WorktreeId, add_hook_retry_hint, branch_tracks_ref, current_or_recover,
+    resolve_input_path,
 };
 use worktrunk::path::{canonicalize_with_parents, format_path_for_display};
 use worktrunk::shell_exec::{ShellEscapeMode, shell_cwd};
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, suggest_command,
-    warning_message,
+    suggest_command_in_dir, warning_message,
 };
 use worktrunk::utils::escape_controls;
 
@@ -1464,11 +1466,19 @@ fn execute_switch(
                         vars = vars
                             .with_base_strs(base_branch.as_deref(), base_worktree_path.as_deref());
                     }
-                    ctx.execute_pre_create_commands(
-                        &vars.as_extra_vars(),
-                        hook_plan,
-                        &worktree_path,
-                    )?;
+                    let extra_vars = vars.as_extra_vars();
+                    // The worktree stays behind when setup fails, and switching
+                    // to it again doesn't re-run pre-start, so name the command
+                    // that does.
+                    ctx.execute_pre_create_commands(&extra_vars, hook_plan, &worktree_path)
+                        .map_err(|err| {
+                            let referenced =
+                                hook_plan.referenced_vars(HookType::PreCreate, &worktree_path);
+                            add_hook_retry_hint(
+                                err,
+                                pre_start_retry_command(&worktree_path, &referenced, &extra_vars),
+                            )
+                        })?;
                 }
 
                 // Record successful switch in history
@@ -2409,10 +2419,61 @@ fn validate_switch_templates(
     Ok(())
 }
 
+/// The `wt hook pre-start` command that re-runs the setup a failed
+/// `wt switch --create` started, in the worktree it left behind.
+///
+/// A manual `wt hook pre-start` binds `base` and `base_worktree_path` to the
+/// worktree it runs in and has no PR, so the switch's own values are passed as
+/// `--KEY=VALUE` to reproduce the same render. Only keys the templates
+/// reference are passed: `wt hook` forwards an unreferenced one into
+/// `{{ args }}` instead.
+fn pre_start_retry_command(
+    worktree_path: &Path,
+    referenced: &BTreeSet<String>,
+    extra_vars: &[(&str, &str)],
+) -> String {
+    let flags: Vec<String> = ["base", "base_worktree_path", "pr_number", "pr_url"]
+        .into_iter()
+        .filter(|key| binds_cli_var(key, referenced))
+        .filter_map(|key| {
+            let (_, value) = extra_vars.iter().find(|(name, _)| *name == key)?;
+            let flag = format!("--{}={value}", key.replace('_', "-"));
+            Some(shell_escape::unix::escape(flag.into()).into_owned())
+        })
+        .collect();
+    let flags: Vec<&str> = flags.iter().map(String::as_str).collect();
+    suggest_command_in_dir(worktree_path, "hook pre-start", &[], &flags)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use worktrunk::testing::TestRepo;
+
+    /// The retry passes the switch's values only for keys the pre-start
+    /// templates reference, so none forwards into `{{ args }}`.
+    #[test]
+    fn pre_start_retry_command_passes_referenced_switch_vars() {
+        let path = Path::new("/tmp/repo.feature");
+        let extra_vars = [
+            ("base", "main"),
+            ("base_worktree_path", "/tmp/my repo"),
+            ("target", "feature"),
+            ("pr_number", "42"),
+            ("pr_url", "https://example.test/pr/42"),
+        ];
+        let referenced: BTreeSet<String> = ["base_worktree_path", "pr_number", "target", "args"]
+            .map(String::from)
+            .into();
+        assert_eq!(
+            pre_start_retry_command(path, &referenced, &extra_vars),
+            "wt -C /tmp/repo.feature hook pre-start '--base-worktree-path=/tmp/my repo' --pr-number=42"
+        );
+        assert_eq!(
+            pre_start_retry_command(path, &BTreeSet::new(), &extra_vars),
+            "wt -C /tmp/repo.feature hook pre-start"
+        );
+    }
 
     /// Windows needs two representations of a deep worktree path: the
     /// verbatim spelling that filesystem operations accept, and the

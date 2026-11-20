@@ -126,6 +126,8 @@ pub use error::{
     // CLI context for enriching switch suggestions in error hints
     SwitchSuggestionCtx,
     WorktrunkError,
+    // Add a retry-command hint to a --no-hooks-hinted hook failure
+    add_hook_retry_hint,
     // Wrap a HookCommandFailed-bearing error with a --no-hooks hint
     add_hook_skip_hint,
     // Shared phrasing for an unmerged index ("1 path with unresolved conflicts")

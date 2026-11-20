@@ -42,11 +42,15 @@
 //! config→commands step for the covered hooks — is the only place
 //! `load_project_config()`'s result is selected from.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use worktrunk::HookType;
-use worktrunk::config::{Approvals, Command, CommandConfig, ProjectConfig, ProjectId, UserConfig};
+use worktrunk::config::{
+    Approvals, Command, CommandConfig, ProjectConfig, ProjectId, UserConfig,
+    referenced_vars_for_templates,
+};
 use worktrunk::git::add_hook_skip_hint;
 
 use super::command_approval::approve_command_batch;
@@ -317,6 +321,18 @@ impl ApprovedHookPlan {
         hook_types
             .iter()
             .any(|ht| !self.lookup(*ht, anchor).is_empty())
+    }
+
+    /// Top-level variables referenced by the frozen selection for
+    /// `(hook_type, anchor)` — what a manual `wt hook` re-run over the same
+    /// selection would bind a `--KEY=VALUE` to rather than forward into
+    /// `{{ args }}`.
+    pub fn referenced_vars(&self, hook_type: HookType, anchor: &Path) -> BTreeSet<String> {
+        referenced_vars_for_templates(
+            self.lookup(hook_type, anchor)
+                .iter()
+                .flat_map(|(_, cfg)| cfg.commands().map(|cmd| cmd.template.as_str())),
+        )
     }
 
     /// The frozen selection for `(hook_type, anchor)`, by exact match.
