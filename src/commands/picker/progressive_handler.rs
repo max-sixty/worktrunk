@@ -53,8 +53,8 @@ const RENDER_THROTTLE: Duration = Duration::from_millis(16);
 use super::items::{
     HeaderFlash, HeaderLoading, HeaderSkimItem, LayoutSlot, LocalCheckout, LocalContent,
     LocalContentSlot, MorphHandle, PickerRow, PickerRowId, PickerRowSubject, PrStatusSlot,
-    PreviewCache, RowShortcutData, RowUrl, ShortcutTable, pr_presence, pr_status_pane_eq,
-    worktree_output_token,
+    PreviewCache, RowShortcutData, RowUrl, ShortcutTable, evict_preview, pr_presence,
+    pr_status_pane_eq, worktree_output_token,
 };
 use super::preview::PreviewMode;
 use super::preview_notify::PrStatusDelta;
@@ -235,8 +235,7 @@ impl PickerHandler {
         if previous != 0 {
             // The live fetch corrected the PR number — drop the stale thread so
             // the re-fetch (below) replaces it rather than serving the old PR.
-            self.preview_cache
-                .remove(&(row_id.clone(), PreviewMode::Comments));
+            evict_preview(&self.preview_cache, &row_id, PreviewMode::Comments);
         }
         super::prs::spawn_worktree_comments_fetch(
             &self.orchestrator,
@@ -587,8 +586,7 @@ impl PickerProgressHandler for PickerHandler {
             // Drop the memoized `pr` pane for this row so the next `preview()`
             // re-renders from the status just mirrored — see
             // `PickerRow::render_pr_pane_cached`.
-            self.preview_cache
-                .remove(&(row_id.clone(), PreviewMode::Pr));
+            evict_preview(&self.preview_cache, &row_id, PreviewMode::Pr);
         }
         // Mirror the row's live diff-content signals so the `working_tree` /
         // `branch_diff` / `upstream` tabs dim once their diff is known empty.
@@ -671,6 +669,7 @@ impl PickerProgressHandler for PickerHandler {
 
 #[cfg(test)]
 mod tests {
+    use super::super::items::preview_cache_key;
     use super::*;
     use crate::commands::list::model::{ListItem, WorktreeData};
     use worktrunk::testing::TestRepo;
@@ -1015,7 +1014,7 @@ mod tests {
             handler
                 .orchestrator
                 .notifier()
-                .note_awaiting(&branch_key("feature"), mode)
+                .note_awaiting(&preview_cache_key(branch_key("feature"), mode, 80))
         };
 
         // Cursor on `feature`'s `pr` tab (still loading). The CI fetch lands as a
@@ -1084,7 +1083,7 @@ mod tests {
         handler
             .orchestrator
             .notifier()
-            .note_awaiting(&branch_key("other"), PreviewMode::Pr);
+            .note_awaiting(&preview_cache_key(branch_key("other"), PreviewMode::Pr, 80));
         handler.on_update(0, "r".into(), &no_pr());
         assert_eq!(
             run_previews(&mut render_rx),
@@ -1131,7 +1130,7 @@ mod tests {
             }));
             item
         };
-        let key = (branch_key("feature"), PreviewMode::Comments);
+        let key = preview_cache_key(branch_key("feature"), PreviewMode::Comments, 80);
 
         // First the row resolves to PR #41 → its comments fetch fires and caches.
         handler.on_update(0, "r".into(), &with_pr(41));
@@ -1213,7 +1212,7 @@ mod tests {
             }));
             item
         };
-        let key = (branch_key("feature"), PreviewMode::Comments);
+        let key = preview_cache_key(branch_key("feature"), PreviewMode::Comments, 80);
 
         // Expired prime → skipped: no comments fetch, cache stays empty. (The
         // prime also must not consume the dedup slot, or the live update below
@@ -1654,7 +1653,7 @@ mod tests {
 
         // Static Summary hint primed for every item at skeleton time.
         for branch in ["alpha", "beta", "gamma"] {
-            let key = (branch_key(branch), PreviewMode::Summary);
+            let key = preview_cache_key(branch_key(branch), PreviewMode::Summary, 80);
             let hint = handler.preview_cache.get(&key).unwrap_or_else(|| {
                 panic!("Summary hint should be filled for {branch} at skeleton time")
             });
@@ -1674,9 +1673,11 @@ mod tests {
             PreviewMode::UpstreamDiff,
         ] {
             assert!(
-                handler
-                    .preview_cache
-                    .contains_key(&(branch_key("alpha"), mode)),
+                handler.preview_cache.contains_key(&preview_cache_key(
+                    branch_key("alpha"),
+                    mode,
+                    80
+                )),
                 "first item should have {mode:?} cached after on_skeleton"
             );
         }
@@ -1684,9 +1685,11 @@ mod tests {
         // Branch-only items 1..N: UnifiedDiff cached at skeleton time.
         for branch in ["beta", "gamma"] {
             assert!(
-                handler
-                    .preview_cache
-                    .contains_key(&(branch_key(branch), PreviewMode::UnifiedDiff)),
+                handler.preview_cache.contains_key(&preview_cache_key(
+                    branch_key(branch),
+                    PreviewMode::UnifiedDiff,
+                    80
+                )),
                 "{branch}.UnifiedDiff should be cached after on_skeleton (initial tier)"
             );
         }
@@ -1700,9 +1703,11 @@ mod tests {
                 PreviewMode::UpstreamDiff,
             ] {
                 assert!(
-                    !handler
-                        .preview_cache
-                        .contains_key(&(branch_key(branch), mode)),
+                    !handler.preview_cache.contains_key(&preview_cache_key(
+                        branch_key(branch),
+                        mode,
+                        80
+                    )),
                     "{branch}.{mode:?} should remain demand-loaded"
                 );
             }
@@ -1721,9 +1726,11 @@ mod tests {
                 PreviewMode::UpstreamDiff,
             ] {
                 assert!(
-                    !handler
-                        .preview_cache
-                        .contains_key(&(branch_key(branch), mode)),
+                    !handler.preview_cache.contains_key(&preview_cache_key(
+                        branch_key(branch),
+                        mode,
+                        80
+                    )),
                     "{branch}.{mode:?} should remain demand-loaded after collection"
                 );
             }
@@ -1766,9 +1773,11 @@ mod tests {
             PreviewMode::Summary,
         ] {
             assert!(
-                handler
-                    .preview_cache
-                    .contains_key(&(branch_key("solo"), mode)),
+                handler.preview_cache.contains_key(&preview_cache_key(
+                    branch_key("solo"),
+                    mode,
+                    80
+                )),
                 "first-item phase should have cached {mode:?}"
             );
         }
@@ -1883,7 +1892,7 @@ mod tests {
 
         // A refresh supersedes this handler; the live spawn fetches the thread.
         handler.orchestrator.refresh(test.repo.clone());
-        let key = (row_id.clone(), PreviewMode::Comments);
+        let key = preview_cache_key(row_id.clone(), PreviewMode::Comments, 80);
         PreviewOrchestrator::fill(
             &handler.orchestrator.cache,
             handler.orchestrator.notifier(),

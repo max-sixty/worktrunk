@@ -9,15 +9,20 @@
 //!
 //! # Two tiers
 //!
-//! **In-memory** — [`PreviewCache`], an `Arc<DashMap<(row-key, mode), String>>`.
+//! **In-memory** — [`PreviewCache`], an `Arc<DashMap<(row-key, mode, width), String>>`.
 //! The only *cache tier* `SkimItem::preview` reads (a lock-free `get`; it never
 //! touches disk) — a miss renders a loading placeholder. (`preview()` also reads
 //! the row's live `pr_status` / `local_content` slots for tab availability and
 //! the Pr/Comments panes, but those aren't cache reads.) Session-scoped, and
 //! **shared across every
-//! `alt-r` spawn** (the one `Arc` is reused). The key is `(row-key, mode)`,
-//! where row-key is a canonical Git item identity for a local row or a
+//! `alt-r` spawn** (the one `Arc` is reused). The key is `(row-key, mode,
+//! width)`, where row-key is a canonical Git item identity for a local row or a
 //! structured PR/MR reference for a `--prs` row — with **no content hash**.
+//! Width is the pane's text width for content laid out to it, so a terminal
+//! resize misses and recomputes at the new width; Summary and the forge-fetched
+//! panes key without one (see [`super::items::preview_cache_key`]). skim re-runs
+//! the preview on a resize before it records the new pane width, so the
+//! re-render arrives with the next preview run (a keystroke), not the resize.
 //! Two consequences: every mode shares one key shape (a `--prs` row's forge
 //! fetches and a worktree row's git diffs coexist), and a `git fetch` or new
 //! commit that moves a branch does *not* invalidate the entry — the key is
@@ -52,7 +57,7 @@
 //! # Invalidation
 //!
 //! - **Pr / Comments** self-invalidate on the CI path: `on_update` drops the
-//!   `(branch, Pr)` entry when a row's live status changes, `--prs` rows drop
+//!   row's `Pr` entries (at every width) when its live status changes, `--prs` rows drop
 //!   theirs on rebuild, and a corrected PR number drops the stale `Comments`
 //!   thread (see [`super::progressive_handler`]).
 //! - **UnifiedDiff / WorkingTree / Log / BranchDiff / UpstreamDiff / Summary**
@@ -157,7 +162,7 @@ use skim::prelude::Event;
 use tokio::sync::mpsc::Sender;
 use worktrunk::git::Repository;
 
-use super::items::{PickerRow, PickerRowId, PreviewCache, PreviewCacheKey};
+use super::items::{PickerRow, PickerRowId, PreviewCache, PreviewCacheKey, preview_cache_key};
 use super::preview::{LOCAL_GIT_MODES, PreviewMode};
 use super::preview_notify::PreviewNotifier;
 use super::summary;
@@ -443,11 +448,11 @@ impl PreviewOrchestrator {
         if !req.spawn_gen.is_current() {
             return;
         }
-        let key = (PickerRowId::local(&req.item), req.mode);
+        let (w, h) = req.dims;
+        let key = preview_cache_key(PickerRowId::local(&req.item), req.mode, w);
         if cache.contains_key(&key) {
             return;
         }
-        let (w, h) = req.dims;
         let computed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             PickerRow::compute_and_page_preview(repo, &req.item, req.mode, w, h)
         }));
@@ -558,7 +563,7 @@ impl PreviewOrchestrator {
             if !spawn_gen.is_current() {
                 return;
             }
-            let cache_key = (PickerRowId::local(&item), mode);
+            let cache_key = preview_cache_key(PickerRowId::local(&item), mode, w);
             if cache.contains_key(&cache_key) {
                 return;
             }
@@ -615,7 +620,7 @@ impl PreviewOrchestrator {
                     &cache,
                     &notifier,
                     &spawn_gen,
-                    (PickerRowId::local(&item), PreviewMode::Log),
+                    preview_cache_key(PickerRowId::local(&item), PreviewMode::Log, w),
                     rendered,
                 );
             }
@@ -642,7 +647,8 @@ impl PreviewOrchestrator {
                 &cache,
                 &notifier,
                 &spawn_gen,
-                (PickerRowId::local(&item), PreviewMode::Summary),
+                // Stored raw and wrapped at display time, so no width.
+                (PickerRowId::local(&item), PreviewMode::Summary, None),
                 summary,
             );
         });
@@ -767,7 +773,7 @@ impl PreviewOrchestrator {
     pub(super) fn seed_summary_hints(&self, items: &[Arc<ListItem>], hint: &str) {
         for item in items {
             self.cache.insert(
-                (PickerRowId::local(item), PreviewMode::Summary),
+                (PickerRowId::local(item), PreviewMode::Summary, None),
                 hint.to_string(),
             );
         }
@@ -818,7 +824,7 @@ impl PreviewOrchestrator {
             .cache
             .iter()
             .map(|e| {
-                let (row, mode) = e.key();
+                let (row, mode, _) = e.key();
                 (
                     row.to_string(),
                     *mode as u8,
@@ -886,6 +892,56 @@ mod tests {
         PickerRowId::change_request(crate::commands::list::ci_status::PrRef::pr(number))
     }
 
+    #[test]
+    fn cache_key_carries_width_only_for_panes_that_can_rerender() {
+        // A local pane laid out to the width keys on it, so a resize misses and
+        // recomputes instead of showing the startup wrapping.
+        for mode in [PreviewMode::UnifiedDiff, PreviewMode::Log, PreviewMode::Pr] {
+            assert_ne!(
+                preview_cache_key(branch_key("a"), mode, 58),
+                preview_cache_key(branch_key("a"), mode, 99),
+                "{mode:?} keys on width"
+            );
+        }
+        // Summaries wrap at display time and forge fetches run once, so a
+        // resize keeps reading the one entry rather than a placeholder.
+        for (row, mode) in [
+            (branch_key("a"), PreviewMode::Summary),
+            (branch_key("a"), PreviewMode::Comments),
+            (pr_key(7), PreviewMode::Comments),
+            (pr_key(7), PreviewMode::Log),
+        ] {
+            assert_eq!(
+                preview_cache_key(row.clone(), mode, 58),
+                preview_cache_key(row, mode, 99),
+                "{mode:?} ignores width"
+            );
+        }
+    }
+
+    #[test]
+    fn evict_preview_drops_every_width_of_one_pane() {
+        let cache: PreviewCache = Arc::new(DashMap::new());
+        for width in [58, 99] {
+            cache.insert(
+                preview_cache_key(branch_key("a"), PreviewMode::Pr, width),
+                "pr".into(),
+            );
+        }
+        let kept = [
+            preview_cache_key(branch_key("a"), PreviewMode::Log, 58),
+            preview_cache_key(branch_key("b"), PreviewMode::Pr, 58),
+        ];
+        for key in &kept {
+            cache.insert(key.clone(), "kept".into());
+        }
+
+        super::super::items::evict_preview(&cache, &branch_key("a"), PreviewMode::Pr);
+
+        assert_eq!(cache.len(), kept.len());
+        assert!(kept.iter().all(|key| cache.contains_key(key)));
+    }
+
     fn dirty_worktree_item() -> (TestRepo, Arc<ListItem>) {
         let t = TestRepo::new();
         fs::write(t.path().join("README.md"), "# Project\n").unwrap();
@@ -942,8 +998,8 @@ mod tests {
         orch.wait_for_idle();
 
         let row_id = item_key(&item);
-        let wt_key = (row_id.clone(), PreviewMode::WorkingTree);
-        let log_key = (row_id, PreviewMode::Log);
+        let wt_key = preview_cache_key(row_id.clone(), PreviewMode::WorkingTree, 80);
+        let log_key = preview_cache_key(row_id, PreviewMode::Log, 80);
         assert!(
             orch.cache.contains_key(&wt_key),
             "WorkingTree preview not cached"
@@ -1004,12 +1060,12 @@ mod tests {
 
         let clean_preview = orch
             .cache
-            .get(&(clean_key, PreviewMode::UnifiedDiff))
+            .get(&preview_cache_key(clean_key, PreviewMode::UnifiedDiff, 80))
             .expect("clean preview cached")
             .clone();
         let dirty_preview = orch
             .cache
-            .get(&(dirty_key, PreviewMode::UnifiedDiff))
+            .get(&preview_cache_key(dirty_key, PreviewMode::UnifiedDiff, 80))
             .expect("dirty preview cached")
             .clone();
         assert!(
@@ -1034,7 +1090,7 @@ mod tests {
             (80, 24),
         );
         orch.wait_for_idle();
-        let key = (item_key(&item), PreviewMode::WorkingTree);
+        let key = preview_cache_key(item_key(&item), PreviewMode::WorkingTree, 80);
         let first = orch.cache.get(&key).unwrap().value().clone();
 
         // Second spawn should hit `contains_key` and skip.
@@ -1067,8 +1123,11 @@ mod tests {
         orch.wait_for_idle();
 
         assert!(
-            orch.cache
-                .contains_key(&(item_key(&item), PreviewMode::Summary)),
+            orch.cache.contains_key(&preview_cache_key(
+                item_key(&item),
+                PreviewMode::Summary,
+                80
+            )),
             "Summary entry not cached"
         );
     }
@@ -1113,7 +1172,7 @@ mod tests {
 
         let in_memory = orch
             .cache
-            .get(&(item_key(&item), PreviewMode::Log))
+            .get(&preview_cache_key(item_key(&item), PreviewMode::Log, 80))
             .expect("in-memory entry present")
             .clone();
         assert!(
@@ -1166,13 +1225,15 @@ mod tests {
         let orch = orch_for(&t);
 
         // A populated value lands in the cache under its key.
-        orch.spawn_compute(&orch.generation(), (pr_key(7), PreviewMode::Log), |_| {
-            Some("commit list".to_string())
-        });
+        orch.spawn_compute(
+            &orch.generation(),
+            preview_cache_key(pr_key(7), PreviewMode::Log, 80),
+            |_| Some("commit list".to_string()),
+        );
         orch.wait_for_idle();
         assert_eq!(
             orch.cache
-                .get(&(pr_key(7), PreviewMode::Log))
+                .get(&preview_cache_key(pr_key(7), PreviewMode::Log, 80))
                 .map(|v| v.clone()),
             Some("commit list".to_string())
         );
@@ -1180,29 +1241,39 @@ mod tests {
         // A second spawn for the same key short-circuits on `contains_key`, so
         // the original value survives even though this closure would overwrite.
         let replacement = Some("REPLACED".to_string());
-        let duplicate_key = (pr_key(7), PreviewMode::Log);
+        let duplicate_key = preview_cache_key(pr_key(7), PreviewMode::Log, 80);
         orch.spawn_compute(&orch.generation(), duplicate_key, move |_| replacement);
         orch.wait_for_idle();
         assert_eq!(
             orch.cache
-                .get(&(pr_key(7), PreviewMode::Log))
+                .get(&preview_cache_key(pr_key(7), PreviewMode::Log, 80))
                 .map(|v| v.clone()),
             Some("commit list".to_string()),
             "duplicate key short-circuits"
         );
 
         // `None` (forge failure) and `Some("")` both leave the slot empty.
-        orch.spawn_compute(&orch.generation(), (pr_key(9), PreviewMode::Log), |_| None);
-        orch.spawn_compute(&orch.generation(), (pr_key(8), PreviewMode::Log), |_| {
-            Some(String::new())
-        });
+        orch.spawn_compute(
+            &orch.generation(),
+            preview_cache_key(pr_key(9), PreviewMode::Log, 80),
+            |_| None,
+        );
+        orch.spawn_compute(
+            &orch.generation(),
+            preview_cache_key(pr_key(8), PreviewMode::Log, 80),
+            |_| Some(String::new()),
+        );
         orch.wait_for_idle();
         assert!(
-            !orch.cache.contains_key(&(pr_key(9), PreviewMode::Log)),
+            !orch
+                .cache
+                .contains_key(&preview_cache_key(pr_key(9), PreviewMode::Log, 80)),
             "None is not cached"
         );
         assert!(
-            !orch.cache.contains_key(&(pr_key(8), PreviewMode::Log)),
+            !orch
+                .cache
+                .contains_key(&preview_cache_key(pr_key(8), PreviewMode::Log, 80)),
             "empty string is not cached"
         );
     }
@@ -1261,8 +1332,10 @@ mod tests {
         drop(row.preview(ctx));
 
         // The demand worker fills the key with the real diff. Bounded poll so
-        // a dead worker fails instead of hanging the suite.
-        let key = (row_id, PreviewMode::UnifiedDiff);
+        // a dead worker fails instead of hanging the suite. The key carries the
+        // text width the 80-column pane leaves once its border is taken.
+        let width = super::super::preview::PreviewStateData::text_width(80);
+        let key = preview_cache_key(row_id, PreviewMode::UnifiedDiff, width);
         let deadline = std::time::Instant::now() + Duration::from_secs(60);
         while !orch.cache.contains_key(&key) {
             assert!(
@@ -1302,14 +1375,19 @@ mod tests {
         orch.wait_for_idle();
 
         assert!(
-            !orch
-                .cache
-                .contains_key(&(item_key(&offscreen), PreviewMode::UnifiedDiff)),
+            !orch.cache.contains_key(&preview_cache_key(
+                item_key(&offscreen),
+                PreviewMode::UnifiedDiff,
+                80
+            )),
             "off-screen worktree should wait for selected-row demand"
         );
         assert!(
-            orch.cache
-                .contains_key(&(item_key(&branch), PreviewMode::UnifiedDiff)),
+            orch.cache.contains_key(&preview_cache_key(
+                item_key(&branch),
+                PreviewMode::UnifiedDiff,
+                80
+            )),
             "branch-only default should be prewarmed from the committed diff"
         );
     }
@@ -1322,7 +1400,7 @@ mod tests {
         let (t, item) = dirty_worktree_item();
         let orch = orch_for(&t);
         let row_id = item_key(&item);
-        let key = (row_id.clone(), PreviewMode::WorkingTree);
+        let key = preview_cache_key(row_id.clone(), PreviewMode::WorkingTree, 80);
         PreviewOrchestrator::fill(
             &orch.cache,
             orch.notifier(),
@@ -1375,7 +1453,9 @@ mod tests {
         );
 
         assert!(
-            !orch.cache.contains_key(&(row_id, PreviewMode::Pr)),
+            !orch
+                .cache
+                .contains_key(&preview_cache_key(row_id, PreviewMode::Pr, 80)),
             "a panicked compute fills nothing"
         );
     }
@@ -1413,7 +1493,7 @@ mod tests {
 
         let in_memory = orch
             .cache
-            .get(&(row_id, PreviewMode::Log))
+            .get(&preview_cache_key(row_id, PreviewMode::Log, 80))
             .expect("in-memory entry present")
             .clone();
         assert!(
@@ -1445,9 +1525,11 @@ mod tests {
             (80, 24),
         );
         orch.spawn_summary(&stale, Arc::clone(&item), "/bin/cat".to_string());
-        orch.spawn_compute(&stale, (pr_key(1), PreviewMode::Log), |_| {
-            Some("stale".to_string())
-        });
+        orch.spawn_compute(
+            &stale,
+            preview_cache_key(pr_key(1), PreviewMode::Log, 80),
+            |_| Some("stale".to_string()),
+        );
         PreviewOrchestrator::spawn_log_refresh(
             &orch.cache,
             orch.notifier(),
@@ -1464,7 +1546,7 @@ mod tests {
             &orch.cache,
             orch.notifier(),
             &stale,
-            (row_id.clone(), PreviewMode::WorkingTree),
+            preview_cache_key(row_id.clone(), PreviewMode::WorkingTree, 80),
             "stale".to_string(),
         );
         assert!(
@@ -1480,7 +1562,8 @@ mod tests {
         );
         orch.wait_for_idle();
         assert!(
-            orch.cache.contains_key(&(row_id, PreviewMode::WorkingTree)),
+            orch.cache
+                .contains_key(&preview_cache_key(row_id, PreviewMode::WorkingTree, 80)),
             "the live spawn's fill lands"
         );
     }
@@ -1599,15 +1682,18 @@ mod tests {
 
         // The selected row is showing main's working-tree diff (a cache miss, so
         // it's awaiting that key).
-        orch.notifier()
-            .note_awaiting(&main, PreviewMode::WorkingTree);
+        orch.notifier().note_awaiting(&preview_cache_key(
+            main.clone(),
+            PreviewMode::WorkingTree,
+            80,
+        ));
 
         // The awaited compute lands → skim is poked to repaint.
         PreviewOrchestrator::fill(
             &orch.cache,
             orch.notifier(),
             &orch.generation(),
-            (main.clone(), PreviewMode::WorkingTree),
+            preview_cache_key(main.clone(), PreviewMode::WorkingTree, 80),
             "diff".to_string(),
         );
         assert!(
@@ -1620,14 +1706,14 @@ mod tests {
             &orch.cache,
             orch.notifier(),
             &orch.generation(),
-            (feature, PreviewMode::WorkingTree),
+            preview_cache_key(feature, PreviewMode::WorkingTree, 80),
             "x".to_string(),
         );
         PreviewOrchestrator::fill(
             &orch.cache,
             orch.notifier(),
             &orch.generation(),
-            (main, PreviewMode::Log),
+            preview_cache_key(main, PreviewMode::Log, 80),
             "y".to_string(),
         );
         assert!(
@@ -1641,11 +1727,13 @@ mod tests {
         let t = TestRepo::new();
         let orch = orch_for(&t);
         orch.cache.insert(
-            (branch_key("branch-a"), PreviewMode::WorkingTree),
+            preview_cache_key(branch_key("branch-a"), PreviewMode::WorkingTree, 80),
             "x".to_string(),
         );
-        orch.cache
-            .insert((branch_key("branch-b"), PreviewMode::Log), "xy".to_string());
+        orch.cache.insert(
+            preview_cache_key(branch_key("branch-b"), PreviewMode::Log, 80),
+            "xy".to_string(),
+        );
         // Structural assertion — future field additions shouldn't flake the test.
         let entries = orch.cache_entries_json();
         let entries = entries.as_array().expect("entries array");

@@ -3,5 +3,5 @@ source: tests/integration_tests/switch_picker.rs
 expression: list
 ---
 >
-    Branch  Status       @±        ^↕        ^…±     Remote
+    Branch  Status       @±        ^↕        ^…±     Remote⇅
 > @ main        ^

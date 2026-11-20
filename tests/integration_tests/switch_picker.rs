@@ -109,12 +109,13 @@ fn repo() -> TestRepo {
 }
 
 /// Columns that split the list and preview panels in the 120-col test terminal.
-/// skim 4.x draws the │ separator at col 59, with the list to its left (cols
-/// 0..59) and the preview interior to its right (cols 60..120). Slicing around
-/// col 59 drops the separator from both panels — the border glyph renders
-/// inconsistently across platforms.
-const LIST_WIDTH: u16 = 59;
-const PREVIEW_START_COL: u16 = 60;
+/// skim splits a 119-column viewport for the `right:50%` preview, drawing the │
+/// separator at col 60, with the list to its left (cols 0..60) and the preview
+/// interior to its right (cols 61..119). Slicing around col 60 drops the
+/// separator from both panels — the border glyph renders inconsistently across
+/// platforms.
+const LIST_WIDTH: u16 = 60;
+const PREVIEW_START_COL: u16 = 61;
 
 /// Full screen content as rows of text.
 ///
@@ -2720,4 +2721,78 @@ fn test_switch_picker_cursor_wait_recovers_under_filter(mut repo: TestRepo) {
     send_input_awaiting_content(&writer, &rx, &mut parser, ARROW_DOWN, Some(first));
     assert!(cursor_points_at(&parser.screen().contents(), first));
     assert_valid_abort_exit_code(abort_and_exit_code(child, writer, rx));
+}
+
+/// Column of the list/preview separator, read from the screen grid rather than
+/// fixed constants so it follows the terminal when the test resizes it. Located
+/// as the column before the preview's `1: diff` tab header, since the │ border
+/// glyph itself renders inconsistently across platforms.
+fn separator_col(screen: &vt100::Screen) -> Option<u16> {
+    const HEADER: &str = "1: diff";
+    let (rows, cols) = screen.size();
+    // A blank cell skim skipped over with a cursor move reads as empty, not " ".
+    let header_at = |row: u16, start: u16| {
+        HEADER.chars().zip(start..).all(|(ch, col)| {
+            screen
+                .cell(row, col)
+                .is_some_and(|cell| match cell.contents() {
+                    "" => ch == ' ',
+                    text => text.chars().eq([ch]),
+                })
+        })
+    };
+    (0..rows.get()).find_map(|row| {
+        (1..cols.get())
+            .find(|&col| header_at(row, col))
+            .map(|col| col - 1)
+    })
+}
+
+/// A terminal resized after the picker opens keeps the 50/50 split. The picker
+/// hands skim an absolute `right:N` window sized from the startup width, so a
+/// floating pane whose pty grows after launch shows a narrow preview beside a
+/// wide list (#4793).
+#[rstest]
+fn test_switch_picker_preview_split_follows_terminal_resize(repo: TestRepo) {
+    let env_vars = repo.test_env_vars();
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+    );
+    let before = separator_col(parser.screen()).expect("startup split");
+
+    const WIDE_COLS: u16 = 200;
+    _master
+        .resize(portable_pty::PtySize {
+            rows: TERM_ROWS,
+            cols: WIDE_COLS,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .unwrap();
+    parser.screen_mut().set_size(
+        NonZeroU16::new(TERM_ROWS).unwrap(),
+        NonZeroU16::new(WIDE_COLS).unwrap(),
+    );
+    wait_for_stable(&rx, &mut parser);
+    let after = separator_col(parser.screen()).expect("split after resize");
+    let exit_code = abort_and_exit_code(child, writer, rx);
+    assert_valid_abort_exit_code(exit_code);
+
+    assert!(
+        before.abs_diff(TERM_COLS / 2) <= 1,
+        "startup split near the middle, got column {before}"
+    );
+    assert!(
+        after.abs_diff(WIDE_COLS / 2) <= 1,
+        "the split must stay in the middle after a resize, got column {after}"
+    );
 }

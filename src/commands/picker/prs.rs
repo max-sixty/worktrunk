@@ -60,6 +60,7 @@ use super::super::list::columns::ColumnKind;
 use super::super::list::layout::ColumnGrid;
 use super::items::{
     PickerRow, PickerRowId, PickerRowSubject, PreviewCache, RowShortcutData, RowUrl, ShortcutTable,
+    evict_preview, preview_cache_key,
 };
 use super::pr_pane;
 use super::preview::PreviewMode;
@@ -444,7 +445,7 @@ fn listed_pr_row(
 ) -> PickerRow {
     let output_token = entry.output_token();
     let row_id = PickerRowId::change_request(entry.pr_ref());
-    preview_cache.remove(&(row_id.clone(), PreviewMode::Pr));
+    evict_preview(&preview_cache, &row_id, PreviewMode::Pr);
     // The display line is built once and never mutated (a `--prs` row has no
     // live list pipeline behind it).
     let rendered = match grid {
@@ -497,7 +498,8 @@ fn spawn_pr_previews(
     let (width, height) = preview_dims;
     let head_oid = entry.head_oid.clone();
     let head_branch = entry.head_branch.clone();
-    orchestrator.spawn_compute(spawn_gen, (row_id.clone(), PreviewMode::Log), move |repo| {
+    let log_key = preview_cache_key(row_id.clone(), PreviewMode::Log, width);
+    orchestrator.spawn_compute(spawn_gen, log_key, move |repo| {
         Some(
             compute_pr_log(
                 repo,
@@ -549,7 +551,8 @@ fn spawn_comments_fetch(
     updated_at: Option<String>,
     width: usize,
 ) {
-    orchestrator.spawn_compute(spawn_gen, (row_id, PreviewMode::Comments), move |repo| {
+    let key = preview_cache_key(row_id, PreviewMode::Comments, width);
+    orchestrator.spawn_compute(spawn_gen, key, move |repo| {
         let Some(kind) = resolve_kind(repo) else {
             return Some(comments_unsupported_forge_pane());
         };
@@ -1880,7 +1883,7 @@ mod tests {
 
         let pane = orchestrator
             .cache
-            .get(&(row_id, PreviewMode::Comments))
+            .get(&preview_cache_key(row_id, PreviewMode::Comments, 80))
             .expect("supported forge fills the row-keyed comments cache");
         assert!(pane.contains("Canonical identity"));
     }
@@ -2035,14 +2038,17 @@ mod tests {
         let cache: PreviewCache = Arc::new(DashMap::new());
         let pr = pr_item_with_cache(entry(RefType::Pr, 42, "t"), 120, None, Arc::clone(&cache));
 
-        let miss = pr.cached_or_loading(PreviewMode::Log);
+        let miss = pr.cached_or_loading(PreviewMode::Log, 80);
         assert!(miss.contains("Loading commit log"), "miss: {miss:?}");
 
         cache.insert(
-            (pr.preview_key(), PreviewMode::Log),
+            preview_cache_key(pr.preview_key(), PreviewMode::Log, 80),
             "abc12345  Fix it\n".to_string(),
         );
-        assert_eq!(pr.cached_or_loading(PreviewMode::Log), "abc12345  Fix it\n");
+        assert_eq!(
+            pr.cached_or_loading(PreviewMode::Log, 80),
+            "abc12345  Fix it\n"
+        );
     }
 
     #[test]
@@ -2187,15 +2193,15 @@ mod tests {
         let cache: PreviewCache = Arc::new(DashMap::new());
         let pr = pr_item_with_cache(entry(RefType::Mr, 7, "t"), 120, None, Arc::clone(&cache));
 
-        let miss = pr.cached_or_loading(PreviewMode::Comments);
+        let miss = pr.cached_or_loading(PreviewMode::Comments, 80);
         assert!(miss.contains("Loading comments"), "miss: {miss:?}");
 
         cache.insert(
-            (pr.preview_key(), PreviewMode::Comments),
+            preview_cache_key(pr.preview_key(), PreviewMode::Comments, 80),
             "rendered thread".to_string(),
         );
         assert_eq!(
-            pr.cached_or_loading(PreviewMode::Comments),
+            pr.cached_or_loading(PreviewMode::Comments, 80),
             "rendered thread"
         );
     }
