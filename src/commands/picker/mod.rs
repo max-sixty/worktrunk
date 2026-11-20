@@ -3636,6 +3636,7 @@ pub mod tests {
                 "ghost-branch".to_string(),
             )),
             PreviewMode::WorkingTree,
+            Some(80),
         );
 
         // Initial spawn (`false`) preserves warm previews.

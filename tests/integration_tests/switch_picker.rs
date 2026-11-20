@@ -109,12 +109,13 @@ fn repo() -> TestRepo {
 }
 
 /// Columns that split the list and preview panels in the 120-col test terminal.
-/// skim 4.x draws the │ separator at col 59, with the list to its left (cols
-/// 0..59) and the preview interior to its right (cols 60..120). Slicing around
-/// col 59 drops the separator from both panels — the border glyph renders
-/// inconsistently across platforms.
-const LIST_WIDTH: u16 = 59;
-const PREVIEW_START_COL: u16 = 60;
+/// skim splits a 119-column viewport for the `right:50%` preview, drawing the │
+/// separator at col 60, with the list to its left (cols 0..60) and the preview
+/// interior to its right (cols 61..119). Slicing around col 60 drops the
+/// separator from both panels — the border glyph renders inconsistently across
+/// platforms.
+const LIST_WIDTH: u16 = 60;
+const PREVIEW_START_COL: u16 = 61;
 
 /// Full screen content as rows of text.
 ///

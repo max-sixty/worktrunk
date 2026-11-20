@@ -3,7 +3,9 @@
 //! Tracks the active preview tab (in process memory) and selects the preview
 //! layout for the interactive selector.
 
-use std::sync::atomic::{AtomicI8, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI8, AtomicU8, Ordering};
+
+use ratatui::layout::{Constraint, Layout, Rect};
 
 /// Preview modes for the interactive selector
 ///
@@ -106,18 +108,32 @@ pub(super) const MIN_PREVIEW_LINES: usize = 5;
 /// Minimum list rows to keep selectable even on a short terminal.
 pub(super) const MIN_VISIBLE_ITEMS: usize = 3;
 
-/// Preview width as percentage of terminal width (for Right layout).
-const PREVIEW_WIDTH_PERCENT: usize = 50;
-
-/// The column skim leaves unpainted at the right edge of a preview pane.
+/// Preview width as a percentage of skim's viewport (for Right layout).
 ///
-/// Measured in both layouts: a `right:N` window paints N-1 columns, and a
-/// `down:` pane paints one fewer than the terminal is wide. Render to the full
+/// Passed to skim as `right:50%` rather than an absolute column count, so the
+/// split follows a terminal resize instead of keeping the startup width.
+const PREVIEW_WIDTH_PERCENT: u16 = 50;
+
+/// Columns skim's startup viewport leaves off the right of the terminal.
+///
+/// A non-fullscreen skim (`height("90%")`) builds its fixed viewport one column
+/// narrower than the terminal (`Tui::new_with_height` in skim 5.9's
+/// `src/tui/backend.rs`), and both layouts split that viewport, not the
+/// terminal. After a resize skim sizes the viewport to the full new width, which
+/// is why the live pane width comes from skim (`PreviewContext::width`, via
+/// [`PreviewLayout::text_width`]) rather than from this startup arithmetic.
+const SKIM_VIEWPORT_RESERVED_COLS: usize = 1;
+
+/// Columns of a Right preview pane taken by its border rather than text.
+///
+/// skim draws the list/preview separator as the pane's left border, inside the
+/// width it reports as `PreviewContext::width`. Render to the full reported
 /// width and the last column is dropped — silently, and only on the lines long
 /// enough to reach it, which for wrapped prose is whichever line happens to
 /// break flush against the edge, so the loss is a missing letter mid-sentence
-/// rather than anything that looks like clipping.
-const PREVIEW_RESERVED_COLS: usize = 1;
+/// rather than anything that looks like clipping. A Down pane's border is a row,
+/// so it spends no columns.
+const PREVIEW_BORDER_COLS: usize = 1;
 
 /// Minimum terminal columns for side-by-side (Right) layout.
 ///
@@ -208,12 +224,38 @@ impl PreviewLayout {
     }
 
     /// Format the skim preview-window spec from already-computed dimensions.
-    /// Right positions the preview by width, Down by height.
-    pub(super) fn spec_for(self, (width, height): (usize, usize)) -> String {
+    /// Right asks for a share of the width, so skim re-splits on a resize; Down
+    /// positions the preview by height.
+    pub(super) fn spec_for(self, (_width, height): (usize, usize)) -> String {
         match self {
-            Self::Right => format!("right:{}", width + PREVIEW_RESERVED_COLS),
+            Self::Right => format!("right:{PREVIEW_WIDTH_PERCENT}%"),
             Self::Down => format!("down:{height}"),
         }
+    }
+
+    /// The text width of a preview pane skim reports as `pane_cols` wide
+    /// (`PreviewContext::width`): what renderers wrap to, and the width the
+    /// in-memory preview cache keys on. Right gives up its border column.
+    pub(super) fn text_width(self, pane_cols: usize) -> usize {
+        match self {
+            Self::Right => pane_cols.saturating_sub(PREVIEW_BORDER_COLS),
+            Self::Down => pane_cols,
+        }
+    }
+
+    /// The width skim gives a `right:50%` pane in a viewport `viewport_cols`
+    /// wide, border included. skim splits its area with ratatui
+    /// (`[Fill(1), Percentage(50)]`, `size_to_constraint` in skim 5.9's
+    /// `src/tui/layout.rs`), so this asks ratatui the same question rather than
+    /// re-deriving its rounding.
+    fn right_pane_cols(viewport_cols: usize) -> usize {
+        let viewport = u16::try_from(viewport_cols).unwrap_or(u16::MAX);
+        let [_, pane] = Layout::horizontal([
+            Constraint::Fill(1),
+            Constraint::Percentage(PREVIEW_WIDTH_PERCENT),
+        ])
+        .areas(Rect::new(0, 0, viewport, 1));
+        usize::from(pane.width)
     }
 
     /// Compute preview dimensions (width, height) in characters for a terminal
@@ -222,9 +264,10 @@ impl PreviewLayout {
     /// `spec_for`) and background pre-computation. Pure, so it's testable
     /// without a live TTY.
     ///
-    /// The width is the pane's *text* width, which is what every renderer
-    /// wants; `spec_for` adds [`PREVIEW_RESERVED_COLS`] back when it asks skim
-    /// for the Right window, and Down's spec carries only a height.
+    /// The width is the pane's *text* width at startup, which is what every
+    /// renderer wants and what [`Self::text_width`] derives from the width skim
+    /// reports for the same pane, so precomputed and on-demand previews share
+    /// cache entries.
     ///
     /// Right keeps a fixed 50%/90% split independent of `num_items`. Down lets
     /// the list grow to `max_visible_items(available)` rows (half of skim's
@@ -238,13 +281,14 @@ impl PreviewLayout {
     ) -> (usize, usize) {
         match self {
             Self::Right => {
-                let width = (term_width * PREVIEW_WIDTH_PERCENT / 100)
-                    .saturating_sub(PREVIEW_RESERVED_COLS);
+                let viewport = term_width.saturating_sub(SKIM_VIEWPORT_RESERVED_COLS);
+                let width = self.text_width(Self::right_pane_cols(viewport));
                 let height = available_height(term_height);
                 (width, height)
             }
             Self::Down => {
-                let width = term_width.saturating_sub(PREVIEW_RESERVED_COLS);
+                let viewport = term_width.saturating_sub(SKIM_VIEWPORT_RESERVED_COLS);
+                let width = self.text_width(viewport);
                 let available = available_height(term_height);
                 let list_lines = LIST_CHROME_LINES + num_items.min(max_visible_items(available));
                 let remaining = available.saturating_sub(list_lines);
@@ -276,6 +320,10 @@ static PREVIEW_SELECTION: AtomicU8 = AtomicU8::new(0);
 /// A Tab keypress is resolved by the selected row when `RunPreview` renders it,
 /// because that row already owns the live availability data.
 static PENDING_CYCLE: AtomicI8 = AtomicI8::new(0);
+/// Whether the session's preview sits below the list ([`PreviewLayout::Down`])
+/// rather than beside it. Set once per session by [`PreviewState::new`];
+/// `PickerRow::preview` reads it to turn skim's pane width into a text width.
+static LAYOUT_IS_DOWN: AtomicBool = AtomicBool::new(false);
 
 pub(super) struct PreviewStateData;
 
@@ -304,7 +352,17 @@ impl PreviewStateData {
         }
     }
 
-    fn reset() {
+    /// The session's preview layout, as recorded by [`PreviewState::new`].
+    pub(super) fn layout() -> PreviewLayout {
+        if LAYOUT_IS_DOWN.load(Ordering::Relaxed) {
+            PreviewLayout::Down
+        } else {
+            PreviewLayout::Right
+        }
+    }
+
+    fn reset(layout: PreviewLayout) {
+        LAYOUT_IS_DOWN.store(layout == PreviewLayout::Down, Ordering::Relaxed);
         PREVIEW_SELECTION.store(0, Ordering::Relaxed);
         PENDING_CYCLE.store(0, Ordering::Relaxed);
     }
@@ -327,7 +385,7 @@ pub(super) struct PreviewState {
 
 impl PreviewState {
     pub(super) fn new(initial_layout: PreviewLayout) -> Self {
-        PreviewStateData::reset();
+        PreviewStateData::reset(initial_layout);
         Self { initial_layout }
     }
 }
@@ -367,28 +425,23 @@ mod tests {
 
     #[test]
     fn test_preview_layout_spec_for() {
-        // Right positions by width, Down by height. The Right window is one
-        // column wider than the text it holds — see PREVIEW_RESERVED_COLS.
-        assert_eq!(PreviewLayout::Right.spec_for((40, 21)), "right:41");
+        // Right asks for a share of the width so skim re-splits on a resize;
+        // Down positions by height.
+        assert_eq!(PreviewLayout::Right.spec_for((40, 21)), "right:50%");
         assert_eq!(PreviewLayout::Down.spec_for((80, 15)), "down:15");
     }
 
     #[test]
     fn test_preview_width_stops_short_of_the_column_skim_leaves_unpainted() {
-        // Both layouts hand renderers a text width one short of the pane, so a
-        // line that fills it survives; rendering to the full pane instead drops
-        // the last column, which reads as a wrapped sentence missing a letter.
-        // Right's window spec still names the whole pane — that is skim's, not
-        // the renderer's.
-        for term_width in [80usize, 120, 139, 200] {
-            let pane = term_width * PREVIEW_WIDTH_PERCENT / 100;
+        // skim splits a viewport one column narrower than the terminal, and a
+        // Right pane's width includes its border column. Renderers get the
+        // text width that is left, so a line that fills it survives; rendering
+        // one column wider drops the last column, which reads as a wrapped
+        // sentence missing a letter. 120 columns: a 119-column viewport splits
+        // 60 | 59, and the 59-column pane holds 58 columns of text.
+        for (term_width, right_text) in [(80usize, 38), (120, 58), (139, 68), (200, 98)] {
             let (text_width, _) = PreviewLayout::Right.dimensions_for(term_width, 40, 10);
-            assert_eq!(text_width, pane - 1, "Right text width at {term_width}");
-            assert_eq!(
-                PreviewLayout::Right.spec_for((text_width, 0)),
-                format!("right:{pane}"),
-                "Right window spec at {term_width}"
-            );
+            assert_eq!(text_width, right_text, "Right text width at {term_width}");
 
             let (down_width, _) = PreviewLayout::Down.dimensions_for(term_width, 40, 10);
             assert_eq!(
@@ -397,6 +450,23 @@ mod tests {
                 "Down text width at {term_width}"
             );
         }
+    }
+
+    #[test]
+    fn test_text_width_matches_startup_dimensions() {
+        // `preview()` derives its width from the pane skim reports; at startup
+        // that must equal the precompute width, or the two producers would
+        // fill different cache keys. 120 columns: skim reports a 59-column
+        // Right pane and a 119-column Down pane.
+        assert_eq!(
+            PreviewLayout::Right.text_width(59),
+            PreviewLayout::Right.dimensions_for(120, 40, 10).0
+        );
+        assert_eq!(
+            PreviewLayout::Down.text_width(119),
+            PreviewLayout::Down.dimensions_for(120, 40, 10).0
+        );
+        assert_eq!(PreviewLayout::Right.text_width(0), 0);
     }
 
     #[test]

@@ -153,8 +153,38 @@ impl std::fmt::Display for PickerRowId {
     }
 }
 
-/// Cache key for pre-computed previews: `(canonical row identity, mode)`.
-pub(super) type PreviewCacheKey = (PickerRowId, PreviewMode);
+/// Cache key for pre-computed previews: `(canonical row identity, mode, text
+/// width)`. Build one with [`preview_cache_key`], which decides whether the
+/// width belongs in it.
+pub(super) type PreviewCacheKey = (PickerRowId, PreviewMode, Option<usize>);
+
+/// The cache key for `row`'s `mode` pane at text width `width`.
+///
+/// A pane laid out to the width and recomputable on demand keys on it, so a
+/// terminal resize misses and re-renders at the new width instead of showing
+/// the startup layout. Two kinds of content key with `None` instead: a Summary,
+/// stored raw and wrapped at display time, and the forge-fetched panes (any
+/// row's Comments, a `--prs` row's Log), fetched once per session, which keep
+/// their startup wrapping rather than fall back to a loading placeholder with
+/// nothing to refill it.
+pub(super) fn preview_cache_key(
+    row: PickerRowId,
+    mode: PreviewMode,
+    width: usize,
+) -> PreviewCacheKey {
+    let width = match (&row, mode) {
+        (_, PreviewMode::Summary | PreviewMode::Comments)
+        | (PickerRowId::ChangeRequest(_), PreviewMode::Log) => None,
+        _ => Some(width),
+    };
+    (row, mode, width)
+}
+
+/// Drop `row`'s `mode` entries at every width — the invalidation for a pane
+/// whose inputs changed, whatever width it was last rendered at.
+pub(super) fn evict_preview(cache: &PreviewCache, row: &PickerRowId, mode: PreviewMode) {
+    cache.retain(|(r, m, _), _| !(r == row && *m == mode));
+}
 
 /// Cache for pre-computed previews, keyed by [`PreviewCacheKey`].
 /// Shared across all PickerRows for background pre-computation. This is the
@@ -613,11 +643,13 @@ impl SkimItem for PickerRow {
         }
         // Record what this (selected) row is showing *before* reading the cache,
         // so a background fill that lands right after a miss still finds the key
-        // set and pokes a repaint (see `PreviewNotifier`). Keyed by `preview_key`
-        // so the awaited key matches the typed identity the background fill
-        // writes.
-        let preview_key = self.preview_key();
-        self.notifier.note_awaiting(&preview_key, mode);
+        // set and pokes a repaint (see `PreviewNotifier`). Keyed by
+        // `preview_cache_key` so the awaited key matches the typed identity and
+        // width the background fill writes. skim reports the pane's width
+        // border included; the text width is what renderers wrap to.
+        let width = PreviewStateData::layout().text_width(context.width);
+        let cache_key = preview_cache_key(self.preview_key(), mode, width);
+        self.notifier.note_awaiting(&cache_key);
         // A miss on a local-git tab means the placeholder below would sit
         // until background precompute reaches this (row, mode) — in a large
         // repo, seconds. Ask the demand worker to compute it now; the fill
@@ -631,16 +663,16 @@ impl SkimItem for PickerRow {
         if let Some(local) = self.subject.local()
             && mode.is_local_git()
             && !local.morphed.load(Ordering::Relaxed)
-            && !self.preview_cache.contains_key(&(preview_key, mode))
+            && !self.preview_cache.contains_key(&cache_key)
         {
             local.demand.request(
                 Arc::clone(&local.item),
                 mode,
-                (context.width, context.height),
+                (width, context.height),
                 local.spawn_gen.clone(),
             );
         }
-        ItemPreview::AnsiText(self.render_preview(mode, context.width, context.height))
+        ItemPreview::AnsiText(self.render_preview(mode, width, context.height))
     }
 }
 
@@ -1157,14 +1189,14 @@ impl PickerRow {
             // kinds: `pr` renders from it, `comments` reads the background-fetched
             // thread when the row has a PR (always, for a `--prs` row).
             PreviewMode::Pr => self.render_pr_pane_cached(width),
-            PreviewMode::Comments => self.render_comments_pane(),
+            PreviewMode::Comments => self.render_comments_pane(width),
             // The local-checkout tabs (complete diff/working-tree/log/
             // branch-diff/upstream/summary) compute locally for a local row; a `--prs` row has no
             // checkout, so its `log` loads from the forge and the rest point at
             // the `pr` tab (see `render_listed_pr_mode`).
             _ => match self.subject.local() {
                 Some(_) => self.preview_for_mode(mode, width, height),
-                None => self.render_listed_pr_mode(mode),
+                None => self.render_listed_pr_mode(mode, width),
             },
         };
         // Every pane converges here, so the cap sits here too — a `comments`
@@ -1218,7 +1250,7 @@ impl PickerRow {
     /// for a `--prs` row, whose slot is static, `prs::listed_pr_row` removes it
     /// when the row is (re)built on an `alt-r` reload.
     pub(super) fn render_pr_pane_cached(&self, width: usize) -> String {
-        let key = (self.preview_key(), PreviewMode::Pr);
+        let key = preview_cache_key(self.preview_key(), PreviewMode::Pr, width);
         if let Some(cached) = self.preview_cache.get(&key) {
             return cached.value().clone();
         }
@@ -1253,7 +1285,7 @@ impl PickerRow {
     /// `pr` tab's empty/loading states, so the two PR-backed tabs stay consistent. The
     /// background fetch renders at the preview width, so this reads it back
     /// without re-wrapping (via `cached_or_loading`).
-    fn render_comments_pane(&self) -> String {
+    fn render_comments_pane(&self, width: usize) -> String {
         let reset = Reset;
         let branch = self.branch_name.as_str();
         match self.pr_preview() {
@@ -1267,7 +1299,7 @@ impl PickerRow {
             PrPreview::NoPr => {
                 cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no PR\n")
             }
-            PrPreview::HasPr(..) => self.cached_or_loading(PreviewMode::Comments),
+            PrPreview::HasPr(..) => self.cached_or_loading(PreviewMode::Comments, width),
         }
     }
 
@@ -1276,9 +1308,9 @@ impl PickerRow {
     /// background fetch (worktree rows' `comments`, `--prs` rows' `log`/
     /// `comments`) writes the same key, and the orchestrator pokes a repaint
     /// once it lands.
-    pub(super) fn cached_or_loading(&self, mode: PreviewMode) -> String {
+    pub(super) fn cached_or_loading(&self, mode: PreviewMode, width: usize) -> String {
         self.preview_cache
-            .get(&(self.preview_key(), mode))
+            .get(&preview_cache_key(self.preview_key(), mode, width))
             .map(|v| v.value().clone())
             .unwrap_or_else(|| super::prs::pr_deferred_loading(mode))
     }
@@ -1287,9 +1319,9 @@ impl PickerRow {
     /// `log` tab loads commits in the background and reads from the cache; the
     /// local-only tabs (complete diff, working-tree, branch-diff, upstream, summary) have no
     /// PR equivalent, so they point the user at the `pr` tab.
-    fn render_listed_pr_mode(&self, mode: PreviewMode) -> String {
+    fn render_listed_pr_mode(&self, mode: PreviewMode, width: usize) -> String {
         match mode {
-            PreviewMode::Log => self.cached_or_loading(PreviewMode::Log),
+            PreviewMode::Log => self.cached_or_loading(PreviewMode::Log, width),
             _ => super::prs::pr_row_empty_placeholder(),
         }
     }
@@ -1305,7 +1337,7 @@ impl PickerRow {
         // Reached only for a worktree row (the `Some(_)` arm in `render_preview`),
         // so the key is the canonical local identity the orchestrator
         // precomputes under.
-        let cache_key = (self.preview_key(), mode);
+        let cache_key = preview_cache_key(self.preview_key(), mode, width);
         let content = self
             .preview_cache
             .get(&cache_key)
@@ -2583,7 +2615,7 @@ mod tests {
         let cache_hit = {
             let preview_cache: PreviewCache = Arc::new(DashMap::new());
             preview_cache.insert(
-                (test_local_row_id("feature"), PreviewMode::Summary),
+                preview_cache_key(test_local_row_id("feature"), PreviewMode::Summary, 80),
                 "Add auth module\n\nImplements JWT-based authentication.".to_string(),
             );
             worktree_test_row("feature", preview_cache, None)
@@ -2773,25 +2805,25 @@ mod tests {
         // CI hasn't reported (None) → the shared "Fetching PR status…" hint (it
         // auto-resolves once the live status lands; see `PreviewNotifier`).
         let loading = row(None, Arc::new(DashMap::new()));
-        let pane = loading.render_comments_pane();
+        let pane = loading.render_comments_pane(80);
         assert!(pane.contains("Fetching PR status"), "loading: {pane:?}");
 
         // No PR (Some(None)) → "has no PR", matching the `pr` tab.
         let no_pr = row(Some(None), Arc::new(DashMap::new()));
         assert!(
-            no_pr.render_comments_pane().contains("has no PR"),
+            no_pr.render_comments_pane(80).contains("has no PR"),
             "no-pr state"
         );
 
         // A PR with the thread already cached → the cached thread is shown.
         let cache: PreviewCache = Arc::new(DashMap::new());
         cache.insert(
-            (test_local_row_id("feature"), PreviewMode::Comments),
+            preview_cache_key(test_local_row_id("feature"), PreviewMode::Comments, 80),
             "@octocat\nLooks good\n".to_string(),
         );
         let with_thread = row(pr_status(Some(PrRef::pr(7))), Arc::clone(&cache));
         assert_eq!(
-            with_thread.render_comments_pane(),
+            with_thread.render_comments_pane(80),
             "@octocat\nLooks good\n",
             "cached thread served verbatim"
         );
@@ -2800,7 +2832,7 @@ mod tests {
         // so a worktree row and a `--prs` row show the identical in-flight pane.
         let pending = row(pr_status(Some(PrRef::pr(7))), Arc::new(DashMap::new()));
         assert_eq!(
-            pending.render_comments_pane(),
+            pending.render_comments_pane(80),
             super::super::prs::pr_deferred_loading(PreviewMode::Comments),
             "cache miss falls back to the shared loading placeholder"
         );
@@ -2970,7 +3002,7 @@ mod tests {
         let cache: PreviewCache = Arc::new(DashMap::new());
         let row = worktree_test_row("feature", Arc::clone(&cache), None);
         cache.insert(
-            (row.preview_key(), PreviewMode::BranchDiff),
+            preview_cache_key(row.preview_key(), PreviewMode::BranchDiff, WIDE),
             "+ a line of diff\n".repeat(70_000),
         );
 
@@ -2991,7 +3023,7 @@ mod tests {
 
         // A pane under the cap is handed through whole, notice-free.
         cache.insert(
-            (row.preview_key(), PreviewMode::BranchDiff),
+            preview_cache_key(row.preview_key(), PreviewMode::BranchDiff, WIDE),
             "+ a line of diff\n".repeat(10),
         );
         let short = row.render_preview(PreviewMode::BranchDiff, WIDE, 24);
@@ -3003,7 +3035,7 @@ mod tests {
         // Exactly the budget, newline-terminated: the cut point is the end of
         // the body, so nothing is dropped and nothing is claimed.
         cache.insert(
-            (row.preview_key(), PreviewMode::BranchDiff),
+            preview_cache_key(row.preview_key(), PreviewMode::BranchDiff, WIDE),
             "+ a line of diff\n".repeat(MAX_PREVIEW_LINES),
         );
         let exact = row.render_preview(PreviewMode::BranchDiff, WIDE, 24);
@@ -3039,7 +3071,7 @@ mod tests {
         let cache: PreviewCache = Arc::new(DashMap::new());
         let slot: PrStatusSlot = Arc::new(Mutex::new(status("First title")));
         let local = test_local_checkout("feature");
-        let key = (PickerRowId::local(&local.item), PreviewMode::Pr);
+        let key = preview_cache_key(PickerRowId::local(&local.item), PreviewMode::Pr, 80);
         let row = PickerRow {
             search_base: String::new(),
             gutter: '@',

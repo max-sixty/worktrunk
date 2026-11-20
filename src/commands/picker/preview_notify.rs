@@ -10,7 +10,7 @@
 //! showing its "Loading…" placeholder until the next keystroke.
 //!
 //! `PreviewNotifier` closes that loop. The selected row records what its preview
-//! is currently showing — `(row-key, mode)` — on every render via
+//! is currently showing — `(row-key, mode, width)` — on every render via
 //! [`note_awaiting`](PreviewNotifier::note_awaiting). When a background fill lands
 //! on that exact key, [`notify_filled`](PreviewNotifier::notify_filled) injects an
 //! `Event::RunPreview` through skim's own event sender, so skim re-reads the
@@ -96,8 +96,8 @@ pub(super) struct PreviewNotifier {
     /// up) simply doesn't notify, which is harmless because skim hasn't rendered
     /// a preview that could strand yet.
     render_tx: Arc<OnceLock<Sender<Event>>>,
-    /// The `(row-key, mode)` the selected row's preview is currently showing or
-    /// awaiting. Written by `*SkimItem::preview` on every render; read on each
+    /// The `(row-key, mode, width)` the selected row's preview is currently
+    /// showing or awaiting. Written by `*SkimItem::preview` on every render; read on each
     /// background fill. The typed row key is a canonical Git item identity for
     /// local rows and a structured PR/MR reference for `--prs` rows — exactly
     /// the identity in [`PreviewCacheKey`], so a fill's key compares directly.
@@ -112,11 +112,11 @@ impl PreviewNotifier {
         }
     }
 
-    /// Record the `(row-key, mode)` the selected row is rendering, so a matching
+    /// Record the cache key the selected row is rendering, so a matching
     /// background fill knows to surface itself. Called from `*SkimItem::preview`
     /// before it reads the cache (see the module docstring on ordering).
-    pub(super) fn note_awaiting(&self, row_id: &PickerRowId, mode: PreviewMode) {
-        *self.awaiting.lock().unwrap() = Some((row_id.clone(), mode));
+    pub(super) fn note_awaiting(&self, key: &PreviewCacheKey) {
+        *self.awaiting.lock().unwrap() = Some(key.clone());
     }
 
     /// Inject an `Event::RunPreview` if `key` is the preview the selected row is
@@ -139,7 +139,7 @@ impl PreviewNotifier {
     pub(super) fn notify_pr_status_changed(&self, row_id: &PickerRowId, delta: PrStatusDelta) {
         let relevant = {
             let awaiting = self.awaiting.lock().unwrap();
-            awaiting.as_ref().is_some_and(|(k, mode)| {
+            awaiting.as_ref().is_some_and(|(k, mode, _)| {
                 k == row_id
                     && match mode {
                         PreviewMode::Pr => delta.pane_changed,
@@ -172,6 +172,7 @@ impl PreviewNotifier {
 
 #[cfg(test)]
 mod tests {
+    use super::super::items::preview_cache_key;
     use super::*;
     use crate::commands::list::model::ListItem;
 
@@ -206,14 +207,18 @@ mod tests {
         };
 
         // `pr` tab: any pane change re-runs it (e.g. "Fetching…" → resolved PR).
-        notifier.note_awaiting(&feature, PreviewMode::Pr);
+        notifier.note_awaiting(&preview_cache_key(feature.clone(), PreviewMode::Pr, 80));
         notifier.notify_pr_status_changed(&feature, pane_only);
         assert_eq!(drain(&mut rx), 1, "a pr-pane change re-runs the pr tab");
 
         // `comments` tab: a pane-only change (no presence flip) does NOT re-run —
         // its body is the unchanged row-keyed thread, so re-running would only
         // reset the scroll. A presence change (e.g. NoPr → HasPr) does re-run.
-        notifier.note_awaiting(&feature, PreviewMode::Comments);
+        notifier.note_awaiting(&preview_cache_key(
+            feature.clone(),
+            PreviewMode::Comments,
+            80,
+        ));
         notifier.notify_pr_status_changed(&feature, pane_only);
         assert_eq!(
             drain(&mut rx),
@@ -228,7 +233,11 @@ mod tests {
         );
 
         // A diff tab reads neither signal → never re-runs (preserves diff scroll).
-        notifier.note_awaiting(&feature, PreviewMode::WorkingTree);
+        notifier.note_awaiting(&preview_cache_key(
+            feature.clone(),
+            PreviewMode::WorkingTree,
+            80,
+        ));
         notifier.notify_pr_status_changed(&feature, presence_too);
         assert_eq!(
             drain(&mut rx),
@@ -237,7 +246,7 @@ mod tests {
         );
 
         // A different row's update injects nothing.
-        notifier.note_awaiting(&feature, PreviewMode::Pr);
+        notifier.note_awaiting(&preview_cache_key(feature.clone(), PreviewMode::Pr, 80));
         notifier.notify_pr_status_changed(&other, presence_too);
         assert_eq!(
             drain(&mut rx),
