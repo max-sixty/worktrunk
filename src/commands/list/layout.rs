@@ -124,14 +124,14 @@
 //!      (bypasses the tier system). A `[list] columns` listing forces them on —
 //!      the planner then includes the task and the column renders
 //!    - **BranchDiff** (`^…±`) is pure local git, so it is *not* gated — it
-//!      shows by default and follows the normal two-tier priority (6/16);
-//!      CiStatus is 5/15
+//!      shows by default and follows the normal two-tier priority (6/20);
+//!      CiStatus is 5/19
 //!
 //! 2. **Low-priority columns** yield to Summary
 //!    - Columns with effective priority > Summary's (10) are dropped to reclaim
 //!      space, with thresholds based on priority distance:
 //!      - Within 4 levels (Commit 11, Time 12, Message 13): Summary < 50
-//!      - Beyond 4 levels (e.g., no-data Path 7+10=17): Summary < 70 (MAX)
+//!      - Beyond 4 levels (e.g., no-data Path 7+14=21): Summary < 70 (MAX)
 //!    - Highest priority value drops first; no-data columns qualify via EMPTY_PENALTY
 //!
 //! 3. **Summary** - Flexible sizing with post-allocation expansion
@@ -1102,8 +1102,8 @@ fn allocate_columns_with_priority(
     // Drop low-priority columns to give Summary more space. Columns with
     // effective priority > Summary's (10) are dropped based on priority distance:
     // - Within 4 levels (Commit 11, Time 12, Message 13): dropped when Summary < 50
-    // - Beyond 4 levels (e.g., no-data Path 17): dropped when Summary < MAX_SUMMARY
-    // No-data columns naturally qualify via EMPTY_PENALTY (e.g., Path 7+10=17).
+    // - Beyond 4 levels (e.g., no-data Path 21): dropped when Summary < MAX_SUMMARY
+    // No-data columns naturally qualify via EMPTY_PENALTY (e.g., Path 7+14=21).
     let summary_priority = ColumnKind::Summary.priority();
     while max_summary_len > 0 && max_summary_len < MAX_SUMMARY {
         let drop_pos = pending

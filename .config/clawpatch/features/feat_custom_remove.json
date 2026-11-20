@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "featureId": "feat_custom_remove",
   "title": "wt remove and picker-driven removal: data-loss surface",
-  "summary": "Worktree removal is the highest-stakes destructive operation. Force-remove must require explicit user consent; cleanup must not silently discard uncommitted changes or untracked files. Race conditions between safety checks and the actual delete must fail closed (retain data). The picker also routes alt-r through handle_remove_output - must consult approvals read-only and skip rather than prompt mid-render. See AGENTS.md > Data Safety.",
+  "summary": "Worktree removal is the highest-stakes destructive operation. Force-remove must require explicit user consent; cleanup must not silently discard uncommitted changes or untracked files. Race conditions between safety checks and the actual delete must fail closed (retain data). The picker also routes alt-x through handle_remove_output - must consult approvals read-only and skip rather than prompt mid-render. See AGENTS.md > Data Safety.",
   "kind": "library",
   "source": "manual",
   "confidence": "high",
@@ -11,7 +11,7 @@
       "path": "src/commands/picker/mod.rs",
       "symbol": "do_removal",
       "route": null,
-      "command": "wt remove (interactive)"
+      "command": "wt switch (picker alt-x)"
     }
   ],
   "ownedFiles": [

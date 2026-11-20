@@ -73,10 +73,9 @@ allow-branch = ["*"]
 consolidate-commits = true
 
 [package.metadata.cargo-udeps.ignore]
-# `which` is used only on Windows (#[cfg(windows)] in src/shell_exec.rs).
 # `petname-macros` is not referenced in code — its exact pin keeps the proc
 # macro version aligned with `petname` (see the dependency comment below).
-normal = ["which", "petname-macros"]
+normal = ["petname-macros"]
 
 [features]
 # Disabled: Enable testing for shells that require extra installation steps (nushell, powershell, elvish, xonsh, oil)
