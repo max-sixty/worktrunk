@@ -2119,7 +2119,11 @@ pub fn collect(
             show_branches || show_remotes,
             &layout.hidden_columns,
             timed_out_count,
-            None,
+            layout
+                .columns
+                .iter()
+                .any(|column| column.kind == super::columns::ColumnKind::Status),
+            worktrunk::styling::terminal_width(),
         ),
     });
 

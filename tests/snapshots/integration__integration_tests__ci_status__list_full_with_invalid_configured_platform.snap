@@ -72,4 +72,4 @@ exit_code: 0
 [2m↳[22m [2mTo see details, run [4mwt config show[24m; to apply updates, run [4mwt config update[24m[22m
 [2m[W][22m Invalid CI platform 'invalid_platform' (from `[forge]` in project config or a `[projects]` entry in user config). Expected 'github', 'gitlab', 'gitea', or 'azure-devops'.
 
-[2m○[22m [2mShowing 5 worktrees, 1 with changes, 3 ahead[0m
+[2m○[22m [2mShowing 5 worktrees, 1 with changes, 3 ahead  (? untracked files  ^ main worktree  | in sync with remote  _ clean at default commit  ↑ ahead of default)[0m

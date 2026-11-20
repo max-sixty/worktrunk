@@ -56,4 +56,4 @@ exit_code: 0
 
 ----- stderr -----
 
-○ Showing 3 worktrees
+○ Showing 3 worktrees  (^ main worktree  _ clean at default commit)

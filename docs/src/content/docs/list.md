@@ -36,7 +36,7 @@ $ wt list
 + fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68    5h  Add secure token s…
 + fix-typos        _|                                      |     41ee083    4d  Merge fix-auth: ha…
 
-○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path
+○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path  (+ staged files  ⇡ ahead of remote)
 ```
 
 Include CI status and LLM summaries:
@@ -153,6 +153,8 @@ The [custom columns config](/config/#custom-columns) covers templates, widths, a
 ## Status symbols
 
 The Status column packs several subcolumns, left to right, each mapping to a schema-2 field in `--format=json` (schema 1 spells several of them differently — see [Schema 1](#schema-1)). Working-tree flags are independent and co-occur — any combination shows at once. The other subcolumns are mutually exclusive: each shows a single symbol, the highest-priority state in top-to-bottom table order, and is blank when nothing applies.
+
+When space permits, the footer explains symbols shown in the Status column.
 
 ### Working tree
 

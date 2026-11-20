@@ -221,7 +221,7 @@ $ wt list
 + fix-auth         ↕|                ↑2  ↓1   +25  -11     |     http://localhost:16460  b772e68
 + fix-typos        _|                                      |     http://localhost:14301  41ee083
 
-○ Showing 4 worktrees, 2 with changes, 2 ahead, hidden: Path, Age, Message
+○ Showing 4 worktrees, 2 with changes, 2 ahead, hidden: Path, Age, Message  (? untracked files)
 ```
 
 `fix-auth` always gets port 16460, on any machine. The URL dims if the server isn't running.
