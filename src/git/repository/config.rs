@@ -317,14 +317,26 @@ impl Repository {
     /// path can. A detached worktree clears the branch, so the two keys always
     /// describe the same worktree, which is what
     /// [`switch_previous_worktree`](Self::switch_previous_worktree) checks.
+    ///
+    /// Each key is written only when its value changes: the keys live in the
+    /// repository's shared config, and a redundant write still takes
+    /// `config.lock`, failing a concurrent config writer in another worktree.
     pub fn record_switch_source(&self, path: &Path, branch: Option<&str>) -> anyhow::Result<()> {
+        let recorded_branch = self.config_last("worktrunk.history")?;
         match branch {
-            Some(branch) => self.set_config_value("worktrunk.history", branch)?,
-            None => {
+            Some(branch) if recorded_branch.as_deref() != Some(branch) => {
+                self.set_config_value("worktrunk.history", branch)?
+            }
+            None if recorded_branch.is_some() => {
                 self.unset_config("worktrunk.history")?;
             }
+            _ => {}
         }
-        self.set_config_value("worktrunk.history-path", &path.to_string_lossy())
+        let path = path.to_string_lossy();
+        if self.config_last("worktrunk.history-path")?.as_deref() != Some(&*path) {
+            self.set_config_value("worktrunk.history-path", &path)?;
+        }
+        Ok(())
     }
 
     /// Set the previous branch outright (`wt config state previous-branch
@@ -1126,6 +1138,30 @@ fn parse_branch_config_key(config_key: &str) -> Option<(&str, &str)> {
 mod tests {
     use super::*;
     use crate::testing::TestRepo;
+
+    #[test]
+    fn test_record_switch_source_skips_unchanged_values() {
+        // A repeated switch from the same worktree must not rewrite the shared
+        // config: parallel worktrees contend for `config.lock`. A held lock
+        // makes any write fail, so success proves no write was attempted.
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let path = test.root_path().to_path_buf();
+        repo.record_switch_source(&path, Some("main")).unwrap();
+        let lock = repo.git_common_dir().join("config.lock");
+        std::fs::write(&lock, "").unwrap();
+        repo.record_switch_source(&path, Some("main")).unwrap();
+        // A changed value still writes, so it fails on the held lock.
+        assert!(repo.record_switch_source(&path, Some("other")).is_err());
+        std::fs::remove_file(&lock).unwrap();
+
+        // A detached source with no recorded branch skips the unset too.
+        let repo = Repository::at(test.root_path()).unwrap();
+        repo.record_switch_source(&path, None).unwrap();
+        std::fs::write(&lock, "").unwrap();
+        repo.record_switch_source(&path, None).unwrap();
+        std::fs::remove_file(&lock).unwrap();
+    }
 
     #[test]
     fn test_config_regexp_entries_no_match_returns_empty() {
