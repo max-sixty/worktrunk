@@ -1179,10 +1179,12 @@ pub fn prompt_for_install(
 
 /// Prompt user for yes/no confirmation (simple [y/N] prompt)
 fn prompt_yes_no() -> Result<bool, String> {
-    eprint!(
+    // One write for the whole prompt, trailing space included.
+    let prompt = format!(
         "{} ",
         prompt_message(color_print::cformat!("Proceed? <bold>[y/N]</>"))
     );
+    eprint!("{prompt}");
     io::stderr().flush().map_err(|e| e.to_string())?;
 
     let mut input = String::new();
