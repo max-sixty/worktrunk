@@ -185,10 +185,13 @@ fn prompt_for_batch_approval_with_header(
     worktrunk::styling::eprintln!();
     stderr().flush()?;
 
-    eprint!(
+    // One write for the whole prompt, trailing space included: a split write
+    // lets typed input echo between the pieces.
+    let prompt = format!(
         "{} ",
         prompt_message(cformat!("Allow and remember? <bold>[y/N]</>"))
     );
+    eprint!("{prompt}");
     stderr().flush()?;
 
     let mut response = String::new();
