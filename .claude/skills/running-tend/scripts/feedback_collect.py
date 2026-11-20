@@ -4,19 +4,20 @@
 # ///
 """Collect public mentions of Worktrunk for the weekly feedback digest.
 
-Finds the open issue labeled `feedback-digest`, reads the state marker the
-newest digest comment ends with, and queries each source from where that
-source left off up to now. Writes to `$TMPDIR/feedback-digest/`:
+Each digest is its own issue labeled `feedback-digest`. Reads the state
+marker the newest digest ends with, and queries each source from where that
+source left off up to now. Digests posted as comments on the earlier single
+tracking issue are read too, so the first weekly issue continues from them.
+Writes to `$TMPDIR/feedback-digest/`:
 
 - `items.jsonl`: one record per mention, with `source`, `kind`, `url`,
   `created_at`, `author`, `where`, `title`, `excerpt`, and `thread` for a
   comment on an older thread.
-- `summary.json`: the tracking issue number (null before the first digest),
-  each source's window, status and item count, and `marker`, the line the new
-  digest ends with.
+- `summary.json`: `title` for the new digest's issue, each source's window,
+  status and item count, and `marker`, the line the new digest ends with.
 - `previous_digests.md`: the earlier digests, oldest first, each under its
-  comment's URL, for checking whether a URL was already reported and for
-  linking a theme to the digest that first reported it.
+  URL, for checking whether a URL was already reported and for linking a theme
+  to the digest that first reported it.
 
 A source whose request fails keeps its old start in the marker, so the next
 run covers its gap; a source that answers with zero results advances.
@@ -383,20 +384,27 @@ def main() -> None:
     repo = json.loads(gh("repo", "view", "--json", "nameWithOwner"))["nameWithOwner"]
     ctx = Context(repo=repo, owner=repo.split("/")[0], me=json.loads(gh("api", "user"))["login"])
     issues = json.loads(
-        gh("issue", "list", "--repo", repo, "--label", LABEL, "--state", "open", "--json", "number")
+        gh(
+            "issue", "list", "--repo", repo, "--label", LABEL, "--state", "all",
+            "--limit", "1000", "--json", "number,url,body,author",
+        )
     )
-    issue = issues[0]["number"] if issues else None
-
     digests: list[dict[str, str]] = []
-    if issue is not None:
+    for issue in sorted(issues, key=lambda i: i["number"]):
+        if issue["author"]["login"] != ctx.me:
+            continue
+        if MARKER_RE.search(issue["body"]):
+            digests.append({"url": issue["url"], "body": issue["body"]})
+            continue
+        # The earlier single tracking issue holds its digests as comments.
         lines = gh(
             "api",
             "--paginate",
-            f"repos/{repo}/issues/{issue}/comments?per_page=100",
+            f"repos/{repo}/issues/{issue['number']}/comments?per_page=100",
             "--jq",
             f'.[] | select(.user.login == "{ctx.me}") | {{url: .html_url, body}} | tojson',
         )
-        digests = [
+        digests += [
             d for d in map(json.loads, lines.splitlines()) if MARKER_RE.search(d["body"])
         ]
     state = json.loads(MARKER_RE.findall(digests[-1]["body"])[-1]) if digests else {}
@@ -424,8 +432,9 @@ def main() -> None:
     with (out / "items.jsonl").open("w") as f:
         for record in items:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    start = min(s["since"] for s in sources.values())[:10]
     summary = {
-        "issue": issue,
+        "title": f"Feedback digest: {start} to {iso(now)[:10]}",
         "previous_digests": len(digests),
         "sources": sources,
         "marker": "<!-- feedback-digest-state "
