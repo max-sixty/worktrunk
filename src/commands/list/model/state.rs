@@ -535,6 +535,19 @@ impl OperationState {
 mod tests {
     use super::*;
 
+    #[test]
+    fn absent_states_have_no_label() {
+        assert_eq!(Divergence::None.label(), None);
+        assert_eq!(WorktreeState::None.label(), None);
+        assert_eq!(MainState::None.label(), None);
+        assert_eq!(OperationState::None.label(), None);
+    }
+
+    #[test]
+    fn diverged_main_state_describes_the_default_branch() {
+        assert_eq!(MainState::Diverged.label(), Some("diverged from default"));
+    }
+
     // ============================================================================
     // Divergence Tests
     // ============================================================================
