@@ -212,6 +212,12 @@ When the bug or proposed fix turns on runtime state the bot can't observe from C
 
 Comment on the issue with what's known, ask the reporter for the concrete symptom they observe ("which marker shows where, when") rather than for a fix to validate, and exit without a PR. The bar for opening a fix PR is *the failure mode is reproducible and the fix is testable*, not *the hypothesis seems plausible*. If you post a fix despite limited testability (rare — usually only when the reporter has confirmed the exact symptom and the code change is obviously correct from inspection), explicitly flag what wasn't verified in the PR body.
 
+### Feedback digest issues
+
+An issue labeled `feedback-digest` is the weekly report, not a bug report. The
+weekly run files each confirmed bug in it as its own issue, so triage posts
+nothing on it.
+
 ### Closing Duplicates
 
 When an issue is clearly a duplicate, close it after commenting. Use
@@ -434,8 +440,8 @@ module the feedback digest turns up, add it in a PR.
 
 ## Weekly Maintenance: Feedback Digest
 
-Post a digest of public feedback on Worktrunk since the previous one to the
-open `feedback-digest` issue, following `references/feedback-digest.md`.
+Open an issue with a digest of public feedback on Worktrunk since the previous
+one, following `references/feedback-digest.md`.
 
 ## README Date Check
 

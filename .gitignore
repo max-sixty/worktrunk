@@ -33,3 +33,6 @@ test-results/
 !/.config/clawpatch/features
 /.config/clawpatch/features/*
 !/.config/clawpatch/features/feat_custom_*.json
+
+# Python bytecode
+__pycache__/
