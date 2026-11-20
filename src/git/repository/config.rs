@@ -94,13 +94,29 @@ impl Repository {
     /// behind a stale duplicate under the literal form.
     pub(super) fn set_config_value(&self, key: &str, value: &str) -> anyhow::Result<()> {
         self.run_command(&["config", key, value])?;
-        if let Some(lock) = self.cache.all_config.get() {
-            let canonical = super::canonical_config_key(key);
-            lock.write()
-                .unwrap()
-                .insert(canonical, vec![value.to_string()]);
-        }
+        self.cache_config_value(key, Some(value));
         Ok(())
+    }
+
+    /// Mirror a known on-disk value for `key` into the bulk config map, if
+    /// populated: `Some` replaces its values, `None` removes the key.
+    fn cache_config_value(&self, key: &str, value: Option<&str>) {
+        let Some(lock) = self.cache.all_config.get() else {
+            return;
+        };
+        let canonical = super::canonical_config_key(key);
+        let mut map = lock.write().unwrap();
+        match value {
+            Some(value) => {
+                map.insert(canonical, vec![value.to_string()]);
+            }
+            // `shift_remove` preserves remaining order (swap_remove would
+            // reorder); order matters for `primary_remote` which picks the
+            // first remote with a configured URL.
+            None => {
+                map.shift_remove(&canonical);
+            }
+        }
     }
 
     /// Unset every value for a config key and keep the bulk config map coherent.
@@ -123,13 +139,7 @@ impl Repository {
         } else {
             return Err(CommandError::from_failed_output("git", &args, &output).into());
         };
-        if let Some(lock) = self.cache.all_config.get() {
-            // `shift_remove` preserves remaining order (swap_remove would
-            // reorder); order matters for `primary_remote` which picks the
-            // first remote with a configured URL.
-            let canonical = super::canonical_config_key(key);
-            lock.write().unwrap().shift_remove(&canonical);
-        }
+        self.cache_config_value(key, None);
         Ok(existed)
     }
 
@@ -323,7 +333,8 @@ impl Repository {
     /// `config.lock`, failing a concurrent config writer in another worktree.
     /// The comparison reads the shared config fresh rather than the
     /// process-lifetime snapshot, which another `wt` may have outdated by
-    /// recording a different source since this process loaded it.
+    /// recording a different source since this process loaded it. A skipped
+    /// write still refreshes this instance's snapshot with the fresh value.
     pub fn record_switch_source(&self, path: &Path, branch: Option<&str>) -> anyhow::Result<()> {
         let recorded = self.config_regexp_entries(r"^worktrunk\.history(-path)?$")?;
         let recorded_value = |key: &str| {
@@ -341,11 +352,13 @@ impl Repository {
             None if recorded_branch.is_some() => {
                 self.unset_config("worktrunk.history")?;
             }
-            _ => {}
+            _ => self.cache_config_value("worktrunk.history", branch),
         }
         let path = path.to_string_lossy();
         if recorded_value("worktrunk.history-path") != Some(&*path) {
             self.set_config_value("worktrunk.history-path", &path)?;
+        } else {
+            self.cache_config_value("worktrunk.history-path", Some(&path));
         }
         Ok(())
     }
@@ -1205,6 +1218,37 @@ mod tests {
                 .as_deref(),
             Some(&*path.to_string_lossy())
         );
+    }
+
+    #[test]
+    fn test_record_switch_source_noop_refreshes_own_snapshot() {
+        // When another process already recorded the same source, the write is
+        // skipped, but this instance's snapshot must still see that source.
+        let test = TestRepo::with_initial_commit();
+        let path = test.root_path().to_path_buf();
+        let other = path.join("other");
+        let first = Repository::at(test.root_path()).unwrap();
+        first.record_switch_source(&path, Some("a")).unwrap();
+        assert_eq!(first.switch_previous().as_deref(), Some("a"));
+
+        let second = Repository::at(test.root_path()).unwrap();
+        second.record_switch_source(&other, Some("b")).unwrap();
+
+        first.record_switch_source(&other, Some("b")).unwrap();
+        assert_eq!(first.switch_previous().as_deref(), Some("b"));
+        assert_eq!(
+            first
+                .config_value("worktrunk.history-path")
+                .unwrap()
+                .as_deref(),
+            Some(&*other.to_string_lossy())
+        );
+
+        // A detached source that another process already recorded clears this
+        // instance's cached branch too.
+        second.record_switch_source(&path, None).unwrap();
+        first.record_switch_source(&path, None).unwrap();
+        assert_eq!(first.switch_previous(), None);
     }
 
     #[test]
