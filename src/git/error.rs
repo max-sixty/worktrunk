@@ -2114,12 +2114,14 @@ pub fn add_hook_skip_hint(err: anyhow::Error) -> anyhow::Error {
     .into()
 }
 
-/// If the error is a [`HookErrorWithHint`], add a hint naming `command` as
-/// the way to retry the failed hooks. Pass-through for any other error.
+/// If the error is a [`HookErrorWithHint`], replace its `--no-hooks` hint with
+/// one naming `command` as the way to retry the failed hooks. Pass-through for
+/// any other error.
 ///
 /// For operations that leave state behind when a hook fails — `wt switch
-/// --create` keeps the new worktree when `pre-start` fails, so re-running the
-/// switch doesn't run setup again.
+/// --create` keeps the new branch and worktree when `pre-start` fails, so
+/// re-running the switch, with or without `--no-hooks`, stops at the existing
+/// branch instead of running setup.
 pub fn add_hook_retry_hint(err: anyhow::Error, command: String) -> anyhow::Error {
     match err.downcast::<HookErrorWithHint>() {
         Ok(hinted) => HookErrorWithHint {
@@ -2158,16 +2160,15 @@ impl Diagnostic for HookErrorWithHint {
         // No empty-body fallback needed.
         // Can't derive command from hook type (e.g., PreRemove is used
         // by both `wt remove` and `wt merge`), so the hint stays generic.
-        let skip = cformat!(
-            "To skip {} hooks, re-run with <underline>--no-hooks</>",
-            self.hook_type
-        );
-        // One hint line; the retry command goes last so it's easy to copy.
+        // A retry command replaces the `--no-hooks` hint: it's set where the
+        // failed operation kept its state, so re-running it would collide
+        // with that state rather than skip the hooks.
         let hint = match &self.retry_command {
-            Some(command) => {
-                cformat!("{skip}; to retry setup, run <underline>{command}</>")
-            }
-            None => skip,
+            Some(command) => cformat!("To retry setup, run <underline>{command}</>"),
+            None => cformat!(
+                "To skip {} hooks, re-run with <underline>--no-hooks</>",
+                self.hook_type
+            ),
         };
         format!("{}\n{}", self.inner.render(), hint_message(hint))
     }
@@ -2578,11 +2579,11 @@ mod tests {
         .into();
         let err = add_hook_retry_hint(
             add_hook_skip_hint(inner),
-            "wt -C /tmp/repo.feature hook pre-start".into(),
+            "wt -C /tmp/repo.feature hook pre-start --base=main".into(),
         );
         assert_snapshot!(render_anyhow(&err), @"
         [31m✗[39m [31m[1mpre-start project:deps[22m failed (exit code 1)[39m
-        [2m↳[22m [2mTo skip pre-start hooks, re-run with [4m--no-hooks[24m; to retry setup, run [4mwt -C /tmp/repo.feature hook pre-start[24m[22m
+        [2m↳[22m [2mTo retry setup, run [4mwt -C /tmp/repo.feature hook pre-start --base=main[24m[22m
         ");
 
         // Passes through errors without a --no-hooks hint unchanged

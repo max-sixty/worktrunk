@@ -251,6 +251,54 @@ failing = "exit 1"
     );
 }
 
+/// The retry hint carries the switch's `base_worktree_path` when the template
+/// references it, so the suggested `wt hook pre-start` re-runs the same setup
+/// rather than binding the variable to the new worktree itself.
+#[rstest]
+#[cfg(unix)]
+fn test_user_pre_start_failure_retry_reruns_same_setup(repo: TestRepo) {
+    fs::write(repo.root_path().join("seed.txt"), "seed").unwrap();
+    repo.write_test_config(
+        r#"[pre-start]
+setup = "cp {{ base_worktree_path }}/seed.txt copied.txt && test -e {{ base_worktree_path }}/ready"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "feature"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("--no-hooks"), "{stderr}");
+    assert!(!stderr.contains("--base="), "{stderr}");
+    let flag = "--base-worktree-path=";
+    let value: String = stderr
+        .split_once(flag)
+        .unwrap_or_else(|| panic!("retry hint lacks {flag}: {stderr}"))
+        .1
+        .chars()
+        .take_while(|c| !c.is_whitespace() && *c != '\x1b')
+        .collect();
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    fs::remove_file(worktree_path.join("copied.txt")).unwrap();
+    fs::write(repo.root_path().join("ready"), "").unwrap();
+    let retry = repo
+        .wt_command()
+        .arg("-C")
+        .arg(&worktree_path)
+        .args(["hook", "pre-start", "--yes", &format!("{flag}{value}")])
+        .output()
+        .unwrap();
+    assert!(retry.status.success(), "{retry:?}");
+    assert_eq!(
+        fs::read_to_string(worktree_path.join("copied.txt")).unwrap(),
+        "seed"
+    );
+}
+
 // ============================================================================
 // User Post-Start Hook Tests (Background)
 // ============================================================================
