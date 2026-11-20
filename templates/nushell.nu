@@ -68,6 +68,10 @@ export def "nu-complete {{ cmd }}" [place] {
 # arrives quoted. See nushell/nushell#18128 for upstream tracking.
 @complete "nu-complete {{ cmd }}"
 export def --env --wrapped {{ cmd }} [...args] {
+    # A user's `alias open = ^open` (or custom `open`) from config.nu is in
+    # scope here; hiding it restores the builtin for this body only.
+    hide open
+
     let worktrunk_bin = if ($env.WORKTRUNK_BIN? | is-not-empty) {
         $env.WORKTRUNK_BIN
     } else {

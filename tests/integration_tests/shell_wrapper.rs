@@ -1082,6 +1082,40 @@ mod unix_tests {
         );
     }
 
+    /// A user's `alias open = ^open` (macOS users add it to reach the system
+    /// `open`) must not intercept the nushell wrapper's temp-file reads.
+    ///
+    /// Same parse-time scoping as the `rm` alias above. Before the fix the
+    /// wrapper ran the aliased command on the cd file instead of reading it,
+    /// so `switch` reported success and the shell stayed where it was.
+    #[rstest]
+    fn test_nu_wrapper_reads_survive_open_alias(repo: TestRepo) {
+        let mut script = String::new();
+        // Must precede the wrapper's `def`: alias resolution is parse-time.
+        script.push_str("alias open = ^echo ALIASED\n");
+        append_wrapper_setup(&mut script, "nu", &repo);
+        script.push_str("wt switch --create open-alias-target\n");
+        script.push_str("print $\"PWD_AFTER:($env.PWD | path basename)\"\n");
+        script.push_str("let out = (wt config show)\n");
+        script.push_str("print $\"WRAPPER_STDOUT_ALIASED:($out | str contains ALIASED)\"\n");
+
+        let config_path = repo.test_config_path().to_string_lossy().to_string();
+        let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
+        let env_vars = build_test_env_vars(&config_path, &approvals_path);
+        let (combined, exit_code) =
+            exec_in_pty_interactive("nu", &script, repo.root_path(), &env_vars, &[]);
+
+        assert_eq!(exit_code, 0, "Output:\n{combined}");
+        assert!(
+            combined.contains("PWD_AFTER:repo.open-alias-target"),
+            "wrapper did not cd into the new worktree.\nOutput:\n{combined}"
+        );
+        assert!(
+            combined.contains("WRAPPER_STDOUT_ALIASED:false"),
+            "wrapper stdout came from the alias, not the captured file.\nOutput:\n{combined}"
+        );
+    }
+
     #[rstest]
     fn test_nu_wrapper_ignores_execute_flags_after_argument_boundary(repo: TestRepo) {
         let mut script = String::new();
