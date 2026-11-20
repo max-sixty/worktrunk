@@ -169,23 +169,12 @@ impl<'a> Branch<'a> {
             .and_then(|b| b.push_remote.clone())
     }
 
-    /// Get the URL of the remote where this branch would be pushed.
+    /// Get the logical URL of this branch's push remote.
     ///
-    /// A remote name goes through `effective_remote_url` to apply
-    /// `url.insteadOf` rewrites; a URL push remote is returned as is.
-    /// Returns `None` if no push remote is configured or the remote has no URL.
+    /// A remote name goes through Git to apply `url.insteadOf` rewrites;
+    /// when Git reports no named URL, preserves the destination as a literal.
+    /// Returns `None` if no push remote is configured or Git fails for another reason.
     pub fn push_remote_url(&self) -> Option<String> {
-        let push_remote = self.push_remote()?;
-        if is_url(&push_remote) {
-            Some(push_remote)
-        } else {
-            self.repo.effective_remote_url(&push_remote)
-        }
+        self.repo.resolve_push_remote_url(&self.push_remote()?)
     }
-}
-
-/// Whether a push remote from `%(push:remotename)` is a URL rather than a
-/// remote name.
-fn is_url(push_remote: &str) -> bool {
-    push_remote.contains("://") || push_remote.starts_with("git@")
 }
