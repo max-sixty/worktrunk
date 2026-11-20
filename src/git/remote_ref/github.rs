@@ -152,7 +152,7 @@ pub(super) fn fetch_pr_info(
                 url_host.filter(|host| !host.eq_ignore_ascii_case("github.com"));
             let hint = if let (None, Some(host)) = (&hostname, enterprise_url_host) {
                 cformat!(
-                    "To sign in to {host}, run <underline>gh auth login --hostname {host}</>. If its API uses a different host, set <underline>forge.hostname</> to that host. To query a different repository, run <underline>gh repo set-default</>"
+                    "To query a different repository, run <underline>gh repo set-default</>; if the {host} API uses a different host, set <underline>forge.hostname</> to that host; to sign in to {host}, run <underline>gh auth login --hostname {host}</>"
                 )
             } else {
                 cformat!("To query a different repository, run <underline>gh repo set-default</>")
