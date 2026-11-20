@@ -321,10 +321,21 @@ impl Repository {
     /// Each key is written only when its value changes: the keys live in the
     /// repository's shared config, and a redundant write still takes
     /// `config.lock`, failing a concurrent config writer in another worktree.
+    /// The comparison reads the shared config fresh rather than the
+    /// process-lifetime snapshot, which another `wt` may have outdated by
+    /// recording a different source since this process loaded it.
     pub fn record_switch_source(&self, path: &Path, branch: Option<&str>) -> anyhow::Result<()> {
-        let recorded_branch = self.config_last("worktrunk.history")?;
+        let recorded = self.config_regexp_entries(r"^worktrunk\.history(-path)?$")?;
+        let recorded_value = |key: &str| {
+            recorded
+                .iter()
+                .rev()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v.as_str())
+        };
+        let recorded_branch = recorded_value("worktrunk.history");
         match branch {
-            Some(branch) if recorded_branch.as_deref() != Some(branch) => {
+            Some(branch) if recorded_branch != Some(branch) => {
                 self.set_config_value("worktrunk.history", branch)?
             }
             None if recorded_branch.is_some() => {
@@ -333,7 +344,7 @@ impl Repository {
             _ => {}
         }
         let path = path.to_string_lossy();
-        if self.config_last("worktrunk.history-path")?.as_deref() != Some(&*path) {
+        if recorded_value("worktrunk.history-path") != Some(&*path) {
             self.set_config_value("worktrunk.history-path", &path)?;
         }
         Ok(())
@@ -1161,6 +1172,39 @@ mod tests {
         std::fs::write(&lock, "").unwrap();
         repo.record_switch_source(&path, None).unwrap();
         std::fs::remove_file(&lock).unwrap();
+    }
+
+    #[test]
+    fn test_record_switch_source_compares_fresh_shared_config() {
+        // Another process can record a different source after this one loads
+        // its config snapshot; restoring the earlier source must still write.
+        let test = TestRepo::with_initial_commit();
+        let path = test.root_path().to_path_buf();
+        let other = path.join("other");
+        let first = Repository::at(test.root_path()).unwrap();
+        first.record_switch_source(&path, Some("a")).unwrap();
+        // Prime the first process's snapshot with source A.
+        assert_eq!(
+            first.config_value("worktrunk.history").unwrap().as_deref(),
+            Some("a")
+        );
+
+        let second = Repository::at(test.root_path()).unwrap();
+        second.record_switch_source(&other, Some("b")).unwrap();
+
+        first.record_switch_source(&path, Some("a")).unwrap();
+        let fresh = Repository::at(test.root_path()).unwrap();
+        assert_eq!(
+            fresh.config_value("worktrunk.history").unwrap().as_deref(),
+            Some("a")
+        );
+        assert_eq!(
+            fresh
+                .config_value("worktrunk.history-path")
+                .unwrap()
+                .as_deref(),
+            Some(&*path.to_string_lossy())
+        );
     }
 
     #[test]
