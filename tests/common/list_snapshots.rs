@@ -1,6 +1,3 @@
-// Functions here are conditionally used based on platform (#[cfg(not(windows))]).
-#![allow(dead_code)]
-
 use super::{TestRepo, wt_command};
 use std::path::Path;
 use std::process::Command;

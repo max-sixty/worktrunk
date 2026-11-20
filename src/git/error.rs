@@ -652,9 +652,6 @@ pub enum GitError {
     ParseError {
         message: String,
     },
-    WorktreeIncludeParseError {
-        error: String,
-    },
     LlmCommandFailed {
         command: String,
         error: String,
@@ -1033,10 +1030,6 @@ impl GitError {
 
             GitError::ParseError { message } => message.clone(),
 
-            GitError::WorktreeIncludeParseError { .. } => {
-                cformat!("Error parsing <bold>.worktreeinclude</>")
-            }
-
             GitError::WorktreeNotFound { branch } => {
                 cformat!("Branch <bold>{branch}</> has no worktree")
             }
@@ -1099,9 +1092,10 @@ impl GitError {
     /// Write the styled diagnostic block, with optional switch-suggestion
     /// context propagated from a [`GitError::WithSwitchSuggestion`] wrapper.
     ///
-    /// Most variants ignore `ctx`. The three that render `wt switch` suggestions
-    /// (`BranchAlreadyExists`, `BranchNotFound`, `WorktreePathExists`) use it
-    /// to append extra flags and trailing args for a copy-pasteable command.
+    /// Most variants ignore `ctx`. The ones that render `wt switch` suggestions
+    /// (`BranchAlreadyExists`, `BranchNotFound`, `WorktreePathExists`,
+    /// `WorktreeCreationFailed`) use it to append extra flags and trailing args
+    /// for a copy-pasteable command.
     ///
     /// Called internally by [`Diagnostic::render`]; not part of the public API.
     fn write_render_with_ctx<W: std::fmt::Write>(
@@ -1392,7 +1386,10 @@ impl GitError {
                 // it here is what keeps the next `--create` run's `Branch …
                 // already exists` from reading as a fresh name collision.
                 let escaped = escape(Cow::Borrowed(branch.as_str()));
-                let switch_cmd = suggest_command("switch", &[branch], &[]);
+                let mut switch_cmd = suggest_command("switch", &[branch], &[]);
+                if let Some(ctx) = ctx {
+                    switch_cmd = ctx.apply(switch_cmd);
+                }
                 write!(
                     f,
                     "\n{}",
@@ -1673,11 +1670,6 @@ impl GitError {
             GitError::ParseError { .. } => {
                 let title = self.title();
                 write!(f, "{}", error_message(&title))
-            }
-
-            GitError::WorktreeIncludeParseError { error } => {
-                let title = self.title();
-                write!(f, "{}", format_error_block(error_message(&title), error))
             }
 
             GitError::WorktreeNotFound { branch } => {
@@ -2113,7 +2105,7 @@ impl ErrorExt for anyhow::Error {
 /// user's intent:
 /// - `wt merge` — user wants to merge, hooks run as part of that
 /// - `wt commit` — user wants to commit, pre-commit hooks run
-/// - `wt switch --create` — user wants a worktree, post-start hooks run
+/// - `wt switch --create` — user wants a worktree, pre-switch and pre-start hooks run
 ///
 /// ## When NOT to use
 ///

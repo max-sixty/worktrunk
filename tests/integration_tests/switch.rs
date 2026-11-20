@@ -6227,6 +6227,7 @@ fn test_switch_pr_gitea_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
+#[cfg(unix)]
 #[rstest]
 fn test_switch_pr_gitea_tea_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
@@ -6236,10 +6237,7 @@ fn test_switch_pr_gitea_tea_not_installed(#[from(repo_with_remote)] repo: TestRe
         "https://gitea.example.com/owner/test-repo.git",
     ]);
 
-    let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
-        eprintln!("Skipping test: symlinks not available on this system");
-        return;
-    };
+    let minimal_bin = setup_minimal_bin_without_cli(&repo);
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -6391,12 +6389,10 @@ fn test_switch_pr_malformed_project_config_bails_before_forge_selection(
 
 /// With no parseable remote URL, dispatch defaults to GitHub. Without `gh`
 /// installed, the GitHub backend returns its install hint.
+#[cfg(unix)]
 #[rstest]
 fn test_switch_pr_no_remote_defaults_to_github(repo: TestRepo) {
-    let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
-        eprintln!("Skipping test: symlinks not available on this system");
-        return;
-    };
+    let minimal_bin = setup_minimal_bin_without_cli(&repo);
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -6572,6 +6568,94 @@ fn test_switch_pr_self_hosted_defaults_to_github(
         assert_eq!(calls.trim(), "logins list --output json");
     } else {
         assert!(!call_log.path().join("tea.calls").exists());
+    }
+}
+
+const GHE_REMOTE: &str = "https://github.example.com/owner/test-repo.git";
+const ALIAS_REMOTE: &str = "git@github-work:owner/test-repo.git";
+const GHE_PR_URL: &str = "https://github.example.com/owner/test-repo/pull/101";
+
+/// With no `forge.hostname`, `gh api` sends a request without `--hostname` to
+/// gh's default host. The PR lookup names a host only when gh holds a login
+/// for it: the host in a `/pull/N` URL first (#4709), then a GitHub Enterprise
+/// remote's host. An SSH alias (`github-work`, #1790) has no login; the alias
+/// cases pass only if the URL host is tried before the remote host.
+#[rstest]
+#[case::authed_remote_host(GHE_REMOTE, "pr:101", true)]
+#[case::unauthed_remote_host(GHE_REMOTE, "pr:101", false)]
+#[case::authed_url_host_over_alias_remote(ALIAS_REMOTE, GHE_PR_URL, true)]
+#[case::unauthed_url_host(ALIAS_REMOTE, GHE_PR_URL, false)]
+fn test_switch_pr_enterprise_passes_hostname(
+    #[from(repo_with_remote)] mut repo: TestRepo,
+    #[case] origin_url: &str,
+    #[case] switch_arg: &str,
+    #[case] gh_authed: bool,
+) {
+    repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&["remote", "set-url", "origin", origin_url]);
+    repo.run_git(&["config", &format!("url.{bare_url}.insteadOf"), origin_url]);
+
+    let gh_response = r#"{
+        "title": "Enterprise PR",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.example.com/owner/test-repo/pull/101"
+    }"#;
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    fs::write(mock_bin.join("pr_response.json"), gh_response).unwrap();
+    let mut gh = MockConfig::new("gh").command("api", MockResponse::file("pr_response.json"));
+    if gh_authed {
+        // Answers for any host, so the alias cases check host precedence.
+        gh = gh.command("auth token --hostname", MockResponse::output("gho_mock"));
+    }
+    gh.command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    let call_log = worktrunk::testing::tempdir().unwrap();
+
+    let mut cmd = repo.wt_command();
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd
+        .args(["switch", switch_arg])
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let calls = fs::read_to_string(call_log.path().join("gh.calls")).unwrap();
+    let api_call = calls.lines().find(|line| line.starts_with("api ")).unwrap();
+    if gh_authed {
+        assert_eq!(
+            api_call,
+            "api repos/owner/test-repo/pulls/101 --hostname github.example.com"
+        );
+    } else {
+        assert_eq!(api_call, "api repos/owner/test-repo/pulls/101");
     }
 }
 
@@ -7433,6 +7517,7 @@ fn test_switch_pr_azure_not_found(#[from(repo_with_remote)] repo: TestRepo) {
 
 /// `az` not installed: with an Azure remote, dispatch routes to the Azure
 /// backend, which returns the install hint when `az` isn't on PATH.
+#[cfg(unix)]
 #[rstest]
 fn test_switch_pr_azure_az_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
@@ -7442,10 +7527,7 @@ fn test_switch_pr_azure_az_not_installed(#[from(repo_with_remote)] repo: TestRep
         "https://dev.azure.com/myorg/myproject/_git/test-repo",
     ]);
 
-    let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
-        eprintln!("Skipping test: symlinks not available on this system");
-        return;
-    };
+    let minimal_bin = setup_minimal_bin_without_cli(&repo);
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -8597,12 +8679,12 @@ fn test_switch_mr_unknown_error(#[from(repo_with_remote)] repo: TestRepo) {
 
 /// Set up a minimal bin directory with only git (no gh/glab).
 ///
-/// Creates a temporary directory with a symlink to git, excluding gh/glab.
-/// Returns the path to use as PATH.
-/// Create a minimal bin directory with only git, excluding gh/glab.
-/// Returns None on Windows where this approach doesn't work reliably.
+/// Creates a directory with a symlink to git, excluding gh/glab, and returns
+/// the path to use as PATH. Unix only: on Windows, git needs its whole
+/// installation directory, so a PATH holding just git can't run it, and the
+/// tests that use this are `#[cfg(unix)]`.
 #[cfg(unix)]
-fn setup_minimal_bin_without_cli(repo: &TestRepo) -> Option<std::path::PathBuf> {
+fn setup_minimal_bin_without_cli(repo: &TestRepo) -> std::path::PathBuf {
     let minimal_bin = repo.root_path().join("minimal-bin");
     fs::create_dir_all(&minimal_bin).unwrap();
 
@@ -8611,24 +8693,19 @@ fn setup_minimal_bin_without_cli(repo: &TestRepo) -> Option<std::path::PathBuf> 
 
     // Symlink git into our minimal bin directory
     std::os::unix::fs::symlink(&git_path, minimal_bin.join("git")).unwrap();
-    Some(minimal_bin)
-}
-
-/// On Windows, git requires its entire installation directory to function,
-/// so we can't easily create a minimal PATH with just git. Skip these tests.
-#[cfg(windows)]
-fn setup_minimal_bin_without_cli(_repo: &TestRepo) -> Option<std::path::PathBuf> {
-    None
+    minimal_bin
 }
 
 /// Configure PATH to exclude gh/glab, keeping only git.
 ///
 /// This simulates the "CLI not installed" scenario.
+#[cfg(unix)]
 fn configure_cli_not_installed_env(cmd: &mut std::process::Command, minimal_bin: &Path) {
     cmd.env("PATH", minimal_bin);
 }
 
 /// Test pr: when gh CLI is not installed
+#[cfg(unix)]
 #[rstest]
 fn test_switch_pr_gh_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
     // Set a GitHub URL so fetch_pr_info can parse owner/repo before checking for gh
@@ -8638,11 +8715,7 @@ fn test_switch_pr_gh_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
         "origin",
         "https://github.com/owner/test-repo.git",
     ]);
-    let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
-        // Symlinks not available (Windows without Developer Mode)
-        eprintln!("Skipping test: symlinks not available on this system");
-        return;
-    };
+    let minimal_bin = setup_minimal_bin_without_cli(&repo);
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -8653,13 +8726,10 @@ fn test_switch_pr_gh_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
 }
 
 /// Test mr: when glab CLI is not installed
+#[cfg(unix)]
 #[rstest]
 fn test_switch_mr_glab_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
-    let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
-        // Symlinks not available (Windows without Developer Mode)
-        eprintln!("Skipping test: symlinks not available on this system");
-        return;
-    };
+    let minimal_bin = setup_minimal_bin_without_cli(&repo);
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -9567,6 +9637,40 @@ fn test_switch_create_names_branch_left_by_failed_worktree_add(repo: TestRepo, #
             "{stderr}"
         );
     }
+}
+
+#[rstest]
+fn test_switch_create_leftover_branch_hint_keeps_flags(repo: TestRepo) {
+    // The leftover-branch hint's `wt switch <branch>` must carry `--path`,
+    // `--execute`, and trailing args (minus `--create`), or following it would
+    // create the worktree somewhere else and skip the command (issue #4839).
+    fs::write(repo.root_path().join("blocked"), "not a directory").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "stranded",
+            "--path",
+            "blocked/stranded",
+            "--execute",
+            "echo hi",
+            "--",
+            "extra",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr.ansi_strip();
+    assert!(
+        stderr.contains(
+            "to use it, run wt switch stranded --path=blocked/stranded --execute='echo hi' -- extra"
+        ),
+        "expected the recovery suggestion to keep the original flags, got: {stderr}"
+    );
 }
 
 // `--path` tests

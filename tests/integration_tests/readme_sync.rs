@@ -2113,6 +2113,8 @@ fn finalize_skill_content(content: &str) -> String {
     // Remove "See also" section (just contains links to other pages)
     let content = remove_section(&content, "## See also");
 
+    let content = rewrite_fragments_for_github(&content);
+
     // Clean up multiple consecutive blank lines
     content
         .lines()
@@ -2125,6 +2127,80 @@ fn finalize_skill_content(content: &str) -> String {
         })
         .0
         .join("\n")
+}
+
+static IN_PAGE_LINK_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\]\(#([^)\s]+)\)").unwrap());
+
+/// Anchor GitHub's slugger generates for a heading: lowercase, drop
+/// punctuation except `-` and `_`, spaces to hyphens.
+fn github_heading_anchor(heading: &str) -> String {
+    heading
+        .to_lowercase()
+        .chars()
+        .filter_map(|c| match c {
+            ' ' => Some('-'),
+            c if c.is_alphanumeric() || c == '-' || c == '_' => Some(c),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Rewrite in-page fragments from the site's heading slug to GitHub's.
+///
+/// Help text links headings by their worktrunk.dev id, where `slugHeading`
+/// turns `_` into `-` and the `[experimental]` badge contributes no text.
+/// Skill files render with GitHub's slugger, which keeps `_` and the literal
+/// `[experimental]` suffix, so those links would otherwise land nowhere.
+fn rewrite_fragments_for_github(content: &str) -> String {
+    let mut site_to_github: BTreeMap<String, String> = BTreeMap::new();
+    let mut in_code_block = false;
+    for line in content.lines() {
+        if line.trim_start().starts_with("```") {
+            in_code_block = !in_code_block;
+            continue;
+        }
+        if in_code_block {
+            continue;
+        }
+        let Some(text) = line
+            .strip_prefix('#')
+            .map(|rest| rest.trim_start_matches('#'))
+            .and_then(|rest| rest.strip_prefix(' '))
+        else {
+            continue;
+        };
+        let site = heading_to_anchor(&text.replace("[experimental]", ""));
+        site_to_github
+            .entry(site)
+            .or_insert_with(|| github_heading_anchor(text.trim()));
+    }
+
+    IN_PAGE_LINK_PATTERN
+        .replace_all(content, |caps: &regex::Captures| {
+            let fragment = &caps[1];
+            let target = site_to_github
+                .get(fragment)
+                .map_or(fragment, String::as_str);
+            format!("](#{target})")
+        })
+        .into_owned()
+}
+
+#[test]
+fn test_skill_fragments_follow_github_slugs() {
+    let content = r"See [custom columns](#custom-columns), [default_branch](#default-branch-object), and [CI](#ci-status).
+
+### Custom columns [experimental]
+
+### default_branch object
+
+### CI status
+";
+    let rewritten = rewrite_fragments_for_github(content);
+    assert!(rewritten.contains("[custom columns](#custom-columns-experimental)"));
+    assert!(rewritten.contains("[default_branch](#default_branch-object)"));
+    assert!(rewritten.contains("[CI](#ci-status)"));
 }
 
 /// Mirror the repo-root `skills/` tree into `plugins/worktrunk/skills/` as

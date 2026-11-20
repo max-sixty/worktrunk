@@ -1,5 +1,5 @@
 name: tend setup
-description: Install cargo tools, test shells, and Nix for the tend workflows
+description: Install cargo tools and test shells for the tend workflows
 
 inputs:
   install-cargo-tools:
@@ -44,7 +44,7 @@ runs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-nextest
-        version: "=0.9.150"
+        version: "=0.9.152"
 
     - name: Publish the cargo tools to a system location
       if: inputs.install-cargo-tools == 'true'
@@ -93,70 +93,4 @@ runs:
       if: inputs.install-shells == 'true'
       uses: hustcer/setup-nu@v3
       with:
-        version: '0.116.1'
-
-    # Nix, for the weekly toolchain bump's `flake.lock` refresh. The sandboxed
-    # agent can't install it: that user has no sudo, so it can't create /nix.
-    # `install-nix-action` runs as `runner` and puts
-    # /nix/var/nix/profiles/default/bin on $GITHUB_PATH — a system path, so the
-    # agent inherits `nix` on the same rule as `nu` above.
-    #
-    # Every tend workflow installs it, though only the weekly one runs `nix`.
-    # `.config/tend.yaml`'s probe asserts `nix` and runs everywhere, so gating
-    # this step to the weekly workflow would fail the rest. It costs 4 s of the
-    # action's ~50 s.
-    #
-    # The multi-user daemon install is what this repo standardized on: root
-    # owns /nix and the store is reached through the daemon. The ~1 s
-    # `nixbuild/nix-quick-install-action` was ruled out because it hands /nix
-    # to the runner and puts only $HOME/.nix-profile/bin on $GITHUB_PATH, a
-    # path the pre-0.2.14 /home/runner PATH rewrite dropped. That rewrite is
-    # gone and so is the objection — but the daemon block below leaves the
-    # agent without a working `nix` either way, so there is nothing to gain by
-    # switching.
-    #
-    # Reaching the daemon is what the agent can no longer do. From tend 0.2.5
-    # the sandbox blocks `socket(AF_UNIX, …)` outright — still true under
-    # 0.2.14's systemd unit — so connecting to
-    # /nix/var/nix/daemon-socket/socket fails and the weekly job's
-    # `nix flake update` cannot run — it needs an upstream lever
-    # (max-sixty/tend#1197). `command -v nix` still resolves, so the probe
-    # below stays green and the gap surfaces only in that one job. The install
-    # stays because it is the half of the route this repo owns, and because
-    # `nix` still works for anything running as `runner`.
-    #
-    # Caching doesn't apply. Of the 4 s, the binary tarball is about half; the
-    # rest creates the nixbld users, /etc/nix and the daemon unit, which no
-    # restored /nix reproduces. Caching the store instead would serve only the
-    # weekly job's flake fetches, at the cost of a restore in every workflow.
-    - name: Install Nix
-      uses: cachix/install-nix-action@v31
-      with:
-        extra_nix_config: |
-          experimental-features = nix-command flakes
-
-    - name: Strip the job token from /etc/nix/nix.conf
-      shell: bash
-      # The step above writes `access-tokens = github.com=<job token>` into
-      # world-readable /etc/nix/nix.conf whenever it can see a token, and its
-      # action.yml passes `GITHUB_TOKEN: ${{ github.token }}` unconditionally.
-      # `github_access_token: ""` doesn't suppress it; install-nix.sh falls
-      # through to the job token, which on tend-weekly carries `contents:
-      # write`. Deleting the line here is enough, because the sandbox user
-      # doesn't exist until the tend action runs.
-      #
-      # Nothing is lost: tend's proxy overwrites `Authorization` on every
-      # sandbox request to github.com, codeload.github.com, and api.github.com
-      # with the bot's token, so flake fetches still authenticate.
-      #
-      # The `grep` runs under sudo like the `sed`, though the file is
-      # world-readable today: `grep` exits 2 when it can't read a file, and an
-      # `if` condition takes that as "no match", so a check that couldn't run
-      # would report success. After `sed -i` succeeds, root can read the file
-      # by construction.
-      run: |
-        sudo sed -i '/^access-tokens/d' /etc/nix/nix.conf
-        if sudo grep -q 'access-tokens' /etc/nix/nix.conf; then
-          echo "::error::a GitHub token survived in /etc/nix/nix.conf"
-          exit 1
-        fi
+        version: '0.117.0'

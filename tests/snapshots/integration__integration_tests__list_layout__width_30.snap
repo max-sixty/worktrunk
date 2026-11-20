@@ -44,8 +44,10 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_MOCK_CONFIG_DIR: "[TEST_MOCK_CONFIG]"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OMP_INSTALLED: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_PARENT_SHELL: ""
+    WORKTRUNK_TEST_PI_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_PROBE_TIMEOUT_MS: "60000"
@@ -67,6 +69,6 @@ exit_code: 0
 
 [2m○[22m [2mShowing 5 worktrees, 1 with
   changes, 3 ahead, hidden:
-  Status, HEAD±, main↕,
-  main…±, Remote⇅, Path,
-  Commit, Age, Message[0m
+  Status, @±, ^↕, ^…±,
+  Remote⇅, Path, Commit, Age,
+  Message[0m

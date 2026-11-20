@@ -1,10 +1,13 @@
 ---
-source: tests/integration_tests/step_copy_ignored.rs
+source: tests/integration_tests/user_hooks.rs
 info:
   program: wt
   args:
-    - step
-    - copy-ignored
+    - remove
+    - _REPO_.feature
+    - "--force"
+    - "--foreground"
+    - "--yes"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
@@ -59,5 +62,8 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mError parsing [1m.worktreeinclude[22m[39m
-[107m [0m _REPO_/.worktreeinclude: line 1: error parsing glob '{unclosed': unclosed alternate group; missing '}' (maybe escape '{' with '[{]'?)
+[36m◎[39m [36mRemoving worktree @ [1m_REPO_.feature[22m... (detached HEAD, no branch to delete)[39m
+[32m✓[39m [32mRemoved worktree @ [1m_REPO_.feature[22m (detached HEAD, no branch to delete)[39m [90m(3 files · [BYTES] B[39m[90m)[39m
+[31m✗[39m [31mFailed to expand post-remove user:forget: undefined variable branch @ line 1[39m
+[107m [0m echo {{ branch }} > ../postremove_forget.txt
+[2m↳[22m [2mAvailable variables: [4margs[24m, [4mcommit[24m, [4mcwd[24m, [4mdefault_branch[24m, [4mhook_name[24m, [4mhook_type[24m, [4mprimary_worktree_path[24m, [4mremote[24m, [4mremote_url[24m, [4mrepo[24m, [4mrepo_path[24m, [4mshort_commit[24m, [4mtarget[24m, [4mtarget_worktree_path[24m, [4mworktree[24m, [4mworktree_name[24m, [4mworktree_path[24m[22m

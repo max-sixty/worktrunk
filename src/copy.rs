@@ -332,13 +332,16 @@ fn preserve_modified(path: &Path, src_meta: &fs::Metadata) {
     }
 }
 
-fn ensure_path_within_root(path: &Path, root: &Path) -> anyhow::Result<()> {
+/// Fails when `path`, with its existing ancestors' symlinks resolved, lies
+/// outside `root`: a symlinked directory in a destination worktree must not
+/// carry a copy or move out of it.
+pub fn ensure_path_within_root(path: &Path, root: &Path) -> anyhow::Result<()> {
     let canonical_root = canonicalize_with_parents(root);
     let canonical_path = canonicalize_with_parents(path);
 
     anyhow::ensure!(
         canonical_path.starts_with(&canonical_root),
-        "refusing to copy outside destination worktree: {} resolves outside {}",
+        "refusing to write outside destination worktree: {} resolves outside {}",
         format_path_for_display(path),
         format_path_for_display(root)
     );

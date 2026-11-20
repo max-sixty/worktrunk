@@ -236,6 +236,93 @@ exit $LASTEXITCODE
     assert_eq!(std::fs::read_dir(&temp_path).unwrap().count(), 0);
 }
 
+/// Write a `wt` into `dir` that appends `<label> <args>` to the file named by
+/// `WORKTRUNK_TEST_CALL_LOG`, so the log shows which `wt` each call reached.
+fn write_logging_wt(dir: &std::path::Path, label: &str) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("wt");
+        std::fs::write(
+            &path,
+            format!("#!/bin/sh\nprintf '%s\\n' \"{label} $*\" >> \"$WORKTRUNK_TEST_CALL_LOG\"\n"),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    #[cfg(windows)]
+    std::fs::write(
+        dir.join("wt.cmd"),
+        format!("@echo off\r\n>>\"%WORKTRUNK_TEST_CALL_LOG%\" echo {label} %*\r\n"),
+    )
+    .unwrap();
+}
+
+/// Windows Terminal installs its own `wt.exe` in `WindowsApps`, which can come
+/// before worktrunk on PATH. The completion step that runs as the integration
+/// loads, and every wrapper call, must reach the worktrunk after it. With only
+/// Windows Terminal's on PATH, the wrapper fails instead of running it.
+///
+/// The completion step is the call with no arguments.
+#[test]
+fn test_powershell_skips_windows_terminal_wt() {
+    let temp_dir = worktrunk::testing::test_tempdir();
+    let terminal_dir = temp_dir.path().join("WindowsApps");
+    let worktrunk_dir = temp_dir.path().join("worktrunk");
+    let call_log = temp_dir.path().join("calls.log");
+    for (dir, label) in [
+        (&terminal_dir, "windows-terminal"),
+        (&worktrunk_dir, "worktrunk"),
+    ] {
+        std::fs::create_dir(dir).unwrap();
+        write_logging_wt(dir, label);
+    }
+
+    let wrapper = ShellInit::with_prefix(Shell::PowerShell, "wt".to_string())
+        .generate()
+        .unwrap();
+    let quote = |path: &std::path::Path| path.display().to_string().replace('\'', "''");
+    let terminal = quote(&terminal_dir);
+    let worktrunk = quote(&worktrunk_dir);
+    let script = format!(
+        r#"
+$env:PATH = '{terminal}' + [IO.Path]::PathSeparator + '{worktrunk}' + [IO.Path]::PathSeparator + $env:PATH
+{wrapper}
+wt --version
+$env:PATH = '{terminal}'
+$failure = wt --version 2>&1
+Write-Output "exit=$LASTEXITCODE error=$failure"
+exit 0
+"#
+    );
+
+    let output = Command::new("pwsh")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .env("WORKTRUNK_TEST_CALL_LOG", &call_log)
+        .env_remove("WORKTRUNK_BIN")
+        .output()
+        .expect("Failed to run pwsh");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "pwsh command failed.\nstdout: {stdout}\nstderr: {stderr}",
+    );
+
+    let calls = std::fs::read_to_string(&call_log).unwrap_or_default();
+    let calls: Vec<&str> = calls.lines().map(str::trim).collect();
+    assert_eq!(
+        calls,
+        ["worktrunk", "worktrunk --version"],
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert_eq!(
+        stdout.trim(),
+        "exit=127 error=wt: worktrunk not found on PATH; a wt.exe in WindowsApps is Windows Terminal's",
+        "stderr: {stderr}"
+    );
+}
+
 /// The installed `pwsh` decides where install writes on Unix: with
 /// `XDG_CONFIG_HOME` pointing away from `~/.config`, the profile lands where
 /// PowerShell loads it.

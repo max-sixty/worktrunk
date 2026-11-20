@@ -72,8 +72,9 @@
 //!   - `%H` full SHA, `%h` abbreviated SHA, `%ct` committer date (Unix
 //!     epoch), `%T` tree SHA, `%s` subject (first line of message).
 //!
-//! SHAs come from #4 (worktree HEADs) ∪ #5 (branch tips), deduplicated.
-//! Argv length scales with N — Linux `ARG_MAX` (~128 KB) bounds the
+//! SHAs come from #4 (worktree HEADs) ∪ #5 (branch tips) ∪ remote-branch
+//! tips (with `--remotes`). Repeats stay in argv; git collapses them in its
+//! output. Argv length scales with N — Linux `ARG_MAX` (~128 KB) bounds the
 //! unchunked form at roughly 3,000 SHAs.
 //!
 //! What each field feeds:
@@ -94,8 +95,9 @@
 //! each commit object to read its timestamp anyway, so the extra bytes add no
 //! measurable latency to the round trip. Without this batch you'd be forking
 //! `git log -1` (and `rev-parse ^{tree}`) per SHA later — same data, N forks
-//! instead of one. The full `(timestamp, subject)` map is handed to the
-//! post-skeleton loop that populates `ListItem.commit` directly.
+//! instead of one. The full `(short_sha, timestamp, subject)` map feeds the
+//! pre-skeleton `%h` fold and the post-skeleton loop that populates
+//! `ListItem.commit`.
 //!
 //! When the batch fails (e.g., a listed SHA was deleted mid-run), the
 //! failure is surfaced once and Age/Message cells render placeholders for
@@ -373,7 +375,7 @@
 //! | `IsAncestor` | `sha_cache` (is-ancestor) |
 //! | `HasFileChanges` | `sha_cache` (has-added-changes) |
 //! | `BranchDiff` | `sha_cache` (diff-stats, skipped when sparse checkout is active) |
-//! | `AheadBehind`, `Upstream` | `sha_cache` (ahead-behind for counts, merge-base for the orphan check); on a cold cache both columns are pre-filled from `for-each-ref %(ahead-behind:SHA)` walks — one against the default branch (`main↕`, in `RefSnapshot::capture_ahead_behind`) and one per unique upstream SHA (`Remote⇅`, in `Repository::prime_upstream_ahead_behind_cache`) |
+//! | `AheadBehind`, `Upstream` | `sha_cache` (ahead-behind for counts, merge-base for the orphan check); on a cold cache both columns are pre-filled from `for-each-ref %(ahead-behind:SHA)` walks — one against the default branch (`^↕`, in `RefSnapshot::capture_ahead_behind`) and one per unique upstream SHA (`Remote⇅`, in `Repository::prime_upstream_ahead_behind_cache`) |
 //! | `CiStatus` | `ci_status::cache` |
 //! | `SummaryGenerate` | `summary` |
 //!
@@ -1166,22 +1168,17 @@ pub fn collect(
     // - Normal repos: the main worktree (repo root)
     // - Bare repos: the default branch's worktree
     //
-    // `None` when no worktree can be the main one — a bare repo with no linked
-    // worktrees, and the degenerate case where every registration is prunable.
-    // Rows can still exist there (branch-only rows under `--branches`), so this
-    // is a normal answer rather than an error: no row is flagged main, and path
-    // shortening falls back to the repo root, which no row uses because a
-    // branch-only row has no path.
+    // `None` when a bare repo has no worktree on the default branch — none at
+    // all, or every one detached or on another branch. That is a normal answer
+    // rather than an error: no row is flagged main, and paths are shortened
+    // relative to the repo root, where `home_path()` also lands.
     let primary_id = repo.primary_worktree()?.as_ref().map(WorktreeId::new);
     let (main_worktree_path, main_worktree_id) = {
-        let main = primary_id
-            .as_ref()
-            .and_then(|id| {
-                worktree_subjects
-                    .iter()
-                    .find(|(_, worktree_ref)| worktree_ref.id() == id)
-            })
-            .or_else(|| worktree_subjects.iter().find(|(wt, _)| !wt.is_prunable()));
+        let main = primary_id.as_ref().and_then(|id| {
+            worktree_subjects
+                .iter()
+                .find(|(_, worktree_ref)| worktree_ref.id() == id)
+        });
         match main {
             Some((wt, worktree_ref)) => (wt.path.clone(), Some(worktree_ref.id().clone())),
             None => (repo.repo_path()?.to_path_buf(), None),
@@ -1686,7 +1683,7 @@ pub fn collect(
 
         // Prime the `ahead-behind/` SHA-cache for the `Remote⇅` column,
         // pairing each local branch with its configured upstream. Mirrors
-        // the `main↕` priming inside `inventory_snapshot`, but
+        // the `^↕` priming inside `inventory_snapshot`, but
         // per-upstream-group instead of single-base: one serial
         // `for-each-ref %(ahead-behind:UPSTREAM_SHA)` walk per unique
         // upstream that's both cold and above the same threshold. It reads
@@ -2236,7 +2233,7 @@ where
 /// Uses the pre-fetched commit-details map for efficiency.
 ///
 /// `main_worktree_id` is `None` when the repo has no main worktree (a bare repo
-/// with no linked worktrees); the middle tier is then simply empty.
+/// with no worktree on the default branch); the middle tier is then simply empty.
 fn sort_worktrees_with_cache<'a>(
     mut worktrees: Vec<(&'a WorktreeInfo, WorktreeRef)>,
     main_worktree_id: Option<&WorktreeId>,

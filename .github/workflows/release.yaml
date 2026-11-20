@@ -46,6 +46,14 @@ permissions:
 name: release
 
 on:
+  # Dispatch from a trusted non-version tag to recover an existing release.
+  # The release environment admits tags only; release_tag selects the source.
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing version tag to publish using this workflow's runner configuration
+        required: true
+        type: string
   pull_request:
   push:
     tags:
@@ -61,16 +69,56 @@ jobs:
     runs-on: "ubuntu-24.04"
     outputs:
       val: ${{ steps.plan.outputs.manifest }}
-      tag: ${{ !github.event.pull_request && github.ref_name || '' }}
-      tag-flag: ${{ !github.event.pull_request && format('--tag={0}', github.ref_name) || '' }}
+      tag: ${{ steps.source.outputs.tag }}
+      source-sha: ${{ steps.source.outputs.sha }}
+      tag-flag: ${{ steps.source.outputs.tag && format('--tag={0}', steps.source.outputs.tag) || '' }}
       publishing: ${{ !github.event.pull_request }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || '' }}
           persist-credentials: false
           submodules: recursive
+      - name: Resolve release source
+        id: source
+        env:
+          RELEASE_TAG: ${{ !github.event.pull_request && (inputs.release_tag || github.ref_name) || '' }}
+        run: |
+          # Version tags become command arguments in downstream dist jobs.
+          if [[ -n "$RELEASE_TAG" && ! "$RELEASE_TAG" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Expected a version tag"
+            exit 1
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+      - name: Apply recovery runner configuration
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          # The source tag stays fixed. Only runner selection comes from the
+          # trusted workflow ref; reject changes to any other dist setting.
+          git fetch --depth=1 origin "$WORKFLOW_SHA"
+          python3 - <<'PYTHON'
+          import os
+          from pathlib import Path
+          import subprocess
+          import tomllib
+
+          path = Path("dist-workspace.toml")
+          workflow_config = subprocess.check_output(
+              ["git", "show", f"{os.environ['WORKFLOW_SHA']}:dist-workspace.toml"], text=True
+          )
+          source = tomllib.loads(path.read_text())
+          workflow = tomllib.loads(workflow_config)
+          for config in (source, workflow):
+              config["dist"].pop("github-custom-runners", None)
+          if source != workflow:
+              raise SystemExit("Recovery permits only github-custom-runners changes")
+          path.write_text(workflow_config)
+          PYTHON
       - name: Install dist
         # we specify bash to get pipefail; it guards against the `curl` command
         # failing. otherwise `sh` won't catch that `curl` returned non-0
@@ -81,14 +129,15 @@ jobs:
         with:
           name: cargo-dist-cache
           path: ~/.cargo/bin/dist
-      # sure would be cool if github gave us proper conditionals...
-      # so here's a doubly-nested ternary-via-truthiness to try to provide the best possible
-      # functionality based on whether this is a pull_request, and whether it's from a fork.
-      # (PRs run on the *source* but secrets are usually on the *target* -- that's *good*
-      # but also really annoying to build CI around when it needs secrets to work right.)
       - id: plan
+        env:
+          RELEASE_TAG: ${{ steps.source.outputs.tag }}
         run: |
-          dist ${{ (!github.event.pull_request && format('host --steps=create --tag={0}', github.ref_name)) || 'plan' }} --output-format=json > plan-dist-manifest.json
+          if [[ -n "$RELEASE_TAG" ]]; then
+            dist host --steps=create --tag="$RELEASE_TAG" --output-format=json > plan-dist-manifest.json
+          else
+            dist plan --output-format=json > plan-dist-manifest.json
+          fi
           echo "dist ran successfully"
           cat plan-dist-manifest.json
           echo "manifest=$(jq -c "." plan-dist-manifest.json)" >> "$GITHUB_OUTPUT"
@@ -133,6 +182,9 @@ jobs:
           git config --global core.longpaths true
       - uses: actions/checkout@v7
         with:
+          ref: ${{ needs.plan.outputs.source-sha }}
+          # build.rs uses git describe for the binary's version string.
+          fetch-tags: true
           persist-credentials: false
           submodules: recursive
       - name: Install Rust non-interactively if not already installed
@@ -266,6 +318,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ needs.plan.outputs.source-sha }}
           persist-credentials: false
           submodules: recursive
       - name: Install cached dist
@@ -323,6 +376,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ needs.plan.outputs.source-sha }}
           persist-credentials: false
           submodules: recursive
       - name: Install cached dist
@@ -376,8 +430,10 @@ jobs:
         # continue-on-error only covers a step that exits; bound a stalled
         # Sigstore call so it cannot hold the release until the job timeout.
         timeout-minutes: 10
-        uses: jdx/packslip@44e50e5f64551234b4a382d991bd7f7f7d021d06 # v1.11.3
+        uses: jdx/packslip@e0340e0c1d10c90a434de2b90f3a1ba345923564 # v1.11.4
         with:
+          tag: ${{ needs.plan.outputs.tag }}
+          commit: ${{ needs.plan.outputs.source-sha }}
           artifacts: artifacts/worktrunk-*.tar.xz artifacts/worktrunk-*.zip
           bin: wt git-wt
           resources: |
@@ -397,7 +453,7 @@ jobs:
           PRERELEASE_FLAG: "${{ fromJson(steps.host.outputs.manifest).announcement_is_prerelease && '--prerelease' || '' }}"
           ANNOUNCEMENT_TITLE: "${{ fromJson(steps.host.outputs.manifest).announcement_title }}"
           ANNOUNCEMENT_BODY: "${{ fromJson(steps.host.outputs.manifest).announcement_github_body }}"
-          RELEASE_COMMIT: "${{ github.sha }}"
+          RELEASE_COMMIT: "${{ needs.plan.outputs.source-sha }}"
         run: |
           # Write and read notes from a file to avoid quoting breaking things
           # Customize install commands:
@@ -432,6 +488,9 @@ jobs:
     if: ${{ needs.plan.outputs.publishing == 'true' }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.source-sha }}
+          persist-credentials: false
       - name: Authenticate with crates.io
         id: auth
         uses: rust-lang/crates-io-auth-action@v1
@@ -458,6 +517,7 @@ jobs:
         with:
           identifier: max-sixty.worktrunk
           version: ${{ needs.plan.outputs.tag }}
+          release-tag: ${{ needs.plan.outputs.tag }}
           installers-regex: '^worktrunk-.*-windows-.*\.zip$'
           token: ${{ secrets.TEND_BOT_TOKEN }}
           fork-user: max-sixty
@@ -503,6 +563,9 @@ jobs:
     if: ${{ needs.plan.outputs.publishing == 'true' }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.source-sha }}
+          persist-credentials: false
       - name: Update PKGBUILD version
         run: |
           VERSION="${{ needs.plan.outputs.tag }}"
@@ -538,6 +601,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ needs.plan.outputs.source-sha }}
           persist-credentials: false
           submodules: recursive
       - name: Announce release

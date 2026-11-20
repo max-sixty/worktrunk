@@ -509,7 +509,7 @@ fn test_picker_dry_run_drains_stashed_warnings(mut repo: TestRepo) {
     );
 }
 
-/// Same as above but with `list.summary=true` and a strict fake LLM command,
+/// Same as `test_picker_dry_run_emits_configured_rows_and_cache_json` but with `list.summary=true` and a strict fake LLM command,
 /// proving the configured generator runs before its result reaches mode 6.
 #[rstest]
 fn test_picker_dry_run_with_summary(mut repo: TestRepo) {

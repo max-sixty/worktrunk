@@ -290,12 +290,13 @@ fn fetch_ref_info(
     forge: ForgeKind,
     number: u32,
     repo: &Repository,
+    url_host: Option<&str>,
 ) -> anyhow::Result<RemoteRefInfo> {
     let _watchdog = worktrunk::progress::Watchdog::start(
         &format!("the {} lookup", forge.ref_type().name()),
         None,
     );
-    remote_ref::fetch_info(forge, number, repo)
+    remote_ref::fetch_info(forge, number, repo, url_host)
 }
 
 /// Resolve a remote ref (PR or MR) through the selected forge.
@@ -304,6 +305,7 @@ fn resolve_remote_ref(
     forge: ForgeKind,
     number: u32,
     create: bool,
+    url_host: Option<&str>,
 ) -> anyhow::Result<ResolvedTarget> {
     let ref_type = forge.ref_type();
     let symbol = ref_type.symbol();
@@ -314,7 +316,7 @@ fn resolve_remote_ref(
         progress_message(cformat!("Fetching {} {symbol}{number}...", ref_type.name()))
     );
 
-    let info = fetch_ref_info(forge, number, repo)?;
+    let info = fetch_ref_info(forge, number, repo, url_host)?;
 
     // Display context with URL (as gutter under fetch progress)
     eprintln!("{}", format_with_gutter(&format_ref_context(&info), None));
@@ -537,20 +539,21 @@ fn fetch_same_repo_branch(repo: &Repository, info: &RemoteRefInfo) -> anyhow::Re
 /// `https://github.com/owner/repo/pull/123`) into the same literal shortcut so
 /// both forms flow through one dispatch. Returns `None` for a regular branch
 /// name, which callers resolve as an ordinary ref.
-fn parse_ref_shortcut(input: &str) -> Option<(RefType, u32)> {
+fn parse_ref_shortcut(input: &str) -> Option<(RefType, u32, Option<String>)> {
     let normalised = parse_ref_url(input);
-    let input = normalised.as_deref().unwrap_or(input);
-    if let Some(number) = input
+    let shortcut = normalised.as_deref().unwrap_or(input);
+    if let Some(number) = shortcut
         .strip_prefix("pr:")
         .and_then(|s| s.parse::<u32>().ok())
     {
-        return Some((RefType::Pr, number));
+        // Only a GitHub `/pull/N` URL names a host; literal `pr:N` doesn't.
+        return Some((RefType::Pr, number, remote_ref::github_pull_url_host(input)));
     }
-    if let Some(number) = input
+    if let Some(number) = shortcut
         .strip_prefix("mr:")
         .and_then(|s| s.parse::<u32>().ok())
     {
-        return Some((RefType::Mr, number));
+        return Some((RefType::Mr, number, None));
     }
     None
 }
@@ -575,12 +578,12 @@ fn resolve_base_ref(
     repo: &Repository,
     base: &str,
 ) -> anyhow::Result<(String, Option<(String, String)>)> {
-    if let Some((ref_type, number)) = parse_ref_shortcut(base) {
+    if let Some((ref_type, number, url_host)) = parse_ref_shortcut(base) {
         let forge = match ref_type {
             RefType::Pr => choose_pr_forge(repo)?,
             RefType::Mr => ForgeKind::GitLab,
         };
-        return resolve_remote_ref_as_base(repo, forge, number);
+        return resolve_remote_ref_as_base(repo, forge, number, url_host.as_deref());
     }
 
     let selector = repo.expand_selector(base)?;
@@ -612,6 +615,7 @@ fn resolve_remote_ref_as_base(
     repo: &Repository,
     forge: ForgeKind,
     number: u32,
+    url_host: Option<&str>,
 ) -> anyhow::Result<(String, Option<(String, String)>)> {
     let ref_type = forge.ref_type();
     let symbol = ref_type.symbol();
@@ -624,7 +628,7 @@ fn resolve_remote_ref_as_base(
         ))
     );
 
-    let info = fetch_ref_info(forge, number, repo)?;
+    let info = fetch_ref_info(forge, number, repo, url_host)?;
     eprintln!("{}", format_with_gutter(&format_ref_context(&info), None));
 
     if !info.is_cross_repo {
@@ -676,7 +680,7 @@ fn resolve_ref_shortcut_target(
 ) -> anyhow::Result<Option<ResolvedTarget>> {
     // `pr:N` dispatches to GitHub, Gitea, or Azure DevOps based on remotes;
     // `mr:N` to GitLab. Forge PR/MR web URLs normalise to the same shortcuts.
-    let Some((ref_type, number)) = parse_ref_shortcut(branch) else {
+    let Some((ref_type, number, url_host)) = parse_ref_shortcut(branch) else {
         return Ok(None);
     };
     // Fail closed on a malformed project config before choosing a forge:
@@ -694,7 +698,7 @@ fn resolve_ref_shortcut_target(
         RefType::Pr => choose_pr_forge(repo)?,
         RefType::Mr => ForgeKind::GitLab,
     };
-    resolve_remote_ref(repo, forge, number, create).map(Some)
+    resolve_remote_ref(repo, forge, number, create, url_host.as_deref()).map(Some)
 }
 
 /// Decide how a new worktree for `branch` gets created, validating
@@ -968,7 +972,7 @@ fn configure_fork_branch(
 /// executed later. Call this BEFORE approval prompts to ensure users aren't
 /// asked to approve hooks for operations that will fail.
 ///
-/// Warnings (remote branch shadow, --base without --create, invalid default branch)
+/// Warnings (remote branch shadow, --base without --create)
 /// are printed during planning since they're informational, not blocking.
 fn plan_switch(
     repo: &Repository,
@@ -1146,7 +1150,7 @@ fn execute_switch(
     repo: &Repository,
     plan: SwitchPlan,
     config: &UserConfig,
-    force: bool,
+    yes: bool,
     run_hooks: bool,
     hook_plan: &ApprovedHookPlan,
 ) -> CommandResult<(SwitchResult, SwitchBranchInfo)> {
@@ -1450,13 +1454,8 @@ fn execute_switch(
                 // worktree's config.
                 if run_hooks {
                     let hook_repo = Repository::at(&worktree_path)?;
-                    let ctx = CommandContext::new(
-                        &hook_repo,
-                        config,
-                        Some(&branch),
-                        &worktree_path,
-                        force,
-                    );
+                    let ctx =
+                        CommandContext::new(&hook_repo, config, Some(&branch), &worktree_path, yes);
                     let mut vars = TemplateVars::new()
                         .with_target(&branch)
                         .with_target_worktree_path(&worktree_path)
@@ -1902,7 +1901,7 @@ pub(crate) struct SwitchPipeline<'a> {
     pub path: Option<&'a Path>,
     pub clobber: bool,
     pub verify: bool,
-    /// `--yes`: skip approval prompts and force past clobber checks.
+    /// `--yes`: skip approval prompts. Clobbering is governed by `clobber` alone.
     pub yes: bool,
     pub change_dir: bool,
     pub format: SwitchFormat,
@@ -1922,6 +1921,19 @@ pub(crate) struct SwitchPipeline<'a> {
     /// Binary name for the shell-integration offer. `Some` only on the argument
     /// path; the picker does not offer shell integration.
     pub shell_integration_binary: Option<&'a str>,
+}
+
+/// Wrap a [`GitError`] so its `wt switch` hint carries the invocation's
+/// `--path`, `--execute`, and trailing args. Other errors pass through.
+fn with_switch_suggestion(err: anyhow::Error, ctx: &SwitchSuggestionCtx) -> anyhow::Error {
+    match err.downcast::<GitError>() {
+        Ok(git_err) => GitError::WithSwitchSuggestion {
+            source: Box::new(git_err),
+            ctx: ctx.clone(),
+        }
+        .into(),
+        Err(err) => err,
+    }
 }
 
 impl SwitchPipeline<'_> {
@@ -1994,14 +2006,7 @@ impl SwitchPipeline<'_> {
         let plan =
             plan_switch(repo, target, create, base, path, clobber, config).map_err(|err| {
                 match suggestion_ctx {
-                    Some(ref ctx) => match err.downcast::<GitError>() {
-                        Ok(git_err) => GitError::WithSwitchSuggestion {
-                            source: Box::new(git_err),
-                            ctx: ctx.clone(),
-                        }
-                        .into(),
-                        Err(err) => err,
-                    },
+                    Some(ref ctx) => with_switch_suggestion(err, ctx),
                     None => err,
                 }
             })?;
@@ -2027,7 +2032,17 @@ impl SwitchPipeline<'_> {
                     {
                         print_json(&SwitchJsonOutput::from_result(result, branch_info))?;
                     }
-                    return Err(failure.error);
+                    // A leftover branch's hint suggests `wt switch <branch>`;
+                    // it needs the same flags as the `plan_switch` hints, or
+                    // following it drops `--path` and `--execute`.
+                    let leftover_hint = matches!(
+                        failure.error.downcast_ref::<GitError>(),
+                        Some(GitError::WorktreeCreationFailed { .. })
+                    );
+                    return Err(match &suggestion_ctx {
+                        Some(ctx) if leftover_hint => with_switch_suggestion(failure.error, ctx),
+                        _ => failure.error,
+                    });
                 }
             };
 

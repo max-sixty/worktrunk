@@ -20,7 +20,9 @@
 //! own way; wt's receipt of the key cancels the group once they exit, including
 //! any remaining output wait. PID-targeted SIGTERM reaches owned direct children.
 //!
-//! Every admitted child runs to completion. Spawn failures occupy the same
+//! Every admitted child runs to completion unless output setup or collection
+//! fails; then the drain kills and reaps the admitted children before
+//! returning the I/O error. Spawn failures occupy the same
 //! per-command outcome slots as child exits; the pipeline owns identity and
 //! failure policy. Cancellation alone stops admission and drains owned children.
 

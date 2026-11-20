@@ -370,7 +370,8 @@ fn maybe_reap_result(result: &RemovalPlan, reap_enabled: bool) {
 ///      → synchronous `remove_dir_all` on the staged directory.
 ///    - **Background** (default): stop fsmonitor → rename + prune +
 ///      synchronous branch delete → spawn a detached drain of the trash
-///      directory (`wt _drain-trash`). Cross-filesystem or locked worktrees fall back to
+///      directory (`wt _drain-trash`). When the rename fails (cross-filesystem,
+///      permissions, Windows file locks), removal falls back to
 ///      `git worktree remove` in the detached process.
 /// 4. **Post-remove hooks** run in the background after dispatch.
 /// 5. **Internal sweep** (fire-and-forget, after primary output): entries

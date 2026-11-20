@@ -29,7 +29,7 @@ use std::sync::atomic::{AtomicI8, AtomicU8, Ordering};
 ///
 /// Loosely aligned with `wt list` columns, though not a perfect match:
 /// - Tabs 1–3 decompose all changes into working-tree and committed diffs
-/// - Tab 4 shows commits (related to "main↕" counts)
+/// - Tab 4 shows commits (related to "^↕" counts)
 /// - Tab 5 corresponds to "Remote⇅" column
 /// - Tab 7 corresponds to the "CI" column's PR/MR
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

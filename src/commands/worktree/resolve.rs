@@ -21,8 +21,9 @@ use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 
 /// Compute the expected worktree path for a branch name.
 ///
-/// For the default branch, returns the repo root (main worktree location).
-/// For other branches, applies the `worktree-path` template from config.
+/// For the default branch of a non-bare repo, returns the repo root (main
+/// worktree location). Otherwise, applies the `worktree-path` template from
+/// config — a bare repo has no main worktree, so every branch is templated.
 ///
 /// Uses cached values from Repository for `default_branch` and `is_bare`.
 pub fn compute_worktree_path(

@@ -66,9 +66,8 @@ fn spawn_tether(repo: &TestRepo, cwd: &Path, pidfile: &Path, tail: &str) -> (Chi
 }
 
 /// Both ways a worktree disappears tear the whole group down: outright
-/// deletion (`rm -rf` / `git worktree remove`, `NOTE_DELETE`/`IN_DELETE_SELF`)
-/// and rename into trash (worktrunk's own removal, `NOTE_RENAME`/
-/// `IN_MOVE_SELF`).
+/// deletion (`rm -rf` / `git worktree remove`) and rename into trash
+/// (worktrunk's own removal). The supervisor's existence poll sees both.
 #[rstest]
 fn test_tether_kills_process_group_when_worktree_removed(mut repo: TestRepo) {
     for mechanism in ["delete", "rename"] {

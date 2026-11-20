@@ -35,17 +35,13 @@ fn vergen_env_vars_are_read_optionally() {
     });
     assert!(
         scanned > 0,
-        "scanned no files under {} — this test asserts absence, so it would have \
-         passed over nothing",
+        "scanned no files under {} — this test asserts absence, so it would have passed over nothing",
         src_dir.display()
     );
 
     assert!(
         violations.is_empty(),
-        "Found `env!` on a build-script `VERGEN_*` variable:\n\n{}\n\n\
-         These variables are absent when building the crates.io source archive \
-         (no `.git`), so `env!` fails to compile and breaks `cargo install` \
-         (#3123). Use `option_env!` and fall back to a default instead.",
+        "Found `env!` on a build-script `VERGEN_*` variable:\n\n{}\n\nThese variables are absent when building the crates.io source archive (no `.git`), so `env!` fails to compile and breaks `cargo install` (#3123). Use `option_env!` and fall back to a default instead.",
         violations.join("\n")
     );
 }

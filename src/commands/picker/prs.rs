@@ -149,10 +149,9 @@ struct PrEntry {
     /// markdown in the `pr` preview tab. Rides the one list call — empty when
     /// the forge returns no body.
     body: String,
-    /// CI + review status for the CI column, built from the same forge call.
-    /// `None` when the forge can't supply it in one call (the row then keeps
-    /// its `#N` in the title instead of the CI column).
-    status: Option<PrStatus>,
+    /// CI + review status, built from the same forge call. Feeds the CI column
+    /// and, overlaid by [`Self::display_status`], the row's PR slot.
+    status: PrStatus,
     /// GitHub PR `updatedAt`, riding the one list call — keys the row's on-disk
     /// comments cache so a repeat `--prs` open skips the per-row comments fetch
     /// when nothing changed (see [`compute_pr_comments`]). `None` for GitLab MRs
@@ -179,28 +178,14 @@ impl PrEntry {
     }
 
     /// The `PrStatus` a listed `--prs` row feeds into the unified row's static
-    /// PR slot. Its CI status (or a no-CI base when the forge couldn't supply
-    /// one in the list call) is overlaid with the entry's display fields —
+    /// PR slot. Its CI status is overlaid with the entry's display fields —
     /// number, title, author, body, url, and draft state — so the unified
     /// `text()` and `pr` pane read every field from the slot exactly as a
     /// worktree row does. Unlike the worktree slot (which `on_update`
     /// overwrites as the live CI fetch lands), this one is built once and never
     /// mutated, so its `(pr:N, Pr)` preview memo stays valid for the row's life.
     fn display_status(&self) -> PrStatus {
-        let mut status = self.status.clone().unwrap_or(PrStatus {
-            ci_status: CiStatus::NoCI,
-            source: CiSource::PullRequest,
-            is_stale: false,
-            is_priming: false,
-            url: None,
-            number: None,
-            review_state: None,
-            title: None,
-            body: None,
-            author: None,
-            comment_count: None,
-            updated_at: None,
-        });
+        let mut status = self.status.clone();
         status.number = status.number.or_else(|| Some(self.pr_ref()));
         status.title = Some(self.title.clone()).filter(|t| !t.is_empty());
         status.author = Some(self.author.clone()).filter(|a| !a.is_empty());
@@ -718,7 +703,7 @@ fn parse_github_prs(stdout: &[u8]) -> anyhow::Result<Vec<PrEntry>> {
             kind: RefType::Pr,
             body: pr.info.body.clone().unwrap_or_default(),
             updated_at: pr.info.updated_at.clone(),
-            status: Some(pr.info.open_pr_status()),
+            status: pr.info.open_pr_status(),
         })
         .collect())
 }
@@ -806,7 +791,7 @@ fn parse_gitlab_mrs(stdout: &[u8]) -> anyhow::Result<Vec<PrEntry>> {
                 // GitLab's MR `updated_at` is throttled and delete-blind, so it
                 // can't key a comments cache — MR comments stay uncached.
                 updated_at: None,
-                status: Some(status),
+                status,
             }
         })
         .collect())
@@ -843,8 +828,8 @@ fn gitlab_mr_status(
         url,
         number: Some(PrRef::mr(u64::from(iid))),
         review_state,
-        // The `--prs` pane reads title/body from the `PrEntry`, not this status
-        // (which feeds only the CI column), so they stay absent here.
+        // `PrEntry::display_status` overlays title/body/author from the
+        // `PrEntry`, so they stay absent here.
         title: None,
         body: None,
         author: None,
@@ -1272,10 +1257,10 @@ fn render_grid_row(entry: &PrEntry, grid: &ColumnGrid, list_width: usize) -> Str
         segments.push((col.start, cell.truncate_to_width(col.width)));
     }
 
-    match grid.column(ColumnKind::CiStatus).zip(entry.status.as_ref()) {
-        Some((col, status)) => {
+    match grid.column(ColumnKind::CiStatus) {
+        Some(col) => {
             let mut cell = StyledLine::new();
-            cell.push_raw(status.format_cell(col.width, grid.link_style));
+            cell.push_raw(entry.status.format_cell(col.width, grid.link_style));
             segments.push((col.start, cell));
         }
         None => {
@@ -1379,7 +1364,7 @@ mod tests {
             kind,
             body: String::new(),
             updated_at: None,
-            status: Some(PrStatus {
+            status: PrStatus {
                 ci_status: CiStatus::Passed,
                 source: CiSource::PullRequest,
                 is_stale: false,
@@ -1392,7 +1377,7 @@ mod tests {
                 author: None,
                 comment_count: None,
                 updated_at: None,
-            }),
+            },
         }
     }
 
@@ -1731,9 +1716,7 @@ mod tests {
         // state Draft) — never as a "draft" word on the row.
         let mut e = entry(RefType::Pr, 9, "WIP");
         e.is_draft = true;
-        if let Some(status) = e.status.as_mut() {
-            status.review_state = Some(ReviewState::Draft);
-        }
+        e.status.review_state = Some(ReviewState::Draft);
         let pr = pr_item(e, 120, Some(&grid_with_ci()));
         let text = plain(&rendered_of(&pr));
         assert!(
@@ -1751,7 +1734,7 @@ mod tests {
           {"number":10,"title":"t","headRefName":"b","statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}],"reviewDecision":"APPROVED"}
         ]"#;
         let entries = parse_github_prs(json).unwrap();
-        let status = entries[0].status.as_ref().expect("status built");
+        let status = &entries[0].status;
         assert_eq!(status.ci_status, CiStatus::Passed);
         assert_eq!(status.review_state, Some(ReviewState::Approved));
         assert_eq!(status.number.map(|r| r.to_string()).as_deref(), Some("#10"));
@@ -1765,7 +1748,7 @@ mod tests {
           {"iid":3,"title":"t","source_branch":"b","draft":true,"detailed_merge_status":"conflict"}
         ]"#;
         let entries = parse_gitlab_mrs(json).unwrap();
-        let status = entries[0].status.as_ref().expect("status built");
+        let status = &entries[0].status;
         assert_eq!(status.ci_status, CiStatus::Conflicts);
         assert_eq!(status.review_state, Some(ReviewState::Draft));
         assert_eq!(status.number.map(|r| r.to_string()).as_deref(), Some("!3"));
@@ -1780,14 +1763,8 @@ mod tests {
           {"iid":5,"title":"t","source_branch":"b","draft":false,"detailed_merge_status":"not_approved"}
         ]"#;
         let entries = parse_gitlab_mrs(json).unwrap();
-        assert_eq!(
-            entries[0].status.as_ref().unwrap().ci_status,
-            CiStatus::Running
-        );
-        assert_eq!(
-            entries[1].status.as_ref().unwrap().review_state,
-            Some(ReviewState::Pending)
-        );
+        assert_eq!(entries[0].status.ci_status, CiStatus::Running);
+        assert_eq!(entries[1].status.review_state, Some(ReviewState::Pending));
     }
 
     #[test]

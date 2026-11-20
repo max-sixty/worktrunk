@@ -516,14 +516,13 @@ replaces the agent directory."#
 pub enum ConfigPluginsClaudeCommand {
     /// Install the Worktrunk plugin
     #[command(
-        after_long_help = r#"Adds the Worktrunk plugin from the marketplace and installs it. Equivalent to:
+        after_long_help = r#"Installs the Worktrunk plugin, adding its marketplace first if Claude Code doesn't have it yet. Equivalent to:
 
 ```console
-$ claude plugin marketplace add max-sixty/worktrunk
-$ claude plugin install worktrunk@worktrunk
+$ claude plugin install worktrunk --marketplace max-sixty/worktrunk
 ```
 
-Requires `claude` CLI. Skips gracefully if already installed."#
+Requires `claude` CLI 2.1.292 or later. Skips gracefully if already installed."#
     )]
     Install,
 
@@ -1309,7 +1308,7 @@ dev = "npm start -- --port {{ vars.config.port }}"
 
 ## Storage format
 
-Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys may contain only letters, digits, and hyphens."#
+Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys start with a lowercase letter and contain only lowercase letters, digits, and hyphens."#
     )]
     Vars {
         #[command(subcommand)]

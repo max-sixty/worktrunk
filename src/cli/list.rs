@@ -11,7 +11,7 @@ pub enum ListSubcommand {
 
 ## Output formats
 
-- `table` (default): `branch  status  HEAD±  main↕  main…±  Remote⇅  CI  URL`
+- `table` (default): `branch  status  @±  ^↕  ^…±  Remote⇅  CI  URL`
 - `json`: the current [`wt list --format=json`](/list/#json-output) schema — a one-item envelope by default, or a one-item array with `[list] json-schema = 1`
 - `claude-code`: the `table` cells, preceded by `dir` and followed by `model  context  pace`
 

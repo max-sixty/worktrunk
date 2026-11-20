@@ -29,10 +29,13 @@
 //!    belong to any live worktree of any repo. Reaped unconditionally — this
 //!    is the class behind large machine-wide accumulations.
 //! 2. **Resolved, but not a live worktree of this repo** — the socket resolves
-//!    to `<git-dir>/fsmonitor--daemon.ipc` where `<git-dir>` is under this
-//!    repo's git-common-dir but is not the git-dir of any live (non-prunable,
-//!    on-disk) worktree. This is a worktree that was removed while its git
-//!    metadata lingered (e.g. a not-yet-pruned `prunable` entry). Class 2
+//!    to `<git-dir>/fsmonitor--daemon.ipc` where `<git-dir>` is one this repo's
+//!    worktrees use (the git-common-dir itself, or `<common-dir>/worktrees/<name>`)
+//!    but is not the git-dir of any live (non-prunable, on-disk) worktree. This
+//!    is a worktree that was removed while its git metadata lingered (e.g. a
+//!    not-yet-pruned `prunable` entry). Other git-dirs nested in the common
+//!    dir, such as a submodule's `<common-dir>/modules/<name>`, belong to
+//!    repositories `git worktree list` never reports, so they are spared. Class 2
 //!    requires a trustworthy live-worktree set: if `git worktree list` fails,
 //!    the set is unknowable and class 2 is skipped entirely, so a transient
 //!    git failure can never escalate to reaping a live worktree's daemon.
@@ -181,8 +184,9 @@ pub fn socket_path_to_git_dir(socket: &Path) -> Option<PathBuf> {
 ///
 /// - its socket is unresolvable (`socket == None`) — provably not a live
 ///   worktree of any repo (orphan class 1); or
-/// - `live_git_dirs` is `Some` *and* the socket's git-dir is under
-///   `repo_common_dir` *and* is not in that set (orphan class 2).
+/// - `live_git_dirs` is `Some` *and* the socket's git-dir is `repo_common_dir`
+///   or `repo_common_dir/worktrees/<name>` *and* is not in that set (orphan
+///   class 2).
 ///
 /// `live_git_dirs` is `None` when the live-worktree set is unknowable (the
 /// `git worktree list` underlying it failed). Class 2 is then **disabled
@@ -192,8 +196,10 @@ pub fn socket_path_to_git_dir(socket: &Path) -> Option<PathBuf> {
 /// serving a live worktree is never reaped.
 ///
 /// A daemon whose git-dir is in the live set is never selected. A daemon whose
-/// resolved git-dir is outside `repo_common_dir` belongs to another repository
-/// and is left for that repository's own sweep; only the unresolvable class is
+/// resolved git-dir is neither `repo_common_dir` nor a direct child of its
+/// `worktrees/` directory belongs to another repository (elsewhere on disk, or
+/// a submodule nested under `modules/`) and is left for that repository's own
+/// sweep; only the unresolvable class is
 /// reaped repo-agnostically, because it cannot be attributed to — or endanger
 /// — any live worktree.
 ///
@@ -204,13 +210,16 @@ pub fn classify_orphans(
     live_git_dirs: Option<&HashSet<PathBuf>>,
     repo_common_dir: &Path,
 ) -> Vec<u32> {
+    let linked_git_dirs = repo_common_dir.join("worktrees");
     daemons
         .iter()
         .filter(|d| match &d.socket {
             None => true,
             Some(socket) => match (live_git_dirs, socket_path_to_git_dir(socket)) {
                 (Some(live), Some(git_dir)) => {
-                    !live.contains(&git_dir) && git_dir.starts_with(repo_common_dir)
+                    let owned_by_repo = git_dir == repo_common_dir
+                        || git_dir.parent() == Some(linked_git_dirs.as_path());
+                    owned_by_repo && !live.contains(&git_dir)
                 }
                 // Unknowable live set, or a socket with no parent: never a
                 // class-2 orphan — leave it for a run with a trustworthy set.
@@ -767,6 +776,13 @@ mod tests {
             // resolved but belongs to a different repo → spare (left for
             // that repo's own sweep).
             daemon(40, Some("/other/.git/worktrees/o.x/fsmonitor--daemon.ipc")),
+            // submodule git-dirs nest under the common dir but are separate
+            // repositories that `git worktree list` never reports → spare.
+            daemon(50, Some("/r/.git/modules/sub/fsmonitor--daemon.ipc")),
+            daemon(
+                60,
+                Some("/r/.git/modules/sub/worktrees/sub.x/fsmonitor--daemon.ipc"),
+            ),
         ];
 
         let mut orphans = classify_orphans(&daemons, Some(&live), &common);

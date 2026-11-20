@@ -4,12 +4,16 @@
 //! - Copy-ignored discovery (`list_and_filter_ignored_entries` and friends) —
 //!   used by `copy_ignored` and `promote`.
 
+use std::collections::HashSet;
+use std::ffi::OsStr;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use ignore::gitignore::GitignoreBuilder;
 use worktrunk::config::CopyIgnoredConfig;
 use worktrunk::git::Repository;
+use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{format_bash_with_gutter, format_heading, format_with_gutter};
 
@@ -93,101 +97,209 @@ pub(super) fn resolve_copy_ignored_config(repo: &Repository) -> anyhow::Result<C
 }
 
 /// List gitignored entries in a worktree, filtered by `.worktreeinclude` and excluding
-/// configured patterns, VCS metadata directories, and entries that contain nested worktrees.
+/// configured patterns, VCS metadata directories, and other worktrees.
 ///
-/// Combines five steps:
-/// 1. `list_ignored_entries()` — git ls-files for ignored entries
-/// 2. `.worktreeinclude` filtering — only matching entries if the file exists
-/// 3. `[step.copy-ignored].exclude` filtering — skip entries matching configured patterns
-/// 4. Built-in exclude filtering — always skip VCS metadata and tool-state directories
-/// 5. Nested worktree filtering — exclude entries containing other worktrees
+/// Git decides both what is ignored and what `.worktreeinclude` selects:
+/// [`list_ignored_entries`] runs once with git's standard exclude sources and,
+/// when the include file exists, once more with that file as the only source,
+/// and [`overlap`] keeps what both listings cover. Git applies gitignore rules,
+/// so a pattern naming a path inside a wholly ignored directory
+/// (`.cache/types/`) finds it, and a negation can't re-include a path inside a
+/// selected directory. Like every git listing, both stop at a nested
+/// repository: a path inside one belongs to that repository.
+///
+/// Inside a directory git lists whole, only a line that names a path
+/// ([`names_path`]) selects anything: a third listing runs with just those
+/// lines and the negations. A name matched at any depth (`.env`, `types/`)
+/// selects only outside such directories, so `.env` copies the root `.env` and
+/// every `.env` git lists on its own, but never a package's `.env` from
+/// `node_modules/`. Claude Code, which defines `.worktreeinclude`, agrees on
+/// path-naming lines; it opens a directory git lists whole from a line's text,
+/// then applies every line inside it. Each include listing walks every
+/// untracked directory, about 0.3 s per 100k ignored files with a warm cache.
+/// [`Boundaries`] then drops configured excludes, built-in VCS and tool-state
+/// directories, and other worktrees.
 pub(super) fn list_and_filter_ignored_entries(
     worktree_path: &Path,
     context: &str,
     worktree_paths: &[PathBuf],
     exclude_patterns: &[String],
 ) -> anyhow::Result<Vec<(PathBuf, bool)>> {
-    let ignored_entries = list_ignored_entries(worktree_path, context)?;
-
-    // Filter to entries that match .worktreeinclude (or all if no file exists)
+    let ignored = list_ignored_entries(worktree_path, context, &["--exclude-standard"])?;
     let include_path = worktree_path.join(".worktreeinclude");
-    let filtered: Vec<_> = if include_path.exists() {
-        let include_matcher = {
-            let mut builder = GitignoreBuilder::new(worktree_path);
-            if let Some(err) = builder.add(&include_path) {
-                // The `ignore` crate formats the path with OS-native separators;
-                // normalize to forward slashes for consistent display.
-                return Err(worktrunk::git::GitError::WorktreeIncludeParseError {
-                    error: err.to_string().replace('\\', "/"),
-                }
-                .into());
-            }
-            builder.build().context("Failed to build include matcher")?
-        };
-        ignored_entries
-            .into_iter()
-            .filter(|(path, is_dir)| {
-                include_matcher
-                    .matched_path_or_any_parents(relative_entry(path, worktree_path), *is_dir)
-                    .is_ignore()
-            })
-            .collect()
-    } else {
-        ignored_entries
-    };
-
-    // Build exclude matcher for configured patterns (if any)
-    let exclude_matcher = if exclude_patterns.is_empty() {
-        None
-    } else {
-        let mut builder = GitignoreBuilder::new(worktree_path);
-        for pattern in exclude_patterns {
-            builder.add_line(None, pattern).map_err(|error| {
-                anyhow::anyhow!(
-                    "Invalid [step.copy-ignored].exclude pattern {:?}: {}",
-                    pattern,
-                    error
-                )
-            })?;
+    let entries = match fs::read_to_string(&include_path) {
+        Ok(lines) => {
+            let included =
+                list_ignored_entries(worktree_path, context, &["--exclude-from=.worktreeinclude"])?;
+            // Git skips a leading byte-order mark, so the first line is read without it.
+            let lines = lines.strip_prefix('\u{feff}').unwrap_or(&lines);
+            let named = if lines.lines().any(names_path) {
+                // A file, not `--exclude=` arguments, so git reads these lines
+                // exactly as it reads `.worktreeinclude`.
+                let naming: String = lines
+                    .lines()
+                    .filter(|line| names_path(line) || line.starts_with('!'))
+                    .map(|line| format!("{line}\n"))
+                    .collect();
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "production code; the disallowed-methods rule targets the test suite (#4692)"
+                )]
+                let dir = tempfile::tempdir().context("Failed to create a temporary directory")?;
+                let naming_path = dir.path().join("worktreeinclude");
+                fs::write(&naming_path, naming).context("Failed to write include lines")?;
+                let exclude_from = format!("--exclude-from={}", naming_path.display());
+                list_ignored_entries(worktree_path, context, &[&exclude_from])?
+            } else {
+                Vec::new()
+            };
+            overlap(&ignored, &included, &named)
         }
-        Some(
-            builder
-                .build()
-                .context("Failed to build copy-ignored exclude matcher")?,
-        )
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => ignored,
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!("Failed to read {}", format_path_for_display(&include_path))
+            });
+        }
     };
-
-    // Filter out excluded patterns, VCS metadata directories, and nested worktrees
-    Ok(filtered
+    let boundaries = Boundaries::new(worktree_path, worktree_paths, exclude_patterns)?;
+    Ok(entries
         .into_iter()
-        .filter(|(path, is_dir)| {
-            // Skip entries matching configured exclude patterns
-            if let Some(ref matcher) = exclude_matcher
-                && matcher
-                    .matched_path_or_any_parents(relative_entry(path, worktree_path), *is_dir)
-                    .is_ignore()
-            {
-                return false;
-            }
-            // Skip built-in excluded directories (.jj, .hg, .worktrees, etc.)
-            if *is_dir
-                && path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|name| {
-                        BUILTIN_COPY_IGNORED_EXCLUDES
-                            .iter()
-                            .any(|pat| pat.trim_end_matches('/') == name)
-                    })
-            {
-                return false;
-            }
-            // Skip entries that contain other worktrees
-            !worktree_paths
-                .iter()
-                .any(|wt_path| wt_path != worktree_path && wt_path.starts_with(path))
-        })
+        .filter(|(path, is_dir)| !boundaries.excludes(path, *is_dir))
         .collect())
+}
+
+/// Whether an include line names a path rather than a name to match at any
+/// depth: once trailing whitespace, a leading `/` and any leading `**/` are
+/// dropped, a slash comes before its end. `.cache/types/` and
+/// `**/.cache/types/` name paths; `.env`, `**/.env` and `node_modules/` don't.
+fn names_path(line: &str) -> bool {
+    let line = line.trim_end();
+    if line.starts_with(['#', '!']) {
+        return false;
+    }
+    let mut rest = line.strip_prefix('/').unwrap_or(line);
+    while let Some(after) = rest.strip_prefix("**/") {
+        rest = after;
+    }
+    rest.trim_end_matches('/').contains('/')
+}
+
+/// The ignored entries the include file selects, in git's byte order. The
+/// include listing selects where it isn't inside a directory git lists whole:
+/// an entry both listings name, and an ignored entry inside a directory it
+/// names. Inside a directory git lists whole, what the path-naming lines
+/// (`named`) match is selected, unless a selected directory already holds it.
+fn overlap(
+    ignored: &[(PathBuf, bool)],
+    included: &[(PathBuf, bool)],
+    named: &[(PathBuf, bool)],
+) -> Vec<(PathBuf, bool)> {
+    let (ignored, included, named) = (leaves(ignored), leaves(included), leaves(named));
+    let inside =
+        |path: &Path, set: &HashSet<&Path>| path.ancestors().skip(1).any(|dir| set.contains(dir));
+    let ignored_paths: HashSet<&Path> = ignored.iter().map(|(path, _)| path.as_path()).collect();
+    let selecting: HashSet<&Path> = included
+        .iter()
+        .map(|(path, _)| path.as_path())
+        .filter(|path| !inside(path, &ignored_paths))
+        .collect();
+    let mut entries: Vec<(PathBuf, bool)> = included
+        .iter()
+        .filter(|(path, _)| ignored_paths.contains(path.as_path()))
+        .chain(ignored.iter().filter(|(path, _)| inside(path, &selecting)))
+        .chain(
+            named
+                .iter()
+                .filter(|(path, _)| inside(path, &ignored_paths) && !inside(path, &selecting)),
+        )
+        .map(|entry| (*entry).clone())
+        .collect();
+    entries.sort_by(|(a, _), (b, _)| a.as_os_str().cmp(b.as_os_str()));
+    entries
+}
+
+/// A listing's entries with no other entry beneath them. Besides each excluded
+/// entry, `git ls-files -i --directory` lists every untracked directory that
+/// holds only excluded entries (`d/` beside `d/f`): no pattern selected that
+/// directory, its contents fill it.
+fn leaves(entries: &[(PathBuf, bool)]) -> Vec<&(PathBuf, bool)> {
+    let parents: HashSet<&Path> = entries
+        .iter()
+        .flat_map(|(path, _)| path.ancestors().skip(1))
+        .collect();
+    entries
+        .iter()
+        .filter(|(path, _)| !parents.contains(path.as_path()))
+        .collect()
+}
+
+/// What discovery never selects: configured excludes, built-in VCS and
+/// tool-state directories, and other worktrees.
+struct Boundaries<'a> {
+    worktree_path: &'a Path,
+    /// Every other worktree, except one the current worktree sits inside.
+    others: Vec<&'a Path>,
+    configured: Option<ignore::gitignore::Gitignore>,
+}
+
+impl<'a> Boundaries<'a> {
+    fn new(
+        worktree_path: &'a Path,
+        worktree_paths: &'a [PathBuf],
+        exclude_patterns: &[String],
+    ) -> anyhow::Result<Self> {
+        let configured = if exclude_patterns.is_empty() {
+            None
+        } else {
+            let mut builder = GitignoreBuilder::new(worktree_path);
+            for pattern in exclude_patterns {
+                builder.add_line(None, pattern).map_err(|error| {
+                    anyhow::anyhow!(
+                        "Invalid [step.copy-ignored].exclude pattern {:?}: {}",
+                        pattern,
+                        error
+                    )
+                })?;
+            }
+            Some(
+                builder
+                    .build()
+                    .context("Failed to build copy-ignored exclude matcher")?,
+            )
+        };
+        let others = worktree_paths
+            .iter()
+            .map(PathBuf::as_path)
+            .filter(|wt| *wt != worktree_path && !worktree_path.starts_with(wt))
+            .collect();
+        Ok(Self {
+            worktree_path,
+            others,
+            configured,
+        })
+    }
+
+    /// Whether discovery drops `path`: it is, or sits inside, something
+    /// configured or built in, or it is a directory holding another worktree,
+    /// which copying it whole would carry along.
+    fn excludes(&self, path: &Path, is_dir: bool) -> bool {
+        let relative = relative_entry(path, self.worktree_path);
+        let is_builtin = |name: &OsStr| {
+            BUILTIN_COPY_IGNORED_EXCLUDES
+                .iter()
+                .any(|pat| name.to_str() == Some(pat.trim_end_matches('/')))
+        };
+        self.configured.as_ref().is_some_and(|matcher| {
+            matcher
+                .matched_path_or_any_parents(relative, is_dir)
+                .is_ignore()
+        }) || relative
+            .parent()
+            .is_some_and(|parent| parent.iter().any(is_builtin))
+            || (is_dir && relative.file_name().is_some_and(is_builtin))
+            || (is_dir && self.others.iter().any(|wt| wt.starts_with(path)))
+    }
 }
 
 /// An entry's path relative to its worktree, for gitignore matching.
@@ -202,11 +314,13 @@ fn relative_entry<'a>(path: &'a Path, worktree_path: &Path) -> &'a Path {
     path.strip_prefix(worktree_path).unwrap_or(path)
 }
 
-/// List ignored entries using git ls-files
+/// List untracked entries that an exclude source ignores, using git ls-files
 ///
-/// Uses `git ls-files -z --ignored --exclude-standard -o --directory` which:
-/// - Handles all gitignore sources (global, .gitignore, .git/info/exclude, nested)
-/// - Stops at directory boundaries (--directory) to avoid listing thousands of files
+/// Runs `git ls-files -z --ignored <excludes> -o --directory`, where `excludes`
+/// is `--exclude-standard` (global excludes, `.gitignore` files and
+/// `.git/info/exclude`), `--exclude-from=<file>`, or `--exclude=<pattern>`
+/// lines. `--directory` lists a wholly ignored directory as one entry rather
+/// than every file inside it.
 ///
 /// `-z` NUL-terminates the entries and, crucially, disables path quoting. Without
 /// it, `core.quotePath` (git's default) renders a non-ASCII name like
@@ -217,17 +331,15 @@ fn relative_entry<'a>(path: &'a Path, worktree_path: &Path) -> &'a Path {
 fn list_ignored_entries(
     worktree_path: &Path,
     context: &str,
+    excludes: &[&str],
 ) -> anyhow::Result<Vec<(std::path::PathBuf, bool)>> {
-    let args = [
-        "ls-files",
-        "-z",
-        "--ignored",
-        "--exclude-standard",
-        "-o",
-        "--directory",
-    ];
+    let args: Vec<&str> = ["ls-files", "-z", "--ignored"]
+        .into_iter()
+        .chain(excludes.iter().copied())
+        .chain(["-o", "--directory"])
+        .collect();
     let output = Cmd::new("git")
-        .args(args)
+        .args(&args)
         .current_dir(worktree_path)
         .context(context)
         .scrub_git_discovery_env()
@@ -280,7 +392,8 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         std::fs::write(test.root_path().join(".git/config"), "[bad\n").unwrap();
 
-        let err = super::list_ignored_entries(test.root_path(), "test").unwrap_err();
+        let err = super::list_ignored_entries(test.root_path(), "test", &["--exclude-standard"])
+            .unwrap_err();
         let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
         assert!(cmd_err.command_string().starts_with("git ls-files"));
     }
@@ -308,7 +421,7 @@ mod tests {
         let ignored_path = root.join("data").join(ignored_name);
         std::fs::write(&ignored_path, "x").unwrap();
 
-        let entries = super::list_ignored_entries(root, "test").unwrap();
+        let entries = super::list_ignored_entries(root, "test", &["--exclude-standard"]).unwrap();
         let (path, is_dir) = entries
             .iter()
             .find(|(path, _)| path.file_name().and_then(|n| n.to_str()) == Some(ignored_name))
@@ -317,6 +430,54 @@ mod tests {
         assert!(
             path.exists(),
             "discovered path does not exist on disk: {path:?}"
+        );
+    }
+
+    /// A line names a path when a slash comes before its end past any leading
+    /// `/` or `**/`; a name matched at any depth, a comment and a negation
+    /// don't.
+    #[test]
+    fn include_line_names_path() {
+        let cases = [
+            (".cache/types/", true),
+            ("/.cache/types", true),
+            ("packages/*/.cache/types/", true),
+            ("**/.cache/types/", true),
+            (".env", false),
+            ("/.env", false),
+            ("**/.env", false),
+            ("node_modules/", false),
+            ("# .cache/types/", false),
+            ("!.cache/types/", false),
+        ];
+        for (line, expected) in cases {
+            assert_eq!(super::names_path(line), expected, "{line:?}");
+        }
+    }
+
+    /// A path-naming match inside a directory git lists whole is dropped only
+    /// when a selected directory already holds it. `foo/` selecting the
+    /// untracked `packages/foo/` carries the ignored `packages/foo/.cache/`, so
+    /// `packages/foo/.cache/types/` adds nothing; but `foo/` matching
+    /// `node_modules/foo/` selects nothing inside the ignored `node_modules/`,
+    /// so `node_modules/foo/types/` still counts.
+    #[test]
+    fn overlap_drops_only_entries_a_selection_holds() {
+        let entries = |path: &str| vec![(std::path::PathBuf::from(path), true)];
+        let selected = |ignored, included, named| {
+            super::overlap(&entries(ignored), &entries(included), &entries(named))
+        };
+        assert_eq!(
+            selected(
+                "packages/foo/.cache",
+                "packages/foo",
+                "packages/foo/.cache/types"
+            ),
+            entries("packages/foo/.cache")
+        );
+        assert_eq!(
+            selected("node_modules", "node_modules/foo", "node_modules/foo/types"),
+            entries("node_modules/foo/types")
         );
     }
 }

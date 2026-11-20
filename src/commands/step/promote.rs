@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 use color_print::cformat;
-use worktrunk::copy::{copy_dir_recursive, copy_leaf};
+use worktrunk::copy::{copy_dir_recursive, copy_leaf, ensure_path_within_root};
 use worktrunk::git::{Repository, duplicated_branches};
 use worktrunk::path::format_path_for_display;
 use worktrunk::progress::Progress;
@@ -128,6 +128,8 @@ fn stage_ignored(
 ///
 /// B's original files (in staging/b) go to worktree A (which now has B's branch).
 /// A's original files (in staging/a) go to worktree B (which now has A's branch).
+/// An entry whose destination resolves outside its worktree, through a
+/// symlinked directory there, stays in staging and fails the promote.
 fn distribute_staged(
     staging_dir: &Path,
     path_a: &Path,
@@ -147,6 +149,7 @@ fn distribute_staged(
         let staging_entry = staging_b.join(relative);
         let dest_entry = path_a.join(relative);
         if fs::symlink_metadata(&staging_entry).is_ok() {
+            ensure_path_within_root(dest_entry.parent().unwrap_or(&dest_entry), path_a)?;
             move_entry(&staging_entry, &dest_entry, *is_dir)
                 .with_context(|| format!("distributing {}", format_path_for_display(relative)))?;
             count += 1;
@@ -161,6 +164,7 @@ fn distribute_staged(
         let staging_entry = staging_a.join(relative);
         let dest_entry = path_b.join(relative);
         if fs::symlink_metadata(&staging_entry).is_ok() {
+            ensure_path_within_root(dest_entry.parent().unwrap_or(&dest_entry), path_b)?;
             move_entry(&staging_entry, &dest_entry, *is_dir)
                 .with_context(|| format!("distributing {}", format_path_for_display(relative)))?;
             count += 1;

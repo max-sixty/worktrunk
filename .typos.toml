@@ -1,5 +1,5 @@
 [files]
-extend-exclude = ["docs/demos/vhs-keystrokes/", "*.snap", "vendor/", "*.log"]
+extend-exclude = ["docs/demos/vhs-keystrokes/", "*.snap", "*.log"]
 
 [default]
 # Generated `wt list` doc embeds (README, site docs, skills mirrors) truncate
@@ -17,10 +17,11 @@ extend-ignore-re = ['\w+…']
 PNGs = "PNGs"
 
 [default.extend-words]
+# GitHub contributor username viwe-monai
+viwe = "viwe"
 # Git commit hashes that typos flags as potential typos
 ba = "ba"  # Part of commit hashes like e28e0ba
-ede = "ede"  # Part of commit hashes like ede2fd3
-# ANSI escape codes in snapshots make is_main/is_current/is_previous look like "mis"
+# Hyphenated prefix in prose ("mis-keyed", "mis-scoped")
 mis = "mis"
 # `lsof -F pn` field spec (PID + name) in the fsmonitor sweep; typos maps the
 # lowercase token `pn` to "on", which silently breaks the field request (`on`

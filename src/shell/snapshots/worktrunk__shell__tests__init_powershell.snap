@@ -21,12 +21,19 @@ if ((Get-Command wt -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
     # (automatic variable for simple functions) ensures all arguments reach the binary
     # unchanged.
     function wt {
-        # Use WORKTRUNK_BIN if set (for testing dev builds), otherwise find via Get-Command
-        # Select-Object -First 1 handles case where multiple binaries match (e.g., wt.exe from Windows Terminal)
+        # Use WORKTRUNK_BIN if set (for testing dev builds). Otherwise take the first
+        # wt on PATH outside WindowsApps: Windows Terminal installs its own wt.exe
+        # there, and it can come before worktrunk on PATH.
         if ($env:WORKTRUNK_BIN) {
             $wtBin = $env:WORKTRUNK_BIN
         } else {
-            $wtBin = (Get-Command wt -CommandType Application | Select-Object -First 1).Source
+            $wtBin = (Get-Command wt -CommandType Application -ErrorAction SilentlyContinue |
+                Where-Object Source -NotMatch '[\\/]WindowsApps[\\/]' | Select-Object -First 1).Source
+        }
+        if (-not $wtBin) {
+            Write-Error "wt: worktrunk not found on PATH; a wt.exe in WindowsApps is Windows Terminal's"
+            $global:LASTEXITCODE = 127
+            return
         }
 
         $cdFile = [System.IO.Path]::GetTempFileName()
@@ -78,11 +85,12 @@ if ((Get-Command wt -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
 
     # Tab completion - generate clap's completer script and eval it
     # This registers Register-ArgumentCompleter with proper handling
-    # Use WORKTRUNK_BIN if set (for testing), otherwise find via Get-Command
+    # Resolve the binary as the wrapper does, skipping Windows Terminal's wt.exe
     if ($env:WORKTRUNK_BIN) {
         $wtBinForComplete = $env:WORKTRUNK_BIN
     } else {
-        $wtBinForComplete = (Get-Command wt -CommandType Application | Select-Object -First 1).Source
+        $wtBinForComplete = (Get-Command wt -CommandType Application -ErrorAction SilentlyContinue |
+            Where-Object Source -NotMatch '[\\/]WindowsApps[\\/]' | Select-Object -First 1).Source
     }
     $env:COMPLETE = "powershell"
     # Register under the name this integration binds. clap names its

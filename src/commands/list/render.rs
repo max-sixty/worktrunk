@@ -586,8 +586,9 @@ impl ColumnLayout {
                     return StyledLine::new(); // Loaded, no active upstream
                 };
                 // Show centered | when in sync instead of ⇡0  ⇣0
-                // Note: This duplicates the InSync check from Divergence::Special, but
-                // checking counts directly is simpler than threading the enum through.
+                // Note: This duplicates the `Divergence::InSync` check in
+                // `Divergence::from_counts_with_remote`, but checking counts
+                // directly is simpler than threading the enum through.
                 if active.ahead == 0 && active.behind == 0 {
                     let mut cell = StyledLine::new();
                     cell.push_styled("|", Style::new().dimmed());
@@ -644,7 +645,9 @@ impl ColumnLayout {
                 Some(None) => StyledLine::new(),
                 Some(Some(summary)) => {
                     let mut cell = StyledLine::new();
-                    let msg = truncate_visible(summary, max_summary_len);
+                    // LLM output: escape control bytes like commit subjects.
+                    let summary = escape_controls(summary);
+                    let msg = truncate_visible(&summary, max_summary_len);
                     cell.push_styled(msg, Style::new());
                     cell
                 }
@@ -726,7 +729,7 @@ mod tests {
             },
             ColumnLayout {
                 kind: ColumnKind::WorkingDiff,
-                header: std::borrow::Cow::Borrowed("HEAD±"),
+                header: std::borrow::Cow::Borrowed("@±"),
                 start: 0,
                 width: 9,
                 format: ColumnFormat::Diff(DiffColumnConfig {
@@ -768,7 +771,7 @@ mod tests {
             .join("|");
 
         assert_snapshot!(format!("{headers}\n{placeholders}"), @"
-        Branch| Age|  HEAD±
+        Branch| Age|   @±
         ·|   ·|    ·
         ");
     }
@@ -1423,7 +1426,7 @@ mod tests {
         insta::assert_snapshot!(arrow_overflow2.render(), @"[32m↑50[0m [1m[31m↓1K[0m");
 
         // Case 7: dimmed base steps up one level to normal, not two to dim+bold.
-        // The `main↕` / upstream behind subcolumn is `DELETION.dimmed()`, so a
+        // The `^↕` / upstream behind subcolumn is `DELETION.dimmed()`, so a
         // compact `↓1C` drops the dim (→ plain red) instead of leaping to bold.
         let arrow_behind_dim = format_diff_like_column(
             0,
@@ -1581,6 +1584,12 @@ mod tests {
         item.summary = Some(Some("Add user authentication".into()));
         let cell = summary_col.render_cell(&item, &cell_layout(summary_col.clone()), PLACEHOLDER);
         insta::assert_snapshot!(cell.render(), @"Add user authentication");
+
+        // Case 4: control bytes from the LLM command render escaped, so an
+        // OSC sequence never reaches the terminal.
+        item.summary = Some(Some("Add \x1b]52;c;aGk=\x07auth".into()));
+        let cell = summary_col.render_cell(&item, &cell_layout(summary_col.clone()), PLACEHOLDER);
+        assert_eq!(cell.render(), r"Add \u{1b}]52;c;aGk=\u{7}auth");
     }
 
     /// The skeleton renders the task-free Age/Message columns from

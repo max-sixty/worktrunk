@@ -1895,13 +1895,67 @@ approved-commands = ["echo 'fish background task'"]
     }
 
     // ========================================================================
-    // --source Flag Error Passthrough Tests
+    // --source Flag Tests
     // ========================================================================
-    //
-    // These tests verify that actual error messages pass through correctly
-    // when using the --source flag (instead of being hidden with generic
-    // wrapper error messages like "Error: cargo build failed").
 
+    /// Only a leading `--source` routes the call through `cargo run`. A later
+    /// `--source` belongs to wt or to a command wt runs, as in
+    /// `wt step tether -- preview --source page.html`, and reaches it unchanged.
+    #[rstest]
+    #[case("bash", &["--norc", "--noprofile"])]
+    #[case("zsh", &["-f"])]
+    #[case("fish", &["--no-config"])]
+    fn test_source_flag_only_as_first_argument(
+        #[case] shell: &str,
+        #[case] isolation: &[&str],
+        repo: TestRepo,
+    ) {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Each stub prints its name and the arguments it received.
+        let stub_dir = repo.root_path().join("stub-bin");
+        fs::create_dir_all(&stub_dir).unwrap();
+        let wt_stub = repo.root_path().join("wt-stub");
+        for (stub, name) in [(stub_dir.join("cargo"), "cargo"), (wt_stub.clone(), "wt")] {
+            fs::write(
+                &stub,
+                format!("#!/bin/sh\nprintf '{name}'\nprintf ' [%s]' \"$@\"\necho\n"),
+            )
+            .unwrap();
+            fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let path = std::env::join_paths(
+            std::iter::once(stub_dir)
+                .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+        )
+        .unwrap();
+
+        let script = format!(
+            "{}\nwt step tether -- preview --source page.html\nwt --source list --source\n",
+            generate_wrapper(&repo, shell)
+        );
+        let mut command = Command::new(shell);
+        repo.configure_wt_cmd(&mut command);
+        let output = command
+            .args(isolation)
+            .args(["-c", &script])
+            .env("WORKTRUNK_BIN", &wt_stub)
+            .env("PATH", path)
+            .output()
+            .unwrap();
+
+        assert!(output.status.success(), "{shell}: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "wt [step] [tether] [--] [preview] [--source] [page.html]
+cargo [run] [--bin] [wt] [--quiet] [--] [list] [--source]
+",
+            "{shell}"
+        );
+    }
+
+    // `--source` forwards wt's own error message rather than hiding it behind a
+    // generic wrapper message like "Error: cargo build failed".
     // Note: Nushell not included - this test builds custom scripts with bash syntax
     #[rstest]
     #[case("bash")]

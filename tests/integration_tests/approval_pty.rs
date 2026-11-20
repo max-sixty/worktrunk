@@ -12,6 +12,7 @@ use crate::common::pty::{
     build_pty_command, exec_cmd_in_pty, exec_cmd_in_pty_prompted, exec_cmd_in_pty_prompted_with,
 };
 use crate::common::{TestRepo, add_pty_binary_path_filters, add_pty_filters, repo, wt_bin};
+use ansi_str::AnsiStr;
 use insta::assert_snapshot;
 use rstest::rstest;
 use std::path::Path;
@@ -85,7 +86,7 @@ fn test_approval_prompt_accept(repo: TestRepo) {
     repo.write_project_config(r#"pre-start = "echo 'test command'""#);
     repo.commit("Add config");
 
-    // Configure shell integration so we get the "Restart shell" hint instead of the prompt
+    // Configure shell integration so the shell-install prompt stays out of the output
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
     let (output, exit_code) = exec_wt_in_pty(
@@ -109,7 +110,7 @@ fn test_approval_prompt_decline(repo: TestRepo) {
     repo.write_project_config(r#"pre-start = "echo 'test command'""#);
     repo.commit("Add config");
 
-    // Configure shell integration so we get the "Restart shell" hint instead of the prompt
+    // Configure shell integration so the shell-install prompt stays out of the output
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
     let (output, exit_code) = exec_wt_in_pty(
@@ -176,7 +177,7 @@ fn test_approval_prompt_multiple_commands(repo: TestRepo) {
     );
     repo.commit("Add config");
 
-    // Configure shell integration so we get the "Restart shell" hint instead of the prompt
+    // Configure shell integration so the shell-install prompt stays out of the output
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
     let (output, exit_code) = exec_wt_in_pty(
@@ -282,7 +283,7 @@ fn test_approval_prompt_named_commands(repo: TestRepo) {
     );
     repo.commit("Add config");
 
-    // Configure shell integration so we get the "Restart shell" hint instead of the prompt
+    // Configure shell integration so the shell-install prompt stays out of the output
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
     let (output, exit_code) = exec_wt_in_pty(
@@ -333,7 +334,7 @@ approved-commands = ["echo 'Second command'"]
         repo.project_id()
     ));
 
-    // Configure shell integration so we get the "Restart shell" hint instead of the prompt
+    // Configure shell integration so the shell-install prompt stays out of the output
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
     let (output, exit_code) = exec_wt_in_pty(
@@ -345,10 +346,11 @@ approved-commands = ["echo 'Second command'"]
 
     assert_eq!(exit_code, 0);
 
-    // Check that only 2 commands are shown in the prompt (ANSI codes may be in between)
     assert!(
-        output.contains("execute") && output.contains("2") && output.contains("command"),
-        "Should show 2 unapproved commands in prompt"
+        output
+            .ansi_strip()
+            .contains("needs approval to execute 2 commands"),
+        "Should show 2 unapproved commands in prompt. Output:\n{output}"
     );
     assert!(
         output.contains("First command"),
@@ -390,7 +392,7 @@ approved-commands = ["echo 'Second command'"]
         repo.project_id()
     ));
 
-    // Configure shell integration so we get the "Restart shell" hint instead of the prompt
+    // Configure shell integration so the shell-install prompt stays out of the output
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
     let (output, exit_code) = exec_wt_in_pty(
@@ -404,10 +406,11 @@ approved-commands = ["echo 'Second command'"]
         exit_code, 0,
         "Command should succeed even when declined (worktree still created)"
     );
-    // Check that only 2 commands are shown in the prompt (ANSI codes may be in between)
     assert!(
-        output.contains("execute") && output.contains("2") && output.contains("command"),
-        "Should show only 2 unapproved commands in prompt (not 3)"
+        output
+            .ansi_strip()
+            .contains("needs approval to execute 2 commands"),
+        "Should show only 2 unapproved commands in prompt (not 3). Output:\n{output}"
     );
     // When declined, ALL commands are skipped (including pre-approved ones)
     assert!(
@@ -790,7 +793,7 @@ fn test_merge_prompts_hooks_and_append_separately(mut repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
     repo.write_project_config(
         r#"
-pre-commit = "echo 'pre-commit hook'"
+pre-commit = "echo hook-$((40+2))"
 
 [commit.generation]
 template-append = "Reference the related issue"
@@ -812,16 +815,30 @@ command = "tee {prompt_capture_str} > /dev/null && echo 'feat: bundled'"
 
     let env_vars = test_env_vars_with_shell(&repo);
 
-    // Hook batch prompts first, append prompts second — approve both.
-    let (output, exit_code) = exec_wt_in_pty_cwd(&feature_wt, &["merge"], &env_vars, "y\ny\n");
+    // Hook batch prompts first, append prompts second — approve each as it
+    // appears, so a single combined prompt would leave the second input unsent.
+    let cmd = build_pty_command(
+        wt_bin().to_str().unwrap(),
+        &["merge"],
+        &feature_wt,
+        &env_vars,
+        None,
+    );
+    let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["y\n", "y\n"], "[y/N");
 
     assert_eq!(
         exit_code, 0,
         "Merge should succeed when both prompts approved. Output:\n{output}"
     );
+    assert_eq!(
+        output.ansi_strip().matches("Allow and remember?").count(),
+        2,
+        "Hooks and append should be approved through separate prompts. Output:\n{output}"
+    );
+    // The command text is `echo hook-$((40+2))`; only running it prints `hook-42`.
     assert!(
-        output.contains("pre-commit hook"),
-        "Hook prompt should list (and run) the pre-commit hook. Output:\n{output}"
+        output.contains("hook-42"),
+        "Approved pre-commit hook should run. Output:\n{output}"
     );
     assert!(
         output.contains("commit-template-append") && output.contains("Reference the related issue"),
@@ -844,7 +861,7 @@ fn test_merge_decline_append_keeps_approved_hooks(mut repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
 
     // Step 1: project config with only the hook; pre-approve it.
-    repo.write_project_config(r#"pre-commit = "echo 'pre-commit hook'""#);
+    repo.write_project_config(r#"pre-commit = "echo hook-$((40+2))""#);
     repo.commit("Add pre-commit hook");
 
     let env_vars = test_env_vars_with_shell(&repo);
@@ -858,7 +875,7 @@ fn test_merge_decline_append_keeps_approved_hooks(mut repo: TestRepo) {
     // Step 2: add an unapproved commit append (hook command unchanged, so it
     // stays approved).
     repo.write_project_config(
-        r#"pre-commit = "echo 'pre-commit hook'"
+        r#"pre-commit = "echo hook-$((40+2))"
 
 [commit.generation]
 template-append = "Reference the related issue"
@@ -890,11 +907,14 @@ command = "tee {prompt_capture_str} > /dev/null && echo 'feat: decline append'"
         output.contains("Project commit guidance declined"),
         "Declining the append should be announced. Output:\n{output}"
     );
+    // The command text is `echo hook-$((40+2))`; only running it prints
+    // `hook-42`, so a skipped hook can't satisfy this.
     assert!(
-        output.contains("pre-commit hook"),
+        output.contains("hook-42"),
         "Already-approved pre-commit hook must still run when the append is \
          declined. Output:\n{output}"
     );
+    assert_no_spurious_no_hooks(&output);
 
     let captured = std::fs::read_to_string(&prompt_capture).expect("captured prompt");
     assert!(

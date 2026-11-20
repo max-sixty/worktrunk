@@ -31,3 +31,9 @@ allow-dirty = ["ci"]
 features = ["git-wt"]
 # Custom success message prompting shell integration
 install-success-msg = "Run 'wt config shell install' for shell integration."
+
+# Keep macOS runners current even when cargo-dist's defaults are retired.
+# Explicit hosts avoid architecture inference for labels unknown to cargo-dist.
+[dist.github-custom-runners]
+aarch64-apple-darwin = { runner = "macos-26", host = "aarch64-apple-darwin" }
+x86_64-apple-darwin = { runner = "macos-26-intel", host = "x86_64-apple-darwin" }

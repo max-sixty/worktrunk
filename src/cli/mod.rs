@@ -809,7 +809,7 @@ List all worktrees:
 <!-- wt list -->
 ```console
 $ wt list
-  Branch       Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message
+  Branch       Status       @±        ^↕        ^…±     Remote⇅  Commit    Age  Message
 @ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      6814f02   30m  Add API tests
 ^ main             ^⇅                                    ⇡1  ⇣1  41ee083    4d  Merge fix-auth: ha…
 + fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68    5h  Add secure token s…
@@ -823,7 +823,7 @@ Include CI status and LLM summaries:
 <!-- wt list --full -->
 ```console
 $ wt list --full
-  Branch       Status      HEAD±     main↕    main…±    Summary                       Remote⇅  CI
+  Branch       Status       @±        ^↕        ^…±     Summary                       Remote⇅  CI
 @ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archit…   ⇡3      #412
 ^ main             ^⇅                                                                  ⇡1  ⇣1  #
 + fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-t…     |     #408
@@ -837,7 +837,7 @@ Include branches that don't have worktrees:
 <!-- wt list --branches --full -->
 ```console
 $ wt list --branches --full
-  Branch       Status      HEAD±     main↕    main…±    Summary                       Remote⇅  CI
+  Branch       Status       @±        ^↕        ^…±     Summary                       Remote⇅  CI
 @ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archit…   ⇡3      #412
 ^ main             ^⇅                                                                  ⇡1  ⇣1  #
 + fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-t…     |     #408
@@ -860,9 +860,9 @@ $ wt list --format=json
 |--------|-------|
 | Branch | Branch name, elided with `…` past 32 characters; a detached worktree shows its short hash |
 | Status | Compact symbols (see below) |
-| HEAD± | Uncommitted changes, including untracked files: +added -deleted lines |
-| main↕ | Commits ahead/behind default branch |
-| main…± | Line diffs since the merge-base (three-dot) with the default branch |
+| @± | Uncommitted changes, including untracked files: +added -deleted lines |
+| ^↕ | Commits ahead/behind default branch |
+| ^…± | Line diffs since the merge-base (three-dot) with the default branch |
 | Summary | LLM-generated branch summary; requires `--full`, `summary = true`, and [`commit.generation`](/config/#commit) |
 | Remote⇅ | Commits ahead/behind tracking branch |
 | CI | PR/MR number colored by pipeline status; `--full` only |
@@ -873,7 +873,9 @@ $ wt list --format=json
 | Age | Time since last commit |
 | Message | Last commit message (truncated) |
 
-The `main↕` and `main…±` headers keep the familiar `main` label in every repository.
+In the headers, `@` stands for the worktree's own `HEAD` and `^` for the default branch, whatever it is named — the same shortcuts `wt switch` accepts.
+
+Counts too large for their column are shortened, rounded down, and drawn brighter: `C` is hundreds and `K` thousands (`↑3C` is 300–399 commits, `+2K` is 2,000–2,999 lines), and `∞` means 10,000 or more. Line counts stay exact up to 999; commit counts up to 99. `--format=json` carries the exact counts.
 
 The table sizes itself to the terminal. When the columns don't all fit, the least important go first — roughly right to left, since the order above runs from identity to nice-to-have — and the summary footer names them (`hidden: Commit, Age, Message`). A wider terminal brings them back. To pin a set rather than leave it to the width, name the columns in [`[list] columns`](/config/#list); `--format=json` carries every field at any width.
 
@@ -1719,7 +1721,7 @@ server = "npm run dev"
 
 Here `install` runs first, then `build` and `server` run together.
 
-Templates are syntax-checked before the pipeline starts and rendered as each step runs, so a step can store [per-branch vars](/config/#wt-config-state-vars) that later steps read via `{{ vars.<key> }}`. Previews (`wt hook <type> --dry-run`, `wt hook show --expanded`) leave `{{ vars.* }}` references unexpanded for that reason.
+Templates are checked before the pipeline starts. One that can't parse, or that fails to expand from values no earlier step can change, such as an unguarded `{{ branch }}` in a detached worktree, stops the hook before any step runs. Templates render as each step runs, so a step can store [per-branch vars](/config/#wt-config-state-vars) that later steps read via `{{ vars.<key> }}`. Previews (`wt hook <type> --dry-run`, `wt hook show --expanded`) leave `{{ vars.* }}` references unexpanded for that reason.
 
 Most hooks don't need `[[hook]]` blocks. Reach for them when there's a dependency chain — typically setup that must complete before later steps, like installing dependencies before running a build and dev server concurrently.
 
@@ -1796,7 +1798,7 @@ Undefined variables error — use conditionals or defaults for optional behavior
 sync = "{% if upstream %}git fetch && git rebase {{ upstream }}{% endif %}"
 ```
 
-A detached worktree has no branch, so `branch` — and a `base` or `target` that names that worktree — is undefined there; guard with `{% if branch %}`.
+A detached worktree has no branch, so `branch` — and a `base` or `target` that names that worktree — is undefined there; guard with `{% if branch %}`. A command that identifies the worktree rather than its branch can use `worktree_name` or `worktree_path`, which every worktree has.
 
 Run any hook-firing command with `-v` to see the resolved variables for the actual invocation — each hook prints a `template variables:` block showing every in-scope variable and its value (`(unset)` for conditional vars that didn't populate, like `target_worktree_path` during `wt switch -`). Aliases do the same under `-v`: `wt -v <alias>` prints the alias's in-scope variables before the pipeline runs.
 
@@ -2207,9 +2209,9 @@ Valid built-in names:
 
 - `branch` — The branch name
 - `status` — Git status symbols, plus any user-defined status
-- `working-diff` — Uncommitted line changes against `HEAD`, including untracked files (header `HEAD±`)
-- `ahead-behind` — Commits ahead of and behind the default branch (header `main↕`)
-- `branch-diff` — Line changes against the default branch (header `main…±`)
+- `working-diff` — Uncommitted line changes against `HEAD`, including untracked files (header `@±`)
+- `ahead-behind` — Commits ahead of and behind the default branch (header `^↕`)
+- `branch-diff` — Line changes against the default branch (header `^…±`)
 - `summary` — An LLM-generated summary of the branch
 - `upstream` — Commits ahead of and behind the upstream tracking branch (header `Remote⇅`)
 - `ci` — CI status of the head commit

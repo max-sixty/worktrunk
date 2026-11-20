@@ -294,7 +294,7 @@ impl Repository {
     /// upstream and, for the ones the cache doesn't already cover, runs
     /// one `for-each-ref %(ahead-behind:UPSTREAM_SHA)` walk per unique
     /// upstream SHA — the same shared-graph-traversal win that
-    /// [`Self::inventory_snapshot`] uses for the `main↕`
+    /// [`Self::inventory_snapshot`] uses for the `^↕`
     /// column, scoped to branches sharing one base.
     ///
     /// Mirrors the cache-correctness defenses applied in

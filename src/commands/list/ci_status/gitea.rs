@@ -83,8 +83,10 @@ pub(super) fn detect_gitea_pr(
     let (query_owner, query_repo) = parse_owner_repo(&primary_url)?;
     let branch_owner = branch_owner_repo(repo, branch).map(|(owner, _)| owner)?;
 
-    // `state=open` required (default returns all states); `limit` matches the
-    // github backend's MAX_PRS_TO_FETCH so both have identical page semantics.
+    // `state=open` required (default returns all states). Gitea's list
+    // endpoint has no head-branch filter, unlike the github and gitlab
+    // backends, so this first page of MAX_PRS_TO_FETCH open PRs is matched
+    // client-side below.
     let path =
         format!("repos/{query_owner}/{query_repo}/pulls?state=open&limit={MAX_PRS_TO_FETCH}");
     let output = tea_api(repo, &path)?;
@@ -397,7 +399,7 @@ mod tests {
     /// from explicit `forge.platform` config, so the host heuristic
     /// (`is_gitea` substring check) is not used here. Re-introducing such a
     /// filter would silently drop CI status for legitimate Forgejo users
-    /// (see `src/git/ci_platform.rs:186`).
+    /// (see `branch_owner_repo` in `ci_status/mod.rs`).
     #[test]
     fn test_branch_owner_repo_resolves_non_canonical_gitea_host() {
         let test = TestRepo::with_initial_commit();

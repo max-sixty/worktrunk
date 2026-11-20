@@ -6,11 +6,13 @@
 # Override {{ cmd }} command so it can change the parent shell's directory.
 # WORKTRUNK_BIN can override the binary path (for testing dev builds).
 function {{ cmd }}
+    # `{{ cmd }} --source ...` runs {{ cmd }} through `cargo run` in the current checkout.
+    # Only a leading --source is this wrapper's flag; every later argument
+    # belongs to {{ cmd }} or to a command it runs.
     set -l use_source false
-    set -l args
-
-    for arg in $argv
-        if test "$arg" = "--source"; set use_source true; else; set -a args $arg; end
+    if test "$argv[1]" = --source
+        set use_source true
+        set -e argv[1]
     end
 
     test -n "$WORKTRUNK_BIN"; or set -l WORKTRUNK_BIN (type -P {{ cmd }} 2>/dev/null)
@@ -46,13 +48,12 @@ function {{ cmd }}
         return $cd_exit
     end
 
-    # --source: use cargo run (builds from source)
     if test $use_source = true
         $run_function env WORKTRUNK_DIRECTIVE_CD_FILE=$cd_file \
-            cargo run --bin {{ cmd }} --quiet -- $args
+            cargo run --bin {{ cmd }} --quiet -- $argv
     else
         $run_function env WORKTRUNK_DIRECTIVE_CD_FILE=$cd_file \
-            $WORKTRUNK_BIN $args
+            $WORKTRUNK_BIN $argv
     end
     set -l exit_code $status
 

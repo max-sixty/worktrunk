@@ -990,6 +990,53 @@ capture = "echo 'branch=[{% if branch %}{{ branch }}{% endif %}]' > ../postremov
     );
 }
 
+/// An unguarded `{{ branch }}` can't expand in a detached worktree, and the
+/// context frozen at preparation already decides that, so the hook fails
+/// before it starts, as a syntax error does: no step runs, not even the one
+/// before the broken step, and the command exits 1 with the error.
+/// `post-remove` is prepared after the removal, so the worktree is gone. The
+/// reported case was a `post-remove` running `jj workspace forget
+/// {{ branch }}`, which was announced, never ran, and left its error only in
+/// the background runner's log while `wt remove` exited 0.
+#[rstest]
+fn test_user_post_remove_unguarded_branch_fails_before_hook_starts(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+    repo.detach_head_in_worktree("feature");
+    let feature_wt_path = repo.worktree_path("feature").to_path_buf();
+
+    repo.write_test_config(
+        r#"post-remove = [
+    { first = "echo ran > ../postremove_first.txt" },
+    { forget = "echo {{ branch }} > ../postremove_forget.txt" },
+]
+"#,
+    );
+
+    snapshot_remove(
+        "user_post_remove_unguarded_branch_fails_before_hook_starts",
+        &repo,
+        &[
+            feature_wt_path.to_str().unwrap(),
+            "--force",
+            "--foreground",
+            "--yes",
+        ],
+        None,
+    );
+
+    assert!(!feature_wt_path.exists(), "the removal itself completes");
+    thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
+    let first_marker = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("postremove_first.txt");
+    assert!(
+        !first_marker.exists(),
+        "no step of a hook rejected at preparation runs"
+    );
+}
+
 /// `target` names the branch the user lands on after removal — the primary
 /// worktree's — so a detached primary leaves it unset for the same reason
 /// `branch` is unset above. Both halves of one removal have to agree: the
@@ -1287,6 +1334,34 @@ mark = "git rev-parse --show-toplevel > {{ repo_path }}/post-commit-toplevel.txt
     }
 }
 
+/// `wt merge --no-remove` registers `post-commit` in the feature worktree and
+/// `post-merge` in the target. The announce's `@ <path>` suffix covers the
+/// whole line, so the two get separate lines rather than one line implying
+/// `post-commit` ran in the target.
+#[rstest]
+fn test_merge_announces_post_commit_and_post_merge_by_directory(mut repo: TestRepo) {
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature", "Add feature");
+    // Uncommitted work so the merge squashes, which is what fires post-commit.
+    fs::write(feature_wt.join("dirty.txt"), "uncommitted").unwrap();
+
+    repo.write_test_config(
+        r#"[post-commit]
+mark = "echo commit"
+
+[post-merge]
+sync = "echo merge"
+"#,
+    );
+
+    snapshot_merge(
+        "merge_announces_post_commit_and_post_merge_by_directory",
+        &repo,
+        &["main", "--yes", "--no-remove"],
+        Some(&feature_wt),
+    );
+}
+
 /// When post-merge template prep errors after post-remove + post-switch are
 /// already registered, the announcer's `Drop` impl flushes the pending hooks
 /// so they still spawn — preserving the prior fire-and-forget behavior in
@@ -1301,10 +1376,10 @@ fn test_merge_drops_pending_hooks_when_post_merge_fails(mut repo: TestRepo) {
     let post_merge_marker = temp_root.join("drop_postmerge_marker.txt");
 
     // post-merge has a template syntax error, so `register` errors after
-    // post-remove + post-switch are already pending in the announcer.
-    // (Semantic errors like undefined variables no longer fail prep — they
-    // surface when the runner renders the step; see
-    // test_background_hook_undefined_var_fails_in_runner.)
+    // post-remove + post-switch are already pending in the announcer. (An
+    // undefined variable the frozen context decides fails prep the same way;
+    // one whose outcome depends on `vars` surfaces when the runner renders the
+    // step — see test_background_hook_undefined_var_fails_in_runner.)
     // Convert to forward slashes so the rendered shell command parses the same
     // way under Windows Git Bash (where backslashes in unquoted paths get
     // eaten as escape-of-next-char).
@@ -1348,16 +1423,18 @@ sync = "echo POST_MERGE_RAN > {} {{{{ bad..syntax }}}}"
     );
 }
 
-/// A semantic template error (undefined variable) in a background hook does
-/// not fail the foreground command: templates render when each step runs, so
-/// the error surfaces in the detached runner and lands in its log. Only
-/// syntax errors abort at prep (see
+/// A template error in a background hook whose outcome depends on `vars`,
+/// which an earlier step could set, does not fail the foreground command:
+/// templates render when each step runs, so the error surfaces in the
+/// detached runner and lands in its log. An error the frozen context already
+/// decides fails at prep instead (see
+/// test_user_post_remove_unguarded_branch_fails_before_hook_starts and
 /// test_merge_drops_pending_hooks_when_post_merge_fails).
 #[rstest]
 fn test_background_hook_undefined_var_fails_in_runner(repo: TestRepo) {
     repo.write_test_config(
         r#"[post-start]
-broken = "echo {{ does_not_exist }} > should_not_exist.txt"
+broken = "{% if not vars.ready %}echo {{ does_not_exist }} > should_not_exist.txt{% endif %}"
 "#,
     );
 
@@ -1386,7 +1463,7 @@ broken = "echo {{ does_not_exist }} > should_not_exist.txt"
     // Template errors identify the hook type, source, and command.
     assert_snapshot!(log_content, @"
     [31m✗[39m [31mFailed to expand post-start user:broken: undefined variable does_not_exist @ line 1[39m
-    [107m [0m echo {{ does_not_exist }} > should_not_exist.txt
+    [107m [0m {% if not vars.ready %}echo {{ does_not_exist }} > should_not_exist.txt{% endif %}
     [2m↳[22m [2mAvailable variables: [4margs[24m, [4mbase[24m, [4mbase_worktree_path[24m, [4mbranch[24m, [4mcommit[24m, [4mcwd[24m, [4mdefault_branch[24m, [4mhook_name[24m, [4mhook_type[24m, [4mprimary_worktree_path[24m, [4mremote[24m, [4mremote_url[24m, [4mrepo[24m, [4mrepo_path[24m, [4mshort_commit[24m, [4mtarget[24m, [4mtarget_worktree_path[24m, [4mupstream[24m, [4mworktree_name[24m, [4mworktree_path[24m[22m
     ");
 
@@ -1613,15 +1690,17 @@ exit 9
     ");
 }
 
-/// A semantic template error in a foreground pipeline step surfaces when that
-/// step runs: earlier steps execute first, then the broken step's render
-/// aborts the pipeline. Syntax errors still abort before step 1.
+/// A template error whose outcome depends on `vars`, which an earlier step
+/// could set, surfaces when that step runs: earlier steps execute first, then
+/// the broken step's render aborts the pipeline. An error the frozen context
+/// already decides aborts before step 1 instead (see
+/// test_foreground_pipeline_decided_error_aborts_before_first_step).
 #[rstest]
 fn test_foreground_pipeline_undefined_var_runs_earlier_steps(repo: TestRepo) {
     repo.write_test_config(
         r#"pre-merge = [
     { first = "echo FIRST_RAN > first_marker.txt" },
-    { broken = "echo {{ does_not_exist }}" },
+    { broken = "{% if not vars.ready %}echo {{ does_not_exist }}{% endif %}" },
 ]
 "#,
     );
@@ -1645,7 +1724,9 @@ fn test_foreground_pipeline_undefined_var_runs_earlier_steps(repo: TestRepo) {
 
 /// Runtime expansion obeys the same foreground policy as child failures:
 /// Warn admits healthy concurrent siblings and later commands from either
-/// source; FailFast rejects the group before spawning any command in it.
+/// source; FailFast rejects the group before spawning any command in it. The
+/// broken templates depend on `vars.ready`, which an earlier step could set,
+/// so their failure is decided when the step runs rather than at prep.
 #[rstest]
 #[case::warn_serial(true, false, true)]
 #[case::warn_concurrent(true, true, true)]
@@ -1659,11 +1740,11 @@ fn test_foreground_template_failure_policy(
     #[case] healthy_sibling: bool,
 ) {
     let hook_type = if warn { "post-start" } else { "pre-merge" };
-    let broken = r#"broken = "echo {{ does_not_exist }}""#;
+    let broken = r#"broken = "{% if not vars.ready %}echo {{ does_not_exist }}{% endif %}""#;
     let sibling = if healthy_sibling {
         r#"sibling = "echo ran > sibling.txt", "#
     } else {
-        r#"also_broken = "echo {{ missing_too }}", "#
+        r#"also_broken = "{% if not vars.ready %}echo {{ missing_too }}{% endif %}", "#
     };
     let failing_step = if concurrent {
         format!("{{ {sibling}{broken} }}")
@@ -1756,27 +1837,35 @@ fn test_hook_template_typo_names_variable(repo: TestRepo) {
     });
 }
 
-/// The other half of that contract: a *syntax* error anywhere in the pipeline
-/// aborts before step 1. Preparation parses every template
-/// (`PreparedPipeline::validated`), so a pipeline that can't render in full never
-/// starts — where a semantic error, rendered per step, lets earlier steps run.
+/// The other half of that contract: a template error the frozen context
+/// already decides, anywhere in the pipeline, aborts before step 1.
+/// Preparation (`PreparedPipeline::validated`) parses every template and
+/// renders each one that reads nothing an earlier step can change, so a
+/// pipeline that can't render in full never starts.
 ///
 /// Driven through `wt merge`'s pre-commit hooks rather than `wt hook
 /// pre-commit`, because the `wt hook` CLI parses every template up front to
-/// route shorthand arguments (`referenced_vars_union`) and would catch the
-/// error before preparation, leaving the preparation-time guard untested.
+/// route shorthand arguments (`referenced_vars_union`) and would catch a
+/// syntax error before preparation, leaving the preparation-time guard
+/// untested.
 #[rstest]
-fn test_foreground_pipeline_syntax_error_aborts_before_first_step(mut repo: TestRepo) {
+#[case::syntax("echo {{ bad..syntax }}", "syntax error")]
+#[case::undefined("echo {{ does_not_exist }}", "undefined variable does_not_exist")]
+fn test_foreground_pipeline_decided_error_aborts_before_first_step(
+    mut repo: TestRepo,
+    #[case] broken: &str,
+    #[case] reported: &str,
+) {
     let feature_wt = repo.add_worktree("feature");
     fs::write(feature_wt.join("uncommitted.txt"), "uncommitted content").unwrap();
 
-    repo.write_test_config(
+    repo.write_test_config(&format!(
         r#"pre-commit = [
-    { first = "echo FIRST_RAN > syntax_first_marker.txt" },
-    { broken = "echo {{ bad..syntax }}" },
+    {{ first = "echo FIRST_RAN > syntax_first_marker.txt" }},
+    {{ broken = "{broken}" }},
 ]
 "#,
-    );
+    ));
 
     let output = repo
         .wt_command()
@@ -1787,16 +1876,16 @@ fn test_foreground_pipeline_syntax_error_aborts_before_first_step(mut repo: Test
 
     assert!(
         !output.status.success(),
-        "an unparsable template should fail the merge"
+        "a template that can't render should fail the merge"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("syntax error"),
-        "error should name the syntax failure, got: {stderr}"
+        stderr.contains(reported),
+        "error should name the failure, got: {stderr}"
     );
     assert!(
         !feature_wt.join("syntax_first_marker.txt").exists(),
-        "step 1 must not run when a later step's template can't parse: {stderr}"
+        "step 1 must not run when a later step's template can't render: {stderr}"
     );
 }
 

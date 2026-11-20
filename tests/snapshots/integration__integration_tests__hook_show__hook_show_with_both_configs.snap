@@ -45,8 +45,10 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_MOCK_CONFIG_DIR: "[TEST_MOCK_CONFIG]"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OMP_INSTALLED: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_PARENT_SHELL: ""
+    WORKTRUNK_TEST_PI_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_PROBE_TIMEOUT_MS: "60000"
@@ -58,7 +60,8 @@ success: true
 exit_code: 0
 ----- stdout -----
 [36mUSER HOOKS[39m @ [TEST_CONFIG]
-[2m○[22m No hooks configured
+[2m○[22m pre-commit [1muser-lint[22m:
+[107m [0m [2m[0m[2m[34mpre-commit[0m[2m run [0m[2m[36m--all-files[0m
 
 [36mPROJECT HOOKS[39m @ _REPO_/.config/wt.toml
 [36m❯[39m post-start [1mdeps[22m: [2m(requires approval)[22m

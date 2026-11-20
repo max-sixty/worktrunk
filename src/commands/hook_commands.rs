@@ -98,14 +98,14 @@ fn build_manual_hook_template_vars(ctx: &CommandContext, hook_type: HookType) ->
     let branch = ctx.branch;
     let worktree_path = ctx.worktree_path;
     match hook_type {
-        // Merge/commit hooks: target = merge target (default branch for commit,
-        // current for merge). Only this arm needs the default branch, and
+        // Commit hooks: target = default branch. Only this arm needs it, and
         // resolving it can cost a `git ls-remote` on a fresh clone — so it is
         // fetched here rather than up front.
         HookType::PreCommit | HookType::PostCommit => ctx
             .repo
             .default_branch()
             .map_or_else(TemplateVars::new, |t| TemplateVars::new().with_target(&t)),
+        // Merge hooks: target = current branch
         HookType::PreMerge | HookType::PostMerge => TemplateVars::new()
             .with_target_opt(branch)
             .with_target_worktree_path(worktree_path),
@@ -186,10 +186,10 @@ pub struct HookCliArgs<'a> {
 ///   regardless of whether any template references the key.
 ///
 /// The `foreground` parameter controls execution mode for hooks that normally run
-/// in background (post-start, post-switch):
+/// in background (every post-* hook):
 /// - `None` = use default behavior for this hook type
 /// - `Some(true)` = run in foreground (for debugging)
-/// - `Some(false)` = run in background (default for post-start/post-switch)
+/// - `Some(false)` = run in background (the post-* default)
 pub fn run_hook(
     hook_type: HookType,
     yes: bool,
@@ -277,14 +277,11 @@ pub fn run_hook(
     // `expand_template` rehydrates it as `ShellArgs` so bare `{{ args }}`
     // renders space-joined with per-element shell escaping. Mirrors
     // `run_alias` at `src/commands/alias.rs`.
-    let args_json =
-        serde_json::to_string(&args).expect("Vec<String> serialization should never fail");
+    let args_json = serde_json::to_string(&args).context("Failed to encode forwarded args")?;
     let template_vars = build_manual_hook_template_vars(&ctx, hook_type);
     let mut extra_vars = template_vars.as_extra_vars();
     extra_vars.extend(custom_vars_refs.iter().copied());
-    // Forward positional CLI args as `{{ args }}` (empty sequence when
-    // nothing was forwarded). `expand_template` rehydrates this JSON into a
-    // `ShellArgs` sequence that renders space-joined, per-element escaped.
+    // Empty sequence when nothing was forwarded.
     extra_vars.push((ALIAS_ARGS_KEY, &args_json));
 
     if dry_run {

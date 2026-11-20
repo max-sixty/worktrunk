@@ -2796,7 +2796,28 @@ fn test_vars_invalid_key(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @r#"[31m✗[39m [31mInvalid key "foo.bar": keys must contain only letters, digits, and hyphens[39m"#);
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @r#"[31m✗[39m [31mInvalid key "foo.bar": keys must start with a lowercase letter and contain only lowercase letters, digits, and hyphens[39m"#);
+}
+
+/// Git lowercases config variable names, so a mixed-case key would read back
+/// under a name templates don't reference (`{{ vars.Ticket }}` renders empty),
+/// and a leading digit is not a valid git config name at all.
+#[rstest]
+#[case::uppercase("Ticket=ABC")]
+#[case::leading_digit("1st=ABC")]
+fn test_vars_set_rejects_keys_git_cannot_store_verbatim(repo: TestRepo, #[case] arg: &str) {
+    let output = wt_state_cmd(&repo, "vars", "set", &[arg]).output().unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("keys must start with a lowercase letter"),
+        "unexpected stderr: {stderr}"
+    );
+
+    let output = wt_state_cmd(&repo, "vars", "list", &["--format=json"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "{}");
 }
 
 #[rstest]

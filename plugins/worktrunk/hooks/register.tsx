@@ -130,7 +130,7 @@ export const register: Register = on => {
       })
     }
     return ran
-  }).catch(($, e, next) => next(e))
+  })
 
   on('turn.complete', async ($, e, next) => {
     const done = await next(e)

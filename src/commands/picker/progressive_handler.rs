@@ -1,9 +1,11 @@
 //! Progressive-rendering glue between `collect::collect` and the skim picker.
 //!
-//! Each event funnels into three places: skim's item stream (`tx`, consumed
-//! by the skeleton batch — the handler's only send), each item's shared
-//! `rendered` mutex (in-place redraws), and `shared_items` used by
-//! `PickerCollector` for alt-x.
+//! Rows funnel into skim's item stream (`tx`, consumed by the skeleton
+//! batch — the handler's only send) and each item's shared `rendered` mutex
+//! (in-place redraws). The skeleton also publishes session-shared state that
+//! outlives this spawn — `shared_items`, the shortcut table, and the layout
+//! `PickerCollector` uses for alt-x — and only the live spawn writes it, so a
+//! superseded skeleton landing after a rapid second alt-r leaves it alone.
 //!
 //! # Why updates poke a render
 //!
@@ -639,8 +641,13 @@ impl PickerProgressHandler for PickerHandler {
 
     fn provide_layout(&self, layout: &crate::commands::list::layout::LayoutConfig) {
         // Stow a clone for `PickerCollector` to render the `alt-x` `/ branch`
-        // row on this grid. Overwritten each skeleton (a refresh re-collects).
-        *self.layout_slot.lock().unwrap() = Some(layout.clone());
+        // row on this grid. Overwritten each skeleton (a refresh re-collects),
+        // but only by the live spawn — a superseded skeleton's grid would
+        // misalign the morph row, as in `on_skeleton`'s shared-list guard.
+        let mut slot = self.layout_slot.lock().unwrap();
+        if self.spawn_gen.is_current() {
+            *slot = Some(layout.clone());
+        }
     }
 
     fn on_collect_complete(&self) {
@@ -745,6 +752,28 @@ mod tests {
 
     fn grid() -> crate::commands::list::layout::ColumnGrid {
         crate::commands::list::layout::ColumnGrid::default()
+    }
+
+    fn layout(items: &[ListItem]) -> crate::commands::list::layout::LayoutConfig {
+        use crate::commands::list::layout;
+        layout::calculate_layout_with_width(
+            items,
+            &crate::commands::list::columns::all_tasks(),
+            layout::Destination {
+                width: 80,
+                link_style: layout::LinkStyle::Expanded,
+            },
+            std::path::Path::new("/test"),
+            layout::ColumnSelection {
+                custom: &[],
+                selected: None,
+            },
+            layout::RepoFacts {
+                has_remote: true,
+                url_template: None,
+                max_pr_number: None,
+            },
+        )
     }
 
     /// `on_skeleton` reads the worktree/branch inventory through the handler's
@@ -1755,7 +1784,8 @@ mod tests {
     }
 
     /// A handler superseded by a refresh must not publish its skeleton into
-    /// the session-shared row list / shortcut table, nor seed summary hints:
+    /// the session-shared row list / shortcut table / alt-x layout, nor seed
+    /// summary hints:
     /// a rapid second `alt-r` can schedule the new spawn's skeleton before a
     /// slow prior spawn's, and the stale skeleton landing second would
     /// otherwise overwrite the live rows (feeding a later `alt-x` resync and
@@ -1763,15 +1793,27 @@ mod tests {
     /// refreshed cache.
     #[test]
     fn superseded_skeleton_leaves_shared_state_alone() {
+        // The live spawn publishes its layout for `alt-x`'s morph row.
+        let (live, _live_test, _live_rx) = make_handler();
+        let live_items = vec![ListItem::new_branch("abc".into(), "live".into())];
+        live.provide_layout(&layout(&live_items));
+        assert!(
+            live.layout_slot.lock().unwrap().is_some(),
+            "live skeleton publishes its layout"
+        );
+
         let (handler, test, rx) = make_handler();
         handler.orchestrator.refresh(test.repo.clone());
 
+        let stale_items = vec![ListItem::new_branch("abc".into(), "stale".into())];
         handler.on_skeleton(
-            vec![ListItem::new_branch("abc".into(), "stale".into())],
+            stale_items.clone(),
             vec!["skel".into()],
             header("hdr"),
             grid(),
         );
+        // `collect` hands over the layout right after the skeleton.
+        handler.provide_layout(&layout(&stale_items));
         handler.orchestrator.wait_for_idle();
 
         // The rows still stream to this spawn's (dead) skim channel...
@@ -1789,6 +1831,10 @@ mod tests {
         assert!(
             handler.preview_cache.is_empty(),
             "superseded skeleton must not seed hints into the refreshed cache"
+        );
+        assert!(
+            handler.layout_slot.lock().unwrap().is_none(),
+            "superseded skeleton must not overwrite the alt-x layout"
         );
     }
 

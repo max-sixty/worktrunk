@@ -207,9 +207,9 @@ Valid built-in names:
 
 - `branch` — The branch name
 - `status` — Git status symbols, plus any user-defined status
-- `working-diff` — Uncommitted line changes against `HEAD`, including untracked files (header `HEAD±`)
-- `ahead-behind` — Commits ahead of and behind the default branch (header `main↕`)
-- `branch-diff` — Line changes against the default branch (header `main…±`)
+- `working-diff` — Uncommitted line changes against `HEAD`, including untracked files (header `@±`)
+- `ahead-behind` — Commits ahead of and behind the default branch (header `^↕`)
+- `branch-diff` — Line changes against the default branch (header `^…±`)
 - `summary` — An LLM-generated summary of the branch
 - `upstream` — Commits ahead of and behind the upstream tracking branch (header `Remote⇅`)
 - `ci` — CI status of the head commit
@@ -219,7 +219,7 @@ Valid built-in names:
 - `age` — Time since the last commit
 - `message` — The head commit's subject
 
-A selection mixes built-ins with [custom columns](#custom-columns), each named
+A selection mixes built-ins with [custom columns](#custom-columns-experimental), each named
 by its `[list.custom-columns]` header (`columns = ["branch", "Ticket", "ci"]`),
 and is exhaustive: only the listed columns render. Omit `columns` to keep the
 default set, where custom columns append automatically.
@@ -1433,7 +1433,7 @@ Markers appear at the end of the Status column, after git symbols:
 
 ```console
 $ wt list
-  Branch       Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message
+  Branch       Status       @±        ^↕        ^…±     Remote⇅  Commit    Age  Message
 @ main             ^⇡                                    ⇡1      33323bc    1d  Initial commit
 + feature-api      ↑ 🤖              ↑1        +1                70343f0    1d  Add REST API endpo…
 + review-ui      ? ↑ 💬    +1        ↑1        +1                a585d6e    1d  Add dashboard comp…
@@ -1533,7 +1533,7 @@ dev = "npm start -- --port {{ vars.config.port }}"
 
 ### Storage format
 
-Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys may contain only letters, digits, and hyphens.
+Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys start with a lowercase letter and contain only lowercase letters, digits, and hyphens.
 
 ### Command reference
 

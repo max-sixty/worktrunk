@@ -31,7 +31,7 @@ tasks:
     platforms: [linux]
     cmds:
       - |
-        set -e
+        set -eo pipefail
         export PATH="$HOME/.local/bin:$HOME/bin:$PATH"
         echo "========================================"
         echo "Claude Code Web - Worktrunk Setup"
@@ -81,7 +81,7 @@ tasks:
             # rather than the tarball: pwsh aborts at startup without libicu,
             # and only the .deb declares that dependency for apt to resolve.
             if ! command -v pwsh &> /dev/null; then
-                PWSH_VERSION="7.6.9"
+                PWSH_VERSION="7.7.0"
                 URL="https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/powershell_${PWSH_VERSION}-1.deb_amd64.deb"
                 TEMP=$(mktemp -d)
                 curl -fsSL -o "$TEMP/powershell.deb" "$URL"
@@ -94,7 +94,7 @@ tasks:
         # Nushell isn't in every web image, and the shell-integration suite
         # drives it directly.
         if ! command -v nu &> /dev/null; then
-            NU_VERSION="0.116.1"
+            NU_VERSION="0.117.0"
             DIR="nu-${NU_VERSION}-x86_64-unknown-linux-gnu"
             TEMP=$(mktemp -d)
             curl -fsSL "https://github.com/nushell/nushell/releases/download/${NU_VERSION}/${DIR}.tar.gz" \
@@ -196,7 +196,9 @@ tasks:
 
         rsync -av --delete "$LOCAL_ASSETS/" "$ASSETS_REPO/assets/"
 
-        if git diff --quiet; then
+        # `git status` rather than `git diff`: newly added assets are
+        # untracked, and `git diff` doesn't see them.
+        if [ -z "$(git status --porcelain)" ]; then
             echo "No changes to publish"
             exit 0
         fi

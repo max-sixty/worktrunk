@@ -81,7 +81,7 @@ async function marker(directory: string, args: string[]): Promise<void> {
 type SessionEvent = {
   type: string;
   location?: { directory: string };
-  data?: { status?: { type?: string } };
+  data?: { sessionID?: string; status?: { type?: string } };
 };
 
 type Signal = { signal: AbortSignal };
@@ -101,6 +101,9 @@ type WorktreeDefinition = {
 
 type SetupContext = {
   location?: { directory: string };
+  session?: {
+    get(input: { sessionID: string }): Promise<{ parentID?: string; location?: { directory?: string } }>;
+  };
   event?: { subscribe(options?: { signal?: AbortSignal }): AsyncIterable<SessionEvent> };
   worktree?: {
     transform(callback: (editor: { add(definition: WorktreeDefinition): void }) => void): Promise<unknown>;
@@ -189,6 +192,34 @@ const strategy: WorktreeDefinition = {
   },
 };
 
+// The marker each `session.execution.*` event sets. OpenCode 2.3 replaced
+// `session.status` and `session.idle` with these.
+const EXECUTION_MARKERS = new Map([
+  ["session.execution.started", WORKING],
+  ["session.execution.succeeded", WAITING],
+  ["session.execution.failed", WAITING],
+  ["session.execution.interrupted", WAITING],
+]);
+
+/**
+ * Whether an execution event belongs to a top-level session in `directory`.
+ *
+ * Execution events carry only a session ID, so the session record supplies the
+ * worktree. A subagent's session runs its own executions, and its finishing
+ * must not mark the worktree as waiting while the parent still works.
+ */
+async function ownsExecution(context: SetupContext, event: SessionEvent, directory: string): Promise<boolean> {
+  const sessionID = event.data?.sessionID;
+  if (!sessionID || !context.session) return false;
+  try {
+    const session = await context.session.get({ sessionID });
+    return !session.parentID && session.location?.directory === directory;
+  } catch {
+    // A session deleted in the meantime has nothing left to mark.
+    return false;
+  }
+}
+
 async function setup(context: SetupContext) {
   // A host without worktree strategies passes no `worktree`, including the
   // OpenCode 1.18 loader noted below; activity tracking doesn't depend on it.
@@ -205,11 +236,17 @@ async function setup(context: SetupContext) {
 
   const watcher = (async () => {
     for await (const event of events.subscribe({ signal: controller.signal })) {
+      const execution = EXECUTION_MARKERS.get(event.type);
+      if (execution) {
+        if (await ownsExecution(context, event, directory)) await marker(directory, ["set", execution]);
+        continue;
+      }
       // The event envelope makes `location` optional; the session events below
       // carry one, and skipping the rest keeps each instance to its own worktree.
       if (event.location?.directory !== directory) continue;
 
       switch (event.type) {
+        // Earlier OpenCode 2 releases emit these instead of `session.execution.*`.
         case "session.status":
           // Status is `idle | busy | retry`. OpenCode 2 marks `session.idle`
           // deprecated in favor of this, so read the status, not the event name.

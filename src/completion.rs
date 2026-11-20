@@ -221,10 +221,13 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
     };
 
     // Bash does not filter COMPREPLY by prefix — its programmable completion
-    // (-F) passes the array as-is. Fish/zsh apply their own matching (substring,
-    // fuzzy), so they receive all candidates. For bash, we must filter here.
+    // (-F) passes the array as-is. PowerShell likewise offers a native
+    // completer's results unfiltered, so Tab would replace the typed word with
+    // the first candidate. Fish/zsh apply their own matching (substring,
+    // fuzzy), so they receive all candidates. For bash and PowerShell, we must
+    // filter here.
     let shell_name = shell_name.to_string_lossy();
-    let completions = if shell_name.as_ref() == "bash" {
+    let completions = if matches!(shell_name.as_ref(), "bash" | "powershell") {
         let prefix = current_word.as_deref().unwrap_or("").to_owned();
         if prefix.is_empty() {
             completions
@@ -321,7 +324,7 @@ pub(crate) fn hook_command_name_completer() -> ArgValueCompleter {
 ///
 /// Completes with the merged user + project alias name set. Returns all
 /// candidates unfiltered — the outer `maybe_handle_env_completion` does
-/// bash-specific prefix filtering; fish/zsh apply their own matching.
+/// prefix filtering for bash and PowerShell; fish/zsh apply their own matching.
 pub(crate) fn alias_name_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(AliasNameCompleter)
 }
@@ -353,7 +356,7 @@ impl ValueCompleter for HookCommandCompleter {
 
         // Return all candidates without prefix filtering — let the shell apply its
         // own matching (substring in fish, fuzzy in zsh, prefix in bash). The
-        // bash-specific prefix filter in maybe_handle_env_completion() handles bash.
+        // prefix filter in maybe_handle_env_completion() handles bash and PowerShell.
 
         // Get the hook type from the command line context
         let hook_type = CONTEXT.with(|ctx| ctx.borrow().as_ref().and_then(|ctx| ctx.hook_type));

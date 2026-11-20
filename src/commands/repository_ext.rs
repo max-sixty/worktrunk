@@ -116,8 +116,8 @@ impl RepositoryCliExt for Repository {
             Some(wts) => wts,
             None => self.list_worktrees()?,
         };
-        // Primary worktree path: prefer default branch's worktree, fall back to first
-        // worktree, then repo base for bare repos with no worktrees.
+        // Primary worktree path, or the repo base for a bare repo with no
+        // worktree on the default branch.
         let primary_path = self.home_path()?;
 
         // Reuse caller's snapshot when present; otherwise capture once for
@@ -144,8 +144,8 @@ impl RepositoryCliExt for Repository {
                 /// carried into the plan for execution-time pruning. `None`
                 /// when the branch has no worktree entry at all, which is also
                 /// the only case with no sibling to check — a branch that has
-                /// one resolves to `Worktree` above, or, named as a `Branch`
-                /// target, errors.
+                /// one resolves to `Worktree` above, or, named as a
+                /// [`RemoveTarget::BranchOnly`] target, errors.
                 pruned_from: Option<PathBuf>,
                 branch: String,
             },

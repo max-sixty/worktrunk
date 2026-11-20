@@ -45,3 +45,17 @@ updates:
         update-types:
           - version-update:semver-major
     labels: []
+
+  - package-ecosystem: nix
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore: "
+    # Every `flake.lock` input in one PR, which triggers nightly's `nix-flake`
+    # job to build and test the flake against the new lock.
+    groups:
+      flake-inputs:
+        patterns:
+          - "*"
+    labels: []

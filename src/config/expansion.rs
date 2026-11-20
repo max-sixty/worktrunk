@@ -166,12 +166,69 @@ impl TemplateContext {
         name: &str,
         vars_mode: VarsMode,
     ) -> Result<String, TemplateExpandError> {
-        let vars: HashMap<&str, &str> = self
-            .0
+        expand_template_with(
+            template,
+            &self.borrowed(),
+            escape_mode,
+            repo,
+            name,
+            vars_mode,
+        )
+    }
+
+    /// The error [`Self::expand`] will return for `template` when it runs
+    /// later, if this context already decides it.
+    ///
+    /// A pipeline freezes its context when it is prepared, so only two inputs
+    /// can change before a step renders: `vars.*`, read from the branch's git
+    /// config that an earlier step may write, and Worktrunk's template
+    /// functions, which read the repository. Without a `branch` there is no
+    /// git config to read, and `vars` is the empty map whenever the step runs.
+    /// A template that reads no changing input renders now exactly as it will
+    /// then, so this renders it, with no `-v` output; escaping can't make a
+    /// render fail, so none is applied. `None` when it renders, when its
+    /// outcome waits on that later state, or when it doesn't parse, which
+    /// [`validate_template_syntax`] reports.
+    ///
+    /// Every read counts, a local's included, since `{% set f = f() %}`
+    /// binds the name it calls and so hides the call from
+    /// `undeclared_variables`.
+    pub fn known_expansion_error(
+        &self,
+        template: &str,
+        repo: &Repository,
+        name: &str,
+    ) -> Option<TemplateExpandError> {
+        let analysis = TemplateVars::of(template)?;
+        let env = template_environment(repo);
+        // MiniJinja's own globals (`range`, `namespace`, …) read nothing, so
+        // the changing ones are those a bare environment lacks.
+        let builtins = Environment::new();
+        let vars_can_change = self.get("branch").is_some();
+        let reads_later_state = analysis.reads.iter().any(|(read, _)| {
+            (*read == "vars" && vars_can_change)
+                || (env.globals().any(|(global, _)| global == *read)
+                    && builtins.globals().all(|(global, _)| global != *read))
+        });
+        if reads_later_state {
+            return None;
+        }
+        render_template(
+            template,
+            &self.borrowed(),
+            ShellEscapeMode::Literal,
+            repo,
+            name,
+            VarsMode::Resolve,
+        )
+        .err()
+    }
+
+    fn borrowed(&self) -> HashMap<&str, &str> {
+        self.0
             .iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
-        expand_template_with(template, &vars, escape_mode, repo, name, vars_mode)
+            .collect()
     }
 
     /// The JSON form piped to a `wt step for-each` child's stdin.
@@ -1069,10 +1126,10 @@ pub fn referenced_vars_for_config(
 ///
 /// Every path that runs hooks calls this on each template, via
 /// `PreparedPipeline::validated`, so syntax errors (e.g. `{{ vars..foo }}`) abort
-/// before the first pipeline step runs; rendering — and with it semantic errors
-/// like undefined variables — is deferred to execution time. Alias dispatch has
-/// already parsed each template for argument routing by then, so it skips the
-/// check. The error matches [`expand_template`]'s
+/// before the first pipeline step runs, along with the render errors
+/// [`TemplateContext::known_expansion_error`] already decides. Alias dispatch
+/// has already parsed each template for argument routing by then, so it skips
+/// the check. The error matches [`expand_template`]'s
 /// parse-failure shape so syntax errors render identically wherever they
 /// surface.
 pub fn validate_template_syntax(template: &str, name: &str) -> Result<(), TemplateExpandError> {
@@ -1203,6 +1260,62 @@ pub fn expand_template_with(
     name: &str,
     vars_mode: VarsMode,
 ) -> Result<String, TemplateExpandError> {
+    // Cache verbosity level for consistent behavior within this call
+    let verbose = verbosity();
+
+    // -vv: Full debug logging with vars
+    // Redact credentials from values to prevent leaking tokens in logs
+    if verbose >= 2 {
+        tracing::debug!(name = %name, template = ?template, "[template:{name}] template={template:?}");
+        // Sort keys for deterministic output in tests
+        let mut sorted_vars: Vec<_> = vars.iter().collect();
+        sorted_vars.sort_by_key(|(k, _)| *k);
+        tracing::debug!(
+            name = %name,
+            "[template:{name}] vars={{{}}}",
+            sorted_vars
+                .iter()
+                .map(|(k, v)| format!("{k}={:?}", redact_credentials(v)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+
+    let result = render_template(template, vars, escape_mode, repo, name, vars_mode)?;
+
+    // -vv: Full debug logging with result
+    // Redact credentials from result to prevent leaking tokens in logs
+    if verbose >= 2 {
+        tracing::debug!(name = %name, "[template:{name}] result={:?}", redact_credentials(&result));
+    }
+
+    // -v: Nice styled output showing template expansion. The source template
+    // and the rendered result each get a labeled info header above a bash gutter
+    // block, so the eye separates input from output. Callers that emit several
+    // expansions in a row (or a single standalone one, like `wt step eval`) add
+    // a trailing blank to separate them; in a command pipeline the executor
+    // already provides that separation.
+    // Single atomic write to avoid interleaving in multi-threaded execution
+    if verbose == 1 {
+        let source_header = info_message(cformat!("<bold>{name}</> source"));
+        let source_gutter = format_bash_with_gutter(template);
+        let result_header = info_message(cformat!("<bold>{name}</> result"));
+        let result_gutter = format_bash_with_gutter(&result);
+        eprintln!("{source_header}\n{source_gutter}\n{result_header}\n{result_gutter}");
+    }
+    Ok(result)
+}
+
+/// [`expand_template_with`] without its `-v` / `-vv` output, for a render
+/// whose only use is its outcome.
+fn render_template(
+    template: &str,
+    vars: &HashMap<&str, &str>,
+    escape_mode: ShellEscapeMode,
+    repo: &Repository,
+    name: &str,
+    vars_mode: VarsMode,
+) -> Result<String, TemplateExpandError> {
     // Build context map with raw values (shell escaping is applied at output time via formatter).
     // The `args` key is reserved: run_alias encodes positional CLI args as a JSON list string,
     // and we rehydrate it here as a `ShellArgs` object so `{{ args }}` behaves sequence-like.
@@ -1257,27 +1370,6 @@ pub fn expand_template_with(
         });
     }
 
-    // Cache verbosity level for consistent behavior within this call
-    let verbose = verbosity();
-
-    // -vv: Full debug logging with vars
-    // Redact credentials from values to prevent leaking tokens in logs
-    if verbose >= 2 {
-        tracing::debug!(name = %name, template = ?template, "[template:{name}] template={template:?}");
-        // Sort keys for deterministic output in tests
-        let mut sorted_vars: Vec<_> = vars.iter().collect();
-        sorted_vars.sort_by_key(|(k, _)| *k);
-        tracing::debug!(
-            name = %name,
-            "[template:{name}] vars={{{}}}",
-            sorted_vars
-                .iter()
-                .map(|(k, v)| format!("{k}={:?}", redact_credentials(v)))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-    }
-
     // Parse errors are always SyntaxError, never UndefinedError — no need for available_vars
     let tmpl = env
         .template_from_named_str(name, template)
@@ -1316,7 +1408,7 @@ pub fn expand_template_with(
         }
     }
 
-    let result = tmpl.render(Value::from_object(context)).map_err(|e| {
+    tmpl.render(Value::from_object(context)).map_err(|e| {
         let mut keys = vars.keys().map(|key| key.to_string()).collect::<Vec<_>>();
         keys.sort();
         if e.kind() == ErrorKind::UndefinedError
@@ -1330,29 +1422,7 @@ pub fn expand_template_with(
             return build_undefined_vars_error(name, &[var.to_string()], keys, template, e.line());
         }
         build_template_error(&e, template, name, keys)
-    })?;
-
-    // -vv: Full debug logging with result
-    // Redact credentials from result to prevent leaking tokens in logs
-    if verbose >= 2 {
-        tracing::debug!(name = %name, "[template:{name}] result={:?}", redact_credentials(&result));
-    }
-
-    // -v: Nice styled output showing template expansion. The source template
-    // and the rendered result each get a labeled info header above a bash gutter
-    // block, so the eye separates input from output. Callers that emit several
-    // expansions in a row (or a single standalone one, like `wt step eval`) add
-    // a trailing blank to separate them; in a command pipeline the executor
-    // already provides that separation.
-    // Single atomic write to avoid interleaving in multi-threaded execution
-    if verbose == 1 {
-        let source_header = info_message(cformat!("<bold>{name}</> source"));
-        let source_gutter = format_bash_with_gutter(template);
-        let result_header = info_message(cformat!("<bold>{name}</> result"));
-        let result_gutter = format_bash_with_gutter(&result);
-        eprintln!("{source_header}\n{source_gutter}\n{result_header}\n{result_gutter}");
-    }
-    Ok(result)
+    })
 }
 
 /// Convert raw vars entries into a minijinja object value.
@@ -1383,12 +1453,17 @@ pub fn vars_map_to_value(entries: &std::collections::BTreeMap<String, String>) -
 /// [`validate_template`] does) would wrongly reject the dominant pattern.
 /// Answering every key keeps the trial render exercising filters without
 /// constraining which keys exist.
+///
+/// The placeholder is a numeric string: runtime values are strings, often
+/// counts or ports, and `| int` / `| float` on a non-numeric placeholder
+/// would reject a template that renders fine against real values. String
+/// filters accept it just the same.
 #[derive(Debug)]
 struct AnyKeyVars;
 
 impl Object for AnyKeyVars {
     fn get_value(self: &Arc<Self>, _key: &Value) -> Option<Value> {
-        Some(Value::from("PLACEHOLDER"))
+        Some(Value::from("1"))
     }
 }
 
@@ -1843,6 +1918,64 @@ mod tests {
             "Failed to expand test: undefined variable target @ line 1"
         );
         assert_eq!(err.suggestion, None);
+    }
+
+    /// A known expansion error is one the frozen context decides. A template
+    /// that calls a function, or reads `vars` on a branch, renders against
+    /// state an earlier step may change, so it reports nothing now, even when
+    /// it would fail. Without a branch, `vars` is always empty.
+    #[test]
+    fn test_known_expansion_error_only_when_the_context_decides() {
+        let test = test_repo();
+        let detached = TemplateContext::from_vars(HashMap::from([(
+            "worktree_name".to_string(),
+            "repo.feature".to_string(),
+        )]));
+        let on_branch =
+            TemplateContext::from_vars(HashMap::from([("branch".to_string(), "main".to_string())]));
+        let known = |ctx: &TemplateContext, template: &str| {
+            ctx.known_expansion_error(template, &test.repo, "test")
+                .map(|err| err.message)
+        };
+        let unset_branch = Some("Failed to expand test: undefined variable branch @ line 1");
+        assert_eq!(
+            known(&detached, "echo {{ branch }}").as_deref(),
+            unset_branch
+        );
+        assert_eq!(
+            known(
+                &detached,
+                "echo {{ vars.port | default(3000) }} {{ branch }}"
+            )
+            .as_deref(),
+            unset_branch
+        );
+        assert_eq!(
+            known(&detached, "echo {% if branch %}{{ branch }}{% endif %}"),
+            None
+        );
+        assert_eq!(known(&on_branch, "echo {{ vars.port }}"), None);
+        assert_eq!(
+            known(&detached, "echo {{ range(1) | list }} {{ branch }}").as_deref(),
+            unset_branch
+        );
+        assert_eq!(
+            known(
+                &detached,
+                "echo {{ worktree_path_of_branch('main') }} {{ branch }}"
+            ),
+            None
+        );
+        // An earlier step may create the worktree, so the guard may pass then.
+        assert_eq!(
+            known(
+                &detached,
+                "{% set worktree_path_of_branch = worktree_path_of_branch('new') %}
+{% if not worktree_path_of_branch %}{{ missing }}{% endif %}"
+            ),
+            None
+        );
+        assert_eq!(known(&detached, "echo {{ branch"), None);
     }
 
     #[test]
@@ -3591,6 +3724,14 @@ mod tests {
         validate_list_column_template("{{ git.branch.jira }}", &test.repo, "t").unwrap();
         validate_list_column_template(
             "{{ git.branch.description | lines | first }}",
+            &test.repo,
+            "t",
+        )
+        .unwrap();
+        // Values are strings at runtime, often numeric ones (counts, ports);
+        // a numeric conversion must not fail against the placeholder
+        validate_list_column_template(
+            "{% if (git.branch.ahead | default(0) | int) > 0 %}{{ vars.port | float }}{% endif %}",
             &test.repo,
             "t",
         )

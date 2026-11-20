@@ -18,7 +18,8 @@ sha256sums_aarch64=('SKIP')
 package() {
   cd "worktrunk-$CARCH-unknown-linux-musl"
   install -Dm755 wt "$pkgdir/usr/bin/wt"
-  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
+  install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
 
   # Fish completions
   # TODO: a bit hacky, but short enough that copy & paste is OK for the moment

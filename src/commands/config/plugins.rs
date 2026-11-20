@@ -17,17 +17,18 @@ use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 
 const MARKETPLACE_SOURCE: &str = "max-sixty/worktrunk";
 const MARKETPLACE_NAME: &str = "worktrunk";
-/// `PLUGIN@MARKETPLACE` selector `claude plugin install` / `uninstall` take,
-/// and the `id` Claude Code lists the plugin under.
+const PLUGIN_NAME: &str = "worktrunk";
+/// `PLUGIN@MARKETPLACE` selector `claude plugin uninstall` takes, and the
+/// `id` Claude Code lists the plugin under.
 const PLUGIN_SELECTOR: &str = "worktrunk@worktrunk";
 
 /// Handle `wt config plugins claude install`
 pub fn handle_claude_install(yes: bool) -> anyhow::Result<()> {
     require_claude_cli()?;
 
-    // Only a confident `Some(true)` short-circuits. Both commands below are
-    // idempotent — Claude Code answers an already-installed plugin and an
-    // already-added marketplace with a success — so an answer wt could not
+    // Only a confident `Some(true)` short-circuits. The install below is
+    // idempotent — Claude Code answers an already-added marketplace and an
+    // already-installed plugin with a success — so an answer wt could not
     // read costs a redundant run rather than a wrong one.
     if is_plugin_installed() == Some(true) {
         eprintln!("{}", info_message("Plugin already installed"));
@@ -38,10 +39,10 @@ pub fn handle_claude_install(yes: bool) -> anyhow::Result<()> {
         match prompt_yes_no_preview(
             &cformat!("Install Worktrunk plugin for <bold>Claude Code</>?"),
             || {
-                let commands = format!(
-                    "claude plugin marketplace add {MARKETPLACE_SOURCE}\nclaude plugin install {PLUGIN_SELECTOR}"
+                let command = format!(
+                    "claude plugin install {PLUGIN_NAME} --marketplace {MARKETPLACE_SOURCE}"
                 );
-                eprintln!("{}", worktrunk::styling::format_bash_with_gutter(&commands));
+                eprintln!("{}", worktrunk::styling::format_bash_with_gutter(&command));
             },
         )? {
             PromptResponse::Accepted => {}
@@ -49,14 +50,19 @@ pub fn handle_claude_install(yes: bool) -> anyhow::Result<()> {
         }
     }
 
-    eprintln!("{}", progress_message("Adding plugin from marketplace..."));
+    // `--marketplace` adds the marketplace first when Claude Code doesn't
+    // have it yet (Claude Code 2.1.292 and later).
+    eprintln!("{}", progress_message("Installing plugin..."));
     super::run_plugin_cli(
         "claude",
-        &["plugin", "marketplace", "add", MARKETPLACE_SOURCE],
+        &[
+            "plugin",
+            "install",
+            PLUGIN_NAME,
+            "--marketplace",
+            MARKETPLACE_SOURCE,
+        ],
     )?;
-
-    eprintln!("{}", progress_message("Installing plugin..."));
-    super::run_plugin_cli("claude", &["plugin", "install", PLUGIN_SELECTOR])?;
 
     eprintln!("{}", success_message("Plugin installed"));
 
@@ -152,10 +158,11 @@ struct PermissionRequest {
 ///   session 💬 while the dialog waits. One hook does both because Claude Code
 ///   runs every matching hook in parallel.
 /// - `WorktreeCreate` runs `wt switch --create` and prints the new worktree's
-///   path, which Claude Code reads as the hook's answer. A name whose branch
-///   already exists switches to it without `--create`, since Claude Code fires
-///   the hook again when `claude --worktree <name>` reopens a kept worktree
-///   (#4486). A failure exits nonzero with nothing on stdout (#3545).
+///   path, resolved through symlinks, which Claude Code reads as the hook's
+///   answer. A name whose branch already exists switches to it without
+///   `--create`, since Claude Code fires the hook again when
+///   `claude --worktree <name>` reopens a kept worktree (#4486). A failure
+///   exits nonzero with nothing on stdout (#3545).
 /// - `WorktreeRemove` resolves against the worktree path Claude Code hands
 ///   over, never `CLAUDE_PROJECT_DIR`: the `claude agents` view spans
 ///   repositories, so no single project dir is right for every session
@@ -203,7 +210,11 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
             let path = created["path"]
                 .as_str()
                 .context("`wt switch --format=json` output has no `path`")?;
-            println!("{path}");
+            // Claude Code refuses an answer that goes through a symlink inside
+            // the project, and a templated `worktree-path` can (#4812).
+            let path = dunce::canonicalize(path)
+                .with_context(|| format!("Failed to resolve worktree path {path}"))?;
+            println!("{}", path.display());
             Ok(())
         }
         ClaudeHook::WorktreeRemove { worktree_path } => {
