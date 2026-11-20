@@ -459,13 +459,13 @@ impl StatusSymbols {
 
         let mut result = String::with_capacity(64);
 
-        for (pos, slot) in self.symbols(SymbolFormat::Styled) {
+        for (pos, slot) in self.symbols() {
             let allocated_width = mask.width(pos);
 
             match slot {
                 SlotState::Visible(content) => {
                     let mut segment = StyledLine::new();
-                    segment.push_raw(content);
+                    segment.push_raw(content.styled());
                     segment.pad_to(allocated_width);
                     result.push_str(&segment.render());
                 }
@@ -495,10 +495,10 @@ impl StatusSymbols {
     ///
     /// Uses the same styled symbols as `render_with_mask()`, just without padding.
     pub fn format_compact(&self) -> String {
-        self.symbols(SymbolFormat::Styled)
+        self.symbols()
             .into_iter()
             .filter_map(|(_, slot)| match slot {
-                SlotState::Visible(s) => Some(s),
+                SlotState::Visible(s) => Some(s.styled()),
                 // Loading and Empty contribute nothing to the compact form —
                 // the statusline has no column alignment, so unresolved gates
                 // are just omitted.
@@ -512,50 +512,27 @@ impl StatusSymbols {
     /// Unresolved gates are omitted. Working-tree rename/delete glyphs and
     /// user marker text retain their raw JSON representation.
     pub(crate) fn format_raw(&self) -> String {
-        self.symbols(SymbolFormat::Raw)
-            .into_iter()
-            .filter_map(|(_, slot)| match slot {
-                SlotState::Visible(s) => Some(s),
-                SlotState::Loading | SlotState::Empty => None,
-            })
-            .collect()
+        let mut raw = self
+            .working_tree
+            .map_or_else(String::new, WorkingTreeStatus::to_symbols);
+        for (_, slot) in self.symbols().into_iter().skip(3) {
+            if let SlotState::Visible(symbol) = slot {
+                raw.push_str(&symbol.raw());
+            }
+        }
+        raw
     }
 
     /// Complete glyph-and-label pairs for resolved built-in terminal slots.
-    pub(crate) fn explanations(&self) -> impl Iterator<Item = &'static str> {
-        self.symbols(SymbolFormat::PlainTerminal)
-            .into_iter()
-            .filter_map(|(position, slot)| match slot {
-                SlotState::Visible(glyph) if position != PositionMask::USER_MARKER => {
-                    match glyph.as_str() {
-                        "+" => Some("+ staged files"),
-                        "!" => Some("! unstaged changes"),
-                        "?" => Some("? untracked files"),
-                        "✘" => Some("✘ merge conflicts"),
-                        "↻" => Some("↻ operation in progress"),
-                        "⊟" => Some("⊟ prunable worktree"),
-                        "⊞" => Some("⊞ locked worktree"),
-                        "⊘" => Some("⊘ detached HEAD"),
-                        "⚐" => Some("⚐ unexpected worktree path or duplicate branch"),
-                        "/" => Some("/ branch without worktree"),
-                        "^" => Some("^ main worktree"),
-                        "∅" => Some("∅ no common ancestor"),
-                        "_" => Some("_ clean at default commit"),
-                        "⊂" => Some("⊂ already integrated"),
-                        "✗" => Some("✗ would conflict"),
-                        "–" => Some("– dirty at default commit"),
-                        "↕" => Some("↕ diverged from default"),
-                        "↑" => Some("↑ ahead of default"),
-                        "↓" => Some("↓ behind default"),
-                        "|" => Some("| in sync with remote"),
-                        "⇡" => Some("⇡ ahead of remote"),
-                        "⇣" => Some("⇣ behind remote"),
-                        "⇅" => Some("⇅ diverged from remote"),
-                        _ => None,
-                    }
-                }
-                _ => None,
-            })
+    pub(crate) fn explanations(&self) -> impl Iterator<Item = String> {
+        self.symbols().into_iter().filter_map(|(_, slot)| {
+            let SlotState::Visible(symbol) = slot else {
+                return None;
+            };
+            symbol
+                .label()
+                .map(|label| format!("{} {label}", symbol.raw()))
+        })
     }
 
     /// Build symbols in Status-column order with shared gate selection.
@@ -573,91 +550,50 @@ impl StatusSymbols {
     /// - Red: Conflicts (blocking problems)
     /// - Yellow: Git operations, would_conflict, locked/prunable (states needing attention)
     /// - Dimmed: Main state symbols, divergence arrows, branch indicator (informational)
-    fn symbols(&self, format: SymbolFormat) -> [(usize, SlotState); 7] {
-        use color_print::cformat;
+    fn symbols(&self) -> [(usize, SlotState<'_>); 7] {
+        use StatusSymbol::*;
 
-        // Gate 1 — working tree flags (positions 0-2). One logical decision,
-        // so while loading we emit a single `·` at the lead position and
-        // blank-pad the other two — keeps the gate's visual weight equal to
-        // the single-position gates 2-5. Raw output has no alignment, so
-        // the lead slot contains all working-tree glyphs, including »✘.
         let (staged, modified, untracked) = match self.working_tree {
-            Some(wt) if matches!(format, SymbolFormat::Raw) => (
-                SlotState::from_content(wt.to_symbols()),
-                SlotState::Empty,
-                SlotState::Empty,
-            ),
             Some(wt) => {
-                let flag = |has: bool, sym: char| -> SlotState {
-                    if has {
-                        SlotState::Visible(match format {
-                            SymbolFormat::PlainTerminal => sym.to_string(),
-                            _ => cformat!("<cyan>{sym}</>"),
-                        })
+                let flag = |present, symbol| {
+                    if present {
+                        SlotState::Visible(symbol)
                     } else {
                         SlotState::Empty
                     }
                 };
                 (
-                    flag(wt.staged, '+'),
-                    flag(wt.modified, '!'),
-                    flag(wt.untracked, '?'),
+                    flag(wt.staged, Staged),
+                    flag(wt.modified, Modified),
+                    flag(wt.untracked, Untracked),
                 )
             }
             None => (SlotState::Loading, SlotState::Empty, SlotState::Empty),
         };
 
-        // Gate 3 — main state (position 4).
-        let main_state_slot = match self.main_state {
-            Some(ms) => SlotState::from_content(match format {
-                SymbolFormat::PlainTerminal | SymbolFormat::Raw => ms.to_string(),
-                SymbolFormat::Styled => ms.styled().unwrap_or_default(),
-            }),
-            None => SlotState::Loading,
-        };
-
-        // Gate 4 — upstream divergence (position 5).
-        let upstream_slot = match self.upstream_divergence {
-            Some(d) => SlotState::from_content(match format {
-                SymbolFormat::PlainTerminal | SymbolFormat::Raw => d.symbol().to_string(),
-                SymbolFormat::Styled => d.styled().unwrap_or_default(),
-            }),
-            None => SlotState::Loading,
-        };
-
-        // Gate 2 — worktree state (position 3). Operation family (`✘↻`)
-        // takes priority over metadata family (`⚐⊘⊟⊞/`). The gate is
-        // `Loading` iff `operation_state` is still `None` — even when
-        // `worktree_state` metadata would yield `⊟`, we cannot safely show
-        // it without ruling out a pending operation signal. Once
-        // `operation_state == Some(None)`, fall through to `worktree_state`
-        // metadata (which `refresh_status_symbols` fills synchronously, so
-        // it's always `Some` by the time `operation_state` resolves).
+        // An unresolved operation can still outrank worktree metadata.
         let worktree_slot = match self.operation_state {
             None => SlotState::Loading,
-            Some(op) if op != OperationState::None => SlotState::Visible(match format {
-                SymbolFormat::PlainTerminal | SymbolFormat::Raw => op.to_string(),
-                SymbolFormat::Styled => op.styled().unwrap_or_default(),
-            }),
-            Some(_) => match self.worktree_state {
+            Some(OperationState::None) => match self.worktree_state {
                 None | Some(WorktreeState::None) => SlotState::Empty,
-                Some(state) => SlotState::Visible(match format {
-                    SymbolFormat::PlainTerminal | SymbolFormat::Raw => state.to_string(),
-                    SymbolFormat::Styled => match state {
-                        WorktreeState::Branch
-                        | WorktreeState::BranchWorktreeMismatch
-                        | WorktreeState::DuplicateBranch => cformat!("<dim>{state}</>"),
-                        _ => cformat!("<yellow>{state}</>"),
-                    },
-                }),
+                Some(state) => SlotState::Visible(Worktree(state)),
             },
+            Some(state) => SlotState::Visible(Operation(state)),
         };
-
-        // Gate 5 — user marker (position 6).
+        let main_state_slot = match self.main_state {
+            None => SlotState::Loading,
+            Some(MainState::None) => SlotState::Empty,
+            Some(state) => SlotState::Visible(Main(state)),
+        };
+        let upstream_slot = match self.upstream_divergence {
+            None => SlotState::Loading,
+            Some(Divergence::None) => SlotState::Empty,
+            Some(state) => SlotState::Visible(Upstream(state)),
+        };
         let user_marker_slot = match &self.user_marker {
             None => SlotState::Loading,
             Some(None) => SlotState::Empty,
-            Some(Some(s)) => SlotState::Visible(s.clone()),
+            Some(Some(marker)) => SlotState::Visible(Marker(marker)),
         };
 
         // CRITICAL: Display order must match position indices for correct rendering.
@@ -674,38 +610,65 @@ impl StatusSymbols {
     }
 }
 
-/// Raw JSON uses compact glyphs; terminal output uses styled, aligned slots.
-#[derive(Clone, Copy)]
-enum SymbolFormat {
-    Raw,
-    Styled,
-    PlainTerminal,
-}
-
-/// State of a single Status-column slot when rendering.
-///
-/// Returned by [`StatusSymbols::symbols`] so the renderer can decide,
-/// per position, whether to emit a position-level placeholder (`Loading`),
-/// blank whitespace (`Empty`), or the styled content (`Visible`).
-#[derive(Debug, Clone)]
-enum SlotState {
-    /// Gate has not resolved — emit the placeholder glyph padded to the
-    /// slot's allocated width.
+enum SlotState<'a> {
     Loading,
-    /// Gate resolved to "nothing to display" — emit whitespace padded to
-    /// the slot's allocated width.
     Empty,
-    /// Gate resolved with content — emit the styled string (padded by the
-    /// caller to the slot's allocated width).
-    Visible(String),
+    Visible(StatusSymbol<'a>),
 }
 
-impl SlotState {
-    fn from_content(content: String) -> Self {
-        if content.is_empty() {
-            Self::Empty
-        } else {
-            Self::Visible(content)
+#[derive(Clone, Copy)]
+enum StatusSymbol<'a> {
+    Staged,
+    Modified,
+    Untracked,
+    Worktree(WorktreeState),
+    Operation(OperationState),
+    Main(MainState),
+    Upstream(Divergence),
+    Marker(&'a str),
+}
+
+impl StatusSymbol<'_> {
+    fn label(self) -> Option<&'static str> {
+        match self {
+            Self::Staged => Some("staged files"),
+            Self::Modified => Some("unstaged changes"),
+            Self::Untracked => Some("untracked files"),
+            Self::Worktree(state) => state.label(),
+            Self::Operation(state) => state.label(),
+            Self::Main(state) => state.label(),
+            Self::Upstream(state) => state.label(),
+            Self::Marker(_) => None,
+        }
+    }
+
+    fn raw(self) -> String {
+        match self {
+            Self::Staged => "+".into(),
+            Self::Modified => "!".into(),
+            Self::Untracked => "?".into(),
+            Self::Worktree(state) => state.to_string(),
+            Self::Operation(state) => state.to_string(),
+            Self::Main(state) => state.to_string(),
+            Self::Upstream(state) => state.symbol().into(),
+            Self::Marker(marker) => marker.into(),
+        }
+    }
+
+    fn styled(self) -> String {
+        use color_print::cformat;
+        match self {
+            Self::Staged | Self::Modified | Self::Untracked => cformat!("<cyan>{}</>", self.raw()),
+            Self::Worktree(state) => match state {
+                WorktreeState::Branch
+                | WorktreeState::BranchWorktreeMismatch
+                | WorktreeState::DuplicateBranch => cformat!("<dim>{state}</>"),
+                _ => cformat!("<yellow>{state}</>"),
+            },
+            Self::Operation(state) => state.styled().unwrap_or_default(),
+            Self::Main(state) => state.styled().unwrap_or_default(),
+            Self::Upstream(state) => state.styled().unwrap_or_default(),
+            Self::Marker(marker) => marker.into(),
         }
     }
 }

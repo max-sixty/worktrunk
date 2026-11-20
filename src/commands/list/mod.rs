@@ -401,10 +401,10 @@ pub(crate) fn format_summary_message(
             .iter()
             .flat_map(|item| item.status_symbols.explanations())
         {
-            if seen.insert(pair) {
+            if seen.insert(pair.clone()) {
                 // The first pair needs two leading spaces and parentheses.
                 // Each following pair needs only the two-space separator.
-                let cost = visual_width(pair) + if legend.is_empty() { 4 } else { 2 };
+                let cost = visual_width(&pair) + if legend.is_empty() { 4 } else { 2 };
                 if cost <= remaining {
                     remaining -= cost;
                     legend.push(pair);
