@@ -2908,7 +2908,7 @@ impl TestRepo {
     /// responses.
     ///
     /// Use this for testing Gitea CI status parsing. The mock handles:
-    /// - `tea api --include repos/{owner}/{repo}/pulls?state=open` → `pulls`
+    /// - `tea api --include repos/{owner}/{repo}/pulls?state=open…` → `pulls`
     /// - `tea api --include repos/{owner}/{repo}/commits/{head_sha}/status` →
     ///   `status`
     ///
@@ -2921,6 +2921,11 @@ impl TestRepo {
     /// * `owner`, `repo_name` - the Gitea repo the test's remote points at.
     /// * `head_sha` - the SHA used for the `commits/{sha}/status` lookup
     ///   (the feature branch's HEAD; also the PR head SHA in `pulls`).
+    /// * `pulls_heads` - the `head=` filters `pulls` answers: one per
+    ///   same-repo branch whose request should get it. Empty registers the
+    ///   unfiltered request a fork branch makes instead. Any other `pulls`
+    ///   request gets the status-shaped catch-all body, which doesn't parse as
+    ///   a PR list.
     /// * `pulls` - `(HTTP status, body)` for `tea api .../pulls`. On 200 the
     ///   body is a JSON array whose entries carry `mergeable`, `html_url`, and
     ///   `head.{ref,sha,repo.owner.login}`; on a 4xx/5xx it is whatever the
@@ -2937,6 +2942,7 @@ impl TestRepo {
         owner: &str,
         repo_name: &str,
         head_sha: &str,
+        pulls_heads: &[&str],
         pulls: (&str, &str),
         status: (&str, &str),
     ) {
@@ -2950,36 +2956,46 @@ impl TestRepo {
 
         // Keep `&limit=20` in sync with `MAX_PRS_TO_FETCH` in
         // `src/commands/list/ci_status/mod.rs`.
-        let pulls_path =
+        let pulls_base =
             format!("api --include repos/{owner}/{repo_name}/pulls?state=open&limit=20");
+        let pulls_paths: Vec<String> = if pulls_heads.is_empty() {
+            vec![pulls_base]
+        } else {
+            pulls_heads
+                .iter()
+                .map(|head| format!("{pulls_base}&head={head}"))
+                .collect()
+        };
         let status_path =
             format!("api --include repos/{owner}/{repo_name}/commits/{head_sha}/status");
 
-        MockConfig::new("tea")
+        let mut tea = MockConfig::new("tea")
             .version("tea version development (mock)")
             .command(
                 "logins list --output",
                 MockResponse::output(TEA_TEST_LOGINS),
-            )
-            .command(
-                &pulls_path,
+            );
+        for pulls_path in &pulls_paths {
+            tea = tea.command(
+                pulls_path,
                 MockResponse::file("tea_pulls.json")
                     .with_stderr(&tea_api_include_stderr(pulls_status)),
-            )
-            .command(
-                &status_path,
-                MockResponse::file("tea_status.json")
-                    .with_stderr(&tea_api_include_stderr(status_status)),
-            )
-            // Every other branch's commit has no statuses, so only `head_sha`'s
-            // row reflects `status`.
-            .command(
-                "api --include",
-                MockResponse::output(r#"{"state":"","total_count":0}"#)
-                    .with_stderr(&tea_api_include_stderr("200 OK")),
-            )
-            .command("_default", MockResponse::exit(1))
-            .write(&mock_bin);
+            );
+        }
+        tea.command(
+            &status_path,
+            MockResponse::file("tea_status.json")
+                .with_stderr(&tea_api_include_stderr(status_status)),
+        )
+        // Every other branch's commit has no statuses, so only `head_sha`'s
+        // row reflects `status`.
+        .command(
+            "api --include",
+            MockResponse::output(r#"{"state":"","total_count":0}"#)
+                .with_stderr(&tea_api_include_stderr("200 OK")),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
 
         // Other CI tools fail — platform detection is URL-based, but keep these
         // present-but-useless so a real tool on PATH can't interfere.

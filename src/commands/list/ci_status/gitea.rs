@@ -66,11 +66,31 @@ fn fetch_combined_status(
     parse_gitea_status_state(&combined.state)
 }
 
+/// The `pulls` list request for `detect_gitea_pr`.
+///
+/// `state=open` is required (the default returns all states). `head` is the
+/// branch name of a same-repo branch: Forgejo 16+ filters on the head branch
+/// name, and Gitea's planned filter (go-gitea/gitea#40164) reads a bare branch
+/// as the base repo's. Servers without the filter ignore the unknown parameter
+/// and return the first MAX_PRS_TO_FETCH open PRs. A fork branch passes `None`
+/// and scans that first page: Forgejo wants the bare name and Gitea
+/// `owner:branch`, and each matches nothing for the other's form. Either way
+/// the caller matches the result client-side.
+fn open_pulls_path(owner: &str, repo_name: &str, head: Option<&str>) -> String {
+    let mut path = format!("repos/{owner}/{repo_name}/pulls?state=open&limit={MAX_PRS_TO_FETCH}");
+    if let Some(head) = head {
+        path.push_str("&head=");
+        path.push_str(&urlencoding::encode(head));
+    }
+    path
+}
+
 /// Detect Gitea PR CI status for a branch.
 ///
-/// Lists open PRs on the primary remote, finds the one whose head branch +
-/// head owner matches, then reports conflicts (`mergeable`) and the head
-/// commit's combined CI status.
+/// Lists open PRs on the primary remote (filtered to the branch where the
+/// server supports it), finds the one whose head branch + head owner matches,
+/// then reports conflicts (`mergeable`) and the head commit's combined CI
+/// status.
 pub(super) fn detect_gitea_pr(
     repo: &Repository,
     branch: &CiBranchName,
@@ -81,14 +101,15 @@ pub(super) fn detect_gitea_pr(
     let primary_remote = repo.primary_remote().ok()?;
     let primary_url = repo.effective_remote_url(&primary_remote)?;
     let (query_owner, query_repo) = parse_owner_repo(&primary_url)?;
-    let branch_owner = branch_owner_repo(repo, branch).map(|(owner, _)| owner)?;
+    let (branch_owner, branch_repo) = branch_owner_repo(repo, branch)?;
 
-    // `state=open` required (default returns all states). Gitea's list
-    // endpoint has no head-branch filter, unlike the github and gitlab
-    // backends, so this first page of MAX_PRS_TO_FETCH open PRs is matched
-    // client-side below.
-    let path =
-        format!("repos/{query_owner}/{query_repo}/pulls?state=open&limit={MAX_PRS_TO_FETCH}");
+    let same_repo = branch_owner.eq_ignore_ascii_case(&query_owner)
+        && branch_repo.eq_ignore_ascii_case(&query_repo);
+    let path = open_pulls_path(
+        &query_owner,
+        &query_repo,
+        same_repo.then_some(&*branch.name),
+    );
     let output = tea_api(repo, &path)?;
     if tea_api_failed(&output) {
         return Some(PrStatus::error());
@@ -306,6 +327,19 @@ mod tests {
             stdout: b"[]".to_vec(),
             stderr: Vec::new(),
         }));
+    }
+
+    #[test]
+    fn test_open_pulls_path() {
+        assert_eq!(
+            open_pulls_path("owner", "repo", None),
+            "repos/owner/repo/pulls?state=open&limit=20"
+        );
+        // A slash or `&` in the branch name stays inside the `head` value.
+        assert_eq!(
+            open_pulls_path("owner", "repo", Some("feat/a&b")),
+            "repos/owner/repo/pulls?state=open&limit=20&head=feat%2Fa%26b"
+        );
     }
 
     #[test]

@@ -1438,6 +1438,15 @@ fn setup_gitea_repo_with_feature(repo: &mut TestRepo) -> String {
     branch_sha(repo, "feature")
 }
 
+/// Every local branch, each of which is a same-repo branch in the Gitea fixtures
+/// and so sends its own `head=<branch>` filter.
+fn local_branch_names(repo: &TestRepo) -> Vec<String> {
+    repo.git_output(&["for-each-ref", "--format=%(refname:short)", "refs/heads"])
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
 /// Run a Gitea CI status test with the given `tea api .../pulls` and
 /// `tea api .../commits/{sha}/status` mock responses, each an
 /// `(HTTP status, body)` pair.
@@ -1448,7 +1457,17 @@ fn run_gitea_ci_status_test(
     pulls: (&str, &str),
     status: (&str, &str),
 ) {
-    repo.setup_mock_tea_with_ci_data("owner", "test-repo", head_sha, pulls, status);
+    repo.setup_mock_tea_with_ci_data(
+        "owner",
+        "test-repo",
+        head_sha,
+        &local_branch_names(repo)
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        pulls,
+        status,
+    );
 
     let settings = setup_snapshot_settings(repo);
     settings.bind(|| {
@@ -1590,6 +1609,10 @@ fn gitea_ci_status_stderr(repo: &mut TestRepo, head_sha: &str, pulls: (&str, &st
         "owner",
         "test-repo",
         head_sha,
+        &local_branch_names(repo)
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
         pulls,
         ("200 OK", r#"{"state":"","total_count":0}"#),
     );
@@ -1716,6 +1739,7 @@ fn test_list_remotes_full_with_gitea_remote_branch(mut repo: TestRepo) {
         "forkowner",
         "test-repo",
         &head_sha,
+        &[],
         ("200 OK", "[]"),
         ("200 OK", r#"{"state":"success","total_count":1}"#),
     );
@@ -1784,6 +1808,7 @@ fn test_list_full_with_gitea_fork_pr(mut repo: TestRepo) {
         "upstream",
         "test-repo",
         &head_sha,
+        &[],
         ("200 OK", &pulls_json),
         ("200 OK", r#"{"state":"success","total_count":1}"#),
     );
