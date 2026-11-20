@@ -369,12 +369,12 @@ Item fields:
 
 [32mhead object[0m
 
-    Field        Type                                         Description                                     
- ──────────── ─────────── ─────────────────────────────────────────────────────────────────────────────────── 
- [2msha[0m          string      Full commit SHA (40 chars)                                                          
- [2mshort_sha[0m    string      Short commit SHA, abbreviated per [2mcore.abbrev[0m (auto-extends for ambiguous prefixes) 
- [2msubject[0m      string/null Commit subject (first line); null when not loaded, as for a prunable worktree       
- [2mcommitted_at[0m string/null Committer time, RFC 3339 UTC; null when not loaded                                  
+    Field        Type                                                           Description                                                       
+ ──────────── ─────────── ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+ [2msha[0m          string      Full commit SHA (40 chars)                                                                                              
+ [2mshort_sha[0m    string/null Short commit SHA, abbreviated per [2mcore.abbrev[0m (auto-extends for ambiguous prefixes); null when the commit can't be read 
+ [2msubject[0m      string/null Commit subject (first line); null when not loaded, as for a prunable worktree                                           
+ [2mcommitted_at[0m string/null Committer time, RFC 3339 UTC; null when not loaded                                                                      
 
 [32mworktree object[0m
 
