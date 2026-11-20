@@ -2049,8 +2049,8 @@ impl Repository {
     /// so a list has no batched form, and looping it is a fork per SHA — the
     /// trade this exists to avoid. `%h` folded into an existing `git log` is
     /// better still where it fits ([`commit_details_many`](Self::commit_details_many)),
-    /// but it needs the objects present and refuses the whole batch on one bad
-    /// ref, so it can't serve a list of forge-named commits or a cache of
+    /// but it needs the objects present and returns nothing for an absent one,
+    /// so it can't serve a list of forge-named commits or a cache of
     /// historical heads.
     ///
     /// What that costs against `short_sha` is disambiguation: git extends a

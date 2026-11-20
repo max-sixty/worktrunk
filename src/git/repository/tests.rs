@@ -945,21 +945,28 @@ fn prime_worktree_path_caches_matches_subprocess() {
 }
 
 #[test]
-fn commit_details_many_fails_loudly_on_unknown_sha() {
-    // `git log --no-walk` refuses the whole batch on a single bad ref. The
-    // error surfaces as an `Err`, which `collect()` turns into a user-facing
-    // warning. Pin this behavior so we don't silently fall back to
-    // empty-map defaults.
+fn commit_details_many_omits_missing_objects() {
+    // A SHA naming an absent object (a worktree whose HEAD points nowhere)
+    // or the null OID must not cost the readable commits their details:
+    // `--ignore-missing` drops it from the batch, and the caller reads its
+    // absence from the map (#4851).
     use crate::testing::TestRepo;
 
     let test = TestRepo::with_initial_commit();
-    let bogus = "0000000000000000000000000000000000000001";
-    let err = test.repo.commit_details_many(&[bogus]).unwrap_err();
-    let msg = format!("{err:#}");
-    assert!(
-        msg.contains("git") || msg.contains("unknown") || msg.contains("bad"),
-        "error message should surface git's complaint about the bogus SHA, got: {msg}"
-    );
+    let sha = test
+        .repo
+        .run_command(&["rev-parse", "HEAD"])
+        .unwrap()
+        .trim()
+        .to_string();
+    let bogus = "1234567890123456789012345678901234567890";
+
+    let result = test
+        .repo
+        .commit_details_many(&[bogus, sha.as_str(), crate::git::NULL_OID])
+        .unwrap();
+
+    assert_eq!(result.keys().collect::<Vec<_>>(), vec![&sha]);
 }
 
 #[test]

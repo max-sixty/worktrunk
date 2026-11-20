@@ -1191,12 +1191,14 @@ pub fn collect(
     // Phase 3: Batch fetch commit details (timestamp + subject) for all SHAs
     // from worktrees + branches. The returned map is the single canonical
     // source of commit details — sorting below and post-skeleton item
-    // population both read from it. A batch failure is surfaced as a
-    // warning and degrades to empty-cell placeholders (no hidden per-SHA
-    // recovery forks).
+    // population both read from it. A SHA git couldn't read (a HEAD naming
+    // an absent object) is omitted from the map and gets its own warning, so
+    // only its rows go without details; a whole-batch failure is surfaced as
+    // a warning and degrades every row to empty-cell placeholders (no hidden
+    // per-SHA recovery forks).
     //
-    // Filter out null OIDs from unborn branches — a single null OID would cause
-    // `git log --no-walk` to fail for ALL shas in the batch.
+    // Null OIDs from unborn branches have no commit to read and are expected,
+    // so they stay out of the batch and out of the missing-object warning.
     let all_shas: Vec<&str> = worktrees
         .iter()
         .map(|wt| wt.head.as_str())
@@ -1212,15 +1214,36 @@ pub fn collect(
         )
         .filter(|sha| *sha != worktrunk::git::NULL_OID)
         .collect();
-    let commit_details_map = repo.commit_details_many(&all_shas).unwrap_or_else(|err| {
-        // Surface git's actual stderr (when available via the typed leaf)
-        // rather than our `CommandError` summary.
-        let detail = err.display_message();
-        emit_warning(
-            warning_message(cformat!("Failed to batch-fetch commit details: {detail}")).to_string(),
-        );
-        std::collections::HashMap::new()
-    });
+    let commit_details_map = match repo.commit_details_many(&all_shas) {
+        Ok(map) => {
+            let mut missing: Vec<&str> = all_shas
+                .iter()
+                .copied()
+                .filter(|sha| !map.contains_key(*sha))
+                .collect();
+            missing.sort_unstable();
+            missing.dedup();
+            for sha in missing {
+                emit_warning(
+                    warning_message(cformat!(
+                        "Commit <bold>{sha}</> not found in repository; its rows show no commit details"
+                    ))
+                    .to_string(),
+                );
+            }
+            map
+        }
+        Err(err) => {
+            // Surface git's actual stderr (when available via the typed leaf)
+            // rather than our `CommandError` summary.
+            let detail = err.display_message();
+            emit_warning(
+                warning_message(cformat!("Failed to batch-fetch commit details: {detail}"))
+                    .to_string(),
+            );
+            std::collections::HashMap::new()
+        }
+    };
 
     // Sort worktrees: current first, main second, then by timestamp descending
     let sorted_worktrees = sort_worktrees_with_cache(

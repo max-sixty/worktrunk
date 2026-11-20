@@ -358,11 +358,12 @@ impl Repository {
     /// memory hits. The mapping is content-addressed (a commit's tree is
     /// immutable), so priming it from the authoritative batch is never stale.
     ///
-    /// Fails if any SHA is invalid — `git log --no-walk` refuses the whole
-    /// batch on a single bad ref. Callers should surface the error rather
-    /// than fall back to per-SHA fetches: the batch is the only commit-detail
-    /// fetch path left, and quietly swallowing the failure produces empty
-    /// cells without telling the user why.
+    /// **Missing objects are omitted, not fatal.** `--ignore-missing` keeps
+    /// one unreadable SHA (a worktree whose HEAD names an absent object, or
+    /// the null OID of an unborn branch) from failing the whole batch, so the
+    /// readable commits still get their details. A requested SHA absent from
+    /// the returned map is one git couldn't read; callers that show details
+    /// should say so rather than leave its cells empty without explanation.
     pub fn commit_details_many(
         &self,
         commits: &[&str],
@@ -372,6 +373,8 @@ impl Repository {
         }
 
         // --no-walk shows exactly the named commits without DAG walking.
+        // --ignore-missing drops SHAs naming absent objects instead of
+        // refusing the batch.
         // --no-show-signature suppresses GPG verification output that otherwise
         // contaminates stdout when log.showSignature is set.
         // %T (tree SHA) rides along to prime the commit→tree cache; it's placed
@@ -380,6 +383,7 @@ impl Repository {
             "log",
             "--no-walk",
             "--no-show-signature",
+            "--ignore-missing",
             "--format=%H%x00%h%x00%ct%x00%T%x00%s",
         ];
         args.extend(commits);
