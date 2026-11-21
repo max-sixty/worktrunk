@@ -362,21 +362,21 @@ fn status_legend(
     let mut eligible: Vec<_> = items
         .iter()
         .flat_map(|item| item.status_symbols.explanations())
-        .filter_map(|pair| {
+        .filter_map(|(attention, pair)| {
             let width = visual_width(&pair);
-            (width <= remaining && visible.insert(pair.clone())).then_some((pair, width))
+            (width <= remaining && visible.insert(pair.clone())).then_some((attention, pair, width))
         })
         .collect();
     if eligible.is_empty() {
         return Vec::new();
     }
-    if eligible.iter().all(|(pair, _)| shown.contains(pair)) {
+    if eligible.iter().all(|(_, pair, _)| shown.contains(pair)) {
         shown.clear();
     }
 
-    eligible.sort_by_key(|(pair, _)| !pair.starts_with(['✗', '✘', '⊂', '↕']));
+    eligible.sort_by_key(|(attention, _, _)| !attention);
     let mut legend = Vec::new();
-    for (pair, width) in eligible {
+    for (_, pair, width) in eligible {
         let cost = width + if legend.is_empty() { 0 } else { 2 };
         if cost <= remaining && shown.insert(pair.clone()) {
             remaining -= cost;
@@ -687,6 +687,7 @@ mod tests {
             MainState::Ahead,
             MainState::WouldConflict,
             MainState::Diverged,
+            MainState::Integrated(worktrunk::git::IntegrationReason::Ancestor),
         ]
         .map(|state| {
             let mut item = ListItem::new_branch("aaaaaaa".into(), "feature".into());
@@ -695,12 +696,13 @@ mod tests {
         });
         let pairs = items
             .each_ref()
-            .map(|item| item.status_symbols.explanations().next().unwrap());
+            .map(|item| item.status_symbols.explanations().next().unwrap().1);
         let width = pairs.iter().map(|pair| visual_width(pair)).max().unwrap();
         let mut shown = ShownExplanations::new();
         assert_eq!(status_legend(&items, width, &mut shown), [pairs[1].clone()]);
         assert_eq!(status_legend(&items, width, &mut shown), [pairs[2].clone()]);
         assert!(status_legend(&items, 0, &mut shown).is_empty());
+        assert_eq!(status_legend(&items, width, &mut shown), [pairs[3].clone()]);
         assert_eq!(status_legend(&items, width, &mut shown), [pairs[0].clone()]);
         assert_eq!(status_legend(&items, width, &mut shown), [pairs[1].clone()]);
         assert_eq!(shown.into_iter().collect::<Vec<_>>(), [pairs[1].clone()]);

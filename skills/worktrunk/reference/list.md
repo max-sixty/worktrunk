@@ -143,8 +143,6 @@ The Status column packs several subcolumns, left to right, each mapping to a sch
 
 The footer rotates through visible status explanations on a separate line.
 
-Run [`wt config state cache clear`](https://worktrunk.dev/config/#wt-config-state-cache) to restart the rotation for the repository.
-
 ### Working tree
 
 Independent flags from `git status`; several can show at once (e.g. `+!?`). Each maps to a boolean in the [changes object](#changes-object):

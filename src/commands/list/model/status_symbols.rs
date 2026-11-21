@@ -523,15 +523,15 @@ impl StatusSymbols {
         raw
     }
 
-    /// Complete glyph-and-label pairs for resolved built-in terminal slots.
-    pub(crate) fn explanations(&self) -> impl Iterator<Item = String> {
+    /// Attention flag and complete glyph-and-label pair for each resolved built-in slot.
+    pub(crate) fn explanations(&self) -> impl Iterator<Item = (bool, String)> {
         self.symbols().into_iter().filter_map(|(_, slot)| {
             let SlotState::Visible(symbol) = slot else {
                 return None;
             };
             symbol
                 .label()
-                .map(|label| format!("{} {label}", symbol.raw()))
+                .map(|label| (symbol.is_attention(), format!("{} {label}", symbol.raw())))
         })
     }
 
@@ -642,6 +642,46 @@ impl StatusSymbol<'_> {
         }
     }
 
+    /// Put related states that are easy to confuse ahead of routine explanations.
+    fn is_attention(self) -> bool {
+        match self {
+            Self::Operation(OperationState::Conflicts)
+            | Self::Main(
+                MainState::WouldConflict | MainState::Integrated(_) | MainState::Diverged,
+            ) => true,
+            Self::Staged
+            | Self::Modified
+            | Self::Untracked
+            | Self::Worktree(
+                WorktreeState::None
+                | WorktreeState::BranchWorktreeMismatch
+                | WorktreeState::DuplicateBranch
+                | WorktreeState::Detached
+                | WorktreeState::Prunable
+                | WorktreeState::Locked
+                | WorktreeState::Branch,
+            )
+            | Self::Operation(OperationState::None | OperationState::InProgress(_))
+            | Self::Main(
+                MainState::None
+                | MainState::IsMain
+                | MainState::Empty
+                | MainState::SameCommit
+                | MainState::Orphan
+                | MainState::Ahead
+                | MainState::Behind,
+            )
+            | Self::Upstream(
+                Divergence::None
+                | Divergence::InSync
+                | Divergence::Ahead
+                | Divergence::Behind
+                | Divergence::Diverged,
+            )
+            | Self::Marker(_) => false,
+        }
+    }
+
     fn raw(self) -> String {
         match self {
             Self::Staged => "+".into(),
@@ -691,15 +731,16 @@ mod tests {
             operation_state: Some(OperationState::Conflicts),
             worktree_state: Some(WorktreeState::Locked),
             main_state: Some(MainState::WouldConflict),
-            upstream_divergence: None,
+            upstream_divergence: Some(Divergence::Diverged),
             user_marker: Some(Some("⇡".into())),
         };
         assert_eq!(
             symbols.explanations().collect::<Vec<_>>(),
             [
-                "! unstaged changes",
-                "✘ merge conflicts",
-                "✗ would conflict"
+                (false, "! unstaged changes".into()),
+                (true, "✘ merge conflicts".into()),
+                (true, "✗ would conflict".into()),
+                (false, "⇅ diverged from remote".into()),
             ]
         );
     }
