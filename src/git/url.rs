@@ -22,6 +22,9 @@ pub struct GitRepoInfo {
     pub provider: GitRepoProvider,
     /// Web host for the repository URL.
     pub host: String,
+    /// Configured API hostname for the local repository.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_host: Option<String>,
     /// Repository owner, organization, or namespace path.
     pub owner: String,
     /// Repository name.
@@ -432,6 +435,7 @@ impl GitRemoteUrl {
                     ),
                     provider,
                     host,
+                    api_host: None,
                     owner: organization,
                     name: self.repo.clone(),
                     project: Some(project),
@@ -446,6 +450,7 @@ impl GitRemoteUrl {
                     url: self.web_url()?,
                     provider: GitRepoProvider::Unknown,
                     host: self.host.clone(),
+                    api_host: None,
                     owner: self.owner.clone(),
                     name: self.repo.clone(),
                     project: None,
@@ -458,6 +463,7 @@ impl GitRemoteUrl {
             url: self.web_url()?,
             provider,
             host: self.host.clone(),
+            api_host: None,
             owner: self.owner.clone(),
             name: self.repo.clone(),
             project: None,

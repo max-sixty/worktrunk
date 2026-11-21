@@ -526,6 +526,66 @@ fn test_list_json_repo_url_from_ssh_remote(repo: TestRepo) {
     );
 }
 
+/// The checkout's remote supplies its web host, while project-scoped forge
+/// settings can independently name an API endpoint.
+#[rstest]
+#[case::default_schema("", "/repo/forge")]
+#[case::schema_one("[list]\njson-schema = 1\n", "/0/repo")]
+fn test_list_json_forge_api_host(repo: TestRepo, #[case] schema: &str, #[case] forge_path: &str) {
+    let list = || {
+        let output = repo
+            .wt_command()
+            .args(["list", "--format=json"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        json.pointer(forge_path).cloned()
+    };
+    let user_override = r#"[projects."git.company.example/team/app".forge]
+hostname = "user-api.example"
+"#;
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "git@git.company.example:team/app.git",
+    ]);
+    for (user, project_host, expected) in [
+        ("", None, None),
+        (user_override, None, Some("user-api.example")),
+        (
+            user_override,
+            Some("api.company.example"),
+            Some("api.company.example"),
+        ),
+        (
+            user_override,
+            Some("git.company.example"),
+            Some("git.company.example"),
+        ),
+    ] {
+        repo.write_test_config(&format!("{schema}{user}"));
+        let mut project = String::from("[forge]\nplatform = \"gitea\"\n");
+        if let Some(host) = project_host {
+            project.push_str(&format!("hostname = \"{host}\"\n"));
+        }
+        repo.write_project_config(&project);
+        let forge = list().expect("primary remote has forge metadata");
+        assert_eq!(forge["host"], "git.company.example");
+        assert_eq!(
+            forge.get("api_host"),
+            expected.map(serde_json::Value::from).as_ref()
+        );
+    }
+    repo.run_git(&["remote", "remove", "origin"]);
+    assert!(list().is_none());
+}
+
 /// A self-hosted instance names its forge however it likes — its own label, a
 /// hyphenated one, inside a word, or a single-label SSH alias — and the
 /// provider follows the name with no config. The statusline stays silent.

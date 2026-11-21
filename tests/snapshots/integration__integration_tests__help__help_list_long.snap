@@ -479,6 +479,7 @@ Presentation only — every value here renders facts that appear elsewhere in th
  [2murl[0m      string Repository web URL                                            
  [2mprovider[0m string [2m"github"[0m, [2m"gitlab"[0m, [2m"gitea"[0m, [2m"azure-devops"[0m, or [2m"unknown"[0m     
  [2mhost[0m     string Repository web host                                           
+ [2mapi_host[0m string API host from [2mforge.hostname[0m, only on [2mrepo.forge[0m when set     
  [2mowner[0m    string Owner, organization, or namespace path                        
  [2mname[0m     string Repository name                                               
  [2mproject[0m  string Azure DevOps project name; absent for other providers         

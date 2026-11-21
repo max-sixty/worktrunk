@@ -401,6 +401,7 @@ Presentation only — every value here renders facts that appear elsewhere in th
 | `url` | string | Repository web URL |
 | `provider` | string | `"github"`, `"gitlab"`, `"gitea"`, `"azure-devops"`, or `"unknown"` |
 | `host` | string | Repository web host |
+| `api_host` | string | API host from `forge.hostname`, only on `repo.forge` when set |
 | `owner` | string | Owner, organization, or namespace path |
 | `name` | string | Repository name |
 | `project` | string | Azure DevOps project name; absent for other providers |
