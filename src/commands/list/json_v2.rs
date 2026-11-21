@@ -212,8 +212,9 @@ pub struct JsonHead {
     /// Full commit SHA.
     pub sha: String,
 
-    /// Abbreviated per `core.abbrev`, auto-extended for ambiguous prefixes.
-    pub short_sha: String,
+    /// Abbreviated per `core.abbrev`, auto-extended for ambiguous prefixes;
+    /// null when not determined (the commit object can't be read).
+    pub short_sha: Option<String>,
 
     /// Commit subject (first line); null when not loaded (e.g. prunable
     /// worktrees).
@@ -610,7 +611,7 @@ impl JsonItemV2 {
             (!item.head().is_empty() && item.head() != worktrunk::git::NULL_OID).then(|| {
                 JsonHead {
                     sha: item.head().to_string(),
-                    short_sha: item.short_sha.clone(),
+                    short_sha: (!item.short_sha.is_empty()).then(|| item.short_sha.clone()),
                     subject: item.commit.as_ref().map(|c| c.commit_message.clone()),
                     committed_at: item
                         .commit

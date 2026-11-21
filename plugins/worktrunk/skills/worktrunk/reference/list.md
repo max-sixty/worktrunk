@@ -294,7 +294,7 @@ Item fields:
 | Field | Type | Description |
 |-------|------|-------------|
 | `sha` | string | Full commit SHA (40 chars) |
-| `short_sha` | string | Short commit SHA, abbreviated per `core.abbrev` (auto-extends for ambiguous prefixes) |
+| `short_sha` | string/null | Short commit SHA, abbreviated per `core.abbrev` (auto-extends for ambiguous prefixes); null when the commit can't be read |
 | `subject` | string/null | Commit subject (first line); null when not loaded, as for a prunable worktree |
 | `committed_at` | string/null | Committer time, RFC 3339 UTC; null when not loaded |
 

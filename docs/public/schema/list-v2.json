@@ -337,8 +337,11 @@
           "type": "string"
         },
         "short_sha": {
-          "description": "Abbreviated per `core.abbrev`, auto-extended for ambiguous prefixes.",
-          "type": "string"
+          "description": "Abbreviated per `core.abbrev`, auto-extended for ambiguous prefixes;\nnull when not determined (the commit object can't be read).",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "subject": {
           "description": "Commit subject (first line); null when not loaded (e.g. prunable\nworktrees).",

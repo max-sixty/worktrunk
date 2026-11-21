@@ -3878,12 +3878,11 @@ fn test_list_shows_warning_on_git_error(mut repo: TestRepo) {
 
 ///
 /// Corrupts a detached worktree's HEAD file to a non-null but unresolvable
-/// SHA. The `collect()` batch filters out `NULL_OID`, so a non-null invalid
-/// SHA reaches `commit_details_many` and fails the whole batch — exercising
-/// the `unwrap_or_else` warning path that reports "Failed to batch-fetch
-/// commit details" on stderr.
+/// SHA. `commit_details_many` omits the absent object rather than failing
+/// the batch, so the other rows keep their Commit, Age and Message, and a
+/// warning names the missing commit (#4851).
 #[rstest]
-fn test_list_warns_when_commit_details_batch_fails(mut repo: TestRepo) {
+fn test_list_warns_when_head_commit_missing(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature");
 
     // Detach the worktree's HEAD and rewrite its HEAD file to a non-null but
@@ -4211,6 +4210,109 @@ fn test_list_unborn_worktree_no_task_failures(repo: TestRepo) {
         output.status.success(),
         "wt list should succeed; stderr:\n{stderr}"
     );
+}
+
+/// A corrupt (present but unreadable) commit object still fails the whole
+/// `git log --no-walk` batch — `--ignore-missing` only skips absent objects —
+/// so `wt list` reports the batch failure instead of leaving every row's
+/// commit cells empty without explanation.
+#[rstest]
+fn test_list_warns_when_commit_details_batch_fails(repo: TestRepo) {
+    repo.commit("first");
+    // A commit only the detached worktree reaches, so corrupting its loose
+    // object leaves the main worktree's history intact.
+    let tree = repo.git_output(&["rev-parse", "HEAD^{tree}"]);
+    let orphan = repo.git_output(&["commit-tree", &tree, "-m", "detached only"]);
+    let wt_path = repo.root_path().parent().unwrap().join("repo.corrupt");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "--detach",
+        wt_path.to_str().unwrap(),
+        &orphan,
+    ]);
+    let object = repo
+        .root_path()
+        .join(".git/objects")
+        .join(&orphan[..2])
+        .join(&orphan[2..]);
+    let mut perms = std::fs::metadata(&object).unwrap().permissions();
+    #[allow(clippy::permissions_set_readonly_false)]
+    perms.set_readonly(false);
+    std::fs::set_permissions(&object, perms).unwrap();
+    std::fs::write(&object, "garbage").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["list"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Failed to batch-fetch commit details"),
+        "a corrupt object should surface as a batch failure, got stderr:\n{stderr}"
+    );
+}
+
+/// Regression for #4851: one worktree whose HEAD names an absent object used
+/// to fail the single `git log --no-walk` commit-details batch, blanking the
+/// Commit, Age and Message of every row. Only the broken row loses them now,
+/// with a warning naming its SHA, and its JSON `short_sha` is null.
+#[rstest]
+fn test_list_missing_head_object_keeps_other_rows_details(mut repo: TestRepo) {
+    repo.commit("first");
+    repo.add_worktree("healthy");
+    let bad_path = repo.root_path().parent().unwrap().join("repo.bad");
+    let out = repo
+        .git_command()
+        .args(["worktree", "add", "--detach", bad_path.to_str().unwrap()])
+        .run()
+        .unwrap();
+    assert!(out.status.success(), "git worktree add --detach failed");
+    let bogus = "1234567890123456789012345678901234567890";
+    let dot_git = std::fs::read_to_string(bad_path.join(".git")).unwrap();
+    let bad_gitdir = std::path::PathBuf::from(
+        dot_git
+            .trim()
+            .strip_prefix("gitdir: ")
+            .expect("worktree .git points at a gitdir")
+            .trim(),
+    );
+    std::fs::write(bad_gitdir.join("HEAD"), format!("{bogus}\n")).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Failed to batch-fetch commit details"),
+        "one missing object must not fail the whole batch, got stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(bogus) && stderr.contains("not found in repository"),
+        "the broken row's missing commit should be named, got stderr:\n{stderr}"
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let items = json["items"].as_array().expect("items array");
+    assert!(
+        items.iter().any(|item| item["head"]["sha"] == bogus),
+        "broken row should be listed: {json}"
+    );
+    for item in items {
+        let head = &item["head"];
+        if head["sha"] == bogus {
+            assert!(head["short_sha"].is_null(), "broken row: {head}");
+            assert!(head["subject"].is_null(), "broken row: {head}");
+        } else {
+            assert!(head["short_sha"].is_string(), "healthy row: {head}");
+            assert!(head["subject"].is_string(), "healthy row: {head}");
+        }
+    }
 }
 
 /// Regression: the `wt list` integration column ORs over local AND upstream,
