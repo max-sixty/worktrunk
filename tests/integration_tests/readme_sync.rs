@@ -2478,7 +2478,11 @@ fn sync_cli_mod_example_bodies(project_root: &Path) -> (Vec<String>, Vec<String>
 /// integration test can't import. Same reason `sync_command_pages` runs
 /// `--help-page`.
 ///
-/// A schemars upgrade rewrites this file. That shows up here as an ordinary
+/// Also generates `docs/public/schema/user-config.json` and
+/// `project-config.json`. Their config types live in the library crate, so
+/// those are generated directly instead of through the binary.
+///
+/// A schemars upgrade rewrites these files. That shows up here as an ordinary
 /// out-of-sync failure, which is the intent — a consumer's schema changing
 /// under a dependency bump should be a reviewed diff.
 fn sync_json_schema(project_root: &Path) -> (Vec<String>, Vec<String>) {
@@ -2506,10 +2510,28 @@ fn sync_json_schema(project_root: &Path) -> (Vec<String>, Vec<String>) {
         return (errors, updated_files);
     }
 
-    let rel_path = "docs/public/schema/list-v2.json";
-    let dst = project_root.join(rel_path);
-    if fs::read_to_string(&dst).unwrap_or_default() != generated {
-        write_tracked(&dst, &generated, rel_path, &mut updated_files);
+    let config_schemas = [
+        (
+            "docs/public/schema/user-config.json",
+            worktrunk::config::user_config_schema_document(),
+        ),
+        (
+            "docs/public/schema/project-config.json",
+            worktrunk::config::project_config_schema_document(),
+        ),
+    ];
+    // Same layout `wt list --print-schema` prints: pretty JSON plus a newline.
+    let documents = std::iter::once(("docs/public/schema/list-v2.json", generated)).chain(
+        config_schemas
+            .into_iter()
+            .map(|(path, schema)| (path, serde_json::to_string_pretty(&schema).unwrap() + "\n")),
+    );
+
+    for (rel_path, generated) in documents {
+        let dst = project_root.join(rel_path);
+        if fs::read_to_string(&dst).unwrap_or_default() != generated {
+            write_tracked(&dst, &generated, rel_path, &mut updated_files);
+        }
     }
 
     (errors, updated_files)
@@ -2853,10 +2875,11 @@ fn test_docs_are_in_sync() {
     let (llms_errors, llms_files) = sync_llms_txt(project_root);
     tag("llms.txt", llms_errors, llms_files);
 
-    // Step 5b: Generate docs/public/schema/list-v2.json from the derived
-    // schema. Grouped here because it also writes docs/public/, but it reads
-    // the binary rather than the markdown pipeline, so it has no ordering
-    // dependency on the steps above.
+    // Step 5b: Generate docs/public/schema/*.json (list-v2 plus the user and
+    // project config schemas) from the derived schemas. Grouped here because
+    // it also writes docs/public/, but it reads the schemas from code rather
+    // than the markdown pipeline, so it has no ordering dependency on the
+    // steps above.
     let (schema_errors, schema_files) = sync_json_schema(project_root);
     tag("json schema", schema_errors, schema_files);
 

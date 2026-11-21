@@ -1,0 +1,296 @@
+{
+  "$defs": {
+    "CommandConfig": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        {
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              }
+            ]
+          },
+          "type": "array"
+        }
+      ]
+    },
+    "CopyIgnoredConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for `wt step copy-ignored`",
+      "properties": {
+        "exclude": {
+          "description": "Gitignore-style patterns to exclude from `wt step copy-ignored`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "ProjectCiConfig": {
+      "additionalProperties": false,
+      "description": "Project-level CI configuration.\n\nNames the CI platform explicitly, for repos where URL-based detection can't\ndetermine it (e.g., GitHub Enterprise or self-hosted GitLab with custom\ndomains).\n\n# Example\n\n```toml\n[ci]\nplatform = \"github\"  # or \"gitlab\"\n```",
+      "properties": {
+        "platform": {
+          "default": null,
+          "description": "CI platform. When unset, the platform is detected from the remote URL.\n\nDeprecated alias for `[forge].platform`; same accepted values\n(\"github\", \"gitlab\", \"gitea\", \"azure-devops\").",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ProjectCommitConfig": {
+      "additionalProperties": false,
+      "description": "Project-level commit message configuration.\n\nOnly fields appropriate as shared, checked-in settings live here. The LLM\ncommand and full prompt template stay in user/system config — they\ndescribe per-developer environment (which CLI is installed, which agent\nthey prefer).",
+      "properties": {
+        "generation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProjectCommitGenerationConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Commit message generation settings shared across the team."
+        }
+      },
+      "type": "object"
+    },
+    "ProjectCommitGenerationConfig": {
+      "additionalProperties": false,
+      "description": "Project-level commit message generation settings.",
+      "properties": {
+        "template-append": {
+          "default": null,
+          "description": "Text appended to the commit and squash prompts inside a\n`<project-guidance>` block.\n\nRendered with the same minijinja context as the main commit/squash\ntemplate (`{{ branch }}`, `{{ git_diff }}`, etc.), so it can\nreference template variables directly. Use this for project-wide\ncommit conventions (e.g. \"use conventional commits\", \"reference\nissue numbers\"). The user config has a `[commit.generation]\ntemplate-append` of its own; it renders into a separate\n`<user-guidance>` block immediately before this one. The first time\nthe rendered text would reach the LLM, worktrunk prompts the user to\napprove the raw fragment — the same gate as project-defined commands.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ProjectForgeConfig": {
+      "additionalProperties": false,
+      "description": "Project-level forge configuration.\n\nNames the forge explicitly, for a remote whose hostname carries no forge\nname for [`ForgeKind::from_host`](crate::git::ForgeKind::from_host) to read\n(a Forgejo instance at `forge.example.com`, a company git server).\n\n# Example\n\n```toml\n[forge]\nplatform = \"github\"              # or \"gitlab\", \"gitea\" (experimental), \"azure-devops\" (experimental)\nhostname = \"github.example.com\"  # API hostname for GHE / self-hosted GitLab\n```",
+      "properties": {
+        "hostname": {
+          "default": null,
+          "description": "API hostname for GitHub Enterprise or self-hosted GitLab.\n\nOnly needed when the remote URL uses an SSH host alias that doesn't\nresolve to the real API hostname. For standard github.com/gitlab.com\nsetups, this is not needed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "platform": {
+          "default": null,
+          "description": "Forge platform. When unset, the platform is detected from the remote URL.\n\nValues: \"github\", \"gitlab\", \"gitea\" (experimental), or \"azure-devops\"\n(experimental). Both the `wt switch pr:` shortcut and `wt list --full`\nCI status detection use `forge.platform` to pick the forge CLI (`gh`,\n`glab`, `tea`, or `az`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ProjectListConfig": {
+      "additionalProperties": false,
+      "description": "Project-level configuration for `wt list` output.\n\nThis is distinct from user-level `ListConfig` which controls CLI defaults.\nProject-level config is for project-specific features like dev server URLs.\n\n# Example\n\n```toml\n[list]\nurl = \"http://localhost:{{ branch | hash_port }}\"\n```",
+      "properties": {
+        "url": {
+          "default": null,
+          "description": "URL template for dev server links shown in `wt list`.\n\nAvailable variable: `{{ branch }}` (the branch name).\nAvailable filters: `{{ branch | hash_port }}` (deterministic port 10000-19999),\n`{{ branch | sanitize }}` (filesystem-safe name).\n\nThe URL is displayed with health-check styling: dim if the port is not\nlistening, normal if it is.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "StepConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for `wt step` subcommands.",
+      "properties": {
+        "copy-ignored": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CopyIgnoredConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Configuration for `wt step copy-ignored`."
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$id": "https://worktrunk.dev/schema/project-config.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Schema for .config/wt.toml.",
+  "properties": {
+    "aliases": {
+      "additionalProperties": {
+        "$ref": "#/$defs/CommandConfig"
+      },
+      "description": "Command aliases for `wt <name>`.\n\nEach alias maps a name to a [`CommandConfig`] — a string for a single\ncommand, a named table (`[aliases.NAME]`) for concurrent commands, or\n`[[aliases.NAME]]` blocks for sequential pipeline steps. All hook\ntemplate variables are available (e.g., `{{ branch }}`,\n`{{ worktree_path }}`).\n\n```toml\n[aliases]\ndeploy = \"cd {{ worktree_path }} && make deploy\"\nlint = \"npm run lint\"\n```",
+      "type": "object"
+    },
+    "ci": {
+      "$ref": "#/$defs/ProjectCiConfig",
+      "description": "CI configuration (platform). Deprecated: use `[forge]` instead."
+    },
+    "commit": {
+      "$ref": "#/$defs/ProjectCommitConfig",
+      "description": "Project-wide commit message settings (shared across teammates)"
+    },
+    "forge": {
+      "$ref": "#/$defs/ProjectForgeConfig",
+      "description": "Forge configuration (platform, API hostname)"
+    },
+    "list": {
+      "$ref": "#/$defs/ProjectListConfig",
+      "description": "Configuration for `wt list` output"
+    },
+    "post-commit": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CommandConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Commands to execute after committing (background)"
+    },
+    "post-merge": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CommandConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Commands to execute after successful merge (background)"
+    },
+    "post-remove": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CommandConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Commands to execute after worktree removal (background)"
+    },
+    "post-start": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CommandConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Commands to execute after worktree creation (background)"
+    },
+    "post-switch": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CommandConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Commands to execute after switching to a worktree (background)"
+    },
+    "pre-commit": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CommandConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Commands to execute before committing during merge (blocking, fail-fast)"
+    },
+    "pre-merge": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CommandConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Commands to execute before merging (blocking, fail-fast)"
+    },
+    "pre-remove": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CommandConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Commands to execute before worktree removal (blocking, fail-fast)"
+    },
+    "pre-start": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CommandConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Commands to execute after worktree creation (blocking, fail-fast)"
+    },
+    "pre-switch": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CommandConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Commands to execute before switch begins (blocking, fail-fast)"
+    },
+    "step": {
+      "$ref": "#/$defs/StepConfig",
+      "description": "Configuration for `wt step` subcommands."
+    }
+  },
+  "title": "Worktrunk project config",
+  "type": "object"
+}
