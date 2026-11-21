@@ -69,14 +69,14 @@ def record_hash(data: bytes) -> str:
     return f"sha256={digest.decode()}"
 
 
-def metadata(version: str, readme: str) -> str:
+def metadata(version: str, readme: str, license_files: list[str]) -> str:
     headers = [
         "Metadata-Version: 2.4",
         f"Name: {NAME}",
         f"Version: {version}",
         "Summary: A CLI for Git worktree management, designed for parallel AI agent workflows",
         "License-Expression: MIT OR Apache-2.0",
-        "License-File: LICENSE",
+        *(f"License-File: {name}" for name in license_files),
         "Project-URL: Homepage, https://worktrunk.dev",
         "Project-URL: Repository, https://github.com/max-sixty/worktrunk",
         "Project-URL: Changelog, https://github.com/max-sixty/worktrunk/blob/main/CHANGELOG.md",
@@ -96,7 +96,12 @@ def build_wheel(archive: Path, version: str, out_dir: Path) -> Path:
     exe = ".exe" if target.endswith("-windows-msvc") else ""
 
     files = read_archive(archive)
-    missing = [n for n in (*(b + exe for b in BINARIES), "LICENSE", "README.md") if n not in files]
+    missing = [n for n in (*(b + exe for b in BINARIES), "README.md") if n not in files]
+    # cargo-dist ships every top-level LICENSE* file: `LICENSE` up to v0.82.0,
+    # `LICENSE-MIT` and `LICENSE-APACHE` after it.
+    license_files = sorted(n for n in files if n.startswith("LICENSE"))
+    if not license_files:
+        missing.append("LICENSE*")
     if missing:
         raise SystemExit(f"{archive.name}: missing {', '.join(missing)}")
 
@@ -106,8 +111,12 @@ def build_wheel(archive: Path, version: str, out_dir: Path) -> Path:
     # (path in wheel, contents, executable)
     entries = [(f"{data_dir}/scripts/{b}{exe}", files[b + exe], True) for b in BINARIES]
     entries += [
-        (f"{dist_info}/METADATA", metadata(version, files["README.md"].decode()).encode(), False),
-        (f"{dist_info}/licenses/LICENSE", files["LICENSE"], False),
+        (
+            f"{dist_info}/METADATA",
+            metadata(version, files["README.md"].decode(), license_files).encode(),
+            False,
+        ),
+        *((f"{dist_info}/licenses/{name}", files[name], False) for name in license_files),
         (
             f"{dist_info}/WHEEL",
             "\n".join(
