@@ -166,11 +166,11 @@
           "additionalProperties": {
             "$ref": "#/$defs/ListColumnConfig"
           },
-          "description": "Custom columns, keyed by header text. See [`ListColumnConfig`].\n\n*(Experimental — fields may change in future releases.)*",
+          "description": "Custom columns, keyed by header text.\n\n*(Experimental — fields may change in future releases.)*",
           "type": "object"
         },
         "full": {
-          "description": "Show CI and `main` diffstat by default",
+          "description": "Show CI status and LLM summaries by default (`--full`)",
           "type": [
             "boolean",
             "null"
@@ -263,7 +263,7 @@
     },
     "ProjectForgeConfig": {
       "additionalProperties": false,
-      "description": "Project-level forge configuration.\n\nNames the forge explicitly, for a remote whose hostname carries no forge\nname for [`ForgeKind::from_host`](crate::git::ForgeKind::from_host) to read\n(a Forgejo instance at `forge.example.com`, a company git server).\n\n# Example\n\n```toml\n[forge]\nplatform = \"github\"              # or \"gitlab\", \"gitea\" (experimental), \"azure-devops\" (experimental)\nhostname = \"github.example.com\"  # API hostname for GHE / self-hosted GitLab\n```",
+      "description": "Project-level forge configuration.\n\nNames the forge explicitly, for a remote whose hostname doesn't name its\nforge (a Forgejo instance at `forge.example.com`, a company git server).\n\n# Example\n\n```toml\n[forge]\nplatform = \"github\"              # or \"gitlab\", \"gitea\" (experimental), \"azure-devops\" (experimental)\nhostname = \"github.example.com\"  # API hostname for GHE / self-hosted GitLab\n```",
       "properties": {
         "hostname": {
           "default": null,
@@ -384,7 +384,7 @@
     },
     "UserProjectOverrides": {
       "additionalProperties": false,
-      "description": "Per-project overrides in the user's config file\n\nStored under `[projects.\"project-id\"]` in the user's config.\nThese are user preferences (not checked into git) that override\nthe corresponding global settings when set.\n\nThe key is a project identifier (`host/owner/repo`) or a `*` pattern\ncovering a set of them, so one entry can carry settings for every\nrepository on a host. Every matching entry applies, least- to\nmost-specific; the `project_match` module states the rules.\n\n# TOML Format\n```toml\n[projects.\"github.com/user/repo\"]\nworktree-path = \".worktrees/{{ branch | sanitize }}\"\n\n[projects.\"github.com/user/repo\".commit.generation]\ncommand = \"llm -m gpt-4\"\n\n[projects.\"github.com/user/repo\".list]\nfull = true\n\n[projects.\"github.com/user/repo\".merge]\nsquash = false\n\n# Every repository on a self-hosted forge whose name carries no brand\n[projects.\"git.company.example/*\"]\nforge.platform = \"gitlab\"\n```",
+      "description": "Per-project overrides in the user's config file\n\nStored under `[projects.\"project-id\"]` in the user's config.\nThese are user preferences (not checked into git) that override\nthe corresponding global settings when set.\n\nThe key is a project identifier (`host/owner/repo`) or a `*` pattern\ncovering a set of them, so one entry can carry settings for every\nrepository on a host. Every matching entry applies, least- to\nmost-specific.\n\n# TOML Format\n```toml\n[projects.\"github.com/user/repo\"]\nworktree-path = \".worktrees/{{ branch | sanitize }}\"\n\n[projects.\"github.com/user/repo\".commit.generation]\ncommand = \"llm -m gpt-4\"\n\n[projects.\"github.com/user/repo\".list]\nfull = true\n\n[projects.\"github.com/user/repo\".merge]\nsquash = false\n\n# Every repository on a self-hosted forge whose name carries no brand\n[projects.\"git.company.example/*\"]\nforge.platform = \"gitlab\"\n```",
       "properties": {
         "aliases": {
           "additionalProperties": {
@@ -393,7 +393,7 @@
           "type": "object"
         },
         "approved-commands": {
-          "description": "Commands that have been approved for automatic execution in this project",
+          "description": "Deprecated: approvals live in `approvals.toml`; `wt config update` moves them there.",
           "items": {
             "type": "string"
           },
@@ -476,7 +476,7 @@
               "type": "null"
             }
           ],
-          "description": "Commands to execute before committing during merge (blocking, fail-fast)"
+          "description": "Commands to execute before any Worktrunk commit (blocking, fail-fast)"
         },
         "pre-merge": {
           "anyOf": [
@@ -630,7 +630,7 @@
           "type": "null"
         }
       ],
-      "description": "Commands to execute before committing during merge (blocking, fail-fast)"
+      "description": "Commands to execute before any Worktrunk commit (blocking, fail-fast)"
     },
     "pre-merge": {
       "anyOf": [
@@ -681,7 +681,7 @@
         "$ref": "#/$defs/UserProjectOverrides"
       },
       "default": {},
-      "description": "Per-project configuration (approved commands, etc.)\nUses BTreeMap for deterministic serialization order and better diff readability",
+      "description": "Per-project overrides, keyed by project identifier (`host/owner/repo`) or a `*` pattern.",
       "type": "object"
     },
     "remove": {

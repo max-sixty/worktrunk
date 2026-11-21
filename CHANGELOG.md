@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.83.0
+
+### Improved
+
+- **PyPI wheels (experimental)**: releases publish `worktrunk` to PyPI as platform wheels holding the same binaries as GitHub Releases, so `uv tool install worktrunk` or `pip install worktrunk` installs `wt` and `git-wt`, and `uvx --from worktrunk wt` runs it without installing. ([#4823](https://github.com/max-sixty/worktrunk/pull/4823), thanks @fresh2dev for [#4822](https://github.com/max-sixty/worktrunk/issues/4822))
+
+- **Editor schemas for config files**: JSON Schemas for user and project config are published under `worktrunk.dev/schema/`. A `#:schema` line at the top of a config file lets Taplo and Tombi complete keys and flag misspelled ones. [Docs](https://worktrunk.dev/config/#editor-schemas) ([#4726](https://github.com/max-sixty/worktrunk/pull/4726), thanks @FlavioAmurrioCS)
+
+- **Claude Code plugin install needs Claude Code 2.1.292**: `wt config plugins claude install` and the docs use `claude plugin install worktrunk --marketplace max-sixty/worktrunk`, which adds the marketplace when it's missing and which older Claude Code rejects. [Docs](https://worktrunk.dev/claude-code/#claude-code) ([#4843](https://github.com/max-sixty/worktrunk/pull/4843))
+
+- **Retry hint after failed setup**: when `pre-start` fails as `wt switch` creates a worktree, the error suggests a `wt hook pre-start` command that reruns setup there with the switch's variables. The old `--no-hooks` hint led to "branch already exists", or to a worktree whose setup never ran. ([#4705](https://github.com/max-sixty/worktrunk/pull/4705), thanks @ee-prog for [#4143](https://github.com/max-sixty/worktrunk/issues/4143))
+
+- **Help through forwarding aliases**: an alias that references `{{ args }}` receives `--help` and `-h` as arguments, so with `sw = "wt switch {{ args }}"`, `wt sw --help` shows `wt switch` help. Such an alias now runs on `--help`, every pipeline step included, where 0.82.0 ran nothing. Other aliases still point to `wt config alias show`. ([#4856](https://github.com/max-sixty/worktrunk/pull/4856), thanks @sdi2200262)
+
+- **Last activity and forge API host in list JSON**: schema 2 adds `worktree.modified_at`, the later of the HEAD commit time and the newest changed or untracked file's mtime. Both schemas report a configured `forge.hostname` as `api_host` (`repo.forge.api_host` in schema 2, `repo.api_host` in schema 1). [Docs](https://worktrunk.dev/list/#json-output) ([#4699](https://github.com/max-sixty/worktrunk/pull/4699), [#4857](https://github.com/max-sixty/worktrunk/pull/4857), thanks @zichen0116 and @sdi2200262, and @luiul for [#4515](https://github.com/max-sixty/worktrunk/issues/4515) and @owpac for [#4762](https://github.com/max-sixty/worktrunk/issues/4762))
+
+### Fixed
+
+- **Worktrees checked out inside a removed worktree**: when the nested checkout was gitignored in the outer worktree, or `--force` was passed, `wt remove` and `wt step prune` deleted it with its uncommitted files. `wt remove` now refuses such a target, and prune skips it. [Docs](https://worktrunk.dev/faq/#worktree-removal) ([#4861](https://github.com/max-sixty/worktrunk/pull/4861))
+
+- **aqua and mise installs**: 0.82.0's signing certificate named a recovery tag instead of `v0.82.0`, so aqua and mise's `aqua:` backend refused to install it. This release is signed under its own version tag. ([#4870](https://github.com/max-sixty/worktrunk/pull/4870), thanks @robfeldmann for [#4829](https://github.com/max-sixty/worktrunk/issues/4829))
+
+- **Picker**: the preview keeps its half-width split after a terminal resize, faint text on the selected row has more contrast, and exiting right after `alt-x` waits for the removal instead of abandoning it. ([#4867](https://github.com/max-sixty/worktrunk/pull/4867), [#4796](https://github.com/max-sixty/worktrunk/pull/4796), [#4861](https://github.com/max-sixty/worktrunk/pull/4861), thanks @disrupted for [#4793](https://github.com/max-sixty/worktrunk/issues/4793) and the request in [#1264](https://github.com/max-sixty/worktrunk/issues/1264))
+
+- **Hook templates that can't render**: an unguarded `{{ branch }}` in a detached worktree (as in jj-colocated repos), or a misspelled variable in a `post-commit`, `post-merge` or `post-remove` hook, now fails before either source's hook starts, and the command exits 1, as for a syntax error. These failed only in the background hook's log. [Docs](https://worktrunk.dev/hook/#template-variables) ([#4787](https://github.com/max-sixty/worktrunk/pull/4787))
+
+- **Agent plugins**: when `worktree-path` runs through a symlinked directory inside the repo, Claude Code's `WorktreeCreate` hook prints the resolved path, which Claude Code 2.1.325 requires. OpenCode 2.3 sessions set activity markers once the plugin is reinstalled with `wt config plugins opencode install`. The `wt-switch-create` skill no longer reads as reserving commits for the user's permission. ([#4814](https://github.com/max-sixty/worktrunk/pull/4814), [#4850](https://github.com/max-sixty/worktrunk/pull/4850), [#4828](https://github.com/max-sixty/worktrunk/pull/4828), thanks @ava-terra for [#4849](https://github.com/max-sixty/worktrunk/issues/4849))
+
+- **Shell integration**: PowerShell integration loaded from worktrunk's own binary skips Windows Terminal's `wt.exe` (the profile line `wt config shell install` writes still runs the first `wt` on `PATH`); once reinstalled with `wt config shell install nu`, the Nushell wrapper works with a user `open` alias; bash, zsh and fish no longer claim a `--source` meant for another command. ([#4786](https://github.com/max-sixty/worktrunk/pull/4786), [#4865](https://github.com/max-sixty/worktrunk/pull/4865), [#4833](https://github.com/max-sixty/worktrunk/pull/4833))
+
+- **Nix home-manager module**: `homeModules.default` defers to home-manager's own `programs.worktrunk` (26.11 and later) instead of failing with "already declared", and the flake package installs the agent skills home-manager links. ([#4788](https://github.com/max-sixty/worktrunk/pull/4788))
+
+- **`wt merge` from a linked default-branch worktree**: with the primary worktree on another branch, `wt merge <target>` run from the default branch's linked worktree merged, then skipped post-merge hooks and exited 1 with "Cannot remove the default branch". It now preserves that worktree and succeeds. ([#4853](https://github.com/max-sixty/worktrunk/pull/4853))
+
+- **Gitea and Forgejo**: on Forgejo 16+, CI status finds a same-repo branch's PR beyond the first 20 open PRs. `wt switch pr:N` checks out PR source branches named `pull/...`. ([#4864](https://github.com/max-sixty/worktrunk/pull/4864), [#4832](https://github.com/max-sixty/worktrunk/pull/4832))
+
+- **`wt list` with a missing HEAD object**: one worktree whose HEAD commit object was absent blanked Commit, Age and Message on every row. Now only that row loses them, with a warning, and schema 2 JSON reports its `head.short_sha` as `null` rather than `""`. ([#4852](https://github.com/max-sixty/worktrunk/pull/4852))
+
+- **Fixes for unusual setups**: `vars` keys must be lowercase and start with a letter, as git stores them; detached worktrees keep separate summaries; the leftover-branch hint keeps `--path` and `--execute`; unchanged switch history skips rewriting `.git/config`; a failed `wt step promote` names where it staged ignored files; `wt list` marks no row primary in a bare repo without a default-branch worktree. ([#4830](https://github.com/max-sixty/worktrunk/pull/4830), [#4840](https://github.com/max-sixty/worktrunk/pull/4840), [#4841](https://github.com/max-sixty/worktrunk/pull/4841), [#4866](https://github.com/max-sixty/worktrunk/pull/4866), [#4861](https://github.com/max-sixty/worktrunk/pull/4861), [#4785](https://github.com/max-sixty/worktrunk/pull/4785))
+
+### Documentation
+
+- **FAQ inventories**: "What files does Worktrunk create?" lists `wt step squash --dry-run`'s temporary index and says `wt remove` deletes the branch only when merged; "What commands does Worktrunk execute?" lists forge CLIs for PR and MR lookups. ([#4831](https://github.com/max-sixty/worktrunk/pull/4831), [#4847](https://github.com/max-sixty/worktrunk/pull/4847))
+
+### Internal
+
+- **MSRV is Rust 1.99.** ([#4811](https://github.com/max-sixty/worktrunk/pull/4811))
+
+- **minijinja 3.1**: templates render with minijinja 3.1, which treats undefined and none values differently in some filters, such as `join`, `first`, `last` and `length`. ([#4809](https://github.com/max-sixty/worktrunk/pull/4809))
+
+- **License files**: `LICENSE` is split into `LICENSE-MIT` and `LICENSE-APACHE`, so GitHub detects the dual license; the texts are unchanged. ([#4783](https://github.com/max-sixty/worktrunk/pull/4783))
+
+- **Source-build versions**: `wt --version` on a build from a git checkout describes only version tags (`v[0-9]*`), so another tag no longer names the version. ([#4791](https://github.com/max-sixty/worktrunk/pull/4791))
+
+- **Breaking Rust library changes**: `GitRepoInfo` gains a public `api_host` field ([#4857](https://github.com/max-sixty/worktrunk/pull/4857)), `GitError` a `WorktreeContainsWorktree` variant ([#4861](https://github.com/max-sixty/worktrunk/pull/4861)), and `WorkingTree::status_porcelain_cached` returns `git status --porcelain -z` bytes instead of a `String` ([#4699](https://github.com/max-sixty/worktrunk/pull/4699)).
+
 ## 0.82.0
 
 ### Improved

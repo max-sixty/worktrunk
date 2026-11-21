@@ -40,8 +40,9 @@ ARCHIVE_RE = re.compile(r"^worktrunk-(?P<target>.+?)\.(?:tar\.xz|zip)$")
 RELATIVE_LINK_RE = re.compile(r'\b(src|href)="(?![a-z][a-z0-9+.-]*:|#|/)')
 
 EXPERIMENTAL_NOTE = (
-    "> **Experimental:** the PyPI package is new; GitHub Releases, Homebrew and "
-    "cargo are the main install channels."
+    "> **Experimental:** the PyPI package is new; install with `uv tool install worktrunk`, "
+    "then `wt config shell install`. GitHub Releases, Homebrew and cargo are the main "
+    "install channels."
 )
 
 # Fixed timestamp so rebuilding the same archives yields identical wheels.
@@ -69,14 +70,14 @@ def record_hash(data: bytes) -> str:
     return f"sha256={digest.decode()}"
 
 
-def metadata(version: str, readme: str) -> str:
+def metadata(version: str, readme: str, licenses: list[str]) -> str:
     headers = [
         "Metadata-Version: 2.4",
         f"Name: {NAME}",
         f"Version: {version}",
         "Summary: A CLI for Git worktree management, designed for parallel AI agent workflows",
         "License-Expression: MIT OR Apache-2.0",
-        "License-File: LICENSE",
+        *(f"License-File: {name}" for name in licenses),
         "Project-URL: Homepage, https://worktrunk.dev",
         "Project-URL: Repository, https://github.com/max-sixty/worktrunk",
         "Project-URL: Changelog, https://github.com/max-sixty/worktrunk/blob/main/CHANGELOG.md",
@@ -96,7 +97,11 @@ def build_wheel(archive: Path, version: str, out_dir: Path) -> Path:
     exe = ".exe" if target.endswith("-windows-msvc") else ""
 
     files = read_archive(archive)
-    missing = [n for n in (*(b + exe for b in BINARIES), "LICENSE", "README.md") if n not in files]
+    # cargo-dist ships every `LICENSE*` file at the crate root.
+    licenses = sorted(n for n in files if n.startswith("LICENSE"))
+    missing = [n for n in (*(b + exe for b in BINARIES), "README.md") if n not in files]
+    if not licenses:
+        missing.append("LICENSE*")
     if missing:
         raise SystemExit(f"{archive.name}: missing {', '.join(missing)}")
 
@@ -105,9 +110,11 @@ def build_wheel(archive: Path, version: str, out_dir: Path) -> Path:
     wheel_tag = f"py3-none-{platform}"
     # (path in wheel, contents, executable)
     entries = [(f"{data_dir}/scripts/{b}{exe}", files[b + exe], True) for b in BINARIES]
+    entries.append(
+        (f"{dist_info}/METADATA", metadata(version, files["README.md"].decode(), licenses).encode(), False)
+    )
+    entries += [(f"{dist_info}/licenses/{name}", files[name], False) for name in licenses]
     entries += [
-        (f"{dist_info}/METADATA", metadata(version, files["README.md"].decode()).encode(), False),
-        (f"{dist_info}/licenses/LICENSE", files["LICENSE"], False),
         (
             f"{dist_info}/WHEEL",
             "\n".join(

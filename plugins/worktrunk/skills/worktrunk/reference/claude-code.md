@@ -20,7 +20,7 @@ The configuration skill is documentation the agent reads to help set up LLM comm
 wt config plugins claude install
 ```
 
-Manual equivalent:
+Manual equivalent (Claude Code 2.1.292 or later):
 
 ```bash
 claude plugin install worktrunk --marketplace max-sixty/worktrunk

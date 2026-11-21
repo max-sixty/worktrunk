@@ -148,7 +148,7 @@ pub struct ListColumnConfig {
 /// Configuration for the `wt list` command
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
 pub struct ListConfig {
-    /// Show CI and `main` diffstat by default
+    /// Show CI status and LLM summaries by default (`--full`)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub full: Option<bool>,
 
@@ -196,7 +196,7 @@ pub struct ListConfig {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub columns: Vec<String>,
 
-    /// Custom columns, keyed by header text. See [`ListColumnConfig`].
+    /// Custom columns, keyed by header text.
     ///
     /// *(Experimental — fields may change in future releases.)*
     #[serde(
@@ -208,7 +208,7 @@ pub struct ListConfig {
 }
 
 impl ListConfig {
-    /// Show CI and `main` diffstat by default (default: false)
+    /// Show CI status and LLM summaries by default (default: false)
     pub fn full(&self) -> bool {
         self.full.unwrap_or(false)
     }
@@ -537,7 +537,7 @@ impl Merge for StepConfig {
 /// The key is a project identifier (`host/owner/repo`) or a `*` pattern
 /// covering a set of them, so one entry can carry settings for every
 /// repository on a host. Every matching entry applies, least- to
-/// most-specific; the `project_match` module states the rules.
+/// most-specific.
 ///
 /// # TOML Format
 /// ```toml
@@ -559,7 +559,7 @@ impl Merge for StepConfig {
 /// ```
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
 pub struct UserProjectOverrides {
-    /// Commands that have been approved for automatic execution in this project
+    /// Deprecated: approvals live in `approvals.toml`; `wt config update` moves them there.
     #[serde(
         default,
         rename = "approved-commands",

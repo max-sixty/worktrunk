@@ -309,7 +309,7 @@ symbol is one [2mdisplay.state[0m value:
  Symb display.sta                            Meaning                            
   ol      te                                                                    
  ──── ─────────── ───────────────────────────────────────────────────────────── 
- [2m^[0m    [2m"is_main"[0m   The main worktree (the repo's home worktree)                  
+ [2m^[0m    [2m"is_main"[0m   The primary worktree (the repo's home worktree)               
  [2m∅[0m    [2m"orphan"[0m    No common ancestor with the default branch                    
  [2m_[0m    [2m"empty"[0m     Same commit as the default branch, working tree clean — safe  
                   to remove; row dimmed                                         
@@ -380,10 +380,10 @@ One envelope object. Items carry independent facts; rendered strings
 [107m [0m [2m "head": {"sha": "05a4a45d…", "short_sha": "05a4a45", "subject": "Add login
 [107m [0m page",[0m
 [107m [0m [2m               "committed_at": "2025-01-01T08:00:00Z"},[0m
-[107m [0m [2m "worktree": {"path": "/home/user/repo.feature", "main": false, "current":
-[107m [0m true,[0m
-[107m [0m [2m "previous": false, "detached": false, "branch_mismatch": false,[0m
-[107m [0m [2m                   "duplicate_branch": false,[0m
+[107m [0m [2m "worktree": {"path": "/home/user/repo.feature", "modified_at":
+[107m [0m "2025-01-01T09:30:00Z",[0m
+[107m [0m [2m "main": false, "current": true, "previous": false, "detached": false,[0m
+[107m [0m [2m                   "branch_mismatch": false, "duplicate_branch": false,[0m
 [107m [0m [2m "changes": {"staged": false, "modified": true, "untracked": false,[0m
 [107m [0m [2m "renamed": false, "deleted": false, "conflicted": false,[0m
 [107m [0m [2m                               "diff": {"added": 10, "deleted": 2}}},[0m
@@ -474,7 +474,8 @@ co-occur — see Worktree for the symbols, which pick one:
  [2mmodified_at[0m      string/null Later of HEAD committer time and the newest       
                               changed or untracked file mtime, RFC 3339 UTC;    
                               null when unresolved                              
- [2mmain[0m             boolean     Is the main worktree                              
+ [2mmain[0m             boolean     Is the primary worktree: the main worktree, or in 
+                              a bare repo the one on the default branch         
  [2mcurrent[0m          boolean     Is the worktree the command ran from              
  [2mprevious[0m         boolean     Is the previous worktree ([2mwt switch -[0m)            
  [2mdetached[0m         boolean     HEAD is detached                                  
