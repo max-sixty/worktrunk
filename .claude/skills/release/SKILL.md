@@ -64,7 +64,7 @@ metadata:
     gh run list --workflow=release.yaml --event=push --branch=vX.Y.Z --limit 1 --json databaseId --jq '.[0].databaseId'
     ```
 
-`release.yaml` builds binaries and publishes to crates.io, Homebrew, and winget automatically.
+`release.yaml` builds binaries and publishes to crates.io, Homebrew, winget, AUR, and PyPI (experimental) automatically.
 
 ## Data-Loss Surface Review
 
