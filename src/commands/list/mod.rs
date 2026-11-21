@@ -344,6 +344,50 @@ impl SummaryMetrics {
     }
 }
 
+/// One cache file shared by all worktrees of the repository.
+pub(crate) fn status_explanations_path(repo: &worktrunk::git::Repository) -> std::path::PathBuf {
+    worktrunk::cache::cache_dir(repo, "status-explanations").join("shown.json")
+}
+
+pub(crate) type ShownExplanations = std::collections::BTreeSet<String>;
+
+/// Add unseen pairs in priority order. A pair that cannot fit on its own
+/// does not hold the current cycle open at this width.
+fn status_legend(
+    items: &[ListItem],
+    mut remaining: usize,
+    shown: &mut ShownExplanations,
+) -> Vec<String> {
+    let mut visible = std::collections::HashSet::new();
+    let mut eligible: Vec<_> = items
+        .iter()
+        .flat_map(|item| item.status_symbols.explanations())
+        .filter_map(|pair| {
+            let width = visual_width(&pair);
+            (width + 4 <= remaining && visible.insert(pair.clone())).then_some((pair, width))
+        })
+        .collect();
+    if eligible.is_empty() {
+        return Vec::new();
+    }
+    if eligible.iter().all(|(pair, _)| shown.contains(pair)) {
+        shown.clear();
+    }
+
+    eligible.sort_by_key(|(pair, _)| !pair.starts_with(['✗', '✘', '⊂', '↕']));
+    let mut legend = Vec::new();
+    for (pair, width) in eligible {
+        // Opening the legend needs two spaces and parentheses. Later pairs
+        // only need the two-space separator.
+        let cost = width + if legend.is_empty() { 4 } else { 2 };
+        if cost <= remaining && shown.insert(pair.clone()) {
+            remaining -= cost;
+            legend.push(pair);
+        }
+    }
+    legend
+}
+
 /// Format the summary line that closes the table.
 ///
 /// The footer is the only home a timed-out task has: it leaves an empty cell
@@ -365,7 +409,7 @@ pub(crate) fn format_summary_message(
     show_branches: bool,
     hidden_columns: &[String],
     timed_out_count: usize,
-    show_status: bool,
+    shown: Option<&mut ShownExplanations>,
     max_width: Option<usize>,
 ) -> String {
     const INDENT: &str = "  "; // symbol + space, so continuations align under the text
@@ -394,27 +438,12 @@ pub(crate) fn format_summary_message(
     .collect::<Vec<_>>()
     .join(&format!("\n{INDENT}"));
 
-    if show_status
+    if let Some(shown) = shown
         && !body.contains('\n')
-        && let Some(mut remaining) =
+        && let Some(remaining) =
             max_width.and_then(|w| w.checked_sub(INDENT.len() + visual_width(&body)))
     {
-        let mut seen = std::collections::HashSet::new();
-        let mut legend = Vec::new();
-        for pair in items
-            .iter()
-            .flat_map(|item| item.status_symbols.explanations())
-        {
-            if seen.insert(pair.clone()) {
-                // The first pair needs two leading spaces and parentheses.
-                // Each following pair needs only the two-space separator.
-                let cost = visual_width(&pair) + if legend.is_empty() { 4 } else { 2 };
-                if cost <= remaining {
-                    remaining -= cost;
-                    legend.push(pair);
-                }
-            }
-        }
+        let legend = status_legend(items, remaining, shown);
         if !legend.is_empty() {
             body.push_str(&format!("  ({})", legend.join("  ")));
         }
@@ -595,10 +624,18 @@ mod tests {
         second.status_symbols.main_state = Some(MainState::WouldConflict);
         second.status_symbols.user_marker = Some(Some("↑".into()));
         let items = [first, second];
-        let render = |width, visible| {
-            format_summary_message(&items, true, &["Path".into()], 1, visible, width)
-                .ansi_strip()
-                .into_owned()
+        let render = |width, visible: bool| {
+            let mut shown = ShownExplanations::new();
+            format_summary_message(
+                &items,
+                true,
+                &["Path".into()],
+                1,
+                visible.then_some(&mut shown),
+                width,
+            )
+            .ansi_strip()
+            .into_owned()
         };
         let summary = "○ Showing 0 worktrees, 2 branches, hidden: Path; 1 task timed out";
         let one = format!("{summary}  (✗ would conflict)");
@@ -623,10 +660,44 @@ mod tests {
         item.status_symbols.main_state = Some(MainState::Ahead);
         let expected = "○ Showing 0 worktrees  (↑ ahead of default)";
         assert_eq!(
-            format_summary_message(&[item], false, &[], 0, true, Some(visual_width(expected)))
-                .ansi_strip(),
+            format_summary_message(
+                &[item],
+                false,
+                &[],
+                0,
+                Some(&mut ShownExplanations::new()),
+                Some(visual_width(expected))
+            )
+            .ansi_strip(),
             expected
         );
+    }
+
+    #[test]
+    fn status_legend_prioritizes_and_rotates_pairs_that_fit() {
+        use model::MainState;
+
+        let items = [
+            MainState::Ahead,
+            MainState::WouldConflict,
+            MainState::Diverged,
+        ]
+        .map(|state| {
+            let mut item = ListItem::new_branch("aaaaaaa".into(), "feature".into());
+            item.status_symbols.main_state = Some(state);
+            item
+        });
+        let pairs = items
+            .each_ref()
+            .map(|item| item.status_symbols.explanations().next().unwrap());
+        let width = pairs.iter().map(|pair| visual_width(pair)).max().unwrap() + 4;
+        let mut shown = ShownExplanations::new();
+        assert_eq!(status_legend(&items, width, &mut shown), [pairs[1].clone()]);
+        assert_eq!(status_legend(&items, width, &mut shown), [pairs[2].clone()]);
+        assert!(status_legend(&items, 0, &mut shown).is_empty());
+        assert_eq!(status_legend(&items, width, &mut shown), [pairs[0].clone()]);
+        assert_eq!(status_legend(&items, width, &mut shown), [pairs[1].clone()]);
+        assert_eq!(shown.into_iter().collect::<Vec<_>>(), [pairs[1].clone()]);
     }
 
     #[test]
@@ -635,10 +706,10 @@ mod tests {
 
         // Nothing timed out. Failures alone leave the footer untouched — the
         // warning after the table names them and carries their count.
-        assert_snapshot!(format_summary_message(&[], false, &[], 0, true, None), @"[2m○[22m [2mShowing 0 worktrees[0m");
+        assert_snapshot!(format_summary_message(&[], false, &[], 0, None, None), @"[2m○[22m [2mShowing 0 worktrees[0m");
         // Single timeout
-        assert_snapshot!(format_summary_message(&[], false, &[], 1, true, None), @"[2m○[22m [2mShowing 0 worktrees; 1 task timed out[0m");
+        assert_snapshot!(format_summary_message(&[], false, &[], 1, None, None), @"[2m○[22m [2mShowing 0 worktrees; 1 task timed out[0m");
         // Several timeouts
-        assert_snapshot!(format_summary_message(&[], false, &[], 3, true, None), @"[2m○[22m [2mShowing 0 worktrees; 3 tasks timed out[0m");
+        assert_snapshot!(format_summary_message(&[], false, &[], 3, None, None), @"[2m○[22m [2mShowing 0 worktrees; 3 tasks timed out[0m");
     }
 }

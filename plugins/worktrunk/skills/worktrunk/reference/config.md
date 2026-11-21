@@ -1233,6 +1233,7 @@ View or drop worktrunk's regenerable caches in one place. Everything here is reb
 - **CI status** — forge CI per branch (30–60s TTL), shown in [`wt list`](https://worktrunk.dev/list/#ci-status)
 - **Summaries** — LLM-generated branch summaries (`wt list --full`, `wt switch` preview)
 - **Git commands** — cached merge-tree, ancestry, diff-stat, and `wt switch` preview results
+- **Status explanations** — explanations shown in the current `wt list` footer rotation
 - **Hints** — one-time hints already shown in this repo
 - **Previous branch** — the `wt switch -` target, re-recorded on the next switch
 

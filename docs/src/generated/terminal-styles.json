@@ -710,11 +710,11 @@
           "classes": [
             "wt-terminal-dim"
           ],
-          "text": "Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path  (+ staged files  ⇡ ahead of remote)"
+          "text": "Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path  (↕ diverged from default)"
         }
       ]
     ],
-    "plain": "  Branch       Status       @±        ^↕        ^…±     Remote⇅  Commit    Age  Message\n@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      6814f02   30m  Add API tests\n^ main             ^⇅                                    ⇡1  ⇣1  41ee083    4d  Merge fix-auth: ha…\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68    5h  Add secure token s…\n+ fix-typos        _|                                      |     41ee083    4d  Merge fix-auth: ha…\n\n○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path  (+ staged files  ⇡ ahead of remote)"
+    "plain": "  Branch       Status       @±        ^↕        ^…±     Remote⇅  Commit    Age  Message\n@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      6814f02   30m  Add API tests\n^ main             ^⇅                                    ⇡1  ⇣1  41ee083    4d  Merge fix-auth: ha…\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68    5h  Add secure token s…\n+ fix-typos        _|                                      |     41ee083    4d  Merge fix-auth: ha…\n\n○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path  (↕ diverged from default)"
   },
   {
     "lines": [

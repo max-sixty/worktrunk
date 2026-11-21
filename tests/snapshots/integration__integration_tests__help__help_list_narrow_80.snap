@@ -122,7 +122,7 @@ List all worktrees:
 [107m [0m [2m[0m[2m[34m+[0m[2m fix-auth         ↕[0m[2m[36m|[0m[2m                [0m[2m[34m↑2[0m[2m  ↓1   +25  [0m[2m[36m-11[0m[2m     [0m[2m[36m|[0m[2m     [0m[2m[34mb772e68[0m[2m    5[22m[2m…[0m
 [107m [0m [2m+ fix-typos        _[0m[2m[36m|[0m[2m                                      [0m[2m[36m|[0m[2m     [0m[2m[34m41ee083[0m[2m    4[22m[2m…[0m
 [107m [0m [0m
-[107m [0m [2m○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path  (+ staged files[22m[2m…[0m
+[107m [0m [2m○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path  (↕ diverged fro[22m[2m…[0m
 
 Include CI status and LLM summaries:
 
@@ -265,7 +265,9 @@ see Schema 1). Working-tree flags are independent and co-occur — any combinati
  symbol, the highest-priority state in top-to-bottom table order, and is blank 
 when nothing applies.
 
-When space permits, the footer explains symbols shown in the Status column.
+The footer rotates through visible status explanations when space permits.
+
+Run [2mwt config state cache clear[0m to restart the rotation for the repository.
 
 [32mWorking tree[0m
 

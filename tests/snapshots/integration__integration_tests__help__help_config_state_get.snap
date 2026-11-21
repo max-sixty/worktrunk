@@ -85,6 +85,7 @@ Shows all stored state including:
 - [1mCI status[0m: Cached forge CI status per branch (30-60s TTL)
 - [1mSummaries[0m: Cached LLM-generated branch summaries (shown in [2mwt list --full[0m and [2mwt switch[0m preview)
 - [1mGit commands cache[0m: Cached merge-tree, ancestry, diff-stat, and [2mwt switch[0m preview results
+- [1mStatus explanations[0m: Symbols explained in the current [2mwt list[0m footer rotation
 - [1mHints[0m: One-time hints that have been shown
 - [1mLog files[0m: Operation and debug logs
 - [1mTrash[0m: Staged worktree directories awaiting background deletion

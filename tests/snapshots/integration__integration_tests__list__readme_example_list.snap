@@ -66,4 +66,4 @@ exit_code: 0
 
 ----- stderr -----
 
-[2m○[22m [2mShowing 4 worktrees, 1 with changes, 2 ahead, hidden: Path  (+ staged files  ⇡ ahead of remote)[0m
+[2m○[22m [2mShowing 4 worktrees, 1 with changes, 2 ahead, hidden: Path  (↕ diverged from default)[0m

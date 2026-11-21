@@ -140,6 +140,7 @@ Worktrunk stores repository state, caches, and logs under `.git/`:
 | `refs/wt-backup/<branch>` | [Squash backups](/step/#wt-step-squash--recovering-staged-changes) and backups of changes discarded by `wt remove --force`; preserved by state clearing | `wt step squash`, `wt merge`, `wt remove --force` |
 | `.git/wt/cache/{kind}/*.json` | Cached CI status, the largest PR/MR number seen (sizes the `wt list` CI column), and git command results (merge-tree, integration probes, diff stats, ancestry checks, ahead/behind counts, merge bases) | `wt list`, `wt merge`, `wt remove` |
 | `.git/wt/cache/summary/{branch}/{hash}.json` | Cached LLM branch summaries, content-addressed by diff hash | `wt list --full`, `wt switch` (when `[list] summary = true`) |
+| `.git/wt/cache/status-explanations/shown.json` | Status explanations shown in the current footer rotation | `wt list` |
 | `.git/wt/cache/picker-preview/*.json` | Rendered preview panes for the interactive picker | `wt switch` |
 | `.git/wt/logs/{branch}/**/*.log` | Background hook output (nested per branch) | Hooks, background `wt remove` |
 | `.git/wt/logs/commands.jsonl` | Command audit log (~2MB max) | Hooks, LLM commands |

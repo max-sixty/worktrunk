@@ -1,12 +1,9 @@
 //! Shared primitives for the on-disk caches under `.git/wt/cache/`.
 //!
-//! Three callers use these primitives: `sha_cache` (content-addressed SHA-pair
-//! results), `ci_status::cache` (branch → CI status with TTL, plus the repo-wide
-//! max-PR-number ratchet), and `summary`
-//! (branch → LLM summary with content-addressed filenames). Each owns its
-//! layout, struct shape, and freshness rules — this module only owns the
-//! filesystem mechanics so those rules have one implementation instead of
-//! three.
+//! Callers include SHA-keyed Git results, CI status, LLM summaries, and the
+//! list footer's per-repository explanation history. Each caller owns its
+//! layout, data shape, and freshness rules. This module owns the filesystem
+//! mechanics.
 //!
 //! # Torn-write semantics
 //!
