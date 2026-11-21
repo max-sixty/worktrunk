@@ -539,7 +539,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.plan.outputs.source-sha }}
           persist-credentials: false
       - name: Download release archives
         env:
