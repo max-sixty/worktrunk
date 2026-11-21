@@ -63,6 +63,7 @@ metadata:
     ```bash
     gh run list --workflow=release.yaml --event=push --branch=vX.Y.Z --limit 1 --json databaseId --jq '.[0].databaseId'
     ```
+    If the run fails, re-run its failed jobs when the cause is transient. Otherwise land the fix on `main` and release it as the next patch version, leaving the vX.Y.Z tag in place. Installers such as aqua check that the signing certificate names `release.yaml@refs/tags/<version>`, so each version's release has to come from the run its own tag push started.
 
 `release.yaml` builds binaries and publishes to crates.io, Homebrew, winget, AUR, and PyPI (experimental) automatically.
 
