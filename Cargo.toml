@@ -54,6 +54,45 @@ filterset = "test(/readme_sync/)"
 globs = [".github/aur/PKGBUILD"]
 filterset = "test(/aur_pkgbuild/)"
 
+# typos (pre-commit) reads its config from this table.
+[workspace.metadata.typos.files]
+extend-exclude = ["docs/demos/vhs-keystrokes/", "*.snap", "*.log"]
+
+[workspace.metadata.typos.default]
+# Generated `wt list` doc embeds (README, site docs, skills mirrors) truncate
+# long commit messages with a trailing … . The cut leaves a word fragment glued
+# to the ellipsis (e.g. "authenticat…"), which typos would "correct" to the full
+# word — re-breaking the doc-sync test on every run. A token immediately followed
+# by … is a truncation, not a typo; *.snap is already excluded, this covers the
+# rendered mirrors that embed the same output.
+extend-ignore-re = ['\w+…']
+
+[workspace.metadata.typos.default.extend-identifiers]
+# "PNGs" is correct (Portable Network Graphics plural). The plural form
+# tokenizes to the word "PN", which typos would otherwise correct to "ON";
+# `extend-words` doesn't suppress it (PNGs isn't a word, it's an identifier).
+PNGs = "PNGs"
+
+[workspace.metadata.typos.default.extend-words]
+# GitHub contributor username viwe-monai
+viwe = "viwe"
+# Git commit hashes that typos flags as potential typos
+ba = "ba"  # Part of commit hashes like e28e0ba
+# Hyphenated prefix in prose ("mis-keyed", "mis-scoped")
+mis = "mis"
+# `lsof -F pn` field spec (PID + name) in the fsmonitor sweep; typos maps the
+# lowercase token `pn` to "on", which silently breaks the field request (`on`
+# is offset+name, dropping the `p<pid>` record opener the parser splits on).
+pn = "pn"
+# Intentional typos in tests for "did you mean?" suggestions
+deplyo = "deplyo"
+comit = "comit"
+siwtch = "siwtch"
+# Intentional typo in expansion.rs exercising conditional undefined-var validation
+targte = "targte"
+# Intentional typo in CHANGELOG.md illustrating the unreferenced-var warning
+brnach = "brnach"
+
 [package]
 name = "worktrunk"
 version = "0.83.0"
