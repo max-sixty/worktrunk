@@ -177,7 +177,9 @@ fn test_list_approvals_all_approved(repo: TestRepo) {
 }
 
 /// Without a project config there is nothing to require approval, but
-/// approvals already on record still list — all as stale.
+/// approvals already on record still list — all as stale. The listing does not
+/// suggest `clear --stale`, which refuses to run without a project config
+/// (`test_clear_approvals_stale_no_config`).
 #[rstest]
 fn test_list_approvals_stale_only(repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
