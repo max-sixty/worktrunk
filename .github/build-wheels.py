@@ -39,6 +39,11 @@ ARCHIVE_RE = re.compile(r"^worktrunk-(?P<target>.+?)\.(?:tar\.xz|zip)$")
 # the README (the logo) would break. Point them at the release tag instead.
 RELATIVE_LINK_RE = re.compile(r'\b(src|href)="(?![a-z][a-z0-9+.-]*:|#|/)')
 
+EXPERIMENTAL_NOTE = (
+    "> **Experimental:** the PyPI package is new; GitHub Releases, Homebrew and "
+    "cargo are the main install channels."
+)
+
 # Fixed timestamp so rebuilding the same archives yields identical wheels.
 ZIP_DATE = (1980, 1, 1, 0, 0, 0)
 
@@ -79,7 +84,7 @@ def metadata(version: str, readme: str) -> str:
     ]
     raw_base = f"https://raw.githubusercontent.com/max-sixty/worktrunk/v{version}/"
     readme = RELATIVE_LINK_RE.sub(lambda m: f'{m[1]}="{raw_base}', readme)
-    return "\n".join(headers) + "\n\n" + readme
+    return "\n".join(headers) + "\n\n" + EXPERIMENTAL_NOTE + "\n\n" + readme
 
 
 def build_wheel(archive: Path, version: str, out_dir: Path) -> Path:
