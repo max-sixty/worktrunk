@@ -241,6 +241,29 @@ fn test_merge_preserves_locked_worktree_no_reason(merge_scenario: (TestRepo, Pat
     );
 }
 
+/// Merging from a linked worktree that holds the default branch into another
+/// branch: the default branch's worktree is never removed, so the merge
+/// preserves it like the other blocking conditions instead of failing after
+/// the merge already landed.
+#[rstest]
+fn test_merge_preserves_default_branch_worktree(mut repo_with_alternate_primary: TestRepo) {
+    let repo = &mut repo_with_alternate_primary;
+    let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
+    repo.commit_in_worktree(&main_wt, "main.txt", "main content", "Add main file");
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        repo,
+        "merge",
+        &["develop"],
+        Some(&main_wt)
+    ));
+
+    assert!(
+        main_wt.exists(),
+        "the default branch's worktree must survive merge"
+    );
+}
+
 #[rstest]
 fn test_merge_already_on_target(repo: TestRepo) {
     // Already on main branch (repo root)
