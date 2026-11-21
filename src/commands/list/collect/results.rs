@@ -298,12 +298,14 @@ pub(super) fn drain_results_with_timings(
                 item.branch_diff = Some(branch_diff);
             }
             TaskResult::WorkingTreeDiff {
+                newest_file_mtime,
                 working_tree_diff,
                 working_tree_status,
                 has_conflicts,
                 ..
             } => {
                 if let Some(data) = item.worktree_data_mut() {
+                    data.newest_file_mtime = Some(newest_file_mtime);
                     data.working_tree_diff = Some(working_tree_diff);
                     data.working_tree_status = Some(working_tree_status);
                     data.has_conflicts = Some(has_conflicts);

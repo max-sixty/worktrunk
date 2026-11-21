@@ -60,6 +60,8 @@ pub struct WorktreeData {
     pub locked: Option<String>,
     pub prunable: Option<String>,
     pub working_tree_diff: Option<LineDiff>,
+    /// Outer None means status unresolved; inner None means no available file mtime.
+    pub newest_file_mtime: Option<Option<i64>>,
     /// Working-tree change flags (tracked/untracked/modified). `None` = not yet
     /// loaded; `Some` = loaded (possibly empty). Fed by the `WorkingTreeDiff` task.
     pub working_tree_status: Option<WorkingTreeStatus>,

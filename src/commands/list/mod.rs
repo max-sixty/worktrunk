@@ -189,6 +189,10 @@ pub fn handle_list(
             cli_full,
         },
         render_target,
+        // Per-file mtimes feed only schema 2 JSON's `worktree.modified_at`;
+        // table renders never read them, so they skip the
+        // `--untracked-files=all` query and the mtime stat loop.
+        json_schema == Some(2),
     )?;
 
     let Some(ListData {

@@ -60,6 +60,7 @@ pub(crate) enum TaskResult {
     },
     /// Working tree diff and status
     WorkingTreeDiff {
+        newest_file_mtime: Option<i64>,
         item_idx: usize,
         working_tree_diff: LineDiff,
         /// Working tree change flags

@@ -79,6 +79,7 @@ exit_code: 0
       },
       "worktree": {
         "path": "_REPO_",
+        "modified_at": "2025-01-01T00:00:00Z",
         "main": true,
         "current": true,
         "previous": false,
@@ -120,6 +121,7 @@ exit_code: 0
       },
       "worktree": {
         "path": "_REPO_.feature-a",
+        "modified_at": "2025-01-01T08:00:00Z",
         "main": false,
         "current": false,
         "previous": false,
@@ -165,6 +167,7 @@ exit_code: 0
       },
       "worktree": {
         "path": "_REPO_.feature-b",
+        "modified_at": "2025-01-01T08:00:00Z",
         "main": false,
         "current": false,
         "previous": false,
@@ -210,6 +213,7 @@ exit_code: 0
       },
       "worktree": {
         "path": "_REPO_.feature-c",
+        "modified_at": "2025-01-01T08:00:00Z",
         "main": false,
         "current": false,
         "previous": false,
@@ -255,6 +259,7 @@ exit_code: 0
       },
       "worktree": {
         "path": "_REPO_.feature-ahead",
+        "modified_at": "2025-01-02T00:00:00Z",
         "main": false,
         "current": false,
         "previous": false,
@@ -300,6 +305,7 @@ exit_code: 0
       },
       "worktree": {
         "path": "_REPO_.feature-behind",
+        "modified_at": "2025-01-01T00:00:00Z",
         "main": false,
         "current": false,
         "previous": false,
