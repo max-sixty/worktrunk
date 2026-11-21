@@ -92,10 +92,11 @@ pub fn list_approvals(format: SwitchFormat) -> anyhow::Result<()> {
 
     // A missing project config just means zero configured commands — recorded
     // approvals for the project still list (as stale), so this never errors.
-    let commands = match repo.load_project_config()? {
-        Some(cfg) => collect_approvable_commands(&cfg),
-        None => Vec::new(),
-    };
+    let project_config = repo.load_project_config()?;
+    let commands = project_config
+        .as_ref()
+        .map(collect_approvable_commands)
+        .unwrap_or_default();
 
     let templates: Vec<&str> = commands
         .iter()
@@ -174,13 +175,17 @@ pub fn list_approvals(format: SwitchFormat) -> anyhow::Result<()> {
         for command in &stale {
             writeln!(out, "{}", format_bash_with_gutter(command))?;
         }
-        writeln!(
-            out,
-            "{}",
-            hint_message(cformat!(
-                "To clear stale approvals, run <underline>wt config approvals clear --stale</>"
-            ))
-        )?;
+        // `clear --stale` refuses to run without a project config (see
+        // `clear_approvals`), so only suggest it where it can succeed.
+        if project_config.is_some() {
+            writeln!(
+                out,
+                "{}",
+                hint_message(cformat!(
+                    "To clear stale approvals, run <underline>wt config approvals clear --stale</>"
+                ))
+            )?;
+        }
     }
 
     // Human-oriented sectioned output, plausibly more than a screen — page it

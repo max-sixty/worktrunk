@@ -62,6 +62,5 @@ exit_code: 0
 ----- stdout -----
 [33m▲[39m [33mApproved commands no longer in project config:[39m
 [107m [0m [2m[0m[2m[34morphan[0m[2m command[0m
-[2m↳[22m [2mTo clear stale approvals, run [4mwt config approvals clear --stale[24m[22m
 
 ----- stderr -----
