@@ -103,11 +103,7 @@ pub(crate) fn is_top_level_builtin(name: &str) -> bool {
     NAMES.contains(name)
 }
 
-/// Whether `--help` or `-h` appears in `args` before any `--` literal-forward
-/// terminator. Aliases have no clap-style help page — the template *is* the
-/// help — so dispatchers intercept help requests and redirect the user to
-/// `wt config alias show / dry-run`. After `--`, all tokens forward to
-/// `{{ args }}` verbatim, so `wt <alias> -- --help` bypasses the intercept.
+/// A help flag after the literal-forward delimiter belongs to the alias body.
 fn help_flag_requested(args: &[String]) -> bool {
     for arg in args {
         if arg == "--" {
@@ -120,23 +116,16 @@ fn help_flag_requested(args: &[String]) -> bool {
     false
 }
 
-/// If `args` requests `--help` for an alias, emit the help hint and return
-/// `true`. Aliases have no clap-style help page — the template *is* the help —
-/// so dispatchers redirect the user to `wt config alias show / dry-run`.
-///
-/// Aliases can bind a `help` variable; only intercept when the template
-/// doesn't reference it. `-h` is never a binding, so it's always safe to
-/// intercept. Conservatively: intercept if any help flag appears and no
-/// binding is claimed on `help`.
+/// Show inspection guidance for aliases that neither bind nor forward help.
 fn try_intercept_alias_help(name: &str, args: &[String], referenced: &BTreeSet<String>) -> bool {
-    if referenced.contains("help") || !help_flag_requested(args) {
+    if referenced.contains("args") || referenced.contains("help") || !help_flag_requested(args) {
         return false;
     }
     eprintln!("{}", info_message(cformat!("<bold>{name}</> is an alias")));
     eprintln!(
         "{}",
         hint_message(cformat!(
-            "To view config, run <underline>wt config alias show {name}</>; to preview expansion, run <underline>wt config alias dry-run {name}</>; to forward --help to the alias body, run <underline>wt {name} -- --help</>"
+            "To view config, run <underline>wt config alias show {name}</>; to preview expansion, run <underline>wt config alias dry-run {name}</>"
         ))
     );
     true

@@ -1812,15 +1812,13 @@ deploy = "echo hi"
     ));
 }
 
-/// `wt <alias> --help` prints guidance rather than forwarding `--help` into
-/// `{{ args }}`. Aliases have no clap-style help page; the canonical
-/// inspection path is `wt config alias show / dry-run`.
+/// Inspection works without running the fixed alias, even when it binds other options.
 #[rstest]
 fn test_alias_help_flag_prints_hint(mut repo: TestRepo) {
     repo.write_project_config(
         r#"
 [aliases]
-deploy = "echo hi {{ args }}"
+deploy = "echo {{ env | default('unset') }} > unexpected"
 "#,
     );
     repo.commit("Add alias config");
@@ -1835,10 +1833,65 @@ deploy = "echo hi {{ args }}"
         &["--help"],
         Some(&feature_path),
     ));
+    for prefix in [&["deploy"][..], &["step", "deploy"]] {
+        for flag in ["--help", "-h"] {
+            let output = repo
+                .wt_command()
+                .current_dir(&feature_path)
+                .arg("--yes")
+                .args(prefix)
+                .arg(flag)
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("wt config alias show deploy")
+            );
+            assert!(!feature_path.join("unexpected").exists());
+        }
+    }
 }
 
-/// `wt <alias> -- --help` bypasses the intercept and forwards `--help` into
-/// the alias body — the documented escape.
+#[rstest]
+fn test_alias_forwards_help_through_argument_parser(repo: TestRepo) {
+    repo.write_test_config(
+        r#"
+[aliases]
+probe = "printf '<%s>\\n' {% for arg in args %} {{ arg }}{% endfor %}"
+environment = "printf '<%s>\\n' {{ env }} {{ args }}"
+binding = "printf '<%s>\\n' {{ help }}"
+"#,
+    );
+    for prefix in [&[][..], &["step"]] {
+        for (args, expected) in [
+            (
+                vec!["probe", "first", "--help", "last"],
+                "<first>\n<--help>\n<last>",
+            ),
+            (vec!["probe", "-h"], "<-h>"),
+            (vec!["probe", "--", "--help"], "<--help>"),
+            (
+                vec!["environment", "--env", "--help", "last"],
+                "<--help>\n<last>",
+            ),
+            (vec!["binding", "--help=value"], "<value>"),
+        ] {
+            let output = repo.wt_command().args(prefix).args(&args).output().unwrap();
+            assert!(
+                output.status.success(),
+                "{:?}: {}",
+                args,
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(
+                String::from_utf8(output.stdout).unwrap().trim_end(),
+                expected
+            );
+        }
+    }
+}
+
+/// A forwarding project alias invoked with `-- --help` reaches the approval gate.
 #[rstest]
 fn test_alias_help_flag_after_double_dash_forwards(mut repo: TestRepo) {
     repo.write_project_config(
