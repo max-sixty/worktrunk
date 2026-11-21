@@ -683,7 +683,7 @@
           "description": "Present when the worktree is locked."
         },
         "main": {
-          "description": "This is the main worktree.",
+          "description": "This is the primary worktree.",
           "type": "boolean"
         },
         "modified_at": {

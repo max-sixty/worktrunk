@@ -236,7 +236,7 @@ pub struct JsonWorktreeV2 {
     #[serde(skip_serializing_if = "Tri::is_absent")]
     pub modified_at: Tri<String>,
 
-    /// This is the main worktree.
+    /// This is the primary worktree.
     pub main: bool,
 
     /// This is the worktree the command ran from.

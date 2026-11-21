@@ -93,9 +93,8 @@ pub struct ProjectCommitGenerationConfig {
 
 /// Project-level forge configuration.
 ///
-/// Names the forge explicitly, for a remote whose hostname carries no forge
-/// name for [`ForgeKind::from_host`](crate::git::ForgeKind::from_host) to read
-/// (a Forgejo instance at `forge.example.com`, a company git server).
+/// Names the forge explicitly, for a remote whose hostname doesn't name its
+/// forge (a Forgejo instance at `forge.example.com`, a company git server).
 ///
 /// # Example
 ///
@@ -223,9 +222,9 @@ pub struct ProjectConfig {
 
     /// Command aliases for `wt <name>`.
     ///
-    /// Each alias maps a name to a [`CommandConfig`] — a string for a single
-    /// command, a named table (`[aliases.NAME]`) for concurrent commands, or
-    /// `[[aliases.NAME]]` blocks for sequential pipeline steps. All hook
+    /// Each alias is a string for a single command, a named table
+    /// (`[aliases.NAME]`) for concurrent commands, or `[[aliases.NAME]]`
+    /// blocks for sequential pipeline steps. All hook
     /// template variables are available (e.g., `{{ branch }}`,
     /// `{{ worktree_path }}`).
     ///

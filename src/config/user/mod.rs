@@ -602,8 +602,8 @@ fn load_config_file(
 /// `__` separator for nested fields (e.g., `WORKTRUNK_COMMIT__GENERATION__COMMAND`).
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct UserConfig {
-    /// Per-project configuration (approved commands, etc.)
-    /// Uses BTreeMap for deterministic serialization order and better diff readability
+    /// Per-project overrides, keyed by project identifier (`host/owner/repo`) or a `*` pattern.
+    // BTreeMap keeps serialization order deterministic, so diffs stay readable.
     #[serde(default)]
     pub projects: std::collections::BTreeMap<String, UserProjectOverrides>,
 

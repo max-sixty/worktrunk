@@ -966,7 +966,7 @@ The single highest-priority state describing the branch's relation to the defaul
 
 | Symbol | display.state | Meaning |
 |--------|---------------|---------|
-| `^` | `"is_main"` | The main worktree (the repo's home worktree) |
+| `^` | `"is_main"` | The primary worktree (the repo's home worktree) |
 | `∅` | `"orphan"` | No common ancestor with the default branch |
 | `_` | `"empty"` | Same commit as the default branch, working tree clean — safe to remove; row dimmed |
 | `⊂` | `"integrated"` | Content [integrated](/remove/#branch-cleanup) into the default branch or merge target via different history; the matching check is in `default_branch.integration.reason`; row dimmed |
@@ -1030,9 +1030,9 @@ One envelope object. Items carry independent facts; rendered strings
       "branch": "feature",
       "head": {"sha": "05a4a45d…", "short_sha": "05a4a45", "subject": "Add login page",
                "committed_at": "2025-01-01T08:00:00Z"},
-      "worktree": {"path": "/home/user/repo.feature", "main": false, "current": true,
-                   "previous": false, "detached": false, "branch_mismatch": false,
-                   "duplicate_branch": false,
+      "worktree": {"path": "/home/user/repo.feature", "modified_at": "2025-01-01T09:30:00Z",
+                   "main": false, "current": true, "previous": false, "detached": false,
+                   "branch_mismatch": false, "duplicate_branch": false,
                    "changes": {"staged": false, "modified": true, "untracked": false,
                                "renamed": false, "deleted": false, "conflicted": false,
                                "diff": {"added": 10, "deleted": 2}}},
@@ -1101,7 +1101,7 @@ Present only on worktree rows. The location attributes are independent, so they 
 |-------|------|-------------|
 | `path` | string | Worktree path |
 | `modified_at` | string/null | Later of HEAD committer time and the newest changed or untracked file mtime, RFC 3339 UTC; null when unresolved |
-| `main` | boolean | Is the main worktree |
+| `main` | boolean | Is the primary worktree: the main worktree, or in a bare repo the one on the default branch |
 | `current` | boolean | Is the worktree the command ran from |
 | `previous` | boolean | Is the previous worktree (`wt switch -`) |
 | `detached` | boolean | HEAD is detached |
@@ -1723,7 +1723,7 @@ server = "npm run dev"
 
 Here `install` runs first, then `build` and `server` run together.
 
-Templates are checked before the pipeline starts. One that can't parse, or that fails to expand from values no earlier step can change, such as an unguarded `{{ branch }}` in a detached worktree, stops the hook before any step runs. Templates render as each step runs, so a step can store [per-branch vars](/config/#wt-config-state-vars) that later steps read via `{{ vars.<key> }}`. Previews (`wt hook <type> --dry-run`, `wt hook show --expanded`) leave `{{ vars.* }}` references unexpanded for that reason.
+Templates are checked before the pipeline starts. One that can't parse, or that fails to expand from values no earlier step can change, such as an unguarded `{{ branch }}` in a detached worktree, stops the hook before any step from either source runs, and the command exits nonzero. Templates render as each step runs, so a step can store [per-branch vars](/config/#wt-config-state-vars) that later steps read via `{{ vars.<key> }}`. Previews (`wt hook <type> --dry-run`, `wt hook show --expanded`) leave `{{ vars.* }}` references unexpanded for that reason.
 
 Most hooks don't need `[[hook]]` blocks. Reach for them when there's a dependency chain — typically setup that must complete before later steps, like installing dependencies before running a build and dev server concurrently.
 
@@ -1738,7 +1738,7 @@ Most hooks don't need `[[hook]]` blocks. Reach for them when there's a dependenc
 
 To run a specific hook when user and project both define the same name, use `user:name` or `project:name` syntax.
 
-For `pre-*` hooks, a user-hook failure skips project hooks. For `post-*` hooks, a failure in one source does not stop the other. Concurrent hooks can race when writing the same file or running Git in the same worktree. Commands that depend on each other should use ordered `[[hook]]` blocks within one source.
+For `pre-*` hooks, a user-hook failure skips project hooks. For `post-*` hooks, a step failing in one source does not stop the other. Concurrent hooks can race when writing the same file or running Git in the same worktree. Commands that depend on each other should use ordered `[[hook]]` blocks within one source.
 
 ## Template variables
 

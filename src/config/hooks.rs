@@ -84,7 +84,7 @@ pub struct HooksConfig {
     )]
     pub post_create: Option<CommandConfig>,
 
-    /// Commands to execute before committing during merge (blocking, fail-fast)
+    /// Commands to execute before any Worktrunk commit (blocking, fail-fast)
     #[serde(
         default,
         rename = "pre-commit",
