@@ -65,7 +65,7 @@ metadata:
     ```
     If the run fails, re-run its failed jobs when the cause is transient. Otherwise land the fix on `main` and release it as the next patch version, leaving the vX.Y.Z tag in place. Installers such as aqua check that the signing certificate names `release.yaml@refs/tags/<version>`, so each version's release has to come from the run its own tag push started.
 
-`release.yaml` builds binaries and publishes to crates.io, Homebrew, and winget automatically.
+`release.yaml` builds binaries and publishes to crates.io, Homebrew, winget, AUR, and PyPI (experimental) automatically.
 
 ## Data-Loss Surface Review
 

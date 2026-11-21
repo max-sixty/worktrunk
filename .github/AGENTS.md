@@ -9,7 +9,7 @@ worktrunk-bot is a PAT-backed GitHub user with write access. Only the repo owner
 ## Tokens and environments
 
 - tend admits main and holds CLAUDE_CODE_OAUTH_TOKEN and TEND_BOT_TOKEN for concurrent agent jobs.
-- release admits tags and holds AUR_SSH_PRIVATE_KEY, TEND_BOT_TOKEN, and SIGNPATH_API_TOKEN; it also gates packslip signing and crates.io Trusted Publishing through OIDC.
+- release admits tags and holds AUR_SSH_PRIVATE_KEY, TEND_BOT_TOKEN, and SIGNPATH_API_TOKEN; it also gates packslip signing and crates.io and PyPI Trusted Publishing through OIDC.
 - github-pages admits main and uses OIDC without a stored secret.
 - CODECOV_TOKEN is a repo secret allowlisted for coverage upload.
 
